@@ -233,6 +233,84 @@ describe('extractCodexApproval', () => {
     );
     expect(r.approved).toBe(true);
   });
+  test('a codex head-bound review with a missing state fails closed', () => {
+    // Silently skipping a malformed decisive node would fall through to the
+    // reaction path, where a fresh +1 approves despite an unreadable
+    // (possibly CHANGES_REQUESTED) verdict.
+    const r = extractCodexApproval(
+      base({
+        reviews: {
+          nodes: [
+            {
+              // state omitted entirely
+              author: codexAuthor('chatgpt-codex-connector'),
+              commit: { oid: HEAD },
+              submittedAt: '2026-02-02T00:00:00Z',
+            },
+          ],
+        },
+        reactions: {
+          nodes: [
+            {
+              createdAt: '2026-02-05T00:00:00Z',
+              user: { login: 'chatgpt-codex-connector[bot]', __typename: 'User' },
+            },
+          ],
+        },
+      }),
+      'https://github.com/o/r/pull/1'
+    );
+    expect(r.approved).toBe(false);
+    expect(r.failClosedReason).toContain('failing closed');
+  });
+
+  test('a codex head-bound review with a missing submittedAt fails closed', () => {
+    const r = extractCodexApproval(
+      base({
+        reviews: {
+          nodes: [
+            {
+              state: 'CHANGES_REQUESTED',
+              author: codexAuthor('chatgpt-codex-connector'),
+              commit: { oid: HEAD },
+            },
+          ],
+        },
+      }),
+      'https://github.com/o/r/pull/1'
+    );
+    expect(r.approved).toBe(false);
+    expect(r.failClosedReason).toContain('failing closed');
+  });
+
+  test('a PENDING codex review (null submittedAt is legitimate) does not fail closed', () => {
+    const r = extractCodexApproval(
+      base({
+        reviews: {
+          nodes: [
+            {
+              state: 'PENDING',
+              author: codexAuthor('chatgpt-codex-connector'),
+              commit: { oid: HEAD },
+            },
+          ],
+        },
+        reactions: {
+          nodes: [
+            {
+              createdAt: '2026-02-05T00:00:00Z',
+              user: { login: 'chatgpt-codex-connector[bot]', __typename: 'User' },
+            },
+          ],
+        },
+      }),
+      'https://github.com/o/r/pull/1'
+    );
+    // PENDING carries no verdict: the reaction path may approve.
+    expect(r.approved).toBe(true);
+    expect(r.failClosedReason).toBeUndefined();
+  });
+
   test('ignores a codex APPROVED on a prior head (commit oid mismatch)', () => {
     const r = extractCodexApproval(
       base({

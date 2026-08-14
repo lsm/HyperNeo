@@ -57,6 +57,14 @@ describe('fetchPrView — structural validation', () => {
     await expectTerminalInfraFailure(fetchPrView('/tmp/ws', PR_LINK));
   });
 
+  test('a body missing mergeable is a terminal infra failure', async () => {
+    // parsePrView fabricates 'UNKNOWN' for a missing mergeable — which the
+    // enum guard accepts, so pr_ready would retry the handoff forever on an
+    // incomplete lookup instead of surfacing an infrastructure failure.
+    serveRaw(JSON.stringify({ state: 'OPEN', mergeStateStatus: 'CLEAN' }));
+    await expectTerminalInfraFailure(fetchPrView('/tmp/ws', PR_LINK));
+  });
+
   test('non-JSON output self-stamps the infra prefix (every terminal path ineligible)', async () => {
     serveRaw('<html>gateway error</html>');
     await expectTerminalInfraFailure(fetchPrView('/tmp/ws', PR_LINK));

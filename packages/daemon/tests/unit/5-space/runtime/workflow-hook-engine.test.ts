@@ -475,6 +475,68 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(hookStateRepo.get('run-1', 'slot_channel_hook')).toBeNull();
   });
 
+  test("an array '*' over a slot-only channel runs no gates (whole multicast refused)", async () => {
+    // Router parity: '*' expands ONLY as the entire string target. Inside an
+    // array it is a literal entry the router cannot authorize without a
+    // wildcard-'to' channel — one unauthorized entry refuses the WHOLE
+    // multicast, so no gate may run off this send (pr_ready could otherwise
+    // stamp the run's immutable PR identity from an undelivered attempt).
+    const STOP_HOOK = scriptHook('array_wild_hook', '{"flow":"stop","reason":"blocked"}');
+    const workflow = makeWorkflow({
+      customHooks: [STOP_HOOK],
+      channels: [{ from: 'coder', to: 'Review', label: 'coder → Review' }],
+      hookBindings: [
+        {
+          hookId: 'array_wild_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const engine = makeEngine(workflow);
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: ['*', 'Review'], message: 'mixed wildcard' },
+      META
+    );
+    expect(outcome.decision).toBe('deliver');
+    expect(hookStateRepo.get('run-1', 'array_wild_hook')).toBeNull();
+  });
+
+  test("an array '*' under a wildcard-'to' channel keeps the sibling entries' gates", async () => {
+    // When the topology authorizes '*' literally (a 'to: *' channel), the
+    // router delivers the resolvable sibling entries — their gates must run.
+    // Over-suppressing here would bypass the gate on a delivered send.
+    const STOP_HOOK = scriptHook('array_wild_ok_hook', '{"flow":"stop","reason":"blocked"}');
+    const workflow = makeWorkflow({
+      customHooks: [STOP_HOOK],
+      channels: [{ from: 'Coding', to: '*', label: 'Coding → *' }],
+      hookBindings: [
+        {
+          hookId: 'array_wild_ok_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const engine = makeEngine(workflow);
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: ['*', 'Review'], message: 'authorized wildcard' },
+      META
+    );
+    expect(outcome.decision).toBe('stop');
+    expect(outcome.blockingHookId).toBe('array_wild_ok_hook');
+  });
+
   test('a worker slot reachable only via a REVERSE channel does not run the gate', async () => {
     // Router parity: for '@worker:Review/reviewer' the router authorizes
     // canSend(fromNode, nodeName) or canSend(fromNode, agentName) — never a

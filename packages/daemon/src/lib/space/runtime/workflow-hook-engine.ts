@@ -1120,6 +1120,13 @@ export class WorkflowHookEngine {
           }
         }
       } else if (Array.isArray(target)) {
+        // The router expands '*' ONLY as the entire target (string form);
+        // inside an array it is a literal entry the router can neither
+        // resolve nor authorize, and ONE unauthorized entry fails the WHOLE
+        // multicast — nothing delivers, so no gate may run off this send.
+        // Track it and suppress every target the other entries resolved.
+        let wildcardEntry = false;
+        const arrayResolvedNodes = new Set<string>();
         for (const t of target) {
           if (typeof t !== 'string') {
             // A non-string entry contributes no resolvable node target — the
@@ -1128,25 +1135,15 @@ export class WorkflowHookEngine {
             continue;
           }
           if (t.trim() === '*') {
-            const permittedNode = resolver.getPermittedTargets(fromNode);
-            const permittedSlot = resolver.getPermittedTargets(meta.agentName);
-            const permitted = [...new Set([...permittedNode, ...permittedSlot])];
-            if (permitted.includes('*')) {
-              for (const node of workflow.nodes) {
-                actionTargets.add(node.name);
-              }
-            } else {
-              for (const pt of permitted) {
-                for (const resolved of this.resolveTargetEntries(
-                  pt,
-                  nodeIdToName,
-                  slotToNodes,
-                  nodeNames
-                )) {
-                  actionTargets.add(resolved);
-                }
-              }
+            if (resolver.getPermittedTargets(fromNode).includes('*')) {
+              // A wildcard-'to' channel authorizes '*' literally at the
+              // router; it resolves to no workflow node, so it contributes
+              // no targets and suppresses nothing (the sibling entries keep
+              // their gates, matching what the router delivers).
+              continue;
             }
+            wildcardEntry = true;
+            continue;
           } else {
             const resolvedTargets = this.resolveTargetEntries(
               t,
@@ -1180,6 +1177,16 @@ export class WorkflowHookEngine {
                 nonRoutableResolvedNodes.add(resolved);
               }
             }
+            for (const resolved of resolvedTargets) {
+              if (nodeNames.has(resolved)) arrayResolvedNodes.add(resolved);
+            }
+          }
+        }
+        if (wildcardEntry) {
+          // Router parity: the whole multicast is refused — suppress the
+          // gates on every node the sibling entries resolved.
+          for (const resolved of arrayResolvedNodes) {
+            nonRoutableResolvedNodes.add(resolved);
           }
         }
       }

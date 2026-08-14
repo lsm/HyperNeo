@@ -380,6 +380,7 @@ export async function fetchPrView(
     !stateOk ||
     !mergeableOk ||
     typeof raw?.state !== 'string' ||
+    typeof raw?.mergeable !== 'string' ||
     typeof raw?.mergeStateStatus !== 'string'
   ) {
     return {
@@ -809,6 +810,14 @@ export interface GithubCodexApproval {
   prLink?: string;
   /** The head SHA the verdict was computed against (for the final recheck). */
   evaluatedHeadOid?: string;
+  /**
+   * Set when the response carried codex-authored head-bound evidence too
+   * malformed to evaluate (missing state / submittedAt): the lookup must
+   * fail closed instead of falling through to the reaction path, where a
+   * fresh +1 would approve despite an unreadable possibly-CHANGES_REQUESTED
+   * verdict. The caller maps this to a retryable error.
+   */
+  failClosedReason?: string;
 }
 
 /**
@@ -1002,6 +1011,9 @@ export async function ghGetCodexApproval(
         },
         link
       );
+      if (approval.failClosedReason) {
+        return { ok: false, retryable: true, error: approval.failClosedReason };
+      }
       if (!approval.approved) return { ok: true, data: approval };
       // FINAL HEAD RECHECK: the multi-page scan takes time, and a commit
       // pushed after the last page was received would leave this approval
@@ -1088,6 +1100,23 @@ export function extractCodexApproval(value: unknown, prLink: string): GithubCode
       if (!onHead) continue;
       const submittedAt = typeof review?.submittedAt === 'string' ? review.submittedAt : '';
       const state = typeof review?.state === 'string' ? review.state : '';
+      // A codex-authored HEAD-BOUND review too malformed to evaluate must
+      // fail the lookup closed — silently skipping it would fall through to
+      // the reaction path, where a fresh +1 could approve despite an
+      // unreadable (possibly CHANGES_REQUESTED) verdict. A PENDING review
+      // legitimately has a null submittedAt; it carries no verdict either way.
+      if (
+        typeof review?.state !== 'string' ||
+        (review?.state !== 'PENDING' && typeof review?.submittedAt !== 'string')
+      ) {
+        return {
+          approved: false,
+          prLink,
+          evaluatedHeadOid: headOid,
+          failClosedReason:
+            'malformed codex review on the head (missing state/submittedAt); failing closed',
+        };
+      }
       if (!submittedAt || (state !== 'APPROVED' && state !== 'CHANGES_REQUESTED')) continue;
       // Compare EPOCHS, not lexical strings: GitHub timestamps can carry
       // fractional seconds, and lexically '...00.500Z' sorts BEFORE

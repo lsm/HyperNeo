@@ -449,6 +449,52 @@ describe('ghGetCodexApproval — final head recheck', () => {
 // off-by-one (or a silently ignored timeoutMs) would let the multi-request
 // scan page on unbounded with nothing catching it.
 
+describe('ghGetCodexApproval — malformed codex evidence', () => {
+  test('a malformed head-bound codex review fails the lookup closed (retryable)', async () => {
+    // A fresh reaction sits alongside the unreadable verdict: the gate must
+    // NOT approve through the reaction path.
+    setGraphqlRunnerForTests(async () => ({
+      ok: true,
+      data: {
+        data: {
+          repository: {
+            pullRequest: {
+              reviews: {
+                nodes: [
+                  {
+                    // state omitted; submittedAt present
+                    author: { login: 'chatgpt-codex-connector' },
+                    commit: { oid: HEAD },
+                    submittedAt: '2026-08-13T10:00:00Z',
+                  },
+                ],
+                pageInfo: { hasNextPage: false, endCursor: 'cGFnZQ' },
+              },
+              reactions: {
+                nodes: [
+                  {
+                    createdAt: '2026-08-13T12:00:00Z',
+                    user: { login: 'chatgpt-codex-connector[bot]' },
+                  },
+                ],
+              },
+              commits: {
+                nodes: [{ commit: { oid: HEAD, pushedDate: '2026-08-12T00:00:00Z' } }],
+              },
+            },
+          },
+        },
+      },
+    }));
+    const result = await ghGetCodexApproval(CTX, PR_LINK);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.retryable).toBe(true);
+      expect(result.error).toContain('failing closed');
+    }
+  });
+});
+
 describe('ghGetCodexApproval — overall deadline budget', () => {
   const realNow = Date.now;
 
