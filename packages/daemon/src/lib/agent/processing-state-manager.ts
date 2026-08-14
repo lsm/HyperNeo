@@ -518,9 +518,31 @@ export class ProcessingStateManager {
     }
 
     if (message.type === 'stream_event') {
-      // We're actively streaming content deltas
-      if (this.streamingPhase !== 'streaming') {
-        await this.updatePhase('streaming');
+      // We're actively streaming — classify the RAW delta so an extended-
+      // thinking generation (thinking_delta / content_block_start of a
+      // thinking block) keeps the "Thinking" phase instead of flipping to
+      // "Streaming" for its entire duration. Text deltas are the only frames
+      // that prove visible output is being produced; other stream frames
+      // (message_start, content_block_stop, message_delta, ping, …) carry no
+      // phase signal and must not disturb the current phase. Heartbeat-only
+      // consumers (the delivery stall watchdog) are unaffected either way —
+      // they bump on the raw message, not the phase. (Codex review, #2476.)
+      const event = (message as Extract<SDKMessage, { type: 'stream_event' }>).event as {
+        type?: string;
+        delta?: { type?: string };
+        content_block?: { type?: string };
+      };
+      if (event?.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
+        if (this.streamingPhase !== 'streaming') {
+          await this.updatePhase('streaming');
+        }
+      } else if (
+        (event?.type === 'content_block_delta' && event.delta?.type === 'thinking_delta') ||
+        (event?.type === 'content_block_start' && event.content_block?.type === 'thinking')
+      ) {
+        if (this.streamingPhase !== 'thinking') {
+          await this.updatePhase('thinking');
+        }
       }
     } else if (message.type === 'assistant') {
       // Assistant message indicates thinking/tool use phase

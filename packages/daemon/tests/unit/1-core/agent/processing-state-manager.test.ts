@@ -732,6 +732,68 @@ describe('ProcessingStateManager', () => {
   });
 
   describe('updatePhase', () => {
+    describe('detectPhaseFromMessage: stream_event delta classification', () => {
+      const streamEvent = (event: Record<string, unknown>): SDKMessage =>
+        ({
+          type: 'stream_event',
+          event,
+          parent_tool_use_id: null,
+          uuid: 'stream-uuid',
+          session_id: sessionId,
+        }) as unknown as SDKMessage;
+
+      test('text deltas set the streaming phase', async () => {
+        await manager.setProcessing('msg-1', 'thinking');
+        await manager.detectPhaseFromMessage(
+          streamEvent({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'hi' } })
+        );
+        expect(manager.getState().phase).toBe('streaming');
+      });
+
+      test('thinking deltas keep the Thinking phase (extended thinking is not Streaming)', async () => {
+        await manager.setProcessing('msg-1', 'initializing');
+        // A long redacted-thinking generation streams thinking_delta frames —
+        // the UI must show "Thinking", not "Streaming", for its whole duration.
+        for (let i = 0; i < 3; i++) {
+          await manager.detectPhaseFromMessage(
+            streamEvent({
+              type: 'content_block_delta',
+              delta: { type: 'thinking_delta', thinking: '…' },
+            })
+          );
+        }
+        expect(manager.getState().phase).toBe('thinking');
+        // A thinking content_block_start must not flip an existing streaming phase either.
+        await manager.updatePhase('streaming');
+        await manager.detectPhaseFromMessage(
+          streamEvent({ type: 'content_block_start', content_block: { type: 'thinking' } })
+        );
+        expect(manager.getState().phase).toBe('thinking');
+      });
+
+      test('phase-neutral stream frames (message_start, ping, …) leave the phase untouched', async () => {
+        await manager.setProcessing('msg-1', 'thinking');
+        for (const neutral of [
+          { type: 'message_start' },
+          { type: 'content_block_start', content_block: { type: 'text' } },
+          { type: 'content_block_stop' },
+          { type: 'message_delta' },
+          { type: 'ping' },
+        ]) {
+          await manager.detectPhaseFromMessage(streamEvent(neutral));
+        }
+        expect(manager.getState().phase).toBe('thinking');
+      });
+
+      test('no phase update when not processing', async () => {
+        emitMock.mockClear();
+        await manager.detectPhaseFromMessage(
+          streamEvent({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'hi' } })
+        );
+        expect(emitMock).not.toHaveBeenCalled();
+      });
+    });
+
     test('updates phase during processing', async () => {
       await manager.setProcessing('msg-1', 'initializing');
       await manager.updatePhase('thinking');
@@ -784,7 +846,19 @@ describe('ProcessingStateManager', () => {
       expect(manager.getState().status).toBe('idle');
     });
 
-    test('transitions to streaming phase on stream_event', async () => {
+    test('transitions to streaming phase on a text-delta stream_event', async () => {
+      await manager.setProcessing('msg-1', 'thinking');
+
+      const message = {
+        type: 'stream_event',
+        event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'hi' } },
+      } as unknown as SDKMessage;
+      await manager.detectPhaseFromMessage(message);
+
+      expect(manager.getState().phase).toBe('streaming');
+    });
+
+    test('a stream_event without a recognizable delta leaves the phase untouched', async () => {
       await manager.setProcessing('msg-1', 'thinking');
 
       const message = {
@@ -793,7 +867,7 @@ describe('ProcessingStateManager', () => {
       } as unknown as SDKMessage;
       await manager.detectPhaseFromMessage(message);
 
-      expect(manager.getState().phase).toBe('streaming');
+      expect(manager.getState().phase).toBe('thinking');
     });
 
     test('transitions to thinking phase on assistant message with tool use', async () => {
