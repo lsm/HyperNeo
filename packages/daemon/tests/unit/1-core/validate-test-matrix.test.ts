@@ -2,14 +2,36 @@
  * Tests for scripts/validate-test-matrix.sh — the universal test-coverage guard.
  */
 
-import { describe, expect, it } from 'bun:test';
-import { spawnSync } from 'node:child_process';
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { execSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
 const REPO_ROOT = path.resolve(__dirname, '../../../../..');
 const SCRIPT = path.join(REPO_ROOT, 'scripts/validate-test-matrix.sh');
-const TIMEOUT = 60_000;
+// Each test spawns the full guard (~15–20s typically). 90s gives margin so a
+// slow/loaded runner does not time out a mutation test and report a false pass.
+const TIMEOUT = 90_000;
+
+// Committed workflow/config files these tests mutate in place. A hard kill
+// (OOM/SIGKILL, or the CI cancel-in-progress that main.yml sets) skips a test's
+// try/finally, leaving a bypass injected into the working tree that would then
+// poison every future local `bun run check`. Restore them from git HEAD before
+// AND after the file runs so each run starts from a known-clean state and a
+// killed prior run is cleaned up on the next one.
+const MUTATED_TARGETS = [
+  '.github/workflows/main.yml',
+  '.github/workflows/real-api-tests.yml',
+  'packages/web/vitest.config.ts',
+];
+function restoreTargetsFromGit(): void {
+  execSync(`git checkout HEAD -- ${MUTATED_TARGETS.map((t) => `'${t}'`).join(' ')}`, {
+    cwd: REPO_ROOT,
+    stdio: 'ignore',
+  });
+}
+beforeAll(restoreTargetsFromGit);
+afterAll(restoreTargetsFromGit);
 
 function runGuard(): { exitCode: number; stdout: string; stderr: string } {
   const r = spawnSync('/bin/bash', [SCRIPT], {
@@ -356,6 +378,87 @@ describe('validate-test-matrix.sh', () => {
           ),
         'has a needs: dependency'
       );
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects a data-command first token on the unit runner',
+    () => {
+      // runner_is_data_cmd (distinct from the post-separator pin, which catches
+      // `test -n`): an echo/printf/cat first token makes the marker an argument,
+      // so zero tests run. Uses the unit runner, where this detector sits before
+      // runner_post_sep_starts_with and is reachable.
+      expectGuardRejects(
+        path.join(REPO_ROOT, '.github/workflows/main.yml'),
+        (s) =>
+          s.replace(
+            './scripts/test-daemon.sh ${{ matrix.shard }} --coverage',
+            'echo ./scripts/test-daemon.sh ${{ matrix.shard }} --coverage'
+          ),
+        'first command token is a data command'
+      );
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects a block-form matrix.exclude in the unit workflow',
+    () => {
+      // matrix_excludes parses BOTH flow and block forms; only the flow form
+      // (real-api) was tested. A block-form exclude: silently drops a shard.
+      expectGuardRejects(
+        path.join(REPO_ROOT, '.github/workflows/main.yml'),
+        (s) =>
+          s.replace(
+            '5-space-runtime-a, 5-space-runtime-b]\n',
+            '5-space-runtime-a, 5-space-runtime-b]\n        exclude:\n          - shard: shared\n'
+          ),
+        'matrix.exclude'
+      );
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects a non-allowlisted key in an online include row',
+    () => {
+      // An include row carrying an extra key (e.g. replica: b) adds a hidden
+      // matrix combination GitHub schedules, evading the module/sibling-axis
+      // checks (which iterate the axis and top-level matrix keys, not row keys).
+      expectGuardRejects(
+        path.join(REPO_ROOT, '.github/workflows/main.yml'),
+        (s) =>
+          s.replace(
+            '          - module: agent-sdk\n',
+            '          - module: agent-sdk\n            replica: b\n'
+          ),
+        'non-allowlisted key'
+      );
+    },
+    TIMEOUT
+  );
+
+  it(
+    "does not leak a second job's module axis into the online axis set",
+    () => {
+      // _axis_modules must reset injob at the next job key; otherwise a later
+      // job's module: axis leaks into the online axis set and (here) duplicates
+      // a real module → false "appears more than once". With the reset the guard
+      // stays green.
+      const wf = path.join(REPO_ROOT, '.github/workflows/main.yml');
+      const original = fs.readFileSync(wf, 'utf-8');
+      const anchor = '  test-daemon-shared-unit:\n';
+      expect(original.includes(anchor)).toBe(true);
+      const leak =
+        '  zzz-axis-leak:\n    runs-on: ubuntu-latest\n    strategy:\n      matrix:\n        module:\n          - components\n        include:\n          - module: components\n            test_path: x\n    steps:\n      - run: echo hi\n';
+      fs.writeFileSync(wf, original.replace(anchor, leak + anchor));
+      try {
+        const { exitCode } = runGuard();
+        expect(exitCode).toBe(0);
+      } finally {
+        fs.writeFileSync(wf, original);
+      }
     },
     TIMEOUT
   );

@@ -457,6 +457,40 @@ reject_invalid_module_values() {
 	done <<< "$_bad_modules"
 }
 
+# Reject a matrix include row carrying a key NOT in the allowlist ($3, space-
+# separated). An include row with an extra key (e.g. `replica: b`) introduces an
+# ADDITIONAL matrix combination GitHub schedules — evading the module-axis and
+# sibling-axis checks (those iterate the declared axis and top-level matrix keys,
+# not include-row keys), so it silently duplicates runs (paid cross-provider runs
+# for real-api). The allowlist is per job (mock_sdk/timeout for mocked-online;
+# default_provider/secrets_used/reason for real-api).
+reject_include_extra_keys() {
+	local file="$1" job="$2" allowed="$3" _keys _k
+	_keys=$(awk -v job="$job" '
+		$0 ~ "^  " job ":" { injob=1; next }
+		injob && /^  [a-z]/ { injob=0; inmatrix=0; ininc=0; next }
+		!injob { next }
+		/^[[:space:]]{6}matrix:[[:space:]]*$/ { inmatrix=1; ininc=0; next }
+		inmatrix && /^[[:space:]]{0,6}[A-Za-z]/ && !/^[[:space:]]*include:/ { ininc=0 }
+		inmatrix && /^[[:space:]]*include:[[:space:]]*$/ { ininc=1; next }
+		ininc {
+			n=0; while (substr($0,n+1,1)==" ") n++
+			if (n <= 8 && $0 !~ /^[[:space:]]*$/) { ininc=0; next }
+			if (/^[[:space:]]*#/) next
+			line=$0; sub(/^[[:space:]]*- /, "", line); sub(/^[[:space:]]+/, "", line)
+			if (match(line, /^[a-z_]+:/)) print substr(line, RSTART, RLENGTH-1)
+		}
+	' "$file" | sort -u)
+	while IFS= read -r _k; do
+		[ -n "$_k" ] || continue
+		case " $allowed " in
+			*" $_k "*) ;;
+			*) err "$job include row has a non-allowlisted key '$_k:' — GitHub schedules an extra matrix combination for it (duplicate runs), evading the module/sibling-axis checks"
+			   echo "     → use only the allowed include-row keys ($allowed) in $job" >&2 ;;
+		esac
+	done <<< "$_keys"
+}
+
 # True (exit 0 = BAD) if the guarded runner step (run contains marker, in job)
 # of file would run under a NON-DEFAULT shell — a step-level `shell:`, or a
 # job/workflow `defaults.run.shell`. enabled_run_cmd/marker_executed assume the
@@ -556,7 +590,8 @@ for _cfg in "$REPO_ROOT/packages/daemon/vitest.config.ts" "$REPO_ROOT/packages/s
 done
 
 COVERED_TMP="$(mktemp)"
-trap 'rm -f "$COVERED_TMP"' EXIT
+UNIT_FILTERS_TMP="$(mktemp)"
+trap 'rm -f "$COVERED_TMP" "$UNIT_FILTERS_TMP"' EXIT
 
 # Build the covered set: "<relpath>\t<shard>" for every file every shard touches.
 # Each shard path-spec is expanded the way Vitest receives it from test-daemon.sh:
@@ -590,6 +625,9 @@ for shard in "${SHARDS[@]}"; do
 				done < <(find "$spec" -type f \( -name '*.test.ts' -o -name '*_test.ts' \))
 			elif [ -f "$spec" ]; then
 				printf '%s\t%s\n' "${spec#"$REPO_ROOT"/}" "$shard" >> "$COVERED_TMP"
+				# Record file-valued filters (a Vitest positional) for the substring-
+				# overlap check below — a dir-expanded file is NOT a positional filter.
+				printf '%s\t%s\n' "${spec#"$REPO_ROOT"/}" "$shard" >> "$UNIT_FILTERS_TMP"
 			else
 				err "daemon unit shard '$shard' references a path that no longer exists: $spec"
 				echo "     → remove it from shard_paths() in scripts/test-daemon.sh" >&2
@@ -608,6 +646,34 @@ while IFS= read -r _bad; do
 	err "unit/shared shard path is outside the config include root (packages/*/tests/), so Vitest would filter it out while this guard reports it covered: $_bad"
 	echo "     → move it under the package tests/ dir, or drop it from shard_paths()" >&2
 done < <(awk -F'\t' '{ print $1 }' "$COVERED_TMP" | grep -vE '^packages/[^/]+/tests/' | sort -u)
+
+# Vitest matches CLI positional filters as path SUBSTRINGS, not exact paths. So a
+# file-valued unit shard filter whose path is a substring of a file owned by a
+# DIFFERENT shard makes that file run in BOTH shards (the shorter filter selects
+# the longer-named file too) — yet the exact-path ownership accounting above
+# (one owner per file) stays green. Compare every file-valued positional filter
+# against every covered file in another shard; report any substring hit. (Mirrors
+# the online section's cross-shard overlap check. shard_paths returns absolute
+# paths, so this is defensive — currently zero overlaps — but it pins the
+# invariant against a future substring-named pair.)
+_unit_overlaps=$(awk -F'\t' '
+	FNR==NR { fp[++nf]=$1; fs[nf]=$2; next }
+	{ cp[++cf]=$1; cs[cf]=$2 }
+	END {
+		for (i=1; i<=nf; i++) for (j=1; j<=cf; j++) {
+			if (fs[i] == cs[j]) continue          # same shard: not a cross overlap
+			if (fp[i] == cp[j]) continue           # the filter itself
+			if (index(cp[j], fp[i]) > 0) print fp[i] "\t" fs[i] "\t" cp[j]
+		}
+	}
+' "$UNIT_FILTERS_TMP" "$COVERED_TMP")
+if [ -n "$_unit_overlaps" ]; then
+	while IFS=$'\t' read -r _filt _fshard _hit; do
+		[ -n "$_filt" ] || continue
+		err "unit shard '$_fshard' file filter '$_filt' is a substring of '$_hit' (owned by another shard) — Vitest matches positional filters as substrings, so that file runs in BOTH shards while this guard reports each file covered once"
+		echo "     → rename the file or scope the filter so it is not a substring of another shard's file" >&2
+	done <<< "$_unit_overlaps"
+fi
 
 # Every SHARDS entry must also appear in the ACTIVE CI unit matrix. A shard that
 # runs locally via test-daemon.sh but is absent from CI would make this guard
@@ -972,6 +1038,9 @@ _check_job_gate daemon-real-api "$REAL_API_WORKFLOW" "github.event.inputs.run_e2
 # distinct module to GitHub — splits a combination while this guard cannot match).
 reject_invalid_module_values "$MAIN_WORKFLOW" test-daemon-online
 reject_invalid_module_values "$REAL_API_WORKFLOW" daemon-real-api
+# An include row carrying an extra key adds a hidden combination (duplicate runs).
+reject_include_extra_keys "$MAIN_WORKFLOW" test-daemon-online "module test_path mock_sdk timeout"
+reject_include_extra_keys "$REAL_API_WORKFLOW" daemon-real-api "module test_path default_provider secrets_used reason"
 
 # Online matrix test_path values must reach an ENABLED runner that forwards
 # ${{ matrix.test_path }}. The marker picks the runner step itself
@@ -1103,7 +1172,8 @@ fi
 # so the runner becomes an UNFILTERED vitest/bun run that executes the ENTIRE
 # online suite (duplicates tests across jobs, reaches intentionally-exempt dirs).
 _axis_modules=$(awk '
-	/^  test-daemon-online:/ { injob=1 }
+	/^  test-daemon-online:/ { injob=1; next }
+	injob && /^  [a-z]/ { inaxis=0; injob=0; next }
 	injob && /^[[:space:]]*module:[[:space:]]*$/ { inaxis=1; next }
 	injob && /^[[:space:]]*include:/ { inaxis=0 }
 	# Accept an optional YAML quote around the axis value; strip non-token chars
