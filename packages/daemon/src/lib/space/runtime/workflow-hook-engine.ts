@@ -1376,9 +1376,27 @@ export class WorkflowHookEngine {
             }
             continue;
           }
-          // A generic non-worker address (@handle/@role/@coordinator) is
-          // delivered separately per entry and does not abort the loop —
-          // no authorization, no block.
+          // A '@role:' target resolving to workflow nodes must be
+          // channel-authorized: the role resolver only delivers to workers
+          // the topology permits (canSendToWorker), so an unauthorized role
+          // reaches no worker — its node is non-routable (suppressed without
+          // aborting later entries; role delivery is not a sequential abort).
+          if (t.startsWith('@role:')) {
+            const roleAuthorized = resolvedTargets.some(
+              (r) => nodeNames.has(r) && isRoutableTarget(r)
+            );
+            if (!roleAuthorized) {
+              for (const resolved of resolvedTargets) {
+                if (!nodeNames.has(resolved)) continue;
+                arrayResolvedNodes.delete(resolved);
+                nonRoutableResolvedNodes.add(resolved);
+              }
+            }
+            continue;
+          }
+          // A generic non-worker address (@handle/@coordinator) is delivered
+          // separately per entry and does not abort the loop — no
+          // authorization, no block.
           if (isAddress && !isWorker) continue;
           // Foreign-run / agent-less worker miss: the router skips the entry
           // (notFound) without aborting — later entries keep their gates.

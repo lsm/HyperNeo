@@ -61,7 +61,7 @@ const codexPage = (
       pullRequest: {
         reviews: {
           nodes: reviews,
-          pageInfo: { hasNextPage: opts.hasNext, endCursor: opts.cursor ?? 'cur' },
+          pageInfo: { hasPreviousPage: opts.hasNext, startCursor: opts.cursor ?? 'Y3Vy' },
         },
         reactions: { nodes: opts.reactions ?? [] },
         commits: {
@@ -88,17 +88,18 @@ const threadPage = (threads: unknown[], hasNext: boolean) => ({
 afterEach(() => setGraphqlRunnerForTests(null));
 
 describe('ghGetCodexApproval — pagination loop', () => {
-  test('a CHANGES_REQUESTED beyond page 1 flips the accumulated verdict', async () => {
-    // Page 1: an older APPROVED on the head. Page 2: a NEWER
-    // CHANGES_REQUESTED on the same head. The first-page prefix would approve;
-    // the accumulated history must decline.
+  test('an OLDER APPROVED beyond page 1 does not flip the newest CHANGES_REQUESTED', async () => {
+    // Backward pagination: page 1 is the NEWEST — a CHANGES_REQUESTED on the
+    // head. Page 2 holds an OLDER APPROVED on the same head. The newest page
+    // already decides (the early exit fires), and the accumulated verdict
+    // must decline regardless of the older approval.
     setGraphqlRunnerForTests(
       pagedRunner([
-        codexPage([codexReview('APPROVED', '2026-08-13T10:00:00Z')], {
+        codexPage([codexReview('CHANGES_REQUESTED', '2026-08-13T11:00:00Z')], {
           hasNext: true,
           cursor: 'cDFlbmQ',
         }),
-        codexPage([codexReview('CHANGES_REQUESTED', '2026-08-13T11:00:00Z')]),
+        codexPage([codexReview('APPROVED', '2026-08-13T10:00:00Z')]),
       ])
     );
     const result = await ghGetCodexApproval(CTX, PR_LINK);
@@ -116,7 +117,7 @@ describe('ghGetCodexApproval — pagination loop', () => {
           codexPage([codexReview('APPROVED', '2026-08-13T10:00:00Z')]),
         ],
         (query) => {
-          const match = /after:"([^"]*)"/.exec(query);
+          const match = /before:"([^"]*)"/.exec(query);
           seenAfters.push(match ? (match[1] as string) : null);
         }
       )
@@ -476,7 +477,7 @@ describe('ghGetCodexApproval — reaction back-pagination', () => {
     data: {
       repository: {
         pullRequest: {
-          reviews: { nodes: [], pageInfo: { hasNextPage: false, endCursor: 'cGFnZQ' } },
+          reviews: { nodes: [], pageInfo: { hasPreviousPage: false } },
           reactions: {
             nodes: reactions,
             pageInfo: { hasPreviousPage: hasPrevious, startCursor },
@@ -572,7 +573,7 @@ describe('ghGetCodexApproval — final head recheck', () => {
                 author: { login: 'chatgpt-codex-connector' },
               },
             ],
-            pageInfo: { hasNextPage: false, endCursor: 'cGFnZQ' },
+            pageInfo: { hasPreviousPage: false },
           },
           reactions: { nodes: [], pageInfo: { hasPreviousPage: false, startCursor: 'Y3Vy' } },
           commits: { nodes: [{ commit: { oid: headOid, pushedDate: '2026-08-12T00:00:00Z' } }] },
@@ -634,7 +635,7 @@ describe('ghGetCodexApproval — malformed codex evidence', () => {
                     submittedAt: '2026-08-13T10:00:00Z',
                   },
                 ],
-                pageInfo: { hasNextPage: false, endCursor: 'cGFnZQ' },
+                pageInfo: { hasPreviousPage: false },
               },
               reactions: {
                 nodes: [
@@ -681,7 +682,7 @@ describe('ghGetCodexApproval — decisive review skips the reaction walk', () =>
                     author: { login: 'chatgpt-codex-connector' },
                   },
                 ],
-                pageInfo: { hasNextPage: false, endCursor: 'cGFnZQ' },
+                pageInfo: { hasPreviousPage: false },
               },
               reactions: {
                 nodes: [],
@@ -710,7 +711,7 @@ test('a non-decisive response missing reactions hasPreviousPage fails closed', a
       data: {
         repository: {
           pullRequest: {
-            reviews: { nodes: [], pageInfo: { hasNextPage: false } },
+            reviews: { nodes: [], pageInfo: { hasPreviousPage: false } },
             reactions: { nodes: [] }, // pageInfo omitted
             commits: {
               nodes: [{ commit: { oid: HEAD, pushedDate: '2026-08-12T00:00:00Z' } }],
@@ -735,7 +736,7 @@ test('an unparseable reaction boundary timestamp fails closed', async () => {
       data: {
         repository: {
           pullRequest: {
-            reviews: { nodes: [], pageInfo: { hasNextPage: false } },
+            reviews: { nodes: [], pageInfo: { hasPreviousPage: false } },
             reactions: {
               nodes: [{ createdAt: 'not-a-date', user: { login: 'chatgpt-codex-connector' } }],
               pageInfo: { hasPreviousPage: true, startCursor: 'Y3Vyc29y' },

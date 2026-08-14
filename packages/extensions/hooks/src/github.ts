@@ -1035,10 +1035,13 @@ export async function ghGetCodexApproval(
     error: 'codex approval scan exceeded its overall deadline (fail closed)',
   });
 
-  const headQuery = (after: string | null) =>
+  // Walk BACKWARD from the newest reviews: a forward scan from the oldest
+  // page reaches the cap on a >500-review PR before it can inspect a recent
+  // verdict on the current head, blocking a handoff the newest page proves.
+  const headQuery = (before: string | null) =>
     `query { repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
-    `reviews(first: ${CODEX_REVIEWS_PAGE_SIZE}${after ? `, after:"${after}"` : ''}) { ` +
-    'pageInfo { hasNextPage endCursor } ' +
+    `reviews(last: ${CODEX_REVIEWS_PAGE_SIZE}${before ? `, before:"${before}"` : ''}) { ` +
+    'pageInfo { hasPreviousPage startCursor } ' +
     'nodes { state author { login } commit { oid } body submittedAt } } ' +
     // Reaction connection: walked BACKWARD from the tail while the oldest
     // entry is still newer than the head push (bounded cap, fail-closed) —
@@ -1052,6 +1055,7 @@ export async function ghGetCodexApproval(
   const allReactionNodes: unknown[] = [];
   let lastPage: Record<string, unknown> | undefined;
   let cursor: string | null = null;
+  let decisiveHeadBoundFound = false;
   for (let page = 0; page < MAX_CODEX_REVIEW_PAGES; page++) {
     const remaining = remainingBudget();
     if (remaining <= 0) return deadlineError();
@@ -1069,7 +1073,7 @@ export async function ghGetCodexApproval(
     if (
       !Array.isArray(reviewsConnection?.nodes) ||
       !codexPageInfo ||
-      typeof codexPageInfo.hasNextPage !== 'boolean'
+      typeof codexPageInfo.hasPreviousPage !== 'boolean'
     ) {
       return {
         ok: false,
@@ -1078,7 +1082,30 @@ export async function ghGetCodexApproval(
       };
     }
     const nodes = reviewsConnection?.nodes;
-    if (Array.isArray(nodes)) allReviewNodes.push(...nodes);
+    // Pages arrive NEWEST-FIRST — unshift keeps the merged document
+    // chronological (extractCodexApproval's tie-breaking relies on it).
+    if (Array.isArray(nodes)) allReviewNodes.unshift(...nodes);
+    // Early exit: reading backward, the accumulated set always contains the
+    // NEWEST reviews — as soon as a decisive head-bound codex verdict
+    // appears, any not-yet-fetched review is OLDER and cannot supersede it.
+    if (page === 0 || decisiveHeadBoundFound === false) {
+      const commitNodes0 = asRecord(prNode?.commits)?.nodes;
+      const headOid0 =
+        Array.isArray(commitNodes0) && commitNodes0.length > 0
+          ? asRecord(asRecord(commitNodes0[commitNodes0.length - 1])?.commit)?.oid
+          : undefined;
+      if (typeof headOid0 === 'string' && Array.isArray(nodes)) {
+        decisiveHeadBoundFound = nodes.some((n) => {
+          const review = asRecord(n);
+          if (!isCodexActor(review?.author)) return false;
+          const oid = asRecord(review?.commit)?.oid;
+          const body = typeof review?.body === 'string' ? review.body : '';
+          if (oid !== headOid0 && !body.includes(headOid0)) return false;
+          const state = review?.state;
+          return state === 'APPROVED' || state === 'CHANGES_REQUESTED';
+        });
+      }
+    }
     // `nodes` is a GraphQL connection ARRAY — index it directly (asRecord
     // rejects arrays, which would silently drop the initial tail page).
     const reactionNodes = asRecord(prNode?.reactions)?.nodes;
@@ -1087,7 +1114,7 @@ export async function ghGetCodexApproval(
       asRecord(prNode?.reactions)?.pageInfo
     );
     const pageInfo = asRecord(reviewsConnection?.pageInfo);
-    if (pageInfo?.hasNextPage !== true) {
+    if (pageInfo?.hasPreviousPage !== true || decisiveHeadBoundFound) {
       // Definitive end of the review history — evaluate the merged document.
       // A decisive head-bound codex review is AUTHORITATIVE: evaluate it
       // BEFORE the reaction back-walk — the walk's caps and fail-closed
@@ -1291,15 +1318,15 @@ export async function ghGetCodexApproval(
       }
       return { ok: true, data: approval };
     }
-    if (typeof pageInfo?.endCursor !== 'string' || !CURSOR_RE.test(pageInfo.endCursor)) break;
-    cursor = pageInfo.endCursor;
+    if (typeof pageInfo?.startCursor !== 'string' || !CURSOR_RE.test(pageInfo.startCursor)) break;
+    cursor = pageInfo.startCursor;
   }
   return {
     ok: false,
     retryable: true,
     error:
       `PR has more than ${MAX_CODEX_REVIEW_PAGES * CODEX_REVIEWS_PAGE_SIZE} reviews; ` +
-      'unable to scan the full codex review history (fail closed).',
+      'unable to scan the newest codex review window (fail closed).',
   };
 }
 
