@@ -188,17 +188,18 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
 
     // Skip save logic entirely when there is no session — draft is ephemeral.
     if (!sessionId) return;
+    // Clear any scheduled debounce FIRST, so a save scheduled before a landing
+    // fired cannot later issue a stale write while we suppress for the landing.
+    if (draftSaveTimeoutRef.current) {
+      clearTimeout(draftSaveTimeoutRef.current);
+      draftSaveTimeoutRef.current = null;
+    }
     // While a landing is pending for this session, the server draft may have
     // been updated (this tab's or another tab's refresh merged the landed
     // transcript), so this tab's local draft is stale — a debounced save (or
     // the session-switch flush) would overwrite the transcript. Suppress saves
     // until the landing is consumed by the idle refresh above.
     if (voiceTranscriptLandedSignal.value.has(sessionId)) return;
-    // Clear existing timeout
-    if (draftSaveTimeoutRef.current) {
-      clearTimeout(draftSaveTimeoutRef.current);
-      draftSaveTimeoutRef.current = null;
-    }
 
     // If sessionId changed, flush the previous session's draft immediately —
     // its LAST KNOWN state. Skip only when nothing is known to flush: content,

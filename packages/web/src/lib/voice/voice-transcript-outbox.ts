@@ -153,14 +153,10 @@ function prune(): void {
   for (const [id, entry] of mirror) {
     if (now - (entry.createdAt ?? 0) >= MAX_AGE_MS) removeEntry(id);
   }
-  // Enforce the cap on the live (non-expired) set.
-  const live = allEntries();
-  if (live.length <= MAX_ENTRIES) return;
-  for (const entry of live.slice(0, live.length - MAX_ENTRIES)) {
-    removeEntry(entry.id);
-  }
   // Drop stale cross-tab landed markers (older than the TTL) so they cannot
-  // accumulate; a fresh landing rewrites its marker.
+  // accumulate; a fresh landing rewrites its marker. Runs INDEPENDENTLY of
+  // entry-cap pruning — a live queue under the cap still returns, but markers
+  // from deliveries to never-opened sessions must not linger forever.
   try {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
@@ -170,6 +166,12 @@ function prune(): void {
     }
   } catch {
     /* storage unavailable */
+  }
+  // Enforce the cap on the live (non-expired) set.
+  const live = allEntries();
+  if (live.length <= MAX_ENTRIES) return;
+  for (const entry of live.slice(0, live.length - MAX_ENTRIES)) {
+    removeEntry(entry.id);
   }
 }
 
@@ -195,6 +197,13 @@ export function isPermanentAppendRefusal(error: unknown): boolean {
 export function enqueueTranscript(sessionId: string, text: string, id?: string): void {
   writeEntry({ id: id ?? generateUUID(), sessionId, text, createdAt: Date.now() });
   prune();
+  // A same-tab enqueue emits no `storage` event and the connection-state
+  // effect does not re-run while already connected — so kick the first flush
+  // here. The flush's own retained-entry logic then schedules the backoff
+  // retries until the transcript is delivered.
+  if (connectionState.value === 'connected') {
+    setTimeout(() => void flushPendingTranscripts(), FLUSH_DELAY_MS);
+  }
 }
 
 export function getPendingTranscripts(): PendingTranscript[] {

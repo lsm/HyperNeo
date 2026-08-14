@@ -146,6 +146,27 @@ describe('voice transcript outbox', () => {
     expect(getPendingTranscripts()).toHaveLength(1);
   });
 
+  it('kicks a flush when enqueuing while already connected', async () => {
+    vi.useFakeTimers();
+    connectionState.value = 'connected';
+    enqueueTranscript('s1', 'fresh');
+    expect(getPendingTranscripts()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(hubRequest).toHaveBeenCalled();
+    expect(getPendingTranscripts()).toHaveLength(0);
+  });
+
+  it('cleans up stale landed markers even when the live queue is under the cap', () => {
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.stale',
+      String(Date.now() - 25 * 60 * 60 * 1000)
+    );
+    enqueueTranscript('s1', 'one'); // under the cap — marker cleanup still runs
+    expect(
+      localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.stale')
+    ).toBeNull();
+  });
+
   it('resumes delivery once a full draft frees up (no hard retry cap)', async () => {
     vi.useFakeTimers();
     enqueueTranscript('s1', 'blocked');

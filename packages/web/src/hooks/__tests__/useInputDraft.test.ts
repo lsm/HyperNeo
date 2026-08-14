@@ -423,6 +423,28 @@ describe('useInputDraft', () => {
       expect(savesAfter).toBe(savesBefore);
     });
 
+    it('cancels a scheduled save when a landing arrives before it fires', async () => {
+      mockHub.request.mockResolvedValue({ session: { metadata: { inputDraft: '' } } });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      result.current.setContent('pending save');
+      // The debounce is scheduled but NOT yet fired when the landing arrives —
+      // the effect must cancel that timer before suppressing, or it would issue
+      // a stale session.update over the merged server draft.
+      voiceTranscriptLandedSignal.value = new Set(['session-1']);
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      const saves = mockHub.request.mock.calls.filter(([m]) => m === 'session.update');
+      expect(saves).toHaveLength(0);
+    });
+
     it('does not apply a draft whose session.get resolved after the session changed', async () => {
       // Each session.get gets its own deferred promise so we can resolve
       // session-1's slow get only after the hook has moved on to session-2.
