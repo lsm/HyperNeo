@@ -1236,6 +1236,12 @@ export class WorkflowHookEngine {
           // a generic address resolving to no node adds no targets and must
           // not suppress the gate (the router delivers it separately).
           const foreignWorkerMiss = target.startsWith('@worker:') && isForeignWorkerMiss(target);
+          // A '@role:' string target resolving to a workflow node must be
+          // channel-authorized (the role resolver only delivers to permitted
+          // workers); an unauthorized role reaches no worker.
+          const roleUnauthorized =
+            target.startsWith('@role:') &&
+            !resolvedTargets.some((r) => nodeNames.has(r) && isRoutableTarget(r));
           for (const resolved of resolvedTargets) {
             const workerSlotOk =
               !foreignWorkerMiss &&
@@ -1267,9 +1273,9 @@ export class WorkflowHookEngine {
             if (
               nodeNames.has(resolved) &&
               !isBuiltInInterLevelTarget(target) &&
-              !workerSlotOk &&
-              !bareSlotOk &&
-              !isRoutableTarget(resolved)
+              (roleUnauthorized ||
+                foreignWorkerMiss ||
+                (!workerSlotOk && !bareSlotOk && !isRoutableTarget(resolved)))
             ) {
               nonRoutableResolvedNodes.add(resolved);
             }
