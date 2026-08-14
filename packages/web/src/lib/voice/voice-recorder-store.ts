@@ -270,10 +270,13 @@ class VoiceRecorderStore {
     const hitDurationLimit = this.stoppedByLimit;
     this.durationLimitHit.value = false;
     this.isRecording.value = false;
-    this.recordingOwnerId.value = null;
-    this.recordingSessionId.value = null;
     const chunks = this.chunks;
     await this.teardown();
+    // Ownership and the limit guard are cleared only AFTER teardown settles:
+    // if teardown rejects, the original owner must still be able to cancel()
+    // the recorder, and a busy store must never end up ownerless.
+    this.recordingOwnerId.value = null;
+    this.recordingSessionId.value = null;
     // Clear the guard only after capture callbacks are detached and chunks are
     // snapshotted, so queued onmessage/onaudioprocess callbacks don't resume
     // appending during teardown.
@@ -333,23 +336,33 @@ class VoiceRecorderStore {
     await this.teardown();
   };
 
+  /**
+   * Shared, idempotent capture teardown. Never rejects (a failing close() must
+   * not poison stop()/cancel()), and does NOT touch `starting`/`isStarting` —
+   * a pending start() awaits this before acquiring the mic, and clearing the
+   * starting guard here would make that in-flight setup look idle to another
+   * composer. start()'s own finally (and cancel/release) own that flag.
+   */
   private readonly teardown = (): Promise<void> => {
     if (!this.teardownPromise) {
       const p = (async () => {
-        if (this.maxDurationTimer) {
-          clearTimeout(this.maxDurationTimer);
-          this.maxDurationTimer = null;
+        try {
+          if (this.maxDurationTimer) {
+            clearTimeout(this.maxDurationTimer);
+            this.maxDurationTimer = null;
+          }
+          this.source?.disconnect();
+          this.node?.disconnect();
+          this.stream?.getTracks().forEach((track) => track.stop());
+          await this.context?.close();
+        } catch {
+          /* A rejecting close()/disconnect must not poison the recorder. */
         }
-        this.source?.disconnect();
-        this.node?.disconnect();
-        this.stream?.getTracks().forEach((track) => track.stop());
-        await this.context?.close();
         this.source = null;
         this.node = null;
         this.analyser = null;
         this.stream = null;
         this.context = null;
-        this.starting = false;
       })();
       this.teardownPromise = p;
       // Allow a future recording to tear down again once this one finished.

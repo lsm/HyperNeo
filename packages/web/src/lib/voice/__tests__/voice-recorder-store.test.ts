@@ -186,6 +186,34 @@ describe('voiceRecorderStore', () => {
     expect(voiceRecorderStore.isRecording.value).toBe(true);
   });
 
+  it('treats a pending getUserMedia as busy — a second composer cannot start', async () => {
+    let resolvePermission!: (value: unknown) => void;
+    navigator.mediaDevices.getUserMedia.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolvePermission = resolve;
+      })
+    );
+    const first = voiceRecorderStore.start('owner-a', 's1');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await expect(voiceRecorderStore.start('owner-b', 's2')).rejects.toThrow('busy');
+    expect(voiceRecorderStore.recordingOwnerId.value).toBe('owner-a');
+    resolvePermission(fakeStream);
+    await first;
+    expect(voiceRecorderStore.isRecording.value).toBe(true);
+  });
+
+  it('survives a rejecting teardown: stop() still completes and clears ownership', async () => {
+    await voiceRecorderStore.start('owner-a', 's1');
+    fakeContext.close.mockRejectedValueOnce(new Error('InvalidStateError'));
+    const recording = await voiceRecorderStore.stop();
+    expect(recording.audioBase64.length).toBeGreaterThan(0);
+    expect(voiceRecorderStore.recordingOwnerId.value).toBeNull();
+    // The recorder is NOT stuck busy — a new recording can start.
+    await voiceRecorderStore.start('owner-b', 's2');
+    expect(voiceRecorderStore.recordingOwnerId.value).toBe('owner-b');
+    expect(voiceRecorderStore.isRecording.value).toBe(true);
+  });
+
   it('cancel() during a pending getUserMedia discards the stream without recording', async () => {
     let resolvePermission!: (value: unknown) => void;
     navigator.mediaDevices.getUserMedia.mockReturnValueOnce(
