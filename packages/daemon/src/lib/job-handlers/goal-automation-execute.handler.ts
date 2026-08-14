@@ -541,6 +541,15 @@ const NON_AFFIRMATIVE_PREFIX_RE =
   /\b(?:not|never|no|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|without|yet|still|pending|waiting|queued|incomplete|unfinished)\b[^.!?;:,\n]{0,32}$/i;
 
 /**
+ * Suffixes that make a matched outcome reference still pending or negated —
+ * "PR #123 is still pending", "tests passing tomorrow", "merge waiting on
+ * review". Like the prefix, the qualifier must sit within the same clause
+ * after the match.
+ */
+const NON_AFFIRMATIVE_SUFFIX_RE =
+  /^[^.!?;:,\n]{0,32}\b(?:not|never|no|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|without|yet|still|pending|wait(?:ing)?|queued|incomplete|unfinished|tomorrow|scheduled|planned)\b/i;
+
+/**
  * Whether the selection carries an affirmative outcome signal (see
  * {@link AFFIRMATIVE_OUTCOME_RE}). Only a row's summary and its string-valued
  * metadata fields are scanned — serializing whole metadata objects would leak
@@ -562,7 +571,10 @@ function hasAffirmativeOutcomeText(text: string): boolean {
   if (hasQuantitativeOutcome(text)) return true;
   for (const match of text.matchAll(AFFIRMATIVE_OUTCOME_RE)) {
     const prefix = text.slice(Math.max(0, match.index - 48), match.index);
-    if (!NON_AFFIRMATIVE_PREFIX_RE.test(prefix)) return true;
+    if (NON_AFFIRMATIVE_PREFIX_RE.test(prefix)) continue;
+    const suffix = text.slice(match.index + match[0].length, match.index + match[0].length + 48);
+    if (NON_AFFIRMATIVE_SUFFIX_RE.test(suffix)) continue;
+    return true;
   }
   return false;
 }
