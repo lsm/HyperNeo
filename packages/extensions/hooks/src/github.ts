@@ -782,7 +782,10 @@ export async function ghGetReviewEvidence(
       error: 'malformed viewer/author identity for comment evidence; failing closed',
     };
   }
-  if (evidence.formalReviewCount === 0 && evidence.ownPr) {
+  // Positive own-PR comment evidence in the tail already proves the gate —
+  // the comments walk (and its fail-closed errors on irrelevant older pages)
+  // cannot change that outcome.
+  if (evidence.formalReviewCount === 0 && evidence.ownPr && evidence.commentEvidenceCount === 0) {
     // Comment evidence is the ONLY remaining path — the connection must
     // EXIST and carry a nodes array (an absent connection would read as "no
     // comments to scan" and report zero evidence, blocking a valid own-PR
@@ -1056,6 +1059,7 @@ export async function ghGetCodexApproval(
   let lastPage: Record<string, unknown> | undefined;
   let cursor: string | null = null;
   let decisiveHeadBoundFound = false;
+  let reachedHeadWindow = false;
   for (let page = 0; page < MAX_CODEX_REVIEW_PAGES; page++) {
     const remaining = remainingBudget();
     if (remaining <= 0) return deadlineError();
@@ -1085,6 +1089,27 @@ export async function ghGetCodexApproval(
     // Pages arrive NEWEST-FIRST — unshift keeps the merged document
     // chronological (extractCodexApproval's tie-breaking relies on it).
     if (Array.isArray(nodes)) allReviewNodes.unshift(...nodes);
+    // Bound the walk to the CURRENT-HEAD window: a review older than the
+    // head push cannot bind to the head and cannot override the reaction
+    // fallback — walking to the cap on a >500-review PR turns a provable
+    // reaction approval into a retryable error.
+    if (Array.isArray(nodes) && nodes.length > 0) {
+      const oldestFetched = asRecord(nodes[0])?.submittedAt;
+      const newestCommit = asRecord(prNode?.commits)?.nodes;
+      const pushedAt = Array.isArray(newestCommit)
+        ? asRecord(asRecord(newestCommit[newestCommit.length - 1])?.commit)?.pushedDate
+        : undefined;
+      if (
+        typeof oldestFetched === 'string' &&
+        typeof pushedAt === 'string' &&
+        Number.isFinite(Date.parse(oldestFetched)) &&
+        Number.isFinite(Date.parse(pushedAt)) &&
+        Date.parse(oldestFetched) < Date.parse(pushedAt)
+      ) {
+        reachedHeadWindow = true;
+        break;
+      }
+    }
     // Early exit: reading backward, the accumulated set always contains the
     // NEWEST reviews — as soon as a decisive head-bound codex verdict
     // appears, any not-yet-fetched review is OLDER and cannot supersede it.
@@ -1318,16 +1343,50 @@ export async function ghGetCodexApproval(
       }
       return { ok: true, data: approval };
     }
-    if (typeof pageInfo?.startCursor !== 'string' || !CURSOR_RE.test(pageInfo.startCursor)) break;
+    if (typeof pageInfo?.startCursor !== 'string' || !CURSOR_RE.test(pageInfo.startCursor)) {
+      // History exhausted (no boundary hit): the accumulated window is the
+      // complete history — the cap error below applies only when the loop
+      // ALSO failed to reach the head-push boundary, meaning the newest
+      // window itself was too large to scan.
+      break;
+    }
     cursor = pageInfo.startCursor;
   }
-  return {
-    ok: false,
-    retryable: true,
-    error:
-      `PR has more than ${MAX_CODEX_REVIEW_PAGES * CODEX_REVIEWS_PAGE_SIZE} reviews; ` +
-      'unable to scan the newest codex review window (fail closed).',
-  };
+  if (!reachedHeadWindow) {
+    return {
+      ok: false,
+      retryable: true,
+      error:
+        `PR has more than ${MAX_CODEX_REVIEW_PAGES * CODEX_REVIEWS_PAGE_SIZE} reviews; ` +
+        'unable to scan the newest codex review window (fail closed).',
+    };
+  }
+  // Boundary reached without a decisive review and without the evaluation
+  // block running (the loop broke at the boundary instead of at history
+  // exhaustion): evaluate the reaction fallback on the accumulated window.
+  const boundaryPrNode = asRecord(asRecord(asRecord(lastPage?.data)?.repository)?.pullRequest);
+  const boundaryReactions = Array.isArray(asRecord(boundaryPrNode?.reactions)?.nodes)
+    ? (asRecord(boundaryPrNode?.reactions)?.nodes as unknown[])
+    : [];
+  const boundaryApproval = extractCodexApproval(
+    {
+      data: {
+        repository: {
+          pullRequest: {
+            ...(boundaryPrNode ?? {}),
+            reviews: { nodes: allReviewNodes },
+            reactions: { nodes: boundaryReactions },
+          },
+        },
+      },
+    },
+    link
+  );
+  if (boundaryApproval.failClosedReason) {
+    return { ok: false, retryable: true, error: boundaryApproval.failClosedReason };
+  }
+  if (!boundaryApproval.approved) return { ok: true, data: boundaryApproval };
+  return { ok: true, data: boundaryApproval };
 }
 
 export function extractCodexApproval(value: unknown, prLink: string): GithubCodexApproval {

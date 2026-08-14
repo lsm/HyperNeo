@@ -978,13 +978,14 @@ export class WorkflowHookEngine {
     // failed consume-write blocks the delivery — otherwise the approval would
     // stay armed and let a later stop bypass (a standing bypass).
     for (const hookId of deferredApprovalConsumes) {
-      const consumed = this.persistStateUpdate(hookId, {
-        localState: {
-          humanApproved: undefined,
-          humanApprovedAt: undefined,
-          humanRejectionReason: undefined,
-        },
-      });
+      // ATOMIC one-shot consume: clears only if humanApproved is still set at
+      // the observed version — exactly one of two overlapping gated actions
+      // can win (a refresh-to-latest persist would let both consume and both
+      // deliver on one approval).
+      const consumed = this.config.hookStateRepo.consumeApprovalIfCurrent(
+        this.config.workflowRunId,
+        hookId
+      );
       if (!consumed) {
         log.warn(
           `Failed to consume human approval for hook "${hookId}" at delivery (state write conflict); blocking.`
@@ -1248,20 +1249,23 @@ export class WorkflowHookEngine {
           // targetAgentSlot}) is the ROLE resolver's rule — apply it to role
           // targets only; for ordinary targets the router authorizes node
           // names alone (a from-SLOT channel authorizes nothing).
-          const roleRoutable =
-            target.startsWith('@role:') &&
-            resolvedTargets.some((r) => {
-              if (!nodeNames.has(r)) return false;
-              const slots = nodeSlots.get(r) ?? [];
-              return (
-                isRoutableTarget(r) ||
-                slots.some(
-                  (sl) => resolver.canSend(fromNode, sl) || resolver.canSend(meta.agentName, sl)
-                ) ||
-                resolver.canSend(meta.agentName, r)
-              );
-            });
-          const roleUnauthorized = target.startsWith('@role:') && !roleRoutable;
+          // Per-resolved-NODE role routability: the role resolver filters
+          // holders individually, so a shared slot/role name must not make
+          // every resolving node routable when only one has an authorized
+          // worker.
+          const roleNodeRoutable = (r: string): boolean => {
+            if (!nodeNames.has(r)) return false;
+            const slots = nodeSlots.get(r) ?? [];
+            return (
+              isRoutableTarget(r) ||
+              slots.some(
+                (sl) => resolver.canSend(fromNode, sl) || resolver.canSend(meta.agentName, sl)
+              ) ||
+              resolver.canSend(meta.agentName, r)
+            );
+          };
+          const roleUnauthorized =
+            target.startsWith('@role:') && !resolvedTargets.some((r) => roleNodeRoutable(r));
           for (const resolved of resolvedTargets) {
             const workerSlotOk =
               !foreignWorkerMiss &&
@@ -1295,7 +1299,11 @@ export class WorkflowHookEngine {
               !isBuiltInInterLevelTarget(target) &&
               (roleUnauthorized ||
                 foreignWorkerMiss ||
-                (!roleRoutable && !workerSlotOk && !bareSlotOk && !isRoutableTarget(resolved)))
+                (!target.startsWith('@role:') &&
+                  !workerSlotOk &&
+                  !bareSlotOk &&
+                  !isRoutableTarget(resolved)) ||
+                (target.startsWith('@role:') && !roleNodeRoutable(resolved)))
             ) {
               nonRoutableResolvedNodes.add(resolved);
             }
@@ -1402,20 +1410,20 @@ export class WorkflowHookEngine {
           // reaches no worker — its node is non-routable (suppressed without
           // aborting later entries; role delivery is not a sequential abort).
           if (t.startsWith('@role:')) {
-            const roleAuthorized = resolvedTargets.some((r) => {
-              if (!nodeNames.has(r)) return false;
-              const slots = nodeSlots.get(r) ?? [];
-              return (
-                isRoutableTarget(r) ||
+            // Per-NODE authorization: only nodes with an authorized worker
+            // receive the role message; unauthorized resolutions are
+            // suppressed individually (a shared slot name must not authorize
+            // every node that declares it).
+            for (const resolved of resolvedTargets) {
+              if (!nodeNames.has(resolved)) continue;
+              const slots = nodeSlots.get(resolved) ?? [];
+              const nodeAuthorized =
+                isRoutableTarget(resolved) ||
                 slots.some(
                   (sl) => resolver.canSend(fromNode, sl) || resolver.canSend(meta.agentName, sl)
                 ) ||
-                resolver.canSend(meta.agentName, r)
-              );
-            });
-            if (!roleAuthorized) {
-              for (const resolved of resolvedTargets) {
-                if (!nodeNames.has(resolved)) continue;
+                resolver.canSend(meta.agentName, resolved);
+              if (!nodeAuthorized) {
                 arrayResolvedNodes.delete(resolved);
                 nonRoutableResolvedNodes.add(resolved);
               }
@@ -2553,8 +2561,18 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
         // send with no in-memory retry (lost until a manual attempt or daemon
         // restart). A different action key means a second gated send while the
         // first is pending — leave its timer alone.
+        // Test the EXACT action key against the hook's queued map (not the
+        // newest entry, which getQueuedRetryableAction returns): a hook with
+        // multiple queued sends must reap the reissued action's timer —
+        // otherwise scheduleRetryableAction sees the stale timer, refuses the
+        // replacement, and the old timer fires early into the cooldown path.
         const existingActionKeyToReap =
-          blockingId && engine.getQueuedRetryableAction(blockingId)?.actionKey === actionKey
+          blockingId &&
+          (
+            engine.getQueuedRetryableActionsMap(blockingId)?.[actionKey] as
+              | { actionKey?: string }
+              | undefined
+          )?.actionKey === actionKey
             ? actionKey
             : undefined;
 

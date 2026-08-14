@@ -339,7 +339,10 @@ describe('ghGetReviewEvidence — back-pagination past the fresh window', () => 
     setGraphqlRunnerForTests(pagedRunner([page1, page2]));
     const result = await ghGetReviewEvidence(CTX, PR_LINK, '2026-08-13T11:00:00Z');
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.data.commentEvidenceCount).toBe(51);
+    // The tail's fresh comments already prove the gate — the walk is SKIPPED
+    // (its outcome cannot change a positive result), so the count is the
+    // tail's 50, not 50 + the buried one.
+    if (result.ok) expect(result.data.commentEvidenceCount).toBe(50);
   });
 
   test('an own-PR comments connection without a boolean hasPreviousPage fails closed', async () => {
@@ -354,8 +357,10 @@ describe('ghGetReviewEvidence — back-pagination past the fresh window', () => 
             author: { login: 'reviewer' }, // own PR
             reviews: { nodes: [], pageInfo: { hasPreviousPage: false } },
             comments: {
-              nodes: [{ createdAt: '2026-08-13T12:00:00Z' }],
-              pageInfo: { hasPreviousPage: true }, // no startCursor below → would break; but the flag check fires first only if non-boolean
+              // OLD comment (before the window): no tail evidence is proven,
+              // so the walk must run and hit the non-boolean flag guard.
+              nodes: [{ createdAt: '2026-08-11T00:00:00Z' }],
+              pageInfo: { hasPreviousPage: true },
             },
           },
         },
@@ -426,44 +431,29 @@ describe('ghGetReviewEvidence — back-pagination past the fresh window', () => 
     }
   });
 
-  test('comments cap exhaustion inside the fresh window fails closed', async () => {
-    const tail = Array.from({ length: 50 }, (_, i) => ({
-      createdAt: `2026-08-13T12:${String(i).padStart(2, '0')}:00Z`,
-    }));
-    // Every comments page claims more history — the scan cannot prove the
-    // window complete, so it must fail closed rather than under-count.
-    const commentsConn = {
-      nodes: tail,
-      pageInfo: { hasPreviousPage: true, startCursor: 'cGFnZTE' },
-    };
+  test('a fresh tail comment proves the gate and skips the walk entirely', async () => {
+    // Round 62: positive own-PR comment evidence in the tail short-circuits
+    // the comments walk — an un-walkable older connection (hasPreviousPage
+    // true, no usable cursor) cannot turn proven evidence into an error.
     const page1 = {
       data: {
         viewer: { login: 'reviewer' },
         repository: {
           pullRequest: {
-            // Own PR: comment evidence is eligible, so the comments walk
-            // runs and its cap exhaustion fails closed.
-            author: { login: 'reviewer' },
+            author: { login: 'reviewer' }, // own PR
             reviews: { nodes: [], pageInfo: { hasPreviousPage: false } },
-            comments: commentsConn,
+            comments: {
+              nodes: [{ createdAt: '2026-08-13T12:00:00Z' }], // fresh
+              pageInfo: { hasPreviousPage: true, startCursor: 'garbage' },
+            },
           },
         },
       },
     };
-    const endless = {
-      data: {
-        repository: {
-          pullRequest: { comments: commentsConn },
-        },
-      },
-    };
-    setGraphqlRunnerForTests(pagedRunner([page1, endless]));
+    setGraphqlRunnerForTests(pagedRunner([page1]));
     const result = await ghGetReviewEvidence(CTX, PR_LINK, '2026-08-13T00:00:00Z');
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.retryable).toBe(true);
-      expect(result.error).toContain('comments since the run started');
-    }
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.commentEvidenceCount).toBeGreaterThanOrEqual(1);
   });
 });
 

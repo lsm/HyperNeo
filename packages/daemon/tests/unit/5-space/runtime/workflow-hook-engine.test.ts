@@ -1091,8 +1091,14 @@ describe('WorkflowHookEngine.executeAction', () => {
     // turning a one-shot approval into a standing bypass — so the engine must
     // fail closed. In-memory SQLite always succeeds, so force the conflict.
     class ConflictedStateRepo extends WorkflowHookStateRepository {
-      updateWithRetry(): null {
+      override updateWithRetry(): null {
         return null;
+      }
+      // The atomic consume path loses its version race (someone else removed
+      // the approval between the read and the write) — the action must block
+      // rather than deliver on an approval it could not exclusively claim.
+      override consumeApprovalIfCurrent(): boolean {
+        return false;
       }
     }
     const workflow = makeWorkflow({

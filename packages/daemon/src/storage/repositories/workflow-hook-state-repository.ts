@@ -151,6 +151,33 @@ export class WorkflowHookStateRepository {
     return null;
   }
 
+  /**
+   * Atomic one-shot approval consume: clears the human-approval keys ONLY if
+   * humanApproved is still set at the observed version — exactly one of two
+   * overlapping gated actions wins the consume (a refresh-to-latest update
+   * would let both see the flag and both deliver).
+   */
+  consumeApprovalIfCurrent(runId: string, hookId: string): boolean {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const current = this.get(runId, hookId);
+        if (!current || current.localState.humanApproved !== true) return false;
+        const result = this.update(runId, hookId, {
+          expectedVersion: current.version,
+          localState: {
+            humanApproved: undefined,
+            humanApprovedAt: undefined,
+            humanRejectionReason: undefined,
+          },
+        });
+        if (result) return true;
+      } catch {
+        // retry on version conflict or transient repo error
+      }
+    }
+    return false;
+  }
+
   update(runId: string, hookId: string, patch: WorkflowHookStatePatch): HookStateSnapshot | null {
     const tx = this.db.transaction(() => {
       let current = this.get(runId, hookId);
