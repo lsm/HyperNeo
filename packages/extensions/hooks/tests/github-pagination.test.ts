@@ -341,6 +341,31 @@ describe('ghGetReviewEvidence — back-pagination past the fresh window', () => 
     if (result.ok) expect(result.data.commentEvidenceCount).toBe(51);
   });
 
+  test('decisive formal evidence skips the comments scan entirely', async () => {
+    // A qualifying formal review decides the gate regardless of comments
+    // (and comments are only eligible on an own PR) — a malformed or absent
+    // comments connection must NOT block an already-decisive review.
+    const page1 = {
+      data: {
+        viewer: { login: 'reviewer' },
+        repository: {
+          pullRequest: {
+            author: { login: 'coder' },
+            reviews: {
+              nodes: [{ state: 'APPROVED', publishedAt: '2026-08-13T12:00:00Z' }],
+              pageInfo: { hasPreviousPage: false },
+            },
+            // comments connection omitted entirely
+          },
+        },
+      },
+    };
+    setGraphqlRunnerForTests(pagedRunner([page1]));
+    const result = await ghGetReviewEvidence(CTX, PR_LINK, '2026-08-13T00:00:00Z');
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.formalReviewCount).toBe(1);
+  });
+
   test('a final page without a comments connection fails closed', async () => {
     // An absent connection must not read as "no comments to scan": that
     // would report zero own-PR evidence and block a valid handoff instead
@@ -350,7 +375,9 @@ describe('ghGetReviewEvidence — back-pagination past the fresh window', () => 
         viewer: { login: 'reviewer' },
         repository: {
           pullRequest: {
-            author: { login: 'coder' },
+            // Own PR: comment evidence is eligible, so the comments path
+            // runs and the absent connection must fail it closed.
+            author: { login: 'reviewer' },
             reviews: { nodes: [], pageInfo: { hasPreviousPage: false } },
             // comments connection omitted entirely
           },
@@ -381,7 +408,9 @@ describe('ghGetReviewEvidence — back-pagination past the fresh window', () => 
         viewer: { login: 'reviewer' },
         repository: {
           pullRequest: {
-            author: { login: 'coder' },
+            // Own PR: comment evidence is eligible, so the comments walk
+            // runs and its cap exhaustion fails closed.
+            author: { login: 'reviewer' },
             reviews: { nodes: [], pageInfo: { hasPreviousPage: false } },
             comments: commentsConn,
           },
@@ -597,6 +626,46 @@ describe('ghGetCodexApproval — malformed codex evidence', () => {
       expect(result.retryable).toBe(true);
       expect(result.error).toContain('failing closed');
     }
+  });
+});
+
+describe('ghGetCodexApproval — decisive review skips the reaction walk', () => {
+  test('a head-bound APPROVED is returned without back-paginating reactions', async () => {
+    // The reactions connection claims more history but carries no usable
+    // startCursor — walking it would fail closed. A decisive APPROVED must
+    // be evaluated first and returned without the walk.
+    setGraphqlRunnerForTests(async () => ({
+      ok: true,
+      data: {
+        data: {
+          repository: {
+            pullRequest: {
+              reviews: {
+                nodes: [
+                  {
+                    state: 'APPROVED',
+                    submittedAt: '2026-08-13T10:00:00Z',
+                    commit: { oid: HEAD },
+                    author: { login: 'chatgpt-codex-connector' },
+                  },
+                ],
+                pageInfo: { hasNextPage: false, endCursor: 'cGFnZQ' },
+              },
+              reactions: {
+                nodes: [],
+                pageInfo: { hasPreviousPage: true }, // no startCursor
+              },
+              commits: {
+                nodes: [{ commit: { oid: HEAD, pushedDate: '2026-08-12T00:00:00Z' } }],
+              },
+            },
+          },
+        },
+      },
+    }));
+    const result = await ghGetCodexApproval(CTX, PR_LINK);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.approved).toBe(true);
   });
 });
 

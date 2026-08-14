@@ -708,86 +708,17 @@ export async function ghGetReviewEvidence(
   // TAIL every page, so a qualifying own-PR comment buried under >50 newer
   // comments would never enter the window and review_posted would block a
   // valid handoff. Walk the comments connection backward through the
-  // run-start boundary with the same bounded fail-closed discipline.
+  // run-start boundary with the same bounded fail-closed discipline — but
+  // ONLY when comment evidence can still change the outcome: the gate passes
+  // on formal review evidence regardless of comments, and comment evidence
+  // is eligible only on an own PR. Skipping otherwise keeps a busy PR's
+  // comment pagination (and its fail-closed errors) from blocking an
+  // already-decisive formal review.
   const lastRecord = lastCommentsPage as Record<string, unknown> | undefined;
   const lastData = asRecord(lastRecord?.data);
   const lastRepository = asRecord(lastData?.repository);
   const lastPullRequest = asRecord(lastRepository?.pullRequest);
-  const seedComments = asRecord(lastPullRequest?.comments);
-  const seedCommentNodes = seedComments?.nodes;
-  // The connection must EXIST and carry a nodes array: an absent connection
-  // would read as "no comments to scan" and report zero evidence, blocking a
-  // valid own-PR handoff instead of surfacing the malformed response.
-  if (!seedComments || !Array.isArray(seedCommentNodes)) {
-    return {
-      ok: false,
-      retryable: true,
-      error: 'malformed comments connection (absent or missing nodes); failing closed',
-    };
-  }
-  const allCommentNodes: unknown[] = [];
-  if (Array.isArray(seedCommentNodes)) allCommentNodes.unshift(...seedCommentNodes);
-  let commentPageInfo = asRecord(seedComments?.pageInfo);
-  let commentsComplete = false;
-  for (let page = 0; page < MAX_REVIEW_PAGES; page++) {
-    if (commentPageInfo?.hasPreviousPage !== true) {
-      commentsComplete = true;
-      break;
-    }
-    const cc = commentPageInfo.startCursor;
-    if (typeof cc !== 'string' || !CURSOR_RE.test(cc)) break;
-    const remainingC = deadline - Date.now();
-    if (remainingC <= 0) {
-      return {
-        ok: false,
-        retryable: true,
-        error: 'review-evidence scan exceeded its overall deadline (fail closed)',
-      };
-    }
-    const q =
-      `query { repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
-      `comments(last: 50, before:"${cc}") { pageInfo { hasPreviousPage startCursor } ` +
-      'nodes { createdAt } } } } }';
-    const result = await runGhGraphql(ctx, q, pr.host, { timeoutMs: remainingC });
-    if (!result.ok) return result;
-    const cNode = asRecord(
-      asRecord(asRecord(asRecord(result.data)?.data)?.repository)?.pullRequest
-    );
-    const cConn = asRecord(cNode?.comments);
-    if (!Array.isArray(cConn?.nodes) || !asRecord(cConn?.pageInfo)) {
-      return {
-        ok: false,
-        retryable: true,
-        error: 'malformed comments connection (missing nodes/pageInfo); failing closed',
-      };
-    }
-    const cNodes = cConn.nodes;
-    allCommentNodes.unshift(...cNodes);
-    commentPageInfo = asRecord(cConn.pageInfo);
-    // Boundary: the page has reached past the run-start window — everything
-    // older cannot contribute fresh evidence.
-    const oldestC = cNodes.length > 0 ? asRecord(cNodes[0]) : undefined;
-    const oldestCAt = typeof oldestC?.createdAt === 'string' ? oldestC.createdAt : '';
-    const cMs = oldestCAt ? Date.parse(oldestCAt) : NaN;
-    if (oldestCAt !== '' && Number.isFinite(cMs) && Number.isFinite(sinceMs) && cMs < sinceMs) {
-      commentsComplete = true;
-      break;
-    }
-  }
-  if (!commentsComplete) {
-    // Cap exhausted while still inside the fresh window — the scan cannot
-    // prove absence/presence of comment evidence; fail closed.
-    return {
-      ok: false,
-      retryable: true,
-      error:
-        `PR has more than ${MAX_REVIEW_PAGES * 50} comments since the run started; ` +
-        'unable to scan the full evidence window (fail closed).',
-    };
-  }
-  // Rebuild the envelope with the merged review history (object spread of a
-  // possibly-undefined value is a no-op, so no fallbacks are needed).
-  const merged = {
+  const buildMerged = (commentNodes: unknown[]) => ({
     ...lastRecord,
     data: {
       ...lastData,
@@ -796,12 +727,89 @@ export async function ghGetReviewEvidence(
         pullRequest: {
           ...lastPullRequest,
           reviews: { nodes: allReviewNodes },
-          comments: { nodes: allCommentNodes },
+          comments: { nodes: commentNodes },
         },
       },
     },
-  };
-  return { ok: true, data: extractReviewEvidence(merged, sinceIso) };
+  });
+  const seedComments = asRecord(lastPullRequest?.comments);
+  const seedCommentNodes = seedComments?.nodes;
+  const allCommentNodes: unknown[] = [];
+  if (Array.isArray(seedCommentNodes)) allCommentNodes.unshift(...seedCommentNodes);
+  let evidence = extractReviewEvidence(buildMerged(allCommentNodes), sinceIso);
+  if (evidence.formalReviewCount === 0 && evidence.ownPr) {
+    // Comment evidence is the ONLY remaining path — the connection must
+    // EXIST and carry a nodes array (an absent connection would read as "no
+    // comments to scan" and report zero evidence, blocking a valid own-PR
+    // handoff instead of surfacing the malformed response).
+    if (!seedComments || !Array.isArray(seedCommentNodes)) {
+      return {
+        ok: false,
+        retryable: true,
+        error: 'malformed comments connection (absent or missing nodes); failing closed',
+      };
+    }
+    let commentPageInfo = asRecord(seedComments?.pageInfo);
+    let commentsComplete = false;
+    for (let page = 0; page < MAX_REVIEW_PAGES; page++) {
+      if (commentPageInfo?.hasPreviousPage !== true) {
+        commentsComplete = true;
+        break;
+      }
+      const cc = commentPageInfo.startCursor;
+      if (typeof cc !== 'string' || !CURSOR_RE.test(cc)) break;
+      const remainingC = deadline - Date.now();
+      if (remainingC <= 0) {
+        return {
+          ok: false,
+          retryable: true,
+          error: 'review-evidence scan exceeded its overall deadline (fail closed)',
+        };
+      }
+      const q =
+        `query { repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
+        `comments(last: 50, before:"${cc}") { pageInfo { hasPreviousPage startCursor } ` +
+        'nodes { createdAt } } } } }';
+      const result = await runGhGraphql(ctx, q, pr.host, { timeoutMs: remainingC });
+      if (!result.ok) return result;
+      const cNode = asRecord(
+        asRecord(asRecord(asRecord(result.data)?.data)?.repository)?.pullRequest
+      );
+      const cConn = asRecord(cNode?.comments);
+      if (!Array.isArray(cConn?.nodes) || !asRecord(cConn?.pageInfo)) {
+        return {
+          ok: false,
+          retryable: true,
+          error: 'malformed comments connection (missing nodes/pageInfo); failing closed',
+        };
+      }
+      const cNodes = cConn.nodes;
+      allCommentNodes.unshift(...cNodes);
+      commentPageInfo = asRecord(cConn.pageInfo);
+      // Boundary: the page has reached past the run-start window — everything
+      // older cannot contribute fresh evidence.
+      const oldestC = cNodes.length > 0 ? asRecord(cNodes[0]) : undefined;
+      const oldestCAt = typeof oldestC?.createdAt === 'string' ? oldestC.createdAt : '';
+      const cMs = oldestCAt ? Date.parse(oldestCAt) : NaN;
+      if (oldestCAt !== '' && Number.isFinite(cMs) && Number.isFinite(sinceMs) && cMs < sinceMs) {
+        commentsComplete = true;
+        break;
+      }
+    }
+    if (!commentsComplete) {
+      // Cap exhausted while still inside the fresh window — the scan cannot
+      // prove absence/presence of comment evidence; fail closed.
+      return {
+        ok: false,
+        retryable: true,
+        error:
+          `PR has more than ${MAX_REVIEW_PAGES * 50} comments since the run started; ` +
+          'unable to scan the full evidence window (fail closed).',
+      };
+    }
+    evidence = extractReviewEvidence(buildMerged(allCommentNodes), sinceIso);
+  }
+  return { ok: true, data: evidence };
 }
 
 /**
@@ -896,6 +904,12 @@ export interface GithubCodexApproval {
    * verdict. The caller maps this to a retryable error.
    */
   failClosedReason?: string;
+  /**
+   * True when a decisive head-bound codex review (APPROVED or
+   * CHANGES_REQUESTED) was found — its verdict is authoritative and callers
+   * may skip reaction-window work that cannot change it.
+   */
+  hadDecisiveReview?: boolean;
 }
 
 /**
@@ -1015,82 +1029,97 @@ export async function ghGetCodexApproval(
     const pageInfo = asRecord(reviewsConnection?.pageInfo);
     if (pageInfo?.hasNextPage !== true) {
       // Definitive end of the review history — evaluate the merged document.
-      // Walk the reactions connection backward while its oldest entry is
-      // still newer than the head push: a valid codex +1 can sit under >50
-      // newer thumbs. Bounded cap; exhaustion fails closed.
-      let reactionsComplete = false;
-      for (let page = 0; page < MAX_CODEX_REVIEW_PAGES; page++) {
-        if (reactionPageInfo?.hasPreviousPage !== true) {
-          reactionsComplete = true;
-          break;
-        }
-        const startCursor = reactionPageInfo.startCursor;
-        if (typeof startCursor !== 'string' || !CURSOR_RE.test(startCursor)) break;
-        // Re-query with a before-cursor on the reactions connection only.
-        const q =
-          `query { repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
-          `reactions(last: 50, content: THUMBS_UP, before:"${startCursor}") { ` +
-          'pageInfo { hasPreviousPage startCursor } nodes { createdAt user { login } } } ' +
-          'commits(last: 1) { nodes { commit { oid pushedDate } } } } } }';
-        const remainingR = remainingBudget();
-        if (remainingR <= 0) return deadlineError();
-        const result = await runGhGraphql(ctx, q, pr.host, { timeoutMs: remainingR });
-        if (!result.ok) return result;
-        const rNode = asRecord(
-          asRecord(asRecord(asRecord(result.data)?.data)?.repository)?.pullRequest
-        );
-        const rConn = asRecord(rNode?.reactions);
-        if (!Array.isArray(rConn?.nodes) || !asRecord(rConn?.pageInfo)) {
-          return {
-            ok: false,
-            retryable: true,
-            error: 'malformed reactions connection (missing nodes/pageInfo); failing closed',
-          };
-        }
-        const rNodes = rConn?.nodes;
-        if (Array.isArray(rNodes)) allReactionNodes.unshift(...rNodes);
-        reactionPageInfo = asRecord(rConn?.pageInfo);
-        // Stop once the page reaches the head-push boundary (epoch compare —
-        // lexical ISO strings mis-order fractional vs whole seconds).
-        const oldestR =
-          Array.isArray(rNodes) && rNodes.length > 0 ? asRecord(rNodes[0]) : undefined;
-        const oldestRAt = typeof oldestR?.createdAt === 'string' ? oldestR.createdAt : '';
-        const commitNodes = asRecord(rNode?.commits)?.nodes;
-        const pushed = Array.isArray(commitNodes)
-          ? asRecord(asRecord(commitNodes[0])?.commit)?.pushedDate
-          : undefined;
-        const oldestRMs = oldestRAt ? Date.parse(oldestRAt) : NaN;
-        const pushedMs = typeof pushed === 'string' ? Date.parse(pushed) : NaN;
-        if (!Number.isFinite(oldestRMs) || !Number.isFinite(pushedMs) || oldestRMs <= pushedMs) {
-          reactionsComplete = true;
-          break;
-        }
-      }
-      if (!reactionsComplete) {
-        return {
-          ok: false,
-          retryable: true,
-          error:
-            `PR has more than ${MAX_CODEX_REVIEW_PAGES * CODEX_REVIEWS_PAGE_SIZE} fresh reactions; ` +
-            'unable to scan the full reaction window (fail closed).',
-        };
-      }
-      const approval = extractCodexApproval(
-        {
-          data: {
-            repository: {
-              pullRequest: {
-                ...prNode,
-                reviews: { nodes: allReviewNodes },
-                reactions: { nodes: allReactionNodes },
+      // A decisive head-bound codex review is AUTHORITATIVE: evaluate it
+      // BEFORE the reaction back-walk — the walk's caps and fail-closed
+      // errors cannot change this verdict and must not block a proven
+      // approval. Only when NO decisive review exists does the reaction
+      // window need scanning.
+      const evaluateMerged = (reactionNodes: unknown[]) =>
+        extractCodexApproval(
+          {
+            data: {
+              repository: {
+                pullRequest: {
+                  ...prNode,
+                  reviews: { nodes: allReviewNodes },
+                  reactions: { nodes: reactionNodes },
+                },
               },
             },
           },
-        },
-        link
-      );
-      if (approval.failClosedReason) {
-        return { ok: false, retryable: true, error: approval.failClosedReason };
+          link
+        );
+      const preliminary = evaluateMerged(allReactionNodes);
+      if (preliminary.failClosedReason) {
+        return { ok: false, retryable: true, error: preliminary.failClosedReason };
+      }
+      let approval = preliminary;
+      if (!preliminary.hadDecisiveReview) {
+        // No decisive review — the reaction path needs the full window. Walk
+        // the reactions connection backward while its oldest entry is still
+        // newer than the head push: a valid codex +1 can sit under >50 newer
+        // thumbs. Bounded cap; exhaustion fails closed.
+        let reactionsComplete = false;
+        for (let page = 0; page < MAX_CODEX_REVIEW_PAGES; page++) {
+          if (reactionPageInfo?.hasPreviousPage !== true) {
+            reactionsComplete = true;
+            break;
+          }
+          const startCursor = reactionPageInfo.startCursor;
+          if (typeof startCursor !== 'string' || !CURSOR_RE.test(startCursor)) break;
+          // Re-query with a before-cursor on the reactions connection only.
+          const q =
+            `query { repository(owner:"${pr.owner}",name:"${pr.repo}") { pullRequest(number:${pr.number}) { ` +
+            `reactions(last: 50, content: THUMBS_UP, before:"${startCursor}") { ` +
+            'pageInfo { hasPreviousPage startCursor } nodes { createdAt user { login } } } ' +
+            'commits(last: 1) { nodes { commit { oid pushedDate } } } } } }';
+          const remainingR = remainingBudget();
+          if (remainingR <= 0) return deadlineError();
+          const result = await runGhGraphql(ctx, q, pr.host, { timeoutMs: remainingR });
+          if (!result.ok) return result;
+          const rNode = asRecord(
+            asRecord(asRecord(asRecord(result.data)?.data)?.repository)?.pullRequest
+          );
+          const rConn = asRecord(rNode?.reactions);
+          if (!Array.isArray(rConn?.nodes) || !asRecord(rConn?.pageInfo)) {
+            return {
+              ok: false,
+              retryable: true,
+              error: 'malformed reactions connection (missing nodes/pageInfo); failing closed',
+            };
+          }
+          const rNodes = rConn?.nodes;
+          if (Array.isArray(rNodes)) allReactionNodes.unshift(...rNodes);
+          reactionPageInfo = asRecord(rConn?.pageInfo);
+          // Stop once the page reaches the head-push boundary (epoch compare —
+          // lexical ISO strings mis-order fractional vs whole seconds).
+          const oldestR =
+            Array.isArray(rNodes) && rNodes.length > 0 ? asRecord(rNodes[0]) : undefined;
+          const oldestRAt = typeof oldestR?.createdAt === 'string' ? oldestR.createdAt : '';
+          const commitNodes = asRecord(rNode?.commits)?.nodes;
+          const pushed = Array.isArray(commitNodes)
+            ? asRecord(asRecord(commitNodes[0])?.commit)?.pushedDate
+            : undefined;
+          const oldestRMs = oldestRAt ? Date.parse(oldestRAt) : NaN;
+          const pushedMs = typeof pushed === 'string' ? Date.parse(pushed) : NaN;
+          if (!Number.isFinite(oldestRMs) || !Number.isFinite(pushedMs) || oldestRMs <= pushedMs) {
+            reactionsComplete = true;
+            break;
+          }
+        }
+        if (!reactionsComplete) {
+          return {
+            ok: false,
+            retryable: true,
+            error:
+              `PR has more than ${MAX_CODEX_REVIEW_PAGES * CODEX_REVIEWS_PAGE_SIZE} fresh reactions; ` +
+              'unable to scan the full reaction window (fail closed).',
+          };
+        }
+        approval = evaluateMerged(allReactionNodes);
+        if (approval.failClosedReason) {
+          return { ok: false, retryable: true, error: approval.failClosedReason };
+        }
       }
       if (!approval.approved) return { ok: true, data: approval };
       // FINAL HEAD RECHECK: the multi-page scan takes time, and a commit
@@ -1233,7 +1262,14 @@ export function extractCodexApproval(value: unknown, prLink: string): GithubCode
         latest = { submittedMs, state };
       }
     }
-    if (latest) return { approved: latest.state === 'APPROVED', prLink, evaluatedHeadOid: headOid };
+    if (latest) {
+      return {
+        approved: latest.state === 'APPROVED',
+        prLink,
+        evaluatedHeadOid: headOid,
+        hadDecisiveReview: true,
+      };
+    }
   }
 
   // Pass path 2 (no head-bound codex review at all): a FRESH THUMBS_UP (+1)
