@@ -115,8 +115,8 @@ vi.mock('../../lib/connection-manager', () => ({
   connectionManager: { getHubIfConnected: () => ({ request: hubRequest }) },
 }));
 
-import MessageInput from '../MessageInput';
 import { toast } from '../../lib/toast.ts';
+import MessageInput from '../MessageInput';
 
 describe('MessageInput — recording UI', () => {
   beforeEach(() => {
@@ -168,6 +168,55 @@ describe('MessageInput — recording UI', () => {
     await waitFor(() => expect(transcribeRequest).toHaveBeenCalledTimes(1));
     // The transcript ('hello world') is auto-submitted once transcription completes.
     await waitFor(() => expect(onSend).toHaveBeenCalledWith('hello world', undefined, 'immediate'));
+  });
+
+  it('persists the transcript to the session draft when the composer unmounts mid-transcription', async () => {
+    // Slow transcription: resolve only after the composer has unmounted, so the
+    // completion runs against mountedRef === false (the keyed ChatContainer is
+    // gone), mirroring a user who clicks Send then navigates to another session.
+    let resolveTranscribe!: (value: { text: string }) => void;
+    const transcribePromise = new Promise<{ text: string }>((resolve) => {
+      resolveTranscribe = resolve;
+    });
+    transcribeRequest.mockReturnValueOnce(transcribePromise);
+    // The target session already has a draft — the transcript must be appended
+    // to it, not replace it. Only voice.transcribe is deferred.
+    hubRequest.mockImplementation(async (method: string, payload?: unknown) => {
+      if (method === 'voice.transcribe') return transcribeRequest(method, payload);
+      if (method === 'session.get')
+        return { session: { metadata: { inputDraft: 'existing draft' } } };
+      return {};
+    });
+
+    const onSend = vi.fn(async () => {});
+    const { unmount } = render(<MessageInput sessionId="s1" onSend={onSend} />);
+
+    fireEvent.click(screen.getByLabelText('Stop, transcribe and send'));
+    // Stop + transcribe request fire while the composer is still mounted...
+    await waitFor(() => expect(transcribeRequest).toHaveBeenCalledTimes(1));
+    // ...then the user navigates away BEFORE the slow transcription resolves.
+    unmount();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    resolveTranscribe({ text: 'hello world' });
+
+    // The transcript is appended to s1's server-side draft — not silently lost.
+    await waitFor(() => {
+      const updateCall = hubRequest.mock.calls.find(([m]) => m === 'session.update');
+      expect(updateCall).toBeTruthy();
+      expect(updateCall[1]).toMatchObject({
+        sessionId: 's1',
+        metadata: { inputDraft: 'existing draft hello world' },
+      });
+    });
+    // No mounted composer to auto-submit through, so it is preserved as a draft
+    // rather than sent. (Background send delivery is a follow-up.)
+    expect(onSend).not.toHaveBeenCalled();
+
+    // Restore the default dispatch so later tests aren't affected.
+    hubRequest.mockImplementation(async (method: string, ...rest: unknown[]) => {
+      if (method === 'voice.transcribe') return transcribeRequest(method, ...rest);
+      return {};
+    });
   });
 
   it('Cancel discards the recording without transcribing', async () => {

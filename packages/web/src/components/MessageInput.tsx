@@ -478,6 +478,47 @@ export default function MessageInput({
   // The session the CURRENT recording was started for (null when idle).
   const recordingSessionRef = useRef<string | null>(null);
 
+  // A transcription can complete AFTER the composer unmounted — the user clicked
+  // Send/Stop then navigated to another session while the (up to 125s) RPC was
+  // in flight. insertTranscript writes through the live draft signal + textarea,
+  // neither of which exists once the keyed ChatContainer is gone, so persist the
+  // transcript straight to the target session's server-side draft instead. That
+  // draft survives navigation and is reloaded by useInputDraft when they return,
+  // so the dictated text is waiting for them rather than silently dropped.
+  const persistTranscriptToDraft = useCallback(
+    async (targetSessionId: string, transcript: string) => {
+      const hub = connectionManager.getHubIfConnected();
+      if (!hub) return;
+      try {
+        const response = await hub.request<{ session?: { metadata?: { inputDraft?: string } } }>(
+          'session.get',
+          { sessionId: targetSessionId }
+        );
+        const existing = (response.session?.metadata?.inputDraft ?? '').trim();
+        // No live caret when unmounted, so append to the end of any existing
+        // draft using the same spacing/CJK rules as insertTranscript.
+        const needsSpace =
+          existing.length > 0 &&
+          !suppressLeadingSpace(existing) &&
+          !/^\s/.test(transcript) &&
+          !isCjk(existing.slice(-1)) &&
+          !isCjk(transcript[0]);
+        const merged = `${existing}${needsSpace ? ' ' : ''}${transcript}`.slice(
+          0,
+          COMPOSER_CHAR_LIMIT
+        );
+        await hub.request('session.update', {
+          sessionId: targetSessionId,
+          metadata: { inputDraft: merged },
+        });
+      } catch {
+        // Best-effort: if persistence fails there is no mounted UI to recover
+        // into, and the toast already told the user we saved it.
+      }
+    },
+    []
+  );
+
   const stopAndTranscribe = useCallback(
     // 'stay' leaves the transcript in the composer; 'send' auto-submits it
     // (immediate send, or steer when the agent is working); 'queue' defers it
@@ -520,6 +561,14 @@ export default function MessageInput({
           // Only queue an auto-send when the transcript produced text; the
           // effect below fires it after isTranscribing flips false.
           if (mode !== 'stay') pendingAutoSendRef.current = { sessionId: targetSessionId, mode };
+        } else if (transcript) {
+          // Composer unmounted (user navigated away) while this transcription
+          // was in flight. Persist the transcript to the target session's
+          // server-side draft so it survives navigation instead of being
+          // silently dropped. Auto-send can't fire with no mounted composer;
+          // for now the text lands as a ready-to-send draft.
+          void persistTranscriptToDraft(targetSessionId, transcript);
+          toast.info('Voice transcript saved to the session draft');
         } else if (mountedRef.current) {
           // Backend heard nothing it could transcribe — say so instead of
           // silently returning to an empty composer.
@@ -533,7 +582,7 @@ export default function MessageInput({
         setIsTranscribing(false);
       }
     },
-    [insertTranscript, isTranscribing, voiceRecorder, sessionId]
+    [insertTranscript, persistTranscriptToDraft, isTranscribing, voiceRecorder, sessionId]
   );
 
   // Cancel discards the recording AND its pinned target session.
