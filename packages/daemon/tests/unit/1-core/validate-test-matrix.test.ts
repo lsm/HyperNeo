@@ -577,4 +577,90 @@ describe('validate-test-matrix.sh', () => {
     },
     TIMEOUT
   );
+
+  it(
+    'rejects a duplicate enabled runner step (P2)',
+    () => {
+      // enabled_run_cmd returns the first matching step; a second enabled runner
+      // step re-runs the suite. count_enabled_run_cmds requires exactly one.
+      const wf = path.join(REPO_ROOT, '.github/workflows/main.yml');
+      const original = fs.readFileSync(wf, 'utf-8');
+      const anchor = '      - name: Run web tests\n';
+      expect(original.includes(anchor)).toBe(true);
+      fs.writeFileSync(
+        wf,
+        original.replace(
+          anchor,
+          `      - name: dup\n        run: cd packages/web && bunx vitest run --reporter dot\n${anchor}`
+        )
+      );
+      try {
+        const { exitCode, stderr } = runGuard();
+        expect(exitCode).toBe(1);
+        expect(stderr).toContain('more than one');
+      } finally {
+        fs.writeFileSync(wf, original);
+      }
+    },
+    TIMEOUT
+  );
+
+  it(
+    'prunes dist/ from the shared disk scan (P2)',
+    () => {
+      // A *.test.ts under dist is excluded by the pinned config; the disk scan
+      // must prune it or bun run check false-positives. Only removes dist if this
+      // test created it.
+      const fake = path.join(REPO_ROOT, 'packages/shared/dist/guard-prune-test.test.ts');
+      const dir = path.dirname(fake);
+      const dirExisted = fs.existsSync(dir);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(fake, "import { it } from 'bun:test';\nit('x', () => {});\n");
+      try {
+        const { exitCode } = runGuard();
+        expect(exitCode).toBe(0);
+      } finally {
+        fs.unlinkSync(fake);
+        if (!dirExisted) fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects a daemon .test.tsx the include does not cover (P2)',
+    () => {
+      // The daemon/shared include is *.test.ts/*_test.ts (no .tsx); a .test.tsx
+      // would neither run nor be flagged. Surface it explicitly.
+      const fake = path.join(REPO_ROOT, 'packages/daemon/tests/unit/z-guard-tsx.test.tsx');
+      fs.writeFileSync(fake, "import { it } from 'bun:test';\nit('x', () => {});\n");
+      try {
+        const { exitCode, stderr } = runGuard();
+        expect(exitCode).toBe(1);
+        expect(stderr).toContain('.tsx suffix');
+      } finally {
+        fs.unlinkSync(fake);
+      }
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects a non-allowlisted plugin with a config hook (P2)',
+    () => {
+      // A plugin config hook can narrow test selection at resolution time
+      // (invisible to a static import). Vitest resolveConfig isn't importable
+      // here, so reject config/configResolved hooks on non-framework plugins.
+      expectGuardRejects(
+        path.join(REPO_ROOT, 'packages/web/vitest.config.ts'),
+        (s) =>
+          s.replace(
+            '  plugins: [',
+            "  plugins: [\n    { name: 'evil-narrower', config: () => ({ test: { include: ['src/one.test.ts'] } }) },\n"
+          ),
+        'effective test config does not match'
+      );
+    },
+    TIMEOUT
+  );
 });

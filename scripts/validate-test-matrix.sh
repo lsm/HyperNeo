@@ -83,6 +83,25 @@ enabled_run_cmd() {
 	' "$1"
 }
 
+# Count ENABLED steps in job (of file) whose folded run command contains marker.
+# enabled_run_cmd returns the FIRST such step (done=1), so a second enabled runner
+# step in the same job is invisible — copying the runner runs the suite twice
+# while the guard sees one. Callers require exactly one.
+count_enabled_run_cmds() {
+	awk -v marker="$2" -v job="$3" '
+		function emit() { if (runval != "" && index(runval, marker) > 0 && !disabled && !job_disabled && curjob == job) count++ }
+		/^[[:space:]]{2}[[:alnum:]_-]+:[[:space:]]*$/ { emit(); runval=""; disabled=0; incmd=0; job_disabled=0; curjob=$0; sub(/^[[:space:]]+/, "", curjob); sub(/:.*$/, "", curjob); next }
+		/^[[:space:]]*-[[:space:]]/ { emit(); runval=""; disabled=0; incmd=0 }
+		/if:[[:space:]]*(\$\{\{[[:space:]]*)?(false|never)([[:space:]]|\}|$)/ { n=0; while (substr($0,n+1,1)==" ") n++; if (n <= 4) job_disabled=1; else disabled=1 }
+		/if:/ { n=0; while (substr($0,n+1,1)==" ") n++; if (n > 4) { v=$0; sub(/^.*if:[[:space:]]*/, "", v); gsub(/[[:space:]]/, "", v); sub(/^\$\{\{/, "", v); sub(/\}\}$/, "", v); if (v != "always()" && v != "success()" && v != "true") disabled=1 } }
+		/^[[:space:]]*#/ { next }
+		incmd { n=0; while (substr($0,n+1,1)==" ") n++; if (n > runindent) { runval=runval" "$0; next }; incmd=0 }
+		/^[[:space:]]*run:[[:space:]]*[>|]/ { incmd=1; n=0; while (substr($0,n+1,1)==" ") n++; runindent=n; runval=$0; next }
+		/^[[:space:]]*run:[[:space:]]+/ { runval=$0; incmd=0; next }
+		END { emit(); print count+0 }
+	' "$1"
+}
+
 # True (exit 0) if `marker` is EXECUTED by runner command `runval` — i.e. it
 # appears OUTSIDE single quotes OR inside a bash/sh -lc/-c body (which the shell
 # executes). A marker that appears only inside another quoted argument — e.g.
@@ -478,6 +497,17 @@ reject_effective_config_drift() {
 			if (t.dir) drift.push("test.dir=" + t.dir);
 			if (t.shard) drift.push("test.shard=" + t.shard);
 			if (t.testNamePattern) drift.push("test.testNamePattern set");
+			// A plugin config/configResolved hook can narrow test selection at
+			// resolution time (invisible to a static import). The sound fix is
+			// Vitest resolveConfig (not importable in this env); as defense-in-
+			// depth, reject such a hook on any plugin that is not a known framework
+			// internal (preact/vite/vitest/@vitejs/prefresh).
+			const plugins = ((m.default || m).plugins || []).flat();
+			const SAFE_PLUGIN = /^(preact|vite|vitest|@vitejs|prefresh)/;
+			for (const p of plugins) {
+				if ((typeof p.config === "function" || typeof p.configResolved === "function") && !SAFE_PLUGIN.test(p.name || ""))
+					drift.push("plugin " + (p.name || "?") + " has a config/configResolved hook that could alter test selection");
+			}
 			if (drift.length) { console.error(drift.join("; ")); process.exit(1); }
 			process.exit(0);
 		}).catch(e => { console.error("could not load config (" + (e.message.split("\n")[0]) + ")"); process.exit(1); });
@@ -880,6 +910,10 @@ done
 # forwards ${{ matrix.shard }}. (Replacing it with a fixed shard would run one
 # shard in every matrix job while this guard reported all as covered.)
 _unit_run=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'test-daemon.sh ${{ matrix.shard }}' 'test-daemon-shared-unit')
+if [ "$(count_enabled_run_cmds "$REPO_ROOT/.github/workflows/main.yml" 'test-daemon.sh ${{ matrix.shard }}' 'test-daemon-shared-unit')" -gt 1 ]; then
+	err "test-daemon-shared-unit has more than one enabled runner step forwarding \${{ matrix.shard }} — each runs the shard (duplicate runs + duplicate Coveralls uploads) while this guard reports each file covered once"
+	echo "     → keep exactly one enabled './scripts/test-daemon.sh ...' step" >&2
+fi
 if [ -z "$_unit_run" ]; then
 	err "test-daemon-shared-unit runner is missing, commented, disabled, or does not forward \${{ matrix.shard }} — unit matrix values don't reach the runner"
 	echo "     → keep an active, enabled './scripts/test-daemon.sh \${{ matrix.shard }} ...' step" >&2
@@ -937,7 +971,7 @@ fi
 
 # Assert every unit/shared test file on disk is covered by exactly one shard.
 unit_disk=$(
-	find "$UNIT_ROOT" "$SHARED_ROOT" -type f \( -name '*.test.ts' -o -name '*_test.ts' \) |
+	find "$UNIT_ROOT" "$SHARED_ROOT" -type f \( -name '*.test.ts' -o -name '*_test.ts' \) -not -path '*/node_modules/*' -not -path '*/dist/*' |
 		wc -l | tr -d ' '
 )
 while IFS= read -r f; do
@@ -950,7 +984,7 @@ while IFS= read -r f; do
 		owners=$(awk -F'\t' -v f="$rel" '$1 == f { print $2 }' "$COVERED_TMP" | sort -u | tr '\n' ',' | sed 's/,$//')
 		err "daemon unit test covered by $owner_count shards ($owners): $rel"
 	fi
-done < <(find "$UNIT_ROOT" "$SHARED_ROOT" -type f \( -name '*.test.ts' -o -name '*_test.ts' \) | sort)
+done < <(find "$UNIT_ROOT" "$SHARED_ROOT" -type f \( -name '*.test.ts' -o -name '*_test.ts' \) -not -path '*/node_modules/*' -not -path '*/dist/*' | sort)
 
 unit_covered=$(sort -u "$COVERED_TMP" | wc -l | tr -d ' ')
 echo "daemon unit: $unit_disk file(s) on disk, $unit_covered covered"
@@ -964,6 +998,17 @@ while IFS= read -r _orphan; do
 	echo "     → move it under tests/unit/ or tests/online/" >&2
 done < <(find "$REPO_ROOT/packages/daemon" -type f \( -name '*.test.ts' -o -name '*_test.ts' \) \
 	-not -path '*/tests/unit/*' -not -path '*/tests/online/*' \
+	-not -path '*/node_modules/*' -not -path '*/dist/*' | sort)
+
+# A daemon/shared test file with a .tsx suffix is NOT matched by the pinned
+# include (`tests/**/*.test.ts` / `*_test.ts` — no .tsx), so it would never run
+# yet be invisible to the *.test.ts coverage model. check-test-quality.ts accepts
+# .test.tsx, so surface it explicitly rather than let it sit silently uncovered.
+while IFS= read -r _tsx; do
+	[ -n "$_tsx" ] || continue
+	err "daemon/shared test file has a .tsx suffix the pinned Vitest include does not match (it would never run, yet the *.test.ts coverage model ignores it): ${_tsx#"$REPO_ROOT"/}"
+	echo "     → rename to .ts, or extend the daemon/shared include to cover .tsx" >&2
+done < <(find "$UNIT_ROOT" "$SHARED_ROOT" -type f \( -name '*.test.tsx' -o -name '*.spec.tsx' \) \
 	-not -path '*/node_modules/*' -not -path '*/dist/*' | sort)
 
 # ===========================================================================
@@ -1012,6 +1057,10 @@ reject_effective_config_drift "$WEB_CFG" "packages/web" \
 # by a flag (or the closing quote), not a positional path — a target on a folded
 # continuation line would otherwise evade an end-of-physical-line check.
 _web_cmd=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/web && bunx vitest run' 'test-web')
+if [ "$(count_enabled_run_cmds "$REPO_ROOT/.github/workflows/main.yml" 'cd packages/web && bunx vitest run' 'test-web')" -gt 1 ]; then
+	err "test-web has more than one enabled 'cd packages/web && bunx vitest run' step — each runs the web suite (duplicate runs + duplicate Coveralls uploads) while this guard reports each file covered once"
+	echo "     → keep exactly one enabled web runner step" >&2
+fi
 if [ -z "$_web_cmd" ]; then
 	err "test-web runner is missing, commented, or disabled (if: false|never) — web coverage assumption broken"
 	echo "     → keep an active, enabled 'cd packages/web && bunx vitest run' step" >&2
@@ -1189,6 +1238,10 @@ reject_moduleless_include_rows "$REAL_API_WORKFLOW" daemon-real-api
 # `echo "Tests: …"` step), so a commented/disabled (if:false) runner, or one
 # swapped for a fixed target, fails.
 _online_main=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'vitest.online.config.ts' 'test-daemon-online')
+if [ "$(count_enabled_run_cmds "$REPO_ROOT/.github/workflows/main.yml" 'vitest.online.config.ts' 'test-daemon-online')" -gt 1 ]; then
+	err "test-daemon-online has more than one enabled runner step forwarding \${{ matrix.test_path }} — each runs its online shard (duplicate runs) while this guard reports each file covered once"
+	echo "     → keep exactly one enabled online runner step" >&2
+fi
 if [ -z "$_online_main" ] || ! printf '%s' "$_online_main" | grep -qF '${{ matrix.test_path }}'; then
 	err "main.yml online runner is missing, commented, disabled, or does not forward \${{ matrix.test_path }} — online matrix values don't reach the runner"
 	echo "     → keep an active, enabled 'vitest ... \${{ matrix.test_path }}' step" >&2
@@ -1255,6 +1308,10 @@ else
 	fi
 fi
 _online_real=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/real-api-tests.yml" 'bun test' 'daemon-real-api')
+if [ "$(count_enabled_run_cmds "$REPO_ROOT/.github/workflows/real-api-tests.yml" 'bun test' 'daemon-real-api')" -gt 1 ]; then
+	err "daemon-real-api has more than one enabled 'bun test' step — a folded second step repeats paid provider calls while this guard reports each file covered once"
+	echo "     → keep exactly one enabled 'bun test \${{ matrix.test_path }}' step" >&2
+fi
 if [ -z "$_online_real" ] || ! printf '%s' "$_online_real" | grep -qF '${{ matrix.test_path }}'; then
 	err "real-api-tests.yml online runner is missing, commented, disabled, or does not forward \${{ matrix.test_path }} — online matrix values don't reach the runner"
 	echo "     → keep an active, enabled 'bun test \${{ matrix.test_path }}' step" >&2
