@@ -12546,10 +12546,42 @@ export function runMigration196(db: BunDatabase): void {
  * deferred to a later startup; the dormant column is harmless (nothing reads
  * it once the workflows have hook_bindings). On the next startup with no such
  * runs/tasks, the drop completes.
+ *
+ * RESTAMP-CONVERGENCE GUARD: even with NO active runs, the v2 bindings for
+ * existing built-in workflows are installed by restampBuiltInWorkflowsOnStartup
+ * — launched LATER from setupRpcHandlers, fire-and-forget, with per-space
+ * failures logged and skipped. Dropping the column during DB construction
+ * (before that restamp lands) would leave the head with NEITHER legacy hooks
+ * NOR v2 bindings for the whole window — or permanently, when the restamp
+ * keeps failing (missing preset agent, validation error). A run pinned from
+ * such a head executes ungated for its lifetime, and with the column gone the
+ * legacy-hook guard can never fire again. So the drop is additionally
+ * deferred while ANY workflow still carries non-empty legacy hooks WITHOUT
+ * v2 bindings: built-ins converge once the restamp stamps `hook_bindings`
+ * (the next startup drops the column); a custom workflow whose legacy hooks
+ * are never migrated keeps the dormant column — and its fail-closed guard —
+ * forever, which is the intended hard-cut behavior.
  */
 export function runMigration197(db: BunDatabase): boolean {
   if (!tableExists(db, 'space_workflows')) return true;
   if (tableHasColumn(db, 'space_workflows', 'hooks')) {
+    // RESTAMP-CONVERGENCE: any workflow with non-empty legacy hooks that has
+    // not yet been populated with v2 bindings still NEEDS the column (the
+    // legacy-hook guard reads it to fail such runs closed). `w.hooks` stays
+    // non-empty on restamped built-ins too (the restamp writes hook_bindings;
+    // only THIS migration retires the column), so the gate is "legacy hooks
+    // present AND bindings absent".
+    const unconverted = db
+      .prepare(
+        `SELECT COUNT(*) AS n
+           FROM space_workflows w
+          WHERE w.hooks IS NOT NULL
+            AND w.hooks != '[]'
+            AND w.hooks != ''
+            AND (w.hook_bindings IS NULL OR w.hook_bindings IN ('', '[]', 'null'))`
+      )
+      .get() as { n: number } | undefined;
+    if (unconverted && unconverted.n > 0) return false;
     // Any non-terminal run (pinned OR NOT — the restamp also defers while
     // runs are active, so a pinned run's workflow head can be equally
     // ungated), OR any approved post-approval task (the run may already be
