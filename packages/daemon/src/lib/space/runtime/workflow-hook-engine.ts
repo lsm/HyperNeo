@@ -1244,9 +1244,13 @@ export class WorkflowHookEngine {
           // targetAgentSlot} — a slot-authored channel on EITHER side
           // authorizes. Mirroring only node-to-node routes would suppress
           // the binding for a slot-authored role send the router delivers.
-          const roleUnauthorized =
+          // The cross-product ({fromNode, fromAgentSlot} x {targetNode,
+          // targetAgentSlot}) is the ROLE resolver's rule — apply it to role
+          // targets only; for ordinary targets the router authorizes node
+          // names alone (a from-SLOT channel authorizes nothing).
+          const roleRoutable =
             target.startsWith('@role:') &&
-            !resolvedTargets.some((r) => {
+            resolvedTargets.some((r) => {
               if (!nodeNames.has(r)) return false;
               const slots = nodeSlots.get(r) ?? [];
               return (
@@ -1257,6 +1261,7 @@ export class WorkflowHookEngine {
                 resolver.canSend(meta.agentName, r)
               );
             });
+          const roleUnauthorized = target.startsWith('@role:') && !roleRoutable;
           for (const resolved of resolvedTargets) {
             const workerSlotOk =
               !foreignWorkerMiss &&
@@ -1290,7 +1295,7 @@ export class WorkflowHookEngine {
               !isBuiltInInterLevelTarget(target) &&
               (roleUnauthorized ||
                 foreignWorkerMiss ||
-                (!workerSlotOk && !bareSlotOk && !isRoutableTarget(resolved)))
+                (!roleRoutable && !workerSlotOk && !bareSlotOk && !isRoutableTarget(resolved)))
             ) {
               nonRoutableResolvedNodes.add(resolved);
             }
@@ -1438,17 +1443,44 @@ export class WorkflowHookEngine {
           // the router aborts at the FIRST unauthorized worker — the node
           // receives the message only when its first declared slot (or the
           // entry string itself, for a bare slot) is authorized.
-          const authorized = resolvedTargets.some((r) => {
-            if (!nodeNames.has(r)) return false;
-            if (isRoutableTarget(r)) return true;
+          // authorized: the node receives the message (its first declared
+          // slot — or the entry/bare-slot string — is authorized, or a
+          // node-level route exists). suffixAborts: the node's LATER slots
+          // include an unauthorized worker — the adapter expands every slot
+          // and the router aborts there, so no entry AFTER this node ever
+          // delivers (this node itself still does).
+          let authorized = false;
+          let suffixAborts = false;
+          for (const r of resolvedTargets) {
+            if (!nodeNames.has(r)) continue;
+            if (isRoutableTarget(r)) {
+              authorized = true;
+              continue;
+            }
             if (isWorker) {
               const agent = workerAgentOf(t);
-              return agent !== undefined && resolver.canSend(fromNode, agent);
+              if (agent !== undefined && resolver.canSend(fromNode, agent)) authorized = true;
+              continue;
             }
-            if (resolver.canSend(fromNode, t)) return true;
             const slots = nodeSlots.get(r) ?? [];
-            return slots.length > 0 && resolver.canSend(fromNode, slots[0]);
-          });
+            if (resolver.canSend(fromNode, t) && !nodeNames.has(t)) {
+              authorized = true;
+              continue;
+            }
+            // Bare slot entry OR plain node entry: the adapter expands the
+            // node's slots in declaration order; walk them.
+            const orderedSlots = nodeNames.has(t) || !isAddress ? slots : [t];
+            for (let si = 0; si < orderedSlots.length; si++) {
+              const slotOk = resolver.canSend(fromNode, orderedSlots[si]);
+              if (si === 0 && slotOk) authorized = true;
+              if (!slotOk) {
+                // An unauthorized slot after a delivered one: the router
+                // aborts here — later ARRAY entries never deliver.
+                suffixAborts = true;
+                break;
+              }
+            }
+          }
           const resolvable = resolvedTargets.some((r) => nodeNames.has(r));
           if (!isAddress && !resolvable) {
             // Plain entry matching no node/slot: the MCP translation rejects
@@ -1461,6 +1493,11 @@ export class WorkflowHookEngine {
             for (const resolved of resolvedTargets) {
               if (nodeNames.has(resolved)) postFailureNodes.add(resolved);
             }
+          } else if (suffixAborts && authorized) {
+            // This node delivered (first slot authorized) but a LATER slot
+            // of it aborted the router — entries AFTER this node never
+            // deliver. Mark the block WITHOUT suppressing this node.
+            sequentialBlocked = true;
           }
         }
         for (const resolved of wholeSendRefused

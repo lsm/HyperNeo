@@ -739,6 +739,53 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(deliveredOutcome.blockingHookId).toBe('order_hook');
   });
 
+  test('a mid-node worker abort blocks later array entries (not the node itself)', async () => {
+    // Node Review ordered [reviewer, qa] with a channel only to 'reviewer':
+    // the adapter expands BOTH slots; the router delivers reviewer then
+    // ABORTS at qa — a later 'Other' entry never delivers, so its gate must
+    // not run. Review itself delivered, so its own gate runs (stop hook).
+    const STOP_HOOK = scriptHook('suffix_hook', '{"flow":"stop","reason":"blocked"}');
+    const workflow = makeWorkflow({
+      customHooks: [STOP_HOOK],
+      nodes: [
+        { id: 'n-coding', name: 'Coding', agents: [{ agentId: 'a1', name: 'coder' }] },
+        {
+          id: 'n-review',
+          name: 'Review',
+          agents: [
+            { agentId: 'a3', name: 'reviewer' },
+            { agentId: 'a2', name: 'qa' },
+          ],
+        },
+        { id: 'n-other', name: 'Other', agents: [{ agentId: 'a4', name: 'other' }] },
+      ],
+      channels: [
+        { from: 'Coding', to: 'Review', label: 'Coding → Review' },
+        { from: 'Coding', to: 'Other', label: 'Coding → Other' },
+      ],
+      hookBindings: [
+        {
+          hookId: 'suffix_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const engine = makeEngine(workflow);
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: ['Review', 'Other'], message: 'node then other' },
+      META
+    );
+    // Review's gate runs (its first slot delivered); the outcome is its stop.
+    expect(outcome.decision).toBe('stop');
+    expect(outcome.blockingHookId).toBe('suffix_hook');
+  });
+
   test('an unauthorized @session reply aborts the multicast (later entries suppressed)', async () => {
     // The router hard-returns when a session target is not the recorded
     // reply route for the sender — later entries never deliver.
