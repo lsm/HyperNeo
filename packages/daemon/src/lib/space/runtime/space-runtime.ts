@@ -2425,14 +2425,19 @@ export class SpaceRuntime {
           'defer',
           eventRecord?.createdAt ?? Date.now()
         );
+        // Mark the persisted delivery with the defer-encoded reason (not
+        // markFailure:false): after a daemon restart the in-memory queue is
+        // gone and requeuePersistedPendingDeliveries reconstructs the mode
+        // via deliveryModeFromFailureReason — a null reason falls back to
+        // 'immediate', which would steer an already-processing kickoff
+        // mid-turn after recovery.
         this.scheduleActivationRetry(
           preparedTarget,
           payload,
           deliveryKey,
-          'node_execution_pending',
+          'deliveryMode:defer; node_execution_pending',
           {
             preserveAttemptCount: true,
-            markFailure: false,
           }
         );
       } else {
@@ -3853,7 +3858,13 @@ export class SpaceRuntime {
    */
   private isTargetSessionInterrupted(sessionId: string): boolean {
     const session = this.config.taskAgentManager?.getAgentSessionById?.(sessionId);
-    return session?.getProcessingState().status === 'interrupted';
+    if (session?.getProcessingState().status !== 'interrupted') return false;
+    // A persisted 'interrupted' status without an interrupt actually in
+    // flight is stale (e.g. a daemon crash between setInterrupted and
+    // setIdle) — no interrupt operation remains to resolve it to idle, so
+    // parking on it would hold the delivery until TTL. Treat it as
+    // not-interrupted and take the normal defer handoff instead.
+    return session.isInterruptInProgress();
   }
 
   /**
@@ -3871,10 +3882,17 @@ export class SpaceRuntime {
   ): boolean {
     if (!target.sessionId || !this.isTargetSessionInterrupted(target.sessionId)) return false;
     this.queueForPendingNode(target, payload, deliveryKey, 'defer', createdAt);
-    this.scheduleActivationRetry(target, payload, deliveryKey, 'target_session_interrupted', {
-      preserveAttemptCount: true,
-      markFailure: false,
-    });
+    // Defer-encoded failure reason so a daemon restart reconstructs 'defer'
+    // (a null reason recovers as 'immediate' — see the pending-node branch).
+    this.scheduleActivationRetry(
+      target,
+      payload,
+      deliveryKey,
+      'deliveryMode:defer; target_session_interrupted',
+      {
+        preserveAttemptCount: true,
+      }
+    );
     return true;
   }
 

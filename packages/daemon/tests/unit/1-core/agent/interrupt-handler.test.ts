@@ -397,6 +397,41 @@ describe('InterruptHandler', () => {
       expect(busPublishAsyncSpy).not.toHaveBeenCalled();
     });
 
+    it('should skip query.trigger for teardown-bound interrupts', async () => {
+      // stopSessionPreserveDb (task cancellation/completion/shutdown) must not
+      // drive the deferred queue: replaying would promote deferred rows to
+      // enqueued and create delivery jobs for a session about to be cleaned up.
+      handler = createHandler();
+
+      await handler.handleInterrupt({ skipDeferredReplay: true });
+
+      expect(busPublishAsyncSpy).not.toHaveBeenCalled();
+    });
+
+    it('should delay query.trigger until the old query exits when the wait times out', async () => {
+      // The interrupt wait races the old queryPromise against 200ms; when the
+      // query is still unwinding, replaying immediately could launch a
+      // replacement query while the old subprocess is still alive.
+      let settleOldQuery!: () => void;
+      const queryPromise = new Promise<void>((resolve) => {
+        settleOldQuery = resolve;
+      });
+      handler = createHandler({ queryPromise });
+
+      const interrupted = handler.handleInterrupt();
+      // Let the 200ms race time out and the interrupt flow finish; the old
+      // query has NOT settled, so no replay yet.
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      expect(busPublishAsyncSpy).not.toHaveBeenCalled();
+
+      settleOldQuery();
+      await interrupted;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(busPublishAsyncSpy).toHaveBeenCalledWith('query.trigger', {
+        sessionId: 'test-session-id',
+      });
+    });
+
     it('should resolve interrupt promise in finally block', async () => {
       handler = createHandler();
 

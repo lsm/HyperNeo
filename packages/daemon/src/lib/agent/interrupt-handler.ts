@@ -69,7 +69,10 @@ export class InterruptHandler {
    * cleanup doesn't block); only the durable-job cancellation is skipped.
    * (Codex P1.)
    */
-  async handleInterrupt(opts?: { preserveDeliveryJobs?: boolean }): Promise<void> {
+  async handleInterrupt(opts?: {
+    preserveDeliveryJobs?: boolean;
+    skipDeferredReplay?: boolean;
+  }): Promise<void> {
     const { session, messageHub, messageQueue, stateManager, logger } = this.ctx;
 
     // Durable-delivery cancel FIRST (message-delivery v2): revoke EVERY active
@@ -160,15 +163,26 @@ export class InterruptHandler {
         }
       }
 
-      // STEP 3: Wait for old query to finish
+      // STEP 3: Wait for old query to finish. Track whether it actually
+      // settled within the wait — if it is still unwinding, the deferred-row
+      // replay must be delayed until it exits, or ensureQueryStarted() can
+      // launch a replacement query while the old subprocess is still alive
+      // (concurrent processes / workspace-lock failures).
+      let oldQuerySettledWithinWait = true;
       if (this.ctx.queryPromise) {
-        try {
-          await Promise.race([
-            this.ctx.queryPromise,
-            new Promise((resolve) => setTimeout(resolve, 200)),
-          ]);
-        } catch (error) {
-          logger.warn('Error waiting for old query:', error);
+        const oldQuery = this.ctx.queryPromise.then(
+          () => true,
+          (error) => {
+            logger.warn('Error waiting for old query:', error);
+            return true; // settled (with error) — replay is safe
+          }
+        );
+        oldQuerySettledWithinWait = await Promise.race([
+          oldQuery,
+          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 200)),
+        ]);
+        if (!oldQuerySettledWithinWait) {
+          void oldQuery.then(() => this.publishDeferredQueueTrigger());
         }
       }
 
@@ -202,11 +216,12 @@ export class InterruptHandler {
       // in 'defer' mode) is never replayed — the interrupt path reaches idle
       // without the query.trigger that finishTurn publishes on normal turn
       // end, so the row would sit unconsumed indefinitely. No-op when no
-      // deferred rows exist.
-      if (this.ctx.session.config.queryMode !== 'manual') {
-        this.ctx.internalEventBus.publishAsync('query.trigger', {
-          sessionId: this.ctx.session.id,
-        });
+      // deferred rows exist. Skipped for teardown-bound interrupts (session
+      // stop/shutdown) — replaying there would promote deferred rows to
+      // enqueued and drive jobs for a session that is about to be cleaned
+      // up. Delayed until the old query exits when STEP 3's wait timed out.
+      if (!opts?.skipDeferredReplay && oldQuerySettledWithinWait) {
+        this.publishDeferredQueueTrigger();
       }
     } finally {
       // Always resolve the interrupt promise
@@ -216,5 +231,17 @@ export class InterruptHandler {
       }
       this.interruptPromise = null;
     }
+  }
+
+  /**
+   * Publish the deferred-queue trigger for this session. Fire-and-forget:
+   * QueryModeHandler flips deferred rows to enqueued and the durable delivery
+   * job drives the replacement turn. No-op when no deferred rows exist.
+   */
+  private publishDeferredQueueTrigger(): void {
+    if (this.ctx.session.config.queryMode === 'manual') return;
+    this.ctx.internalEventBus.publishAsync('query.trigger', {
+      sessionId: this.ctx.session.id,
+    });
   }
 }

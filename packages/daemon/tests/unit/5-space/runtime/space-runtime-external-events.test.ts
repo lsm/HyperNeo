@@ -88,6 +88,8 @@ class MockTaskAgentManager {
   alive = new Set<string>();
   /** sessionId → processing-state status (unset = not interrupted). */
   processingStates = new Map<string, string>();
+  /** sessionIds with an interrupt actually in flight (vs stale persisted state). */
+  interrupting = new Set<string>();
   spawned: string[] = [];
   activationCalls: Array<{
     taskId: string;
@@ -103,9 +105,16 @@ class MockTaskAgentManager {
     return this.alive.has(sessionId);
   }
 
-  getAgentSessionById(sessionId: string): { getProcessingState: () => { status: string } } | null {
+  getAgentSessionById(
+    sessionId: string
+  ): { getProcessingState: () => { status: string }; isInterruptInProgress: () => boolean } | null {
     const status = this.processingStates.get(sessionId);
-    return status === undefined ? null : { getProcessingState: () => ({ status }) };
+    return status === undefined
+      ? null
+      : {
+          getProcessingState: () => ({ status }),
+          isInterruptInProgress: () => this.interrupting.has(sessionId),
+        };
   }
 
   async rehydrate(): Promise<void> {}
@@ -1101,6 +1110,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
     tam.alive.add('session-interrupted');
     tam.processingStates.set('session-interrupted', 'interrupted');
+    tam.interrupting.add('session-interrupted');
 
     const event = makeEvent();
     await eventService.publish(event);
@@ -1109,9 +1119,10 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected).toHaveLength(0);
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('pending');
-    // Parked, not failed — preserveAttemptCount + markFailure:false keep the
-    // pending row owned by the in-memory queue with a null failureReason.
-    expect(delivery.failureReason).toBeNull();
+    // Parked with a defer-encoded reason (non-terminal): after a daemon
+    // restart, requeuePersistedPendingDeliveries reconstructs 'defer' from it
+    // — a null reason would recover as 'immediate'.
+    expect(delivery.failureReason).toBe('deliveryMode:defer; target_session_interrupted');
 
     // The interrupt resolves — the session reaches a true idle.
     tam.processingStates.set('session-interrupted', 'idle');
@@ -1124,6 +1135,32 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
     await runtime.stop();
+  });
+
+  test('does not park on a stale persisted interrupted state (no interrupt in flight)', async () => {
+    // A daemon crash between setInterrupted and setIdle leaves the persisted
+    // processing state 'interrupted' with no interrupt operation remaining to
+    // resolve it — parking on that state would hold the delivery until TTL.
+    // Only an interrupt actually in flight is a parking signal; a stale
+    // interrupted session takes the normal defer handoff.
+    const { run } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-stale-interrupted',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-stale-interrupted');
+    tam.processingStates.set('session-stale-interrupted', 'interrupted');
+    // No tam.interrupting entry — the interrupt is not in flight.
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-stale-interrupted');
+    expect(injected[0]!.deliveryMode).toBe('defer');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
   test('a shared-PR synchronize (commit push) does NOT stamp any co-subscriber lastActivityAt', async () => {
@@ -4461,7 +4498,9 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('pending');
-    expect(delivery.failureReason).toBeNull();
+    // Defer-encoded reason (non-terminal) so a daemon restart reconstructs
+    // 'defer' — a null reason would recover as 'immediate'.
+    expect(delivery.failureReason).toBe('deliveryMode:defer; node_execution_pending');
 
     runtime.flushPendingNodeQueue({
       workflowRunId: run.id,

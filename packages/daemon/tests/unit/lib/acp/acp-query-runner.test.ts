@@ -590,6 +590,37 @@ describe('AcpQueryRunner', () => {
     expect(publishAsync).toHaveBeenCalledWith('query.trigger', { sessionId: 'session-1' });
   });
 
+  test('does not publish query.trigger after a terminal turn failure', async () => {
+    // The replay lives in run()'s finally; after handleRunError handles a
+    // terminal failure (auth rejection, provider unavailable, exhausted
+    // startup retries), replaying would promote deferred rows to enqueued
+    // and immediately drive another turn that is likely to fail too. Deferred
+    // rows must stay deferred and available for after recovery.
+    const failingClient = createMockClient();
+    failingClient.initialize = mock(async () => {
+      throw new Error('authentication rejected');
+    });
+    const { runner, ctx } = createRunnerFixture({ client: failingClient });
+    const publishAsync = ctx.internalEventBus.publishAsync as unknown as ReturnType<typeof mock>;
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(publishAsync).not.toHaveBeenCalledWith('query.trigger', { sessionId: 'session-1' });
+  });
+
+  test('does not publish query.trigger in manual query mode', async () => {
+    const { runner, ctx } = createRunnerFixture({
+      session: { config: { queryMode: 'manual' } } as Partial<Session>,
+    });
+    const publishAsync = ctx.internalEventBus.publishAsync as unknown as ReturnType<typeof mock>;
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(publishAsync).not.toHaveBeenCalledWith('query.trigger', { sessionId: 'session-1' });
+  });
+
   test('aborts ACP submission when remove/defer already revoked the row (#3744696846)', async () => {
     const client = createMockClient();
     let promptBodyRan = false;

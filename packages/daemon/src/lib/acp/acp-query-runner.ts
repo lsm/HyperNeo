@@ -450,6 +450,10 @@ export class AcpQueryRunner {
     let receivedAcpMessageDuringRun = false;
     let restoreMessageEnqueuedHandler: (() => void) | undefined;
     let proxyBridge: AcpMcpProxyBridge | null = null;
+    // Set at the end of the try block; the finally-block deferred replay is
+    // gated on it so a terminal failure (handleRunError) does not drive the
+    // next turn.
+    let turnCompletedNormally = false;
 
     try {
       const { initializeProviders, waitForOptionalProviderRegistration } = await import(
@@ -779,6 +783,12 @@ export class AcpQueryRunner {
       if (this.ctx.getQueryGeneration() === queryGeneration) {
         messageQueue.stop();
       }
+      // The turn consumed its input and ended without reaching the catch —
+      // mark it completed normally so the finally-block deferred replay only
+      // drives the next turn after a successful completion, not after a
+      // terminal failure (auth rejection, provider unavailable, exhausted
+      // startup retries) handled by handleRunError.
+      turnCompletedNormally = true;
     } catch (error) {
       restoreMessageEnqueuedHandler?.();
       const effectiveError =
@@ -840,7 +850,10 @@ export class AcpQueryRunner {
           // 'deferred' while the ACP node was processing (e.g. an external
           // event in 'defer' mode) is never replayed — the automatic replay is
           // specific to the Claude SDK path. No-op when no deferred rows exist.
-          if (session.config.queryMode !== 'manual') {
+          // Gated on normal completion: after a terminal error
+          // (handleRunError), replaying would promote deferred rows to
+          // enqueued and drive another turn that is likely to fail too.
+          if (turnCompletedNormally && session.config.queryMode !== 'manual') {
             this.ctx.internalEventBus.publishAsync('query.trigger', { sessionId: session.id });
           }
         }

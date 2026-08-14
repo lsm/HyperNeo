@@ -968,7 +968,10 @@ export class AgentSession
   // Interrupt and Reset
   // ============================================================================
 
-  async handleInterrupt(opts?: { preserveDeliveryJobs?: boolean }): Promise<void> {
+  async handleInterrupt(opts?: {
+    preserveDeliveryJobs?: boolean;
+    skipDeferredReplay?: boolean;
+  }): Promise<void> {
     // Cancel any rate-limit recovery so an in-flight fallback switch / armed
     // cooldown timer can't switch the model or replay the stale message after
     // the user explicitly stopped the turn.
@@ -978,8 +981,19 @@ export class AgentSession
     // the single chokepoint every interrupt path reaches (client.interrupt RPC
     // → agent.interruptRequest subscriber → the raw handler, and the space
     // paths via this wrapper). See Codex (#3744105273). `preserveDeliveryJobs`
-    // is forwarded for restart-bound shutdown stops.
+    // is forwarded for restart-bound shutdown stops; `skipDeferredReplay`
+    // for teardown-bound stops that must not drive the deferred queue.
     await this.interruptHandler.handleInterrupt(opts);
+  }
+
+  /**
+   * Whether an interrupt is currently in flight for this session. Distinguishes
+   * a live `interrupted` processing state from a stale persisted one (e.g. a
+   * daemon crash between setInterrupted and setIdle leaves the persisted state
+   * `interrupted` with no interrupt operation remaining to resolve it).
+   */
+  isInterruptInProgress(): boolean {
+    return this.interruptHandler.getInterruptPromise() !== null;
   }
 
   async resetQuery(options?: {
