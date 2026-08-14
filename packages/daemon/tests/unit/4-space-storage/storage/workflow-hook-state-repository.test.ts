@@ -81,7 +81,7 @@ describe('WorkflowHookStateRepository', () => {
     });
   });
 
-  test('a null-valued patch key is deleted, not stored as a tombstone', () => {
+  test('localStateDeletePaths physically remove keys; recorded nulls survive', () => {
     repo.ensure('run-1', 'hook-1');
     const first = repo.update('run-1', 'hook-1', {
       expectedVersion: 0,
@@ -91,25 +91,30 @@ describe('WorkflowHookStateRepository', () => {
           'action-b': { actionKey: 'action-b' },
         },
         humanApproved: true,
+        recordedNull: null,
       },
     });
 
-    // Clear action-a per-key: the null must PHYSICALLY REMOVE the entry —
-    // a stored null tombstone would grow local_state without bound (each
-    // cleared action key persists forever, keyed by its full serialized
-    // action) while surviving siblings stay merge-safe in either order.
+    // Clear action-a via its key path: the entry is PHYSICALLY REMOVED (a
+    // stored tombstone would grow local_state without bound — each cleared
+    // action key persists forever, keyed by its full serialized action)
+    // while surviving siblings stay merge-safe in either order.
     const second = repo.update('run-1', 'hook-1', {
       expectedVersion: first!.version,
-      localState: { __queuedRetryableActions: { 'action-a': null } },
+      localStateDeletePaths: [['__queuedRetryableActions', 'action-a']],
     });
     expect(second?.localState.__queuedRetryableActions).toEqual({
       'action-b': { actionKey: 'action-b' },
     });
 
-    // A null at the top level removes the whole key.
+    // A hook-recorded null is DATA, not a delete — recordState(key, null)
+    // must survive the merge so readState can distinguish it from missing.
+    expect(second?.localState.recordedNull).toBeNull();
+
+    // A top-level path removes the whole key; absent paths are skipped.
     const third = repo.update('run-1', 'hook-1', {
       expectedVersion: second!.version,
-      localState: { __queuedRetryableActions: null },
+      localStateDeletePaths: [['__queuedRetryableActions'], ['no-such-key', 'nested']],
     });
     expect(third?.localState.__queuedRetryableActions).toBeUndefined();
     expect(third?.localState.humanApproved).toBe(true);

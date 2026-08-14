@@ -288,7 +288,11 @@ export class WorkflowHookEngine {
     for (const action of this.getQueuedRetryableActions()) {
       if (!sameRetryableActionOwner(action.meta, ownerMeta)) continue;
       if (this.isRetryableActionCancelled(action.meta)) {
-        this.clearQueuedRetryableAction(action.hookId);
+        // Clear ONLY this action's key: the hook's durable map is shared
+        // across owners — a whole-map clear would delete another session's
+        // queued send (losing it if that owner has not rehydrated yet, or
+        // across a later restart).
+        this.clearQueuedRetryableAction(action.hookId, action.actionKey);
         continue;
       }
       const rawHandler = handlersByMethod[action.methodName];
@@ -314,27 +318,18 @@ export class WorkflowHookEngine {
   }
 
   clearQueuedRetryableAction(hookId: string, actionKey?: string): boolean {
-    if (actionKey === undefined) {
-      return this.persistStateUpdate(hookId, {
-        localState: { [QUEUED_RETRYABLE_ACTION_STATE_KEY]: null },
-      });
-    }
-    const state = this.config.hookStateRepo.get(this.config.workflowRunId, hookId)?.localState;
-    const map = state?.[QUEUED_RETRYABLE_ACTION_STATE_KEY];
-    if (!map || typeof map !== 'object' || Array.isArray(map)) return true;
-    // Explicit null, not an omission: the repo's localState deep-merge
-    // DELETES null-valued keys, so this physically removes the entry (a key
-    // merely absent from the patch would survive the merge — the cleared
-    // action would rehydrate after restart and deliver again). Spreading the
-    // current map also re-writes any legacy null tombstones from earlier
-    // versions, compacting them on write.
+    // Explicit delete paths, not a null in localState: deep-merge preserves
+    // keys the patch omits (the cleared action would rehydrate after restart
+    // and deliver again), while a null would collide with recordState's
+    // contract (hooks may record null as a value). The delete physically
+    // removes the key (bounded growth, no tombstones) and is merge-safe — a
+    // sibling key queued before or after the clear survives either order.
     return this.persistStateUpdate(hookId, {
-      localState: {
-        [QUEUED_RETRYABLE_ACTION_STATE_KEY]: {
-          ...(map as Record<string, unknown>),
-          [actionKey]: null,
-        },
-      },
+      localStateDeletePaths: [
+        actionKey === undefined
+          ? [QUEUED_RETRYABLE_ACTION_STATE_KEY]
+          : [QUEUED_RETRYABLE_ACTION_STATE_KEY, actionKey],
+      ],
     });
   }
 
@@ -423,6 +418,8 @@ export class WorkflowHookEngine {
     hookId: string,
     patch: {
       localState?: Record<string, unknown>;
+      /** Key paths to physically delete from localState after the merge. */
+      localStateDeletePaths?: string[][];
       lastFlow?: HookFlow;
       lastReason?: string | null;
       retryCount?: number;
@@ -1038,9 +1035,14 @@ export class WorkflowHookEngine {
     // Nodes whose requested resolution was NON-ROUTABLE (per-target, not
     // global: a mixed multicast's routable parts keep their gates).
     const nonRoutableResolvedNodes = new Set<string>();
+    // Router parity: ordinary targets are authorized ONLY via
+    // canSend(fromNodeName, resolvedNode) — never from the sender's AGENT
+    // SLOT. A slot-authored channel ('coder → Review' with no 'Coding →
+    // Review') authorizes nothing at the router, so it must not run a
+    // side-effecting gate here either (pr_ready stamps the run's immutable
+    // PR identity from an attempt the router then refuses to deliver).
     const isRoutableTarget = (targetNode: string): boolean =>
-      nodeNames.has(targetNode) &&
-      (resolver.canSend(fromNode, targetNode) || resolver.canSend(meta.agentName, targetNode));
+      nodeNames.has(targetNode) && resolver.canSend(fromNode, targetNode);
     // The router ALSO accepts a send addressed to a worker on an AGENT SLOT
     // the channel names (e.g. channel 'Coding → reviewer', send
     // '@worker:Review/reviewer') via resolver.canSend(fromNode, agentName).
@@ -1070,9 +1072,9 @@ export class WorkflowHookEngine {
       const target = params.target;
       if (typeof target === 'string') {
         if (target.trim() === '*') {
-          const permittedNode = resolver.getPermittedTargets(fromNode);
-          const permittedSlot = resolver.getPermittedTargets(meta.agentName);
-          const permitted = [...new Set([...permittedNode, ...permittedSlot])];
+          // Router parity: '*' resolves against the SENDER NODE's permitted
+          // targets only (agent-message-router.ts:750-752) — no slot union.
+          const permitted = resolver.getPermittedTargets(fromNode);
           if (permitted.includes('*')) {
             for (const node of workflow.nodes) {
               actionTargets.add(node.name);

@@ -21,6 +21,16 @@ interface HookStateRow {
 export interface WorkflowHookStatePatch {
   expectedVersion: number;
   localState?: Record<string, unknown>;
+  /**
+   * Key paths to DELETE from localState after the merge, outermost key first
+   * (e.g. `['__queuedRetryableActions', actionKey]`). Deep-merge preserves
+   * keys the patch omits, so a caller clearing an entry must name it here —
+   * physically removing the key (bounded growth, no tombstones) while staying
+   * merge-safe: sibling keys written before or after the delete survive
+   * either order. `localState` itself keeps plain merge semantics, so a null
+   * RECORDED by a hook via recordState(key, null) is stored, not deleted.
+   */
+  localStateDeletePaths?: string[][];
   lastFlow?: HookFlow;
   /** `null` explicitly clears the reason (an absent `reason` keeps the current one). */
   lastReason?: string | null;
@@ -41,24 +51,25 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
+/** Delete each key path from `state` (after the deep-merge), skipping absent paths. */
+function deletePaths(state: Record<string, unknown>, paths: string[][]): void {
+  for (const path of paths) {
+    if (path.length === 0) continue;
+    let cursor: Record<string, unknown> | undefined = state;
+    for (let i = 0; i < path.length - 1 && cursor; i++) {
+      const next: unknown = cursor[path[i]];
+      cursor = isPlainRecord(next) ? next : undefined;
+    }
+    if (cursor) delete cursor[path[path.length - 1]];
+  }
+}
+
 function deepMerge(
   base: Record<string, unknown>,
   patch: Record<string, unknown>
 ): Record<string, unknown> {
   const next: Record<string, unknown> = { ...base };
   for (const [key, value] of Object.entries(patch)) {
-    // An explicit null DELETES the key (recursively). Deep-merge preserves
-    // keys the patch omits, so callers clear entries by writing null (the
-    // engine's per-action queue clears). Treating null as a delete rather
-    // than storing a tombstone keeps local_state from growing without bound
-    // — each cleared action key is physically removed — while staying
-    // merge-safe: a sibling key written before or after the clear survives
-    // either merge order. Readers treat null and absent identically (they
-    // skip non-record entries).
-    if (value === null) {
-      delete next[key];
-      continue;
-    }
     if (isPlainRecord(value) && isPlainRecord(next[key])) {
       next[key] = deepMerge(next[key] as Record<string, unknown>, value);
     } else {
@@ -150,9 +161,13 @@ export class WorkflowHookStateRepository {
       if (current.version !== patch.expectedVersion) return null;
       const now = Date.now();
       const nextVersion = current.version + 1;
-      const nextLocalState = patch.localState
+      const mergedLocalState = patch.localState
         ? deepMerge(current.localState, patch.localState)
-        : current.localState;
+        : { ...current.localState };
+      if (patch.localStateDeletePaths?.length) {
+        deletePaths(mergedLocalState, patch.localStateDeletePaths);
+      }
+      const nextLocalState = mergedLocalState;
       const nextRetryCount = patch.retryCount ?? current.retryCount;
       const nextRetryAt =
         patch.nextRetryAt === undefined ? (current.nextRetryAt ?? null) : patch.nextRetryAt;

@@ -15,6 +15,7 @@ import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositor
 import { WorkflowHookStateRepository } from '../../../../src/storage/repositories/workflow-hook-state-repository';
 import {
   createLegacyHookGuardEngine,
+  QUEUED_RETRYABLE_ACTION_STATE_KEY,
   WorkflowHookEngine,
   wrapHandlerWithHooks,
   type HookActionOutcome,
@@ -282,6 +283,117 @@ describe('WorkflowHookEngine.executeAction', () => {
     );
     expect(outcome.decision).toBe('stop');
     expect(outcome.blockingHookId).toBe('mixed_hook');
+  });
+
+  test("cancelled-owner rehydration clears only that owner's queued action", () => {
+    // The durable queue map is SHARED across owners under one hook: clearing
+    // the whole map on a cancelled owner's rehydration would delete another
+    // session's accepted send (lost until its own rehydration, and across any
+    // restart in between). Only the cancelled action's key may be removed.
+    const RETRY_HOOK = scriptHook('cancel_clear_hook', '{"flow":"retry","reason":"waiting"}');
+    const workflow = makeWorkflow({
+      customHooks: [RETRY_HOOK],
+      hookBindings: [
+        {
+          hookId: 'cancel_clear_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const cancelledMeta: HookActionMeta = {
+      sessionId: 's-a',
+      agentName: 'coder',
+      nodeId: 'n-coding',
+      taskId: 'task-cancelled',
+    };
+    const otherMeta: HookActionMeta = {
+      sessionId: 's-b',
+      agentName: 'reviewer',
+      nodeId: 'n-review',
+      taskId: 'task-live',
+    };
+    const entry = (actionKey: string, meta: HookActionMeta) => ({
+      actionKey,
+      hookId: 'cancel_clear_hook',
+      methodName: 'send_message',
+      args: { target: 'Review', message: 'm' },
+      meta,
+      isFollowUp: false,
+      nextRetryAt: Date.now() + 60_000,
+      retryAfterMs: 60_000,
+      queuedAt: Date.now(),
+    });
+    hookStateRepo.updateWithRetry('run-1', 'cancel_clear_hook', {
+      localState: {
+        [QUEUED_RETRYABLE_ACTION_STATE_KEY]: {
+          'key-cancelled': entry('key-cancelled', cancelledMeta),
+          'key-other': entry('key-other', otherMeta),
+        },
+      },
+    });
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: new NodeExecutionRepository(db),
+      artifactRepo,
+      hookStateRepo,
+      workspacePath: process.cwd(),
+      getTaskStatus: (taskId) => (taskId === 'task-cancelled' ? 'cancelled' : 'in_progress'),
+    });
+    engine.scheduleQueuedRetryableActions(
+      { send_message: async () => ({ content: [{ type: 'text', text: 'ok' }] }) },
+      cancelledMeta
+    );
+    const map = engine.getQueuedRetryableActionsMap('cancel_clear_hook');
+    expect(map && 'key-cancelled' in map).toBe(false);
+    expect(map?.['key-other']).toBeTruthy();
+  });
+
+  test('a slot-authored channel does not run the gate (router parity)', async () => {
+    // The router authorizes ordinary targets ONLY via
+    // canSend(fromNodeName, resolvedNode) — a channel authored from the
+    // AGENT SLOT ('coder → Review', no 'Coding → Review') authorizes nothing
+    // at the router, so the engine must not run a side-effecting gate on it.
+    const STOP_HOOK = scriptHook('slot_channel_hook', '{"flow":"stop","reason":"blocked"}');
+    const workflow = makeWorkflow({
+      customHooks: [STOP_HOOK],
+      channels: [{ from: 'coder', to: 'Review', label: 'coder → Review' }],
+      hookBindings: [
+        {
+          hookId: 'slot_channel_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const engine = makeEngine(workflow);
+    // Direct node-addressed send.
+    const direct = await engine.executeAction(
+      'send_message',
+      { target: 'Review', message: 'handoff' },
+      META
+    );
+    expect(direct.decision).toBe('deliver');
+    expect(hookStateRepo.get('run-1', 'slot_channel_hook')).toBeNull();
+
+    // Broadcast: '*' resolves against the SENDER NODE's permitted targets
+    // only — the slot-authored channel contributes nothing.
+    const broadcast = await engine.executeAction(
+      'send_message',
+      { target: '*', message: 'broadcast' },
+      META
+    );
+    expect(broadcast.decision).toBe('deliver');
+    expect(hookStateRepo.get('run-1', 'slot_channel_hook')).toBeNull();
   });
 
   test('a worker slot reachable only via a REVERSE channel does not run the gate', async () => {

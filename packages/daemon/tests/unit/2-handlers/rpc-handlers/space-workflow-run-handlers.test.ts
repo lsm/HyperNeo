@@ -1402,18 +1402,17 @@ describe('space-workflow-run-handlers', () => {
       const patch = hookStateRepo.patches[0];
       expect(patch.localState?.__firstRetryAt).toBeUndefined();
       expect(patch.localState?.__retryCeilingTerminal).toBeUndefined();
-      // Per-key null clears — the repo's deep-merge deletes null-valued keys,
-      // and a MAP-WIDE null would also delete a send queued concurrently
-      // between the handler's read and its write (losing the new action's
-      // durable record while its in-memory timer lives on).
-      expect(patch.localState?.__queuedRetryableActions).toEqual({
-        'space.send_action-1': null,
-      });
+      // The queued records are NOT cleared by the patch: the triggered
+      // replay owns its own lifecycle (deliver clears by key, retry
+      // re-queues), and a key with no live in-memory timer must keep its
+      // durable record for a later successful rehydration.
+      expect(patch.localState?.__queuedRetryableActions).toBeUndefined();
       expect(patch.lastFlow).toBe('continue');
       expect(patch.retryCount).toBe(0);
       expect(result.hookState.localState.__retryCeilingTerminal).toBeUndefined();
+      // The seeded durable record survives the RPC (nothing cleared it).
       expect(result.hookState.localState.__queuedRetryableActions).toEqual({
-        'space.send_action-1': null,
+        'space.send_action-1': { actionKey: 'space.send_action-1' },
       });
     });
   });
