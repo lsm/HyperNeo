@@ -739,6 +739,100 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(deliveredOutcome.blockingHookId).toBe('order_hook');
   });
 
+  test('@role coverage: authorized node gates, unauthorized suppressed, per-node scoping, cross-product slots', async () => {
+    const STOP_HOOK = scriptHook('role_hook', '{"flow":"stop","reason":"blocked"}');
+    const build = (channels: SpaceWorkflow['channels']) =>
+      makeWorkflow({
+        customHooks: [STOP_HOOK],
+        channels,
+        hookBindings: [
+          {
+            hookId: 'role_hook',
+            sourceNode: 'Coding',
+            targetNode: 'Review',
+            method: 'send_message',
+            order: 0,
+            enabled: true,
+            authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+          },
+        ],
+      });
+
+    // 1. Node-level channel: the role send is authorized — gate runs.
+    const authorized = makeEngine(build([{ from: 'Coding', to: 'Review', label: 'c' }]));
+    const okOutcome = await authorized.executeAction(
+      'send_message',
+      { target: '@role:Review', message: 'role' },
+      META
+    );
+    expect(okOutcome.decision).toBe('stop');
+    expect(okOutcome.blockingHookId).toBe('role_hook');
+
+    // 2. No channel to Review: unauthorized — gate suppressed.
+    const unauthorized = makeEngine(build([{ from: 'Coding', to: 'Other', label: 'c' }]));
+    const noOutcome = await unauthorized.executeAction(
+      'send_message',
+      { target: '@role:Review', message: 'role' },
+      META
+    );
+    expect(noOutcome.decision).toBe('deliver');
+    expect(noOutcome.executionLog.length).toBe(0);
+
+    // 3. Cross-product slot case: channel authored to the SLOT
+    // ('Coding → reviewer') authorizes the role send via
+    // canSendToWorkerTarget's cross-product.
+    const slotChan = makeEngine(build([{ from: 'Coding', to: 'reviewer', label: 'c' }]));
+    const slotOutcome = await slotChan.executeAction(
+      'send_message',
+      { target: '@role:Review', message: 'role' },
+      META
+    );
+    expect(slotOutcome.decision).toBe('stop');
+    expect(slotOutcome.blockingHookId).toBe('role_hook');
+
+    // 4. Per-node scoping: a role resolving to TWO nodes where only one has
+    // an authorized worker — the unauthorized node's gate is suppressed
+    // individually, the authorized node's runs.
+    const multiWorkflow = makeWorkflow({
+      customHooks: [STOP_HOOK],
+      nodes: [
+        { id: 'n-coding', name: 'Coding', agents: [{ agentId: 'a1', name: 'coder' }] },
+        { id: 'n-review', name: 'Review', agents: [{ agentId: 'a2', name: 'reviewer' }] },
+        { id: 'n-other', name: 'Other', agents: [{ agentId: 'a2', name: 'reviewer' }] },
+      ],
+      channels: [{ from: 'Coding', to: 'Review', label: 'Coding → Review' }],
+      hookBindings: [
+        {
+          hookId: 'role_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+        {
+          hookId: 'role_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Other',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const multiEngine = makeEngine(multiWorkflow);
+    const multi = await multiEngine.executeAction(
+      'send_message',
+      { target: '@role:reviewer', message: 'shared role' },
+      META
+    );
+    // Review (authorized) gates; the send stops there.
+    expect(multi.decision).toBe('stop');
+    expect(multi.blockingHookId).toBe('role_hook');
+  });
+
   test('a duplicate failing worker does not suppress the earlier delivered node', async () => {
     // ['@worker:Review/good', '@worker:Review/bad'] with a channel to 'good'
     // only: the router delivers good BEFORE aborting at bad — Review received

@@ -9,7 +9,7 @@
  */
 
 import { BUILT_IN_HOOKS } from '@hyperneo/extensions-hooks';
-import { LEGACY_GUARD_HOOK_ID } from './runtime/workflow-hook-engine';
+import { LEGACY_GUARD_HOOK_ID } from './hook-reserved-ids';
 import type {
   CustomHook,
   HookDataFieldType,

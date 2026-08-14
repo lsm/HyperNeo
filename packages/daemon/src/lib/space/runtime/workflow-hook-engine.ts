@@ -2448,7 +2448,8 @@ export function createLegacyHookGuardEngine(
 }
 
 /** Synthetic hook id attributing legacy-cutover guard stops. */
-export const LEGACY_GUARD_HOOK_ID = '__legacy_hooks__';
+import { LEGACY_GUARD_HOOK_ID } from '../hook-reserved-ids';
+export { LEGACY_GUARD_HOOK_ID };
 
 /**
  * Wrap an MCP tool handler with the workflow hook engine. Runs the hook chain

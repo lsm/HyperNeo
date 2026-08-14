@@ -1352,6 +1352,20 @@ describe('space-workflow-run-handlers', () => {
       }
     });
 
+    it('rejects an approval when no hook state exists (no pre-arming)', async () => {
+      // No snapshot: the update would ensure() a version-0 row pre-armed with
+      // humanApproved — a client could approve before the hook ever ran.
+      setup({ hookState: null });
+      await expect(
+        call('spaceWorkflowRun.approveHook', {
+          runId: 'run-1',
+          hookId: 'pr_ready',
+          approved: true,
+        })
+      ).rejects.toThrow(/has not run yet/);
+      expect(hookStateRepo.patches).toHaveLength(0);
+    });
+
     it('an approval with the DISPLAYED version is version-guarded', async () => {
       // Stop A displayed (version 3); the same hook re-evaluated to stop B
       // (version 4) before the click. The lastFlow guard passes (both stop),

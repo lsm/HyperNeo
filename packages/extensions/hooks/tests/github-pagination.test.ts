@@ -93,18 +93,26 @@ describe('ghGetCodexApproval — pagination loop', () => {
     // head. Page 2 holds an OLDER APPROVED on the same head. The newest page
     // already decides (the early exit fires), and the accumulated verdict
     // must decline regardless of the older approval.
-    setGraphqlRunnerForTests(
-      pagedRunner([
-        codexPage([codexReview('CHANGES_REQUESTED', '2026-08-13T11:00:00Z')], {
-          hasNext: true,
-          cursor: 'cDFlbmQ',
-        }),
-        codexPage([codexReview('APPROVED', '2026-08-13T10:00:00Z')]),
-      ])
-    );
+    let calls = 0;
+    setGraphqlRunnerForTests(async (ctx: unknown, query: string) => {
+      calls += 1;
+      const page =
+        calls === 1
+          ? codexPage([codexReview('CHANGES_REQUESTED', '2026-08-13T11:00:00Z')], {
+              hasNext: true,
+              cursor: 'cDFlbmQ',
+            })
+          : codexPage([codexReview('APPROVED', '2026-08-13T10:00:00Z')]);
+      return { ok: true as const, data: page };
+    });
     const result = await ghGetCodexApproval(CTX, PR_LINK);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.data.approved).toBe(false);
+    // PIN the early exit: the decisive verdict on page 1 must stop the scan —
+    // fetching page 2 (plus a head recheck) means the exit did not fire.
+    // Page 1 + head recheck = 2 calls; the decisive early-exit path skips
+    // neither.
+    expect(calls).toBeLessThanOrEqual(2);
   });
 
   test('follows endCursor across pages', async () => {

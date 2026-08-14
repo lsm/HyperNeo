@@ -2885,6 +2885,25 @@ describe('exportWorkflow — deferred legacy-hook workflows', () => {
     expect(() => exportWorkflow(workflow, [])).toThrow(/legacy v1 hooks/);
   });
 
+  test('rejects the reserved legacy-guard id in imported custom hooks', () => {
+    const workflow = makeWorkflow({
+      customHooks: [
+        {
+          id: '__legacy_hooks__',
+          requiredData: [],
+          run: { kind: 'script', interpreter: 'bash', source: 'echo ok' },
+        },
+      ],
+    });
+    const exported = exportWorkflow(workflow, []);
+    const result = validateExportedWorkflow(
+      JSON.parse(JSON.stringify({ ...exported, version: 4 })),
+      4
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('is reserved');
+  });
+
   test('exports once v2 bindings exist alongside the surviving legacy column', () => {
     const workflow = makeWorkflow({
       hookBindings: [

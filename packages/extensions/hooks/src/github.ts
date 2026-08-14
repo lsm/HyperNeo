@@ -1113,7 +1113,7 @@ export async function ghGetCodexApproval(
     // Early exit: reading backward, the accumulated set always contains the
     // NEWEST reviews — as soon as a decisive head-bound codex verdict
     // appears, any not-yet-fetched review is OLDER and cannot supersede it.
-    if (page === 0 || decisiveHeadBoundFound === false) {
+    if (!decisiveHeadBoundFound) {
       const commitNodes0 = asRecord(prNode?.commits)?.nodes;
       const headOid0 =
         Array.isArray(commitNodes0) && commitNodes0.length > 0
@@ -1140,12 +1140,12 @@ export async function ghGetCodexApproval(
     );
     const pageInfo = asRecord(reviewsConnection?.pageInfo);
     if (pageInfo?.hasPreviousPage !== true || decisiveHeadBoundFound) {
-      // Definitive end of the review history — evaluate the merged document.
-      // A decisive head-bound codex review is AUTHORITATIVE: evaluate it
-      // BEFORE the reaction back-walk — the walk's caps and fail-closed
-      // errors cannot change this verdict and must not block a proven
-      // approval. Only when NO decisive review exists does the reaction
-      // window need scanning.
+      // History exhausted OR a decisive verdict already accumulated —
+      // evaluate the merged document. A decisive head-bound codex review is
+      // AUTHORITATIVE: evaluate it BEFORE the reaction back-walk — the walk's
+      // caps and fail-closed errors cannot change this verdict and must not
+      // block a proven approval. Only when NO decisive review exists does the
+      // reaction window need scanning.
       const evaluateMerged = (reactionNodes: unknown[]) =>
         extractCodexApproval(
           {
@@ -1423,7 +1423,6 @@ export async function ghGetCodexApproval(
   if (boundaryApproval.failClosedReason) {
     return { ok: false, retryable: true, error: boundaryApproval.failClosedReason };
   }
-  if (!boundaryApproval.approved) return { ok: true, data: boundaryApproval };
   // Route an APPROVED boundary result through the same deadline-guarded head
   // recheck as the normal path: a commit pushed after the last pagination
   // response must not deliver on the previous head.
