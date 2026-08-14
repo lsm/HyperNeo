@@ -515,26 +515,28 @@ const AFFIRMATIVE_OUTCOME_RE =
 /**
  * Prefixes that make an outcome keyword a negated or still-pending mention
  * rather than an affirmative one — "CI has not run yet", "waiting for tests
- * to pass", "build still pending", "no meaningful failures".
+ * to pass", "build still pending", "no meaningful failures". The prefix must
+ * sit within the same clause: commas, semicolons, colons, and line breaks
+ * end it, so "No errors; tests passed" still counts "passed" as affirmative.
  */
 const NON_AFFIRMATIVE_PREFIX_RE =
-  /\b(?:not|never|no|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|without|yet|still|pending|waiting|queued|incomplete|unfinished)\b[^.!?]{0,32}$/i;
+  /\b(?:not|never|no|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|without|yet|still|pending|waiting|queued|incomplete|unfinished)\b[^.!?;:,\n]{0,32}$/i;
 
 /**
  * Whether the selection carries an affirmative outcome signal (see
- * {@link AFFIRMATIVE_OUTCOME_RE}) in any row's summary or metadata. The gate
- * uses this instead of the preflight's `counts.outcomes`, which over-counts
- * bare outcome keywords in negated or pending phrases.
+ * {@link AFFIRMATIVE_OUTCOME_RE}). Only a row's summary and its string-valued
+ * metadata fields are scanned — serializing whole metadata objects would leak
+ * key names and structure (`{"passed": false}` must not count as "passed").
+ * The gate uses this instead of the preflight's `counts.outcomes`, which
+ * over-counts bare outcome keywords in negated or pending phrases.
  */
 function hasAffirmativeOutcome(evidence: EvidenceRef[]): boolean {
   return evidence.some((item) => {
-    let metadataText = '';
-    try {
-      metadataText = JSON.stringify(item.metadata ?? {});
-    } catch {
-      metadataText = '';
+    const texts = [item.summary ?? ''];
+    for (const value of Object.values(item.metadata ?? {})) {
+      if (typeof value === 'string' && value.trim()) texts.push(value);
     }
-    return [item.summary ?? '', metadataText].some(hasAffirmativeOutcomeText);
+    return texts.some(hasAffirmativeOutcomeText);
   });
 }
 

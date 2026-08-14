@@ -2927,7 +2927,8 @@ describe('handleGoalAutomationExecute', () => {
       scopeId: scope.id,
       kind: 'manual_note',
       sourceId: null,
-      summary: 'PR #42 merged, CI green',
+      // Cross-clause: the earlier "No errors" must not suppress "passed".
+      summary: 'No errors; tests passed',
       createdAt: 30,
     });
 
@@ -3035,6 +3036,71 @@ describe('handleGoalAutomationExecute', () => {
                 workflowArtifacts: 0,
                 metricSnapshots: 0,
                 outcomes: 3,
+              },
+            }),
+        },
+      }
+    );
+
+    expect(result).toMatchObject({ skipped: true, skipReason: 'low_evidence_noop' });
+    expect(episodeCreated).toBe(false);
+    expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(0);
+  });
+
+  it('skips a manual note whose metadata only has non-affirmative key names', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Metadata keys', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Metadata keys',
+      objective: 'Metadata whose keys are outcome words but values are absent',
+      policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'manual_note',
+      sourceId: null,
+      summary: 'Waiting on the pipeline',
+      // Key names are outcome words, but the values are explicitly absent —
+      // serializing the whole object must not make them affirmative.
+      metadata: { passed: false, error: null, status: 'pending' },
+      createdAt: 30,
+    });
+    let episodeCreated = false;
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'self_nag',
+        triggerKey: 'schedule-metadata-keys',
+        reason: 'self_nag',
+        scheduleId: 'schedule-metadata-keys',
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        goalEventRepo: new SpaceGoalEventRepository(db as never),
+        episodeService: {
+          createFromEvidence: async () => {
+            episodeCreated = true;
+            throw new Error('should not create episode from metadata key names alone');
+          },
+          preflightEvidence: () =>
+            makePreflight({
+              level: 'low',
+              score: 0,
+              requiresConfirmation: true,
+              counts: {
+                total: 1,
+                manualNotes: 1,
+                taskResults: 0,
+                workflowArtifacts: 0,
+                metricSnapshots: 0,
+                outcomes: 0,
               },
             }),
         },
