@@ -29,28 +29,32 @@ export function useVoiceRecorder(sessionId: string) {
   const ownerId = ownerIdRef.current;
   const owns = () => voiceRecorderStore.recordingOwnerId.value === ownerId;
 
-  // Adopt on mount AND whenever ownership frees up while this composer is
-  // bound to the recording's session: if a recording for THIS session was
-  // orphaned (its owner unmounted mid-recording), this composer takes it
-  // over. adopt() refuses recordings that still have a live owner, so a
-  // concurrently-mounted composer is never disturbed.
-  useSignalEffect(() => {
-    // Subscribe to ownership changes; adopt only when there is no owner.
-    void voiceRecorderStore.recordingOwnerId.value;
-    voiceRecorderStore.adopt(ownerId, sessionId);
-  });
-
-  // A composer re-targeted to a DIFFERENT session relinquishes ownership of
-  // the recording it hold for its old session (orphaning it for the next
-  // composer of that session) instead of delivering the old session's audio
-  // through the new session's send path.
-  const prevSessionIdRef = useRef(sessionId);
-  useSignalEffect(() => {
-    void voiceRecorderStore.recordingSessionId.value;
-    if (prevSessionIdRef.current !== sessionId) {
-      prevSessionIdRef.current = sessionId;
+  // Session changes (mount + retarget) drive both the retarget guard and
+  // adoption; ownership transitions re-trigger adoption so a recording freed
+  // by its owner's unmount is picked up by an already-mounted same-session
+  // composer. Plain-prop reads don't rerun a signal effect, so this is a
+  // useEffect keyed to sessionId plus the ownership signal subscription below.
+  const prevSessionIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (prevSessionIdRef.current !== null && prevSessionIdRef.current !== sessionId) {
+      // Retargeted to a DIFFERENT session: relinquish ownership of the
+      // recording held for the old session (orphaning it for that session's
+      // next composer) instead of delivering the old session's audio through
+      // the new session's send path.
       voiceRecorderStore.orphan(ownerId);
     }
+    prevSessionIdRef.current = sessionId;
+    // Adopt: a recording for THIS session with no live owner becomes ours.
+    // adopt() refuses owned recordings, so concurrently-mounted composers are
+    // never disturbed.
+    voiceRecorderStore.adopt(ownerId, sessionId);
+  }, [ownerId, sessionId]);
+
+  // Re-attempt adoption whenever ownership frees up (the ownerId signal
+  // transitions to orphaned while this composer stays bound to its session).
+  useSignalEffect(() => {
+    void voiceRecorderStore.recordingOwnerId.value;
+    voiceRecorderStore.adopt(ownerId, sessionId);
   });
 
   // Reading these signals during render subscribes through @preact/signals —
