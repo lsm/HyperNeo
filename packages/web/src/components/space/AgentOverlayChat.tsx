@@ -13,9 +13,12 @@ import { useEffect, useRef } from 'preact/hooks';
 import type { MessageDeliveryMode, MessageImage } from '@hyperneo/shared';
 import { Portal } from '../ui/Portal';
 import { setupFocusTrap } from '../ui/Modal';
+import { VoiceRecordingIndicator } from '../voice/VoiceRecordingIndicator.tsx';
+import { VoiceSurfaceContext } from '../../hooks/useVoiceRecorder';
 import ChatContainer from '../../islands/ChatContainer';
 import { SessionStore } from '../../lib/session-store';
 import type { SpaceOverlayTaskContext } from '../../lib/signals';
+import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
 import { cn } from '../../lib/utils';
 
@@ -207,50 +210,70 @@ export function AgentOverlayChat({
     };
   }, [onClose]);
 
+  // Voice surface identity for composers mounted inside this overlay: the
+  // overlay is its own surface (the base composer for the SAME session can
+  // still own a recording underneath it), nested in the same Space. A
+  // task-context overlay (workflow node agent) scopes recordings to the task
+  // so Return reopens the task thread's task-messaging composer.
+  const voiceSurfaceSpaceId = currentSpaceCanonicalIdSignal.value ?? currentSpaceIdSignal.value;
+
   return (
     <Portal into="body">
-      {/* Full-screen wrapper — backdrop on the left, panel on the right */}
-      <div
-        class="fixed inset-0 z-50 flex justify-end"
-        data-testid="agent-overlay-chat"
-        aria-modal="true"
-        role="dialog"
-        aria-label={agentName ? `${agentName} chat` : 'Agent chat'}
+      <VoiceSurfaceContext.Provider
+        value={{
+          surfaceId: 'agent-overlay',
+          spaceId: voiceSurfaceSpaceId,
+          taskId: taskContext?.taskId ?? null,
+        }}
       >
-        {/* Translucent backdrop — click to dismiss */}
+        {/* Full-screen wrapper — backdrop on the left, panel on the right */}
         <div
-          class="absolute inset-0 bg-black/40 backdrop-blur-[1px] cursor-pointer"
-          onClick={onClose}
-          aria-hidden="true"
-        />
-
-        {/* Slide-over panel */}
-        <div
-          ref={panelRef}
-          class={cn(
-            'relative flex flex-col h-full w-full max-w-2xl bg-dark-900 shadow-2xl',
-            'border-l border-dark-700',
-            'animate-slideInRight'
-          )}
+          class="fixed inset-0 z-50 flex justify-end"
+          data-testid="agent-overlay-chat"
+          aria-modal="true"
+          role="dialog"
+          aria-label={agentName ? `${agentName} chat` : 'Agent chat'}
         >
-          {/* Chat content — ChatHeader owns the single header; back button replaces the mobile-menu toggle */}
-          <div class="flex-1 min-h-0 overflow-hidden flex flex-col">
-            <ChatContainer
-              key={sessionId ?? `pending:${pendingAgent?.taskId}:${pendingAgent?.agentName}`}
-              sessionId={sessionId ?? ''}
-              onBack={onClose}
-              highlightMessageId={highlightMessageId}
-              pendingAgent={pendingAgent ?? null}
-              onSendOverride={handleTaskContextSend}
-              store={storeRef.current ?? undefined}
-              // Read-only only when the terminal-worker path explicitly marks
-              // the overlay as history — contextless overlays opened from the
-              // feed (Task Agent / Space Agent) stay writable via message.send.
-              readonly={(taskContext?.readonly ?? false) && !pendingAgent}
-            />
+          {/* Translucent backdrop — click to dismiss */}
+          <div
+            class="absolute inset-0 bg-black/40 backdrop-blur-[1px] cursor-pointer"
+            onClick={onClose}
+            aria-hidden="true"
+          />
+
+          {/* Slide-over panel */}
+          <div
+            ref={panelRef}
+            class={cn(
+              'relative flex flex-col h-full w-full max-w-2xl bg-dark-900 shadow-2xl',
+              'border-l border-dark-700',
+              'animate-slideInRight'
+            )}
+          >
+            {/* Chat content — ChatHeader owns the single header; back button replaces the mobile-menu toggle */}
+            <div class="flex-1 min-h-0 overflow-hidden flex flex-col">
+              <ChatContainer
+                key={sessionId ?? `pending:${pendingAgent?.taskId}:${pendingAgent?.agentName}`}
+                sessionId={sessionId ?? ''}
+                onBack={onClose}
+                highlightMessageId={highlightMessageId}
+                pendingAgent={pendingAgent ?? null}
+                onSendOverride={handleTaskContextSend}
+                store={storeRef.current ?? undefined}
+                // Read-only only when the terminal-worker path explicitly marks
+                // the overlay as history — contextless overlays opened from the
+                // feed (Task Agent / Space Agent) stay writable via message.send.
+                readonly={(taskContext?.readonly ?? false) && !pendingAgent}
+              />
+            </div>
+
+            {/* Global recording-elsewhere chip INSIDE the trapped panel:
+                setupFocusTrap cycles only this panel's descendants, so the
+                chip must live here for keyboard users to reach it. */}
+            <VoiceRecordingIndicator inOverlay />
           </div>
         </div>
-      </div>
+      </VoiceSurfaceContext.Provider>
     </Portal>
   );
 }
