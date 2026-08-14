@@ -364,10 +364,37 @@ export class WorkflowHookEngine {
     return out;
   }
 
+  /** Raw per-action-key queued map for a hook (test/merge-site helper). */
+  getQueuedRetryableActionsMap(hookId: string): Record<string, unknown> | undefined {
+    const state = this.config.hookStateRepo.get(this.config.workflowRunId, hookId)?.localState;
+    const raw = state?.[QUEUED_RETRYABLE_ACTION_STATE_KEY];
+    return raw && typeof raw === 'object' && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : undefined;
+  }
+
+  getHookIdsWithQueuedAction(actionKey: string): string[] {
+    return (this.config.workflow.hookBindings ?? [])
+      .map((b) => b.hookId)
+      .filter((hookId) => this.hookHasQueuedAction(hookId, actionKey));
+  }
+
+  /** True when ANY of the hook's queued entries (not just the newest) matches. */
+  private hookHasQueuedAction(hookId: string, actionKey: string): boolean {
+    const state = this.config.hookStateRepo.get(this.config.workflowRunId, hookId)?.localState;
+    const map = state?.[QUEUED_RETRYABLE_ACTION_STATE_KEY];
+    if (!map || typeof map !== 'object' || Array.isArray(map)) return false;
+    for (const value of Object.values(map as Record<string, unknown>)) {
+      if (isQueuedRetryableHookAction(value) && value.actionKey === actionKey) return true;
+    }
+    return false;
+  }
+
   /**
-   * Clear the persisted queued actions matching an action key. Returns true
-   * when every clear landed; false means at least one durable replay record
-   * survived (the deliver path fails closed on it).
+   * Clear the persisted queued actions matching an action key across every
+   * binding's hook. Returns true when every clear landed; false means at
+   * least one durable replay record survived (the deliver/stop paths fail or
+   * stay armed on it).
    */
   clearQueuedRetryableActionsForKey(actionKey: string): boolean {
     let allCleared = true;
@@ -383,44 +410,6 @@ export class WorkflowHookEngine {
       }
     }
     return allCleared;
-  }
-
-  clearQueuedRetryableActionsForOwner(hookIds: Iterable<string>, meta: HookActionMeta): string[] {
-    const clearedActionKeys: string[] = [];
-    for (const hookId of hookIds) {
-      for (const queued of this.getQueuedRetryableActions().filter(
-        (entry) => entry.hookId === hookId && sameRetryableActionOwner(entry.meta, meta)
-      )) {
-        if (!this.clearQueuedRetryableAction(hookId, queued.actionKey)) {
-          // Do NOT report the key as cleared: the caller cancels the in-memory
-          // timer per returned key, and a persistently-queued action that was
-          // reported cleared would replay after a restart with no timer left
-          // to deduplicate it.
-          log.warn(
-            `Failed to clear queued retryable action for hook "${hookId}"; ` +
-              'it may replay after a restart.'
-          );
-          continue;
-        }
-        clearedActionKeys.push(queued.actionKey);
-      }
-    }
-    return clearedActionKeys;
-  }
-
-  /** Raw per-action-key queued map for a hook (test/merge-site helper). */
-  getQueuedRetryableActionsMap(hookId: string): Record<string, unknown> | undefined {
-    const state = this.config.hookStateRepo.get(this.config.workflowRunId, hookId)?.localState;
-    const raw = state?.[QUEUED_RETRYABLE_ACTION_STATE_KEY];
-    return raw && typeof raw === 'object' && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : undefined;
-  }
-
-  getHookIdsWithQueuedAction(actionKey: string): string[] {
-    return (this.config.workflow.hookBindings ?? [])
-      .map((b) => b.hookId)
-      .filter((hookId) => this.getQueuedRetryableAction(hookId)?.actionKey === actionKey);
   }
 
   /**
@@ -1050,6 +1039,28 @@ export class WorkflowHookEngine {
     const isRoutableTarget = (targetNode: string): boolean =>
       nodeNames.has(targetNode) &&
       (resolver.canSend(fromNode, targetNode) || resolver.canSend(meta.agentName, targetNode));
+    // The router ALSO accepts a send addressed to a worker on an AGENT SLOT
+    // the channel names (e.g. channel 'Coding → reviewer', send
+    // '@worker:Review/reviewer') via resolver.canSend(fromNode, agentName).
+    // Mirror that fallback so a slot-addressed route is not misread as
+    // non-routable — suppressing its gate while the router delivers.
+    const workerAgentOf = (rawTarget: string): string | undefined => {
+      if (!rawTarget.startsWith('@worker:')) return undefined;
+      try {
+        const addr = parseAddress(rawTarget);
+        return addr.kind === 'worker' ? addr.agentName : undefined;
+      } catch {
+        return undefined;
+      }
+    };
+    const isRoutableWorkerOnSlot = (
+      workerAgentName: string | undefined,
+      targetNode: string
+    ): boolean =>
+      nodeNames.has(targetNode) &&
+      !!workerAgentName &&
+      (resolver.canSend(fromNode, workerAgentName) ||
+        resolver.canSend(workerAgentName, targetNode));
     const isBuiltInInterLevelTarget = (targetValue: string): boolean =>
       targetValue.trim() === 'space-agent';
 
@@ -1091,9 +1102,13 @@ export class WorkflowHookEngine {
           // a generic address resolving to no node adds no targets and must
           // not suppress the gate (the router delivers it separately).
           for (const resolved of resolvedTargets) {
+            const workerSlotOk =
+              target.startsWith('@worker:') &&
+              isRoutableWorkerOnSlot(workerAgentOf(target), resolved);
             if (
               nodeNames.has(resolved) &&
               !isBuiltInInterLevelTarget(target) &&
+              !workerSlotOk &&
               !isRoutableTarget(resolved)
             ) {
               nonRoutableResolvedNodes.add(resolved);
@@ -1146,9 +1161,12 @@ export class WorkflowHookEngine {
             // must not suppress the gate on the node-addressed part of a
             // mixed multicast.
             for (const resolved of resolvedTargets) {
+              const slotOk =
+                t.startsWith('@worker:') && isRoutableWorkerOnSlot(workerAgentOf(t), resolved);
               if (
                 nodeNames.has(resolved) &&
                 !isBuiltInInterLevelTarget(t) &&
+                !slotOk &&
                 !isRoutableTarget(resolved)
               ) {
                 // Per-target suppression: a non-routable resolution
@@ -2107,16 +2125,10 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
       entry.localState = { ...entry.localState, ...update.state };
     }
 
-    // stop — clear queued retries for this action/owner.
+    // stop — clear THIS action's queued retry only (per-action scope, matching
+    // the deliver path): a terminal decision for one send must not tombstone a
+    // sibling send from the same source merely sharing the hook's cooldown.
     if (outcome.decision === 'stop') {
-      if (outcome.blockingHookId) {
-        for (const queuedActionKey of engine.clearQueuedRetryableActionsForOwner(
-          [outcome.blockingHookId],
-          meta
-        )) {
-          clearRetryableHookActionTimer(queuedActionKey);
-        }
-      }
       // If this action's durable replay record survived the clear, KEEP the
       // in-memory timer: it is the only thing preventing the rehydrated
       // record from replaying an action already reported terminally blocked.

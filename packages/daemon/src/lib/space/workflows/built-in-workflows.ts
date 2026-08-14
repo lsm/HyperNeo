@@ -2007,10 +2007,17 @@ function mergeHookBindingsFromTemplate(
       )
       .map(hookBindingKey)
   );
+  // Template-owned hook ids: validation enforces one placement per hook id, so
+  // a user-customized binding with a TEMPLATE hook id must be REPLACED by the
+  // canonical entry — retaining both (route-based keys differ) would fail
+  // validateWorkflowHookBindings on every restamp, wedging template updates.
+  const templateHookIds = new Set(remapped.map((binding) => binding.hookId));
   return [
     ...existingBindings.filter(
       (binding) =>
-        !templateKeys.has(hookBindingKey(binding)) && !equivalentKeys.has(hookBindingKey(binding))
+        !templateKeys.has(hookBindingKey(binding)) &&
+        !equivalentKeys.has(hookBindingKey(binding)) &&
+        !templateHookIds.has(binding.hookId)
     ),
     ...remapped,
   ];

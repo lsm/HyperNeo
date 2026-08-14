@@ -336,7 +336,27 @@ export async function fetchPrView(
   } catch {
     return { ok: false, retryable: false, error: 'gh pr view returned non-JSON output' };
   }
-  return { ok: true, data: parsePrView(parsed) };
+  // Structural validation: a successful exit with a malformed envelope must
+  // NOT fabricate CLOSED/UNKNOWN fields — pr_ready/pr_merged would surface an
+  // override-eligible policy stop off invented state. Treat it as a terminal
+  // infrastructure failure instead.
+  const view = parsePrView(parsed);
+  const stateOk = view.state === 'OPEN' || view.state === 'CLOSED' || view.state === 'MERGED';
+  const mergeableOk =
+    view.mergeable === 'MERGEABLE' ||
+    view.mergeable === 'CONFLICTING' ||
+    view.mergeable === 'UNKNOWN';
+  const raw = asRecord(parsed);
+  if (!stateOk || !mergeableOk || typeof raw?.state !== 'string') {
+    return {
+      ok: false,
+      retryable: false,
+      error:
+        GH_INFRA_ERROR_PREFIX +
+        'gh pr view returned a structurally invalid response (missing/unknown state fields)',
+    };
+  }
+  return { ok: true, data: view };
 }
 
 export function parsePrView(value: unknown): GithubPrView {
