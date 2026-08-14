@@ -12,7 +12,9 @@ export default defineConfig({
     // Match the daemon shard behaviour (historical `bun test --jobs=1`):
     // several suites rely on module-level state and are not file-parallel-safe.
     fileParallelism: false,
-    include: ['tests/**/*.test.ts'],
+    // Match both `.test.ts` and `_test.ts` (the daemon shard does the same) so
+    // the universal coverage guard's both-suffix model holds for shared too.
+    include: ['tests/**/*.test.ts', 'tests/**/*_test.ts'],
     exclude: ['node_modules', 'dist'],
   },
   resolve: {

@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'bun:test';
+import { spawnSync } from 'child_process';
 import net from 'net';
 import path from 'path';
 import fs from 'fs';
@@ -41,9 +42,8 @@ async function closeTcpServer(server: net.Server): Promise<void> {
 // Check if devproxy is available
 async function isDevProxyInstalled(): Promise<boolean> {
   try {
-    const proc = Bun.spawn(['which', 'devproxy'], { stdout: 'pipe' });
-    const exitCode = await proc.exited;
-    return exitCode === 0;
+    const result = spawnSync('which', ['devproxy'], { stdio: 'pipe' });
+    return result.status === 0;
   } catch {
     return false;
   }
@@ -55,11 +55,13 @@ async function isDevProxyInstalled(): Promise<boolean> {
  * it is already running, tests that need to start a fresh instance must skip.
  */
 async function isDevProxyAlreadyRunning(): Promise<boolean> {
-  return new Promise((resolve) => {
+  try {
     // pgrep -x matches the exact process name (macOS / Linux)
-    const proc = Bun.spawn(['pgrep', '-x', 'devproxy'], { stdout: 'ignore', stderr: 'ignore' });
-    proc.exited.then((code) => resolve(code === 0)).catch(() => resolve(false));
-  });
+    const result = spawnSync('pgrep', ['-x', 'devproxy'], { stdio: 'ignore' });
+    return result.status === 0;
+  } catch {
+    return false;
+  }
 }
 
 const DEV_PROXY_INSTALLED = await isDevProxyInstalled();
@@ -102,7 +104,20 @@ describe('Dev Proxy Helper', () => {
     // Skip when devproxy is not installed or when an instance is already running.
     // devproxy enforces a single-instance constraint so a second start attempt
     // on any port will fail when the binary is already in use.
-    const itif = DEV_PROXY_FREE_TO_START ? it : it.skip;
+    // Conditional runner: execute when a fresh devproxy can start, skip
+    // otherwise. A bare ternary (`it : it.skip`) breaks under Vitest 4: the
+    // bun:test shim only reorders (name, fn, {timeout}) -> (name, {timeout}, fn)
+    // when args[1] is a function and args[2] is an object, so `it.skip(name, fn,
+    // {timeout})` throws whenever devproxy is absent (CI). Call the Vitest 4 form
+    // (name, fn, timeout) directly — a number in the 3rd slot, which the shim
+    // passes through untouched and Vitest parses as the per-test timeout.
+    const itif = (name: string, fn: () => Promise<unknown>, opts?: { timeout?: number }): void => {
+      if (DEV_PROXY_FREE_TO_START) {
+        it(name, fn, opts?.timeout);
+      } else {
+        it.skip(name, fn);
+      }
+    };
 
     itif(
       'should start and stop proxy',
@@ -202,7 +217,20 @@ describe('Dev Proxy Helper', () => {
   });
 
   describe('Global Dev Proxy', () => {
-    const itif = DEV_PROXY_FREE_TO_START ? it : it.skip;
+    // Conditional runner: execute when a fresh devproxy can start, skip
+    // otherwise. A bare ternary (`it : it.skip`) breaks under Vitest 4: the
+    // bun:test shim only reorders (name, fn, {timeout}) -> (name, {timeout}, fn)
+    // when args[1] is a function and args[2] is an object, so `it.skip(name, fn,
+    // {timeout})` throws whenever devproxy is absent (CI). Call the Vitest 4 form
+    // (name, fn, timeout) directly — a number in the 3rd slot, which the shim
+    // passes through untouched and Vitest parses as the per-test timeout.
+    const itif = (name: string, fn: () => Promise<unknown>, opts?: { timeout?: number }): void => {
+      if (DEV_PROXY_FREE_TO_START) {
+        it(name, fn, opts?.timeout);
+      } else {
+        it.skip(name, fn);
+      }
+    };
 
     afterEach(async () => {
       await stopGlobalDevProxy();
