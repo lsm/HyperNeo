@@ -17,6 +17,7 @@ const routerState = vi.hoisted(() => ({
   currentSessionId: 'session-current',
   spaceSessionId: null,
   spaceId: null,
+  overlaySessionId: null,
   navigatedTo: null,
   navigatedSpace: null,
 }));
@@ -36,6 +37,11 @@ vi.mock('../../../lib/signals.ts', () => ({
   currentSpaceIdSignal: {
     get value() {
       return routerState.spaceId;
+    },
+  },
+  spaceOverlaySessionIdSignal: {
+    get value() {
+      return routerState.overlaySessionId;
     },
   },
 }));
@@ -59,6 +65,7 @@ describe('VoiceRecordingIndicator', () => {
     routerState.currentSessionId = 'session-current';
     routerState.spaceSessionId = null;
     routerState.spaceId = null;
+    routerState.overlaySessionId = null;
     routerState.navigatedTo = null;
     routerState.navigatedSpace = null;
   });
@@ -113,6 +120,42 @@ describe('VoiceRecordingIndicator', () => {
     voiceRecorderStore.recordingSessionId.value = 'space-session-2';
     routerState.currentSessionId = null;
     routerState.spaceSessionId = 'space-session-1';
+    routerState.spaceId = 'space-9';
+    render(<VoiceRecordingIndicator />);
+    fireEvent.click(screen.getByTestId('voice-recording-elsewhere'));
+    expect(navigateToSpaceSession).toHaveBeenCalledWith('space-9', 'space-session-2');
+    expect(navigateToSession).not.toHaveBeenCalled();
+  });
+
+  it('shows the chip when an overlay covers the recording base session', () => {
+    voiceRecorderStore.isRecording.value = true;
+    voiceRecorderStore.recordingSessionId.value = 'space-session-1';
+    routerState.currentSessionId = null;
+    routerState.spaceSessionId = 'space-session-1';
+    routerState.spaceId = 'space-9';
+    routerState.overlaySessionId = 'overlay-session-7';
+    render(<VoiceRecordingIndicator />);
+    // The overlay displays a DIFFERENT session — the base recording is
+    // elsewhere and the chip must offer a return.
+    expect(screen.getByTestId('voice-recording-elsewhere')).toBeTruthy();
+  });
+
+  it('hides the chip for a recording made in the open overlay session', () => {
+    voiceRecorderStore.isRecording.value = true;
+    voiceRecorderStore.recordingSessionId.value = 'overlay-session-7';
+    routerState.currentSessionId = null;
+    routerState.spaceSessionId = 'space-session-1';
+    routerState.spaceId = 'space-9';
+    routerState.overlaySessionId = 'overlay-session-7';
+    const { container } = render(<VoiceRecordingIndicator />);
+    expect(container.querySelector('[data-testid="voice-recording-elsewhere"]')).toBeNull();
+  });
+
+  it('routes through the Space surface when only spaceId remains (overview/task pages)', () => {
+    voiceRecorderStore.isRecording.value = true;
+    voiceRecorderStore.recordingSessionId.value = 'space-session-2';
+    routerState.currentSessionId = null;
+    routerState.spaceSessionId = null; // cleared on overview/task pages
     routerState.spaceId = 'space-9';
     render(<VoiceRecordingIndicator />);
     fireEvent.click(screen.getByTestId('voice-recording-elsewhere'));

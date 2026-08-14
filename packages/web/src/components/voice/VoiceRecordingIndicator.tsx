@@ -12,10 +12,13 @@
  * one currently displayed. The displayed session accounts for BOTH routing
  * surfaces: the primary chat (`currentSessionIdSignal`) and Space session
  * views (`currentSpaceSessionIdSignal` + its owning space), and the return
- * navigation targets whichever surface is active. The chip sits at z-50 so it
- * stays clickable above the full-screen agent overlay (z-50 portal) — an
- * overlay hiding the base session's recording is precisely an "elsewhere"
- * case the chip must remain usable for.
+ * navigation targets whichever surface is active (any open Space surface
+ * keeps spaceId populated — overview, task, goals, sessions pages alike). The
+ * chip sits at z-[60], above the z-50 agent overlay portal: equal-z portals
+ * append to document.body after the app root and paint later, so an equal z
+ * would leave the overlay intercepting clicks — and an overlay hiding the
+ * base session's recording is precisely an "elsewhere" case the chip must
+ * stay usable for.
  */
 
 import { voiceRecorderStore } from '../../lib/voice/voice-recorder-store.ts';
@@ -23,6 +26,7 @@ import {
   currentSessionIdSignal,
   currentSpaceIdSignal,
   currentSpaceSessionIdSignal,
+  spaceOverlaySessionIdSignal,
 } from '../../lib/signals.ts';
 import { navigateToSession, navigateToSpaceSession } from '../../lib/router.ts';
 
@@ -36,7 +40,10 @@ export function VoiceRecordingIndicator() {
   const primarySessionId = currentSessionIdSignal.value;
   const spaceSessionId = currentSpaceSessionIdSignal.value;
   const spaceId = currentSpaceIdSignal.value;
-  const displayedSessionId = spaceSessionId ?? primarySessionId;
+  // An open agent overlay displays ITS session: the base Space session signal
+  // still holds the underlying session, but the overlay is what the user sees.
+  const overlaySessionId = spaceOverlaySessionIdSignal.value;
+  const displayedSessionId = overlaySessionId ?? spaceSessionId ?? primarySessionId;
 
   // Show only for a live recording belonging to some OTHER session (or with
   // no session displayed at all).
@@ -49,9 +56,10 @@ export function VoiceRecordingIndicator() {
   }
 
   const returnToRecording = () => {
-    // Route through whichever surface is displayed — jumping out of an open
-    // Space to the generic chat view (or vice versa) would be jarring.
-    if (spaceSessionId !== null && spaceId !== null) {
+    // Stay within any open Space SURFACE (overview/task/session pages all keep
+    // spaceId populated even when the session signal is cleared) — routing to
+    // the generic chat view would exit the Space entirely.
+    if (spaceId !== null) {
       navigateToSpaceSession(spaceId, recordingSessionId);
     } else {
       navigateToSession(recordingSessionId);
@@ -62,7 +70,7 @@ export function VoiceRecordingIndicator() {
     <button
       type="button"
       onClick={returnToRecording}
-      class="fixed bottom-20 right-4 sm:bottom-6 sm:right-6 z-50 flex items-center gap-2 rounded-full
+      class="fixed bottom-20 right-4 sm:bottom-6 sm:right-6 z-[60] flex items-center gap-2 rounded-full
         bg-gray-900/90 backdrop-blur border border-red-500/40 pl-3 pr-4 py-2 shadow-lg
         text-sm text-gray-100 hover:bg-gray-800/90 transition-colors"
       aria-label="Voice recording in progress in another session — click to return"
