@@ -279,8 +279,16 @@ export default function MessageInput({
     handlePaste,
   } = useFileAttachments();
   const { handleInterrupt } = useInterrupt({ sessionId });
-  const voiceRecorder = useVoiceRecorder(sessionId);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  // A completed transcription is waiting for its auto-send effect to fire.
+  const [hasPendingAutoSend, setHasPendingAutoSend] = useState(false);
+  // Mid-transcription OR with a pending auto-send, do NOT auto-adopt an
+  // orphaned same-session recording: the in-flight request's error path could
+  // cancel an adopted capture, and adoption re-enables the recording guard
+  // that would swallow the pending auto-send of the user's original action.
+  const voiceRecorder = useVoiceRecorder(sessionId, {
+    autoAdopt: !isTranscribing && !hasPendingAutoSend,
+  });
   const voiceSettings = globalSettings.value?.voice;
   const voiceEnabled = voiceSettings?.enabled ?? false;
   const voiceConfigured = (() => {
@@ -378,6 +386,19 @@ export default function MessageInput({
     agentMentionQuery !== null && filteredAgentMentionCandidates.length > 0;
 
   // Wrap setContent to detect @-mentions
+  // Continuous caret/selection tracking: the textarea's `select` event fires
+  // for every caret move (arrow keys, mouse clicks, drags), keeping the cursor
+  // refs current even for changes that never emit an input event. Voice
+  // delivery relies on these refs whenever the textarea is (or is about to be)
+  // gone — recording, mid-transcription unmount, or an ADOPTED recording whose
+  // startRecording() snapshot never ran in this composer.
+  const handleSelect = useCallback(() => {
+    const textarea = textareaInputRef.current;
+    if (!textarea) return;
+    lastCursorRef.current = textarea.selectionStart ?? textarea.value.length;
+    lastSelectionEndRef.current = textarea.selectionEnd ?? lastCursorRef.current;
+  }, []);
+
   const handleContentChange = useCallback(
     (value: string) => {
       // Drop stale onInput events that race with submit/clear
@@ -462,7 +483,10 @@ export default function MessageInput({
       // composer can re-target sessionId without remounting while recording or
       // transcribing; pinning here (not at Stop/Send click) means a mid-recording
       // retarget is detected at completion and the transcript is discarded
-      // rather than delivered to the newly selected agent.
+      // rather than delivered to the newly selected agent. An ADOPTED recording
+      // (orphaned by this session's previous composer and picked up on mount)
+      // re-pins to this composer's session, which adopt() guarantees matches
+      // the recording's session — never a stale pin from an earlier recording.
       recordingSessionRef.current = sessionId;
       // The textarea unmounts while recording, so insertTranscript later falls
       // back to the cursor refs — snapshot the live selection now, including
@@ -474,7 +498,14 @@ export default function MessageInput({
         lastSelectionEndRef.current = textarea.selectionEnd ?? lastCursorRef.current;
       }
       try {
-        await voiceRecorder.start();
+        // The caret/selection is persisted WITH the recording: if this
+        // composer unmounts mid-recording and another composer for this
+        // session adopts it, the original insertion point survives the
+        // handoff instead of resetting to 0.
+        await voiceRecorder.start({
+          start: lastCursorRef.current,
+          end: lastSelectionEndRef.current,
+        });
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Voice input failed to start');
       }
@@ -494,6 +525,28 @@ export default function MessageInput({
   sessionIdRef.current = sessionId;
   // The session the CURRENT recording was started for (null when idle).
   const recordingSessionRef = useRef<string | null>(null);
+  // Keep the pinned delivery target synchronized with an ADOPTED recording:
+  // this composer never called startRecording for it, so the pin is either
+  // null (fresh mount) or stale from an earlier recording. Covers BOTH an
+  // active adoption and a limit-hit one (isRecording false, audio buffered).
+  // Ownership is relinquished on retarget, so this never overrides the
+  // intentional retarget-discard safeguard.
+  useEffect(() => {
+    if (
+      (voiceRecorder.isRecording || voiceRecorder.durationLimitHit) &&
+      voiceRecorder.recordingSessionId
+    ) {
+      recordingSessionRef.current = voiceRecorder.recordingSessionId;
+      // Restore the insertion point captured by the recording's STARTER — an
+      // adopter's local cursor refs reset to 0 on remount, which would
+      // otherwise insert the transcript at the draft's start.
+      const cursor = voiceRecorder.recordingCursor;
+      if (cursor) {
+        lastCursorRef.current = cursor.start;
+        lastSelectionEndRef.current = cursor.end;
+      }
+    }
+  });
 
   // Deliver a transcript whose composer has already unmounted (the user clicked
   // Send/Stop then navigated to another session while the up-to-125s RPC was in
@@ -675,7 +728,10 @@ export default function MessageInput({
           insertTranscript(transcript);
           // Only queue an auto-send when the transcript produced text; the
           // effect below fires it after isTranscribing flips false.
-          if (mode !== 'stay') pendingAutoSendRef.current = { sessionId: targetSessionId, mode };
+          if (mode !== 'stay') {
+            pendingAutoSendRef.current = { sessionId: targetSessionId, mode };
+            setHasPendingAutoSend(true);
+          }
         } else if (transcript) {
           // Composer unmounted (user navigated away) while this transcription
           // was in flight. Deliver the transcript directly to the target session
@@ -1030,6 +1086,7 @@ export default function MessageInput({
     if (pendingAutoSendRef.current !== null && !voiceActive) {
       const pending = pendingAutoSendRef.current;
       pendingAutoSendRef.current = null;
+      setHasPendingAutoSend(false);
       if (pending.sessionId === sessionId)
         void handleSubmit(pending.mode === 'queue' ? 'defer' : 'immediate');
     }
@@ -1202,6 +1259,7 @@ export default function MessageInput({
             <InputTextarea
               content={content}
               onContentChange={handleContentChange}
+              onSelect={handleSelect}
               onKeyDown={handleKeyDown}
               onSubmit={() => {
                 void handleSubmit('immediate');
@@ -1249,6 +1307,7 @@ export default function MessageInput({
                     isTranscribing={isTranscribing}
                     isStarting={voiceRecorder.isStarting}
                     onCancel={cancelRecording}
+                    startedAt={voiceRecorder.recordingStartedAt}
                   />
                 ) : undefined
               }

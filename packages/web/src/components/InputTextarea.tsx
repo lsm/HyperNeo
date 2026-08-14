@@ -60,6 +60,12 @@ export interface InputTextareaProps {
   agentMentionCandidates?: Array<{ id: string; name: string }>;
   selectedAgentMentionIndex?: number;
   onAgentMentionSelect?: (name: string) => void;
+  /**
+   * Fires on every caret/selection change of this textarea — including
+   * collapsed caret moves (arrow keys, clicks) that do NOT emit the native
+   * `select` event. Implemented via the document `selectionchange` event.
+   */
+  onSelect?: () => void;
   onAgentMentionClose?: () => void;
   // Agent state - passed as prop to avoid direct signal reads that cause re-renders
   isAgentWorking?: boolean;
@@ -95,6 +101,7 @@ export function InputTextarea({
   agentMentionCandidates = [],
   selectedAgentMentionIndex = 0,
   onAgentMentionSelect,
+  onSelect,
   onAgentMentionClose,
   showCommandAutocomplete = false,
   filteredCommands = [],
@@ -182,6 +189,25 @@ export function InputTextarea({
   useEffect(() => {
     if (!recordingBody) textareaRef.current?.focus();
   }, [recordingBody]);
+
+  // Continuous caret/selection tracking. The native `select` event does not
+  // fire for collapsed caret moves (plain arrow keys or clicks), so we listen
+  // to the document-level `selectionchange` and forward only the events that
+  // belong to THIS textarea. Consumers rely on this for voice transcript
+  // placement whenever the textarea is (or is about to be) gone.
+  useEffect(() => {
+    if (!onSelect) return;
+    const handler = () => {
+      const active = document.activeElement;
+      if (active && textareaRef.current && active === textareaRef.current) {
+        onSelect();
+      }
+    };
+    document.addEventListener('selectionchange', handler);
+    return () => {
+      document.removeEventListener('selectionchange', handler);
+    };
+  }, [onSelect, textareaRef]);
 
   const charCount = content.length;
   const showCharCount = charCount > maxChars * 0.8;

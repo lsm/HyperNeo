@@ -48,6 +48,19 @@ class VoiceRecorderStore {
    * composer (see useVoiceRecorder).
    */
   readonly recordingOwnerId = signal<string | null>(null);
+  /**
+   * Wall-clock start time of the current recording, so an ADOPTING composer's
+   * waveform can display the true remaining time against the unchanged cap
+   * deadline instead of restarting its timer from the adoption mount.
+   */
+  readonly recordingStartedAt = signal<number | null>(null);
+  /**
+   * Composer-supplied insertion metadata for the current recording (caret /
+   * selection endpoints in the owner's draft at recording start). The capture
+   * layer is draft-agnostic; the owner sets this so an ADOPTING composer can
+   * restore the original insertion point after a session-switch handoff.
+   */
+  readonly recordingCursor = signal<{ start: number; end: number } | null>(null);
 
   private context: AudioContext | null = null;
   private stream: MediaStream | null = null;
@@ -81,16 +94,35 @@ class VoiceRecorderStore {
    * owner's stop() — starting in that last window would destroy the buffered
    * recording.
    */
-  readonly start = async (ownerId: string, ownerSessionId: string): Promise<void> => {
-    if (this.isRecording.value || this.starting || this.stopping || this.stoppedByLimit)
+  readonly start = async (
+    ownerId: string,
+    ownerSessionId: string,
+    cursor?: { start: number; end: number } | null
+  ): Promise<void> => {
+    if (this.isRecording.value || this.starting || this.stopping)
       throw new Error('Voice recorder is busy');
+    if (this.stoppedByLimit && this.recordingOwnerId.value !== null) {
+      // Capped audio still owned — its owner's stop() is pending.
+      throw new Error('Voice recorder is busy');
+    }
+    // Claim ownership and the startup reservation BEFORE any await, so a
+    // composer that unmounts or retargets mid-start is properly orphaned
+    // (orphan() finds its ownerId here) and a concurrent start() stays busy
+    // throughout.
     this.starting = true;
     this.isStarting.value = true;
     this.stoppedByLimit = false;
     this.durationLimitHit.value = false;
     this.recordingOwnerId.value = ownerId;
     this.recordingSessionId.value = ownerSessionId;
+    // Insertion metadata supplied by the STARTING composer, stored with the
+    // ownership claim (before any await) so it survives an unmount/adopt
+    // handoff even if the composer departs mid-setup.
+    this.recordingCursor.value = cursor ?? null;
     const generation = ++this.startGeneration;
+    // Eviction of an orphaned capped buffer (if any): drop its audio up front.
+    // The shared teardown inside the try below reclaims its mic graph.
+    this.chunks = [];
     const discarded = () => this.startGeneration !== generation;
     // Cleanup for a DISCARDED start. If the shared fields still belong to this
     // generation, defer to the shared (idempotent) teardown; if a NEWER
@@ -233,6 +265,10 @@ class VoiceRecorderStore {
       this.chunks = chunks;
       this.sampleRate = context.sampleRate;
       this.maxDurationTimer = setTimeout(hitLimit, MAX_RECORDING_MS);
+      // Record the timestamp when capture is actually wired (beside the cap
+      // deadline it mirrors), not at request time — a slow permission prompt
+      // or worklet setup must not eat into the displayed 5-minute budget.
+      this.recordingStartedAt.value = Date.now();
       this.isRecording.value = true;
     } catch (error) {
       // A cancelled/discarded start fails silently — the user already moved on.
@@ -326,26 +362,36 @@ class VoiceRecorderStore {
     this.isRecording.value = false;
     this.recordingOwnerId.value = null;
     this.recordingSessionId.value = null;
+    this.recordingStartedAt.value = null;
     await this.teardown();
   };
 
   /**
-   * Composer-unmount teardown: discards any in-flight or active recording.
-   * Identical to the pre-store hook's unmount effect — the follow-up change
-   * that keeps recordings alive across session switches removes this call from
-   * the adapter without touching the capture logic.
+   * Composer-unmount hand-off: the recording OUTLIVES its composer. If this
+   * instance owned the recording, ONLY its ownership is cleared — capture
+   * stays live (in-flight permission/setup included: the generation and
+   * starting state are preserved so a pending start() completes adoptably),
+   * and the composer that next mounts for the same session can adopt() it.
+   * A composer that never owned the recording changes nothing. If nobody
+   * returns, the 5-minute/byte cap eventually stops the mic and the audio
+   * stays recoverable.
    */
-  readonly release = async (): Promise<void> => {
-    this.startGeneration += 1;
-    this.starting = false;
-    this.isStarting.value = false;
-    this.chunks = [];
-    this.stoppedByLimit = false;
-    this.durationLimitHit.value = false;
-    this.isRecording.value = false;
+  readonly orphan = (ownerId: string): void => {
+    if (this.recordingOwnerId.value !== ownerId) return;
     this.recordingOwnerId.value = null;
-    this.recordingSessionId.value = null;
-    await this.teardown();
+  };
+
+  /**
+   * Claim an orphaned recording for a freshly-mounted composer. Succeeds only
+   * when the recording belongs to `ownerSessionId` AND has no live owner — a
+   * concurrently-mounted composer for the same session never steals ownership
+   * from an active one. Returns whether this composer now owns the recording.
+   */
+  readonly adopt = (ownerId: string, ownerSessionId: string): boolean => {
+    if (this.recordingSessionId.value !== ownerSessionId) return false;
+    if (this.recordingOwnerId.value !== null) return false;
+    this.recordingOwnerId.value = ownerId;
+    return true;
   };
 
   /**
