@@ -284,6 +284,44 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(outcome.blockingHookId).toBe('mixed_hook');
   });
 
+  test('a worker slot reachable only via a REVERSE channel does not run the gate', async () => {
+    // Router parity: for '@worker:Review/reviewer' the router authorizes
+    // canSend(fromNode, nodeName) or canSend(fromNode, agentName) — never a
+    // reverse canSend(agentName, nodeName). With only a 'reviewer → Review'
+    // channel and no route from Coding, the router REFUSES the send, so the
+    // engine must treat the resolution as non-routable and suppress the
+    // gate — running it would let a side-effecting hook (pr_ready stamps the
+    // run's immutable PR identity) fire from an unauthorized attempt.
+    const STOP_HOOK = scriptHook('reverse_hook', '{"flow":"stop","reason":"blocked by script"}');
+    const workflow = makeWorkflow({
+      customHooks: [STOP_HOOK],
+      channels: [
+        // Only the reverse direction: reviewer → Review, nothing from Coding.
+        { from: 'reviewer', to: 'Review', label: 'reviewer → Review' },
+      ],
+      hookBindings: [
+        {
+          hookId: 'reverse_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const engine = makeEngine(workflow);
+    const outcome = await engine.executeAction(
+      'send_message',
+      { target: '@worker:n-review/reviewer', message: 'unauthorized route' },
+      META
+    );
+    // Non-routable for this sender: the gate is suppressed, no hook state.
+    expect(outcome.decision).toBe('deliver');
+    expect(hookStateRepo.get('run-1', 'reverse_hook')).toBeNull();
+  });
+
   test('a non-string multicast element does not poison the valid parts', async () => {
     const STOP_HOOK = scriptHook('stop_hook', '{"flow":"stop","reason":"blocked by script"}');
     const workflow = makeWorkflow({

@@ -252,6 +252,27 @@ describe('ghGetReviewEvidence — back-pagination past the fresh window', () => 
     }
   });
 
+  test('fractional-second timestamps do not stop pagination early', async () => {
+    // The page boundary must compare EPOCHS, not lexical strings: GitHub may
+    // return '...12:00:00.500Z' while sinceIso is whole-second '...12:00:00Z'.
+    // Lexically '.500Z' sorts BEFORE 'Z', so the actually-newer review would
+    // read as older and pagination would stop on page 1 — dropping the
+    // qualifying APPROVED on page 2 and incorrectly blocking review_posted.
+    const freshFractional = Array.from({ length: 50 }, (_, i) => ({
+      state: 'COMMENTED',
+      publishedAt: `2026-08-13T12:00:${String(i).padStart(2, '0')}.500Z`,
+    }));
+    setGraphqlRunnerForTests(
+      pagedRunner([
+        reviewPage(freshFractional, true, 'cGFnZTE'),
+        reviewPage([{ state: 'APPROVED', publishedAt: '2026-08-13T12:00:00.250Z' }], false),
+      ])
+    );
+    const result = await ghGetReviewEvidence(CTX, PR_LINK, '2026-08-13T12:00:00Z');
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.formalReviewCount).toBe(1);
+  });
+
   test('cap exhaustion inside the fresh window fails closed', async () => {
     const fresh = Array.from({ length: 50 }, (_, i) => ({
       state: 'COMMENTED',

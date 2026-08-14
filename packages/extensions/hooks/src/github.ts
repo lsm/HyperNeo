@@ -642,12 +642,26 @@ export async function ghGetReviewEvidence(
     if (Array.isArray(nodes)) allReviewNodes.unshift(...nodes);
     const pageInfo = asRecord(reviewsConnection?.pageInfo);
     // Stop when the page reaches past the run-start window: everything older
-    // cannot contribute fresh evidence. A NULL publishedAt (pending/draft
-    // review) proves nothing about the boundary — keep paging (the page cap
-    // fails closed if the window extends beyond it).
+    // cannot contribute fresh evidence. Compare EPOCHS, not lexical strings:
+    // GitHub timestamps can carry fractional seconds while `sinceIso` is
+    // whole-second precision, and lexically '...00.500Z' sorts BEFORE
+    // '...00Z' — the actually-newer review would read as older and stop
+    // pagination early, dropping qualifying evidence on an earlier page (the
+    // evidence predicate and reaction boundary below already compare epochs).
+    // A NULL publishedAt (pending/draft review) proves nothing about the
+    // boundary — keep paging (the page cap fails closed if the window
+    // extends beyond it).
     const oldest = Array.isArray(nodes) && nodes.length > 0 ? asRecord(nodes[0]) : undefined;
     const oldestAt = typeof oldest?.publishedAt === 'string' ? oldest.publishedAt : '';
-    if (!pageInfo?.hasPreviousPage || (oldestAt !== '' && oldestAt < sinceIso)) {
+    const oldestMs = oldestAt ? Date.parse(oldestAt) : NaN;
+    const sinceMs = Date.parse(sinceIso);
+    if (
+      !pageInfo?.hasPreviousPage ||
+      (oldestAt !== '' &&
+        Number.isFinite(oldestMs) &&
+        Number.isFinite(sinceMs) &&
+        oldestMs < sinceMs)
+    ) {
       reachedBoundary = true;
       break;
     }

@@ -47,6 +47,18 @@ function deepMerge(
 ): Record<string, unknown> {
   const next: Record<string, unknown> = { ...base };
   for (const [key, value] of Object.entries(patch)) {
+    // An explicit null DELETES the key (recursively). Deep-merge preserves
+    // keys the patch omits, so callers clear entries by writing null (the
+    // engine's per-action queue clears). Treating null as a delete rather
+    // than storing a tombstone keeps local_state from growing without bound
+    // — each cleared action key is physically removed — while staying
+    // merge-safe: a sibling key written before or after the clear survives
+    // either merge order. Readers treat null and absent identically (they
+    // skip non-record entries).
+    if (value === null) {
+      delete next[key];
+      continue;
+    }
     if (isPlainRecord(value) && isPlainRecord(next[key])) {
       next[key] = deepMerge(next[key] as Record<string, unknown>, value);
     } else {

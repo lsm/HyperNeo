@@ -322,10 +322,12 @@ export class WorkflowHookEngine {
     const state = this.config.hookStateRepo.get(this.config.workflowRunId, hookId)?.localState;
     const map = state?.[QUEUED_RETRYABLE_ACTION_STATE_KEY];
     if (!map || typeof map !== 'object' || Array.isArray(map)) return true;
-    // TOMBSTONE, not an omission: the repo deep-merges localState, and a key
-    // absent from the patch survives the merge — the cleared action would
-    // rehydrate after restart and deliver again. Writing an explicit null
-    // REPLACES the entry (readers skip non-action values).
+    // Explicit null, not an omission: the repo's localState deep-merge
+    // DELETES null-valued keys, so this physically removes the entry (a key
+    // merely absent from the patch would survive the merge — the cleared
+    // action would rehydrate after restart and deliver again). Spreading the
+    // current map also re-writes any legacy null tombstones from earlier
+    // versions, compacting them on write.
     return this.persistStateUpdate(hookId, {
       localState: {
         [QUEUED_RETRYABLE_ACTION_STATE_KEY]: {
@@ -1042,8 +1044,11 @@ export class WorkflowHookEngine {
     // The router ALSO accepts a send addressed to a worker on an AGENT SLOT
     // the channel names (e.g. channel 'Coding → reviewer', send
     // '@worker:Review/reviewer') via resolver.canSend(fromNode, agentName).
-    // Mirror that fallback so a slot-addressed route is not misread as
-    // non-routable — suppressing its gate while the router delivers.
+    // Mirror that fallback EXACTLY — the router checks only
+    // canSend(fromNodeName, agentName), never a reverse
+    // canSend(agentName, nodeName): accepting the reverse here would run a
+    // side-effecting gate (pr_ready can stamp the run's immutable PR
+    // identity) on a send the router then refuses to deliver.
     const workerAgentOf = (rawTarget: string): string | undefined => {
       if (!rawTarget.startsWith('@worker:')) return undefined;
       try {
@@ -1057,10 +1062,7 @@ export class WorkflowHookEngine {
       workerAgentName: string | undefined,
       targetNode: string
     ): boolean =>
-      nodeNames.has(targetNode) &&
-      !!workerAgentName &&
-      (resolver.canSend(fromNode, workerAgentName) ||
-        resolver.canSend(workerAgentName, targetNode));
+      nodeNames.has(targetNode) && !!workerAgentName && resolver.canSend(fromNode, workerAgentName);
     const isBuiltInInterLevelTarget = (targetValue: string): boolean =>
       targetValue.trim() === 'space-agent';
 
@@ -1886,6 +1888,14 @@ function buildRetryableActionKey(
 const MAX_RETRY_BACKOFF_MS = 3_600_000;
 
 /**
+ * Re-arm delay when a terminal replay's durable queued-record clear failed:
+ * the re-armed entry is the in-memory dedupe guard (and the settlement
+ * retry), not a pacing mechanism — long enough not to spam the source
+ * session with terminal notifications while the state store is down.
+ */
+const TERMINAL_CLEAR_REARM_MS = 5 * 60_000;
+
+/**
  * Exponential backoff with jitter for timer-driven hook retries: base *
  * 2^min(attempts, 6) capped at 1h, then ±25% jitter. The base comes from the
  * hook's retryAfterMs (or the engine default), so GitHub-advertised
@@ -1974,6 +1984,14 @@ async function replayRetryableAction(options: PendingRetryableHookAction): Promi
       // a restart cannot replay an action already reported terminally blocked.
       if (options.engine.clearQueuedRetryableActionsForKey(options.actionKey)) {
         clearRetryableHookActionTimer(options.actionKey);
+      } else {
+        // The fire-time delete already consumed this action's pending entry,
+        // so a failed clear must RE-ARM it: without the entry, rehydration
+        // would see the surviving durable record, re-schedule it, and replay
+        // an action already reported terminally blocked. The re-armed replay
+        // re-evaluates the gate and retries the clear once the state store
+        // recovers.
+        scheduleRetryableAction({ ...options, delayMs: TERMINAL_CLEAR_REARM_MS });
       }
     }
   }

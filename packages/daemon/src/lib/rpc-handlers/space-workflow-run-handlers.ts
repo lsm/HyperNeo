@@ -935,6 +935,9 @@ export function setupSpaceWorkflowRunHandlers(
     // action a timer just cleared and replaying an obsolete actionKey.
     const updateResult = hookStateRepo.updateWithRetry(params.runId, params.hookId, {
       localState: {
+        // Explicit null: the repo's deep-merge DELETES null-valued keys, so
+        // this physically removes the queued-action map (an omitted key
+        // would survive the merge and rehydrate after restart).
         [QUEUED_RETRYABLE_ACTION_STATE_KEY]: null,
         // Reset the elapsed-ceiling cycle stamp AND the terminal marker (see
         // approveHook — "retry now" is an operator recovery event).

@@ -81,6 +81,40 @@ describe('WorkflowHookStateRepository', () => {
     });
   });
 
+  test('a null-valued patch key is deleted, not stored as a tombstone', () => {
+    repo.ensure('run-1', 'hook-1');
+    const first = repo.update('run-1', 'hook-1', {
+      expectedVersion: 0,
+      localState: {
+        __queuedRetryableActions: {
+          'action-a': { actionKey: 'action-a' },
+          'action-b': { actionKey: 'action-b' },
+        },
+        humanApproved: true,
+      },
+    });
+
+    // Clear action-a per-key: the null must PHYSICALLY REMOVE the entry —
+    // a stored null tombstone would grow local_state without bound (each
+    // cleared action key persists forever, keyed by its full serialized
+    // action) while surviving siblings stay merge-safe in either order.
+    const second = repo.update('run-1', 'hook-1', {
+      expectedVersion: first!.version,
+      localState: { __queuedRetryableActions: { 'action-a': null } },
+    });
+    expect(second?.localState.__queuedRetryableActions).toEqual({
+      'action-b': { actionKey: 'action-b' },
+    });
+
+    // A null at the top level removes the whole key.
+    const third = repo.update('run-1', 'hook-1', {
+      expectedVersion: second!.version,
+      localState: { __queuedRetryableActions: null },
+    });
+    expect(third?.localState.__queuedRetryableActions).toBeUndefined();
+    expect(third?.localState.humanApproved).toBe(true);
+  });
+
   test('ensure tolerates concurrent insert races', () => {
     const first = repo.ensure('run-1', 'hook-1', { first: true });
     const second = repo.ensure('run-1', 'hook-1', { second: true });

@@ -1402,8 +1402,8 @@ describe('space-workflow-run-handlers', () => {
       const patch = hookStateRepo.patches[0];
       expect(patch.localState?.__firstRetryAt).toBeUndefined();
       expect(patch.localState?.__retryCeilingTerminal).toBeUndefined();
-      // Explicit null tombstone — the repo deep-merges, so the clear must be
-      // an explicit null rather than an omitted key.
+      // Explicit null clear — the repo's deep-merge deletes null-valued
+      // keys, so the handler must write null rather than omit the key.
       expect(patch.localState?.__queuedRetryableActions).toBeNull();
       expect(patch.lastFlow).toBe('continue');
       expect(patch.retryCount).toBe(0);
