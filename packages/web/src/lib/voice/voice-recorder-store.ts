@@ -94,7 +94,11 @@ class VoiceRecorderStore {
    * owner's stop() — starting in that last window would destroy the buffered
    * recording.
    */
-  readonly start = async (ownerId: string, ownerSessionId: string): Promise<void> => {
+  readonly start = async (
+    ownerId: string,
+    ownerSessionId: string,
+    cursor?: { start: number; end: number } | null
+  ): Promise<void> => {
     if (this.isRecording.value || this.starting || this.stopping)
       throw new Error('Voice recorder is busy');
     if (this.stoppedByLimit && this.recordingOwnerId.value !== null) {
@@ -111,6 +115,10 @@ class VoiceRecorderStore {
     this.durationLimitHit.value = false;
     this.recordingOwnerId.value = ownerId;
     this.recordingSessionId.value = ownerSessionId;
+    // Insertion metadata supplied by the STARTING composer, stored with the
+    // ownership claim (before any await) so it survives an unmount/adopt
+    // handoff even if the composer departs mid-setup.
+    this.recordingCursor.value = cursor ?? null;
     const generation = ++this.startGeneration;
     // Eviction of an orphaned capped buffer (if any): drop its audio up front.
     // The shared teardown inside the try below reclaims its mic graph.

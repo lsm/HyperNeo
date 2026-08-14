@@ -497,15 +497,15 @@ export default function MessageInput({
         lastCursorRef.current = textarea.selectionStart ?? textarea.value.length;
         lastSelectionEndRef.current = textarea.selectionEnd ?? lastCursorRef.current;
       }
-      // Persist the insertion point WITH the recording: if this composer
-      // unmounts mid-recording and another composer for this session adopts
-      // it, the original caret survives the handoff instead of resetting to 0.
-      voiceRecorder.setRecordingCursor({
-        start: lastCursorRef.current,
-        end: lastSelectionEndRef.current,
-      });
       try {
-        await voiceRecorder.start();
+        // The caret/selection is persisted WITH the recording: if this
+        // composer unmounts mid-recording and another composer for this
+        // session adopts it, the original insertion point survives the
+        // handoff instead of resetting to 0.
+        await voiceRecorder.start({
+          start: lastCursorRef.current,
+          end: lastSelectionEndRef.current,
+        });
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Voice input failed to start');
       }
@@ -537,6 +537,14 @@ export default function MessageInput({
       voiceRecorder.recordingSessionId
     ) {
       recordingSessionRef.current = voiceRecorder.recordingSessionId;
+      // Restore the insertion point captured by the recording's STARTER — an
+      // adopter's local cursor refs reset to 0 on remount, which would
+      // otherwise insert the transcript at the draft's start.
+      const cursor = voiceRecorder.recordingCursor;
+      if (cursor) {
+        lastCursorRef.current = cursor.start;
+        lastSelectionEndRef.current = cursor.end;
+      }
     }
   });
 

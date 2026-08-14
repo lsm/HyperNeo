@@ -96,11 +96,10 @@ export function useVoiceRecorder(sessionId: string, options?: { autoAdopt?: bool
     get recordingCursor() {
       return owns() ? voiceRecorderStore.recordingCursor.value : null;
     },
-    /** Attach insertion metadata to THIS instance's recording (owner-only). */
-    setRecordingCursor: (cursor: { start: number; end: number } | null) => {
-      if (owns()) voiceRecorderStore.recordingCursor.value = cursor;
-    },
-    start: () => voiceRecorderStore.start(ownerId, sessionId),
+    /** Start a recording owned by this composer; `cursor` is the composer's
+     *  caret/selection at recording start (restored on adoption). */
+    start: (cursor?: { start: number; end: number } | null) =>
+      voiceRecorderStore.start(ownerId, sessionId, cursor),
     stop: voiceRecorderStore.stop,
     /** Cancels only this instance's recording; a no-op for anyone else's. */
     cancel: () => (owns() ? voiceRecorderStore.cancel() : Promise.resolve()),
