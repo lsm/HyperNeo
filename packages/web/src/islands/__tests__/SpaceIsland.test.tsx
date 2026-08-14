@@ -156,9 +156,6 @@ vi.mock('../../components/space/visual-editor/VisualWorkflowEditor', () => ({
   },
 }));
 
-vi.mock('../../components/space/SpaceRuntimeStatusControl', () => ({
-  SpaceRuntimeStatusControl: () => <div data-testid="space-runtime-control" />,
-}));
 vi.mock('../../components/space/SpaceOverview', () => ({
   SpaceOverview: (props: {
     spaceId: string;

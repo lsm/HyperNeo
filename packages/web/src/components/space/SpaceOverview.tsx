@@ -26,6 +26,7 @@ import { AUTONOMY_LABELS } from '../../lib/space-constants';
 import { isActionRequired } from '../../lib/task-filters';
 import { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
 import { AutonomyWorkflowSummary } from './AutonomyWorkflowSummary';
+import { SpaceRuntimeStatusControl } from './SpaceRuntimeStatusControl';
 import {
   FLAT_SURFACE,
   GLASS_CONTENT_CONTAINER_CLASS,
@@ -304,6 +305,10 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
               activity.
             </p>
           </div>
+          {/* Runtime status + Pause/Stop/Resume kebab. Rare controls, kept
+              compact on the right of the intro card (where Create task used to
+              live); only renders when the daemon reports a runtime state. */}
+          <SpaceRuntimeStatusControl />
         </section>
 
         {/* Primary surfaces as count + navigation shortcuts. */}

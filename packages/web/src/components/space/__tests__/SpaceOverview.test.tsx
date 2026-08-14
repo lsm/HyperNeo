@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { signal } from '@preact/signals';
-import type { Space, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
+import type { RuntimeState, Space, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 
 let mockSpace: ReturnType<typeof signal<Space | null>>;
 let mockLoading: ReturnType<typeof signal<boolean>>;
@@ -16,6 +16,7 @@ let mockSessions: ReturnType<
   typeof signal<{ id: string; title?: string; status: string; lastActiveAt: number }[]>
 >;
 let mockAgents: ReturnType<typeof signal<{ id: string }[]>>;
+let mockRuntimeState: ReturnType<typeof signal<RuntimeState | null>>;
 
 const mockUpdateSpace = vi.fn().mockResolvedValue(undefined);
 
@@ -28,6 +29,7 @@ vi.mock('../../../lib/space-store', () => ({
       workflows: mockWorkflows,
       sessions: mockSessions,
       longHorizonAgents: mockAgents,
+      runtimeState: mockRuntimeState,
       updateSpace: mockUpdateSpace,
     };
   },
@@ -50,6 +52,7 @@ mockTasks = signal<SpaceTask[]>([]);
 mockWorkflows = signal<SpaceWorkflow[]>([]);
 mockSessions = signal([]);
 mockAgents = signal([]);
+mockRuntimeState = signal<RuntimeState | null>(null);
 
 import { SpaceOverview } from '../SpaceOverview';
 
@@ -106,6 +109,7 @@ describe('SpaceOverview', () => {
     mockWorkflows.value = [];
     mockSessions.value = [];
     mockAgents.value = [];
+    mockRuntimeState.value = null;
     mockUpdateSpace.mockClear();
     navigateToSpaceTasksMock.mockClear();
     navigateToSpaceAgentMock.mockClear();
