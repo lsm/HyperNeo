@@ -304,6 +304,29 @@ describe('SessionInfoPanel', () => {
       });
     });
 
+    it('does not commit a stale draft when opening the panel after an external title change', () => {
+      // Auto-title generation can update the title before the panel is ever
+      // opened; the hook's draft still holds the old title, so the toggle's
+      // settle-commit must be a no-op when no edit is in flight.
+      renameMocks.updateSession.mockClear();
+      const session = createMockSession();
+      const { container, rerender } = render(
+        <SessionInfoPanelButton {...defaultProps} session={session} />
+      );
+      rerender(
+        <SessionInfoPanelButton
+          {...defaultProps}
+          session={createMockSession({ title: 'Auto Generated' })}
+        />
+      );
+
+      // Open and then close the panel without ever starting an edit.
+      fireEvent.click(container.querySelector('button[title="Session info"]')!);
+      fireEvent.click(container.querySelector('button[title="Session info"]')!);
+
+      expect(renameMocks.updateSession).not.toHaveBeenCalled();
+    });
+
     it('disables the rename action while an edit is in flight', () => {
       // Re-clicking the pencil mid-edit would blur-commit the draft and then
       // reopen the editor seeded from the stale title prop.

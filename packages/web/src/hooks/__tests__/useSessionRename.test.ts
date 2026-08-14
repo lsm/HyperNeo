@@ -57,6 +57,24 @@ describe('useSessionRename', () => {
     expect(result.current.inputProps.value).toBe('Original');
   });
 
+  it('exposed commit is a no-op without an active edit, even after an external title change', async () => {
+    // The draft is seeded at mount; a title arriving later (e.g. auto-title
+    // generation) does NOT re-seed it. Hosts call commit() from panel-open
+    // paths, so it must not persist that stale draft as a user rename.
+    const { result, rerender } = renderHook(({ title }) => useSessionRename('session-1', title), {
+      initialProps: { title: 'Original' },
+    });
+    rerender({ title: 'Auto Generated' });
+
+    await act(async () => {
+      result.current.commit();
+    });
+
+    expect(result.current.isEditing).toBe(false);
+    expect(mocks.updateSession).not.toHaveBeenCalled();
+    expect(mocks.globalStoreUpdate).not.toHaveBeenCalled();
+  });
+
   it('commits on Enter: optimistic store update + updateSession with title and metadata', async () => {
     const { result } = renderHook(() => useSessionRename('session-1', 'Original'));
 

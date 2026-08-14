@@ -253,6 +253,22 @@ describe('SessionStore multi-instance isolation', () => {
     expect(storeA.sessionInfo.value?.title).toBe('Renamed A');
   });
 
+  it('applyOptimisticSessionInfo rollback guard preserves newer titles', async () => {
+    await storeA.select('session-a');
+
+    applyOptimisticSessionInfo('session-a', { title: 'Optimistic' });
+    expect(storeA.sessionInfo.value?.title).toBe('Optimistic');
+
+    // Matching expected title: the rollback applies.
+    applyOptimisticSessionInfo('session-a', { title: 'Old Title' }, 'Optimistic');
+    expect(storeA.sessionInfo.value?.title).toBe('Old Title');
+
+    // Mismatched expected title (a newer title landed while the request was
+    // pending): the rollback is skipped so the newer title survives.
+    applyOptimisticSessionInfo('session-a', { title: 'Stale Rollback' }, 'Optimistic');
+    expect(storeA.sessionInfo.value?.title).toBe('Old Title');
+  });
+
   it('keeps transcripts independent — B never renders A messages', async () => {
     await selectWithSnapshot(storeA, hub, 'session-a', [
       { id: 'a1', uuid: 'a1', type: 'text', role: 'user', timestamp: 1 },
