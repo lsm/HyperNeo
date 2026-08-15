@@ -32,6 +32,8 @@ import { connectionManager } from '../lib/connection-manager';
 import { connectionState } from '../lib/state';
 import {
   consumeVoiceTranscriptLanded,
+  getDraftBackup,
+  saveDraftBackup,
   voiceTranscriptLandedSignal,
 } from '../lib/voice/voice-transcript-outbox';
 
@@ -72,17 +74,22 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // (inputDraftVoicePending) into inputDraft atomically while serving the
   // request, so the draft here already includes it — no client-side merge.
   // `onResult` runs once the load has settled: `ok` is whether the get
-  // succeeded (no hub counts as a failure), and `pendingRetained` reports
-  // whether the daemon KEPT `inputDraftVoicePending` because the draft was too
-  // full to merge — the landed transcript is still staged, so a landing must
-  // not be consumed as delivered. The initial load marks itself settled
-  // regardless; the replay refresh consumes its landing only on a successful
-  // FULL merge.
+  // succeeded (no hub counts as a failure), `pendingRetained` reports whether
+  // the daemon KEPT `inputDraftVoicePending` (draft too full to merge — the
+  // transcript is still staged, so a landing must not be consumed as
+  // delivered), and `wasCancelled` reports whether the effect was torn down
+  // while the get was in flight. A RESOLVED get is a side-effecting
+  // server-side merge even if the client no longer applies the response (the
+  // draft write is guarded below), so `onResult` still fires so the landing
+  // can be consumed — otherwise a later clear could delete the merged
+  // transcript. The initial load marks itself settled only when not cancelled;
+  // the replay refresh consumes its landing on a successful FULL merge
+  // regardless of cancellation.
   const loadDraft = useCallback(
     (
       targetSessionId: string,
       isCancelled: () => boolean,
-      onResult?: (ok: boolean, pendingRetained?: boolean) => void
+      onResult?: (ok: boolean, pendingRetained?: boolean, wasCancelled?: boolean) => void
     ): void => {
       const hub = connectionManager.getHubIfConnected();
       if (!hub) {
@@ -96,11 +103,11 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           sessionId: targetSessionId,
         })
         .then((response) => {
-          if (isCancelled()) return;
+          const cancelled = isCancelled();
           const draft = response.session?.metadata?.inputDraft;
-          if (draft) contentSignal.value = draft;
+          if (!cancelled && draft) contentSignal.value = draft;
           const pendingRetained = !!response.session?.metadata?.inputDraftVoicePending;
-          onResult?.(true, pendingRetained);
+          onResult?.(true, pendingRetained, cancelled);
         })
         .catch(() => {
           // A stale request (session changed / hook unmounted while this get
@@ -137,8 +144,16 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     loadDraft(
       sessionId,
       () => cancelled,
-      () => {
+      (_ok, _pendingRetained, wasCancelled) => {
+        if (wasCancelled) return; // session changed / unmounted — not our load
+        // Only a load that was NOT cancelled (session still current) marks the
+        // initial load settled; a stale rejection must not settle a newer load.
         initialLoadSettledRef.current = sessionId;
+        // Restore any draft backup from a deferred-landing session (the user's
+        // edits persisted locally while the server draft kept the transcript),
+        // so a reload does not lose what they were typing.
+        const backup = getDraftBackup(sessionId);
+        if (backup !== null) contentSignal.value = backup;
       }
     );
     return () => {
@@ -196,7 +211,11 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       loadDraft(
         sessionId,
         () => cancelled,
-        (ok, pendingRetained) => {
+        (ok, pendingRetained, _wasCancelled) => {
+          // Consume even when this run was cancelled mid-get: a RESOLVED get
+          // already merged (and cleared) the pending server-side, so the
+          // landing is handled — leaving it pending would let a later clear
+          // delete the merged transcript.
           if (ok && !pendingRetained) consumeVoiceTranscriptLanded(sessionId, generation);
         }
       );
@@ -206,7 +225,9 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       const hub = connectionManager.getHubIfConnected();
       if (!hub) {
         pendingClearRef.current = sessionId; // no socket — retry on reconnect
-        return;
+        return () => {
+          cancelled = true;
+        };
       }
       pendingClearRef.current = null;
       hub
@@ -217,7 +238,12 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           // land on top of the stale draft and resurrect already-sent text.
           pendingClearRef.current = sessionId;
         });
-      return;
+      // Register the cleanup so switching sessions mid-clear cancels the
+      // refresh chain (the stale session's draft must not load into the
+      // signal now backing another session).
+      return () => {
+        cancelled = true;
+      };
     }
     refresh();
     return () => {
@@ -287,8 +313,13 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     // transcript), so this tab's local copy is stale and a debounced save would
     // overwrite the transcript. Suppress until the landing is consumed by the
     // idle refresh, which itself owns the clear-before-merge for an explicit
-    // send/clear — so nothing suppressed here resurrects already-sent text.
-    if (voiceTranscriptLandedSignal.value.has(sessionId)) return;
+    // send/clear — but PERSIST the evolving local draft to the draft backup
+    // (restored on reload / when the landing resolves), so protecting the
+    // landed transcript does not disable draft durability.
+    if (voiceTranscriptLandedSignal.value.has(sessionId)) {
+      if (content.trim() !== '') saveDraftBackup(sessionId, content);
+      return;
+    }
 
     const trimmedContent = content.trim();
 

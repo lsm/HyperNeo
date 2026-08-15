@@ -281,6 +281,17 @@ describe('voice transcript outbox', () => {
     expect(getPendingTranscripts().map((e) => e.text)).toEqual(['older', 'newer']);
   });
 
+  it('keeps the shared landed marker when a tab consumes its landing', () => {
+    markVoiceTranscriptLanded('s1');
+    consumeVoiceTranscriptLanded('s1', 1);
+    expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(false);
+    // Consumption is local to this tab — the marker stays so a LATER tab can
+    // hydrate it (TTL prunes it).
+    expect(
+      localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1')
+    ).not.toBeNull();
+  });
+
   it('writes distinct landed-marker values for repeated landings (cross-tab storage events)', () => {
     markVoiceTranscriptLanded('s1');
     const first = localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1');

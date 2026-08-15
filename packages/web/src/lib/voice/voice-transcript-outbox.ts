@@ -89,8 +89,10 @@ function markVoiceTranscriptLandedLocal(sessionId: string): void {
  * Forget the landing of generation `generation` once its session's composer
  * has refreshed for it — but only if no NEWER landing arrived meanwhile (the
  * count is unchanged), so a landing that landed mid-refresh keeps its own
- * pending refresh. Also drops the cross-tab marker so a later storage event
- * does not resurrect it.
+ * pending refresh. The cross-tab landed MARKER is deliberately KEPT (TTL
+ * prunes it): consumption is local to this tab, and a later tab must still be
+ * able to hydrate the marker if it opens while the daemon is unavailable.
+ * Also clears this session's draft backup (the refresh reconciled it).
  */
 export function consumeVoiceTranscriptLanded(sessionId: string, generation: number): void {
   const current = voiceTranscriptLandedSignal.value;
@@ -98,15 +100,55 @@ export function consumeVoiceTranscriptLanded(sessionId: string, generation: numb
   const next = new Map(current);
   next.delete(sessionId);
   voiceTranscriptLandedSignal.value = next;
+  clearDraftBackup(sessionId);
+}
+
+const DRAFT_BACKUP_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Persist the evolving local draft for a session whose landing is deferred
+ * (the composer has text, so its server saves are suppressed to protect the
+ * landed transcript). A reload or session switch then restores the user's
+ * edits instead of losing them, while the server draft keeps the transcript.
+ */
+export function saveDraftBackup(sessionId: string, content: string): void {
   try {
-    localStorage.removeItem(`${LANDED_PREFIX}${sessionId}`);
+    localStorage.setItem(
+      `${DRAFT_BACKUP_PREFIX}${sessionId}`,
+      JSON.stringify({ content, ts: Date.now() })
+    );
   } catch {
-    /* marker best-effort */
+    /* backup best-effort */
+  }
+}
+
+export function getDraftBackup(sessionId: string): string | null {
+  try {
+    const raw = localStorage.getItem(`${DRAFT_BACKUP_PREFIX}${sessionId}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { content?: string; ts?: number };
+    if (typeof parsed.content !== 'string') return null;
+    if (Date.now() - (parsed.ts ?? 0) >= DRAFT_BACKUP_TTL_MS) {
+      localStorage.removeItem(`${DRAFT_BACKUP_PREFIX}${sessionId}`);
+      return null;
+    }
+    return parsed.content;
+  } catch {
+    return null;
+  }
+}
+
+export function clearDraftBackup(sessionId: string): void {
+  try {
+    localStorage.removeItem(`${DRAFT_BACKUP_PREFIX}${sessionId}`);
+  } catch {
+    /* backup best-effort */
   }
 }
 
 const STORAGE_PREFIX = 'hyperneo_voice_transcript_outbox_v1.entry.';
 const LANDED_PREFIX = `${STORAGE_PREFIX}landed.`;
+const DRAFT_BACKUP_PREFIX = 'hyperneo_voice_transcript_outbox_v1.draft.';
 const MAX_ENTRIES = 20;
 const MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24h — a transcript older than this is stale
 const FLUSH_DELAY_MS = 500; // let subscriptions settle, like outbound-queue

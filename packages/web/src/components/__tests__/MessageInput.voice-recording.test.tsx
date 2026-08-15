@@ -121,11 +121,15 @@ const enqueueTranscript = vi.hoisted(() => vi.fn());
 const voiceTranscriptLandedSignal = vi.hoisted(() => ({ value: new Map() }));
 const consumeVoiceTranscriptLanded = vi.hoisted(() => vi.fn());
 const isPermanentAppendRefusal = vi.hoisted(() => vi.fn(() => false));
+const getDraftBackup = vi.hoisted(() => vi.fn(() => null));
+const saveDraftBackup = vi.hoisted(() => vi.fn());
 vi.mock('../../lib/voice/voice-transcript-outbox.ts', () => ({
   enqueueTranscript,
   voiceTranscriptLandedSignal,
   consumeVoiceTranscriptLanded,
   isPermanentAppendRefusal,
+  getDraftBackup,
+  saveDraftBackup,
 }));
 
 import { toast } from '../../lib/toast.ts';

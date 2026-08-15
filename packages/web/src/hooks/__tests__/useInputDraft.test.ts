@@ -12,7 +12,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useInputDraft } from '../useInputDraft.ts';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { connectionState } from '../../lib/state.ts';
-import { voiceTranscriptLandedSignal } from '../../lib/voice/voice-transcript-outbox.ts';
+import {
+  getDraftBackup,
+  voiceTranscriptLandedSignal,
+} from '../../lib/voice/voice-transcript-outbox.ts';
 
 // Mock the connection manager
 vi.mock('../../lib/connection-manager.ts', () => ({
@@ -20,6 +23,22 @@ vi.mock('../../lib/connection-manager.ts', () => ({
     getHubIfConnected: vi.fn(),
   },
 }));
+
+function createMemoryStorage(): Storage {
+  const store = new Map<string, string>();
+  return {
+    get length() {
+      return store.size;
+    },
+    clear: () => store.clear(),
+    getItem: (k: string) => store.get(k) ?? null,
+    key: (i: number) => [...store.keys()][i] ?? null,
+    removeItem: (k: string) => void store.delete(k),
+    setItem: (k: string, v: string) => void store.set(k, String(v)),
+  } as Storage;
+}
+
+const originalStorage = globalThis.localStorage;
 
 describe('useInputDraft', () => {
   const mockHub = {
@@ -37,12 +56,14 @@ describe('useInputDraft', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+    globalThis.localStorage = createMemoryStorage();
     voiceTranscriptLandedSignal.value = new Map();
     // Default: no hub connected
     vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
   });
 
   afterEach(() => {
+    globalThis.localStorage = originalStorage;
     connectionState.value = 'connecting';
     vi.useRealTimers();
   });
@@ -617,6 +638,65 @@ describe('useInputDraft', () => {
       });
       expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(false);
       expect(result.current.content).toBe('transcript');
+    });
+
+    it('preserves edits to the draft backup while a landing is pending', async () => {
+      mockHub.request.mockResolvedValue({ session: { metadata: { inputDraft: '' } } });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      result.current.setContent('editing');
+      voiceTranscriptLandedSignal.value = new Map([['session-1', 1]]);
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // The stale server save is suppressed (landing pending), but the evolving
+      // local draft is backed up so a reload/switch does not lose it.
+      expect(getDraftBackup('session-1')).toBe('editing');
+      expect(mockHub.request.mock.calls.filter(([m]) => m === 'session.update')).toHaveLength(0);
+    });
+
+    it('consumes the landing when a cancelled refresh still resolved (server merged it)', async () => {
+      let resolveGet!: (value: { session: { metadata: { inputDraft?: string } } }) => void;
+      mockHub.request
+        .mockResolvedValueOnce({ session: { metadata: { inputDraft: '' } } }) // initial
+        .mockImplementationOnce(
+          () =>
+            new Promise((r) => {
+              resolveGet = r;
+            })
+        ); // refresh get
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      await act(async () => {
+        voiceTranscriptLandedSignal.value = new Map([['session-1', 1]]);
+      });
+      // The refresh get is now in-flight.
+      expect(resolveGet).toBeTypeOf('function');
+      // The user types — cancelling that effect run, but the server-side merge
+      // of the in-flight get still happens.
+      await act(async () => {
+        result.current.setContent('typing');
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      await act(async () => {
+        resolveGet({ session: { metadata: { inputDraft: 'transcript' } } });
+        await vi.runAllTimersAsync();
+      });
+      // The landing is consumed — a later clear must not delete the merged
+      // transcript.
+      expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(false);
     });
 
     it('cancels a scheduled save when a landing arrives before it fires', async () => {
