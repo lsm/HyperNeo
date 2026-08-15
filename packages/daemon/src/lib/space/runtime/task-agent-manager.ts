@@ -1357,18 +1357,32 @@ export class TaskAgentManager {
         const kickoffMessage = runtimeContract
           ? `${initialMessage}\n\n${runtimeContract}`
           : initialMessage;
-        const kickoffMessageUuid = await this.injectMessageIntoSession(spawned, kickoffMessage);
         // Durable correlation of this activation's expected kickoff with the
         // node execution: the crash-window reconciliation only accepts the
         // settlement of THIS delivery, never any turn that happened to run
-        // (e.g. a pending-message flush racing ahead of the kickoff). See
-        // registerCompletionCallback's reconcile timer. (Task #944 review.)
+        // (e.g. a pending-message flush racing ahead of the kickoff). The id
+        // is generated and stamped BEFORE the inject — injectMessageIntoSession
+        // awaits SDK consumption, so stamping afterwards would leave a window
+        // where a crash strands an unstamped execution with delivery underway,
+        // which both the live settle and the reconciliation would reject
+        // forever. (Task #944 review.)
+        const kickoffMessageUuid = generateUUID();
         const owningExecution = this.config.nodeExecutionRepo.getByAgentSessionId(actualSessionId);
         if (owningExecution) {
           this.config.nodeExecutionRepo.update(owningExecution.id, {
             data: { ...(owningExecution.data ?? {}), kickoffMessageUuid },
           });
         }
+        await this.injectMessageIntoSession(
+          spawned,
+          kickoffMessage,
+          'immediate',
+          undefined,
+          true,
+          undefined,
+          'task',
+          kickoffMessageUuid
+        );
       }
       return actualSessionId;
     } catch (err) {
@@ -3785,9 +3799,12 @@ export class TaskAgentManager {
         // run a peer handoff as a `role:'turn'` job after the callback is
         // registered but before the kickoff is injected — no stamp exists yet,
         // and that turn is not this node's work (same correlation the delayed
-        // reconciliation uses). A promoted steer's turn (uuid ≠ kickoff)
-        // declines here and self-heals via the reconciliation, which finds the
-        // kickoff's own settled row. Sessions WITHOUT a node execution (the
+        // reconciliation uses). A uuid mismatch is still accepted when the
+        // DURABLE correlated outcome says completed — the kickoff itself lost
+        // the turn arbiter to a flush and settled as a consumed steer, and
+        // THIS settle is its owning turn (the only live completion signal for
+        // that shape; the one-shot reconcile may already have fired during a
+        // turn longer than its delay). Sessions WITHOUT a node execution (the
         // post-approval merger) keep the stamp-less behavior — there is no
         // execution to falsely complete.
         const execution = this.config.nodeExecutionRepo.getByAgentSessionId(subSessionId);
@@ -3795,8 +3812,20 @@ export class TaskAgentManager {
           const kickoffMessageUuid = (
             execution.data as { kickoffMessageUuid?: unknown } | null | undefined
           )?.kickoffMessageUuid;
-          if (typeof kickoffMessageUuid !== 'string' || event.messageUuid !== kickoffMessageUuid) {
-            return;
+          if (typeof kickoffMessageUuid === 'string' && event.messageUuid !== kickoffMessageUuid) {
+            const startedAt = execution.startedAt ?? execution.createdAt;
+            const outcome =
+              startedAt != null
+                ? this.config.db
+                    .getJobQueueRepo()
+                    .deliveryTurnOutcomeSince(subSessionId, startedAt, kickoffMessageUuid)
+                : null;
+            if (outcome !== 'completed') {
+              if (outcome === 'dead') fireTerminalError(DEAD_LETTER_SESSION_ERROR);
+              return;
+            }
+          } else if (typeof kickoffMessageUuid !== 'string') {
+            return; // unstamped — the kickoff has not been injected yet
           }
         }
         completeFromDeliveryState();
@@ -3821,49 +3850,67 @@ export class TaskAgentManager {
     // qualify, and a dead-lettered turn whose error/result rows postdate the
     // activation start can never complete. Unref'd so it never holds the
     // process open.
-    const reconcileTimer = setTimeout(() => {
-      // Best-effort by nature (the event-driven paths are primary); a throw
-      // here must never surface as an unhandled timer exception.
-      try {
-        if (fired) return;
-        // Deliberately NOT gated on the current v2 flag: the decision reads
-        // durable rows written while v2 WAS enabled. An operator restarting
-        // with the rollback switch after a crash still needs the repair — the
-        // settled job row is never re-claimed and no new idle is published.
-        // (Task #944 review.)
-        const session = this.getSubSession(subSessionId);
-        if (!session) return;
-        if (session.getProcessingState().status !== 'idle') return;
-        const execution = this.config.nodeExecutionRepo.getByAgentSessionId(subSessionId);
-        const startedAt = execution?.startedAt ?? execution?.createdAt;
-        // Only the settlement of THIS activation's expected kickoff qualifies —
-        // stamped on the execution at inject time. Without it (older rows, or a
-        // crash before the kickoff was enqueued) the reconciliation declines:
-        // a pending-message flush can run a peer handoff as a turn job in the
-        // window before the kickoff exists, and that is not the node's work.
-        const kickoffMessageUuid = (
-          execution?.data as { kickoffMessageUuid?: unknown } | null | undefined
-        )?.kickoffMessageUuid;
-        if (!startedAt || typeof kickoffMessageUuid !== 'string') return;
-        const outcome = this.config.db
-          .getJobQueueRepo()
-          .deliveryTurnOutcomeSince(subSessionId, startedAt, kickoffMessageUuid);
-        if (outcome === 'dead') {
-          fireTerminalError(DEAD_LETTER_SESSION_ERROR);
-          return;
+    // Re-schedulable form: a single shot can fall inside a delivery that
+    // outlasts the delay (a long turn — the timer would return for a
+    // processing session and never re-check). While delivery is still in
+    // flight and no terminal decision was made, re-arm.
+    let reconcileTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleReconcile = (): void => {
+      reconcileTimer = setTimeout(() => {
+        reconcileTimer = null;
+        // Best-effort by nature (the event-driven paths are primary); a throw
+        // here must never surface as an unhandled timer exception.
+        try {
+          if (fired) return;
+          // Deliberately NOT gated on the current v2 flag: the decision reads
+          // durable rows written while v2 WAS enabled. An operator restarting
+          // with the rollback switch after a crash still needs the repair —
+          // the settled job row is never re-claimed and no new idle is
+          // published. (Task #944 review.)
+          const session = this.getSubSession(subSessionId);
+          if (!session) return;
+          if (session.getProcessingState().status !== 'idle') {
+            scheduleReconcile();
+            return;
+          }
+          const execution = this.config.nodeExecutionRepo.getByAgentSessionId(subSessionId);
+          const startedAt = execution?.startedAt ?? execution?.createdAt;
+          // Only the settlement of THIS activation's expected kickoff qualifies
+          // — stamped on the execution BEFORE the inject. Without it (older
+          // rows, or a crash before the kickoff was enqueued) the
+          // reconciliation declines: a pending-message flush can run a peer
+          // handoff as a turn job in the window before the kickoff exists, and
+          // that is not the node's work.
+          const kickoffMessageUuid = (
+            execution?.data as { kickoffMessageUuid?: unknown } | null | undefined
+          )?.kickoffMessageUuid;
+          if (!startedAt || typeof kickoffMessageUuid !== 'string') return;
+          const outcome = this.config.db
+            .getJobQueueRepo()
+            .deliveryTurnOutcomeSince(subSessionId, startedAt, kickoffMessageUuid);
+          if (outcome === 'dead') {
+            fireTerminalError(DEAD_LETTER_SESSION_ERROR);
+            return;
+          }
+          if (outcome !== 'completed') {
+            // No durable settlement yet — delivery may still be in flight.
+            if (this.hasActiveDeliveryJob(subSessionId)) scheduleReconcile();
+            return;
+          }
+          completeFromDeliveryState();
+          if (!fired && this.hasActiveDeliveryJob(subSessionId)) scheduleReconcile();
+        } catch (err) {
+          log.debug(
+            `TaskAgentManager: delivery-settle reconciliation failed for ${subSessionId}:`,
+            err
+          );
         }
-        if (outcome !== 'completed') return;
-        completeFromDeliveryState();
-      } catch (err) {
-        log.debug(
-          `TaskAgentManager: delivery-settle reconciliation failed for ${subSessionId}:`,
-          err
-        );
+      }, deliverySettleReconcileMs());
+      if (typeof (reconcileTimer as { unref?: () => void }).unref === 'function') {
+        (reconcileTimer as { unref: () => void }).unref();
       }
-    }, deliverySettleReconcileMs());
-    if (typeof (reconcileTimer as { unref?: () => void }).unref === 'function') {
-      (reconcileTimer as { unref: () => void }).unref();
-    }
+    };
+    scheduleReconcile();
 
     // Block the node on a terminal failure exactly once and tear down the
     // listeners. Shared by the `session.error` and `session.delivery_failed`
@@ -3973,7 +4020,7 @@ export class TaskAgentManager {
     // Store a combined unsubscribe that tears down all listeners + the
     // reconcile timer at once.
     this.sessionListeners.set(subSessionId, () => {
-      clearTimeout(reconcileTimer);
+      if (reconcileTimer !== null) clearTimeout(reconcileTimer);
       unsubscribeUpdated();
       unsubscribeSettled();
       unsubscribeDeliveryFailed();

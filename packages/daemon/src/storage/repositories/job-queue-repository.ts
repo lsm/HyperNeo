@@ -422,12 +422,13 @@ export class JobQueueRepository {
   }
 
   /**
-   * True when the session has a message_delivery job currently being DRIVEN
-   * (claimed, `processing`) — not merely queued/parked/backing-off. Used by
-   * TaskAgentManager's recoverable-error deferral: only a job the delivery
-   * layer is actually driving can be the source of (and the retry for) a
-   * turn error; a merely-pending job cannot retry unrelated work such as a
-   * rehydration tool-continuation replay. (Task #944 review.)
+   * True when the session has a message_delivery TURN job currently being
+   * DRIVEN (claimed, `processing`) — not merely queued/parked/backing-off, and
+   * not a steer (a mid-turn feed whose driving turn is the retry owner). Used
+   * by TaskAgentManager's recoverable-error deferral: only the turn that owns
+   * the drive can be the source of (and the retry for) a turn error; a
+   * merely-pending job or a claimed steer cannot retry unrelated work such as
+   * a rehydration tool-continuation replay. (Task #944 review.)
    */
   hasProcessingDeliveryForSession(sessionId: string, queue: string = 'message_delivery'): boolean {
     const row = this.db
@@ -435,6 +436,7 @@ export class JobQueueRepository {
         `SELECT 1 FROM job_queue
           WHERE queue = ?
             AND status = 'processing'
+            AND json_extract(payload, '$.role') = 'turn'
             AND json_extract(payload, '$.sessionId') = ?
           LIMIT 1`
       )

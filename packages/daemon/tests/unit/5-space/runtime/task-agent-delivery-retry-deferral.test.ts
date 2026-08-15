@@ -69,7 +69,7 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
   /** Mutable stand-in for the session's active (pending/processing) delivery-job set. */
   let activeJobs: Set<string>;
   /** Stand-in for jobs currently being DRIVEN (claimed processing). */
-  let processingJobs: Set<string>;
+  let processingTurnJobs: Set<string>;
 
   beforeEach(() => {
     // Shorten the crash-window reconciliation delay (read at subscribe time in
@@ -123,7 +123,7 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     bus = createDaemonInternalEventBus();
 
     activeJobs = new Set(['kickoff-uuid']);
-    processingJobs = new Set(['kickoff-uuid']); // the kickoff turn is being driven
+    processingTurnJobs = new Set(['kickoff-uuid']); // the kickoff TURN is being driven
     // Stand-in for the durable turn-delivery outcome the reconcile reads
     // (deliveryTurnOutcomeSince): null = no settled turn for this activation.
     turnOutcome = null;
@@ -133,7 +133,7 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
         // hasActiveDeliveryJob / reconciliation resolve job state from here.
         getJobQueueRepo: () => ({
           activeDeliveryMessageUuids: () => activeJobs,
-          hasProcessingDeliveryForSession: () => processingJobs.size > 0,
+          hasProcessingDeliveryForSession: () => processingTurnJobs.size > 0,
           // uuid-correlated: only the stamped kickoff's outcome qualifies.
           deliveryTurnOutcomeSince: (_sid: string, _since: number, uuid?: string) =>
             uuid === 'kickoff-uuid' ? turnOutcome : null,
@@ -397,7 +397,7 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     try {
       // A pure-legacy boot has no message_delivery rows; nothing can retry.
       activeJobs.clear();
-      processingJobs.clear();
+      processingTurnJobs.clear();
       await publishError(RECOVERABLE_DETAILS);
       expect(completed).toBe(false);
       expect(nodeStatus()).toBe('blocked');
@@ -421,7 +421,7 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
 
       // And its dead-letter still blocks through the row-driven event path.
       activeJobs.clear();
-      processingJobs.clear();
+      processingTurnJobs.clear();
       await bus.publish('session.delivery_failed', {
         sessionId: SUB_SESSION_ID,
         messageUuid: 'kickoff-uuid',
@@ -503,7 +503,7 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     // its live settlement must not complete the unstarted node.
     nodeExecRepo.update(executionId, { data: null }); // kickoff not injected yet
     activeJobs.clear();
-    processingJobs.clear();
+    processingTurnJobs.clear();
     await bus.publish('session.delivery_settled', {
       sessionId: SUB_SESSION_ID,
       messageUuid: 'peer-flush-uuid', // the PEER's turn — not the kickoff
@@ -524,7 +524,7 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     // the settle still completes (nothing to falsely complete).
     nodeExecRepo.update(executionId, { agentSessionId: null }); // detach the row
     activeJobs.clear();
-    processingJobs.clear();
+    processingTurnJobs.clear();
     await bus.publish('session.delivery_settled', {
       sessionId: SUB_SESSION_ID,
       messageUuid: 'any-turn-uuid',
@@ -532,6 +532,66 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     });
     await flush();
     expect(completed).toBe(true); // callback fired via the stamp-less path
+  });
+
+  it('a recoverable error while only a STEER is processing blocks (no driving turn)', async () => {
+    // A claimed steer is a mid-turn feed — its driving TURN owns the retry.
+    // With no processing turn, a continuation-replay error must block.
+    processingTurnJobs.clear(); // only a steer is claimed — no driving turn
+    activeJobs.add('steer-uuid');
+    await publishError(RECOVERABLE_DETAILS);
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('blocked');
+  });
+
+  it('the OWNING turn settle completes a kickoff that settled as a steer (Codex P1)', async () => {
+    // Kickoff lost the arbiter to a flush (settled as a consumed steer); the
+    // flush's peer turn outlasted the reconcile delay. Its settle carries a
+    // uuid ≠ the stamp — the durable correlated outcome (kickoff consumed +
+    // owning turn completed) must accept it.
+    turnOutcome = 'completed'; // durable: kickoff-as-steer consumed + owner completed
+    activeJobs.clear();
+    processingTurnJobs.clear();
+    await bus.publish('session.delivery_settled', {
+      sessionId: SUB_SESSION_ID,
+      messageUuid: 'peer-turn-uuid', // ≠ stamped 'kickoff-uuid'
+      role: 'turn',
+    });
+    await flush();
+    expect(completed).toBe(true);
+  });
+
+  it('a uuid-mismatched turn settle with NO durable kickoff settlement declines', async () => {
+    turnOutcome = null; // kickoff row not settled (or owner still live)
+    activeJobs.clear();
+    processingTurnJobs.clear();
+    await bus.publish('session.delivery_settled', {
+      sessionId: SUB_SESSION_ID,
+      messageUuid: 'peer-turn-uuid',
+      role: 'turn',
+    });
+    await flush();
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('in_progress');
+  });
+
+  it('the reconcile RE-ARMS when its shot falls inside a long turn (Codex P1)', async () => {
+    // First shot: session still processing (turn > delay) → re-arm. Then the
+    // turn ends and its settle is lost; the re-armed shot repairs.
+    turnOutcome = 'completed';
+    const subSessions = (manager as unknown as { subSessions: Map<string, Map<string, unknown>> })
+      .subSessions;
+    let live: { getProcessingState: () => { status: string } } | undefined;
+    for (const nodeMap of subSessions.values()) {
+      live = nodeMap.get(SUB_SESSION_ID) as typeof live;
+    }
+    if (live) live.getProcessingState = () => ({ status: 'processing' });
+    await new Promise<void>((resolve) => setTimeout(resolve, 25)); // first shot re-arms
+    if (live) live.getProcessingState = () => ({ status: 'idle' }); // turn ends
+    activeJobs.clear();
+    processingTurnJobs.clear(); // settle lost — durable rows carry the truth
+    await new Promise<void>((resolve) => setTimeout(resolve, 60)); // re-armed shot
+    expect(completed).toBe(true);
   });
 
   it('a settled STEER that was the last job repays the suppressed idle (ACP shape)', async () => {
@@ -589,7 +649,7 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     // retry an error from that work, and no delivery_failed will repay it.
     // The deferral must not apply; the error blocks as before this PR.
     activeJobs.clear();
-    processingJobs.clear();
+    processingTurnJobs.clear();
     await publishError(RECOVERABLE_DETAILS);
     expect(completed).toBe(false);
     expect(nodeStatus()).toBe('blocked');
@@ -600,7 +660,7 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     // driving the session) while an unrelated delivery job sits pending —
     // active, but not being driven, so it cannot retry the replay's error.
     // The deferral must not apply.
-    processingJobs.clear(); // queued only — nothing is being driven
+    processingTurnJobs.clear(); // queued only — nothing is being driven
     await publishError(RECOVERABLE_DETAILS);
     expect(completed).toBe(false);
     expect(nodeStatus()).toBe('blocked');
@@ -615,7 +675,7 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
       turnOutcome = 'completed'; // durable: the stamped kickoff completed
       await publishIdle(); // suppressed before the crash — job was active
       activeJobs.clear();
-      processingJobs.clear();
+      processingTurnJobs.clear();
       await new Promise<void>((resolve) => setTimeout(resolve, 60));
       expect(completed).toBe(true);
     } finally {
