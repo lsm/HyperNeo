@@ -32,7 +32,8 @@ import { useSessionRename } from '../useSessionRename';
 
 // Lightweight synthetic-event builders (tests bypass strict Preact event types).
 const inputEvent = (value: string) => ({ currentTarget: { value } }) as any;
-const keyEvent = (key: string) => ({ key, preventDefault: () => {} }) as any;
+const keyEvent = (key: string) =>
+  ({ key, preventDefault: () => {}, stopPropagation: () => {} }) as any;
 
 describe('useSessionRename', () => {
   beforeEach(() => {
@@ -54,6 +55,24 @@ describe('useSessionRename', () => {
 
     expect(result.current.isEditing).toBe(true);
     expect(result.current.inputProps.value).toBe('Original');
+  });
+
+  it('exposed commit is a no-op without an active edit, even after an external title change', async () => {
+    // The draft is seeded at mount; a title arriving later (e.g. auto-title
+    // generation) does NOT re-seed it. Hosts call commit() from panel-open
+    // paths, so it must not persist that stale draft as a user rename.
+    const { result, rerender } = renderHook(({ title }) => useSessionRename('session-1', title), {
+      initialProps: { title: 'Original' },
+    });
+    rerender({ title: 'Auto Generated' });
+
+    await act(async () => {
+      result.current.commit();
+    });
+
+    expect(result.current.isEditing).toBe(false);
+    expect(mocks.updateSession).not.toHaveBeenCalled();
+    expect(mocks.globalStoreUpdate).not.toHaveBeenCalled();
   });
 
   it('commits on Enter: optimistic store update + updateSession with title and metadata', async () => {

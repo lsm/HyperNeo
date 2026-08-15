@@ -15,17 +15,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 let mockStatuses: ReturnType<
   typeof signal<Map<string, { processingState: AgentProcessingState; unreadCount: number }>>
 >;
-let mockCurrentSessionId: ReturnType<typeof signal<string | null>>;
+
+// The currentSessionIdSignal instance must exist during the import phase:
+// connection-manager reads it at module-eval time (reached transitively via
+// useSessionRename → session-store), before this file's body assigns anything.
+const signalMocks = vi.hoisted(() => ({ currentSessionId: null as unknown }));
+vi.mock('../../lib/signals.ts', async () => {
+  const { signal } = await import('@preact/signals');
+  signalMocks.currentSessionId ??= signal<string | null>(null);
+  return {
+    get currentSessionIdSignal() {
+      return signalMocks.currentSessionId;
+    },
+    // connection-manager exposes this at module-eval time; a plain signal is
+    // enough for the import chain to resolve.
+    slashCommandsSignal: signal<string[]>([]),
+  };
+});
 
 vi.mock('../../lib/session-status.ts', () => ({
   get allSessionStatuses() {
     return computed(() => mockStatuses.value);
-  },
-}));
-
-vi.mock('../../lib/signals.ts', () => ({
-  get currentSessionIdSignal() {
-    return mockCurrentSessionId;
   },
 }));
 
@@ -49,7 +59,11 @@ vi.mock('../../lib/toast', () => ({ toast: { error: renameMocks.toastError } }))
 mockStatuses = signal<Map<string, { processingState: AgentProcessingState; unreadCount: number }>>(
   new Map()
 );
-mockCurrentSessionId = signal<string | null>(null);
+// currentSessionIdSignal's instance lives in signalMocks (created inside the
+// mock factory); expose it under the name tests mutate directly.
+const mockCurrentSessionId = signalMocks.currentSessionId as ReturnType<
+  typeof signal<string | null>
+>;
 
 import SessionListItem from '../SessionListItem';
 

@@ -26,6 +26,7 @@ import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import type { JSX } from 'preact';
 import { globalStore } from '../lib/global-store';
 import { spaceStore } from '../lib/space-store';
+import { applyOptimisticSessionInfo } from '../lib/session-store';
 import { updateSession } from '../lib/api-helpers';
 import { toast } from '../lib/toast';
 
@@ -42,6 +43,12 @@ export interface UseSessionRenameResult {
   isEditing: boolean;
   /** Seed the draft from the current title and enter edit mode. */
   startEditing: () => void;
+  /**
+   * Commit the current draft (no-op if not editing, empty, or unchanged).
+   * Used by hosts that unmount the input without a blur event (e.g. a
+   * dropdown panel closing mid-edit).
+   */
+  commit: () => void;
   /** Spread onto the `<input>` rendered while editing. */
   inputProps: SessionRenameInputProps;
 }
@@ -89,12 +96,20 @@ export function useSessionRename(sessionId: string, currentTitle: string): UseSe
     // Update both stores: chat rows read globalStore, space rows read spaceStore.
     globalStore.updateSession(sessionId, { title: trimmed });
     spaceStore.updateSession(sessionId, { title: trimmed });
+    // Surfaces rendering the ACTIVE session (chat header/info panel) read
+    // SessionStore.sessionInfo, not the list stores — patch those too.
+    applyOptimisticSessionInfo(sessionId, { title: trimmed });
     try {
       await updateSession(sessionId, { title: trimmed, metadata: { titleSetBy: 'user' } });
     } catch {
-      // Roll back to the prior title and surface the failure.
+      // Roll back to the prior title and surface the failure. The active-view
+      // rollback is guarded on this request's optimistic value: a newer title
+      // may already have landed via state.session while the request was
+      // pending, and stomping it would strand the header on an obsolete title
+      // with no later push guaranteed to repair it.
       globalStore.updateSession(sessionId, { title: currentTitle });
       spaceStore.updateSession(sessionId, { title: currentTitle });
+      applyOptimisticSessionInfo(sessionId, { title: currentTitle }, trimmed);
       toast.error('Failed to rename');
     }
   }, [draft, currentTitle, sessionId]);
@@ -107,6 +122,14 @@ export function useSessionRename(sessionId: string, currentTitle: string): UseSe
   return {
     isEditing,
     startEditing,
+    // No-op unless an edit is actually in flight. Hosts call this from panel
+    // close/toggle paths that also run on OPEN — an unconditional commit there
+    // could persist a stale draft (seeded before an external title change,
+    // e.g. auto-title generation) as a user rename.
+    commit: () => {
+      if (!isEditing) return;
+      void commit();
+    },
     inputProps: {
       ref: (el: HTMLInputElement | null) => {
         inputElRef.current = el;
@@ -120,6 +143,10 @@ export function useSessionRename(sessionId: string, currentTitle: string): UseSe
           void commit();
         } else if (e.key === 'Escape') {
           e.preventDefault();
+          // Stop bubbling so outer Escape handlers (e.g. the session info
+          // panel's close-on-Escape) don't also dismiss their surface while
+          // the edit is being cancelled.
+          e.stopPropagation();
           cancel();
         }
       },
