@@ -71,8 +71,11 @@ export interface QueryLifecycleManagerContext {
   terminateTrackedAgentProcesses(options?: {
     forceDelayMs?: number;
     processes?: Array<[number, import('./query-runner').TrackedAgentProcess]>;
+    noPidProcesses?: unknown[];
   }): void;
   snapshotTrackedAgentProcesses(): Array<[number, import('./query-runner').TrackedAgentProcess]>;
+  /** Snapshot the durable no-PID tracked handles (VM/container/remote spawns). */
+  snapshotNoPidTrackedProcesses?(): unknown[];
 
   // Mutable session state
   pendingRestartReason: 'settings.local.json' | null;
@@ -267,7 +270,9 @@ export class QueryLifecycleManager {
     const processExitedPromise = this.ctx.processExitedPromise;
     // Snapshot tracked processes before awaiting so that terminateTrackedAgentProcesses
     // only signals processes belonging to THIS query, not a concurrently started new one.
+    // Includes the durable no-PID handles (VM/container/remote spawns).
     const trackedProcessSnapshot = this.ctx.snapshotTrackedAgentProcesses();
+    const noPidProcessSnapshot = this.ctx.snapshotNoPidTrackedProcesses?.() ?? [];
 
     // 1. Stop the message queue (no new messages processed)
     messageQueue.stop();
@@ -312,6 +317,7 @@ export class QueryLifecycleManager {
     this.ctx.terminateTrackedAgentProcesses({
       forceDelayMs: FORCE_PROCESS_KILL_DELAY_MS,
       processes: trackedProcessSnapshot,
+      noPidProcesses: noPidProcessSnapshot,
     });
 
     // 5. Close query only if runQuery()'s finally block has not already done so.
@@ -674,9 +680,11 @@ export class QueryLifecycleManager {
         // does not collide with a surviving subprocess, and wait (bounded) for it
         // to exit before starting the replacement. Mirrors stop()'s ordering.
         const orphanedProcesses = this.ctx.snapshotTrackedAgentProcesses();
+        const orphanedNoPidProcesses = this.ctx.snapshotNoPidTrackedProcesses?.() ?? [];
         this.ctx.terminateTrackedAgentProcesses({
           forceDelayMs: FORCE_PROCESS_KILL_DELAY_MS,
           processes: orphanedProcesses,
+          noPidProcesses: orphanedNoPidProcesses,
         });
         const orphanExit = this.ctx.processExitedPromise;
         if (orphanExit) {

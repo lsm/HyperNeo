@@ -334,6 +334,34 @@ describe('AgentSession', () => {
       expect(sigtermCalls).toBe(1); // not re-signaled after exit
     });
 
+    it('scopes no-PID termination to the supplied snapshot, sparing a replacement handle', async () => {
+      // Codex P2 follow-up: stop() captures a snapshot before awaiting so a
+      // concurrently started replacement is not killed. The no-PID path must
+      // honor the snapshot exactly like the PID path.
+      const agentSession = createAgentSession();
+      const mkProc = () => {
+        const p = {
+          once: mock((_event: string, _handler: () => void) => p),
+          kill: mock(() => true),
+        };
+        return p;
+      };
+      const oldProc = mkProc();
+      const replacementProc = mkProc();
+
+      agentSession.trackAgentProcess(oldProc as never);
+      const snapshot = agentSession.snapshotNoPidTrackedProcesses();
+      // The replacement starts AFTER the snapshot was captured.
+      agentSession.trackAgentProcess(replacementProc as never);
+
+      agentSession.terminateTrackedAgentProcesses({ forceDelayMs: 10, noPidProcesses: snapshot });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
+      expect(oldProc.kill).toHaveBeenCalledWith('SIGTERM');
+      expect(oldProc.kill).toHaveBeenCalledWith('SIGKILL');
+      expect(replacementProc.kill).not.toHaveBeenCalled();
+    });
+
     it('binds deferred SIGKILL to the process snapshot being terminated', async () => {
       const agentSession = createAgentSession();
       processKillSpy = spyOn(process, 'kill').mockImplementation(() => true);

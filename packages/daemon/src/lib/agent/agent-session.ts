@@ -2860,16 +2860,21 @@ export class AgentSession
   terminateTrackedAgentProcesses(options?: {
     forceDelayMs?: number;
     processes?: Array<[number, TrackedAgentProcess]>;
+    noPidProcesses?: NoPidTrackedProcess[];
   }): void {
     const forceDelayMs = options?.forceDelayMs ?? 2000;
     const processSnapshot = options?.processes ?? [...this.trackedAgentProcesses];
 
     // No-PID handles (VM/container/remote spawns) are not in the PID map —
     // signal them via their own kill() with the same SIGTERM→SIGKILL cadence.
-    // Without this, a hung no-PID spawn survives termination because there is
-    // no PID to process.kill. (Codex P2, PR #2491.)
-    this.signalNoPidTrackedProcesses('SIGTERM');
-    for (const entry of [...this.noPidAgentProcesses]) {
+    // Snapshot-scoped like the PID entries: a caller that captured only the
+    // old query's handles (stop() during a replacement start) must not kill
+    // the replacement's no-PID process. (Codex P2, PR #2491.)
+    const noPidSnapshot = options?.noPidProcesses ?? [...this.noPidAgentProcesses];
+    this.signalNoPidTrackedProcesses(noPidSnapshot, 'SIGTERM');
+    for (const entry of noPidSnapshot) {
+      // Ownership guard: skip entries that exited or were replaced.
+      if (!this.noPidAgentProcesses.includes(entry)) continue;
       const timer = setTimeout(() => {
         entry.forceKillTimer = undefined;
         this.signalNoPidTrackedProcess(entry, 'SIGKILL');
@@ -2888,9 +2893,18 @@ export class AgentSession
     }
   }
 
-  /** Signal every live no-PID tracked handle (best-effort via kill()). */
-  private signalNoPidTrackedProcesses(signal: NodeJS.Signals): void {
-    for (const entry of [...this.noPidAgentProcesses]) {
+  /** Snapshot the durable no-PID handles (for scoped termination). */
+  snapshotNoPidTrackedProcesses(): NoPidTrackedProcess[] {
+    return [...this.noPidAgentProcesses];
+  }
+
+  /** Signal the given no-PID tracked handles (best-effort via kill()). */
+  private signalNoPidTrackedProcesses(
+    entries: NoPidTrackedProcess[],
+    signal: NodeJS.Signals
+  ): void {
+    for (const entry of entries) {
+      if (!this.noPidAgentProcesses.includes(entry)) continue;
       this.signalNoPidTrackedProcess(entry, signal);
     }
   }
@@ -2983,13 +2997,14 @@ export class AgentSession
    * Called when retry paths time out and abandon the current wait.
    * Without this, unresolved no-PID promises accumulate and block
    * future teardown waits for processes that were already abandoned.
+   *
+   * The durable no-PID HANDLES are intentionally kept: they are the only way
+   * to kill a still-live no-PID process later (stop / stale-state recovery).
+   * They self-clean when the process exits or after a forced termination.
+   * (Codex P2, PR #2491.)
    */
   resetProcessExitedPromise(): void {
     this.noPidExitPromises.length = 0;
-    for (const entry of this.noPidAgentProcesses) {
-      if (entry.forceKillTimer) clearTimeout(entry.forceKillTimer);
-    }
-    this.noPidAgentProcesses.length = 0;
     this.processExitedPromise = null;
   }
 

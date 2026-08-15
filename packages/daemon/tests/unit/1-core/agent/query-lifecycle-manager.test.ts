@@ -306,6 +306,7 @@ describe('QueryLifecycleManager', () => {
       expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalledWith({
         forceDelayMs: 2000,
         processes: [],
+        noPidProcesses: [],
       });
       expect(closeMock).toHaveBeenCalled();
       expect(terminateTrackedAgentProcessesSpy.mock.invocationCallOrder[0]).toBeLessThan(
@@ -953,6 +954,7 @@ describe('QueryLifecycleManager', () => {
       expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalledWith({
         forceDelayMs: 2000,
         processes: [],
+        noPidProcesses: [],
       });
       // Recovery still proceeds to start a fresh query.
       expect(startStreamingCalled).toBe(true);
