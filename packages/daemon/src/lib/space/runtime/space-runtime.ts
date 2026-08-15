@@ -8238,6 +8238,25 @@ export class SpaceRuntime {
         if (refreshedCanonical) {
           canonicalTask = refreshedCanonical;
         }
+        // Recompute completion after the refresh: a concurrent
+        // `recoverWorkflowBackedTask` reopens BOTH the run and the task in
+        // one transaction (run → in_progress, task reset with reportedStatus
+        // cleared) and can land during the awaited transition notification
+        // above. The refreshed task observes that recovery, but
+        // `runIsComplete` above is the stale decision — continuing would
+        // dispatch post-approval on the recovered task, re-terminalize it,
+        // and quiesce the freshly recovered workers. If the run is no longer
+        // done, or the refreshed task no longer signals completion, return
+        // and let the next tick evaluate the recovered state. (task #918)
+        const runAfterTransition = this.config.workflowRunRepo.getRun(runId);
+        const completionStillHolds =
+          runAfterTransition?.status === 'done' &&
+          (canonicalTask.status === 'done' ||
+            canonicalTask.status === 'cancelled' ||
+            canonicalTask.reportedStatus !== null);
+        if (!completionStillHolds) {
+          return;
+        }
         const summaryFromArtifact = this.resolvePrimaryResultArtifactSummary(runId);
         const summary = this.resolveCompletionSummary(runId, meta.workflow);
         const reportedSummary = normalizeMeaningfulTaskResult(canonicalTask.reportedSummary);

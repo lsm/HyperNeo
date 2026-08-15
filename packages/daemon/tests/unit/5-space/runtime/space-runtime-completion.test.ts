@@ -614,6 +614,64 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       expect(finalTask?.status).toBe('done');
       expect(finalTask?.result).toBe('external validation outcome');
     });
+
+    test('does not re-terminalize a task recovered during the run-done transition', async () => {
+      // Interleaving: CompletionDetector sees the done task, and the tick
+      // transitions the run to done — but a concurrent
+      // recoverWorkflowBackedTask lands during that awaited transition
+      // notification, reopening BOTH the run and the task (the recovery
+      // transaction resets the task with reportedStatus cleared). The
+      // refreshed task observes the recovery; continuing on the stale
+      // runIsComplete decision would dispatch post-approval, re-terminalize
+      // the recovered task, and quiesce the freshly recovered workers. The
+      // completion recompute must return instead.
+      const rt = makeRuntimeWithTam();
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: 'node-recover', name: 'Coding', agentId: AGENT_A },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Recovery race run');
+      const task = tasks[0];
+      taskRepo.updateTask(task.id, { status: 'done', result: 'completed by worker' });
+      seedNodeExec(db, run.id, 'node-recover', 'agent', 'in_progress');
+
+      const originalTransition = workflowRunRepo.transitionStatus.bind(workflowRunRepo);
+      let reopened = false;
+      workflowRunRepo.transitionStatus = ((
+        id: string,
+        status: Parameters<SpaceWorkflowRunRepository['transitionStatus']>[1]
+      ) => {
+        const result = originalTransition(id, status);
+        if (id === run.id && status === 'done' && !reopened) {
+          reopened = true;
+          // Simulate the concurrent recovery transaction committing during
+          // the awaited transition notification: run → in_progress, task
+          // reset exactly as recoverWorkflowBackedTask writes it.
+          originalTransition(run.id, 'in_progress');
+          taskRepo.updateTask(task.id, {
+            status: 'in_progress',
+            reportedStatus: null,
+            result: null,
+            completedAt: null,
+          });
+        }
+        return result;
+      }) as typeof workflowRunRepo.transitionStatus;
+
+      try {
+        await rt.executeTick();
+      } finally {
+        workflowRunRepo.transitionStatus = originalTransition;
+      }
+
+      expect(reopened).toBe(true);
+      // The explicit recovery is not undone: the task and run stay
+      // in_progress, and the recovered worker's execution stays alive.
+      expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+      expect(taskRepo.getTask(task.id)?.result).toBeNull();
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id);
+      expect(execution.some((e) => e.status === 'in_progress')).toBe(true);
+    });
   });
 
   // -------------------------------------------------------------------------
