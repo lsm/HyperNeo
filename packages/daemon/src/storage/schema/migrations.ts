@@ -997,6 +997,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   // Migration 193: channel_cycle_events — rate-based dead-loop detection.
   run(migrationMarkerKey(193), () => runMigration193(db));
+
+  // Migration 194: Persist a dedicated job-claim heartbeat without overwriting
+  // the attempt's immutable started_at timestamp.
+  run(migrationMarkerKey(194), () => runMigration194(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -12474,4 +12478,15 @@ export function runMigration193(db: BunDatabase): void {
 		CREATE INDEX IF NOT EXISTS idx_channel_cycle_events_window
 		ON channel_cycle_events(run_id, channel_index, sent_at)
 	`);
+}
+
+/**
+ * Migration 194: Add a dedicated lease heartbeat for processing job claims.
+ * Existing in-flight rows intentionally retain NULL and fall back to started_at.
+ */
+export function runMigration194(db: BunDatabase): void {
+  if (!tableExists(db, 'job_queue')) return;
+  if (!tableHasColumn(db, 'job_queue', 'heartbeat_at')) {
+    db.exec(`ALTER TABLE job_queue ADD COLUMN heartbeat_at INTEGER`);
+  }
 }

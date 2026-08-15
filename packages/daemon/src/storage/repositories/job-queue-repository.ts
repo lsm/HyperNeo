@@ -16,6 +16,7 @@ export interface Job {
   runAt: number;
   createdAt: number;
   startedAt: number | null;
+  heartbeatAt: number | null;
   completedAt: number | null;
   /** Opaque generation assigned on each claim; fences reclaimed predecessors. */
   claimToken: string | null;
@@ -60,8 +61,8 @@ export class JobQueueRepository {
     const now = Date.now();
 
     const stmt = this.db.prepare(
-      `INSERT INTO job_queue (id, queue, status, payload, result, error, priority, max_retries, retry_count, run_at, created_at, started_at, completed_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO job_queue (id, queue, status, payload, result, error, priority, max_retries, retry_count, run_at, created_at, started_at, heartbeat_at, completed_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
 
     stmt.run(
@@ -76,6 +77,7 @@ export class JobQueueRepository {
       0,
       params.runAt ?? now,
       now,
+      null,
       null,
       null
     );
@@ -150,11 +152,11 @@ export class JobQueueRepository {
       this.db
         .prepare(
           `UPDATE job_queue
-              SET status = 'processing', started_at = ?,
+              SET status = 'processing', started_at = ?, heartbeat_at = ?,
                   payload = json_set(payload, '$.__claimToken', ?)
             WHERE id = ? AND status = 'pending'`
         )
-        .run(now, claimToken, row.id as string);
+        .run(now, now, claimToken, row.id as string);
       const job = this.getJob(row.id as string);
       if (job?.claimToken === claimToken) claimed.push(job);
     }
@@ -170,7 +172,7 @@ export class JobQueueRepository {
    */
   requeue(jobId: string, runAt: number, claimToken?: string | null): Job | null {
     const stmt = this.db.prepare(
-      `UPDATE job_queue SET status = 'pending', run_at = ?, started_at = NULL
+      `UPDATE job_queue SET status = 'pending', run_at = ?, started_at = NULL, heartbeat_at = NULL
         WHERE id = ? AND status = 'processing'
           AND (? IS NULL OR json_extract(payload, '$.__claimToken') = ?)`
     );
@@ -201,7 +203,7 @@ export class JobQueueRepository {
   requeueParked(jobId: string, runAt: number, claimToken?: string | null): Job | null {
     const stmt = this.db.prepare(
       `UPDATE job_queue
-         SET status = 'pending', run_at = ?, started_at = NULL,
+         SET status = 'pending', run_at = ?, started_at = NULL, heartbeat_at = NULL,
              payload = json_set(payload, '$.__parkCount',
                COALESCE(json_extract(payload, '$.__parkCount'), 0) + 1)
        WHERE id = ? AND status = 'processing'
@@ -230,7 +232,8 @@ export class JobQueueRepository {
            SET status = 'pending',
                payload = json_set(payload, '$.role', ?),
                run_at = ?,
-               started_at = NULL
+               started_at = NULL,
+               heartbeat_at = NULL
          WHERE id = ? AND status = 'processing'
            AND (? IS NULL OR json_extract(payload, '$.__claimToken') = ?)`
       )
@@ -253,32 +256,22 @@ export class JobQueueRepository {
   requeueAllProcessing(queue: string, runAt: number): number {
     const res = this.db
       .prepare(
-        `UPDATE job_queue SET status = 'pending', run_at = ?, started_at = NULL WHERE queue = ? AND status = 'processing'`
+        `UPDATE job_queue SET status = 'pending', run_at = ?, started_at = NULL, heartbeat_at = NULL WHERE queue = ? AND status = 'processing'`
       )
       .run(runAt, queue);
     return res.changes;
   }
 
-  /**
-   * Refresh `started_at` on a `processing` job WITHOUT changing status — a lease
-   * heartbeat so the generic `reclaimStale` sweep (default 5min threshold) does
-   * not reclaim a long-but-live SDK turn and re-deliver it (duplicate turn). The
-   * message-delivery handler heartbeats this throughout the turn await; a
-   * crashed handler stops heartbeating, so reclaimStale still recovers it. See
-   * message-delivery-v2.md §10 + Codex review (live-turn reclaim).
-   */
-  touchStartedAt(jobId: string, claimToken?: string | null): boolean {
-    const result = claimToken
-      ? this.db
-          .prepare(
-            `UPDATE job_queue SET started_at = ?
-              WHERE id = ? AND status = 'processing'
-                AND json_extract(payload, '$.__claimToken') = ?`
-          )
-          .run(Date.now(), jobId, claimToken)
-      : this.db
-          .prepare(`UPDATE job_queue SET started_at = ? WHERE id = ? AND status = 'processing'`)
-          .run(Date.now(), jobId);
+  /** Renew the lease for one exact processing claim without changing its start time. */
+  heartbeat(jobId: string, claimToken: string | null): boolean {
+    if (!claimToken) return false;
+    const result = this.db
+      .prepare(
+        `UPDATE job_queue SET heartbeat_at = ?
+          WHERE id = ? AND status = 'processing'
+            AND json_extract(payload, '$.__claimToken') = ?`
+      )
+      .run(Date.now(), jobId, claimToken);
     return result.changes > 0;
   }
 
@@ -590,7 +583,7 @@ export class JobQueueRepository {
     claimToken?: string | null
   ): Job | null {
     const stmt = this.db.prepare(
-      `UPDATE job_queue SET status = 'completed', completed_at = ?, result = ?
+      `UPDATE job_queue SET status = 'completed', completed_at = ?, result = ?, heartbeat_at = NULL
         WHERE id = ? AND status = 'processing'
           AND (? IS NULL OR json_extract(payload, '$.__claimToken') = ?)`
     );
@@ -627,7 +620,7 @@ export class JobQueueRepository {
         .prepare(
           `UPDATE job_queue
               SET retry_count = retry_count + 1, status = 'pending', error = ?,
-                  run_at = ?, started_at = NULL
+                  run_at = ?, started_at = NULL, heartbeat_at = NULL
             WHERE id = ?
               AND (? IS NULL OR (status = 'processing'
                 AND json_extract(payload, '$.__claimToken') = ?))`
@@ -636,7 +629,7 @@ export class JobQueueRepository {
     } else {
       result = this.db
         .prepare(
-          `UPDATE job_queue SET status = 'dead', error = ?, completed_at = ?
+          `UPDATE job_queue SET status = 'dead', error = ?, completed_at = ?, heartbeat_at = NULL
             WHERE id = ?
               AND (? IS NULL OR (status = 'processing'
                 AND json_extract(payload, '$.__claimToken') = ?))`
@@ -665,7 +658,7 @@ export class JobQueueRepository {
     }
     const result = this.db
       .prepare(
-        `UPDATE job_queue SET status = 'dead', error = ?, completed_at = ?
+        `UPDATE job_queue SET status = 'dead', error = ?, completed_at = ?, heartbeat_at = NULL
           WHERE id = ?
             AND (? IS NULL OR (status = 'processing'
               AND json_extract(payload, '$.__claimToken') = ?))`
@@ -734,7 +727,7 @@ export class JobQueueRepository {
   }
 
   /**
-   * Count `processing` rows in a lane whose lease (`started_at`) is past the
+   * Count `processing` rows in a lane whose effective lease (`heartbeat_at`, falling back to `started_at`) is past the
    * stale-reclamation threshold — i.e. reclaimable (their handler stopped
    * heartbeating). Used by the messageDelivery.diagnostics RPC to distinguish
    * genuinely-stale deliveries from healthy in-flight turns (which `countByStatus`
@@ -744,7 +737,9 @@ export class JobQueueRepository {
     const row = this.db
       .prepare(
         `SELECT COUNT(*) AS c FROM job_queue
-           WHERE queue = ? AND status = 'processing' AND started_at IS NOT NULL AND started_at < ?`
+           WHERE queue = ? AND status = 'processing'
+             AND COALESCE(heartbeat_at, started_at) IS NOT NULL
+             AND COALESCE(heartbeat_at, started_at) < ?`
       )
       .get(queue, staleBeforeMs) as { c: number } | undefined;
     return row?.c ?? 0;
@@ -800,7 +795,7 @@ export class JobQueueRepository {
         .prepare(
           `SELECT id, json_extract(payload, '$.__claimToken') AS claim_token
              FROM job_queue
-            WHERE status = 'processing' AND started_at < ?`
+            WHERE status = 'processing' AND COALESCE(heartbeat_at, started_at) < ?`
         )
         .all(staleBefore) as Array<{ id: string; claim_token: string | null }>;
       const reclaimed: ReclaimedJobClaim[] = [];
@@ -808,8 +803,10 @@ export class JobQueueRepository {
       for (const candidate of candidates) {
         const result = this.db
           .prepare(
-            `UPDATE job_queue SET status = 'pending', started_at = NULL
-              WHERE id = ? AND status = 'processing' AND started_at < ?
+            `UPDATE job_queue
+                SET status = 'pending', started_at = NULL, heartbeat_at = NULL
+              WHERE id = ? AND status = 'processing'
+                AND COALESCE(heartbeat_at, started_at) < ?
                 AND ((? IS NULL AND json_extract(payload, '$.__claimToken') IS NULL)
                   OR json_extract(payload, '$.__claimToken') = ?)`
           )
@@ -840,6 +837,7 @@ export class JobQueueRepository {
       runAt: row.run_at as number,
       createdAt: row.created_at as number,
       startedAt: (row.started_at as number | null) ?? null,
+      heartbeatAt: (row.heartbeat_at as number | null) ?? null,
       completedAt: (row.completed_at as number | null) ?? null,
       claimToken: typeof rawPayload.__claimToken === 'string' ? rawPayload.__claimToken : null,
     };

@@ -1,5 +1,5 @@
-import type { Job, JobQueueRepository, PayloadMatch } from './repositories/job-queue-repository';
 import type { TableChangeScope } from './reactive-database';
+import type { Job, JobQueueRepository, PayloadMatch } from './repositories/job-queue-repository';
 
 export interface JobHandlerContext {
   signal: AbortSignal;
@@ -91,6 +91,7 @@ export class JobQueueProcessor {
   private readonly pollIntervalMs: number;
   private readonly maxConcurrent: number;
   private readonly staleThresholdMs: number;
+  private readonly heartbeatIntervalMs: number;
   private lastStaleCheck = 0;
   private static readonly STALE_CHECK_INTERVAL = 60_000;
 
@@ -101,6 +102,7 @@ export class JobQueueProcessor {
     this.pollIntervalMs = options?.pollIntervalMs ?? 1000;
     this.maxConcurrent = options?.maxConcurrent ?? 1;
     this.staleThresholdMs = options?.staleThresholdMs ?? 5 * 60 * 1000;
+    this.heartbeatIntervalMs = Math.max(10, Math.floor(this.staleThresholdMs / 3));
   }
 
   register(queue: string, handler: JobHandler, options?: RegisterOptions): void {
@@ -197,6 +199,12 @@ export class JobQueueProcessor {
     const scope = scopeFromJob(job);
     const controller = new AbortController();
     this.trackInFlightClaim(job, controller);
+    const heartbeat = setInterval(() => {
+      if (!this.repo.heartbeat(job.id, job.claimToken)) controller.abort();
+    }, this.heartbeatIntervalMs);
+    if (typeof (heartbeat as { unref?: () => void }).unref === 'function') {
+      (heartbeat as { unref: () => void }).unref();
+    }
     try {
       if (!reg) {
         this.repo.fail(job.id, `No handler registered for queue: ${job.queue}`);
@@ -230,6 +238,7 @@ export class JobQueueProcessor {
       }
       this.notifyChange(scope);
     } finally {
+      clearInterval(heartbeat);
       this.untrackInFlightClaim(job, controller);
       if (exempt) this.inFlightExempt--;
       else this.inFlightCapped--;

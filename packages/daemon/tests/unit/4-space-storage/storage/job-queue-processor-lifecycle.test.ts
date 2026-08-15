@@ -35,6 +35,7 @@ const DB_SCHEMA = `
 		run_at INTEGER NOT NULL,
 		created_at INTEGER NOT NULL,
 		started_at INTEGER,
+		heartbeat_at INTEGER,
 		completed_at INTEGER
 	);
 	CREATE INDEX IF NOT EXISTS idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC);
@@ -208,8 +209,10 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
       // reclaimStale returns, not 'completed'.
       const job = repo.enqueue({ queue: 'reclaim-order-q', payload: {} });
       repo.dequeue('reclaim-order-q', 1);
-      db.prepare(`UPDATE job_queue SET started_at = ? WHERE id = ?`).run(
-        Date.now() - 30_000,
+      const staleLease = Date.now() - 30_000;
+      db.prepare(`UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?`).run(
+        staleLease,
+        staleLease,
         job.id
       );
 

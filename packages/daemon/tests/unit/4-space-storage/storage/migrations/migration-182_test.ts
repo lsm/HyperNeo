@@ -16,7 +16,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { createTables } from '../../../../../src/storage/schema';
-import { runMigration182 } from '../../../../../src/storage/schema/migrations';
+import { runMigration182, runMigration194 } from '../../../../../src/storage/schema/migrations';
 import { JobQueueRepository } from '../../../../../src/storage/repositories/job-queue-repository';
 import { MESSAGE_DELIVERY } from '../../../../../src/lib/job-queue-constants';
 import { deliverMessage } from '../../../../../src/lib/agent/message-delivery';
@@ -40,10 +40,37 @@ function makeJobQueue(db: BunDatabase): void {
       run_at INTEGER NOT NULL,
       created_at INTEGER NOT NULL,
       started_at INTEGER,
+      heartbeat_at INTEGER,
       completed_at INTEGER
     );
   `);
 }
+
+describe('Migration 194: job_queue heartbeat_at', () => {
+  test('adds the nullable column idempotently without backfilling in-flight rows', () => {
+    const db = new BunDatabase(':memory:');
+    try {
+      makeJobQueue(db);
+      db.exec(`ALTER TABLE job_queue DROP COLUMN heartbeat_at`);
+      db.exec(`
+        INSERT INTO job_queue (
+          id, queue, status, payload, run_at, created_at, started_at
+        ) VALUES ('legacy', 'q', 'processing', '{}', 0, 0, 123)
+      `);
+
+      runMigration194(db);
+      runMigration194(db);
+
+      const row = db.prepare(`SELECT started_at, heartbeat_at FROM job_queue`).get() as {
+        started_at: number;
+        heartbeat_at: number | null;
+      };
+      expect(row).toEqual({ started_at: 123, heartbeat_at: null });
+    } finally {
+      db.close();
+    }
+  });
+});
 
 describe('Migration 181: uq_message_delivery_active_turn', () => {
   let db: BunDatabase;
