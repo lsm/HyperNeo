@@ -358,6 +358,31 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
     expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
   });
 
+  test('an async (thenable-returning) precondition is refused, not silently ignored', async () => {
+    // TypeScript happily assigns an `async` function to the `void`-returning
+    // precondition slot; without the runtime thenable check the transition
+    // would commit before the async check settled and the check's rejection
+    // would surface as unhandled. Fail closed instead.
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    const asyncPrecondition = async () => {
+      await Promise.resolve();
+    };
+    await expect(
+      taskManager.setTaskStatus(task.id, 'done', {
+        result: 'validated',
+        // Biome/TS accept this assignment because async ⇒ void is legal.
+        precondition: asyncPrecondition as unknown as () => void,
+      })
+    ).rejects.toThrow(/precondition must be synchronous/);
+    expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+    expect(taskRepo.getTask(task.id)?.result).toBeNull();
+  });
+
   test('interleaving: a status change landing after the reread is NOT overwritten by the guarded UPDATE', async () => {
     // Exercises the SQL guard's 0-row path specifically. The precondition
     // callback runs AFTER setTaskStatus' reread and BEFORE the UPDATE — inside

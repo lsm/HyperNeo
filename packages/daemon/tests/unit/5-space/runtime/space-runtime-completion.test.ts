@@ -486,6 +486,75 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Forge evidence refresh on resolved-task reconciliation (task #918)
+  // -------------------------------------------------------------------------
+
+  describe('Forge evidence refresh on resolved-task reconciliation', () => {
+    test('reconciliation refreshes auto-captured evidence captured before the run completed', async () => {
+      // complete_validation_task commits a workflow-backed task's `done` while
+      // its run is still `in_progress` — the terminal transition captures
+      // Forge evidence against that provisional state (run status, null
+      // completedAt). Reconciliation finalizes the run; it must also REFRESH
+      // the evidence (createAutoEvidenceOnce upserts) so the Forge record
+      // matches the finalized outcome instead of the provisional one.
+      const evolutionRepo = new EvolutionRepository(db);
+      const scope = evolutionRepo.createScope({
+        spaceId: SPACE_ID,
+        kind: 'custom',
+        name: 'Evidence refresh scope',
+        objective: 'Guard the post-reconciliation evidence refresh for externally completed tasks.',
+      });
+      const evolutionScopeService = new EvolutionScopeService({
+        evolutionRepo,
+        spaceRepo: new SpaceRepository(db),
+        goalRepo: new SpaceGoalRepository(db),
+        taskRepo,
+        workflowRunRepo,
+        artifactRepo,
+      });
+      const rt = makeRuntimeWithTam({ evolutionScopeService });
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: 'node-ev-refresh', name: 'Coding', agentId: AGENT_A },
+      ]);
+
+      const { run, tasks } = await rt.startWorkflowRun(
+        SPACE_ID,
+        workflow.id,
+        'Evidence refresh run'
+      );
+      const task = tasks[0];
+      // External validation-only completion shape: task done, run still active.
+      taskRepo.updateTask(task.id, {
+        evolutionScopeId: scope.id,
+        status: 'done',
+        result: 'validated: no PR involved',
+      });
+      seedNodeExec(db, run.id, 'node-ev-refresh', 'agent', 'idle');
+
+      // Provisional capture exactly as the terminal transition performs it —
+      // while the run is still in_progress.
+      evolutionScopeService.captureCompletedTaskEvidence({ taskId: task.id });
+      const runEvidenceBefore = evolutionRepo
+        .listEvidence(scope.id)
+        .find((item) => item.sourceId === run.id && item.metadata.autoCaptured === true);
+      expect(runEvidenceBefore?.metadata.status).toBe('in_progress');
+      expect(runEvidenceBefore?.metadata.completedAt).toBeNull();
+
+      await rt.executeTick();
+
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+      // The SAME evidence row (upsert, not a duplicate) now carries the
+      // finalized run state.
+      const runEvidenceAfter = evolutionRepo
+        .listEvidence(scope.id)
+        .find((item) => item.sourceId === run.id && item.metadata.autoCaptured === true);
+      expect(runEvidenceAfter?.id).toBe(runEvidenceBefore?.id);
+      expect(runEvidenceAfter?.metadata.status).toBe('done');
+      expect(runEvidenceAfter?.metadata.completedAt).not.toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // completedAt timestamp
   // -------------------------------------------------------------------------
 

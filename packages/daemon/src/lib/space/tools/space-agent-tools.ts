@@ -78,6 +78,7 @@ import type { ReplyRoutingRegistry } from '../runtime/reply-routing-registry';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types';
 import type { ActorResolver } from '../../../../../messaging/src/contracts';
 import type { SpaceRuntime } from '../runtime/space-runtime';
+import { pickCanonicalRunTask } from '../runtime/space-runtime';
 import type { TaskAgentManager } from '../runtime/task-agent-manager';
 import {
   collectDispatchablePostApprovalRoutes,
@@ -3498,6 +3499,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
      *     `postApproval` route are rejected — a direct done would silently skip
      *     the route (the tick loop treats an already-done task as resolved).
      *     They must close through submit_for_approval so the router fires.
+     *   - Workflow-backed completions apply the tick loop's canonical-task
+     *     selection (`pickCanonicalRunTask`) and reject non-canonical
+     *     duplicates — the tick archives duplicates, which would discard the
+     *     completion while keeping its side effects.
+     *   - Workflow-backed tasks whose workflow declares hooks on
+     *     completion-family methods (`approve_task`, `submit_for_approval`,
+     *     `mark_complete`) are rejected — those validators wrap the node-agent
+     *     completion tools, and this tool ships on an unwrapped server, so the
+     *     unwrapped path fails closed instead of bypassing the hook engine.
      *   - The no-PR and run-runnable (run not cancelled/done/blocked) conditions are
      *     re-asserted synchronously inside the terminal write's precondition
      *     against the reread state, closing the window between the early
@@ -3666,7 +3676,44 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             error: `Task ${args.task_id} belongs to a ${run.status} workflow run; validation-only completion is not applicable. Reconcile or retry the task instead.`,
           });
         }
+        // Canonical-task guard: a run should have exactly one task, but
+        // imported/legacy runs can temporarily carry duplicates. The tick loop
+        // picks the canonical task (pickCanonicalRunTask) and archives every
+        // duplicate, so completing a non-canonical duplicate here would be
+        // discarded by that archive while its side effects (evidence capture,
+        // dependent unblocking) persisted. Apply the tick's exact selection
+        // rule and reject duplicates up front.
+        const runTasks = taskRepo.listByWorkflowRun(task.workflowRunId);
+        const canonicalTask = run ? pickCanonicalRunTask(run, runTasks) : null;
+        if (canonicalTask && canonicalTask.id !== task.id) {
+          return jsonResult({
+            success: false,
+            error: `Task ${args.task_id} is not the canonical task of its workflow run (a duplicate the runtime will archive); completing it would be discarded. Complete or reconcile the canonical task (${canonicalTask.taskNumber}) instead.`,
+          });
+        }
         const routeWorkflow = run?.workflowId ? workflowManager.getWorkflowForRun(run) : null;
+        // Terminal-hook guard: the workflow hook engine wraps the node-agent
+        // completion tools (`approve_task`, `submit_for_approval`,
+        // `mark_complete`) so workflow-declared validators can veto a
+        // completion — but this tool ships on `space-agent-tools`, a different
+        // MCP server the engine does not wrap. Fail closed: when the workflow
+        // declares hooks on any completion-family method, refuse the
+        // unwrapped path so the configured validators cannot be bypassed.
+        const terminalHookMethods = new Set<string>([
+          'approve_task',
+          'submit_for_approval',
+          'mark_complete',
+        ]);
+        if (
+          (routeWorkflow?.hooks ?? []).some(
+            (hook) => hook.enabled && terminalHookMethods.has(hook.method)
+          )
+        ) {
+          return jsonResult({
+            success: false,
+            error: `Task ${args.task_id} belongs to a workflow with terminal-action hooks; validation-only completion bypasses the hook engine. Use submit_for_approval (then approval) so the configured validators run.`,
+          });
+        }
         if (collectDispatchablePostApprovalRoutes(routeWorkflow).length > 0) {
           return jsonResult({
             success: false,

@@ -213,10 +213,15 @@ export class SpaceTaskManager {
        *
        * MUST be synchronous. An async hook yields the event loop between the
        * check and the write, reopening the race it exists to close — enforce
-       * the type as `void`-returning and never await it. Cross-table invariants
-       * that need an await belong in the caller BEFORE this call; the status
-       * half of the race is closed atomically by `allowedSourceStatuses`
-       * (the UPDATE itself predicates `WHERE status IN (…)`).
+       * the type as `void`-returning and never await it. Because TypeScript
+       * happily assigns an `async` function to a `void`-returning signature,
+       * this method ALSO runtime-checks the returned value for thenables and
+       * refuses the transition if one appears (an ignored async check would
+       * proceed before it settles and turn its rejection unhandled). Cross-
+       * table invariants that need an await belong in the caller BEFORE this
+       * call; the status half of the race is closed atomically by
+       * `allowedSourceStatuses` (the UPDATE itself predicates
+       * `WHERE status IN (…)`).
        */
       precondition?: (task: SpaceTask) => void;
       /**
@@ -256,9 +261,23 @@ export class SpaceTaskManager {
 
     // Domain precondition — last gate before the UPDATE commits (see the
     // option's doc). Synchronous by contract: no event-loop yield between the
-    // reread and the write.
+    // reread and the write. TypeScript permits assigning an `async` function
+    // to this `void`-returning slot, so enforce the contract at runtime too —
+    // a thenable return means the check has NOT settled; refuse the
+    // transition rather than proceed before it does (its eventual rejection
+    // would also surface as an unhandled rejection).
     if (options?.precondition) {
-      options.precondition(task);
+      const preconditionResult: unknown = options.precondition(task);
+      if (
+        preconditionResult != null &&
+        typeof (preconditionResult as { then?: unknown }).then === 'function'
+      ) {
+        throw new Error(
+          'setTaskStatus precondition must be synchronous — an async (thenable-returning) ' +
+            'precondition was supplied; refusing the transition instead of proceeding ' +
+            'before the check settles.'
+        );
+      }
     }
 
     const updates: Parameters<SpaceTaskRepository['updateTask']>[1] = { status: newStatus };

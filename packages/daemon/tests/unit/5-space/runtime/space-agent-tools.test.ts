@@ -6047,6 +6047,123 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
   });
 
+  test('rejects a non-canonical duplicate task of a multi-task run', async () => {
+    // Imported/legacy runs can temporarily carry duplicates. The tick loop
+    // picks the canonical task and archives every duplicate, so completing a
+    // duplicate here would be discarded while its side effects (evidence
+    // capture, dependent unblocking) persisted. The guard applies the tick's
+    // exact selection rule (pickCanonicalRunTask).
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    // Seed the legacy duplicate FIRST so it holds the lower task number —
+    // that makes it canonical once attached to the target's run.
+    const legacyDup = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'Legacy per-node task',
+      description: '',
+      status: 'in_progress',
+    });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    expect(task.taskNumber).toBeGreaterThan(legacyDup.taskNumber);
+    ctx.taskRepo.updateTask(legacyDup.id, { workflowRunId: task.workflowRunId });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-review',
+      agentName: 'Review',
+      agentId: ctx.agentId,
+      status: 'idle',
+    });
+
+    // Completing the NON-canonical task is rejected.
+    const denied = JSON.parse(
+      (
+        await makeHandlers(ctx).complete_validation_task({
+          task_id: task.id,
+          validation_outcome: 'should be refused',
+        })
+      ).content[0].text
+    );
+    expect(denied.success).toBe(false);
+    expect(denied.error).toContain('not the canonical task');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
+
+    // Completing the canonical task still works.
+    const allowed = JSON.parse(
+      (
+        await makeHandlers(ctx).complete_validation_task({
+          task_id: legacyDup.id,
+          validation_outcome: 'canonical task validated',
+        })
+      ).content[0].text
+    );
+    expect(allowed.success).toBe(true);
+    expect(ctx.taskRepo.getTask(legacyDup.id)?.status).toBe('done');
+  });
+
+  test('rejects a workflow-backed task whose workflow declares terminal-action hooks', async () => {
+    // The hook engine wraps the node-agent completion tools but NOT this
+    // tool's server (space-agent-tools). Fail closed: when the workflow
+    // declares hooks on any completion-family method, the unwrapped path is
+    // refused so the configured validators cannot be bypassed.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const nodeId = `node-${Math.random().toString(36).slice(2)}`;
+    const workflow = ctx.workflowManager.createWorkflow({
+      spaceId: ctx.spaceId,
+      name: `Hook-gated workflow ${nodeId.slice(-6)}`,
+      description: '',
+      nodes: [{ id: nodeId, name: 'Review', agentId: ctx.agentId }],
+      transitions: [],
+      startNodeId: nodeId,
+      endNodeId: nodeId,
+      rules: [],
+      completionAutonomyLevel: 5,
+      hooks: [
+        {
+          id: 'gate-approve',
+          enabled: true,
+          sourceNode: 'Review',
+          method: 'approve_task',
+          validator: {
+            kind: 'script',
+            interpreter: 'bash',
+            source: 'echo \'{"type":"allow"}\'',
+          },
+          authorizedCallers: [{ sourceNode: 'Review' }],
+        },
+      ],
+    });
+    const run = ctx.workflowRunRepo.createRun({
+      spaceId: ctx.spaceId,
+      workflowId: workflow.id,
+      title: 'Hook-gated run',
+      description: '',
+    });
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'Hook-gated task',
+      description: '',
+      status: 'in_progress',
+      workflowRunId: run.id,
+    });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: run.id,
+      workflowNodeId: nodeId,
+      agentName: 'Review',
+      agentId: ctx.agentId,
+      status: 'idle',
+    });
+
+    const result = await makeHandlers(ctx).complete_validation_task({
+      task_id: task.id,
+      validation_outcome: 'validated',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('terminal-action hooks');
+    expect(parsed.error).toContain('bypasses the hook engine');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
+  });
+
   test('rejects when space autonomy is below workflow completionAutonomyLevel', async () => {
     await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 3 });
     const task = createWorkflowTask(5);
