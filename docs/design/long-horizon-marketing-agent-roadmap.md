@@ -123,9 +123,13 @@ The target is one behavioral contract per PR, normally no more than 200 changed 
 
 - Preserve the deterministic reminder-occurrence UUID.
 - Advance one-shot/cron state only at the selected receipt boundary.
+- Define terminal-delivery failure recovery before advancement:
+  - do not mark a one-shot occurrence fired merely on durable acceptance;
+  - a terminal V2 failure creates a new attempt generation or explicit degraded/manual-retry state rather than silently skipping the occurrence;
+  - deterministic occurrence identity plus attempt generation prevents repeated scans from colliding with the failed delivery.
 - Remove bespoke probes/timeouts only after V2 provides equivalent guarantees.
 
-**Estimate:** 90–170 lines, likely deletion-heavy.
+**Estimate:** 100–180 lines, likely deletion-heavy.
 
 #### V5. Migrate LH external-event delivery
 
@@ -208,8 +212,9 @@ interface SpaceLifecycleSubscriptionFilter {
   - `labels` filters to `labelsAny` for marketing, product-quality-manager, and research;
   - coordinator `statuses` filters to typed `statusesAny` or equivalent exact status topics.
 - Backfill or repair already persisted legacy `labels` and `statuses` subscription rows in the same release so existing agents do not silently lose matching.
+- Handle the singular `{ label: ... }` metadata written by the existing `subscribe_agent_event` MCP contract. It is not payload filtering: either move it to a separate typed display-label field with a migration or intentionally map it to payload semantics before rejecting it. Update the MCP contract so it cannot continue creating unsupported filters.
 
-**Estimate:** 120–190 lines.
+**Estimate:** 140–210 lines.
 
 #### S2. Runtime filter enforcement
 
@@ -282,6 +287,7 @@ Do not provide payload update/delete methods.
 #### G6. Terminal transition captures outcome report
 
 - Define one shared reportable-terminal predicate before implementation. Goal-linked tasks entering `done` or `blocked` require reports; `cancelled` and `archived` require reports only when they terminate previously active goal work rather than an administrative cleanup. The predicate must be versioned and covered by tests so every writer applies the same rule.
+- Add a durable task-scoped pending-outcome record for supervised/pre-terminal submissions. A worker can submit structured observations, recommendations, proposed updates, and evidence references while a task is in `review`; that payload must survive until approval and post-approval work complete. The terminal transition atomically consumes the pending outcome into the immutable report and terminal generation.
 - Create the report as part of the central reportable terminal transition, not as an optional model-invoked tool. A worker may submit the structured outcome payload before or during completion, but the terminal command/transition must guarantee one report exists even when the worker omits the tool call.
 - Audit every reportable terminal writer and route it through the atomic transition. This must include direct repository writers such as `PostApprovalRouter.route`, whose no-route branch currently completes with `taskRepo.updateTask` and intentionally bypasses `setTaskStatus`.
 - Keep notification/routing asynchronous and non-blocking.
@@ -290,7 +296,7 @@ Do not provide payload update/delete methods.
 
 This is the required behavior currently absent from `mark_complete.goal_update`; without terminal-capture, a normal completion can produce no report.
 
-**Estimate:** 170–250 lines.
+**Estimate:** 190–270 lines; split pending-outcome persistence from terminal capture if it exceeds 250.
 
 #### G7. Owner routing through V2
 
@@ -298,12 +304,13 @@ This is the required behavior currently absent from `mark_complete.goal_update`;
 - Activate/rehydrate the owner session.
 - Deliver through the LH V2 adapter.
 - Use explicit coordinator fallback when the owner is absent or unavailable.
-- Atomically persist durable routing work with report creation or require the dispatcher to scan every unrouted report. Delivery identity must be deterministic from report ID plus route generation so restart recovery is idempotent.
+- Tie route generation to an ownership version. `replacePrimaryGoalOwner` must invalidate or supersede routes for unresolved reports and enqueue a fresh deterministic route to the new owner; a routed former owner must not leave the report stranded even though it cannot decide it.
+- Atomically persist durable routing work with report creation or require the dispatcher to scan every unrouted/superseded report. Delivery identity must be deterministic from report ID plus route generation so restart recovery is idempotent.
 - Persist routing outcome without blocking task completion; a committed report must not be lost because the daemon exits before the asynchronous route call starts.
 
 **Dependencies:** G1–G6 and V1–V3.
 
-**Estimate:** 150–240 lines.
+**Estimate:** 170–250 lines.
 
 #### G8. Owner decision and atomic apply
 
@@ -319,13 +326,13 @@ This is the required behavior currently absent from `mark_complete.goal_update`;
 
 #### G9. Authorization and compatibility migration
 
-- Restrict worker direct rolling-state mutations.
+- Restrict every goal-mutating MCP/RPC operation—not only worker paths or `mark_complete`—to the current primary owner, coordinator, or explicit human authority. This includes `update_goal`, pause/resume, archive/complete, schedule/cadence changes, and goal-task triggering. Managers, watchers, unrelated LH agents, and ordinary member sessions must not bypass owner disposition by rewriting goal strategy directly.
 - Deprecate direct `mark_complete.goal_update` application in favor of outcome-report submission and owner disposition.
 - Apply equivalent owner authority to Forge rollups.
 - Preserve coordinator/human override policy.
 - Migrate centralized worker prompts and the `mark_complete` schema descriptions before enabling restrictions. Existing goal-linked workers are instructed to update goals through goal tools or `goal_update`; they must instead be instructed to submit reports and let the owner decide.
 
-**Estimate:** 130–220 lines.
+**Estimate:** 160–240 lines.
 
 ### Stage R — Direct LH reminders and self-nagging
 
