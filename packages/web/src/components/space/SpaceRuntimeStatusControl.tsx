@@ -62,7 +62,7 @@ export function SpaceRuntimeStatusControl() {
     'flex w-full items-center rounded-lg px-3 py-2 text-left text-sm text-gray-300 transition-colors hover:bg-white/[0.07] hover:text-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/55 disabled:cursor-not-allowed disabled:opacity-40';
 
   return (
-    <div ref={rootRef} class="relative flex items-center text-sm">
+    <div ref={rootRef} class="relative flex self-end items-center text-sm sm:self-center">
       {/* Status readout — display only (colored dot + label). Reads as status
           metadata, not a button, so it sits quietly in the intro composition. */}
       <span class={`flex items-center gap-2 pr-3 font-medium ${style.tone}`}>

@@ -248,19 +248,27 @@ describe('SpaceOverview', () => {
     expect(getByRole('button', { name: /^Tasks: 3/ })).toBeTruthy();
   });
 
-  it('Tasks card shows a need-attention hint when actionable tasks exist', () => {
+  it('renders separate Needs attention and In review cards', () => {
     mockSpace.value = makeSpace();
-    mockTasks.value = [makeTask('t1', 'open'), makeTask('t2', 'review')];
+    // 1 blocked (attention), 2 review (in review), 1 open, 1 done.
+    mockTasks.value = [
+      makeTask('t1', 'open'),
+      makeTask('t2', 'review'),
+      makeTask('t3', 'review'),
+      makeTask('t4', 'blocked'),
+      makeTask('t5', 'done'),
+    ];
     const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
-    // review tasks are "action required" → 1 need attention.
-    expect(getByRole('button', { name: /^Tasks: 2 \(1 need attention\)/ })).toBeTruthy();
+    expect(getByRole('button', { name: 'Needs attention: 1' })).toBeTruthy();
+    expect(getByRole('button', { name: 'In review: 2' })).toBeTruthy();
   });
 
-  it('Tasks card omits the hint when nothing needs attention', () => {
+  it('attention cards stay zero when nothing is actionable', () => {
     mockSpace.value = makeSpace();
     mockTasks.value = [makeTask('t1', 'open'), makeTask('t2', 'done')];
     const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
-    expect(getByRole('button', { name: 'Tasks: 2' })).toBeTruthy();
+    expect(getByRole('button', { name: 'Needs attention: 0' })).toBeTruthy();
+    expect(getByRole('button', { name: 'In review: 0' })).toBeTruthy();
   });
 
   describe('Autonomy Level Bar', () => {

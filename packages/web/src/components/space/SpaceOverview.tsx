@@ -243,10 +243,15 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
     [sessions]
   );
 
-  // Matches the Action-tab predicate (isActionRequired) so the Overview
-  // "need attention" hint and the Action list can't drift — rate/usage-limited
-  // tasks count here too.
-  const attentionTasks = useMemo(() => tasks.filter(isActionRequired), [tasks]);
+  // Attention split: "In review" = awaiting approval (review status);
+  // "Needs attention" = the rest of the Action-tab set (blocked for any
+  // reason, plus rate/usage-limited). Both derive from the shared predicate
+  // so the cards and the Action list can't drift.
+  const inReviewTasks = useMemo(() => tasks.filter((t) => t.status === 'review'), [tasks]);
+  const needsAttentionTasks = useMemo(
+    () => tasks.filter((t) => isActionRequired(t) && t.status !== 'review'),
+    [tasks]
+  );
 
   // Recent tasks — sorted by updatedAt, top 5
   const recentTasks = useMemo(
@@ -311,13 +316,13 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
           <SpaceRuntimeStatusControl />
         </section>
 
-        {/* Primary surfaces as count + navigation shortcuts. */}
-        <div class="grid grid-cols-3 gap-3">
+        {/* Primary surfaces as count + navigation shortcuts, plus the two
+            attention cards (blocked / rate-limited vs awaiting review). */}
+        <div class="grid grid-cols-3 gap-3 lg:grid-cols-5">
           <StatCard
             label="Tasks"
             count={tasks.length}
             color="border-amber-800/40 text-amber-300"
-            hint={attentionTasks.length > 0 ? `${attentionTasks.length} need attention` : undefined}
             onClick={() => navigateToSpaceTasks(routeSpaceId)}
           />
           <StatCard
@@ -331,6 +336,18 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
             count={sessions.length}
             color="border-sky-800/30 text-sky-300"
             onClick={() => navigateToSpaceSessions(routeSpaceId)}
+          />
+          <StatCard
+            label="Needs attention"
+            count={needsAttentionTasks.length}
+            color="border-amber-800/40 text-amber-300"
+            onClick={() => navigateToSpaceTasks(routeSpaceId, 'action')}
+          />
+          <StatCard
+            label="In review"
+            count={inReviewTasks.length}
+            color="border-purple-800/30 text-purple-300"
+            onClick={() => navigateToSpaceTasks(routeSpaceId, 'action')}
           />
         </div>
 
