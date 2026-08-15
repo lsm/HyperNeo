@@ -3108,6 +3108,35 @@ export class TaskAgentManager {
 
   /** Returns a sub-session by its session ID, or undefined if not found. */
   /**
+   * The current node execution's kickoff correlation state for the session:
+   * null when the session has NO execution (keep unconditional behavior);
+   * otherwise the stamped kickoff uuid (null when the kickoff was never
+   * injected — the pre-kickoff window on a reused session) and its durable
+   * correlated outcome. Shared correlation for the settle, dead-letter, and
+   * steer-repayment decisions: only the activation's OWN kickoff settlement
+   * (as a turn, or as a consumed steer under a terminated owning turn) is
+   * this node's terminal evidence. (Task #944 review.)
+   */
+  private kickoffDeliveryOutcome(
+    subSessionId: string
+  ): { kickoffMessageUuid: string | null; outcome: 'completed' | 'dead' | null } | null {
+    const execution = this.config.nodeExecutionRepo.getByAgentSessionId(subSessionId);
+    if (!execution) return null;
+    const kickoffMessageUuid = (
+      execution.data as { kickoffMessageUuid?: unknown } | null | undefined
+    )?.kickoffMessageUuid;
+    if (typeof kickoffMessageUuid !== 'string') {
+      return { kickoffMessageUuid: null, outcome: null };
+    }
+    const startedAt = execution.startedAt ?? execution.createdAt;
+    if (startedAt == null) return { kickoffMessageUuid, outcome: null };
+    const outcome = this.config.db
+      .getJobQueueRepo()
+      .deliveryTurnOutcomeSince(subSessionId, startedAt, kickoffMessageUuid);
+    return { kickoffMessageUuid, outcome };
+  }
+
+  /**
    * Whether a message_delivery job for the session is currently being DRIVEN
    * (claimed `processing`). The recoverable-error deferral keys on this, not
    * on any-active-job: only a driven job can be the source of / retry for a
@@ -3791,6 +3820,13 @@ export class TaskAgentManager {
           const session = this.getSubSession(subSessionId);
           if (!session) return;
           if (session.getProcessingState().status !== 'idle') return; // turn still running
+          // Current-activation evidence: the kickoff's durable settlement is
+          // 'completed' (a restored old steer settling in the pre-kickoff
+          // window on a reused session must not complete the new execution).
+          const kickoff = this.kickoffDeliveryOutcome(subSessionId);
+          if (kickoff && (kickoff.kickoffMessageUuid === null || kickoff.outcome !== 'completed')) {
+            return;
+          }
           completeFromDeliveryState();
           return;
         }
@@ -3943,6 +3979,20 @@ export class TaskAgentManager {
       'session.delivery_failed',
       (event) => {
         if (fired) return;
+        // Correlate with the current activation's kickoff: the startup
+        // reconciler re-enqueues an older stranded message on a reused session
+        // as an unrelated origin:'recovery' turn job, and ITS dead-letter must
+        // not fail this node. (The kickoff itself keeps the same message uuid
+        // when the recovery reconciler re-enqueues it, so a genuine kickoff
+        // dead-letter still matches.) Sessions without a node execution keep
+        // the unconditional behavior. (Task #944 review.)
+        if (event.role === 'turn') {
+          const kickoff = this.kickoffDeliveryOutcome(subSessionId);
+          if (kickoff && event.messageUuid !== kickoff.kickoffMessageUuid) return;
+          // Unstamped execution (pre-kickoff window): the dead turn is not
+          // this activation's kickoff.
+          if (kickoff && kickoff.kickoffMessageUuid === null) return;
+        }
         if (event.role !== 'turn') {
           // The KICKOFF itself can be persisted as a steer (it lost the turn
           // arbiter to a pending-message flush); ITS dead-letter is the node's
@@ -3961,12 +4011,21 @@ export class TaskAgentManager {
           // it may have been the LAST active job holding down a suppressed
           // terminal idle (the turn's settle was ignored while the steer was
           // in flight, and no success settlement or later idle is coming).
-          // Repay the suppressed completion when the turn is actually over
-          // (live idle state) and nothing else is in flight; if work is still
-          // ongoing, the checks make this a no-op. (Task #944 review.)
+          // Repay ONLY with current-activation evidence — the kickoff's own
+          // durable settlement is 'completed' (proves the node's work ran and
+          // its terminal idle was the suppressed one; a restored old steer
+          // settling in the pre-kickoff window on a reused session is NOT
+          // such evidence) — plus live idle and nothing in flight. Sessions
+          // without a node execution keep the unconditional behavior.
+          // (Task #944 review.)
           {
             const session = this.getSubSession(subSessionId);
-            if (session && session.getProcessingState().status === 'idle') {
+            const kickoff = this.kickoffDeliveryOutcome(subSessionId);
+            if (
+              session &&
+              session.getProcessingState().status === 'idle' &&
+              (!kickoff || (kickoff.kickoffMessageUuid !== null && kickoff.outcome === 'completed'))
+            ) {
               completeFromDeliveryState();
             }
           }

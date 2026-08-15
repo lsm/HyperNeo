@@ -290,8 +290,9 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
   it('a dead-lettered STEER repays a suppressed idle when it was the last job (Codex P2)', async () => {
     // Kickoff turn succeeded but its settle was suppressed while a steer was
     // in flight; the steer then dead-letters. The failed handoff must not fail
-    // the node — and must not strand it either: with nothing else in flight,
-    // it repays the suppressed completion.
+    // the node — and must not strand it either: with nothing else in flight
+    // and the kickoff durably completed, it repays the suppressed completion.
+    turnOutcome = 'completed';
     await publishIdle(); // suppressed — kickoff job active
     activeJobs.delete('kickoff-uuid');
     await bus.publish('session.delivery_settled', {
@@ -598,7 +599,9 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     // The owning turn finished while an ACP steer was parked awaiting
     // acceptance: the turn's idle AND settle were both suppressed (steer
     // active). The accepted steer later settles ('already_consumed') as the
-    // LAST active job — its settlement must repay the completion.
+    // LAST active job — its settlement must repay the completion. The
+    // kickoff's durable settlement ('completed') is the activation evidence.
+    turnOutcome = 'completed';
     await publishIdle(); // suppressed — kickoff job active
     activeJobs.delete('kickoff-uuid');
     activeJobs.add('steer-uuid');
@@ -682,6 +685,51 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
       if (prev === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
       else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = prev;
     }
+  });
+
+  it('an UNRELATED recovery turn dead-letter does not block the node (Codex P2)', async () => {
+    // The startup reconciler re-enqueues an older stranded message on a reused
+    // session as an origin:'recovery' turn job; its dead-letter is not this
+    // activation's kickoff and must not fail the node.
+    await bus.publish('session.delivery_failed', {
+      sessionId: SUB_SESSION_ID,
+      messageUuid: 'old-stranded-uuid', // ≠ the stamped kickoff
+      origin: 'recovery',
+      role: 'turn',
+    });
+    await flush();
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('in_progress');
+  });
+
+  it('a restored old steer settling in the pre-kickoff window does not complete (Codex P1)', async () => {
+    // Reused session: callback registered, new kickoff not yet injected (no
+    // stamp). An old steer reclaimed with its message already consumed
+    // settles 'already_consumed' while the restored session idles — the
+    // historical transcript must NOT complete the new execution.
+    nodeExecRepo.update(executionId, { data: null }); // kickoff not injected yet
+    turnOutcome = 'completed'; // stale durable evidence — must be ignored without the stamp
+    activeJobs.clear();
+    processingTurnJobs.clear();
+    await bus.publish('session.delivery_settled', {
+      sessionId: SUB_SESSION_ID,
+      messageUuid: 'old-steer-uuid',
+      role: 'steer',
+    });
+    await flush();
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('in_progress');
+
+    // The same old steer dead-lettering must neither block nor repay.
+    await bus.publish('session.delivery_failed', {
+      sessionId: SUB_SESSION_ID,
+      messageUuid: 'old-steer-uuid',
+      origin: 'recovery',
+      role: 'steer',
+    });
+    await flush();
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('in_progress');
   });
 
   it('a dead-lettered KICKOFF-AS-STEER blocks the node (Codex P1)', async () => {

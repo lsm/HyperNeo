@@ -614,8 +614,9 @@ The contract (`TaskAgentManager.registerCompletionCallback`):
   (`consumed`/`already_consumed`) is repayment-ONLY — steers settle at
   mid-turn CONSUMPTION while the agent is still working, so a steer settle
   completes the node only when the session is live-idle AND nothing else is
-  in flight (the ACP shape: the owning turn settled while its steer waited on
-  acceptance, leaving the steer as the last active job). This repays the suppressed idle after a successful
+  in flight AND the kickoff's own durable settlement is `completed` — the
+  activation evidence (a restored old steer settling in the pre-kickoff
+  window on a reused session is not such evidence). This repays the suppressed idle after a successful
   retry, and completes a successful turn that carried an unrelated recoverable
   error. A one-shot delayed reconciliation (default 30s,
   `HYPERNEO_DELIVERY_SETTLE_RECONCILE_MS`) repays a settlement lost to a
@@ -642,7 +643,9 @@ The contract (`TaskAgentManager.registerCompletionCallback`):
   idle, so a turn longer than the delay is still repaired after it ends.
 - **`session.delivery_failed`** (processor `onDead` lane hook — published for
   EVERY dead delivery, unlike the settlement's origin-gated `session.error`)
-  blocks the node when `role === 'turn'`. This covers recovery-origin
+  blocks the node when `role === 'turn'` AND the event's messageUuid matches
+  the current activation's stamped kickoff (an unrelated recovery re-enqueue
+  of an older stranded message on a reused session must not fail the node). This covers recovery-origin
   re-enqueued kickoffs that dead-letter with no `session.error` at all. Steers
   never block: a failed mid-turn handoff must not fail a node whose kickoff
   succeeded — but when a dead steer was the LAST active job holding down a
