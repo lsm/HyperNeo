@@ -1454,7 +1454,11 @@ export class SDKMessageRepository {
    * - 'deferred' -> 'enqueued' (when user triggers manual send)
    * - 'enqueued' -> 'consumed' (when message is yielded to SDK)
    */
-  updateMessageStatus(messageIds: string[], newStatus: SendStatus): void {
+  updateMessageStatus(
+    messageIds: string[],
+    newStatus: SendStatus,
+    options?: { sharedTurn?: boolean }
+  ): void {
     if (messageIds.length === 0) return;
 
     const placeholders = messageIds.map(() => '?').join(',');
@@ -1525,6 +1529,23 @@ export class SDKMessageRepository {
         const maxStmt = this.db.prepare(
           'SELECT MAX(conversation_turn_index) AS m FROM sdk_messages WHERE task_id = ?'
         );
+        // sharedTurn (a batched queue flush): every newly-anchored row of the
+        // same task gets ONE turn index — the batch is a single provider
+        // prompt, and N distinct MAX+1 assignments would both consume the
+        // compact feed's recent-turn allowance and attach the response to the
+        // last artificial turn. The base is captured once per task BEFORE any
+        // row updates, so all rows share base+1.
+        const sharedBases = options?.sharedTurn ? new Map<string, number>() : null;
+        if (sharedBases) {
+          for (const row of pending) {
+            if (row.task_id && row.is_renderable === 1 && !sharedBases.has(row.task_id)) {
+              sharedBases.set(
+                row.task_id,
+                (maxStmt.get(row.task_id) as { m: number | null } | undefined)?.m ?? 0
+              );
+            }
+          }
+        }
         const updStmt = this.db.prepare(
           'UPDATE sdk_messages SET conversation_turn_index = ?, timestamp = ? WHERE id = ?'
         );
@@ -1541,8 +1562,10 @@ export class SDKMessageRepository {
         );
         for (const row of pending) {
           if (row.task_id && row.is_renderable === 1) {
-            const max = (maxStmt.get(row.task_id) as { m: number | null } | undefined)?.m ?? 0;
-            updStmt.run(max + 1, now, row.id);
+            const turn = sharedBases
+              ? (sharedBases.get(row.task_id) ?? 0) + 1
+              : ((maxStmt.get(row.task_id) as { m: number | null } | undefined)?.m ?? 0) + 1;
+            updStmt.run(turn, now, row.id);
           } else {
             // Non-renderable or non-task row: align the timestamp to the
             // consume/fail moment only — turn index stays untouched (limited to
@@ -2201,7 +2224,35 @@ export class SDKMessageRepository {
           )
           .get(sessionId, uuid) as { id: string } | undefined;
         if (!row) continue;
-        this.updateMessageStatus([row.id], 'consumed');
+        this.updateMessageStatus([row.id], 'consumed', { sharedTurn: true });
+        ids.push(row.id);
+      }
+      return ids;
+    })();
+  }
+
+  /**
+   * Flip a batched flush's admitted members to `submitted` TOGETHER at
+   * admission — their text is already inside the kickoff-keyed combined prompt
+   * the bridge is about to hand the transport, so they must leave the
+   * user-mutable `enqueued` state at that moment (revoke/defer operate only on
+   * `enqueued`/`deferred` rows and cannot retract in-flight prompt text).
+   * Only flips still-`enqueued` rows; returns the flipped db ids.
+   */
+  markDeliverySubmittedByUuids(sessionId: string, uuids: string[]): string[] {
+    return this.db.transaction(() => {
+      const ids: string[] = [];
+      for (const uuid of new Set(uuids)) {
+        const row = this.db
+          .prepare(
+            `SELECT id FROM sdk_messages
+               WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+                 AND send_status = 'enqueued'
+               ORDER BY timestamp ASC LIMIT 1`
+          )
+          .get(sessionId, uuid) as { id: string } | undefined;
+        if (!row) continue;
+        this.updateMessageStatus([row.id], 'submitted');
         ids.push(row.id);
       }
       return ids;

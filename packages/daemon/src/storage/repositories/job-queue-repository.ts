@@ -466,6 +466,13 @@ export class JobQueueRepository {
     if (!current) return false;
     const admittedSet = new Set(admitted);
     const dropped = current.filter((uuid) => !admittedSet.has(uuid));
+    // Only record drops that still need lifecycle settlement: rows currently
+    // `enqueued`/`submitted`. A user-deferred or failed member is in its
+    // user-intended state — including it would let a later archive/reset
+    // cancellation (which fails everything it is handed) terminalize the
+    // user's deliberately-queued message.
+    const settleableDropped =
+      dropped.length > 0 ? this.settleableBatchMembers(sessionId, dropped) : [];
     // json(?) parses the bound text INTO a JSON array — binding it directly
     // would store a string value and break the json_type(...)= 'array' guards.
     const res = this.db
@@ -480,8 +487,25 @@ export class JobQueueRepository {
             AND json_extract(payload, '$.messageUuid') = ?
             AND status IN ('pending', 'processing')`
       )
-      .run(JSON.stringify(admitted), JSON.stringify(dropped), sessionId, kickoffUuid);
+      .run(JSON.stringify(admitted), JSON.stringify(settleableDropped), sessionId, kickoffUuid);
     return res.changes > 0;
+  }
+
+  /**
+   * The subset of `uuids` whose sdk_messages rows are still pending delivery
+   * (`enqueued`/`submitted`) — the only members lifecycle cancellation needs
+   * to settle. User-deferred/failed/removed rows keep their own state.
+   */
+  private settleableBatchMembers(sessionId: string, uuids: string[]): string[] {
+    const placeholders = uuids.map(() => '?').join(',');
+    const rows = this.db
+      .prepare(
+        `SELECT sdk_uuid AS uuid FROM sdk_messages
+          WHERE session_id = ? AND sdk_uuid IN (${placeholders})
+            AND send_status IN ('enqueued', 'submitted')`
+      )
+      .all(sessionId, ...uuids) as Array<{ uuid: string }>;
+    return rows.map((r) => r.uuid);
   }
 
   /**

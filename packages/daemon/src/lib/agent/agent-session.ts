@@ -2268,6 +2268,17 @@ export class AgentSession
               return { kind: 'aborted' as const };
             }
           }
+          // Freeze the admitted members as in-flight (enqueued → submitted)
+          // BEFORE the admission places their text inside the kickoff-keyed
+          // combined prompt. Revoke/defer only mutate enqueued/deferred rows,
+          // so past this point a member's text can no longer be deleted from
+          // a prompt the transport is about to receive — without this, the
+          // admission→provider window lets the queue UI "remove" text that
+          // still executes. Serialized with revoke by this session lock.
+          const memberUuids = (admittedBatchUuids ?? []).filter((uuid) => uuid !== messageUuid);
+          if (memberUuids.length > 0) {
+            this.markDeliveryBatchSubmitted(memberUuids);
+          }
         }
         acknowledgment = this.messageQueue.admitWithId(messageUuid, feedContent, false, {
           durable: true,
@@ -2790,6 +2801,29 @@ export class AgentSession
           sessionId: this.session.id,
           messageIds: flippedIds,
           status: 'consumed',
+        })
+        .catch(() => {});
+    }
+  }
+
+  /**
+   * Freeze a batched flush's admitted members as in-flight (`enqueued` →
+   * `submitted`, one transaction + one broadcast) at admission — their text is
+   * inside the combined prompt about to reach the transport, and revoke/defer
+   * (which only touch `enqueued`/`deferred` rows) must stop offering to remove
+   * it. `submitted` rows still consume normally (see
+   * markDeliveryConsumedByUuids) and settle on dead-letter.
+   */
+  private markDeliveryBatchSubmitted(uuids: string[]): void {
+    const flippedIds = this.db
+      .getSDKMessageRepo()
+      .markDeliverySubmittedByUuids(this.session.id, uuids);
+    if (flippedIds.length > 0) {
+      void this.internalEventBus
+        .publish('messages.statusChanged', {
+          sessionId: this.session.id,
+          messageIds: flippedIds,
+          status: 'submitted',
         })
         .catch(() => {});
     }

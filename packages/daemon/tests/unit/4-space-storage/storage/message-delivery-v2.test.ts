@@ -66,6 +66,15 @@ function setupRepo(): { db: Database; repo: JobQueueRepository } {
     );
     CREATE INDEX idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC);
     CREATE INDEX idx_job_queue_status ON job_queue(status);
+    -- Minimal delivery-row projection: narrowActiveDeliveryBatchUuids reads
+    -- pending-state membership from sdk_messages (a full schema table in
+    -- production).
+    CREATE TABLE sdk_messages (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      sdk_uuid TEXT NOT NULL,
+      send_status TEXT
+    );
   `);
   // The atomic role arbiter — the v2 substrate.
   runMigration182(db as unknown as Parameters<typeof runMigration182>[0]);
@@ -418,9 +427,16 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
           role: 'turn',
           origin: 'recovery',
           parentToolUseId: null,
-          batchUuids: ['kickoff', 'admitted-a', 'over-budget-tail'],
+          batchUuids: ['kickoff', 'admitted-a', 'over-budget-tail', 'user-deferred-tail'],
         },
       });
+      // Pending tail → recorded for lifecycle settlement; user-deferred tail →
+      // NOT recorded (cancellation must not fail the user's queued message).
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, sdk_uuid, send_status)
+         VALUES ('m1', ?, 'over-budget-tail', 'enqueued'),
+                ('m2', ?, 'user-deferred-tail', 'deferred')`
+      ).run(SESSION, SESSION);
       expect(
         repo.narrowActiveDeliveryBatchUuids(SESSION, 'kickoff', ['kickoff', 'admitted-a'])
       ).toBe(true);
@@ -432,15 +448,18 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
         'admitted-a',
       ]);
       expect(repo.activeDeliveryMessageUuids(SESSION)).toEqual(new Set(['kickoff', 'admitted-a']));
-      // The dropped tail stays durably recorded so lifecycle cancellation can
-      // still settle it (archive/reset must not leave it a hidden orphan).
+      // The settleable dropped tail stays durably recorded so lifecycle
+      // cancellation can still settle it (archive/reset must not leave it a
+      // hidden orphan) — the user-deferred one is excluded.
       const job = repo.listJobs({ queue: MESSAGE_DELIVERY, limit: 10 })[0];
       expect((job.payload as { droppedBatchUuids?: string[] }).droppedBatchUuids).toEqual([
         'over-budget-tail',
       ]);
-      expect(repo.cancelForSessionWithMessages(SESSION)).toEqual(
+      const cancelled = repo.cancelForSessionWithMessages(SESSION);
+      expect(cancelled).toEqual(
         expect.arrayContaining(['kickoff', 'admitted-a', 'over-budget-tail'])
       );
+      expect(cancelled).not.toContain('user-deferred-tail');
       // No active job → no narrowing (the job settled).
       expect(repo.narrowActiveDeliveryBatchUuids(SESSION, 'kickoff', ['kickoff'])).toBe(false);
     });
