@@ -168,11 +168,13 @@ function isAuthorizedCallerElement(
     nodeNames.has(c.sourceNode) &&
     (c.agentSlots === undefined ||
       (Array.isArray(c.agentSlots) &&
-        // Every slot must be a NON-BLANK string DECLARED on the caller's own
-        // node (mirroring validateCaller): a typo like "codre" passes a
-        // nonblank-only check but no real worker's agentName ever matches
-        // agentSlots.includes(...), so the binding would never authorize —
-        // loading it "valid" gates nothing.
+        // NON-EMPTY and every slot a NON-BLANK string DECLARED on the
+        // caller's own node (mirroring validateCaller): [] passes every()
+        // vacuously but resolveMatchingBindings treats it like an omitted
+        // list — whole-node authorization, the opposite of the restriction
+        // the field expresses; a typo'd slot matches no worker and gates
+        // nothing.
+        c.agentSlots.length > 0 &&
         c.agentSlots.every(
           (slot) =>
             typeof slot === 'string' &&

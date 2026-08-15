@@ -130,6 +130,9 @@ describe('SpaceWorkflowRepository — corrupt hook columns', () => {
       // A typo'd slot: nonblank and on the right node, but not DECLARED
       // there — no real worker's agentName matches it (ungated).
       '[{"hookId":"gate","sourceNode":"Only","targetNode":"Only","method":"send_message","enabled":true,"authorizedCallers":[{"sourceNode":"Only","agentSlots":["codre"]}]}]',
+      // agentSlots [] passes every() vacuously but authorizes the WHOLE
+      // node at runtime — the opposite of the restriction (round 82).
+      '[{"hookId":"gate","sourceNode":"Only","targetNode":"Only","method":"send_message","enabled":true,"authorizedCallers":[{"sourceNode":"Only","agentSlots":[]}]}]',
     ]) {
       corruptColumn('hook_bindings', bad);
       const wf = repo.getWorkflow(
