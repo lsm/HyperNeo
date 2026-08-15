@@ -1112,6 +1112,47 @@ describe('useInputDraft', () => {
       ).toBeNull();
     });
 
+    it('keeps the owed-clear tombstone when the conditional reconcile is declined', async () => {
+      localStorage.setItem(
+        'hyperneo_voice_transcript_outbox_v1.clear.session-1',
+        JSON.stringify({ ts: Date.now() })
+      );
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return {
+            session: {
+              metadata: {
+                inputDraft: 'sent text voice',
+                inputDraftVoiceBaseline: 'sent text',
+                inputDraftVoiceBaselineSeq: 1,
+              },
+            },
+          };
+        }
+        // A newer sequence/draft raced the reconcile — both conditional RPCs
+        // decline rather than stomp it.
+        if (method === 'session.stripVoiceBaseline') return { updated: false };
+        if (method === 'session.clearInputDraftIf') return { cleared: false };
+        return {};
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // Nothing was applied and the tombstone stays — the reconnect
+      // subscription retries with a fresh read of the raced state.
+      expect(result.current.content).toBe('sent text voice');
+      expect(
+        localStorage.getItem('hyperneo_voice_transcript_outbox_v1.clear.session-1')
+      ).not.toBeNull();
+    });
+
     it('reconciles an owed clear directly when its landing expired (tombstone only)', async () => {
       // The landing marker aged past its TTL and was pruned, but the owed
       // clear tombstone is fresh: no replay effect will fire, so the settle

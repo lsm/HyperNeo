@@ -263,18 +263,20 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                 expectedSeq: meta.inputDraftVoiceBaselineSeq,
               })
               .then((result) => {
-                if (currentSessionIdRef.current === targetSessionId && result.updated) {
+                if (!result.updated) return; // raced a newer sequence — stays owed
+                if (currentSessionIdRef.current === targetSessionId) {
                   contentSignal.value = result.value ?? '';
                 }
                 removeClearTombstone(targetSessionId);
               });
           }
           return hub
-            .request('session.clearInputDraftIf', {
+            .request<{ cleared?: boolean }>('session.clearInputDraftIf', {
               sessionId: targetSessionId,
               expected: meta.inputDraft ?? '',
             })
-            .then(() => {
+            .then((result) => {
+              if (!result.cleared) return; // raced a newer draft — stays owed
               if (currentSessionIdRef.current === targetSessionId) {
                 contentSignal.value = '';
               }
@@ -573,16 +575,19 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     content: string;
     cleared?: boolean;
   }>({ sessionId: null, content: '' });
-  // A departed session's backup flush that could not run or commit during the
-  // switch (socket down / update failed). The switch is otherwise the ONLY
-  // trigger and the session ref has already advanced — without this retry the
-  // expired-landing backup is never pushed and is eventually pruned.
-  const pendingBackupFlushRef = useRef<{ sessionId: string; content: string } | null>(null);
-  // Retry a retained backup flush once the connection is restored. Skipped
-  // when the user has returned to that session: their live edits (saved
-  // normally — the landing is dead in this scenario) supersede the stale
-  // backup. Subscribed explicitly (not via a signal effect) so connection
-  // changes do not re-run the component's other signal effects.
+  // Departed sessions' backup flushes that could not run or commit during
+  // their switch (socket down / update failed), keyed per session: switching
+  // offline through several sessions must queue one flush EACH, not overwrite
+  // the earlier one. The switch is otherwise the ONLY trigger and the session
+  // ref has already advanced — without this retry the expired-landing backups
+  // are never pushed and are eventually pruned.
+  const pendingBackupFlushRef = useRef<Map<string, string>>(new Map());
+  // Retry retained backup flushes once the connection is restored. A flush
+  // whose session is active again is ADOPTED into an idle composer (its edits
+  // are newer than the stale server draft; normal saves then persist them) —
+  // a composer with text supersedes the backup, whose durable copy stays for
+  // a later switch. Subscribed explicitly (not via a signal effect) so
+  // connection changes do not re-run the component's other signal effects.
   useEffect(() => {
     const retryBackupFlush = () => {
       if (connectionState.value !== 'connected') return;
@@ -594,39 +599,32 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       ) {
         reconcileOwedClear(currentSessionIdRef.current);
       }
-      const pending = pendingBackupFlushRef.current;
-      if (!pending) return;
-      pendingBackupFlushRef.current = null;
-      if (pending.sessionId === currentSessionIdRef.current) {
-        // The user is back on the departed session: ADOPT the backup into an
-        // idle composer — its edits are newer than the stale server draft —
-        // and let normal saves persist them. A composer with text (the user
-        // typed since returning, or a newer draft loaded) supersedes the
-        // backup; the durable copy stays and a later switch retries it.
-        if (contentSignal.peek().trim() === '') {
-          contentSignal.value = pending.content;
-          clearDraftBackup(pending.sessionId);
-        } else {
-          pendingBackupFlushRef.current = pending;
-        }
-        return;
-      }
       const hub = connectionManager.getHubIfConnected();
-      if (!hub) {
-        pendingBackupFlushRef.current = pending; // not actually reachable yet
-        return;
+      if (!hub) return; // not actually reachable yet — retry on the next change
+      const queued = [...pendingBackupFlushRef.current.entries()];
+      pendingBackupFlushRef.current.clear();
+      for (const [flushSessionId, content] of queued) {
+        if (flushSessionId === currentSessionIdRef.current) {
+          if (contentSignal.peek().trim() === '') {
+            contentSignal.value = content;
+            clearDraftBackup(flushSessionId);
+          } else {
+            pendingBackupFlushRef.current.set(flushSessionId, content);
+          }
+          continue;
+        }
+        hub
+          .request('session.update', {
+            sessionId: flushSessionId,
+            metadata: { inputDraft: content },
+          })
+          .then(() => {
+            clearDraftBackup(flushSessionId);
+          })
+          .catch(() => {
+            pendingBackupFlushRef.current.set(flushSessionId, content);
+          });
       }
-      hub
-        .request('session.update', {
-          sessionId: pending.sessionId,
-          metadata: { inputDraft: pending.content },
-        })
-        .then(() => {
-          clearDraftBackup(pending.sessionId);
-        })
-        .catch(() => {
-          pendingBackupFlushRef.current = pending; // keep retrying on reconnects
-        });
     };
     return connectionState.subscribe(retryBackupFlush);
   }, [contentSignal, reconcileOwedClear]);
@@ -672,18 +670,18 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       // instead of dying with the expired marker.
       const claimed = peekExpiredDraftBackup(prevSessionId);
       const flushContent = claimed?.content.trim() || trimmedContent;
+      const queueRetry = () => {
+        if (claimed?.content.trim()) {
+          pendingBackupFlushRef.current.set(prevSessionId, claimed.content.trim());
+        }
+      };
       const pushBackup = () => {
         const hub = connectionManager.getHubIfConnected();
         if (!hub) {
           // Offline (or the update failed): retain the flush for the
           // reconnect effect below — the switch is the only other trigger,
           // and the session ref has already advanced past this session.
-          if (claimed?.content.trim()) {
-            pendingBackupFlushRef.current = {
-              sessionId: prevSessionId,
-              content: claimed.content.trim(),
-            };
-          }
+          queueRetry();
           return;
         }
         if (!flushContent && !(last.sessionId === prevSessionId && last.cleared)) return;
@@ -699,12 +697,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             if (claimed) clearDraftBackup(prevSessionId);
           })
           .catch(() => {
-            if (claimed?.content.trim()) {
-              pendingBackupFlushRef.current = {
-                sessionId: prevSessionId,
-                content: claimed.content.trim(),
-              };
-            }
+            queueRetry();
           });
       };
       pushBackup();
