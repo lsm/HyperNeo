@@ -392,9 +392,16 @@ export class SessionManager {
           // treat that write as current and resurrect the sent content.
           if (hasDraftToClear) {
             const beforeClear = this.getSessionFromDB(sessionId);
+            // A staged voice sequence re-anchors its baseline to the CLEARED
+            // draft (same as session.clearInputDraftIf): the pending merges
+            // onto the now-empty draft at the next get, and a baseline naming
+            // the sent non-empty draft would make later reconciliation
+            // extract no transcript.
+            const staged = (beforeClear?.metadata?.inputDraftVoicePending ?? '').trim() !== '';
             await this.sessionLifecycle.update(sessionId, {
               metadata: {
                 inputDraft: null,
+                ...(staged ? { inputDraftVoiceBaseline: '' } : {}),
                 inputDraftVersion: (beforeClear?.metadata?.inputDraftVersion ?? 0) + 1,
               },
             } as Partial<Session>);

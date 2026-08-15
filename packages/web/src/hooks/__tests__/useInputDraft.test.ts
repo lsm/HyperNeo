@@ -1579,6 +1579,11 @@ describe('useInputDraft', () => {
       await act(async () => {
         await vi.runAllTimersAsync();
       });
+      // The queued merge runs through the retry backoff — arm it.
+      connectionState.value = 'connected';
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
 
       expect(result.current.content).toBe('user edits');
       expect(mergeCommitted).toBe(true);

@@ -619,15 +619,21 @@ export function clearDraftBackup(sessionId: string, generation?: number): void {
  * Retire the exact backup key a caller claimed (any tab's — the caller
  * persisted or folded that content, so the durable copy is superseded). When
  * `generation` is given, the stored generation must still match: a NEWER
- * landing can have rewritten the backup while the claim was in flight.
+ * landing can have rewritten the backup while the claim was in flight. When
+ * `expectedTs` is also given, the stored timestamp must match too — the same
+ * tab can have RESUMED editing during the claim and rewritten this key with
+ * newer content under the SAME generation; deleting that copy would lose
+ * still-suppressed edits that never reached the daemon.
  */
-export function removeDraftBackupKey(key: string, generation?: number): void {
+export function removeDraftBackupKey(key: string, generation?: number, expectedTs?: number): void {
   try {
-    if (generation !== undefined) {
+    if (generation !== undefined || expectedTs !== undefined) {
       const parsed = JSON.parse(localStorage.getItem(key) ?? 'null') as {
         generation?: number;
+        ts?: number;
       } | null;
-      if (parsed?.generation !== generation) return;
+      if (generation !== undefined && parsed?.generation !== generation) return;
+      if (expectedTs !== undefined && parsed?.ts !== expectedTs) return;
     }
     localStorage.removeItem(key);
   } catch {
@@ -651,7 +657,7 @@ export function retireDraftBackupClaim(claim: {
   generation: number;
   ts: number;
 }): void {
-  removeDraftBackupKey(claim.key, claim.generation);
+  removeDraftBackupKey(claim.key, claim.generation, claim.ts);
   try {
     const sessionId = claim.key.slice(DRAFT_BACKUP_PREFIX.length, claim.key.lastIndexOf('.'));
     // The marker only ever moves FORWARD: an older claim's merge can
