@@ -132,6 +132,22 @@ export function saveDraftBackup(sessionId: string, content: string, generation: 
   }
 }
 
+/**
+ * Whether a landing is currently LIVE for `sessionId` — either marked in this
+ * tab's process-local signal, or a fresh cross-tab marker in storage.
+ */
+export function isLandingLive(sessionId: string): boolean {
+  if (voiceTranscriptLandedSignal.value.has(sessionId)) return true;
+  try {
+    const raw = localStorage.getItem(`${LANDED_PREFIX}${sessionId}`);
+    if (!raw) return false;
+    const ts = Number(raw); // '1234.5' → 1234.5 (timestamp + counter suffix)
+    return Date.now() - ts < MAX_AGE_MS;
+  } catch {
+    return false;
+  }
+}
+
 export function getDraftBackup(sessionId: string): string | null {
   try {
     const raw = localStorage.getItem(`${DRAFT_BACKUP_PREFIX}${sessionId}`);
@@ -142,6 +158,10 @@ export function getDraftBackup(sessionId: string): string | null {
       localStorage.removeItem(`${DRAFT_BACKUP_PREFIX}${sessionId}`);
       return null;
     }
+    // Restore only while the landing is still live: an EXPIRED landing no
+    // longer suppresses saves, so restoring the backup would let the normal
+    // debounce overwrite the freshly-merged transcript.
+    if (!isLandingLive(sessionId)) return null;
     return parsed.content;
   } catch {
     return null;

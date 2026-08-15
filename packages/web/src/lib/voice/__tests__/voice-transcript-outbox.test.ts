@@ -309,6 +309,14 @@ describe('voice transcript outbox', () => {
     expect(getDraftBackup('s1')).toBeNull();
   });
 
+  it('does not restore a draft backup whose landing has expired', () => {
+    saveDraftBackup('s1', 'stale edits', 1);
+    // No live landing (signal empty, marker absent) — restoring the backup
+    // would let the normal save overwrite the freshly-merged transcript.
+    expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(false);
+    expect(getDraftBackup('s1')).toBeNull();
+  });
+
   it('prunes expired draft backups proactively', () => {
     localStorage.setItem(
       'hyperneo_voice_transcript_outbox_v1.draft.s1',
