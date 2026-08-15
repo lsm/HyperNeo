@@ -114,6 +114,9 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
       status: 'in_progress',
     });
     executionId = execution.id;
+    // Stamp this activation's expected kickoff (as spawnWorkflowNodeAgentForExecution
+    // does after the inject) so the reconcile can correlate with it.
+    nodeExecRepo.update(executionId, { data: { kickoffMessageUuid: 'kickoff-uuid' } });
 
     bus = createDaemonInternalEventBus();
 
@@ -127,7 +130,9 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
         // hasActiveDeliveryJob / reconciliation resolve job state from here.
         getJobQueueRepo: () => ({
           activeDeliveryMessageUuids: () => activeJobs,
-          deliveryTurnOutcomeSince: () => turnOutcome,
+          // uuid-correlated: only the stamped kickoff's outcome qualifies.
+          deliveryTurnOutcomeSince: (_sid: string, _since: number, uuid?: string) =>
+            uuid === 'kickoff-uuid' ? turnOutcome : null,
         }),
       },
       taskRepo,
@@ -327,6 +332,20 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     await new Promise<void>((resolve) => setTimeout(resolve, 60));
     expect(completed).toBe(false);
     expect(nodeStatus()).toBe('blocked');
+  });
+
+  it('a flushed PEER turn is not the activation kickoff — reconcile declines (Codex P2)', async () => {
+    // A pending-message flush can run a peer handoff as a role:'turn' job in
+    // the window before the kickoff is enqueued. If the daemon dies there, a
+    // completed peer turn must NOT satisfy the reconciliation for the
+    // unstarted node — only the stamped kickoff's settlement qualifies.
+    nodeExecRepo.update(executionId, { data: null }); // no kickoff stamped yet
+    turnOutcome = 'completed'; // the PEER turn's outcome — wrong uuid, filtered out
+    await publishIdle();
+    activeJobs.clear();
+    await new Promise<void>((resolve) => setTimeout(resolve, 60));
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('in_progress');
   });
 
   it('reconciliation ignores a reused session whose kickoff was never enqueued (Codex P2)', async () => {

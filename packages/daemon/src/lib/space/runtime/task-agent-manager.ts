@@ -1357,7 +1357,18 @@ export class TaskAgentManager {
         const kickoffMessage = runtimeContract
           ? `${initialMessage}\n\n${runtimeContract}`
           : initialMessage;
-        await this.injectMessageIntoSession(spawned, kickoffMessage);
+        const kickoffMessageUuid = await this.injectMessageIntoSession(spawned, kickoffMessage);
+        // Durable correlation of this activation's expected kickoff with the
+        // node execution: the crash-window reconciliation only accepts the
+        // settlement of THIS delivery, never any turn that happened to run
+        // (e.g. a pending-message flush racing ahead of the kickoff). See
+        // registerCompletionCallback's reconcile timer. (Task #944 review.)
+        const owningExecution = this.config.nodeExecutionRepo.getByAgentSessionId(actualSessionId);
+        if (owningExecution) {
+          this.config.nodeExecutionRepo.update(owningExecution.id, {
+            data: { ...(owningExecution.data ?? {}), kickoffMessageUuid },
+          });
+        }
       }
       return actualSessionId;
     } catch (err) {
@@ -3787,10 +3798,18 @@ export class TaskAgentManager {
         if (session.getProcessingState().status !== 'idle') return;
         const execution = this.config.nodeExecutionRepo.getByAgentSessionId(subSessionId);
         const startedAt = execution?.startedAt ?? execution?.createdAt;
-        if (!startedAt) return;
+        // Only the settlement of THIS activation's expected kickoff qualifies —
+        // stamped on the execution at inject time. Without it (older rows, or a
+        // crash before the kickoff was enqueued) the reconciliation declines:
+        // a pending-message flush can run a peer handoff as a turn job in the
+        // window before the kickoff exists, and that is not the node's work.
+        const kickoffMessageUuid = (
+          execution?.data as { kickoffMessageUuid?: unknown } | null | undefined
+        )?.kickoffMessageUuid;
+        if (!startedAt || typeof kickoffMessageUuid !== 'string') return;
         const outcome = this.config.db
           .getJobQueueRepo()
-          .deliveryTurnOutcomeSince(subSessionId, startedAt);
+          .deliveryTurnOutcomeSince(subSessionId, startedAt, kickoffMessageUuid);
         if (outcome === 'dead') {
           fireTerminalError(DEAD_LETTER_SESSION_ERROR);
           return;

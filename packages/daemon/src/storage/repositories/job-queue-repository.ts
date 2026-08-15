@@ -432,8 +432,19 @@ export class JobQueueRepository {
    * rows cannot qualify. Used by TaskAgentManager's crash-window
    * reconciliation, which must derive its decision from the durable job row,
    * not from arbitrary recent transcript rows. (Task #944 review.)
+   *
+   * When `messageUuid` is given (the activation's expected kickoff, stamped on
+   * the node execution), only THAT delivery qualifies: a pending-message flush
+   * can run a peer handoff as a `role:'turn'` job before the kickoff is even
+   * enqueued, and accepting any turn would false-complete the node. A kickoff
+   * that lost the active-turn arbiter to such a flush settles as a steer and
+   * correctly does not qualify (the reconciliation declines — conservative).
    */
-  deliveryTurnOutcomeSince(sessionId: string, sinceMs: number): 'completed' | 'dead' | null {
+  deliveryTurnOutcomeSince(
+    sessionId: string,
+    sinceMs: number,
+    messageUuid?: string
+  ): 'completed' | 'dead' | null {
     const rows = this.db
       .prepare(
         `SELECT status, json_extract(result, '$.outcome') AS outcome
@@ -442,9 +453,13 @@ export class JobQueueRepository {
             AND json_extract(payload, '$.sessionId') = ?
             AND json_extract(payload, '$.role') = 'turn'
             AND completed_at IS NOT NULL
-            AND completed_at >= ?`
+            AND completed_at >= ?
+            ${messageUuid ? "AND json_extract(payload, '$.messageUuid') = ?" : ''}`
       )
-      .all(sessionId, sinceMs) as Array<{ status: string; outcome: string | null }>;
+      .all(...(messageUuid ? [sessionId, sinceMs, messageUuid] : [sessionId, sinceMs])) as Array<{
+      status: string;
+      outcome: string | null;
+    }>;
     for (const row of rows) {
       if (row.status === 'dead') return 'dead';
     }
