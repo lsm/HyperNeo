@@ -2821,7 +2821,11 @@ export class AgentSession
       return { content: kickoffContent };
     }
     if (texts.length === 1) {
-      return { content: kickoffRaw ?? kickoffContent };
+      // Single survivor (e.g. the budget admitted only the kickoff): still
+      // return the singleton admitted set — the caller narrows the payload so
+      // the omitted tail is not consumed at ACP acceptance / failed on
+      // dead-letter as part of this batch.
+      return { content: kickoffRaw ?? kickoffContent, admittedUuids: admitted };
     }
     return { content: buildBatchedDeliveryContent(texts), admittedUuids: admitted };
   }

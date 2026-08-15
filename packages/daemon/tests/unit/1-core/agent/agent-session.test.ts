@@ -1067,6 +1067,54 @@ describe('AgentSession', () => {
       expect(retrySpy).toHaveBeenCalledTimes(1); // no additional reopen
     });
 
+    it('driveDeliveryTurn narrows the batch payload even when only the kickoff is admitted', async () => {
+      // Singleton admission (e.g. the budget fits only the kickoff, or every
+      // other member was deferred/removed since enqueue) must STILL persist the
+      // admitted set — otherwise the payload keeps the full batchUuids and the
+      // omitted tail is consumed at ACP acceptance / failed on dead-letter as
+      // part of a batch it was never fed into. (Codex round 3, P1.)
+      const narrowSpy = mock(() => true);
+      const contents: Record<string, { content: string; sendStatus: string }> = {
+        'kick-only': { content: 'first and only fitting message', sendStatus: 'enqueued' },
+        'tail-member': { content: 'deferred out before delivery', sendStatus: 'deferred' },
+      };
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock((_sid: string, uuid: string) => contents[uuid] ?? null),
+        hasTerminalResultAfter: mock(() => false),
+        hasDeliveryTurnEnd: mock(() => false),
+        clearDeliveryTurnEnd: mock(() => {}),
+        getErrorTerminalResultSubtypeAfter: mock(() => null),
+        recordDeliveryTurnEnd: mock(() => {}),
+        markDeliveryConsumedByUuids: mock(() => []),
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        isProcessingDelivery: mock(() => true),
+        narrowActiveDeliveryBatchUuids: narrowSpy,
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      // A never-resolving admission keeps the drive pending on the (unmocked)
+      // consume path — the narrowing happens BEFORE admission under the lock.
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: mock(() => new Promise<void>(() => {})),
+        isRunning: mock(() => false),
+        size: mock(() => 0),
+      };
+
+      await agentSession.stateManager.setProcessing('kick-only');
+      // Intentionally not awaited: the turn awaits a never-settling admission.
+      void agentSession.driveDeliveryTurn('kick-only', 'estimate', null, false, () => true, [
+        'kick-only',
+        'tail-member',
+      ]);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(narrowSpy).toHaveBeenCalledTimes(1);
+      expect(narrowSpy.mock.calls[0]).toEqual(['test-session-id', 'kick-only', ['kick-only']]);
+    });
+
     it('isWaitingForInput sees an unresolved sdk_resume_choice even while parked as queued', async () => {
       // A resume-blocked startup persists the sdk_resume_choice action and
       // parks the session as `queued` — `waiting_for_input` belongs to
