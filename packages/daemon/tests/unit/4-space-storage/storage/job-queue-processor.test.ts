@@ -474,6 +474,48 @@ describe('JobQueueProcessor', () => {
       expect(after?.status).toBe('completed');
     });
 
+    it('aborts a reclaimed predecessor and releases its capped slot', async () => {
+      const staleProcessor = new JobQueueProcessor(repo, {
+        staleThresholdMs: 100,
+        maxConcurrent: 1,
+      });
+      const signals: AbortSignal[] = [];
+      let calls = 0;
+      staleProcessor.register('claim-loss', async (_job, context) => {
+        calls++;
+        signals.push(context!.signal);
+        if (calls === 1) {
+          await new Promise<void>((_, reject) => {
+            context!.signal.addEventListener(
+              'abort',
+              () => reject(context!.signal.reason ?? new Error('claim lost')),
+              { once: true }
+            );
+          });
+        }
+      });
+
+      const job = repo.enqueue({ queue: 'claim-loss', payload: {}, maxRetries: 0 });
+      await staleProcessor.tick();
+      await flush();
+      db.prepare(`UPDATE job_queue SET started_at = ? WHERE id = ?`).run(
+        Date.now() - 10_000,
+        job.id
+      );
+      (staleProcessor as unknown as { lastStaleCheck: number }).lastStaleCheck = 0;
+
+      await staleProcessor.tick();
+      await flush();
+      await staleProcessor.tick();
+      await flush();
+
+      expect(signals[0]?.aborted).toBe(true);
+      expect(calls).toBe(2);
+      expect(repo.getJob(job.id)?.status).toBe('completed');
+      expect(repo.getJob(job.id)?.retryCount).toBe(0);
+      await staleProcessor.stop();
+    });
+
     it('does not reclaim jobs that are not old enough', async () => {
       const staleProcessor = new JobQueueProcessor(repo, { staleThresholdMs: 60_000 });
       staleProcessor.register('fresh-queue', async () => {});

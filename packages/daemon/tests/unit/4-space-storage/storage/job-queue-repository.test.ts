@@ -629,7 +629,7 @@ describe('JobQueueRepository', () => {
       const threshold = Date.now() + 1000;
       const reclaimed = repository.reclaimStale(threshold);
 
-      expect(reclaimed).toBe(1);
+      expect(reclaimed).toHaveLength(1);
       const updated = repository.getJob(job.id);
       expect(updated!.status).toBe('pending');
     });
@@ -643,7 +643,7 @@ describe('JobQueueRepository', () => {
       const threshold = Date.now() + 1000;
       const reclaimed = repository.reclaimStale(threshold);
 
-      expect(reclaimed).toBe(0);
+      expect(reclaimed).toHaveLength(0);
     });
 
     it('sets status back to pending and clears startedAt', () => {
@@ -668,7 +668,7 @@ describe('JobQueueRepository', () => {
       const threshold = Date.now() + 1000;
       const reclaimed = repository.reclaimStale(threshold);
 
-      expect(reclaimed).toBe(4);
+      expect(reclaimed).toHaveLength(4);
     });
   });
 

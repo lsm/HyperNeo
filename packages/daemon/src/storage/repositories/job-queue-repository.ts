@@ -40,6 +40,11 @@ export interface EnqueueUniquePendingParams extends EnqueueParams {
  * message_delivery `role:'steer'`) are claimed separately from the
  * maxConcurrent-capped turn jobs. See message-delivery-v2.md + Codex (#2587).
  */
+export interface ReclaimedJobClaim {
+  jobId: string;
+  claimToken: string | null;
+}
+
 export interface PayloadMatch {
   /** JSON path into payload, e.g. '$.role'. */
   path: string;
@@ -615,20 +620,31 @@ export class JobQueueRepository {
     const retryCount = row.retry_count as number;
     const maxRetries = row.max_retries as number;
 
+    let result: { changes: number };
     if (retryCount < maxRetries) {
       const delay = 2 ** retryCount * 1000;
-      this.db
+      result = this.db
         .prepare(
-          `UPDATE job_queue SET retry_count = retry_count + 1, status = 'pending', error = ?, run_at = ?, started_at = NULL WHERE id = ?`
+          `UPDATE job_queue
+              SET retry_count = retry_count + 1, status = 'pending', error = ?,
+                  run_at = ?, started_at = NULL
+            WHERE id = ?
+              AND (? IS NULL OR (status = 'processing'
+                AND json_extract(payload, '$.__claimToken') = ?))`
         )
-        .run(error, Date.now() + delay, jobId);
+        .run(error, Date.now() + delay, jobId, claimToken ?? null, claimToken ?? null);
     } else {
-      this.db
-        .prepare(`UPDATE job_queue SET status = 'dead', error = ?, completed_at = ? WHERE id = ?`)
-        .run(error, Date.now(), jobId);
+      result = this.db
+        .prepare(
+          `UPDATE job_queue SET status = 'dead', error = ?, completed_at = ?
+            WHERE id = ?
+              AND (? IS NULL OR (status = 'processing'
+                AND json_extract(payload, '$.__claimToken') = ?))`
+        )
+        .run(error, Date.now(), jobId, claimToken ?? null, claimToken ?? null);
     }
 
-    return this.getJob(jobId);
+    return result.changes > 0 ? this.getJob(jobId) : null;
   }
 
   /**
@@ -647,10 +663,15 @@ export class JobQueueRepository {
       const payload = JSON.parse(row.payload as string) as Record<string, unknown>;
       if (row.status !== 'processing' || payload.__claimToken !== claimToken) return null;
     }
-    this.db
-      .prepare(`UPDATE job_queue SET status = 'dead', error = ?, completed_at = ? WHERE id = ?`)
-      .run(error, Date.now(), jobId);
-    return this.getJob(jobId);
+    const result = this.db
+      .prepare(
+        `UPDATE job_queue SET status = 'dead', error = ?, completed_at = ?
+          WHERE id = ?
+            AND (? IS NULL OR (status = 'processing'
+              AND json_extract(payload, '$.__claimToken') = ?))`
+      )
+      .run(error, Date.now(), jobId, claimToken ?? null, claimToken ?? null);
+    return result.changes > 0 ? this.getJob(jobId) : null;
   }
 
   getJob(jobId: string): Job | null {
@@ -773,13 +794,33 @@ export class JobQueueRepository {
     return row ? this.rowToJob(row) : null;
   }
 
-  reclaimStale(staleBefore: number): number {
-    const result = this.db
-      .prepare(
-        `UPDATE job_queue SET status = 'pending', started_at = NULL WHERE status = 'processing' AND started_at < ?`
-      )
-      .run(staleBefore);
-    return result.changes;
+  reclaimStale(staleBefore: number): ReclaimedJobClaim[] {
+    return this.db.transaction(() => {
+      const candidates = this.db
+        .prepare(
+          `SELECT id, json_extract(payload, '$.__claimToken') AS claim_token
+             FROM job_queue
+            WHERE status = 'processing' AND started_at < ?`
+        )
+        .all(staleBefore) as Array<{ id: string; claim_token: string | null }>;
+      const reclaimed: ReclaimedJobClaim[] = [];
+
+      for (const candidate of candidates) {
+        const result = this.db
+          .prepare(
+            `UPDATE job_queue SET status = 'pending', started_at = NULL
+              WHERE id = ? AND status = 'processing' AND started_at < ?
+                AND ((? IS NULL AND json_extract(payload, '$.__claimToken') IS NULL)
+                  OR json_extract(payload, '$.__claimToken') = ?)`
+          )
+          .run(candidate.id, staleBefore, candidate.claim_token, candidate.claim_token);
+        if (result.changes > 0) {
+          reclaimed.push({ jobId: candidate.id, claimToken: candidate.claim_token });
+        }
+      }
+
+      return reclaimed;
+    })();
   }
 
   private rowToJob(row: Record<string, unknown>): Job {

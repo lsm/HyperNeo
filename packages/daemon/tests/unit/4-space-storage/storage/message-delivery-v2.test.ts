@@ -273,7 +273,7 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       const staleStartedAt = Date.now() - 10 * 60 * 1000;
       db.prepare(`UPDATE job_queue SET started_at = ? WHERE id = ?`).run(staleStartedAt, job.id);
       const reclaimed = repo.reclaimStale(Date.now() - 5 * 60 * 1000);
-      expect(reclaimed).toBe(1);
+      expect(reclaimed).toHaveLength(1);
       const after = repo.getJob(job.id);
       expect(after?.status).toBe('pending');
       expect(after?.startedAt).toBeNull();
@@ -342,7 +342,7 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       db.prepare(`UPDATE job_queue SET started_at = ? WHERE id = ?`).run(stale, job.id);
       repo.touchStartedAt(job.id);
       // After the heartbeat, the job is NOT reclaimed (started_at is fresh)...
-      expect(repo.reclaimStale(Date.now() - 5 * 60 * 1000)).toBe(0);
+      expect(repo.reclaimStale(Date.now() - 5 * 60 * 1000)).toHaveLength(0);
       expect(repo.getJob(job.id)?.status).toBe('processing');
     });
   });
@@ -867,7 +867,7 @@ describe('handler — status-aware delivery (§8)', () => {
     expect((steerRow?.payload as { role: string }).role).toBe('steer');
 
     // 3) reclaimStale resets the zombie to pending (the durable redelivery seam).
-    expect(repo.reclaimStale(Date.now() - 5 * 60 * 1000)).toBe(1);
+    expect(repo.reclaimStale(Date.now() - 5 * 60 * 1000)).toHaveLength(1);
 
     // 4) Re-claim + handle the zombie: turn_terminated → completed, no re-drive.
     const [reclaimed] = repo.dequeue(MESSAGE_DELIVERY, 1);

@@ -1,7 +1,14 @@
 import type { Job, JobQueueRepository, PayloadMatch } from './repositories/job-queue-repository';
 import type { TableChangeScope } from './reactive-database';
 
-export type JobHandler = (job: Job) => Promise<Record<string, unknown> | void>;
+export interface JobHandlerContext {
+  signal: AbortSignal;
+}
+
+export type JobHandler = (
+  job: Job,
+  context?: JobHandlerContext
+) => Promise<Record<string, unknown> | void>;
 
 /**
  * Throw from a handler to force a job straight to `dead` (bypassing the retry
@@ -78,6 +85,8 @@ export class JobQueueProcessor {
   // be starved by — nor starve — capped jobs. Both count toward `stop()` drain.
   private inFlightExempt = 0;
   private running = false;
+  private inFlightClaims = new Map<string, Map<string, AbortController>>();
+  private tickRequested = false;
   private changeNotifier: ((table: string, scope?: TableChangeScope) => void) | null = null;
   private readonly pollIntervalMs: number;
   private readonly maxConcurrent: number;
@@ -106,7 +115,7 @@ export class JobQueueProcessor {
     this.running = true;
     // Eagerly reclaim stale jobs from a previous crash before the first poll tick,
     // so crash-recovery is instant rather than delayed by up to STALE_CHECK_INTERVAL.
-    this.repo.reclaimStale(Date.now() - this.staleThresholdMs);
+    this.reclaimStaleClaims(Date.now() - this.staleThresholdMs);
     this.lastStaleCheck = Date.now();
     this.pollTimer = setInterval(() => {
       this.tick();
@@ -186,18 +195,23 @@ export class JobQueueProcessor {
     else this.inFlightCapped++;
     const reg = this.handlers.get(job.queue);
     const scope = scopeFromJob(job);
+    const controller = new AbortController();
+    this.trackInFlightClaim(job, controller);
     try {
       if (!reg) {
         this.repo.fail(job.id, `No handler registered for queue: ${job.queue}`);
         this.notifyChange(scope);
         return;
       }
-      const result = await reg.handler(job);
+      const result = await reg.handler(job, { signal: controller.signal });
       // message_delivery parks/promotes by requeueing the job itself; the
       // auto-complete here is then a no-op (row no longer 'processing').
       this.repo.complete(job.id, result ?? undefined, job.claimToken);
       this.notifyChange(scope);
     } catch (err) {
+      // A reclaimed predecessor lost ownership; cancellation is not a job
+      // failure and must not burn retries or invoke the dead-letter hook.
+      if (controller.signal.aborted) return;
       const message = err instanceof Error ? err.message : String(err);
       // A handler throws `DeadLetterImmediatelyError` to terminalize without
       // burning the retry budget (e.g. a delivery turn that ended in a
@@ -216,9 +230,45 @@ export class JobQueueProcessor {
       }
       this.notifyChange(scope);
     } finally {
+      this.untrackInFlightClaim(job, controller);
       if (exempt) this.inFlightExempt--;
       else this.inFlightCapped--;
+      this.requestTick();
     }
+  }
+
+  private trackInFlightClaim(job: Job, controller: AbortController): void {
+    if (!job.claimToken) return;
+    let claims = this.inFlightClaims.get(job.id);
+    if (!claims) {
+      claims = new Map();
+      this.inFlightClaims.set(job.id, claims);
+    }
+    claims.set(job.claimToken, controller);
+  }
+
+  private untrackInFlightClaim(job: Job, controller: AbortController): void {
+    if (!job.claimToken) return;
+    const claims = this.inFlightClaims.get(job.id);
+    if (claims?.get(job.claimToken) !== controller) return;
+    claims.delete(job.claimToken);
+    if (claims.size === 0) this.inFlightClaims.delete(job.id);
+  }
+
+  private reclaimStaleClaims(staleBefore: number): void {
+    for (const claim of this.repo.reclaimStale(staleBefore)) {
+      if (!claim.claimToken) continue;
+      this.inFlightClaims.get(claim.jobId)?.get(claim.claimToken)?.abort();
+    }
+  }
+
+  private requestTick(): void {
+    if (!this.running || this.tickRequested) return;
+    this.tickRequested = true;
+    queueMicrotask(() => {
+      this.tickRequested = false;
+      if (this.running) void this.tick();
+    });
   }
 
   setChangeNotifier(notifier: (table: string, scope?: TableChangeScope) => void): void {
@@ -234,7 +284,7 @@ export class JobQueueProcessor {
   private checkStaleJobs(): void {
     const now = Date.now();
     if (now - this.lastStaleCheck < JobQueueProcessor.STALE_CHECK_INTERVAL) return;
-    this.repo.reclaimStale(now - this.staleThresholdMs);
+    this.reclaimStaleClaims(now - this.staleThresholdMs);
     this.lastStaleCheck = now;
   }
 }

@@ -263,7 +263,7 @@ describe('Stale job reclamation on restart (eager reclaim)', () => {
     // reclaimStale (as the processor runs eagerly on start + every 60s) only
     // reclaims jobs still past the window — the heartbeated one stays processing.
     const reclaimed = repo.reclaimStale(Date.now() - staleThresholdMs);
-    expect(reclaimed).toBe(1);
+    expect(reclaimed).toHaveLength(1);
     expect(repo.getJob(alive.id)?.status).toBe('processing'); // alive — NOT reclaimed
     expect(repo.getJob(dead.id)?.status).toBe('pending'); // dead — reclaimed, re-drives
   });

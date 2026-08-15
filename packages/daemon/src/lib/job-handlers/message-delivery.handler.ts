@@ -93,7 +93,8 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
   // Inject for tests; the singleton in production.
   const metrics: DeliveryMetrics = deps.metrics ?? deliveryMetrics;
 
-  return async (job: Job): Promise<Record<string, unknown>> => {
+  return async (job: Job, context): Promise<Record<string, unknown>> => {
+    const signal = context?.signal;
     const payload = asMessageDeliveryPayload(job.payload);
     if (!payload) {
       // Malformed payload — dead-letter rather than spin.
@@ -224,7 +225,8 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
         payload.parentToolUseId,
         alreadyConsumed,
         claimCurrent,
-        payload.batchUuids
+        payload.batchUuids,
+        signal
       );
       const heartbeat = setInterval(
         () => deps.jobQueue.touchStartedAt(job.id, job.claimToken),
@@ -282,7 +284,8 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       payload.messageUuid,
       content,
       payload.parentToolUseId,
-      claimCurrent
+      claimCurrent,
+      signal
     );
     if (result.outcome === 'aborted') {
       // Bridge revalidation found the session archived or the message removed
