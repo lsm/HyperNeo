@@ -289,6 +289,12 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         }>('session.get', { sessionId: targetSessionId })
         .then((response) => {
           const meta = response.session?.metadata ?? {};
+          // The composer content the reconcile observed (its get's draft) —
+          // adoptions below must not overwrite typing that began mid-flight.
+          const observedDraft = meta.inputDraft ?? '';
+          const canAdopt = (): boolean =>
+            currentSessionIdRef.current === targetSessionId &&
+            (contentSignal.peek().trim() === '' || contentSignal.peek() === observedDraft);
           if (
             tombstone?.baselineSeq !== undefined &&
             meta.inputDraftVoiceLastStrippedSeq === tombstone.baselineSeq
@@ -297,7 +303,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             // draft already holds only the transcripts and the baseline is
             // gone. The no-baseline fallback below would conditionally CLEAR
             // this transcript-only draft — adopt it and retire the tombstone.
-            if (currentSessionIdRef.current === targetSessionId) {
+            if (canAdopt()) {
               contentSignal.value = meta.inputDraft ?? '';
             }
             removeClearTombstone(targetSessionId);
@@ -326,7 +332,15 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                   })
                   .then((merged) => {
                     if (currentSessionIdRef.current === targetSessionId) {
-                      contentSignal.value = merged.session?.metadata?.inputDraft ?? '';
+                      // Only over an idle composer or unchanged observed text:
+                      // typing that began mid-reconcile is newer user state.
+                      const mergedDraft = merged.session?.metadata?.inputDraft ?? '';
+                      if (
+                        contentSignal.peek().trim() === '' ||
+                        contentSignal.peek() === observedDraft
+                      ) {
+                        contentSignal.value = mergedDraft;
+                      }
                     }
                     removeClearTombstone(targetSessionId);
                     if (pendingClearRef.current === targetSessionId) {
@@ -364,7 +378,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                   flushKickRef.current();
                   return;
                 }
-                if (currentSessionIdRef.current === targetSessionId) {
+                if (canAdopt()) {
                   contentSignal.value = result.value ?? '';
                 }
                 removeClearTombstone(targetSessionId);
@@ -387,7 +401,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                 flushKickRef.current(); // stays owed — arm the bounded retry
                 return;
               }
-              if (currentSessionIdRef.current === targetSessionId) {
+              if (canAdopt()) {
                 contentSignal.value = '';
               }
               removeClearTombstone(targetSessionId);
@@ -695,8 +709,19 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             // CONDITIONALLY, so a newer draft saved meanwhile survives — then
             // the refresh get merges the pending onto a clean draft.
             hub
-              .request('session.clearInputDraftIf', { sessionId, expected: draft ?? '' })
-              .then(() => {
+              .request<{ cleared?: boolean }>('session.clearInputDraftIf', {
+                sessionId,
+                expected: draft ?? '',
+              })
+              .then((result) => {
+                if (!result.cleared) {
+                  // A concurrent draft write raced the clear — refreshing now
+                  // would merge the pending onto the stale pre-clear text and
+                  // consume the landing, abandoning the user's clear intent
+                  // and resurrecting the old text. Keep the clear owed.
+                  oweClear();
+                  return;
+                }
                 if (stillCurrent()) refresh();
               })
               .catch(() => {

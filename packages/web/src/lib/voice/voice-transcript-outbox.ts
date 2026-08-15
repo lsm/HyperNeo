@@ -537,17 +537,17 @@ function readSuperseded(sessionId: string): { generation: number; beforeTs: numb
  * anything — the caller retires the exact `key` once the content is durably
  * persisted or folded.
  */
-/** Whether the given OWNER (tab suffix) has a fresh clear tombstone for the session. */
-function ownerHasClearTombstone(sessionId: string, owner: string): boolean {
+/** The given OWNER's fresh clear-tombstone timestamp, or null when none. */
+function ownerClearTombstoneTs(sessionId: string, owner: string): number | null {
   try {
     const raw = localStorage.getItem(`${CLEAR_TOMBSTONE_PREFIX}${sessionId}.${owner}`);
-    if (raw === null) return false;
+    if (raw === null) return null;
     const parsed = JSON.parse(raw) as { ts?: number } | null;
-    return (
-      !!parsed && typeof parsed.ts === 'number' && Date.now() - parsed.ts < DRAFT_BACKUP_TTL_MS
-    );
+    if (!parsed || typeof parsed.ts !== 'number') return null;
+    if (Date.now() - parsed.ts >= DRAFT_BACKUP_TTL_MS) return null;
+    return parsed.ts;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -584,8 +584,12 @@ function freshestDraftBackup(sessionId: string): DraftBackupClaim | null {
       // what the user already cleared. The tombstone is keyed by the same
       // owner suffix as the backup key, so a foreign owner's intent is
       // honored even though only THIS tab's tombstone is ever re-armed here.
+      // The owner's clear suppresses only backups written BEFORE it: the
+      // user can have kept typing after clearing, and those newer writes are
+      // live edits that must stay restorable for the tombstone's whole TTL.
       const owner = key.slice(key.lastIndexOf('.') + 1);
-      if (ownerHasClearTombstone(sessionId, owner)) continue;
+      const clearedAt = ownerClearTombstoneTs(sessionId, owner);
+      if (clearedAt !== null && ts <= clearedAt) continue;
       if (!freshest || ts >= freshest.ts) {
         freshest = { key, content: parsed.content, generation, ts };
       }
