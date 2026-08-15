@@ -18,9 +18,16 @@ import { SpacePageHeader } from './SpacePageHeader';
 export const GLASS_SURFACE =
   'border-white/15 bg-white/[0.07] shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_16px_40px_rgba(0,0,0,0.18)] backdrop-blur-xl';
 
-/** Opaque high-contrast surface — content cards, list rows, state panels. */
+/**
+ * Opaque high-contrast surface — content cards, list rows, state panels.
+ *
+ * Elevation follows the iOS dark-mode model: raised surfaces sit *lighter*
+ * than the page behind them (app-content #151517), so cards read as panels
+ * and row text rests on a visible surface instead of near-white type on a
+ * void darker than the page.
+ */
 export const FLAT_SURFACE =
-  'border-white/15 bg-dark-900/95 shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_18px_44px_rgba(0,0,0,0.24)]';
+  'border-white/15 bg-dark-800/95 shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_18px_44px_rgba(0,0,0,0.24)]';
 
 /**
  * Atmospheric route shell — the contained radial "spot light" gradients plus a
