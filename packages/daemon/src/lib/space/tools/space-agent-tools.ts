@@ -3800,6 +3800,22 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           // the race is closed atomically by the `WHERE status IN (…)`
           // predicate on the UPDATE (allowedSourceStatuses above).
           precondition: (current) => {
+            // Checkpoint recheck on the reread state (BEFORE the run-identity
+            // work — this applies to standalone tasks too): a concurrent
+            // `submit_for_approval` can flip an initially-in_progress task to
+            // `review` (stamping the human-approval checkpoint) between the
+            // handler's early check and this reread — `review` is in the
+            // allowed set and the exact-status predicate keys on the reread
+            // status, so only this recheck can catch it. Refuse so the
+            // requested human approval is not bypassed.
+            if (
+              current.status === 'review' &&
+              current.pendingCheckpointType === 'task_completion'
+            ) {
+              throw new Error(
+                `Task ${args.task_id} was submitted for human approval during completion (pending 'task_completion' checkpoint); refusing so the requested review is not bypassed. The human approve/reject flow owns it now.`
+              );
+            }
             // Run-identity binding: every run-dependent guard (autonomy's
             // workflow, PR, runnable status, canonical ownership, hooks,
             // post-approval routes) evaluated against the run the task

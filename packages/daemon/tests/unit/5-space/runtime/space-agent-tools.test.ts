@@ -6091,6 +6091,49 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     }
   });
 
+  test('terminal precondition rechecks the checkpoint: a concurrent submit_for_approval mid-completion aborts it', async () => {
+    // The early checkpoint guard sees an in_progress task (no checkpoint).
+    // A concurrent submit_for_approval then flips it to review and stamps the
+    // human-approval checkpoint BEFORE setTaskStatus' reread — `review` is in
+    // the allowed set and the exact-status predicate keys on the reread
+    // status, so only the precondition's checkpoint recheck on `current`
+    // catches the flip. Standalone task (no run): proves the recheck is not
+    // hidden behind the run-identity early-return.
+    const taskId = await createTask('in_progress');
+    const originalGetTask = ctx.taskManager.getTask.bind(ctx.taskManager);
+    let submitted = false;
+    const getTaskSpy = spyOn(ctx.taskManager, 'getTask').mockImplementation(async (id: string) => {
+      if (id === taskId && !submitted) {
+        submitted = true;
+        // Mirrors submitTaskForReview's atomic single-UPDATE write.
+        ctx.taskRepo.updateTask(taskId, {
+          status: 'review',
+          pendingCheckpointType: 'task_completion',
+          pendingCompletionReason: 'needs human approval',
+        });
+      }
+      return originalGetTask(id);
+    });
+
+    try {
+      const result = await makeHandlers(ctx).complete_validation_task({
+        task_id: taskId,
+        validation_outcome: 'should be refused',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+
+      expect(parsed.success).toBe(false);
+      expect(parsed.error).toContain('submitted for human approval during completion');
+      // The requested human review survives — status review, checkpoint intact.
+      const after = ctx.taskRepo.getTask(taskId);
+      expect(after?.status).toBe('review');
+      expect(after?.pendingCheckpointType).toBe('task_completion');
+      expect(after?.result).toBeNull();
+    } finally {
+      getTaskSpy.mockRestore();
+    }
+  });
+
   test('rejects a workflow-backed task whose workflow declares a post-approval route', async () => {
     // A direct done would silently skip the route: the tick loop treats an
     // already-done task as resolved and never calls dispatchPostApproval.
