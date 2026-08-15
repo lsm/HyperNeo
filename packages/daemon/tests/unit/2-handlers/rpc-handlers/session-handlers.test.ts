@@ -1268,6 +1268,27 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     expect(replay.merged).toBe(true);
   });
 
+  it('retains every claim for the full retry lifetime (no count cap)', async () => {
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    // More than 20 backup claims can commit inside the 24h retry window; a
+    // count cap would evict an older claim whose client is still retrying
+    // after a lost ack, sending that retry down the plain-write branch.
+    existingPending = null;
+    existingBaseline = 'old';
+    existingBaselineSeq = 1;
+    existingDraft = 'old voice';
+    existingMergeClaimLog = Array.from({ length: 25 }, (_, i) => ({
+      id: `claim-${i}`,
+      ts: Date.now(),
+    }));
+    await handler!({ sessionId: 's1', content: 'edits', claimId: 'claim-25' }, {});
+    const write = sessionManager.updateSession.mock.calls[0][1] as {
+      metadata: { inputDraftVoiceMergeClaimLog: Array<{ id: string }> };
+    };
+    expect(write.metadata.inputDraftVoiceMergeClaimLog).toHaveLength(26);
+    expect(write.metadata.inputDraftVoiceMergeClaimLog.map((e) => e.id)).toContain('claim-0');
+  });
+
   it('records the committed claim id alongside the merged draft', async () => {
     const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
     existingPending = null;

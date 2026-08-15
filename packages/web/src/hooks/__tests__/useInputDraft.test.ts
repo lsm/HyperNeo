@@ -1547,6 +1547,68 @@ describe('useInputDraft', () => {
       expect(getClearTombstone('session-1')?.baselineSeq).toBe(2);
     });
 
+    it('persists a pendingRetained expired-landing restore through an acknowledged merge', async () => {
+      // The landing marker is long pruned but the backup is fresh, and the
+      // daemon RETAINED the pending (draft too full to merge). The restore
+      // must not delete the durable copy on the spot — the debounced save
+      // alone could be lost to a reload or dropped socket — but persist it
+      // through the daemon-side merge and retire only on the acknowledgement.
+      saveDraftBackup('session-1', 'user edits', 1);
+      let mergeCommitted = false;
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return {
+            session: {
+              metadata: { inputDraft: 'full draft', inputDraftVoicePending: 'voice' },
+            },
+          };
+        }
+        if (method === 'session.mergeVoiceDraftBackup') {
+          mergeCommitted = true;
+          return { merged: true, value: 'user edits' };
+        }
+        return {};
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      expect(result.current.content).toBe('user edits');
+      expect(mergeCommitted).toBe(true);
+      expect(peekExpiredDraftBackup('session-1')).toBeNull();
+    });
+
+    it('keeps the durable backup when the pendingRetained merge cannot commit', async () => {
+      // Same restore, but the merge is DECLINED (a newer sequence is
+      // unresolved): the backup stays — a later departed-session flush
+      // retries it, and deleting it here would leave only the un-committed
+      // debounced save.
+      saveDraftBackup('session-1', 'user edits', 1);
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return {
+            session: {
+              metadata: { inputDraft: 'full draft', inputDraftVoicePending: 'voice' },
+            },
+          };
+        }
+        if (method === 'session.mergeVoiceDraftBackup') return { merged: false };
+        return {};
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      expect(result.current.content).toBe('user edits');
+      expect(peekExpiredDraftBackup('session-1')?.content).toBe('user edits');
+    });
+
     it('recognizes an owed strip that committed with a lost ack (no transcript clear)', async () => {
       // The strip COMMITTED but its response was lost: the server draft is
       // transcript-only and the baseline is gone, while this tab's tombstone

@@ -738,12 +738,13 @@ export function setupSessionHandlers(
     if (claimId) {
       // Record the committed claim AFTER the branches above, so a retry of
       // THIS merge is recognized before any branch can rewrite the draft.
-      // Appended to the LOG (TTL-pruned, count-capped) so concurrent tabs'
-      // claims never evict each other.
+      // Appended to the TTL-pruned LOG with NO count cap: a still-retrying
+      // claim's acknowledgement can arrive long after later claims commit,
+      // and evicting its id would send the retry down the plain-write branch.
       metadataUpdate.inputDraftVoiceMergeClaimLog = [
         ...committedClaims,
         { id: claimId, ts: Date.now() },
-      ].slice(-20);
+      ];
     }
     const updates: UpdateSessionRequest = { metadata: metadataUpdate };
     await sessionManager.updateSession(sessionId, updates as Partial<Session>);

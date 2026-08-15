@@ -407,14 +407,32 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         }
         if (pendingRetained) {
           // Still staged (draft too full): restore the edits; a LIVE landing
-          // stays deferred for the refresh below, an EXPIRED one retires the
-          // durable copy the composer now owns (its saves are enabled, and the
-          // still-staged pending merges onto the restored draft later). The
-          // retirement also sweeps same-generation sibling backups — their
-          // edits are older versions of this same deferral window.
+          // stays deferred for the refresh below. An EXPIRED landing persists
+          // the restore through the daemon-side MERGE (its staged branch makes
+          // the restored edits the draft the pending later merges onto) and
+          // retires the durable copy only once that write is ACKNOWLEDGED —
+          // the debounced save alone could be lost to a reload, crash, or
+          // dropped socket before it commits, deleting the only copy of the
+          // newer edits while the daemon still holds the older full draft.
           if (backup !== null) {
             contentSignal.value = backup;
-            if (!landingLive && claimed) retireDraftBackupClaim(claimed);
+            if (!landingLive && claimed) {
+              const hub = connectionManager.getHubIfConnected();
+              if (hub) {
+                hub
+                  .request<{ merged?: boolean }>('session.mergeVoiceDraftBackup', {
+                    sessionId,
+                    content: backup.trim(),
+                    claimId: generateUUID(),
+                  })
+                  .then((result) => {
+                    if (result.merged) retireDraftBackupClaim(claimed);
+                  })
+                  .catch(() => {
+                    /* backup retained — the departed-session flush paths retry */
+                  });
+              }
+            }
           }
           return;
         }
