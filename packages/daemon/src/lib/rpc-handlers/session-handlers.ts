@@ -461,6 +461,9 @@ export function setupSessionHandlers(
     // itself lives in a separate field this update never touches, so a plain
     // metadata write here only re-anchors the merge point.
     const draftWrite = (updates.metadata as Partial<SessionMetadata> | undefined)?.inputDraft;
+    // Whether this write took the transcript-folding branch (its ack carries
+    // the applied value so the client can adopt it).
+    let didFold = false;
     if (draftWrite !== undefined) {
       const existing = sessionManager.getSessionFromDB(targetSessionId);
       const meta = existing?.metadata;
@@ -507,6 +510,7 @@ export function setupSessionHandlers(
           (updates.metadata as Partial<SessionMetadata>).inputDraftVoiceBaseline = null;
         } else {
           (updates.metadata as Partial<SessionMetadata>).inputDraftVoiceBaseline = written;
+          didFold = true;
         }
         (updates.metadata as Partial<SessionMetadata>).inputDraftVersion = currentVersion + 1;
       } else {
@@ -538,12 +542,17 @@ export function setupSessionHandlers(
     // Echo the applied version when this write bumped it, so the client
     // advances its cached version on the acknowledgement — without it, every
     // later edit from that composer would echo the pre-write version and be
-    // misclassified as stale (folded) by the daemon.
-    const appliedVersion = (updates.metadata as Partial<SessionMetadata> | undefined)
-      ?.inputDraftVersion;
+    // misclassified as stale (folded) by the daemon. A FOLDED write also
+    // returns the applied VALUE: the caller must either adopt it (its local
+    // content lacks the transcripts) or deliberately keep its version cache
+    // stale — advancing without adopting would let its next edit apply as-is
+    // and clear the baseline, deleting the transcript from the draft.
+    const appliedMeta = (updates.metadata as Partial<SessionMetadata> | undefined) ?? {};
+    const appliedVersion = appliedMeta.inputDraftVersion;
     return {
       success: true,
       ...(appliedVersion !== undefined ? { draftVersion: appliedVersion } : {}),
+      ...(didFold ? { draftValue: appliedMeta.inputDraft ?? '' } : {}),
     };
   });
 

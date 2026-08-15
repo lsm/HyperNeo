@@ -758,6 +758,26 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
     setupSessionHandlers(messageHubData.hub, sessionManager, eventBus, {} as SpaceManager);
   });
 
+  it('returns the folded draft value so the client can adopt it', async () => {
+    // The stale writer's local content lacks the transcripts the daemon
+    // folded in; its ack must carry the applied VALUE, or the client would
+    // advance its version cache while its composer still shows the
+    // transcript-free text — and its next edit would apply as-is and clear
+    // the baseline, deleting the transcript.
+    existingPending = null;
+    existingDraft = 'old draft voice words';
+    existingBaseline = 'old draft';
+    existingDraftVersion = 2;
+    const handler = messageHubData.handlers.get('session.update');
+    const result = (await handler!(
+      { sessionId: 's1', metadata: { inputDraft: 'stale edits' } },
+      {}
+    )) as { success: boolean; draftVersion?: number; draftValue?: string };
+    expect(result.success).toBe(true);
+    expect(result.draftVersion).toBe(3);
+    expect(result.draftValue).toBe('stale edits voice words');
+  });
+
   it('re-anchors the baseline to the new draft when a pending sequence is staged', async () => {
     // A voice pending exists; another tab's normal draft save lands between
     // the sequence start and its merge. The pending will merge onto the NEW

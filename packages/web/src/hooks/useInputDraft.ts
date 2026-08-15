@@ -117,6 +117,15 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // Arm the backup-flush retry backoff from outside the retry effect (the
   // connection subscription alone only fires on connection CHANGES).
   const flushKickRef = useRef<() => void>(() => {});
+  // Advance the cached draft version MONOTONICALLY: overlapping saves can
+  // acknowledge out of order, and an older ack must never move the cache
+  // backward (the next save would then be misclassified as stale and fold a
+  // transcript the draft already contains).
+  const advanceDraftVersion = (sid: string, version: number | undefined): void => {
+    if (typeof version !== 'number') return;
+    const cached = draftVersionsRef.current.get(sid);
+    if (cached === undefined || version > cached) draftVersionsRef.current.set(sid, version);
+  };
   // Claim ids of ACTIVE-CONTENT merges keyed per session: the id must survive
   // retries so a merge that committed with a lost ack is recognized — a fresh
   // id per attempt would let the retry rewrite the committed draft, and
@@ -1033,7 +1042,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         if (!claimed) {
           // No voice backup involved — a plain draft write.
           hub
-            .request<{ draftVersion?: number }>('session.update', {
+            .request<{ draftVersion?: number; draftValue?: string }>('session.update', {
               sessionId: prevSessionId,
               expectedDraftVersion: draftVersionsRef.current.get(prevSessionId),
               metadata: {
@@ -1041,8 +1050,8 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
               },
             })
             .then((ack) => {
-              if (typeof ack?.draftVersion === 'number') {
-                draftVersionsRef.current.set(prevSessionId, ack.draftVersion);
+              if (typeof ack?.draftValue !== 'string') {
+                advanceDraftVersion(prevSessionId, ack?.draftVersion);
               }
             })
             .catch(() => {
@@ -1116,7 +1125,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       const hub = connectionManager.getHubIfConnected();
       if (hub) {
         hub
-          .request<{ draftVersion?: number }>('session.update', {
+          .request<{ draftVersion?: number; draftValue?: string }>('session.update', {
             sessionId,
             expectedDraftVersion: draftVersionsRef.current.get(sessionId),
             metadata: {
@@ -1124,8 +1133,12 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             },
           })
           .then((ack) => {
-            if (typeof ack?.draftVersion === 'number') {
-              draftVersionsRef.current.set(sessionId, ack.draftVersion);
+            // A folded clear/flush must NOT advance the cache: the applied
+            // draft gained transcripts this composer does not hold, and the
+            // reconciliation chains own adopting them — staying stale makes
+            // the next write fold again instead of clearing the baseline.
+            if (typeof ack?.draftValue !== 'string') {
+              advanceDraftVersion(sessionId, ack?.draftVersion);
             }
             // Deletion CONFIRMED server-side: drop the retry marker so a later
             // switch flush cannot null a NEWER draft another client saved in
@@ -1148,24 +1161,38 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       if (!hub) return;
 
       try {
-        const ack = await hub.request<{ draftVersion?: number }>('session.update', {
-          sessionId,
-          // Echo the draft version this composer last READ: the daemon applies
-          // the write as-is only when it matches (a mismatch marks a stale
-          // in-flight save, whose transcripts it folds back in).
-          expectedDraftVersion: draftVersionsRef.current.get(sessionId),
-          metadata: {
-            inputDraft: trimmedContent,
-          },
-        });
+        const ack = await hub.request<{ draftVersion?: number; draftValue?: string }>(
+          'session.update',
+          {
+            sessionId,
+            // Echo the draft version this composer last READ: the daemon applies
+            // the write as-is only when it matches (a mismatch marks a stale
+            // in-flight save, whose transcripts it folds back in).
+            expectedDraftVersion: draftVersionsRef.current.get(sessionId),
+            metadata: {
+              inputDraft: trimmedContent,
+            },
+          }
+        );
+        if (typeof ack?.draftValue === 'string') {
+          // The daemon FOLDED transcripts into this write: its value is the
+          // true draft. Adopt it when the composer still shows what we sent;
+          // if the user typed meanwhile, leave the version cache STALE so the
+          // next save folds onto the newer content — advancing without
+          // adopting would let that save apply as-is and clear the baseline,
+          // deleting the transcript from the draft.
+          if (contentSignal.peek().trim() === trimmedContent) {
+            contentSignal.value = ack.draftValue;
+            advanceDraftVersion(sessionId, ack.draftVersion);
+          }
+          return;
+        }
         // Advance the cache to the APPLIED version: without it, a concurrent
         // daemon-side bump (another tab's folded save) would leave this
         // composer echoing a stale version forever, and every later edit
         // would be misclassified as stale and folded (duplicating the
         // transcript it already contains).
-        if (typeof ack?.draftVersion === 'number') {
-          draftVersionsRef.current.set(sessionId, ack.draftVersion);
-        }
+        advanceDraftVersion(sessionId, ack?.draftVersion);
       } catch {
         // Ignore draft save errors
       }
