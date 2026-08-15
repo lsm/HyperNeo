@@ -266,12 +266,14 @@ interface SpaceLifecycleSubscriptionFilter {
 
 Add a narrow `space_goal_outcome_reports` model with:
 
-- Space, goal, task, and terminal-generation identity;
+- Space, goal, durable task identity, and terminal-generation identity;
 - reporter session/node identity;
 - immutable outcome summary, observations, recommendations, proposed goal update, and evidence references;
 - creation and routing metadata.
 
 Before this schema, add a durable task terminal-generation identifier to the task/terminal transition. Every reportable transition into a terminal status must atomically allocate or advance that generation, and the report uniqueness key must be `(task_id, terminal_generation)` rather than a timestamp such as `completedAt`, which is assigned too late and may change on reopen/re-completion.
+
+Preserve immutable reports when a linked task would be hard-deleted: either replace hard deletion with archival for reported tasks, or store a durable task identity independent of the foreign key and prohibit deleting the report. Do not use a default cascading foreign key that erases the only outcome record, and do not null the identity key.
 
 Do not provide payload update/delete methods.
 
@@ -279,6 +281,7 @@ Do not provide payload update/delete methods.
 
 #### G6. Terminal transition captures outcome report
 
+- Define one shared reportable-terminal predicate before implementation. Goal-linked tasks entering `done` or `blocked` require reports; `cancelled` and `archived` require reports only when they terminate previously active goal work rather than an administrative cleanup. The predicate must be versioned and covered by tests so every writer applies the same rule.
 - Create the report as part of the central reportable terminal transition, not as an optional model-invoked tool. A worker may submit the structured outcome payload before or during completion, but the terminal command/transition must guarantee one report exists even when the worker omits the tool call.
 - Audit every reportable terminal writer and route it through the atomic transition. This must include direct repository writers such as `PostApprovalRouter.route`, whose no-route branch currently completes with `taskRepo.updateTask` and intentionally bypasses `setTaskStatus`.
 - Keep notification/routing asynchronous and non-blocking.
@@ -317,9 +320,10 @@ This is the required behavior currently absent from `mark_complete.goal_update`;
 #### G9. Authorization and compatibility migration
 
 - Restrict worker direct rolling-state mutations.
-- Deprecate direct `mark_complete.goal_update` application in favor of reporting.
+- Deprecate direct `mark_complete.goal_update` application in favor of outcome-report submission and owner disposition.
 - Apply equivalent owner authority to Forge rollups.
 - Preserve coordinator/human override policy.
+- Migrate centralized worker prompts and the `mark_complete` schema descriptions before enabling restrictions. Existing goal-linked workers are instructed to update goals through goal tools or `goal_update`; they must instead be instructed to submit reports and let the owner decide.
 
 **Estimate:** 130–220 lines.
 
@@ -333,8 +337,9 @@ Forge goal-automation self-nag remains a separate evidence-processing mechanism.
 - Pause, resume, and semantic cancel.
 - Recompute cron `nextRunAt` and explicitly handle past one-shot resumes.
 - Add MCP parity, including cron reminders and paused/fired status filters.
+- Enforce mutation authorization inside every MCP handler, not only RPC/UI: the reminder's owning LH agent, explicit coordinator authority, or human authority may edit/pause/resume/cancel; ordinary ad-hoc member sessions must not mutate another agent's wakeups.
 
-**Estimate:** 150–230 lines.
+**Estimate:** 170–250 lines.
 
 #### R2. Optional single-goal link and bounded context
 
@@ -357,7 +362,8 @@ Do not inject task results, transcripts, event history, Forge evidence, or every
 - Full reminder list for the selected LH agent.
 - One-shot and cron creation.
 - Status, timezone, next run, and last run.
-- Cancel/delete behavior and reminder-count refresh.
+- User-facing cancellation calls the R1 semantic-cancel API and preserves cancelled reminders and firing history in the full list. Physical deletion, if retained, is a separate administrative action rather than the default cancel behavior.
+- Reminder-count refresh.
 
 **Estimate:** 120–200 lines.
 
@@ -378,8 +384,7 @@ V1 -> V2 -> V3 -> V4
 
 L1 -> L2 -> L3
        |-> L4
-       `-> L5
-L3 + L4 + L5 -> L6
+L3 + L4 -> L5 -> L6
 
 L1 -> S1 -> S2 -> S3
 
