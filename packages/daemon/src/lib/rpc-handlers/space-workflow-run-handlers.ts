@@ -830,7 +830,17 @@ export function setupSpaceWorkflowRunHandlers(
     const run = workflowRunRepo.getRun(params.runId);
     if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
-    if (run.status === 'done' || run.status === 'cancelled' || run.status === 'pending') {
+    // POST-APPROVAL EXEMPTION: the runtime marks a run `done` BEFORE
+    // dispatching its post-approval worker, so a done run can still have a
+    // live approved task executing hook-protected actions. Rejecting the
+    // banner's Approve/Reject on run status alone leaves a displayed hook
+    // decision impossible to act on while the worker is still running.
+    const doneRunHasLiveApprovedWork =
+      run.status === 'done' && spaceTaskRepo.hasApprovedTaskForWorkflow(run.workflowId);
+    if (
+      !doneRunHasLiveApprovedWork &&
+      (run.status === 'done' || run.status === 'cancelled' || run.status === 'pending')
+    ) {
       throw new Error(
         `Cannot modify hook on a ${workflowRunAttemptLabel(run.status)} workflow run`
       );
@@ -939,7 +949,15 @@ export function setupSpaceWorkflowRunHandlers(
     const run = workflowRunRepo.getRun(params.runId);
     if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
-    if (run.status === 'done' || run.status === 'cancelled' || run.status === 'pending') {
+    // POST-APPROVAL EXEMPTION (mirrors approveHook): a done run with live
+    // approved work still executes hook-protected actions — its retrying
+    // hooks must remain operable.
+    const doneRunHasLiveApprovedWork2 =
+      run.status === 'done' && spaceTaskRepo.hasApprovedTaskForWorkflow(run.workflowId);
+    if (
+      !doneRunHasLiveApprovedWork2 &&
+      (run.status === 'done' || run.status === 'cancelled' || run.status === 'pending')
+    ) {
       throw new Error(`Cannot retry hook on a ${workflowRunAttemptLabel(run.status)} workflow run`);
     }
 

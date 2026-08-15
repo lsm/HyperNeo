@@ -137,7 +137,7 @@ function parseJson<T>(raw: string | null | undefined, fallback: T): T {
  */
 function parseHookColumn<T>(
   raw: string | null | undefined,
-  isElement: (value: unknown) => boolean
+  isElement: (value: unknown, all: unknown[]) => boolean
 ): { ok: true; value: T[] | null } | { ok: false } {
   if (raw == null || raw === '') return { ok: true, value: null };
   try {
@@ -147,7 +147,7 @@ function parseHookColumn<T>(
     // false and silently filters such bindings, loading a "valid" list that
     // gates nothing — validate every element's shape before trusting the
     // array, and route the workflow through the fail-closed marker otherwise.
-    if (Array.isArray(parsed) && parsed.every(isElement)) {
+    if (Array.isArray(parsed) && parsed.every((el) => isElement(el, parsed))) {
       return { ok: true, value: parsed as T[] };
     }
     return { ok: false };
@@ -369,10 +369,23 @@ function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
   const nodeSlots = new Map(
     nodes.map((n) => [n.name, new Set((n.agents ?? []).map((a) => a.name))])
   );
-  const hookBindingsResult = parseHookColumn<HookBinding>(row.hook_bindings, (value) =>
-    isHookBindingElement(value, nodeNames, nodeSlots)
+  // Collection-level: duplicate hookIds are ALSO corruption — the runtime
+  // validator rejects them (state is keyed (runId, hookId); duplicates share
+  // approvals/cooldowns/queued actions across routes), so a row carrying
+  // two well-formed bindings with one id must load through the marker.
+  const hookBindingsResult = parseHookColumn<HookBinding>(row.hook_bindings, (value, all) => {
+    if (!isHookBindingElement(value, nodeNames, nodeSlots)) return false;
+    const id = (value as Record<string, unknown>).hookId;
+    return !all.some(
+      (other, i) =>
+        i < all.indexOf(value) &&
+        isHookBindingElement(other, nodeNames, nodeSlots) &&
+        (other as Record<string, unknown>).hookId === id
+    );
+  });
+  const customHooksResult = parseHookColumn<CustomHook>(row.custom_hooks, (v) =>
+    isCustomHookElement(v)
   );
-  const customHooksResult = parseHookColumn<CustomHook>(row.custom_hooks, isCustomHookElement);
 
   const wf: SpaceWorkflow = {
     id: row.id,

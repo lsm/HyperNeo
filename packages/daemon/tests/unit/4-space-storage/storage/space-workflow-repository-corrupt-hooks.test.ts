@@ -142,6 +142,27 @@ describe('SpaceWorkflowRepository — corrupt hook columns', () => {
     }
   });
 
+  test('duplicate hookIds across well-formed bindings fail closed (round 89)', () => {
+    // Two individually valid bindings sharing one id: the runtime validator
+    // rejects this (state is keyed (runId, hookId) — duplicates share
+    // approvals/cooldowns/queued actions across routes), so the row must
+    // load through the corruption marker, not as "healthy".
+    repo.createWorkflow({ spaceId, name: 'WF', nodes: [{ name: 'Only', agentId: 'a1' }] });
+    const binding = {
+      hookId: 'pr_ready',
+      sourceNode: 'Only',
+      targetNode: 'Only',
+      method: 'send_message',
+      enabled: true,
+      authorizedCallers: [{ sourceNode: 'Only' }],
+    };
+    corruptColumn('hook_bindings', JSON.stringify([binding, binding]));
+    const wf = repo.getWorkflow(
+      db.prepare('SELECT id FROM space_workflows LIMIT 1').get()?.id as string
+    );
+    expect(wf?.hookBindings?.[0]?.hookId).toBe(CORRUPT_HOOK_BINDINGS_HOOK_ID);
+  });
+
   test('unknown node references and malformed custom-hook fields fail closed', () => {
     repo.createWorkflow({ spaceId, name: 'WF', nodes: [{ name: 'Only', agentId: 'a1' }] });
     // A typo'd sourceNode with a MATCHING caller: shape-valid, resolves to

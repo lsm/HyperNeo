@@ -2631,7 +2631,11 @@ export function buildRetryableActionKey(
   return JSON.stringify({
     runScopedTaskId: meta.taskId,
     nodeId: meta.nodeId,
-    sessionId: meta.sessionId,
+    // NO sessionId — consistent with sameRetryableActionOwner's relaxed
+    // ownership: a respawned worker (same task/node/agent, NEW session id)
+    // re-issuing an identical blocked action must hash to the SAME key as
+    // the persisted __blockedActionKey, or the armed approval never matches
+    // and the operator must reproduce the stop and approve it twice.
     agentName: meta.agentName,
     methodName,
     args: canonicalizeActionValue(args),

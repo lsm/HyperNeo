@@ -1652,6 +1652,52 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(second.blockingHookId).toBe('stop_hook');
   });
 
+  test('an approval survives a replacement session re-issuing the action (round 89)', async () => {
+    // The blocked worker was respawned with a NEW session id; the
+    // replacement's identical re-issue must match the persisted
+    // __blockedActionKey (session-independent identity) so the armed
+    // approval applies without a second operator round.
+    hookStateRepo.updateWithRetry('run-1', 'stop_hook', {
+      localState: {
+        humanApproved: true,
+        humanApprovedAt: 1,
+        __approvedActionKey: actionKeyFor(sendParams()),
+      },
+      lastFlow: 'stop',
+    });
+    const workflow = makeWorkflow({
+      customHooks: [STOP_HOOK],
+      hookBindings: [
+        {
+          hookId: 'stop_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const replacementMeta = { ...META, sessionId: 'respawned-session' };
+    const engine = makeEngine(workflow);
+    // Through the WRAPPER with the replacement session (delivery-time
+    // consume): the armed approval overrides and is consumed.
+    const wrapped = wrapHandlerWithHooks(
+      'send_message',
+      async () => ({ content: [{ type: 'text', text: '{\"success\":true}' }] }),
+      engine,
+      {},
+      replacementMeta
+    );
+    const result = await wrapped(sendParams());
+    const parsed = JSON.parse((result.content?.[0] as { text: string }).text) as {
+      success: boolean;
+    };
+    expect(parsed.success).toBe(true);
+    expect(hookStateRepo.get('run-1', 'stop_hook')?.localState.humanApproved).toBeUndefined();
+  });
+
   test("an approval bound to action A does not bypass action B's stop", async () => {
     // The P1 cross-action case: the operator approves a displayed stop of
     // action A; a DIFFERENT action (different target) reaching the same hook

@@ -273,6 +273,7 @@ function createMockSpaceTaskRepo(tasks: SpaceTask[] = [mockTask]): SpaceTaskRepo
   return {
     listByWorkflowRun: mock(() => tasks),
     getTask: mock(() => null),
+    hasApprovedTaskForWorkflow: mock(() => false),
   } as unknown as SpaceTaskRepository;
 }
 
@@ -1307,6 +1308,43 @@ describe('space-workflow-run-handlers', () => {
   // next attempt must be able to run, not short-circuit on the stale marker).
 
   describe('spaceWorkflowRun.approveHook — decision CAS + ceiling recovery', () => {
+    it('permits approval on a DONE run with live approved post-approval work (round 89)', async () => {
+      setup({ run: { ...mockRun, status: 'done' } });
+      // An approved (non-archived) task on the run's workflow → live work.
+      spaceTaskRepo.hasApprovedTaskForWorkflow = mock(() => true);
+      hookStateRepo.repo.ensure('run-1', 'pr_ready');
+      hookStateRepo.repo.update('run-1', 'pr_ready', {
+        expectedVersion: 0,
+        localState: {},
+        lastFlow: 'stop',
+        lastReason: 'not ready',
+      });
+      const result = (await call('spaceWorkflowRun.approveHook', {
+        runId: 'run-1',
+        hookId: 'pr_ready',
+        approved: true,
+      })) as { hookState: HookStateSnapshot };
+      expect(result.hookState.localState.humanApproved).toBe(true);
+    });
+
+    it('still rejects a DONE run with no live approved work', async () => {
+      setup({ run: { ...mockRun, status: 'done' } });
+      hookStateRepo.repo.ensure('run-1', 'pr_ready');
+      hookStateRepo.repo.update('run-1', 'pr_ready', {
+        expectedVersion: 0,
+        localState: {},
+        lastFlow: 'stop',
+        lastReason: 'not ready',
+      });
+      await expect(
+        call('spaceWorkflowRun.approveHook', {
+          runId: 'run-1',
+          hookId: 'pr_ready',
+          approved: true,
+        })
+      ).rejects.toThrow(/Cannot modify hook/);
+    });
+
     const stoppedHookState = (
       overrides: {
         lastFlow?: HookFlow;
