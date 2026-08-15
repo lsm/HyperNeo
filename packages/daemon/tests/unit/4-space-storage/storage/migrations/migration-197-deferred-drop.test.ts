@@ -268,6 +268,49 @@ describe('Migration 194 deferred hooks drop', () => {
     }
   });
 
+  test('a legacy SCRIPT placement without a custom definition defers (round 92)', () => {
+    // Legacy instance-id placement (a script hook) covered by a binding —
+    // but custom_hooks does not define the id: dropping the legacy column
+    // would strand the workflow with a binding resolving to nothing.
+    const db = makeLegacyDb();
+    try {
+      db.prepare(`UPDATE space_workflows SET hooks = ? WHERE id = 'wf-1'`).run(
+        '[{"id":"my_script_hook"}]'
+      );
+      db.prepare(`UPDATE space_workflows SET hook_bindings = ? WHERE id = 'wf-1'`).run(
+        JSON.stringify([
+          {
+            hookId: 'my_script_hook',
+            sourceNode: 'W',
+            targetNode: 'W',
+            method: 'send_message',
+            enabled: true,
+            authorizedCallers: [{ sourceNode: 'W' }],
+          },
+        ])
+      );
+      db.prepare(`UPDATE space_workflow_runs SET status = 'done' WHERE id = 'run-1'`).run();
+      const result = runMigration197(db);
+      expect(result).toBe(false);
+      expect(hasHooksColumn(db)).toBe(true);
+      // Defining the custom hook lets the drop complete.
+      db.prepare(`UPDATE space_workflows SET custom_hooks = ? WHERE id = 'wf-1'`).run(
+        JSON.stringify([
+          {
+            id: 'my_script_hook',
+            requiredData: [],
+            run: { kind: 'script', interpreter: 'bash', source: 'exit 0' },
+          },
+        ])
+      );
+      const retry = runMigration197(db);
+      expect(retry).toBe(true);
+      expect(hasHooksColumn(db)).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
   test('a non-array persisted agents value does not abort startup (round 91)', () => {
     const db = makeLegacyDb();
     try {

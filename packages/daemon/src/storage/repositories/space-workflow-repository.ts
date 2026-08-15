@@ -280,7 +280,10 @@ function isCustomHookElement(value: unknown): boolean {
   const run = h.run as Record<string, unknown>;
   return (
     run.kind === 'script' &&
-    (run.interpreter === undefined || typeof run.interpreter === 'string') &&
+    // The literal 'bash' only (validateCustomHooks' rule): a missing or
+    // arbitrary interpreter string loads "healthy" and runCustomHookScript
+    // produces an unsupported-interpreter execution error at runtime.
+    run.interpreter === 'bash' &&
     typeof run.source === 'string' &&
     run.source.trim().length > 0 &&
     // validateCustomHooks caps the timeout at 120s and requires positive

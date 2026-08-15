@@ -104,6 +104,10 @@ export interface LegacyHookPlacement {
   method: string;
   sourceNode?: string;
   target?: string;
+  /** False when the id came from the INSTANCE id (a legacy script hook)
+   * rather than a validator id — script hooks reference per-workflow custom
+   * definitions that must exist before the legacy column can drop. */
+  isValidator: boolean;
 }
 
 /** Parse per-placement legacy gate descriptors (id + route). The method
@@ -121,8 +125,8 @@ export function legacyPlacements(legacyHooks: unknown): LegacyHookPlacement[] {
         ? (validator as Record<string, unknown>)
         : undefined;
     const validatorId = typeof validator === 'string' ? validator : validatorRec?.id;
-    const id =
-      typeof validatorId === 'string' && validatorId.trim().length > 0 ? validatorId : record.id;
+    const hasValidatorId = typeof validatorId === 'string' && validatorId.trim().length > 0;
+    const id = hasValidatorId ? validatorId : record.id;
     if (typeof id !== 'string' || id.trim().length === 0) continue;
     const method =
       typeof record.method === 'string'
@@ -132,7 +136,7 @@ export function legacyPlacements(legacyHooks: unknown): LegacyHookPlacement[] {
           : 'send_message';
     const sourceNode = typeof record.sourceNode === 'string' ? record.sourceNode : undefined;
     const target = typeof record.targetNode === 'string' ? record.targetNode : undefined;
-    out.push({ id, method, sourceNode, target });
+    out.push({ id, method, sourceNode, target, isValidator: hasValidatorId });
   }
   return out;
 }

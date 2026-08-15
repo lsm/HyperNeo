@@ -144,6 +144,22 @@ describe('SpaceWorkflowRepository — corrupt hook columns', () => {
 
   test('unsupported json field type and colliding custom-hook ids fail closed (round 90)', () => {
     repo.createWorkflow({ spaceId, name: 'WF', nodes: [{ name: 'Only', agentId: 'a1' }] });
+    // A non-bash interpreter (or none) loads "healthy" but fails at
+    // execution with an unsupported-interpreter error (round 92).
+    corruptColumn(
+      'custom_hooks',
+      JSON.stringify([
+        {
+          id: 'h',
+          requiredData: [],
+          run: { kind: 'script', interpreter: 'python', source: 'exit 0' },
+        },
+      ])
+    );
+    const wfInterpreter = repo.getWorkflow(
+      db.prepare('SELECT id FROM space_workflows LIMIT 1').get()?.id as string
+    );
+    expect(wfInterpreter?.hookBindings?.[0]?.hookId).toBe(CORRUPT_HOOK_BINDINGS_HOOK_ID);
     // 'json' is not a HookDataFieldType — the prompt generator would render
     // it as a quoted string for a script expecting structured input.
     corruptColumn(

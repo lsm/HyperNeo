@@ -29,7 +29,8 @@ import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import { createEvolutionTables } from './evolution';
 import { createLongHorizonAgentTables } from './long-horizon-agents';
 import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration';
-import { legacyHookCoverage } from '../../lib/space/legacy-hook-coverage';
+import { legacyHookCoverage, legacyPlacements } from '../../lib/space/legacy-hook-coverage';
+import { BUILT_IN_HOOKS } from '@hyperneo/extensions-hooks';
 import type { HookBinding } from '@hyperneo/shared';
 import { isHookBindingElement } from '../repositories/space-workflow-repository';
 
@@ -12696,6 +12697,49 @@ export function migration197Defers(db: BunDatabase): boolean {
       if (!bindingsAreWellFormed || hasDuplicateBindingId) return true;
       const coverage = legacyHookCoverage(legacyParsed, bindingsParsed as HookBinding[]);
       if (!coverage.complete) return true;
+      // Legacy SCRIPT placements reference per-workflow custom definitions:
+      // coverage by a structurally valid binding is not migration until the
+      // workflow's custom_hooks column actually DEFINES the referenced ids
+      // (malformed/missing definitions decode as corruption in the
+      // repository — dropping the legacy column would strand the workflow
+      // fail-closed with the executable legacy definition destroyed).
+      const customHooksRaw = (
+        db
+          .prepare(`SELECT custom_hooks FROM space_workflows WHERE id = ?`)
+          .get(row.workflow_id) as { custom_hooks: string | null }
+      ).custom_hooks;
+      const coveredIds = new Set(
+        (Array.isArray(bindingsParsed) ? bindingsParsed : []).map(
+          (b) => (b as Record<string, unknown>).hookId as string
+        )
+      );
+      // Only NON-BUILT-IN ids need custom definitions — a legacy placement
+      // naming a registered built-in (pr_ready et al.) resolves from the
+      // registry regardless of the workflow's custom_hooks.
+      const builtInIdSet = new Set(BUILT_IN_HOOKS.map((hook) => hook.id));
+      const legacyScriptIds = legacyPlacements(legacyParsed)
+        .filter((pl) => !pl.isValidator)
+        .map((pl) => pl.id)
+        .filter((id) => coveredIds.has(id) && !builtInIdSet.has(id));
+      if (legacyScriptIds.length > 0) {
+        let customs: unknown = null;
+        try {
+          customs = customHooksRaw ? JSON.parse(customHooksRaw) : null;
+        } catch {
+          customs = null;
+        }
+        const customsOk =
+          Array.isArray(customs) &&
+          customs.every(
+            (h) =>
+              !!h && typeof h === 'object' && typeof (h as Record<string, unknown>).id === 'string'
+          );
+        if (!customsOk) return true;
+        const definedIds = new Set(
+          (customs as Array<Record<string, unknown>>).map((h) => h.id as string)
+        );
+        if (legacyScriptIds.some((id) => !definedIds.has(id))) return true;
+      }
     }
     // Any non-terminal run (pinned OR NOT — the restamp also defers while
     // runs are active, so a pinned run's workflow head can be equally
