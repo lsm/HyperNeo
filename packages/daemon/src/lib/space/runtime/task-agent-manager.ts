@@ -3760,17 +3760,41 @@ export class TaskAgentManager {
     // earlier idle was already suppressed (job was active), the completed job
     // is never re-claimed, and restart rehydration publishes no fresh idle
     // (`restoreFromDatabase` sets state without broadcasting). Re-check once,
-    // delayed past the activation window: at (re)activation the handoff inject
-    // enqueues its delivery job within milliseconds, so a still-jobless idle
-    // session this far in is a genuinely stranded completion, not an imminent
-    // turn. Unref'd so it never holds the process open.
+    // delayed past the activation window, and ONLY with current-activation
+    // evidence: SDK output that postdates the execution's start. A reused
+    // session idles with a full HISTORICAL transcript, and a crash between
+    // registering this callback and enqueuing the next kickoff would otherwise
+    // falsely complete the new execution whose turn never ran. The evidence
+    // check is consistent with the active-job check: a kickoff that WAS
+    // enqueued has a job row (pending/processing) and is suppressed there, so
+    // "no job + output since start" is exactly the lost-settle shape. Unref'd
+    // so it never holds the process open.
     const reconcileTimer = setTimeout(() => {
-      if (fired) return;
-      if (!isMessageDeliveryV2Enabled()) return;
-      const session = this.getSubSession(subSessionId);
-      if (!session) return;
-      if (session.getProcessingState().status !== 'idle') return;
-      completeFromDeliveryState();
+      // Best-effort by nature (the event-driven paths are primary); a throw
+      // here must never surface as an unhandled timer exception.
+      try {
+        if (fired) return;
+        if (!isMessageDeliveryV2Enabled()) return;
+        const session = this.getSubSession(subSessionId);
+        if (!session) return;
+        if (session.getProcessingState().status !== 'idle') return;
+        const execution = this.config.nodeExecutionRepo.getByAgentSessionId(subSessionId);
+        const startedAt = execution?.startedAt ?? execution?.createdAt;
+        if (!startedAt) return;
+        if (
+          !this.config.db
+            .getSDKMessageRepo()
+            .hasMessagesSince(subSessionId, new Date(startedAt).toISOString())
+        ) {
+          return;
+        }
+        completeFromDeliveryState();
+      } catch (err) {
+        log.debug(
+          `TaskAgentManager: delivery-settle reconciliation failed for ${subSessionId}:`,
+          err
+        );
+      }
     }, deliverySettleReconcileMs());
     if (typeof (reconcileTimer as { unref?: () => void }).unref === 'function') {
       (reconcileTimer as { unref: () => void }).unref();

@@ -28,6 +28,7 @@ import { settleMessageDeliveryDeadLetter } from '../../../../src/lib/job-handler
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
@@ -59,6 +60,7 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
   let nodeExecRepo: NodeExecutionRepository;
   let bus: ReturnType<typeof createDaemonInternalEventBus>;
   let manager: TaskAgentManager;
+  let sdkRepo: SDKMessageRepository;
   let executionId: string;
   let completed: boolean;
   /** Mutable stand-in for the session's active message_delivery job set. */
@@ -113,11 +115,21 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     bus = createDaemonInternalEventBus();
 
     activeJobs = new Set(['kickoff-uuid']);
+    sdkRepo = new SDKMessageRepository(db as never);
+    // The reconcile path reads current-activation evidence from sdk_messages.
+    // Seed the parent session row so per-test message inserts satisfy the FK.
+    const sessionNow = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata)
+       VALUES (?, 'sub', ?, ?, 'active', '{}', '{}')`
+    ).run(SUB_SESSION_ID, sessionNow, sessionNow);
     const config = {
       db: {
         getDatabase: () => db,
         // hasActiveDeliveryJob resolves the active delivery-job set from here.
         getJobQueueRepo: () => ({ activeDeliveryMessageUuids: () => activeJobs }),
+        // The reconcile timer reads hasMessagesSince from here.
+        getSDKMessageRepo: () => sdkRepo,
       },
       taskRepo,
       nodeExecutionRepo: nodeExecRepo,
@@ -144,6 +156,14 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
   });
 
   afterEach(() => {
+    // Disarm any still-pending reconcile timer so it cannot fire against the
+    // closed DB after this test (the combined unsub clears it).
+    const listeners = (
+      manager as unknown as {
+        sessionListeners: Map<string, () => void>;
+      }
+    ).sessionListeners;
+    for (const unsub of listeners.values()) unsub();
     delete process.env.HYPERNEO_DELIVERY_SETTLE_RECONCILE_MS;
     db.close();
   });
@@ -170,6 +190,14 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     await flush();
   };
   const nodeStatus = (): string | undefined => nodeExecRepo.getById(executionId)?.status;
+
+  /** Seed a raw sdk_messages row (current-activation evidence for reconcile). */
+  const seedSdkMessage = (id: string, timestampIso: string): void => {
+    db.prepare(
+      `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
+       VALUES (?, ?, 'assistant', '{}', ?)`
+    ).run(id, SUB_SESSION_ID, timestampIso);
+  };
 
   it('a recoverable error does not block the node, and the retry settles it as complete', async () => {
     await publishError(RECOVERABLE_DETAILS);
@@ -287,12 +315,24 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
   it('reconciles a settle lost to a daemon crash (delayed idle+jobless check)', async () => {
     // Crash between the job row's completion and the settle publication: the
     // idle was suppressed, no event is coming. The delayed reconciliation
-    // fires completion for an idle session with no active jobs.
+    // fires completion for an idle session with no active jobs — and with
+    // SDK output postdating the execution start (current-activation evidence).
+    seedSdkMessage('turn-output', new Date().toISOString());
     await publishIdle(); // suppressed — job active
     activeJobs.clear(); // job completed; settle event LOST
-    const timerFired = new Promise<void>((resolve) => setTimeout(resolve, 60));
-    await timerFired;
+    await new Promise<void>((resolve) => setTimeout(resolve, 60));
     expect(completed).toBe(true);
+  });
+
+  it('reconciliation ignores a reused session whose kickoff was never enqueued (Codex P2)', async () => {
+    // Crash between registering the callback and enqueuing the next kickoff on
+    // a REUSED session: idle, historical transcript, no active job. The
+    // historical messages predate this execution's start — they are NOT proof
+    // the current turn ran, so the timer must not complete the node.
+    seedSdkMessage('old-history', '2020-01-01T00:00:00.000Z');
+    await new Promise<void>((resolve) => setTimeout(resolve, 60));
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('in_progress');
   });
 
   it('reconciliation does not fire while a job is active or the session is processing', async () => {

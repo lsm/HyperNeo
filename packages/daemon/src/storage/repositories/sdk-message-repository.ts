@@ -7,18 +7,16 @@
  * - Message query mode tracking (deferred/enqueued/consumed status)
  */
 
-import type { Database as BunDatabase } from '../sqlite-compat';
-import { generateUUID, sendStatusToDeliveryStatus } from '@hyperneo/shared';
 import type {
+  ChatMessage,
+  HyperNeoActionMessage,
   MessageContent,
   MessageDeliveryStatus,
   MessageOrigin,
-  HyperNeoActionMessage,
-  ChatMessage,
 } from '@hyperneo/shared';
+import { generateUUID, sendStatusToDeliveryStatus } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
-import type { ReactiveDatabase } from '../reactive-database';
 import { Logger } from '../../lib/logger';
 import {
   buildFtsQuery,
@@ -28,6 +26,8 @@ import {
   type MessageSearchResponse,
   type MessageSearchResult,
 } from '../message-search';
+import type { ReactiveDatabase } from '../reactive-database';
+import type { Database as BunDatabase } from '../sqlite-compat';
 import type { SQLiteValue } from '../types';
 
 export type SendStatus = 'deferred' | 'enqueued' | 'submitted' | 'consumed' | 'failed';
@@ -1966,6 +1966,22 @@ export class SDKMessageRepository {
           LIMIT 1`
       )
       .get(sessionId, sessionId, uuid) as { 1: number } | undefined | null;
+    return row != null;
+  }
+
+  /**
+   * Whether the session has ANY SDK message at/after `sinceIso` (ISO-8601).
+   * Used by TaskAgentManager's delivery-settle reconciliation as
+   * current-activation evidence: a genuine turn completion produced messages
+   * after the node execution started, while a kickoff that was never even
+   * enqueued (crash inside the activation window) leaves the newest message
+   * predating the activation — a reused session's historical transcript is
+   * NOT proof the current execution's turn ran. (Task #944 review.)
+   */
+  hasMessagesSince(sessionId: string, sinceIso: string): boolean {
+    const row = this.db
+      .prepare(`SELECT 1 FROM sdk_messages WHERE session_id = ? AND timestamp >= ? LIMIT 1`)
+      .get(sessionId, sinceIso) as { 1: number } | undefined | null;
     return row != null;
   }
 

@@ -604,8 +604,13 @@ The contract (`TaskAgentManager.registerCompletionCallback`):
   error. A one-shot delayed reconciliation (default 30s,
   `HYPERNEO_DELIVERY_SETTLE_RECONCILE_MS`) repays a settle lost to a daemon
   crash between the job row's completion and the publication: an idle session
-  with history and no active jobs is genuinely stranded, not an imminent turn
-  (activation enqueues its job within milliseconds).
+  with no active jobs is a candidate only with CURRENT-ACTIVATION evidence —
+  SDK output postdating the node execution's start
+  (`hasMessagesSince`). A reused session's historical transcript alone is not
+  proof the current execution's turn ran (a crash between registering the
+  completion callback and enqueuing the next kickoff would otherwise falsely
+  complete it), and a kickoff that WAS enqueued has a job row and is
+  suppressed by the active-job check instead.
 - **`session.delivery_failed`** (processor `onDead` lane hook — published for
   EVERY dead delivery, unlike the settlement's origin-gated `session.error`)
   blocks the node when `role === 'turn'`. This covers recovery-origin
