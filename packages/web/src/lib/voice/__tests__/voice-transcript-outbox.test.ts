@@ -402,6 +402,68 @@ describe('voice transcript outbox', () => {
     expect(getLandingTranscript('s1')).toBe('the transcript');
   });
 
+  it('aggregates the texts of a live landing sequence (multiple queued entries)', () => {
+    // Two outbox entries for one session land while the refresh is deferred —
+    // the daemon accumulates BOTH into inputDraftVoicePending, so the
+    // reconciliation text must be the aggregate, not just the latest entry's.
+    markVoiceTranscriptLanded('s1', 'first');
+    markVoiceTranscriptLanded('s1', 'second');
+    expect(getLandingTranscript('s1')).toBe('first second');
+    const marker = JSON.parse(
+      localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1') ?? '{}'
+    ) as { text?: string };
+    expect(marker.text).toBe('first second');
+
+    // Consumption implies a full merge cleared the server-side pending — the
+    // next landing sequence starts a fresh aggregate.
+    consumeVoiceTranscriptLanded('s1', 2);
+    markVoiceTranscriptLanded('s1', 'third');
+    expect(getLandingTranscript('s1')).toBe('third');
+  });
+
+  it('lets a cross-tab marker REPLACE the local aggregate (authoritative)', () => {
+    markVoiceTranscriptLanded('s1', 'local sequence');
+    startVoiceTranscriptOutboxFlush();
+    // Another tab (which already consumed the earlier landing) lands a fresh
+    // transcript — its marker aggregate supersedes this tab's stale local one.
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key: 'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+        newValue: JSON.stringify({ v: 1, ts: Date.now(), n: 9, text: 'authoritative' }),
+      })
+    );
+    expect(getLandingTranscript('s1')).toBe('authoritative');
+    stopVoiceTranscriptOutboxFlush();
+  });
+
+  it('removes ADJACENT expired markers and backups without skipping keys', () => {
+    // Removing while iterating localStorage by index shifts later keys into
+    // the current index — the old loop skipped a stale key that followed a
+    // removed one. Seed adjacent stale keys to prove collect-then-remove.
+    const expired = Date.now() - 25 * 60 * 60 * 1000;
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.a',
+      JSON.stringify({ v: 1, ts: expired, n: 1, text: 'x' })
+    );
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.b',
+      JSON.stringify({ v: 1, ts: expired, n: 2, text: 'y' })
+    );
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.draft.a',
+      JSON.stringify({ content: 'old-a', ts: expired, generation: 1 })
+    );
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.draft.b',
+      JSON.stringify({ content: 'old-b', ts: expired, generation: 1 })
+    );
+    enqueueTranscript('s1', 'fresh'); // triggers prune
+    expect(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.a')).toBeNull();
+    expect(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.b')).toBeNull();
+    expect(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.draft.a')).toBeNull();
+    expect(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.draft.b')).toBeNull();
+  });
+
   it('hydrates existing landed markers into the signal at startup', () => {
     localStorage.setItem(
       'hyperneo_voice_transcript_outbox_v1.entry.landed.s9',

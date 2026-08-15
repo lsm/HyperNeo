@@ -28,6 +28,7 @@
 
 import { useEffect, useRef, useCallback, useMemo } from 'preact/hooks';
 import { useSignal, useSignalEffect } from '@preact/signals';
+import { appendDraftText } from '@hyperneo/shared';
 import { connectionManager } from '../lib/connection-manager';
 import { connectionState } from '../lib/state';
 import {
@@ -120,27 +121,33 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         .then((response) => {
           const cancelled = isCancelled();
           const draft = response.session?.metadata?.inputDraft;
+          const pendingRetained = !!response.session?.metadata?.inputDraftVoicePending;
           if (!cancelled && draft) {
             contentSignal.value = draft;
           } else if (
             cancelled &&
             reconcileOnCancel &&
+            // Only a get that MERGED (pendingRetained false) put the transcript
+            // on the server; folding after a retained pending would bake the
+            // text into the local draft AND leave it staged server-side, and a
+            // later reload restore would then duplicate it.
+            !pendingRetained &&
             currentSessionIdRef.current === targetSessionId
           ) {
             // A cancelled REPLAY get still merged the transcript server-side.
-            // Fold ONLY the transcript (known from the landing state — the rest
-            // of the merged draft is the stale pre-landing baseline) into the
-            // local typed text so a subsequent save does not overwrite it
-            // (consuming the landing below re-enables saves). Scoped to the
-            // SAME session — a stale get from a moved-on session must never
-            // touch the new session's content.
+            // Fold ONLY the aggregate transcript (known from the landing state
+            // — the rest of the merged draft is the stale pre-landing baseline)
+            // into the local typed text so a subsequent save does not overwrite
+            // it (consuming the landing below re-enables saves). Appended
+            // blindly, NOT via a substring check: the user may legitimately
+            // have typed the same phrase, and skipping then would drop the
+            // voice occurrence. Scoped to the SAME session — a stale get from a
+            // moved-on session must never touch the new session's content.
             const transcript = getLandingTranscript(targetSessionId);
-            const current = contentSignal.peek();
-            if (transcript && !current.includes(transcript)) {
-              contentSignal.value = current ? `${current} ${transcript}` : transcript;
+            if (transcript) {
+              contentSignal.value = appendDraftText(contentSignal.peek(), transcript);
             }
           }
-          const pendingRetained = !!response.session?.metadata?.inputDraftVoicePending;
           onResult?.(true, pendingRetained, cancelled, draft);
         })
         .catch(() => {
@@ -205,9 +212,15 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         }
         const transcript = getLandingTranscript(sessionId);
         if (backup !== null && !transcript) return; // text unknown — defer to the refresh
-        if (backup !== null && transcript && !contentSignal.peek().includes(transcript)) {
-          const current = contentSignal.peek();
-          contentSignal.value = current ? `${current} ${transcript}` : transcript;
+        if (backup !== null && transcript) {
+          // Appended blindly rather than substring-checked: the user's draft
+          // may legitimately contain the same PHRASE as the transcript, and a
+          // presence check would then drop the new voice occurrence when the
+          // re-enabled save overwrites the merged (two-occurrence) draft. The
+          // aggregate provably never reached the backup: every fold path that
+          // puts it into local content consumes the landing (lifting the
+          // suppression) before another backup can be written.
+          contentSignal.value = appendDraftText(contentSignal.peek(), transcript);
         }
         consumeVoiceTranscriptLanded(sessionId, generation);
       }
