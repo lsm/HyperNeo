@@ -457,7 +457,7 @@ function AgentCard({
             }
           : undefined
       }
-      class={`group flex min-h-32 flex-col rounded-xl border border-white/10 bg-dark-850/90 px-4 py-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-all hover:-translate-y-0.5 hover:border-white/20 hover:bg-dark-800/95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 ${sessionId ? 'cursor-pointer' : ''}`}
+      class={`group flex min-h-32 flex-col rounded-xl border border-white/15 bg-dark-800/95 px-4 py-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_18px_44px_rgba(0,0,0,0.24)] transition-all hover:-translate-y-0.5 hover:border-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/55 ${sessionId ? 'cursor-pointer' : ''}`}
     >
       <div class="flex items-start justify-between gap-3">
         <div class="flex min-w-0 flex-1 items-start gap-3">
@@ -564,19 +564,19 @@ function TemplateCard({
     <button
       type="button"
       onClick={onClick}
-      class="group min-h-28 rounded-xl border border-white/10 bg-dark-850/85 px-4 py-4 text-left shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-all hover:-translate-y-0.5 hover:border-blue-400/30 hover:bg-dark-800/95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
+      class="group min-h-28 rounded-xl border border-dashed border-white/15 bg-white/[0.03] px-4 py-4 text-left transition-colors hover:border-white/30 hover:bg-white/[0.055] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/55"
     >
       <div class="flex items-center justify-between gap-2">
-        <span class="text-sm font-semibold tracking-tight text-gray-100">
+        <span class="text-sm font-medium tracking-tight text-gray-300 group-hover:text-gray-100">
           {template.displayName}
         </span>
         {addedCount > 0 ? (
-          <span class="flex-shrink-0 rounded bg-white/5 px-1.5 py-0.5 text-xs text-gray-400">
-            ×{addedCount}
+          <span class="flex-shrink-0 rounded bg-white/5 px-1.5 py-0.5 text-xs text-gray-500">
+            ×{addedCount} added
           </span>
         ) : (
           <svg
-            class="w-3.5 h-3.5 flex-shrink-0 text-gray-400"
+            class="w-3.5 h-3.5 flex-shrink-0 text-gray-500 transition-colors group-hover:text-amber-200"
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -590,7 +590,7 @@ function TemplateCard({
           </svg>
         )}
       </div>
-      <p class="mt-1.5 line-clamp-2 text-sm leading-relaxed text-gray-300">
+      <p class="mt-1.5 line-clamp-2 text-sm leading-relaxed text-gray-500">
         {template.description}
       </p>
     </button>
@@ -795,8 +795,19 @@ export function SpaceLongHorizonAgents({
           </section>
         )}
 
-        {/* Configured agents */}
+        {/* Configured agents — live actors, elevated cards */}
         <section aria-label="Configured agents">
+          <div class="mb-3 flex items-end justify-between gap-3">
+            <div>
+              <h3 class="text-lg font-semibold tracking-tight text-gray-50">
+                Configured agents ·{' '}
+                <span data-testid="agent-configured-count">{sortedAgents.length}</span>
+              </h3>
+              <p class="mt-0.5 text-xs text-gray-400">
+                Live actors in this Space — click a card to open its session.
+              </p>
+            </div>
+          </div>
           {sortedAgents.length === 0 ? (
             <div class={`rounded-2xl border px-5 py-8 text-center ${FLAT_SURFACE}`}>
               <p class="text-sm font-medium text-gray-200">No configured agents yet</p>
@@ -828,15 +839,15 @@ export function SpaceLongHorizonAgents({
           )}
         </section>
 
-        {/* Templates */}
+        {/* Templates — blueprints, deliberately recessed */}
         <section>
           <div class="mb-3 flex items-end justify-between gap-3">
             <div>
-              <h3 class="text-lg font-semibold tracking-tight text-gray-50">
+              <h3 class="text-lg font-medium tracking-tight text-gray-300">
                 Templates · <span data-testid="agent-template-count">{templates.length}</span>
               </h3>
               <p class="mt-0.5 text-xs text-gray-500">
-                Add a focused role with preconfigured instructions.
+                Blueprints for new agents — pick one to configure a live actor.
               </p>
             </div>
             <button
