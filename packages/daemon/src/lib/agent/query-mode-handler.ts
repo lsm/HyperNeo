@@ -177,18 +177,27 @@ export class QueryModeHandler {
    * queued-marker wrapper so the first (turn) message marks the session busy
    * — a concurrent deliveryMode:'defer' send then stays deferred instead of
    * being mis-converted to immediate. (Codex review.)
+   *
+   * Batch-aware: messages owned by an ACTIVE batched turn (members have no
+   * job row of their own, so deliverMessage's per-UUID idempotency check
+   * cannot see them) are skipped — a startup/replay flush racing a pending
+   * batch would otherwise give every member its own steer job on top of the
+   * combined prompt, executing it twice.
    */
   private async deliverEachUnderV2(
     messages: Array<SDKMessage & { dbId: string; timestamp: number }>,
     origin: MessageDeliveryOrigin
   ): Promise<void> {
     const jobQueue = this.ctx.db.getJobQueueRepo();
+    const active = jobQueue.activeDeliveryMessageUuids(this.ctx.session.id);
     for (const msg of messages) {
+      const uuid = msg.uuid as string;
+      if (active.has(uuid)) continue; // owned by an active job (incl. batch member)
       await deliverAndMarkQueued({
         jobQueue,
         stateManager: this.ctx.stateManager,
         sessionId: this.ctx.session.id,
-        messageUuid: msg.uuid as string,
+        messageUuid: uuid,
         origin,
       });
     }

@@ -2236,6 +2236,23 @@ export class AgentSession
           const rebuilt = this.rebuildBatchDeliveryContent(messageUuid, content, batchUuids);
           feedContent = rebuilt.content;
           admittedBatchUuids = rebuilt.admittedUuids;
+          // Persist the ADMITTED set back into the job payload: every payload
+          // consumer (ACP acceptance consume, dead-letter settlement,
+          // batch-aware active lookups) must see exactly what was fed, so
+          // dropped tails are neither marked consumed, nor failed on
+          // dead-letter, nor shielded from reconciler redelivery.
+          if (admittedBatchUuids && admittedBatchUuids.length !== batchUuids.length) {
+            try {
+              this.db
+                .getJobQueueRepo()
+                ?.narrowActiveDeliveryBatchUuids(this.session.id, messageUuid, admittedBatchUuids);
+            } catch (error) {
+              // Non-fatal: the payload keeps the superset; consumers then
+              // over-treat members (consumed/failed) — surfaced by the
+              // delivery metrics rather than blocking the feed.
+              this.logger.warn('Failed to narrow batch payload to admitted members:', error);
+            }
+          }
         }
         acknowledgment = this.messageQueue.admitWithId(messageUuid, feedContent, false, {
           durable: true,

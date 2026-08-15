@@ -419,6 +419,35 @@ export class JobQueueRepository {
   }
 
   /**
+   * Narrow an active batched-turn job's `batchUuids` payload to the members
+   * ACTUALLY admitted into the prompt (the bridge revalidates under its lock
+   * and drops members removed/deferred/over-budget since enqueue). Every
+   * payload consumer — the ACP acceptance consume, dead-letter settlement,
+   * and the batch-aware active lookups — then operates on exactly what was
+   * fed, so never-admitted tails are neither marked consumed, nor failed, nor
+   * shielded from redelivery. Returns true when a row was updated.
+   */
+  narrowActiveDeliveryBatchUuids(
+    sessionId: string,
+    kickoffUuid: string,
+    admitted: string[]
+  ): boolean {
+    // json(?) parses the bound text INTO a JSON array — binding it directly
+    // would store a string value and break the json_type(...)= 'array' guards.
+    const res = this.db
+      .prepare(
+        `UPDATE job_queue
+            SET payload = json_set(payload, '$.batchUuids', json(?))
+          WHERE queue = 'message_delivery'
+            AND json_extract(payload, '$.sessionId') = ?
+            AND json_extract(payload, '$.messageUuid') = ?
+            AND status IN ('pending', 'processing')`
+      )
+      .run(JSON.stringify(admitted), sessionId, kickoffUuid);
+    return res.changes > 0;
+  }
+
+  /**
    * True when a `message_delivery` job for (sessionId, messageUuid) is
    * currently `processing` — a turn the handler is actively driving. The
    * terminal-idle turn-end marker gate uses this to distinguish "the delivery

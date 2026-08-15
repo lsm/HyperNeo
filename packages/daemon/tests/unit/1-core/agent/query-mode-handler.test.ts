@@ -633,6 +633,38 @@ describe('QueryModeHandler', () => {
       expect(jobs.find((j) => j.uuid === 'uuid-2')?.role).toBe('steer');
     });
 
+    it('handleQueryTrigger skips batch-owned members in the per-message fallback (replay race)', async () => {
+      // Startup/replay flush while the batched turn is still pending: the
+      // batch attempt declines (members are active), and the fallback must
+      // NOT give the members individual steer jobs on top of the pending
+      // combined prompt — that would execute each prompt twice.
+      jobQueue.enqueue({
+        queue: 'message_delivery',
+        payload: {
+          sessionId: 'test-session-id',
+          messageUuid: 'uuid-1',
+          role: 'turn',
+          origin: 'recovery',
+          parentToolUseId: null,
+          batchUuids: ['uuid-1', 'uuid-2', 'uuid-3'],
+        },
+      });
+      getMessagesByStatusSpy.mockReturnValue([
+        { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
+        { dbId: 'db-2', uuid: 'uuid-2', type: 'user', message: { role: 'user', content: 'two' } },
+        { dbId: 'db-3', uuid: 'uuid-3', type: 'user', message: { role: 'user', content: 'three' } },
+      ] as unknown as SDKMessage[]);
+
+      handler = new QueryModeHandler(createContext());
+      const result = await handler.handleQueryTrigger();
+
+      expect(result).toEqual({ success: true, messageCount: 3 });
+      // Only the pre-existing batch job remains — no per-member jobs added.
+      const jobs = deliveryUuids();
+      expect(jobs.map((j) => j.uuid)).toEqual(['uuid-1']);
+      expect(jobs[0].role).toBe('turn');
+    });
+
     it('sendEnqueuedMessagesOnTurnEnd enqueues a durable job per enqueued message', async () => {
       getMessagesByStatusSpy.mockReturnValue([
         { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'q' } },

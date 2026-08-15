@@ -409,6 +409,37 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       expect(repo.getActiveDeliveryBatchUuids(SESSION, 'kickoff')).toEqual(['kickoff', 'member-a']);
     });
 
+    it('narrowActiveDeliveryBatchUuids shrinks the payload to the admitted set', () => {
+      repo.enqueue({
+        queue: MESSAGE_DELIVERY,
+        payload: {
+          sessionId: SESSION,
+          messageUuid: 'kickoff',
+          role: 'turn',
+          origin: 'recovery',
+          parentToolUseId: null,
+          batchUuids: ['kickoff', 'admitted-a', 'over-budget-tail'],
+        },
+      });
+      expect(
+        repo.narrowActiveDeliveryBatchUuids(SESSION, 'kickoff', ['kickoff', 'admitted-a'])
+      ).toBe(true);
+      // Every payload consumer (ACP acceptance consume, dead-letter, active
+      // lookups) now sees exactly what was fed — the tail is no longer
+      // batch-owned, consumed, or failed with the batch.
+      expect(repo.getActiveDeliveryBatchUuids(SESSION, 'kickoff')).toEqual([
+        'kickoff',
+        'admitted-a',
+      ]);
+      expect(repo.activeDeliveryMessageUuids(SESSION)).toEqual(new Set(['kickoff', 'admitted-a']));
+      // No active job → no narrowing (the job settled). Processing IS still
+      // narrowable — the bridge narrows mid-turn, while the job is claimed.
+      const [claimed] = repo.dequeue(MESSAGE_DELIVERY, 1);
+      expect(repo.narrowActiveDeliveryBatchUuids(SESSION, 'kickoff', ['kickoff'])).toBe(true);
+      repo.complete(claimed.id, { ok: true });
+      expect(repo.narrowActiveDeliveryBatchUuids(SESSION, 'kickoff', ['kickoff'])).toBe(false);
+    });
+
     it('deliverBatchAndMarkQueued returns false when ANY member already owns an active job', async () => {
       // The oldest queued UUID owns a surviving steer job (startup/replay) —
       // batching only the unowned tail would reorder the queue behind it, so
