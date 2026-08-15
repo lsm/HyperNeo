@@ -156,12 +156,12 @@ function parseHookColumn<T>(
 }
 
 /** Structural check for a decoded HookAuthorizedCallers entry. */
-function isAuthorizedCallerElement(value: unknown): boolean {
+function isAuthorizedCallerElement(value: unknown, nodeNames: Set<string>): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const c = value as Record<string, unknown>;
   return (
     typeof c.sourceNode === 'string' &&
-    c.sourceNode.trim().length > 0 &&
+    nodeNames.has(c.sourceNode) &&
     (c.agentSlots === undefined ||
       (Array.isArray(c.agentSlots) &&
         // Non-blank slot strings only: a whitespace-only slot can never match
@@ -176,14 +176,18 @@ function isAuthorizedCallerElement(value: unknown): boolean {
  * a typo'd method or a shapeless caller entry would otherwise load as a
  * "valid" binding that resolveMatchingBindings silently never matches,
  * gating nothing. */
-function isHookBindingElement(value: unknown): boolean {
+function isHookBindingElement(value: unknown, nodeNames: Set<string>): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const b = value as Record<string, unknown>;
   return (
     typeof b.hookId === 'string' &&
     b.hookId.trim().length > 0 &&
+    // Node references must resolve against the LOADED workflow: a typo like
+    // sourceNode "Codng" (with a matching caller) passes shape checks but
+    // resolveMatchingBindings finds no executing node by that name and drops
+    // the binding — the protected action runs ungated.
     typeof b.sourceNode === 'string' &&
-    b.sourceNode.trim().length > 0 &&
+    nodeNames.has(b.sourceNode) &&
     typeof b.method === 'string' &&
     ALL_HOOK_METHODS.includes(b.method as (typeof ALL_HOOK_METHODS)[number]) &&
     // ROUTING PARITY (mirrors the create/update validator and
@@ -193,7 +197,7 @@ function isHookBindingElement(value: unknown): boolean {
     // persisted row like {method:'mark_complete', targetNode:'Review'} would
     // load "valid" but gate nothing.
     (b.method === 'send_message'
-      ? typeof b.targetNode === 'string' && b.targetNode.trim().length > 0
+      ? typeof b.targetNode === 'string' && nodeNames.has(b.targetNode)
       : b.targetNode === undefined) &&
     typeof b.enabled === 'boolean' &&
     (b.order === undefined || typeof b.order === 'number') &&
@@ -203,14 +207,17 @@ function isHookBindingElement(value: unknown): boolean {
     // "valid" would gate nothing. ([] would pass a bare every() vacuously.)
     Array.isArray(b.authorizedCallers) &&
     b.authorizedCallers.length > 0 &&
-    b.authorizedCallers.every(isAuthorizedCallerElement) &&
+    b.authorizedCallers.every((c) => isAuthorizedCallerElement(c, nodeNames)) &&
     // At least one caller MUST name the binding's OWN source node (mirroring
     // the create/update validator): a non-empty list naming only OTHER nodes
     // passes the shape checks but can never authorize the acting node, so
     // resolveMatchingBindings filters the binding out — ungated.
     b.authorizedCallers.some(
       (c) =>
-        !!c && typeof c === 'object' && (c as Record<string, unknown>).sourceNode === b.sourceNode
+        !!c &&
+        typeof c === 'object' &&
+        nodeNames.has((c as Record<string, unknown>).sourceNode as string) &&
+        (c as Record<string, unknown>).sourceNode === b.sourceNode
     )
   );
 }
@@ -219,13 +226,42 @@ function isHookBindingElement(value: unknown): boolean {
 function isCustomHookElement(value: unknown): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const h = value as Record<string, unknown>;
+  if (
+    typeof h.id !== 'string' ||
+    h.id.trim().length === 0 ||
+    !Array.isArray(h.requiredData) ||
+    !h.run ||
+    typeof h.run !== 'object' ||
+    Array.isArray(h.run)
+  ) {
+    return false;
+  }
+  // Per-field parity with the create/update validator: a shape-valid entry
+  // like requiredData [null] or an empty run object survives this check and
+  // only explodes later (buildHookValidatedHandoffLines reads field.required
+  // at task-agent startup; a malformed run survives until execution).
+  for (const field of h.requiredData) {
+    if (!field || typeof field !== 'object' || Array.isArray(field)) return false;
+    const f = field as Record<string, unknown>;
+    if (typeof f.key !== 'string' || f.key.trim().length === 0) return false;
+    if (
+      f.type !== 'string' &&
+      f.type !== 'number' &&
+      f.type !== 'boolean' &&
+      f.type !== 'link' &&
+      f.type !== 'json'
+    ) {
+      return false;
+    }
+    if (f.required !== undefined && typeof f.required !== 'boolean') return false;
+  }
+  const run = h.run as Record<string, unknown>;
   return (
-    typeof h.id === 'string' &&
-    h.id.trim().length > 0 &&
-    Array.isArray(h.requiredData) &&
-    !!h.run &&
-    typeof h.run === 'object' &&
-    !Array.isArray(h.run)
+    run.kind === 'script' &&
+    (run.interpreter === undefined || typeof run.interpreter === 'string') &&
+    typeof run.source === 'string' &&
+    run.source.trim().length > 0 &&
+    (run.timeoutMs === undefined || typeof run.timeoutMs === 'number')
   );
 }
 
@@ -299,7 +335,10 @@ function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
   const tags = parseJson<string[]>(row.tags, []);
   const layout = parseJson<Record<string, { x: number; y: number }> | null>(row.layout, null);
   const channels = parseJson<WorkflowChannel[] | null>(row.channels, null);
-  const hookBindingsResult = parseHookColumn<HookBinding>(row.hook_bindings, isHookBindingElement);
+  const nodeNames = new Set(nodes.map((n) => n.name));
+  const hookBindingsResult = parseHookColumn<HookBinding>(row.hook_bindings, (value) =>
+    isHookBindingElement(value, nodeNames)
+  );
   const customHooksResult = parseHookColumn<CustomHook>(row.custom_hooks, isCustomHookElement);
 
   const wf: SpaceWorkflow = {

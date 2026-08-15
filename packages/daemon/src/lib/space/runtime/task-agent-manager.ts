@@ -530,7 +530,9 @@ export class TaskAgentManager {
   }
 
   /**
-   * Maps taskId → (nodeId → AgentSession) for sub-sessions.
+   * Maps taskId → (SESSION id → AgentSession) for sub-sessions. NOTE: keyed
+   * by the session's own id, NOT the workflow node id — node lookups must
+   * bridge through the run's executions (workflowNodeId → agentSessionId).
    * Sub-session IDs follow the convention:
    *   `space:${spaceId}:task:${taskId}:node:${nodeId}`
    */
@@ -5580,8 +5582,24 @@ export class TaskAgentManager {
         // Live-session signal for '@role:' targets — mirrors the message
         // resolver's active-preferred role delivery (only active holders
         // receive a role when any holder is active), so an inactive
-        // holder's gate does not run off an undelivered role send.
-        roleHolderActiveLookup: (nodeId) => this.subSessions.get(taskId)?.has(nodeId) === true,
+        // holder's gate does not run off an undelivered role send. The
+        // subSessions map is keyed by SESSION id — bridge node → sessions
+        // through the run's executions (workflowNodeId → agentSessionId
+        // must be live).
+        roleHolderActiveLookup: (nodeId) => {
+          const live = this.subSessions.get(taskId);
+          if (!live) return false;
+          try {
+            return this.config.nodeExecutionRepo
+              .listByWorkflowRun(workflowRunId)
+              .some(
+                (e) =>
+                  e.workflowNodeId === nodeId && !!e.agentSessionId && live.has(e.agentSessionId)
+              );
+          } catch {
+            return false;
+          }
+        },
         notifySourceSession: async (sessionId, message) => {
           // Hook-failure notice — a synthetic inject, but NOT a node→node
           // handoff, so it must not trigger a resetContextPerTurn clear.
