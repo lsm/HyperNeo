@@ -22,11 +22,12 @@
  * Tests have been updated to reflect the post-M74 schema.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { rmSync, mkdirSync } from 'node:fs';
+import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll } from 'bun:test';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
+import { buildMigratedTemplate, openEmptyDb, openMigratedClone } from './test-db-template';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -52,14 +53,30 @@ function indexExists(db: BunDatabase, name: string): boolean {
 describe('Migration 29: Space system tables', () => {
   let testDir: string;
   let db: BunDatabase;
+  let templateDir: string;
+  let templatePath: string;
+  let cloneCounter = 0;
+
+  // The full migration chain is replayed once here; every test below starts
+  // from a file-clone of this template, so each test's runMigrations() call
+  // is a fast marker-only no-op replay instead of a full chain rebuild.
+  beforeAll(() => {
+    templateDir = join(process.cwd(), 'tmp', 'test-migration-29', `template-${Date.now()}`);
+    templatePath = buildMigratedTemplate(templateDir);
+  }, 30_000);
+
+  afterAll(() => {
+    try {
+      rmSync(templateDir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  });
 
   beforeEach(() => {
-    testDir = join(process.cwd(), 'tmp', 'test-migration-29', `test-${Date.now()}`);
-    mkdirSync(testDir, { recursive: true });
-
-    const dbPath = join(testDir, 'test.db');
-    db = new BunDatabase(dbPath);
-    db.exec('PRAGMA foreign_keys = ON');
+    cloneCounter += 1;
+    testDir = join(process.cwd(), 'tmp', 'test-migration-29', `test-${Date.now()}-${cloneCounter}`);
+    db = openMigratedClone(templatePath, testDir);
   });
 
   afterEach(() => {
@@ -112,7 +129,15 @@ describe('Migration 29: Space system tables', () => {
   });
 
   test('legacy space_tasks without custom_agent_id is upgraded safely', () => {
-    // Simulate an early preview schema missing custom_agent_id.
+    // Simulate an early preview schema missing custom_agent_id. This test
+    // builds pre-migration state, so reset the migrated clone to an empty DB
+    // first and replay the full chain against the legacy table below.
+    try {
+      db.close();
+    } catch {
+      // ignore
+    }
+    db = openEmptyDb(testDir);
     db.exec(`
 			CREATE TABLE space_tasks (
 				id TEXT PRIMARY KEY,
