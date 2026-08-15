@@ -8,6 +8,7 @@
  * `resolve.alias` in `vitest.config.ts` (see `tests/sdk-mock.ts`).
  */
 
+import * as nodeDns from 'node:dns';
 import * as nodeNet from 'node:net';
 import { configureLogger, LogLevel } from '@hyperneo/shared';
 import { resetProviderRegistry } from '../src/lib/providers/registry';
@@ -113,7 +114,25 @@ const guardError = (href: string): Error =>
     `unit test attempted real network fetch: ${href} — unit tests may only reach loopback servers they spawned; stub the provider or move the test to tests/online/ (see tests/vitest.setup.ts)`
   );
 
-const isAllowedUrl = (url: URL): boolean => {
+// 'localhost' resolves to either loopback family depending on the host and
+// resolver order — resolve it and check the address native fetch would dial,
+// so an unrelated service on the other family at the same port stays blocked.
+const resolvesToBoundLoopback = async (host: string, bound: Set<string>): Promise<boolean> => {
+  const ipAllowed = (ip: string): boolean =>
+    bound.has(ip) || bound.has('::') || (bound.has('0.0.0.0') && ip === '127.0.0.1');
+  if (host !== 'localhost') {
+    return ipAllowed(host);
+  }
+  try {
+    const lookup = await nodeDns.promises.lookup('localhost', { all: true });
+    // undici dials the resolver's first answer; require that one to be bound.
+    return lookup.length > 0 && ipAllowed(lookup[0].address);
+  } catch {
+    return false;
+  }
+};
+
+const isAllowedUrl = async (url: URL): Promise<boolean> => {
   // The URL host must be loopback no matter what the server bound — a
   // wildcard-bound server never licenses non-loopback destinations.
   const host = normalizeHost(url.hostname);
@@ -124,14 +143,7 @@ const isAllowedUrl = (url: URL): boolean => {
   if (!bound) {
     return false;
   }
-  if ([...ANY_ADDRESSES].some((any) => bound.has(any))) {
-    return true;
-  }
-  if (bound.has(host)) {
-    return true;
-  }
-  // 'localhost' in a URL may resolve to either loopback family.
-  return host === 'localhost' && (bound.has('127.0.0.1') || bound.has('::1'));
+  return resolvesToBoundLoopback(host, bound);
 };
 
 type GuardedFetch = typeof fetch & { __unitFetchGuard?: boolean };
@@ -152,7 +164,7 @@ if (!currentFetch.__unitFetchGuard) {
     } catch {
       throw guardError(href);
     }
-    if (!isAllowedUrl(url)) {
+    if (!(await isAllowedUrl(url))) {
       throw guardError(href);
     }
 
@@ -167,7 +179,12 @@ if (!currentFetch.__unitFetchGuard) {
     try {
       return await realFetch(input as RequestInfo, { ...init, redirect: 'error' });
     } catch (error) {
-      if (error instanceof TypeError && /redirect/i.test(error.message)) {
+      // Node reports redirect violations as a top-level TypeError whose
+      // message is just "fetch failed"; the detail lives in error.cause.
+      const cause = (error as { cause?: unknown }).cause;
+      const detail =
+        error instanceof Error ? `${error.message} ${cause instanceof Error ? cause.message : ''}` : '';
+      if (error instanceof TypeError && /redirect/i.test(detail)) {
         throw new Error(
           `unit-test fetch to ${href} followed a redirect — test servers must not redirect in unit tests (see tests/vitest.setup.ts)`
         );
