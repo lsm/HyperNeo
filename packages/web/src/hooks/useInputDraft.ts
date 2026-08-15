@@ -32,6 +32,7 @@ import { appendDraftText, generateUUID } from '@hyperneo/shared';
 import { connectionManager } from '../lib/connection-manager';
 import { connectionState } from '../lib/state';
 import {
+  clearDraftBackup,
   consumeVoiceTranscriptLanded,
   getClearTombstone,
   getDraftBackup,
@@ -41,7 +42,6 @@ import {
   isLandingLive,
   peekExpiredDraftBackup,
   removeClearTombstone,
-  removeDraftBackupKey,
   retireDraftBackupClaim,
   saveClearTombstone,
   saveDraftBackup,
@@ -117,12 +117,13 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // Arm the backup-flush retry backoff from outside the retry effect (the
   // connection subscription alone only fires on connection CHANGES).
   const flushKickRef = useRef<() => void>(() => {});
-  // Claim ids of ACTIVE-CONTENT merges keyed per session: the id must survive
-  // retries so a merge that committed with a lost ack is recognized — a fresh
-  // id per attempt would let the retry rewrite the committed draft, and
-  // requeueing the ORIGINAL backup claim instead could push its
-  // transcript-free content over the active draft the merge committed.
-  const activeMergeClaimsRef = useRef<Map<string, string>>(new Map());
+  // Claim ids of ACTIVE-CONTENT merges keyed per session, BOUND to the exact
+  // content they make idempotent: the id must survive retries of the SAME
+  // content (a merge that committed with a lost ack is recognized, not
+  // rewritten), but NEWER content must mint its own id — reusing the old one
+  // would let the daemon dedup the request as the earlier merge and return
+  // its value, replacing newer edits with older committed content.
+  const activeMergeClaimsRef = useRef<Map<string, { claimId: string; content: string }>>(new Map());
 
   // Advance the cached draft version MONOTONICALLY: overlapping saves and
   // gets can acknowledge out of order, and an older response must never move
@@ -356,7 +357,13 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                 expectedSeq: meta.inputDraftVoiceBaselineSeq,
               })
               .then((result) => {
-                if (!result.updated) return; // raced a newer sequence — stays owed
+                if (!result.updated) {
+                  // Raced a newer sequence — the clear stays owed, and no
+                  // replay effect exists to retry it (the landing expired).
+                  // Arm the bounded retry pass, which re-runs this reconcile.
+                  flushKickRef.current();
+                  return;
+                }
                 if (currentSessionIdRef.current === targetSessionId) {
                   contentSignal.value = result.value ?? '';
                 }
@@ -376,7 +383,10 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
               expected: meta.inputDraft ?? '',
             })
             .then((result) => {
-              if (!result.cleared) return; // raced a newer draft — stays owed
+              if (!result.cleared) {
+                flushKickRef.current(); // stays owed — arm the bounded retry
+                return;
+              }
               if (currentSessionIdRef.current === targetSessionId) {
                 contentSignal.value = '';
               }
@@ -618,7 +628,14 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     // retry can recognize a strip that committed with a lost acknowledgement.
     const oweClear = (baselineSeq?: number) => {
       pendingClearRef.current = sessionId;
-      saveClearTombstone(sessionId, baselineSeq);
+      const persisted = saveClearTombstone(sessionId, baselineSeq);
+      if (!persisted) {
+        // localStorage refused the tombstone: the clear intent cannot survive
+        // a reload, and the retained backup would restore the sent text. The
+        // safe fallback is to drop the durable copy — its content is pre-clear
+        // text the user already sent or deleted.
+        clearDraftBackup(sessionId);
+      }
     };
     // The chained reconciles below guard on the SESSION, not the effect's
     // `cancelled`: applying the merged draft to the composer is itself a
@@ -659,7 +676,8 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       // only the tombstone survives to reconcile after a reload — without it,
       // the retained backup could restore text the user already sent. Retired
       // only by a successful reconciliation (consumeLanding / the reconciles).
-      saveClearTombstone(sessionId);
+      // A failed persist falls back to dropping the backup (oweClear's rule).
+      if (!saveClearTombstone(sessionId)) clearDraftBackup(sessionId);
       // Get FIRST: session.get performs (or reveals) the pending merge, so the
       // transcript is IN the draft before anything is cleared. The previous
       // unconditional inputDraft:null here could delete a transcript ANOTHER
@@ -883,9 +901,13 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             // One claim id per session's active-merge sequence, reused across
             // retries (the daemon's idempotent replay acknowledges a committed
             // merge instead of rewriting); retired once the merge commits.
+            const boundClaim = activeMergeClaimsRef.current.get(flushSessionId);
             const activeClaimId =
-              activeMergeClaimsRef.current.get(flushSessionId) ?? generateUUID();
-            activeMergeClaimsRef.current.set(flushSessionId, activeClaimId);
+              boundClaim && boundClaim.content === active ? boundClaim.claimId : generateUUID();
+            activeMergeClaimsRef.current.set(flushSessionId, {
+              claimId: activeClaimId,
+              content: active,
+            });
             hub
               .request<{ merged?: boolean; value?: string }>('session.mergeVoiceDraftBackup', {
                 sessionId: flushSessionId,
@@ -895,7 +917,10 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
               .then((result) => {
                 if (result.merged) {
                   activeMergeClaimsRef.current.delete(flushSessionId);
-                  removeDraftBackupKey(key, generation, ts);
+                  // Retire through the claim path so the SUPERSEDE boundary
+                  // is recorded: other tabs' older same-generation backups
+                  // must become unrestorable over this committed draft.
+                  retireDraftBackupClaim({ key, generation, ts });
                   // ADOPT the daemon's value while the composer still shows
                   // the content we sent: after a voice sequence merged, the
                   // value is active + transcripts and the baseline cleared —

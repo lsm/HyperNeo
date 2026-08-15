@@ -1132,8 +1132,10 @@ describe('useInputDraft', () => {
         first.result.current.clear();
         await vi.runAllTimersAsync();
       });
-      // The backup holds the pre-clear text; the tombstone records the clear.
-      expect(peekExpiredDraftBackup('session-1')?.content).toBe('sent text');
+      // The raw backup key still holds the pre-clear text, but the tombstone
+      // marks its OWNER as cleared — the backup is unclaimable from now on,
+      // so a restore can never resurrect the sent text.
+      expect(peekExpiredDraftBackup('session-1')).toBeNull();
       expect(hasClearTombstone('session-1')).toBe(true);
       first.unmount();
 

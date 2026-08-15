@@ -116,37 +116,54 @@ export function markVoiceTranscriptLanded(
   // dictated occurrence while the marker still advertises both ids. The
   // persisted aggregate appends when ANY persisted id is not yet ours, and
   // no-id markers (test-only writes) never trigger the union.
-  const consumedThisTab = rawMarker !== null && consumedMarkers.get(sessionId) === rawMarker;
-  if (!consumedThisTab && existing?.text) {
+  const consumeMarker = (marker: ReturnType<typeof parseLandedMarker>): void => {
+    if (!marker?.text) return;
     const ours = new Set(landingIds.get(sessionId) ?? []);
-    if (existing.ids.some((id) => !ours.has(id))) {
-      landingTexts.set(
-        sessionId,
-        appendDraftText(landingTexts.get(sessionId) ?? '', existing.text)
-      );
+    if (marker.ids.some((id) => !ours.has(id))) {
+      landingTexts.set(sessionId, appendDraftText(landingTexts.get(sessionId) ?? '', marker.text));
     }
-  }
-  if (!consumedThisTab && existing?.ids.length) {
-    const mergedIds = new Set(landingIds.get(sessionId) ?? []);
-    for (const id of existing.ids) mergedIds.add(id);
-    landingIds.set(sessionId, [...mergedIds].slice(-MAX_ENTRIES));
-  }
+    if (marker.ids.length) {
+      const mergedIds = new Set(landingIds.get(sessionId) ?? []);
+      for (const id of marker.ids) mergedIds.add(id);
+      landingIds.set(sessionId, [...mergedIds].slice(-MAX_ENTRIES));
+    }
+  };
+  const consumedRaw = (raw: string | null): boolean =>
+    raw !== null && consumedMarkers.get(sessionId) === raw;
+  if (!consumedRaw(rawMarker)) consumeMarker(existing);
   try {
     // Timestamp + monotonic counter so two landings within the same Date.now()
     // tick still change the value — a same-value write would not emit a
     // storage event in other tabs, which would then never learn of the second.
     // The marker carries the AGGREGATE text and announced ENTRY IDS of the
     // live landing sequence (see markVoiceTranscriptLandedLocal).
-    localStorage.setItem(
-      `${LANDED_PREFIX}${sessionId}`,
-      JSON.stringify({
-        v: 1,
-        ts: Date.now(),
-        n: seq,
-        text: landingTexts.get(sessionId) ?? null,
-        ids: landingIds.get(sessionId) ?? [],
-      })
-    );
+    //
+    // COMPARE-AND-REVALIDATE: two tabs can read the SAME old marker, build
+    // independent aggregates, and the last write would silently drop the
+    // other's entries. localStorage writes are atomic per call, so re-reading
+    // immediately before writing catches a concurrent tab's marker that
+    // landed in between — re-union from it and retry (bounded) until the
+    // write lands against the state just read.
+    const key = `${LANDED_PREFIX}${sessionId}`;
+    let markerRaw = rawMarker;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const currentRaw = localStorage.getItem(key);
+      if (currentRaw !== markerRaw && !consumedRaw(currentRaw)) {
+        consumeMarker(parseLandedMarker(currentRaw));
+      }
+      localStorage.setItem(
+        key,
+        JSON.stringify({
+          v: 1,
+          ts: Date.now(),
+          n: seq,
+          text: landingTexts.get(sessionId) ?? null,
+          ids: landingIds.get(sessionId) ?? [],
+        })
+      );
+      markerRaw = localStorage.getItem(key);
+      if (markerRaw === null) break;
+    }
   } catch {
     /* mirror-only — this tab still refreshes via the signal */
   }
@@ -424,7 +441,6 @@ const TAB_ID = readTabId();
 // ordinary reload immediately reclaims the identity.
 try {
   const heartbeatKey = `hyperneo_tab_heartbeat.${TAB_ID}`;
-  localStorage.setItem(heartbeatKey, String(Date.now()));
   const beat = () => {
     try {
       localStorage.setItem(heartbeatKey, String(Date.now()));
@@ -432,22 +448,39 @@ try {
       /* best-effort liveness */
     }
   };
-  const interval = setInterval(beat, TAB_HEARTBEAT_INTERVAL_MS);
-  // Timer throttling makes the interval unreliable in background tabs;
-  // lifecycle transitions refresh the beat exactly when a clone is likely
-  // being created (this tab hiding or resuming).
-  window.addEventListener('visibilitychange', beat);
-  window.addEventListener('pageshow', beat);
-  window.addEventListener('resume', beat);
-  const stop = () => {
-    clearInterval(interval);
+  let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  const startHeartbeat = () => {
+    if (heartbeatTimer !== null) return;
+    beat();
+    heartbeatTimer = setInterval(beat, TAB_HEARTBEAT_INTERVAL_MS);
+    // pagehide tears the heartbeat down (an ordinary reload reclaims the id
+    // immediately); re-arm on the NEXT pageshow, including a BFCache restore
+    // of this same context — the once-listener is gone after its first fire,
+    // and a restored live tab must keep proving its liveness or a duplicate
+    // made later would inherit its id.
+    window.addEventListener('pagehide', stopHeartbeat, { once: true });
+  };
+  const stopHeartbeat = () => {
+    if (heartbeatTimer !== null) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
     try {
       localStorage.removeItem(heartbeatKey);
     } catch {
       /* best-effort */
     }
   };
-  window.addEventListener('pagehide', stop, { once: true });
+  // Timer throttling makes the interval unreliable in background tabs;
+  // lifecycle transitions refresh the beat exactly when a clone is likely
+  // being created (this tab hiding or resuming).
+  window.addEventListener('visibilitychange', beat);
+  window.addEventListener('pageshow', (event) => {
+    beat();
+    if ((event as PageTransitionEvent).persisted) startHeartbeat();
+  });
+  window.addEventListener('resume', beat);
+  startHeartbeat();
 } catch {
   /* storage unavailable — clone detection degrades to the stored id */
 }
@@ -504,6 +537,20 @@ function readSuperseded(sessionId: string): { generation: number; beforeTs: numb
  * anything — the caller retires the exact `key` once the content is durably
  * persisted or folded.
  */
+/** Whether the given OWNER (tab suffix) has a fresh clear tombstone for the session. */
+function ownerHasClearTombstone(sessionId: string, owner: string): boolean {
+  try {
+    const raw = localStorage.getItem(`${CLEAR_TOMBSTONE_PREFIX}${sessionId}.${owner}`);
+    if (raw === null) return false;
+    const parsed = JSON.parse(raw) as { ts?: number } | null;
+    return (
+      !!parsed && typeof parsed.ts === 'number' && Date.now() - parsed.ts < DRAFT_BACKUP_TTL_MS
+    );
+  } catch {
+    return false;
+  }
+}
+
 function freshestDraftBackup(sessionId: string): DraftBackupClaim | null {
   let freshest: DraftBackupClaim | null = null;
   const superseded = readSuperseded(sessionId);
@@ -532,6 +579,13 @@ function freshestDraftBackup(sessionId: string): DraftBackupClaim | null {
       ) {
         continue; // superseded by a committed reconciliation — never restorable
       }
+      // Skip backups whose OWNER durably recorded a clear: that tab sent or
+      // deleted this text before it closed, and restoring it would resurrect
+      // what the user already cleared. The tombstone is keyed by the same
+      // owner suffix as the backup key, so a foreign owner's intent is
+      // honored even though only THIS tab's tombstone is ever re-armed here.
+      const owner = key.slice(key.lastIndexOf('.') + 1);
+      if (ownerHasClearTombstone(sessionId, owner)) continue;
       if (!freshest || ts >= freshest.ts) {
         freshest = { key, content: parsed.content, generation, ts };
       }
@@ -701,14 +755,25 @@ export function retireDraftBackupClaim(claim: {
  * known, names the voice sequence the reconcile was about to strip, so a
  * retry can recognize a strip that COMMITTED but whose ack was lost.
  */
-export function saveClearTombstone(sessionId: string, baselineSeq?: number): void {
+export function saveClearTombstone(sessionId: string, baselineSeq?: number): boolean {
   try {
-    localStorage.setItem(
-      `${CLEAR_TOMBSTONE_PREFIX}${sessionId}.${TAB_ID}`,
-      JSON.stringify({ ts: Date.now(), baselineSeq })
-    );
+    const key = `${CLEAR_TOMBSTONE_PREFIX}${sessionId}.${TAB_ID}`;
+    // Re-arming WITHOUT a new sequence must not drop a recorded one: a
+    // versioned tombstone (from a lost-ack strip) is strictly stronger, and
+    // overwriting it with an unversioned write would leave the committed
+    // strip unrecognizable after a reload.
+    let seqToWrite = baselineSeq;
+    if (seqToWrite === undefined) {
+      const existing = JSON.parse(localStorage.getItem(key) ?? 'null') as {
+        baselineSeq?: number;
+      } | null;
+      if (typeof existing?.baselineSeq === 'number') seqToWrite = existing.baselineSeq;
+    }
+    localStorage.setItem(key, JSON.stringify({ ts: Date.now(), baselineSeq: seqToWrite }));
+    return true;
   } catch {
-    /* tombstone best-effort */
+    /* tombstone best-effort — the caller must fall back to a safe state */
+    return false;
   }
 }
 
