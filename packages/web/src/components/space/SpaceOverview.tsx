@@ -23,7 +23,7 @@ import { createSession } from '../../lib/api-helpers';
 import { cn, getRelativeTime } from '../../lib/utils';
 import { toast } from '../../lib/toast';
 import { AUTONOMY_LABELS } from '../../lib/space-constants';
-import { isActionRequired } from '../../lib/task-filters';
+import { isActionRequired, isActiveTask } from '../../lib/task-filters';
 import { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
 import { AutonomyWorkflowSummary } from './AutonomyWorkflowSummary';
 import { SpaceRuntimeStatusControl } from './SpaceRuntimeStatusControl';
@@ -243,15 +243,12 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
     [sessions]
   );
 
-  // Attention split: "In review" = awaiting approval (review status);
-  // "Needs attention" = the rest of the Action-tab set (blocked for any
-  // reason, plus rate/usage-limited). Both derive from the shared predicate
-  // so the cards and the Action list can't drift.
-  const inReviewTasks = useMemo(() => tasks.filter((t) => t.status === 'review'), [tasks]);
-  const needsAttentionTasks = useMemo(
-    () => tasks.filter((t) => isActionRequired(t) && t.status !== 'review'),
-    [tasks]
-  );
+  // The two leading cards mirror the Tasks page tabs exactly — same shared
+  // predicates, so counts and lists can't drift: Attention = isActionRequired
+  // (blocked, review, rate/usage-limited); Active = isActiveTask (open,
+  // in_progress, approved).
+  const actionTasks = useMemo(() => tasks.filter(isActionRequired), [tasks]);
+  const activeTasks = useMemo(() => tasks.filter(isActiveTask), [tasks]);
 
   // Recent tasks — sorted by updatedAt, top 5
   const recentTasks = useMemo(
@@ -316,20 +313,20 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
           <SpaceRuntimeStatusControl />
         </section>
 
-        {/* Attention first (Blocked = blocked + rate/usage-limited, then
-            awaiting review), followed by the Agents and Sessions surfaces. */}
+        {/* Leading cards mirror the Tasks page tabs (Attention, then Active),
+            followed by the Agents and Sessions surfaces. */}
         <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <StatCard
-            label="Blocked"
-            count={needsAttentionTasks.length}
+            label="Attention"
+            count={actionTasks.length}
             color="border-amber-800/40 text-amber-300"
             onClick={() => navigateToSpaceTasks(routeSpaceId, 'action')}
           />
           <StatCard
-            label="In review"
-            count={inReviewTasks.length}
-            color="border-purple-800/30 text-purple-300"
-            onClick={() => navigateToSpaceTasks(routeSpaceId, 'action')}
+            label="Active"
+            count={activeTasks.length}
+            color="border-emerald-800/40 text-emerald-300"
+            onClick={() => navigateToSpaceTasks(routeSpaceId, 'active')}
           />
           <StatCard
             label="Agents"

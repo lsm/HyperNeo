@@ -772,7 +772,7 @@ export function SpaceDetailPanel({
                 onClick={() => setTaskTab('active')}
               />
               <TaskTabButton
-                label="Action"
+                label="Attention"
                 count={actionCount}
                 active={taskTab === 'action'}
                 onClick={() => setTaskTab('action')}

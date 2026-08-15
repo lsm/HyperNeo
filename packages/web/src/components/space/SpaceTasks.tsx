@@ -867,7 +867,7 @@ export function SpaceTasks({
     variant: 'green',
   };
   const primaryTabs: TabConfig[] = [
-    { key: 'action', label: 'Action', count: counts.action, variant: 'amber' },
+    { key: 'action', label: 'Attention', count: counts.action, variant: 'amber' },
     { key: 'active', label: 'Active', count: counts.active },
   ];
   const allTabs: TabConfig[] = [

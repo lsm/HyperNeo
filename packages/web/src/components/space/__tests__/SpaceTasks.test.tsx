@@ -198,7 +198,7 @@ describe('SpaceTasks', () => {
   it('renders the available tabs and removes the standalone Archived tab', () => {
     mockTasks.value = [makeTask('t1', 'open')];
     const { getAllByText, queryByText } = render(<SpaceTasks spaceId="space-1" />);
-    expect(getAllByText('Action').length).toBeGreaterThan(0);
+    expect(getAllByText('Attention').length).toBeGreaterThan(0);
     expect(getAllByText('Active').length).toBeGreaterThan(0);
     expect(getAllByText('Completed').length).toBeGreaterThan(0);
     expect(getAllByText('Scheduled').length).toBeGreaterThan(0);
@@ -214,7 +214,7 @@ describe('SpaceTasks', () => {
   it('shows empty state for action tab', () => {
     mockTasks.value = [makeTask('t1', 'open')];
     const { getAllByText, getByText } = render(<SpaceTasks spaceId="space-1" />);
-    fireEvent.click(getAllByText('Action')[0]);
+    fireEvent.click(getAllByText('Attention')[0]);
     expect(getByText('No tasks needing action')).toBeTruthy();
   });
 
@@ -224,7 +224,7 @@ describe('SpaceTasks', () => {
       <SpaceTasks spaceId="space-1" navigationSpaceId="space-slug" />
     );
 
-    fireEvent.click(getAllByText('Action')[0]);
+    fireEvent.click(getAllByText('Attention')[0]);
 
     expect(mockNavigateToSpaceTasks).toHaveBeenCalledWith('space-slug', 'action');
   });
@@ -274,7 +274,7 @@ describe('SpaceTasks', () => {
   it('displays tasks in action tab (blocked + review)', async () => {
     mockTasks.value = [makeTask('t1', 'blocked'), makeTask('t2', 'review')];
     const { getAllByText, findByText } = render(<SpaceTasks spaceId="space-1" />);
-    fireEvent.click(getAllByText('Action')[0]);
+    fireEvent.click(getAllByText('Attention')[0]);
     expect(await findByText('Task t1')).toBeTruthy();
     expect(await findByText('Task t2')).toBeTruthy();
   });
@@ -308,7 +308,7 @@ describe('SpaceTasks', () => {
     const text = Array.from(buttons).map((b) => b.textContent ?? '');
 
     expect(text.some((t) => t?.includes('Active') && t?.includes('2'))).toBe(true);
-    expect(text.some((t) => t?.includes('Action') && t?.includes('2'))).toBe(true);
+    expect(text.some((t) => t?.includes('Attention') && t?.includes('2'))).toBe(true);
     expect(text.some((t) => t?.includes('Completed') && t?.includes('3'))).toBe(true);
     expect(text.some((t) => t?.includes('Archived'))).toBe(false);
   });

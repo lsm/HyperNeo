@@ -252,7 +252,7 @@ describe('SpaceDetailPanel', () => {
     expect(screen.queryByText('Queued Task')).toBeNull();
 
     const activeTab = getTaskTab('Active');
-    const actionTab = getTaskTab('Action');
+    const actionTab = getTaskTab('Attention');
     expect(within(activeTab).getByText('2')).toBeTruthy();
     expect(within(actionTab).getByText('1')).toBeTruthy();
   });
@@ -576,7 +576,7 @@ describe('SpaceDetailPanel', () => {
       expect(within(tasksNav).getByText('2')).toBeTruthy();
     });
 
-    it('Tasks-nav badge stays in sync with the Action tab count', () => {
+    it('Tasks-nav badge stays in sync with the Attention tab count', () => {
       mockTasksSignal.value = [
         makeTask('t1', 'Blocked Task', 'blocked'),
         makeTask('t2', 'Review Task', 'review'),
@@ -584,9 +584,9 @@ describe('SpaceDetailPanel', () => {
       ];
       render(<SpaceDetailPanel spaceId="space-1" />);
 
-      // Action tab badge inside the tab pill shows "2" (blocked + review).
-      const actionTabButton = screen.getByRole('button', { name: /Action/i });
-      expect(within(actionTabButton).getByText('2')).toBeTruthy();
+      // Attention tab badge inside the tab pill shows "2" (blocked + review).
+      const attentionTabButton = screen.getByRole('button', { name: /Attention/i });
+      expect(within(attentionTabButton).getByText('2')).toBeTruthy();
 
       // Sidebar Tasks badge should match.
       const tasksNav = screen.getByTestId('space-detail-tasks');
