@@ -40,25 +40,92 @@ console.log = () => {};
 // fetch with per-probe timeouts (see src/lib/providers/shared/credential-probe.ts),
 // so any provider whose availability check passes without an env key still burns
 // real network round-trips inside the per-test budget — the root of the
-// model-service flakes registered in flaky-tests.json. Loopback stays live for
-// suites that spin up local bridge servers.
+// model-service flakes registered in flaky-tests.json.
+//
+// The guard admits loopback ONLY on ports that test-spawned servers actually
+// bound in this process (e.g. the copilot embedded server tests): patching
+// net.Server.prototype.listen records them, so ambient developer-machine
+// services (Ollama on localhost:11434, …) stay blocked and results remain
+// environment-independent. Redirects are followed manually so every hop is
+// re-validated — a test server 3xx cannot smuggle a fetch to a real API.
 const realFetch = globalThis.fetch.bind(globalThis);
-const loopbackHosts = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+const testServerPorts = new Set<number>();
 
-globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+type ListeningServer = {
+  address(): { address: string; port: number } | string | null;
+  on(event: string, listener: () => void): unknown;
+};
+const loopbackOrAnyAddress = (address: string): boolean =>
+  ['127.0.0.1', '::1', 'localhost', '::', '0.0.0.0'].includes(address);
+
+const netServerProto = (
+  require('node:net') as typeof import('node:net')
+).Server.prototype as { listen: (...args: unknown[]) => unknown };
+const originalListen = netServerProto.listen;
+netServerProto.listen = function patchedListen(this: ListeningServer, ...args: unknown[]) {
+  this.on('listening', () => {
+    const address = this.address();
+    if (address && typeof address === 'object' && loopbackOrAnyAddress(address.address)) {
+      testServerPorts.add(address.port);
+      this.on('close', () => testServerPorts.delete(address.port));
+    }
+  });
+  return originalListen.apply(this, args);
+};
+
+const guardError = (href: string): Error =>
+  new Error(
+    `unit test attempted real network fetch: ${href} — unit tests may only reach loopback servers they spawned; stub the provider or move the test to tests/online/ (see tests/vitest.setup.ts)`
+  );
+
+const isAllowedUrl = (url: URL): boolean =>
+  loopbackOrAnyAddress(url.hostname) &&
+  url.port !== '' &&
+  testServerPorts.has(Number(url.port));
+
+globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-  let hostname: string | null = null;
+  let url: URL;
   try {
-    hostname = new URL(href).hostname;
+    url = new URL(href);
   } catch {
-    // a non-absolute URL cannot be loopback
+    throw guardError(href);
   }
-  if (hostname === null || !loopbackHosts.has(hostname)) {
-    throw new Error(
-      `unit test attempted real network fetch: ${href} — unit tests must not leave the loopback; stub the provider or use tests/online/`
-    );
+  if (!isAllowedUrl(url)) {
+    throw guardError(href);
   }
-  return realFetch(input as RequestInfo, init);
+
+  // Follow redirects manually so each hop is re-validated against the guard.
+  let method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
+  let headers = init?.headers;
+  let body: BodyInit | undefined = init?.body;
+  for (let hop = 0; ; hop += 1) {
+    if (hop >= 20) throw new Error(`unit-test fetch exceeded 20 redirects: ${href}`);
+    const response = await realFetch(url, {
+      ...init,
+      method,
+      headers,
+      body,
+      redirect: 'manual',
+    });
+    if (![301, 302, 303, 307, 308].includes(response.status)) {
+      return response;
+    }
+    const location = response.headers.get('location');
+    if (!location) {
+      return response;
+    }
+    const next = new URL(location, url);
+    if (!isAllowedUrl(next)) {
+      throw guardError(next.href);
+    }
+    if (response.status === 303 || ((response.status === 301 || response.status === 302) && method === 'POST')) {
+      method = 'GET';
+      body = undefined;
+      headers = undefined;
+    }
+    url = next;
+  }
 }) as typeof fetch;
 
 (globalThis as unknown as Record<string, unknown>).__originalFetch = realFetch;
