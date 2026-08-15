@@ -1,5 +1,5 @@
-import type { Job, JobQueueRepository, PayloadMatch } from './repositories/job-queue-repository';
 import type { TableChangeScope } from './reactive-database';
+import type { Job, JobQueueRepository, PayloadMatch } from './repositories/job-queue-repository';
 
 export type JobHandler = (job: Job) => Promise<Record<string, unknown> | void>;
 
@@ -61,12 +61,23 @@ export interface RegisterOptions {
    * break the processor. See message-delivery-v2.md + Codex (#2595).
    */
   onDead?: (job: Job) => void;
+  /**
+   * Invoked when a job in this lane actually COMPLETES — the row transitioned
+   * `processing` → `completed` (a park/requeue's auto-complete is a no-op and
+   * does NOT fire this). `message_delivery` uses this to publish
+   * `session.delivery_settled`, the terminal success signal for consumers that
+   * deferred a decision while the job was retrying (TaskAgentManager's node
+   * completion, task #944). Hook errors are swallowed like `onDead`'s so a
+   * completion side-effect can never break the processor loop.
+   */
+  onComplete?: (job: Job) => void;
 }
 
 interface Registration {
   handler: JobHandler;
   exemptJobs?: PayloadMatch;
   onDead?: (job: Job) => void;
+  onComplete?: (job: Job) => void;
 }
 
 export class JobQueueProcessor {
@@ -99,6 +110,7 @@ export class JobQueueProcessor {
       handler,
       exemptJobs: options?.exemptJobs,
       onDead: options?.onDead,
+      onComplete: options?.onComplete,
     });
   }
 
@@ -194,9 +206,18 @@ export class JobQueueProcessor {
       }
       const result = await reg.handler(job);
       // message_delivery parks/promotes by requeueing the job itself; the
-      // auto-complete here is then a no-op (row no longer 'processing').
-      this.repo.complete(job.id, result ?? undefined, job.claimToken);
+      // auto-complete here is then a no-op (row no longer 'processing'). Only a
+      // real `processing` → `completed` transition (non-null return) settles the
+      // job — that, and only that, fires the lane's `onComplete` hook.
+      const completed = this.repo.complete(job.id, result ?? undefined, job.claimToken);
       this.notifyChange(scope);
+      if (completed && reg.onComplete) {
+        try {
+          reg.onComplete(completed);
+        } catch {
+          // A completion side-effect must never break the processor loop.
+        }
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       // A handler throws `DeadLetterImmediatelyError` to terminalize without

@@ -3,12 +3,17 @@
  *
  * A RECOVERABLE provider error during a delivery-driven node-agent turn must be
  * INVISIBLE to Space: the durable message_delivery job retries it (PR #2471),
- * and only the job dead-lettering is terminal. These tests pin the
- * `registerCompletionCallback` behavior that implements that contract:
+ * and only the job dead-lettering is terminal. The deferral keys off the JOB
+ * ROW (pending/processing = still in flight), not the `session.error` broadcast
+ * — which ErrorManager throttles after 3 identical occurrences per 10s (Codex
+ * P1 #1) and which unrelated subsystems can fire during an otherwise successful
+ * turn (Codex P1 #2). These tests pin `registerCompletionCallback`:
  *   - a recoverable `session.error` does NOT block the node,
- *   - the idle that follows it (turn produced no result; retry pending) is NOT a
- *     completion,
- *   - a later legitimate idle (retry succeeded) DOES complete the node,
+ *   - an idle while a delivery job is active is NOT a completion (throttled or
+ *     missing error events included),
+ *   - `session.delivery_settled` (job completed, nothing in flight) completes
+ *     the node — including a successful turn that had an unrelated recoverable
+ *     error,
  *   - the dead-letter settlement (`session.error` with no details) and a
  *     genuinely non-recoverable error DO block the node.
  *
@@ -18,6 +23,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
+import { settleMessageDeliveryDeadLetter } from '../../../../src/lib/job-handlers/message-delivery-dead-letter';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
@@ -54,6 +60,8 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
   let manager: TaskAgentManager;
   let executionId: string;
   let completed: boolean;
+  /** Mutable stand-in for the session's active message_delivery job set. */
+  let activeJobs: Set<string>;
 
   beforeEach(() => {
     db = new BunDatabase(':memory:');
@@ -98,8 +106,13 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
 
     bus = createDaemonInternalEventBus();
 
+    activeJobs = new Set(['kickoff-uuid']);
     const config = {
-      db: { getDatabase: () => db },
+      db: {
+        getDatabase: () => db,
+        // hasActiveDeliveryJob resolves the active delivery-job set from here.
+        getJobQueueRepo: () => ({ activeDeliveryMessageUuids: () => activeJobs }),
+      },
       taskRepo,
       nodeExecutionRepo: nodeExecRepo,
       internalEventBus: bus,
@@ -138,44 +151,91 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     });
     await flush();
   };
+  /** Simulate a delivery job completing: nothing left in flight + settle event. */
+  const settleDelivery = async (): Promise<void> => {
+    activeJobs.clear();
+    await bus.publish('session.delivery_settled', {
+      sessionId: SUB_SESSION_ID,
+      messageUuid: 'kickoff-uuid',
+    });
+    await flush();
+  };
   const nodeStatus = (): string | undefined => nodeExecRepo.getById(executionId)?.status;
 
-  it('a recoverable error does not block the node (deferred to the dead-letter)', async () => {
+  it('a recoverable error does not block the node, and the retry settles it as complete', async () => {
     await publishError(RECOVERABLE_DETAILS);
-    expect(completed).toBe(false);
     expect(nodeStatus()).toBe('in_progress'); // not blocked — retry pending
-  });
 
-  it('the idle following a recoverable error is suppressed (retry in progress)', async () => {
-    await publishError(RECOVERABLE_DETAILS);
-    await publishIdle(); // turn produced no result → not a completion
+    await publishIdle(); // post-error idle — job still retrying, suppressed
     expect(completed).toBe(false);
     expect(nodeStatus()).toBe('in_progress');
+
+    await settleDelivery(); // retry succeeded
+    expect(completed).toBe(true);
   });
 
-  it('a later legitimate idle (retry success) completes the node', async () => {
-    await publishError(RECOVERABLE_DETAILS);
-    await publishIdle(); // post-error idle — suppressed
-    await publishIdle(); // retry succeeded — genuine completion
+  it('a THROTTLED 4th error cannot leak a completion (idle stays suppressed; dead-letter blocks)', async () => {
+    // Codex P1 #1: ErrorManager throttles the 4th identical session.error in
+    // 10s, but the failed turn still idles. The idle must stay suppressed
+    // because the JOB — not the error event — drives suppression.
+    await publishError(RECOVERABLE_DETAILS); // attempt 1 error (unthrottled)
+    await publishIdle(); // suppressed — job retrying
+    await publishIdle(); // attempt 2+ failed with NO error event (throttled)
+    expect(completed).toBe(false); // must NOT complete while retrying
+    expect(nodeStatus()).toBe('in_progress');
+
+    // Retries exhausted → dead-letter publishes session.error with no details.
+    activeJobs.clear(); // dead row leaves the active set
+    await publishError(undefined);
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('blocked');
+  });
+
+  it('an unrelated recoverable error during a SUCCESSFUL turn does not suppress completion (Codex P1 #2)', async () => {
+    // The turn succeeded (a result was produced) but an unrelated subsystem
+    // fired a recoverable session.error mid-turn. The old flag-based approach
+    // suppressed the successful idle with no retry/dead-letter ever coming,
+    // stranding the node. Now the settle event completes it.
+    await publishError(RECOVERABLE_DETAILS); // unrelated — no block
+    await publishIdle(); // job still processing the successful turn — suppressed
+    expect(completed).toBe(false);
+
+    await settleDelivery(); // job completed — no retry ever scheduled
+    expect(completed).toBe(true);
+  });
+
+  it('an idle with NO active delivery job completes immediately (no settle hop)', async () => {
+    activeJobs.clear(); // job completed before the idle event reached us
+    await publishIdle();
+    expect(completed).toBe(true);
+  });
+
+  it('a settle with another job still in flight does not fire; the last settle does', async () => {
+    // A steer job queued behind the turn: the turn's settle must not complete
+    // the node while the steer is undelivered.
+    await publishIdle(); // suppressed — turn job active
+    activeJobs.delete('kickoff-uuid');
+    activeJobs.add('steer-uuid');
+    await bus.publish('session.delivery_settled', {
+      sessionId: SUB_SESSION_ID,
+      messageUuid: 'kickoff-uuid',
+    });
+    await flush();
+    expect(completed).toBe(false); // steer still in flight
+
+    await settleDelivery(); // last job settles
     expect(completed).toBe(true);
   });
 
   it('the dead-letter settlement (session.error with no details) blocks the node', async () => {
-    await publishError(undefined); // dead-letter publishes session.error with no details
+    activeJobs.clear();
+    await publishError(undefined);
     expect(completed).toBe(false);
     expect(nodeStatus()).toBe('blocked');
   });
 
   it('a non-recoverable error blocks the node immediately', async () => {
     await publishError(NON_RECOVERABLE_DETAILS);
-    expect(completed).toBe(false);
-    expect(nodeStatus()).toBe('blocked');
-  });
-
-  it('a terminal error after a deferred recoverable error still blocks the node', async () => {
-    await publishError(RECOVERABLE_DETAILS); // deferred
-    await publishIdle(); // suppressed retry-pending idle
-    await publishError(undefined); // retries exhausted → dead-letter
     expect(completed).toBe(false);
     expect(nodeStatus()).toBe('blocked');
   });
@@ -191,5 +251,78 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
       if (prev === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
       else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = prev;
     }
+  });
+
+  it('an idle with zero SDK messages never fires, even after the job settles (not-started gate)', async () => {
+    // The not-started early return must hold on BOTH completion paths — an
+    // eager-spawn session that never received its kickoff must not be marked
+    // complete by delivery settlement alone. (Review: sdkCount===0 ordering.)
+    const subSessions = (manager as unknown as { subSessions: Map<string, Map<string, unknown>> })
+      .subSessions;
+    for (const nodeMap of subSessions.values()) {
+      const session = nodeMap.get(SUB_SESSION_ID) as
+        | { getSDKMessageCount: () => number }
+        | undefined;
+      if (session) session.getSDKMessageCount = () => 0;
+    }
+
+    await publishIdle(); // zero messages — no fire
+    expect(completed).toBe(false);
+    await settleDelivery(); // zero messages — still no fire
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('in_progress');
+  });
+
+  it('a dead-lettered TURN blocks the node even with no session.error (recovery-origin kickoff)', async () => {
+    // Codex P2: the settlement's session.error is gated to space_inject+turn,
+    // so a recovery-origin re-enqueued kickoff dead-letters with no terminal
+    // session.error. `session.delivery_failed` (published for every dead
+    // delivery) must still block it.
+    await publishIdle(); // suppressed — job active
+    activeJobs.clear();
+    await bus.publish('session.delivery_failed', {
+      sessionId: SUB_SESSION_ID,
+      messageUuid: 'kickoff-uuid',
+      origin: 'system', // NOT space_inject — settlement's session.error gate skips it
+      role: 'turn',
+    });
+    await flush();
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('blocked');
+  });
+
+  it('a dead-lettered STEER does not block the node (mid-turn handoff failure)', async () => {
+    await bus.publish('session.delivery_failed', {
+      sessionId: SUB_SESSION_ID,
+      messageUuid: 'steer-uuid',
+      origin: 'space_inject',
+      role: 'steer',
+    });
+    await flush();
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('in_progress');
+  });
+
+  it('composition: the real dead-letter settlement wired through the bus blocks the node', async () => {
+    // Wire app.ts's actual onDead composition (delivery_failed broadcast +
+    // settleMessageDeliveryDeadLetter) against the same bus the manager
+    // listens on, then simulate a space_inject turn job dying.
+    const payload = {
+      sessionId: SUB_SESSION_ID,
+      messageUuid: 'kickoff-uuid',
+      origin: 'space_inject',
+      role: 'turn',
+    } as const;
+    await bus.publish('session.delivery_failed', { ...payload });
+    await settleMessageDeliveryDeadLetter(payload, {
+      markDeliveryFailedByUuid: () => null, // no sdk_messages row in this fixture
+      publishStatusChanged: () => Promise.resolve(),
+      publishSessionError: (sid, error) => bus.publish('session.error', { sessionId: sid, error }),
+      settleSkippedDelivery: () => Promise.resolve(),
+    });
+    await flush();
+
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('blocked');
   });
 });

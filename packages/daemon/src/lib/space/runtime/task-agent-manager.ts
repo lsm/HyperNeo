@@ -62,6 +62,7 @@ import {
   deliveryConsumptionTimeoutMs,
   isMessageDeliveryV2Enabled,
 } from '../../../lib/agent/message-delivery';
+import { DEAD_LETTER_SESSION_ERROR } from '../../../lib/job-handlers/message-delivery-dead-letter';
 import type { Database } from '../../../storage/database';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
 import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository';
@@ -3643,14 +3644,30 @@ export class TaskAgentManager {
 
     // Track whether we've fired (to make callback fire exactly once)
     let fired = false;
-    // True while a recoverable provider error is being retried by the durable
-    // message_delivery job. While set, neither the recoverable `session.error`
-    // nor the subsequent idle is terminal for this node: the delivery layer
-    // (PR #2471) re-drives the turn, and only the job dead-lettering is a real
-    // failure. Without this, one transient 5xx would permanently block the node
-    // even when the automatic retry succeeds. See task #944 +
-    // message-delivery-dead-letter.ts.
-    let deliveryRetryPending = false;
+
+    // Fire all registered callbacks exactly once and tear down the listeners.
+    // Shared by the idle-completion path and the delivery-settled path below.
+    const fireCompletion = (): void => {
+      fired = true;
+      // Unsubscribe immediately to prevent double-firing
+      const unsub = this.sessionListeners.get(subSessionId);
+      if (unsub) {
+        unsub();
+        this.sessionListeners.delete(subSessionId);
+      }
+
+      // Fire all registered callbacks
+      const callbacks = this.completionCallbacks.get(subSessionId) ?? [];
+      this.completionCallbacks.delete(subSessionId);
+      for (const cb of callbacks) {
+        cb().catch((err) => {
+          log.error(
+            `TaskAgentManager: completion callback error for session ${subSessionId}:`,
+            err
+          );
+        });
+      }
+    };
 
     const unsubscribeUpdated = this.config.internalEventBus.subscribe(
       'session.updated',
@@ -3668,38 +3685,82 @@ export class TaskAgentManager {
           const sdkCount = session.getSDKMessageCount();
           if (sdkCount === 0) return; // Not started yet
 
-          // A recoverable provider error idles the session before the delivery
-          // retry fires. That idle is NOT a completion — the turn produced no
-          // result and the message_delivery job will re-drive it. Suppress it so
-          // the retry either completes normally on its own idle or dead-letters
-          // (the error path below then marks the node blocked). (Task #944.)
-          if (deliveryRetryPending) {
-            deliveryRetryPending = false;
+          // While a durable message_delivery job for this session is still in
+          // flight (queued, parked, or retrying after a recoverable provider
+          // error), the delivery layer owns the turn lifecycle and this idle is
+          // NOT a terminal node outcome: a failed turn idles the session BEFORE
+          // the job's throw → backoff → retry lands, and a successful turn
+          // idles just before the job row completes. Suppress; the job's own
+          // settlement decides — `session.delivery_settled` (below) fires the
+          // completion, the dead-letter `session.error` blocks the node. Keyed
+          // off the JOB ROW (not the throttled, ambiguity-prone `session.error`
+          // broadcast) so an ErrorManager-throttled 4th error cannot leak a
+          // bogus completion, and an unrelated recoverable error during a
+          // successful turn cannot suppress it. (Task #944.)
+          if (isMessageDeliveryV2Enabled() && this.hasActiveDeliveryJob(subSessionId)) {
             return;
           }
 
-          fired = true;
-          // Unsubscribe immediately to prevent double-firing
-          const unsub = this.sessionListeners.get(subSessionId);
-          if (unsub) {
-            unsub();
-            this.sessionListeners.delete(subSessionId);
-          }
-
-          // Fire all registered callbacks
-          const callbacks = this.completionCallbacks.get(subSessionId) ?? [];
-          this.completionCallbacks.delete(subSessionId);
-          for (const cb of callbacks) {
-            cb().catch((err) => {
-              log.error(
-                `TaskAgentManager: completion callback error for session ${subSessionId}:`,
-                err
-              );
-            });
-          }
+          fireCompletion();
         }
       },
       { sessionId: subSessionId, subscriberName: 'TaskAgentManager.subSessionCompletion' }
+    );
+
+    // A delivery job settled successfully. When nothing else is in flight this
+    // is the genuine completion for a turn whose idle was suppressed above
+    // (retry succeeded after a recoverable error, or a successful turn whose
+    // idle raced the job completion). (Task #944.)
+    const unsubscribeSettled = this.config.internalEventBus.subscribe(
+      'session.delivery_settled',
+      () => {
+        if (fired) return;
+        if (this.hasActiveDeliveryJob(subSessionId)) return; // another job owns the session
+
+        const session = this.getSubSession(subSessionId);
+        if (!session) return;
+        if (session.getSDKMessageCount() === 0) return; // Not started yet
+
+        fireCompletion();
+      },
+      { sessionId: subSessionId, subscriberName: 'TaskAgentManager.subSessionDeliverySettled' }
+    );
+
+    // Block the node on a terminal failure exactly once and tear down the
+    // listeners. Shared by the `session.error` and `session.delivery_failed`
+    // handlers below.
+    const fireTerminalError = (error: string): void => {
+      fired = true;
+
+      // Push an explicit failure event back to the Task Agent so orchestration
+      // stays event-driven (no polling loop required to discover crashes).
+      void this.handleSubSessionError(subSessionId, error).catch((err) => {
+        log.warn(`TaskAgentManager: failed to handle sub-session error for ${subSessionId}:`, err);
+      });
+
+      // Tear down the listeners now that the error terminal state is handled.
+      const unsub = this.sessionListeners.get(subSessionId);
+      if (unsub) {
+        unsub();
+        this.sessionListeners.delete(subSessionId);
+      }
+    };
+
+    // A message_delivery TURN job dead-lettered. This is the authoritative
+    // terminal-failure signal — unlike the settlement's `session.error` (gated
+    // to `space_inject`-origin kickoffs), `delivery_failed` fires for every
+    // dead delivery, so a recovery-origin re-enqueued kickoff still blocks the
+    // node instead of hanging in_progress. Steers are excluded: a failed
+    // mid-turn handoff must not fail a node whose kickoff turn succeeded.
+    // (Task #944 review, P2.)
+    const unsubscribeDeliveryFailed = this.config.internalEventBus.subscribe(
+      'session.delivery_failed',
+      (event) => {
+        if (fired) return;
+        if (event.role !== 'turn') return;
+        fireTerminalError(DEAD_LETTER_SESSION_ERROR);
+      },
+      { sessionId: subSessionId, subscriberName: 'TaskAgentManager.subSessionDeliveryFailed' }
     );
 
     // Subscribe to session.error to mark the session as fired so that a subsequent idle
@@ -3716,40 +3777,31 @@ export class TaskAgentManager {
         // dead-lettering is terminal. The dead-letter settlement publishes
         // `session.error` with NO `details`, and a genuinely non-recoverable
         // error carries `details.recoverable === false` — both fall through to
-        // the terminal handling below. A recoverable error carries
-        // `details.recoverable === true`; arm `deliveryRetryPending` so the
-        // retry's own idle can still complete the node. Gated on delivery v2 so
-        // the legacy inline path keeps its first-error-blocks behavior.
-        // (Task #944.)
+        // the terminal handling below. Gated on delivery v2 so the legacy
+        // inline path keeps its first-error-blocks behavior. The subsequent
+        // idle is suppressed separately via the active-job check above — this
+        // branch only declines to block. (Task #944.)
+        //
+        // This classification is ADVISORY only: even when it misclassifies
+        // (ErrorManager's recoverable taxonomy has diverged from delivery's —
+        // auth is delivery-terminal despite recoverable === true), the job
+        // dead-letters immediately and `session.delivery_failed` above blocks
+        // the node. A wrong deferral delays the block by one immediate
+        // dead-letter; it can never flip the outcome.
         if (isMessageDeliveryV2Enabled() && isRecoverableSessionError(event.details)) {
-          deliveryRetryPending = true;
           return;
         }
 
-        fired = true;
-
-        // Push an explicit failure event back to the Task Agent so orchestration
-        // stays event-driven (no polling loop required to discover crashes).
-        void this.handleSubSessionError(subSessionId, event.error).catch((err) => {
-          log.warn(
-            `TaskAgentManager: failed to handle sub-session error for ${subSessionId}:`,
-            err
-          );
-        });
-
-        // Tear down both listeners now that the error terminal state is handled.
-        const unsub = this.sessionListeners.get(subSessionId);
-        if (unsub) {
-          unsub();
-          this.sessionListeners.delete(subSessionId);
-        }
+        fireTerminalError(event.error);
       },
       { sessionId: subSessionId, subscriberName: 'TaskAgentManager.subSessionError' }
     );
 
-    // Store a combined unsubscribe that tears down both listeners at once.
+    // Store a combined unsubscribe that tears down all listeners at once.
     this.sessionListeners.set(subSessionId, () => {
       unsubscribeUpdated();
+      unsubscribeSettled();
+      unsubscribeDeliveryFailed();
       unsubscribeError();
     });
   }
@@ -4546,6 +4598,10 @@ export class TaskAgentManager {
    * for the session. Used to gate resetContextPerTurn so a `/clear` does not race
    * a v2 turn whose job is enqueued but not yet claimed — the session's live
    * processing state lags the durable job state under v2. Read-only indexed SELECT.
+   * Also drives `registerCompletionCallback`'s post-error idle suppression
+   * (task #944): while a job is in flight the delivery layer owns the turn
+   * lifecycle, so an idle is not a terminal node outcome — the job's settlement
+   * (`session.delivery_settled` / dead-letter `session.error`) decides.
    */
   private hasActiveDeliveryJob(sessionId: string): boolean {
     return this.config.db.getJobQueueRepo().activeDeliveryMessageUuids(sessionId).size > 0;

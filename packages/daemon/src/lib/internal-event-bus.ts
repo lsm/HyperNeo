@@ -395,6 +395,32 @@ export interface SessionEvents {
   'session.error': { sessionId: string; error: string; details?: unknown };
   'session.errorClear': { sessionId: string };
   /**
+   * A durable message_delivery job for the session SETTLED SUCCESSFULLY (the
+   * job row transitioned `processing` → `completed` — not parked, not retried).
+   * The terminal failure counterpart is the dead-letter settlement's
+   * `session.error` (published with no `details`). Emitted from the job
+   * processor's `onComplete` lane hook; TaskAgentManager uses it to complete a
+   * workflow node whose post-error idle was suppressed while the delivery job
+   * was still retrying (task #944).
+   */
+  'session.delivery_settled': { sessionId: string; messageUuid: string };
+  /**
+   * A durable message_delivery job for the session DEAD-LETTERED (exhausted
+   * its retry budget, or was forced dead via DeadLetterImmediatelyError).
+   * Published for EVERY dead delivery — unlike the settlement's
+   * `session.error`, which is gated to `space_inject`-origin turn kickoffs.
+   * The `role` field lets consumers decide terminality: a dead TURN is the
+   * node's failed kickoff; a dead STEER is a failed mid-turn handoff that must
+   * not fail a node whose kickoff succeeded. Emitted from the processor's
+   * `onDead` lane hook (task #944).
+   */
+  'session.delivery_failed': {
+    sessionId: string;
+    messageUuid: string;
+    origin?: string;
+    role?: string;
+  };
+  /**
    * A session has paused after rate/usage-limit exhaustion with no fallback
    * left (chain exhausted). Listeners (e.g. the Space runtime) surface a paused
    * task status with a resume-at timestamp. Emitted by RateLimitWatchdog.

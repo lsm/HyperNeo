@@ -574,3 +574,33 @@ after the lock closes, so the widened delivery feeds drop the queued/retrying
 badge immediately instead of staying stuck until an unrelated write or reconnect.
 `message_delivery` jobs' payloads carry `sessionId`, which the processor derives
 into the change scope.
+
+## 18. Space node-completion contract (task #944)
+
+A workflow node-agent sub-session's terminal outcome keys off the JOB ROW, not
+the `session.error` broadcast. `session.error` is unsuitable as a terminal
+signal for Space: ErrorManager throttles it (3 identical per 10s — a fast-fail
+retry loop goes silent on the 4th attempt) and unrelated subsystems can fire a
+recoverable one mid-turn while the turn still succeeds.
+
+The contract (`TaskAgentManager.registerCompletionCallback`):
+
+- **Recoverable `session.error`** (`details.recoverable === true`, v2 on) does
+  not block the node. The classification is advisory: even a misclassification
+  (ErrorManager's taxonomy has diverged from delivery's — auth is
+  delivery-terminal despite `recoverable === true`) only delays the block until
+  the immediate dead-letter; `session.delivery_failed` then blocks the node.
+- **Idle while a delivery job is active** (`jobQueue.activeDeliveryMessageUuids`
+  non-empty) is not a completion. A failed turn idles BEFORE the job's
+  throw→backoff lands; a successful turn idles just before the job row
+  completes. Suppressed on both sides of that race.
+- **`session.delivery_settled`** (processor `onComplete` lane hook — job row
+  `processing`→`completed`, parks excluded) completes the node when nothing
+  else is in flight. This repays the suppressed idle after a successful retry,
+  and completes a successful turn that carried an unrelated recoverable error.
+- **`session.delivery_failed`** (processor `onDead` lane hook — published for
+  EVERY dead delivery, unlike the settlement's origin-gated `session.error`)
+  blocks the node when `role === 'turn'`. This covers recovery-origin
+  re-enqueued kickoffs that dead-letter with no `session.error` at all. Steers
+  never block: a failed mid-turn handoff must not fail a node whose kickoff
+  succeeded.
