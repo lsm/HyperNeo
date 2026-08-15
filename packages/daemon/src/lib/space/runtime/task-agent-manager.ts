@@ -5590,11 +5590,18 @@ export class TaskAgentManager {
           const live = this.subSessions.get(taskId);
           if (!live) return false;
           try {
+            // ACTOR-REGISTRY PARITY: a workflow worker is active only when
+            // its execution is in_progress or waiting_rebind — a retained
+            // session on a completed execution must NOT count (the resolver
+            // would deliver the role only to the truly active holder).
             return this.config.nodeExecutionRepo
               .listByWorkflowRun(workflowRunId)
               .some(
                 (e) =>
-                  e.workflowNodeId === nodeId && !!e.agentSessionId && live.has(e.agentSessionId)
+                  e.workflowNodeId === nodeId &&
+                  (e.status === 'in_progress' || e.status === 'waiting_rebind') &&
+                  !!e.agentSessionId &&
+                  live.has(e.agentSessionId)
               );
           } catch {
             return false;
