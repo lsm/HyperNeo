@@ -190,6 +190,25 @@ describe('SpaceWorkflowRepository — corrupt hook columns', () => {
     expect(wf?.hookBindings).toBeUndefined();
   });
 
+  test('an unrecognizable legacy hooks column stays fail-closed (round 86)', () => {
+    // Malformed JSON / non-array / shapeless-nonempty ([{}]) legacy columns
+    // must NOT load as "no legacy hooks" (the run would go ungated) — they
+    // surface a synthetic unsatisfiable legacy entry so the run guard fires.
+    repo.createWorkflow({ spaceId, name: 'WF', nodes: [{ name: 'Only', agentId: 'a1' }] });
+    db.exec(`ALTER TABLE space_workflows ADD COLUMN hooks TEXT`);
+    for (const bad of ['{"not":"an array"', '{}', '[{}]']) {
+      db.prepare(`UPDATE space_workflows SET hooks = ? WHERE id = ?`).run(
+        bad,
+        db.prepare('SELECT id FROM space_workflows LIMIT 1').get()?.id
+      );
+      const wf = repo.getWorkflow(
+        db.prepare('SELECT id FROM space_workflows LIMIT 1').get()?.id as string
+      );
+      const hooks = (wf as { hooks?: unknown[] }).hooks;
+      expect(Array.isArray(hooks) && hooks.length > 0).toBe(true);
+    }
+  });
+
   test('valid bindings still round-trip unchanged', () => {
     const wf = repo.createWorkflow({
       spaceId,

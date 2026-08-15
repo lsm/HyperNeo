@@ -29,8 +29,18 @@ describe('Migration 194 deferred hooks drop', () => {
     ).run();
     db.prepare(
       `INSERT INTO space_workflows (id, space_id, name, hooks, hook_bindings, created_at, updated_at)
-       VALUES ('wf-1', 'sp-1', 'W', '[{"id":"pr_ready"}]', '[{"hookId":"pr_ready"}]', 1, 1)`
-    ).run();
+       VALUES ('wf-1', 'sp-1', 'W', '[{"id":"pr_ready"}]', ?, 1, 1)`
+    ).run(
+      JSON.stringify([
+        {
+          hookId: 'pr_ready',
+          sourceNode: 'W',
+          method: 'send_message',
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'W' }],
+        },
+      ])
+    );
     db.prepare(
       `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, definition_version, created_at, updated_at)
        VALUES ('run-1', 'sp-1', 'wf-1', 'R', 'in_progress', NULL, 1, 1)`
@@ -228,6 +238,25 @@ describe('Migration 194 deferred hooks drop', () => {
     }
   });
 
+  test('a shape-valid binding missing required fields defers the drop (round 86)', () => {
+    // hookId matches the legacy id but the binding lacks sourceNode/method/
+    // enabled/callers — the repository decodes it as CORRUPT, so dropping
+    // the legacy column would strand the workflow fail-closed with no
+    // recoverable definitions. The migration must defer.
+    const db = makeLegacyDb();
+    try {
+      db.prepare(`UPDATE space_workflows SET hook_bindings = ? WHERE id = 'wf-1'`).run(
+        '[{"hookId":"pr_ready"}]'
+      );
+      db.prepare(`UPDATE space_workflow_runs SET status = 'done' WHERE id = 'run-1'`).run();
+      const result = runMigration197(db);
+      expect(result).toBe(false);
+      expect(hasHooksColumn(db)).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
   test('legacy hooks WITHOUT v2 bindings block the drop even with no runs (restamp window)', () => {
     // The v2 bindings for existing built-ins are installed by the LATER
     // fire-and-forget startup restamp; dropping the column during DB
@@ -242,9 +271,17 @@ describe('Migration 194 deferred hooks drop', () => {
       runMigration197(db);
       expect(hasHooksColumn(db)).toBe(true);
       // The restamp converges (bindings populated): the drop completes.
-      db.prepare(
-        `UPDATE space_workflows SET hook_bindings = '[{"hookId":"pr_ready"}]' WHERE id = 'wf-1'`
-      ).run();
+      db.prepare(`UPDATE space_workflows SET hook_bindings = ? WHERE id = 'wf-1'`).run(
+        JSON.stringify([
+          {
+            hookId: 'pr_ready',
+            sourceNode: 'W',
+            method: 'send_message',
+            enabled: true,
+            authorizedCallers: [{ sourceNode: 'W' }],
+          },
+        ])
+      );
       runMigration197(db);
       expect(hasHooksColumn(db)).toBe(false);
     } finally {
@@ -262,9 +299,17 @@ describe('Migration 194 deferred hooks drop', () => {
       db.prepare(`UPDATE space_workflows SET hook_bindings = '[]' WHERE id = 'wf-1'`).run();
       runMigration197(db);
       expect(hasHooksColumn(db)).toBe(true);
-      db.prepare(
-        `UPDATE space_workflows SET hook_bindings = '[{"hookId":"pr_ready"}]' WHERE id = 'wf-1'`
-      ).run();
+      db.prepare(`UPDATE space_workflows SET hook_bindings = ? WHERE id = 'wf-1'`).run(
+        JSON.stringify([
+          {
+            hookId: 'pr_ready',
+            sourceNode: 'W',
+            method: 'send_message',
+            enabled: true,
+            authorizedCallers: [{ sourceNode: 'W' }],
+          },
+        ])
+      );
       runMigration197(db);
       expect(hasHooksColumn(db)).toBe(false);
     } finally {

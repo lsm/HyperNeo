@@ -12645,14 +12645,26 @@ export function migration197Defers(db: BunDatabase): boolean {
       // but THIS path must not throw (an abort here kills daemon startup):
       // validate the parsed shape first and treat malformed rows as
       // unconverted (defer — fail closed, keep the legacy column).
+      // FULL binding validation (the repository decoder's bar): a binding
+      // with the right hookId but a missing sourceNode/method/enabled/
+      // authorizedCallers counts as coverage here yet decodes as CORRUPT in
+      // the repository — the drop would destroy the recoverable legacy
+      // definitions and leave the workflow permanently fail-closed. Malformed
+      // → defer (keep the legacy column).
       const bindingsAreWellFormed =
         Array.isArray(bindingsParsed) &&
+        bindingsParsed.length > 0 &&
         bindingsParsed.every(
           (b) =>
             !!b &&
             typeof b === 'object' &&
             !Array.isArray(b) &&
-            typeof (b as Record<string, unknown>).hookId === 'string'
+            typeof (b as Record<string, unknown>).hookId === 'string' &&
+            typeof (b as Record<string, unknown>).sourceNode === 'string' &&
+            typeof (b as Record<string, unknown>).method === 'string' &&
+            typeof (b as Record<string, unknown>).enabled === 'boolean' &&
+            Array.isArray((b as Record<string, unknown>).authorizedCallers) &&
+            ((b as Record<string, unknown>).authorizedCallers as unknown[]).length > 0
         );
       if (!bindingsAreWellFormed) return true;
       const coverage = legacyHookCoverage(legacyParsed, bindingsParsed as HookBinding[]);

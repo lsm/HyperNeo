@@ -32,6 +32,7 @@ import type {
 } from '@hyperneo/shared';
 import { Logger } from '../../lib/logger';
 import { CORRUPT_HOOK_BINDINGS_HOOK_ID } from '../../lib/space/hook-reserved-ids';
+import { legacyHookIds } from '../../lib/space/legacy-hook-coverage';
 import { ALL_HOOK_METHODS } from '@hyperneo/shared';
 import {
   computeDefinitionVersion,
@@ -421,7 +422,34 @@ function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
   // Legacy pre-v2 hooks (column present only while migration 194 deferred its
   // drop): surface non-empty definitions so task-agent-manager's legacy-hook
   // guard fails the run closed instead of resuming without its gates.
-  const legacyHooks = parseJson<unknown[] | null>(row.hooks ?? null, null);
+  // STRICT decode: a nonempty column that cannot be recognized (malformed
+  // JSON, a non-array value, or a shapeless nonempty array like [{}]) must
+  // NOT load as "no legacy hooks" — the run would construct no engine and
+  // execute ungated while m197 deliberately retains this column as the
+  // fail-closed signal. Route such rows through the corruption marker.
+  const rawHooks = row.hooks ?? null;
+  let legacyHooks: unknown[] | null = null;
+  if (rawHooks !== null && rawHooks !== '' && rawHooks !== '[]') {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rawHooks);
+    } catch {
+      parsed = undefined;
+    }
+    if (Array.isArray(parsed) && parsed.some((entry) => legacyHookIds([entry]).length > 0)) {
+      // A RECOGNIZABLE legacy array carries at least one entry with a
+      // usable gate id (validator.id or instance id).
+      legacyHooks = parsed;
+    }
+    if (legacyHooks === null) {
+      // Undecodable JSON, a non-array value, or a shapeless nonempty array
+      // ([{}] extracts no ids → coverage would read complete and the run
+      // would go ungated): surface a synthetic legacy entry whose id no v2
+      // binding can cover — the legacy guard stays fail-closed until the
+      // column is healed or deliberately cleared.
+      legacyHooks = [{ id: '__unrecognizable_legacy_hooks__' }];
+    }
+  }
   if (legacyHooks && legacyHooks.length > 0) {
     (wf as { hooks?: unknown[] }).hooks = legacyHooks;
   }
