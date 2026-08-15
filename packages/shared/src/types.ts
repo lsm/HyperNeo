@@ -647,12 +647,14 @@ export interface SessionMetadata {
    */
   inputDraftVoiceLastStrippedSeq?: number | null;
   /**
-   * The claim id of the LAST session.mergeVoiceDraftBackup commit. The client
-   * mints one id per queued backup claim and reuses it across retries, so a
-   * merge whose acknowledgement was lost is acknowledged idempotently on
-   * retry instead of rewriting the draft with the transcript-free backup.
+   * Timestamped log of session.mergeVoiceDraftBackup claim ids that COMMITTED.
+   * A LOG (not a single last marker) because two tabs can commit different
+   * backup claims for the same session while either's acknowledgement is in
+   * flight: a single marker lets the second commit evict the first, whose
+   * retry would then take the plain-write branch and overwrite the newer
+   * draft with older transcript-free content. Bounded to the backup TTL.
    */
-  inputDraftVoiceMergeClaim?: { id: string; ts: number } | null;
+  inputDraftVoiceMergeClaimLog?: Array<{ id: string; ts: number }> | null;
   removedOutputs?: string[]; // UUIDs of messages whose tool_result outputs were removed from SDK session file
   resolvedQuestions?: Record<string, ResolvedQuestion>; // Resolved AskUserQuestion responses, keyed by toolUseId
   // Cost tracking: SDK reports cumulative cost per run, but resets on agent restart

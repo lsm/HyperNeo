@@ -678,8 +678,15 @@ export function setupSessionHandlers(
     // Idempotent replay: this claim's merge already COMMITTED but its ack was
     // lost. Rewriting now would take the baseline-null branch (the first
     // commit cleared it) and replace the combined draft with the
-    // transcript-free backup, permanently dropping the voice text.
-    if (claimId && metadata.inputDraftVoiceMergeClaim?.id === claimId) {
+    // transcript-free backup, permanently dropping the voice text. A LOG, not
+    // a single marker: another tab's claim can commit while this claim's ack
+    // is in flight, and a last-only marker would evict it before its retry.
+    const claimLogCutoff = Date.now() - VOICE_APPEND_LOG_TTL_MS;
+    const committedClaims = (metadata.inputDraftVoiceMergeClaimLog ?? []).filter(
+      (entry) =>
+        typeof entry?.id === 'string' && typeof entry?.ts === 'number' && entry.ts > claimLogCutoff
+    );
+    if (claimId && committedClaims.some((entry) => entry.id === claimId)) {
       return { merged: true, value: metadata.inputDraft ?? '' };
     }
     const baseline = metadata.inputDraftVoiceBaseline;
@@ -708,7 +715,12 @@ export function setupSessionHandlers(
     if (claimId) {
       // Record the committed claim AFTER the branches above, so a retry of
       // THIS merge is recognized before any branch can rewrite the draft.
-      metadataUpdate.inputDraftVoiceMergeClaim = { id: claimId, ts: Date.now() };
+      // Appended to the LOG (TTL-pruned, count-capped) so concurrent tabs'
+      // claims never evict each other.
+      metadataUpdate.inputDraftVoiceMergeClaimLog = [
+        ...committedClaims,
+        { id: claimId, ts: Date.now() },
+      ].slice(-20);
     }
     const updates: UpdateSessionRequest = { metadata: metadataUpdate };
     await sessionManager.updateSession(sessionId, updates as Partial<Session>);

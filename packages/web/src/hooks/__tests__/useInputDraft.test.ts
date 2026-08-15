@@ -13,6 +13,7 @@ import { useInputDraft } from '../useInputDraft.ts';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { connectionState } from '../../lib/state.ts';
 import {
+  getClearTombstone,
   getDraftBackup,
   hasClearTombstone,
   markVoiceTranscriptLanded,
@@ -1436,6 +1437,43 @@ describe('useInputDraft', () => {
       // No clear is owed — the landing defers behind the non-empty composer.
       expect(result.current.content).toBe('voice');
       expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(true);
+    });
+
+    it('versions an unversioned owed tombstone with the sequence before stripping', async () => {
+      // The original owe ran offline (no get had happened), so the tombstone
+      // carries no baselineSeq. The reconcile learns the sequence from its
+      // get — and must write it back BEFORE the strip is in flight, or a
+      // strip that commits with a lost ack can never be recognized (the
+      // unversioned retry falls into the no-baseline conditional clear and
+      // deletes the transcript-only draft).
+      saveClearTombstone('session-1');
+      expect(getClearTombstone('session-1')?.baselineSeq).toBeUndefined();
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return {
+            session: {
+              metadata: {
+                inputDraft: 'sent text voice',
+                inputDraftVoiceBaseline: 'sent text',
+                inputDraftVoiceBaselineSeq: 2,
+              },
+            },
+          };
+        }
+        if (method === 'session.stripVoiceBaseline') throw new Error('socket dropped');
+        return {};
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // The strip failed — the tombstone stays owed, now VERSIONED so the
+      // retry recognizes a committed-but-unacked strip.
+      expect(hasClearTombstone('session-1')).toBe(true);
+      expect(getClearTombstone('session-1')?.baselineSeq).toBe(2);
     });
 
     it('recognizes an owed strip that committed with a lost ack (no transcript clear)', async () => {

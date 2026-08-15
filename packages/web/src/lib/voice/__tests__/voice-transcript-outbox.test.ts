@@ -748,11 +748,13 @@ describe('voice transcript outbox', () => {
     ).not.toBeNull();
   });
 
-  it('retireDraftBackupClaim sweeps same-generation siblings, keeps newer generations', () => {
+  it('marks same-generation siblings superseded without deleting them', () => {
     markVoiceTranscriptLanded('s1', 'voice', 'e1'); // generation 1
-    // Two tabs deferred edits for the same landing; the freshest (ours) is
-    // claimed and made durable — the older sibling is SUPERSEDED and must go,
-    // or a later reload would restore its obsolete edits as "freshest".
+    // Two tabs deferred edits for the same landing; ours (the freshest at
+    // claim time) is committed durably. The OLDER sibling's edits are
+    // superseded — a later reload must not restore them — but its KEY is
+    // another still-active tab's only durable copy: deleting it would lose
+    // that tab's draft on a crash. It is skipped on read, not removed.
     localStorage.setItem(
       'hyperneo_voice_transcript_outbox_v1.draft.s1.older-tab',
       JSON.stringify({ content: 'older edits', ts: Date.now() - 1000, generation: 1 })
@@ -760,18 +762,24 @@ describe('voice transcript outbox', () => {
     saveDraftBackup('s1', 'newer edits', 1);
     const claim = peekExpiredDraftBackup('s1');
     expect(claim?.content).toBe('newer edits');
-    // A NEWER landing's backup must survive the sweep.
+    // A NEWER landing's backup and a same-generation write made AFTER the
+    // committed claim are both live state, never superseded.
     localStorage.setItem(
       'hyperneo_voice_transcript_outbox_v1.draft.s1.future-tab',
       JSON.stringify({ content: 'gen 2 edits', ts: Date.now(), generation: 2 })
     );
-    retireDraftBackupClaim(claim?.key ?? '', 1);
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.draft.s1.active-tab',
+      JSON.stringify({ content: 'live edits', ts: Date.now() + 5000, generation: 1 })
+    );
+    retireDraftBackupClaim(claim ?? { key: '', generation: 1, ts: 0 });
+    // The older sibling still EXISTS (its tab may still need it) but is no
+    // longer restorable; the live and newer-generation ones remain claims.
     expect(
       localStorage.getItem('hyperneo_voice_transcript_outbox_v1.draft.s1.older-tab')
-    ).toBeNull();
-    expect(
-      localStorage.getItem('hyperneo_voice_transcript_outbox_v1.draft.s1.future-tab')
     ).not.toBeNull();
+    const next = peekExpiredDraftBackup('s1');
+    expect(next?.content).toBe('live edits');
   });
 
   it('delivers the OLDEST batch when concurrent enqueues exceed the cap', () => {

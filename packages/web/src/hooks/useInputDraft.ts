@@ -277,6 +277,14 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             typeof meta.inputDraftVoiceBaseline === 'string' &&
             typeof meta.inputDraftVoiceBaselineSeq === 'number'
           ) {
+            // Version the tombstone with the sequence BEFORE the strip is in
+            // flight: a tombstone saved without one (the original owe ran
+            // offline, before any get) could never be matched against
+            // inputDraftVoiceLastStrippedSeq if the strip commits but its
+            // acknowledgement is lost — the retry would fall into the
+            // no-baseline conditional clear and delete the transcript-only
+            // draft the strip produced.
+            saveClearTombstone(targetSessionId, meta.inputDraftVoiceBaselineSeq);
             return hub
               .request<{ updated?: boolean; value?: string }>('session.stripVoiceBaseline', {
                 sessionId: targetSessionId,
@@ -406,7 +414,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           // edits are older versions of this same deferral window.
           if (backup !== null) {
             contentSignal.value = backup;
-            if (!landingLive && claimed) retireDraftBackupClaim(claimed.key, claimed.generation);
+            if (!landingLive && claimed) retireDraftBackupClaim(claimed);
           }
           return;
         }
@@ -461,7 +469,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         // The claimed backup's edits (plus transcripts) are now in a composer
         // with saves enabled — retire it AND its same-generation siblings,
         // whose older edits a later reload must not restore over this.
-        else if (claimed) retireDraftBackupClaim(claimed.key, claimed.generation);
+        else if (claimed) retireDraftBackupClaim(claimed);
       }
     );
     return () => {
@@ -602,6 +610,11 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           // `expected` + `expectedSeq` guards keep a NEWER draft (or a
           // baseline a newer sequence replaced) intact. A declined strip just
           // adopts the server draft via a refresh.
+          // Version the tombstone with the sequence BEFORE the strip is in
+          // flight, so a strip that commits with a lost acknowledgement (or
+          // a crash before the catch) is recognized on retry instead of
+          // falling into the no-baseline conditional clear.
+          if (typeof baselineSeq === 'number') saveClearTombstone(sessionId, baselineSeq);
           hub
             .request<{ updated?: boolean; value?: string }>('session.stripVoiceBaseline', {
               sessionId,
@@ -618,9 +631,8 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
               }
             })
             .catch(() => {
-              // The strip may have COMMITTED with a lost ack — record its
-              // sequence so the retry recognizes it as done instead of
-              // clearing the transcript-only draft.
+              // The strip may have COMMITTED with a lost ack — the versioned
+              // tombstone above lets the retry recognize it as done.
               oweClear(baselineSeq ?? undefined);
             });
         },
@@ -658,7 +670,16 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // ref has already advanced — without this retry the expired-landing backups
   // are never pushed and are eventually pruned.
   const pendingBackupFlushRef = useRef<
-    Map<string, { content: string; generation: number; key: string; claimId: string }>
+    Map<
+      string,
+      {
+        content: string;
+        generation: number;
+        key: string;
+        claimId: string;
+        ts: number;
+      }
+    >
   >(new Map());
   // Retry retained backup flushes once the connection is restored. A flush
   // whose session is active again is ADOPTED into an idle composer (its edits
@@ -696,7 +717,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       if (!hub) return; // not actually reachable yet — retry on the next change
       const queued = [...pendingBackupFlushRef.current.entries()];
       pendingBackupFlushRef.current.clear();
-      for (const [flushSessionId, { content, generation, key, claimId }] of queued) {
+      for (const [flushSessionId, { content, generation, key, claimId, ts }] of queued) {
         if (flushSessionId === currentSessionIdRef.current) {
           if (contentSignal.peek().trim() === '') {
             // ADOPT into the idle composer through the daemon-side MERGE: it
@@ -723,6 +744,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                     generation,
                     key,
                     claimId,
+                    ts,
                   });
                   scheduleFlushRetry();
                   return;
@@ -734,7 +756,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                     contentSignal.value = result.value ?? content;
                   }
                 }
-                retireDraftBackupClaim(key, generation);
+                retireDraftBackupClaim({ key, generation, ts });
               })
               .catch(() => {
                 pendingBackupFlushRef.current.set(flushSessionId, {
@@ -742,6 +764,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                   generation,
                   key,
                   claimId,
+                  ts,
                 });
                 scheduleFlushRetry();
               });
@@ -763,7 +786,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           })
           .then((result) => {
             if (result.merged) {
-              retireDraftBackupClaim(key, generation);
+              retireDraftBackupClaim({ key, generation, ts });
               return;
             }
             // Declined (a newer sequence is unresolved — the draft diverged
@@ -774,6 +797,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
               generation,
               key,
               claimId,
+              ts,
             });
             scheduleFlushRetry();
           })
@@ -783,6 +807,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
               generation,
               key,
               claimId,
+              ts,
             });
             scheduleFlushRetry();
           });
@@ -852,6 +877,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             generation: claimed.generation,
             key: claimed.key,
             claimId: flushClaimId ?? generateUUID(),
+            ts: claimed.ts,
           });
         }
       };
@@ -896,7 +922,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             // retired (with its same-generation siblings) by the exact key
             // and generation it held. A declined merge (newer sequence
             // unresolved) is requeued for retry.
-            if (result.merged) retireDraftBackupClaim(claimed.key, claimed.generation);
+            if (result.merged) retireDraftBackupClaim(claimed);
             else queueRetry();
           })
           .catch(() => {

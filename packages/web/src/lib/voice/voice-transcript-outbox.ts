@@ -313,16 +313,43 @@ export interface DraftBackupClaim {
   key: string;
   content: string;
   generation: number;
+  ts: number;
+}
+
+// A committed backup reconciliation: the freshest claim of `generation` was
+// durably persisted (server merge or composer fold), so same-generation
+// backups written BEFORE this timestamp are SUPERSEDED — their edits lost the
+// last-writer-wins race and must not be restored later. Same-generation
+// backups written AFTER it are a still-active tab's newer edits and survive.
+// Superseded keys are SKIPPED on read (not deleted — deleting would cross the
+// tab-ownership boundary and could destroy a live tab's only durable copy);
+// the TTL prunes them.
+const SUPERSEDED_PREFIX = 'hyperneo_voice_transcript_outbox_v1.superseded.';
+
+function readSuperseded(sessionId: string): { generation: number; beforeTs: number } | null {
+  try {
+    const parsed = JSON.parse(
+      localStorage.getItem(`${SUPERSEDED_PREFIX}${sessionId}`) ?? 'null'
+    ) as { generation?: unknown; beforeTs?: unknown } | null;
+    if (parsed && typeof parsed.generation === 'number' && typeof parsed.beforeTs === 'number') {
+      return { generation: parsed.generation, beforeTs: parsed.beforeTs };
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /**
  * Scan every TAB-OWNED backup key for `sessionId` and return the FRESHEST
- * in-TTL claim (the delimiter terminates the session id, so `s1` never matches
- * `s10`'s keys). null when none exists. Does NOT remove anything — the caller
- * retires the exact `key` once the content is durably persisted or folded.
+ * in-TTL, not-yet-superseded claim (the delimiter terminates the session id,
+ * so `s1` never matches `s10`'s keys). null when none exists. Does NOT remove
+ * anything — the caller retires the exact `key` once the content is durably
+ * persisted or folded.
  */
 function freshestDraftBackup(sessionId: string): DraftBackupClaim | null {
-  let freshest: (DraftBackupClaim & { ts: number }) | null = null;
+  let freshest: DraftBackupClaim | null = null;
+  const superseded = readSuperseded(sessionId);
   try {
     const staleKeys: string[] = [];
     const prefix = `${DRAFT_BACKUP_PREFIX}${sessionId}.`;
@@ -340,13 +367,16 @@ function freshestDraftBackup(sessionId: string): DraftBackupClaim | null {
         staleKeys.push(key);
         continue;
       }
+      const generation = typeof parsed.generation === 'number' ? parsed.generation : 0;
+      if (
+        superseded &&
+        (generation < superseded.generation ||
+          (generation === superseded.generation && ts <= superseded.beforeTs))
+      ) {
+        continue; // superseded by a committed reconciliation — never restorable
+      }
       if (!freshest || ts >= freshest.ts) {
-        freshest = {
-          key,
-          content: parsed.content,
-          generation: typeof parsed.generation === 'number' ? parsed.generation : 0,
-          ts,
-        };
+        freshest = { key, content: parsed.content, generation, ts };
       }
     }
     for (const key of staleKeys) localStorage.removeItem(key);
@@ -448,31 +478,32 @@ export function removeDraftBackupKey(key: string, generation?: number): void {
 
 /**
  * Retire a claimed backup whose content just became durable (persisted to the
- * server draft, or folded into a composer with saves enabled) AND sweep the
- * SUPERSEDED siblings: other tabs' backups of the SAME landing generation,
- * which are by construction older edits of the same deferral window. Without
- * the sweep, the freshest claim retires and a later reload restores the
- * stalest remaining sibling as "freshest", overwriting the newer server draft
- * with obsolete edits. A sibling a still-deferring tab rewrites AFTER this
- * sweep carries a newer timestamp and survives.
+ * server draft, or folded into a composer with saves enabled) and record the
+ * SUPERSEDE point: same-generation backups written at or before the claim's
+ * timestamp are older edits of the same deferral window and must never be
+ * restored over the committed content. The superseded keys themselves are NOT
+ * deleted — equal generations do not mean identical content (both tabs can
+ * edit independently), and deleting another still-active tab's only durable
+ * copy while it suppresses server saves would lose that tab's draft on a
+ * crash. Instead they are skipped by future claim scans; the TTL prunes them.
  */
-export function retireDraftBackupClaim(key: string, generation: number): void {
-  removeDraftBackupKey(key, generation);
+export function retireDraftBackupClaim(claim: {
+  key: string;
+  generation: number;
+  ts: number;
+}): void {
+  removeDraftBackupKey(claim.key, claim.generation);
   try {
-    const sessionId = key.slice(DRAFT_BACKUP_PREFIX.length, key.lastIndexOf('.'));
-    const prefix = `${DRAFT_BACKUP_PREFIX}${sessionId}.`;
-    const supersededKeys: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const sibling = localStorage.key(i);
-      if (!sibling || !sibling.startsWith(prefix) || sibling === key) continue;
-      const parsed = JSON.parse(localStorage.getItem(sibling) ?? 'null') as {
-        generation?: number;
-      } | null;
-      if (parsed?.generation === generation) supersededKeys.push(sibling);
-    }
-    for (const sibling of supersededKeys) localStorage.removeItem(sibling);
+    const sessionId = claim.key.slice(DRAFT_BACKUP_PREFIX.length, claim.key.lastIndexOf('.'));
+    // The marker only ever moves FORWARD: claims are freshest-at-their-time,
+    // so a later retire has a newer timestamp for an equal-or-greater
+    // generation and overwriting keeps the strongest supersede point.
+    localStorage.setItem(
+      `${SUPERSEDED_PREFIX}${sessionId}`,
+      JSON.stringify({ generation: claim.generation, beforeTs: claim.ts })
+    );
   } catch {
-    /* sweep best-effort — the claimed key itself is already retired */
+    /* marker best-effort — the claimed key itself is already retired */
   }
 }
 
@@ -537,9 +568,7 @@ export function removeClearTombstone(sessionId: string): void {
   }
 }
 
-export function peekExpiredDraftBackup(
-  sessionId: string
-): { key: string; content: string; generation: number } | null {
+export function peekExpiredDraftBackup(sessionId: string): DraftBackupClaim | null {
   return freshestDraftBackup(sessionId);
 }
 
@@ -674,16 +703,22 @@ function pruneExpired(): void {
   // Drop expired draft backups proactively — a backup whose session is never
   // reopened would otherwise linger past its TTL with nothing to prune it.
   // Same collect-then-remove discipline as the marker scan. Clear tombstones
-  // follow the same TTL.
+  // and supersede markers follow the same TTL (their timestamps are wall
+  // clocks too).
   try {
     const staleBackupKeys: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       const isBackup = key?.startsWith(DRAFT_BACKUP_PREFIX);
       const isTombstone = key?.startsWith(CLEAR_TOMBSTONE_PREFIX);
-      if (!key || (!isBackup && !isTombstone)) continue;
-      const parsed = JSON.parse(localStorage.getItem(key) ?? 'null') as { ts?: number } | null;
-      if (parsed && now - (parsed.ts ?? 0) >= DRAFT_BACKUP_TTL_MS) staleBackupKeys.push(key);
+      const isSuperseded = key?.startsWith(SUPERSEDED_PREFIX);
+      if (!key || (!isBackup && !isTombstone && !isSuperseded)) continue;
+      const parsed = JSON.parse(localStorage.getItem(key) ?? 'null') as {
+        ts?: number;
+        beforeTs?: number;
+      } | null;
+      const stamp = parsed?.ts ?? parsed?.beforeTs ?? 0;
+      if (parsed && now - stamp >= DRAFT_BACKUP_TTL_MS) staleBackupKeys.push(key);
     }
     for (const key of staleBackupKeys) localStorage.removeItem(key);
   } catch {

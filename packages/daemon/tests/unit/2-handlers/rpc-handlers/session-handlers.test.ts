@@ -783,7 +783,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
   let existingDraft: string | null;
   let existingBaseline: string | null | undefined;
   let existingBaselineSeq: number | null | undefined;
-  let existingMergeClaim: { id: string; ts: number } | null;
+  let existingMergeClaimLog: Array<{ id: string; ts: number }> | null;
   let sessionExists: boolean;
 
   beforeEach(async () => {
@@ -794,7 +794,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     existingDraft = null;
     existingBaseline = undefined;
     existingBaselineSeq = undefined;
-    existingMergeClaim = null;
+    existingMergeClaimLog = null;
     sessionExists = true;
     sessionManager = {
       getSessionFromDB: mock(() =>
@@ -807,7 +807,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
                 inputDraftVoiceBaseline: existingBaseline,
                 inputDraftVoiceBaselineSeq: existingBaselineSeq,
                 inputDraftVoiceAppendLog: existingAppendLog,
-                inputDraftVoiceMergeClaim: existingMergeClaim,
+                inputDraftVoiceMergeClaimLog: existingMergeClaimLog,
               },
             }
           : null
@@ -1182,13 +1182,45 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     existingBaseline = 'old';
     existingBaselineSeq = 1;
     existingDraft = 'old voice';
-    existingMergeClaim = { id: 'claim-1', ts: Date.now() };
+    existingMergeClaimLog = [{ id: 'claim-1', ts: Date.now() }];
     const result = (await handler!(
       { sessionId: 's1', content: 'user edits', claimId: 'claim-1' },
       {}
     )) as { merged: boolean; value: string };
     expect(result).toEqual({ merged: true, value: 'old voice' });
     expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('retains every live claim across concurrent commits (merge claim LOG)', async () => {
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    // Tab A's claim committed but its ack is in flight when tab B's claim
+    // commits. A single last-marker would evict A, whose retry would then
+    // take the plain-write branch and overwrite B's newer draft with A's
+    // older transcript-free content — the LOG keeps both recognizable.
+    existingPending = null;
+    existingBaseline = 'old';
+    existingBaselineSeq = 1;
+    existingDraft = 'old voice';
+    existingMergeClaimLog = [{ id: 'claim-a', ts: Date.now() }];
+    const result = (await handler!(
+      { sessionId: 's1', content: 'tab b edits', claimId: 'claim-b' },
+      {}
+    )) as { merged: boolean };
+    expect(result.merged).toBe(true);
+    const write = sessionManager.updateSession.mock.calls[0][1] as {
+      metadata: Record<string, unknown>;
+    };
+    expect(write.metadata.inputDraftVoiceMergeClaimLog.map((e: { id: string }) => e.id)).toEqual([
+      'claim-a',
+      'claim-b',
+    ]);
+    // Tab A's retry (ack lost after B committed) is still acknowledged from
+    // the log without rewriting B's draft.
+    const replay = (await handler!(
+      { sessionId: 's1', content: 'tab a edits', claimId: 'claim-a' },
+      {}
+    )) as { merged: boolean; value: string };
+    expect(replay.merged).toBe(true);
   });
 
   it('records the committed claim id alongside the merged draft', async () => {
@@ -1202,10 +1234,9 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
       metadata: Record<string, unknown>;
     };
     expect(write.metadata.inputDraft).toBe('user edits voice');
-    expect(write.metadata.inputDraftVoiceMergeClaim).toEqual({
-      id: 'claim-2',
-      ts: expect.any(Number),
-    });
+    expect(write.metadata.inputDraftVoiceMergeClaimLog).toEqual([
+      { id: 'claim-2', ts: expect.any(Number) },
+    ]);
   });
 });
 
