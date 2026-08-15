@@ -21,6 +21,7 @@ import {
   enqueueTranscript,
   flushPendingTranscripts,
   getDraftBackup,
+  getLandingTranscript,
   getPendingTranscripts,
   isLandingLive,
   markVoiceTranscriptLanded,
@@ -211,7 +212,7 @@ describe('voice transcript outbox', () => {
   it('cleans up stale landed markers even when the live queue is under the cap', () => {
     localStorage.setItem(
       'hyperneo_voice_transcript_outbox_v1.entry.landed.stale',
-      String(Date.now() - 25 * 60 * 60 * 1000)
+      JSON.stringify({ v: 1, ts: Date.now() - 25 * 60 * 60 * 1000, n: 1, text: 'old' })
     );
     enqueueTranscript('s1', 'one'); // under the cap — marker cleanup still runs
     expect(
@@ -293,21 +294,37 @@ describe('voice transcript outbox', () => {
     expect(
       localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1')
     ).not.toBeNull();
+    // The retained marker must NOT read as live in the CONSUMING tab — or the
+    // save-suppression it lifted would re-engage and disable server-side draft
+    // durability until the marker's TTL expires.
+    expect(isLandingLive('s1')).toBe(false);
+  });
+
+  it('treats a NEWER marker as live again after an earlier one was consumed', () => {
+    markVoiceTranscriptLanded('s1');
+    consumeVoiceTranscriptLanded('s1', 1);
+    expect(isLandingLive('s1')).toBe(false);
+    // A second landing (same tab here; another tab in production rewrites the
+    // marker with a fresh counter) is a NEW landing — live again.
+    markVoiceTranscriptLanded('s1');
+    expect(isLandingLive('s1')).toBe(true);
   });
 
   it('retires the backup for the consumed landing generation, not a newer one', () => {
-    // A NEWER-generation backup survives a stale consume.
-    markVoiceTranscriptLanded('s1');
+    const draftKey = 'hyperneo_voice_transcript_outbox_v1.draft.s1';
+    // A NEWER-generation backup survives a stale (mismatched-generation) consume.
+    markVoiceTranscriptLanded('s1'); // generation 1
+    markVoiceTranscriptLanded('s1'); // generation 2
     saveDraftBackup('s1', 'newer edit', 2);
     consumeVoiceTranscriptLanded('s1', 1);
-    expect(getDraftBackup('s1')).toBe('newer edit');
+    expect(JSON.parse(localStorage.getItem(draftKey) ?? '{}').content).toBe('newer edit');
+    expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(true);
 
     // The matching-generation backup is retired on reconcile — a reload must
     // show the freshly-merged transcript, not text the user sent/cleared.
-    markVoiceTranscriptLanded('s1');
-    saveDraftBackup('s1', 'gen1 edit', 1);
-    consumeVoiceTranscriptLanded('s1', 1);
-    expect(getDraftBackup('s1')).toBeNull();
+    saveDraftBackup('s1', 'gen2 edit', 2);
+    consumeVoiceTranscriptLanded('s1', 2);
+    expect(localStorage.getItem(draftKey)).toBeNull();
   });
 
   it('does not restore a draft backup whose landing has expired', () => {
@@ -326,7 +343,7 @@ describe('voice transcript outbox', () => {
   it('treats a landing as dead when only an expired marker remains', () => {
     localStorage.setItem(
       'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
-      `${Date.now() - 25 * 60 * 60 * 1000}.1`
+      JSON.stringify({ v: 1, ts: Date.now() - 25 * 60 * 60 * 1000, n: 1, text: 'old' })
     );
     expect(isLandingLive('s1')).toBe(false);
   });
@@ -364,13 +381,35 @@ describe('voice transcript outbox', () => {
     // A same-value write would not emit a storage event in other tabs, which
     // would then never learn of the second landing.
     expect(first).not.toBe(second);
-    expect(first).toMatch(/\d+\.\d+/);
+    // The marker is JSON carrying the landing's timestamp, monotonic counter,
+    // and the transcript text (needed by backup reconciliation). The counter
+    // is module-global, so assert the RELATIVE bump rather than absolute n.
+    const firstParsed = JSON.parse(first ?? '{}') as { ts?: number; n?: number };
+    const secondParsed = JSON.parse(second ?? '{}') as { ts?: number; n?: number };
+    expect(secondParsed.n).toBe((firstParsed.n ?? 0) + 1);
+    expect(typeof firstParsed.ts).toBe('number');
+  });
+
+  it('carries the transcript text in the landed marker for reconciliation', () => {
+    markVoiceTranscriptLanded('s1', 'the transcript');
+    // The consuming/reloading tab learns WHICH part of the merged server draft
+    // is the transcript.
+    expect(getLandingTranscript('s1')).toBe('the transcript');
+    consumeVoiceTranscriptLanded('s1', 1);
+    // The marker survives consumption; its text stays recoverable for the
+    // reconcile paths that run after the landing is settled (cross-tab text
+    // recovery from the marker alone is covered by the hydration test).
+    expect(getLandingTranscript('s1')).toBe('the transcript');
   });
 
   it('hydrates existing landed markers into the signal at startup', () => {
-    localStorage.setItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s9', String(Date.now()));
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.s9',
+      JSON.stringify({ v: 1, ts: Date.now(), n: 1, text: 'hello' })
+    );
     startVoiceTranscriptOutboxFlush();
     expect(voiceTranscriptLandedSignal.value.has('s9')).toBe(true);
+    expect(getLandingTranscript('s9')).toBe('hello');
     stopVoiceTranscriptOutboxFlush();
   });
 
@@ -426,28 +465,28 @@ describe('voice transcript outbox', () => {
     window.dispatchEvent(
       new StorageEvent('storage', {
         key: 'hyperneo_voice_transcript_outbox_v1.entry.landed.s3',
-        newValue: String(Date.now()),
+        newValue: JSON.stringify({ v: 1, ts: Date.now(), n: 1, text: 'cross-tab' }),
       })
     );
     expect(voiceTranscriptLandedSignal.value.has('s3')).toBe(true);
+    expect(getLandingTranscript('s3')).toBe('cross-tab');
     stopVoiceTranscriptOutboxFlush();
   });
 
   it('does not re-write the landed marker when handling a cross-tab storage event', () => {
     // A storage event for a landed marker must update only the local signal —
     // re-persisting the marker would fire another event in the writer and loop.
-    localStorage.setItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s4', '12345');
+    const raw = JSON.stringify({ v: 1, ts: 12345, n: 1, text: 'x' });
+    localStorage.setItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s4', raw);
     startVoiceTranscriptOutboxFlush();
     window.dispatchEvent(
       new StorageEvent('storage', {
         key: 'hyperneo_voice_transcript_outbox_v1.entry.landed.s4',
-        newValue: '12345',
+        newValue: raw,
       })
     );
     expect(voiceTranscriptLandedSignal.value.has('s4')).toBe(true);
-    expect(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s4')).toBe(
-      '12345'
-    );
+    expect(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s4')).toBe(raw);
     stopVoiceTranscriptOutboxFlush();
   });
 
