@@ -137,6 +137,39 @@ describe('SpaceWorkflowManager — corrupt-marker laundering', () => {
   });
 });
 
+describe('legacyHookIds — validator-id derivation (round 82)', () => {
+  test('the VALIDATOR id is the gate identity, not the legacy instance id', async () => {
+    const { legacyHookIds, legacyHookCoverage } = await import(
+      '../../../../src/lib/space/legacy-hook-coverage.ts'
+    );
+    // The pre-cutover Coding shape: instance id 'code-pr-ready', validator
+    // id 'pr_ready' — coverage must key on the validator id (what the v2
+    // binding recreates).
+    const legacy = [{ id: 'code-pr-ready', validator: { id: 'pr_ready' } }];
+    expect(legacyHookIds(legacy)).toEqual(['pr_ready']);
+    expect(
+      legacyHookCoverage(legacy, [
+        { hookId: 'pr_ready', sourceNode: 'C', method: 'send_message', order: 0, enabled: true },
+      ]).complete
+    ).toBe(true);
+    expect(
+      legacyHookCoverage(legacy, [
+        {
+          hookId: 'code-pr-ready',
+          sourceNode: 'C',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+        },
+      ]).complete
+    ).toBe(false);
+    // Legacy script hooks (no validator): the instance id IS the identity.
+    expect(legacyHookIds([{ id: 'my_script_hook' }])).toEqual(['my_script_hook']);
+    // String validator form tolerated.
+    expect(legacyHookIds([{ id: 'x', validator: 'pr_ready' }])).toEqual(['pr_ready']);
+  });
+});
+
 describe('SpaceWorkflowManager — legacy migration completeness (round 81)', () => {
   let db: InstanceType<typeof import('../../../../src/storage/sqlite-compat').Database>;
   let manager: InstanceType<
@@ -196,6 +229,27 @@ describe('SpaceWorkflowManager — legacy migration completeness (round 81)', ()
       hooks: string;
     };
     expect(raw.hooks).toContain('review_posted');
+  });
+
+  test('a REPLACEMENT binding list must itself cover the legacy ids (round 82)', () => {
+    // hookBindings replaces wholesale: an update supplying only hook B while
+    // the row's existing bindings covered hook A must REFUSE — the union
+    // check previously passed and the update dropped A from both
+    // representations.
+    const id = seedLegacyWorkflow();
+    // Pre-existing complete coverage.
+    manager.updateWorkflow(id, {
+      hookBindings: [bindingFor('pr_ready'), bindingFor('review_posted')],
+    });
+    // The legacy column was cleared by that update; re-arm it to exercise
+    // the replacement path.
+    db.prepare(`UPDATE space_workflows SET hooks = ? WHERE id = ?`).run(
+      '[{"id":"pr_ready"},{"id":"review_posted"}]',
+      id
+    );
+    expect(() =>
+      manager.updateWorkflow(id, { hookBindings: [bindingFor('review_posted')] })
+    ).toThrow(/missing v2 bindings for: pr_ready/);
   });
 
   test('complete coverage clears the legacy column in the SAME update', () => {

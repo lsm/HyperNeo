@@ -211,6 +211,23 @@ describe('Migration 194 deferred hooks drop', () => {
     }
   });
 
+  test('malformed hook_bindings JSON defers (does not abort startup)', () => {
+    const db = makeLegacyDb();
+    try {
+      db.prepare(`UPDATE space_workflows SET hook_bindings = ? WHERE id = 'wf-1'`).run('{}');
+      db.prepare(`UPDATE space_workflow_runs SET status = 'done' WHERE id = 'run-1'`).run();
+      // A shapeless parsed value must defer (legacy column kept), not throw
+      // out of migration197Defers and kill daemon startup.
+      expect(() => {
+        const result = runMigration197(db);
+        expect(result).toBe(false);
+      }).not.toThrow();
+      expect(hasHooksColumn(db)).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
   test('legacy hooks WITHOUT v2 bindings block the drop even with no runs (restamp window)', () => {
     // The v2 bindings for existing built-ins are installed by the LATER
     // fire-and-forget startup restamp; dropping the column during DB

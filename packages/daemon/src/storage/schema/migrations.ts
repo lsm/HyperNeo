@@ -12641,6 +12641,20 @@ export function migration197Defers(db: BunDatabase): boolean {
       } catch {
         return true; // undecodable → defer (fail closed)
       }
+      // The repository decoder handles malformed hook columns fail-closed,
+      // but THIS path must not throw (an abort here kills daemon startup):
+      // validate the parsed shape first and treat malformed rows as
+      // unconverted (defer — fail closed, keep the legacy column).
+      const bindingsAreWellFormed =
+        Array.isArray(bindingsParsed) &&
+        bindingsParsed.every(
+          (b) =>
+            !!b &&
+            typeof b === 'object' &&
+            !Array.isArray(b) &&
+            typeof (b as Record<string, unknown>).hookId === 'string'
+        );
+      if (!bindingsAreWellFormed) return true;
       const coverage = legacyHookCoverage(legacyParsed, bindingsParsed as HookBinding[]);
       if (!coverage.complete) return true;
     }

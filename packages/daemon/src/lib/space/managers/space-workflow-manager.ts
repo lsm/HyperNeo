@@ -469,10 +469,11 @@ export class SpaceWorkflowManager {
       Array.isArray(existingLegacyHooks) &&
       existingLegacyHooks.length > 0
     ) {
-      const coverage = legacyHookCoverage(existingLegacyHooks, [
-        ...(existing.hookBindings ?? []),
-        ...params.hookBindings,
-      ]);
+      // hookBindings has REPLACEMENT semantics — the update persists
+      // params.hookBindings ALONE. Validating a union with the existing
+      // bindings would report complete coverage while the replacement
+      // actually drops a legacy gate (leaving it in neither representation).
+      const coverage = legacyHookCoverage(existingLegacyHooks, params.hookBindings);
       if (!coverage.complete) {
         throw new WorkflowValidationError(
           `hookBindings: this workflow still carries legacy hooks that must ALL be recreated ` +
