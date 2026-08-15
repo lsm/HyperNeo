@@ -3930,7 +3930,18 @@ export class TaskAgentManager {
           }
           if (outcome !== 'completed') {
             // No durable settlement yet — delivery may still be in flight.
-            if (this.hasActiveDeliveryJob(subSessionId)) scheduleReconcile();
+            if (this.hasActiveDeliveryJob(subSessionId)) {
+              scheduleReconcile();
+              return;
+            }
+            // Stamped kickoff, no settlement row, nothing in flight: the
+            // daemon exited between the execution update (stamp) and the
+            // inject's enqueue. No settlement or idle event can ever arrive —
+            // block so the runtime's blocked-execution re-spawn machinery
+            // re-activates the node with a fresh kickoff. (Task #944 review.)
+            fireTerminalError(
+              'Task-agent kickoff delivery was lost before enqueue (daemon crash during activation); execution blocked for re-spawn.'
+            );
             return;
           }
           completeFromDeliveryState();
@@ -4069,6 +4080,29 @@ export class TaskAgentManager {
           this.hasProcessingDeliveryJob(subSessionId)
         ) {
           return;
+        }
+
+        // The dead-letter settlement ALSO publishes a uuid-less session.error
+        // for any space_inject turn. When a NON-kickoff turn is the one that
+        // dead-lettered (a flushed peer message that won the arbiter over the
+        // kickoff) and the kickoff itself did not dead-letter, this error is
+        // not the node's failure — decline. (The uuid-aware
+        // session.delivery_failed path already correlates; this covers the
+        // fallback publication.) (Task #944 review.)
+        if (event.details === undefined) {
+          const kickoff = this.kickoffDeliveryOutcome(subSessionId);
+          if (kickoff && kickoff.outcome !== 'dead') {
+            const execution = this.config.nodeExecutionRepo.getByAgentSessionId(subSessionId);
+            const startedAt = execution?.startedAt ?? execution?.createdAt;
+            if (
+              startedAt != null &&
+              this.config.db
+                .getJobQueueRepo()
+                .hasDeadTurnExcept(subSessionId, startedAt, kickoff.kickoffMessageUuid ?? undefined)
+            ) {
+              return;
+            }
+          }
         }
 
         fireTerminalError(event.error);

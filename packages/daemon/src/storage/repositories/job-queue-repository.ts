@@ -445,6 +445,34 @@ export class JobQueueRepository {
   }
 
   /**
+   * True when the session has a DEAD-LETTERED turn delivery settled since
+   * `sinceMs` whose message uuid is NOT `exceptUuid` — i.e. an unrelated turn
+   * (typically a pending-message flush's peer handoff that won the arbiter
+   * over the kickoff) failed. Used by TaskAgentManager to attribute the
+   * dead-letter settlement's uuid-less `session.error` to the right delivery.
+   * (Task #944 review.)
+   */
+  hasDeadTurnExcept(sessionId: string, sinceMs: number, exceptUuid?: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1 FROM job_queue
+          WHERE queue = 'message_delivery'
+            AND status = 'dead'
+            AND json_extract(payload, '$.role') = 'turn'
+            AND json_extract(payload, '$.sessionId') = ?
+            AND completed_at IS NOT NULL
+            AND completed_at >= ?
+            ${exceptUuid ? "AND json_extract(payload, '$.messageUuid') != ?" : ''}
+          LIMIT 1`
+      )
+      .get(...(exceptUuid ? [sessionId, sinceMs, exceptUuid] : [sessionId, sinceMs])) as
+      | { 1: number }
+      | undefined
+      | null;
+    return row != null;
+  }
+
+  /**
    * The durable terminal outcome of the session's TURN delivery jobs settled
    * at/after `sinceMs` (the current node execution's start): `'dead'` when any
    * dead-lettered (blocks — a lost `session.delivery_failed` publication is
@@ -489,14 +517,46 @@ export class JobQueueRepository {
       ) {
         return 'completed';
       }
-      const consumedSteer = own.some(
+      const consumedSteer = own.find(
         (r) =>
           r.role === 'steer' &&
           r.status === 'completed' &&
           (r.outcome === 'consumed' || r.outcome === 'already_consumed')
       );
       if (consumedSteer) {
-        return this.deliveryTurnOutcomeSince(sessionId, sinceMs);
+        // Scope to the turn that OWNED the steer: the earliest turn terminal
+        // at/after the steer's consumption (the one that was running when it
+        // was fed). A LATER turn's dead row (e.g. an unrelated steer promoted
+        // after completion was suppressed) must not fail an activation whose
+        // kickoff was already consumed successfully.
+        // (Task #944 review.)
+        const steerRow = this.db
+          .prepare(
+            `SELECT completed_at FROM job_queue
+              WHERE queue = 'message_delivery'
+                AND json_extract(payload, '$.messageUuid') = ?
+                AND completed_at IS NOT NULL
+              ORDER BY completed_at ASC LIMIT 1`
+          )
+          .get(messageUuid) as { completed_at: number } | undefined;
+        if (!steerRow) return null;
+        const owner = this.db
+          .prepare(
+            `SELECT status, json_extract(result, '$.outcome') AS outcome
+               FROM job_queue
+              WHERE queue = 'message_delivery'
+                AND json_extract(payload, '$.sessionId') = ?
+                AND json_extract(payload, '$.role') = 'turn'
+                AND completed_at IS NOT NULL
+                AND completed_at >= ?
+              ORDER BY completed_at ASC LIMIT 1`
+          )
+          .get(sessionId, steerRow.completed_at) as
+          | { status: string; outcome: string | null }
+          | undefined;
+        if (!owner) return null;
+        if (owner.status === 'dead') return 'dead';
+        return owner.status === 'completed' && owner.outcome === 'completed' ? 'completed' : null;
       }
       return null;
     }

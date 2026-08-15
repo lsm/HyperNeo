@@ -635,12 +635,18 @@ The contract (`TaskAgentManager.registerCompletionCallback`):
   peer handoff as a `role:'turn'` job before the kickoff is enqueued, and
   that is not the node's work. A kickoff that lost the turn arbiter to such a
   flush is persisted as a `steer`; its consumption counts only when its
-  OWNING turn also terminated (completed → success, dead → block). The stamp
+  OWNING turn — the earliest turn terminal at/after the steer's consumption,
+  not any later turn — also terminated (completed → success, dead → block). The stamp
   is written BEFORE the inject (a pre-generated id passed as the injection's
   explicit message id — the inject awaits SDK consumption, so a post-inject
   stamp would leave a crash window with an unstamped execution under way),
   and the timer RE-ARMS while a delivery is in flight or the session is not
-  idle, so a turn longer than the delay is still repaired after it ends.
+  idle, so a turn longer than the delay is still repaired after it ends. A
+  stamped kickoff with NO delivery row and nothing in flight (crash between
+  the stamp and the enqueue) BLOCKS for the runtime's re-spawn machinery, and
+  the settlement's uuid-less fallback `session.error` is attributed via the
+  durable dead rows — it only blocks when the kickoff itself dead-lettered,
+  never an unrelated non-kickoff turn.
 - **`session.delivery_failed`** (processor `onDead` lane hook — published for
   EVERY dead delivery, unlike the settlement's origin-gated `session.error`)
   blocks the node when `role === 'turn'` AND the event's messageUuid matches

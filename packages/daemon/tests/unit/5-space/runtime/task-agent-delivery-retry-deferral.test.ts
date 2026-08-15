@@ -64,6 +64,8 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
   let manager: TaskAgentManager;
   /** Durable turn-delivery outcome stand-in for the reconcile path. */
   let turnOutcome: 'completed' | 'dead' | null;
+  /** Stand-in: a dead turn row NOT belonging to the stamped kickoff. */
+  let deadNonKickoffTurn: boolean;
   let executionId: string;
   let completed: boolean;
   /** Mutable stand-in for the session's active (pending/processing) delivery-job set. */
@@ -127,6 +129,7 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     // Stand-in for the durable turn-delivery outcome the reconcile reads
     // (deliveryTurnOutcomeSince): null = no settled turn for this activation.
     turnOutcome = null;
+    deadNonKickoffTurn = false;
     const config = {
       db: {
         getDatabase: () => db,
@@ -134,6 +137,7 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
         getJobQueueRepo: () => ({
           activeDeliveryMessageUuids: () => activeJobs,
           hasProcessingDeliveryForSession: () => processingTurnJobs.size > 0,
+          hasDeadTurnExcept: () => deadNonKickoffTurn,
           // uuid-correlated: only the stamped kickoff's outcome qualifies.
           deliveryTurnOutcomeSince: (_sid: string, _since: number, uuid?: string) =>
             uuid === 'kickoff-uuid' ? turnOutcome : null,
@@ -449,10 +453,41 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
         | undefined;
       if (session) session.getSDKMessageCount = () => 0;
     }
+    // Unstamp: this test pins the not-started gate on the COMPLETION paths
+    // (a stamped kickoff with no settlement row is the lost-kickoff case,
+    // pinned separately below).
+    nodeExecRepo.update(executionId, { data: null });
 
     await publishIdle(); // zero messages — no fire
     expect(completed).toBe(false);
     await settleDelivery(); // zero messages — still no fire
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('in_progress');
+  });
+
+  it('a stamped kickoff with no delivery row (lost pre-enqueue) blocks for re-spawn', async () => {
+    // Daemon exit between the execution update (stamp) and the inject's
+    // enqueue: no settlement or idle can ever arrive. The reconcile blocks so
+    // the runtime's blocked-execution machinery re-activates the node.
+    turnOutcome = null; // no delivery row for the stamped kickoff
+    await publishIdle(); // suppressed while the job was 'active'
+    activeJobs.clear();
+    processingTurnJobs.clear();
+    await new Promise<void>((resolve) => setTimeout(resolve, 60));
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('blocked');
+  });
+
+  it('the settlement fallback session.error for a NON-kickoff dead turn does not block', async () => {
+    // A flushed peer message won the arbiter (space_inject origin); its
+    // dead-letter publishes the uuid-less settlement session.error. With the
+    // kickoff not dead and a dead non-kickoff turn row present, the error is
+    // attributed to the peer delivery and declined.
+    deadNonKickoffTurn = true;
+    turnOutcome = null; // kickoff itself not dead
+    activeJobs.clear();
+    processingTurnJobs.clear();
+    await publishError(undefined); // settlement fallback: no details
     expect(completed).toBe(false);
     expect(nodeStatus()).toBe('in_progress');
   });
