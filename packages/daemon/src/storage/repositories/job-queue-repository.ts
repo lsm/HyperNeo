@@ -422,6 +422,27 @@ export class JobQueueRepository {
   }
 
   /**
+   * True when the session has a message_delivery job currently being DRIVEN
+   * (claimed, `processing`) — not merely queued/parked/backing-off. Used by
+   * TaskAgentManager's recoverable-error deferral: only a job the delivery
+   * layer is actually driving can be the source of (and the retry for) a
+   * turn error; a merely-pending job cannot retry unrelated work such as a
+   * rehydration tool-continuation replay. (Task #944 review.)
+   */
+  hasProcessingDeliveryForSession(sessionId: string, queue: string = 'message_delivery'): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1 FROM job_queue
+          WHERE queue = ?
+            AND status = 'processing'
+            AND json_extract(payload, '$.sessionId') = ?
+          LIMIT 1`
+      )
+      .get(queue, sessionId) as { 1: number } | undefined | null;
+    return row != null;
+  }
+
+  /**
    * The durable terminal outcome of the session's TURN delivery jobs settled
    * at/after `sinceMs` (the current node execution's start): `'dead'` when any
    * dead-lettered (blocks — a lost `session.delivery_failed` publication is

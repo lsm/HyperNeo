@@ -586,10 +586,12 @@ recoverable one mid-turn while the turn still succeeds.
 The contract (`TaskAgentManager.registerCompletionCallback`):
 
 - **Recoverable `session.error`** (`details.recoverable === true`, v2 on, AND
-  an active delivery job for the session) does not block the node — without an
-  in-flight job there is no retry and no `delivery_failed` repayment, so
-  errors from non-delivery work (rehydration's direct streaming start /
-  tool-continuation replays) keep the first-error-blocks behavior. The classification is advisory: even a misclassification
+  a delivery job currently being DRIVEN for the session — claimed
+  `processing`, not merely queued) does not block the node — without a driven
+  job there is no retry and no `delivery_failed` repayment, so errors from
+  non-delivery work (rehydration's direct streaming start / tool-continuation
+  replays, which can overlap an unrelated merely-queued job) keep the
+  first-error-blocks behavior. The classification is advisory: even a misclassification
   (ErrorManager's taxonomy has diverged from delivery's — auth is
   delivery-terminal despite `recoverable === true`) only delays the block until
   the immediate dead-letter; `session.delivery_failed` then blocks the node.
@@ -615,7 +617,13 @@ The contract (`TaskAgentManager.registerCompletionCallback`):
   publication), a `completed`-with-success-result turn row COMPLETES, anything
   else declines. This is strictly stronger than transcript evidence: a reused
   session's historical rows can never qualify, and a dead-lettered turn whose
-  partial output postdates the activation start can never complete.
+  partial output postdates the activation start can never complete. The
+  reconciliation reads durable rows and is deliberately NOT gated on the
+  current v2 flag — an operator restarting with the rollback switch after a
+  crash still needs the repair — and only the stamped kickoff's OWN delivery
+  qualifies (`data.kickoffMessageUuid`): a pending-message flush can run a
+  peer handoff as a `role:'turn'` job before the kickoff is enqueued, and
+  that is not the node's work.
 - **`session.delivery_failed`** (processor `onDead` lane hook — published for
   EVERY dead delivery, unlike the settlement's origin-gated `session.error`)
   blocks the node when `role === 'turn'`. This covers recovery-origin

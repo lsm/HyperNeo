@@ -66,8 +66,10 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
   let turnOutcome: 'completed' | 'dead' | null;
   let executionId: string;
   let completed: boolean;
-  /** Mutable stand-in for the session's active message_delivery job set. */
+  /** Mutable stand-in for the session's active (pending/processing) delivery-job set. */
   let activeJobs: Set<string>;
+  /** Stand-in for jobs currently being DRIVEN (claimed processing). */
+  let processingJobs: Set<string>;
 
   beforeEach(() => {
     // Shorten the crash-window reconciliation delay (read at subscribe time in
@@ -121,6 +123,7 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     bus = createDaemonInternalEventBus();
 
     activeJobs = new Set(['kickoff-uuid']);
+    processingJobs = new Set(['kickoff-uuid']); // the kickoff turn is being driven
     // Stand-in for the durable turn-delivery outcome the reconcile reads
     // (deliveryTurnOutcomeSince): null = no settled turn for this activation.
     turnOutcome = null;
@@ -130,6 +133,7 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
         // hasActiveDeliveryJob / reconciliation resolve job state from here.
         getJobQueueRepo: () => ({
           activeDeliveryMessageUuids: () => activeJobs,
+          hasProcessingDeliveryForSession: () => processingJobs.size > 0,
           // uuid-correlated: only the stamped kickoff's outcome qualifies.
           deliveryTurnOutcomeSince: (_sid: string, _since: number, uuid?: string) =>
             uuid === 'kickoff-uuid' ? turnOutcome : null,
@@ -516,9 +520,39 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     // retry an error from that work, and no delivery_failed will repay it.
     // The deferral must not apply; the error blocks as before this PR.
     activeJobs.clear();
+    processingJobs.clear();
     await publishError(RECOVERABLE_DETAILS);
     expect(completed).toBe(false);
     expect(nodeStatus()).toBe('blocked');
+  });
+
+  it('a recoverable error while the job is merely QUEUED blocks (continuation replay)', async () => {
+    // Rehydration shape: a tool-continuation replay runs directly (no job is
+    // driving the session) while an unrelated delivery job sits pending —
+    // active, but not being driven, so it cannot retry the replay's error.
+    // The deferral must not apply.
+    processingJobs.clear(); // queued only — nothing is being driven
+    await publishError(RECOVERABLE_DETAILS);
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('blocked');
+  });
+
+  it('the crash reconcile repairs a stranded settle even after v2 is switched OFF', async () => {
+    // Operator rollback after the crash: the durable rows were written while
+    // v2 was enabled; the reconciliation must not depend on the current flag.
+    const prev = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+    process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
+    try {
+      turnOutcome = 'completed'; // durable: the stamped kickoff completed
+      await publishIdle(); // suppressed before the crash — job was active
+      activeJobs.clear();
+      processingJobs.clear();
+      await new Promise<void>((resolve) => setTimeout(resolve, 60));
+      expect(completed).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = prev;
+    }
   });
 
   it('a dead-lettered STEER does not block the node (mid-turn handoff failure)', async () => {

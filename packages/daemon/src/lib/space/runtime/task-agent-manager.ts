@@ -3093,6 +3093,16 @@ export class TaskAgentManager {
   }
 
   /** Returns a sub-session by its session ID, or undefined if not found. */
+  /**
+   * Whether a message_delivery job for the session is currently being DRIVEN
+   * (claimed `processing`). The recoverable-error deferral keys on this, not
+   * on any-active-job: only a driven job can be the source of / retry for a
+   * turn error. See JobQueueRepository.hasProcessingDeliveryForSession.
+   */
+  private hasProcessingDeliveryJob(subSessionId: string): boolean {
+    return this.config.db.getJobQueueRepo().hasProcessingDeliveryForSession(subSessionId);
+  }
+
   getSubSession(subSessionId: string): AgentSession | undefined {
     for (const [, nodeMap] of this.subSessions) {
       const session = nodeMap.get(subSessionId);
@@ -3792,7 +3802,11 @@ export class TaskAgentManager {
       // here must never surface as an unhandled timer exception.
       try {
         if (fired) return;
-        if (!isMessageDeliveryV2Enabled()) return;
+        // Deliberately NOT gated on the current v2 flag: the decision reads
+        // durable rows written while v2 WAS enabled. An operator restarting
+        // with the rollback switch after a crash still needs the repair — the
+        // settled job row is never re-claimed and no new idle is published.
+        // (Task #944 review.)
         const session = this.getSubSession(subSessionId);
         if (!session) return;
         if (session.getProcessingState().status !== 'idle') return;
@@ -3891,16 +3905,16 @@ export class TaskAgentManager {
 
         // A RECOVERABLE error during a delivery-driven turn (transient provider
         // 5xx / connection / timeout) must be INVISIBLE to Space — but ONLY
-        // while a delivery job is actually in flight to retry it. The
-        // message_delivery job retries the error (PR #2471) and only its
-        // dead-letter is terminal; without an active job there is no retry and
-        // no `session.delivery_failed` repayment, so an error from non-delivery
-        // work (rehydration's direct streaming start / tool-continuation
-        // replays) keeps the first-error-blocks behavior. The dead-letter
-        // settlement publishes `session.error` with NO `details`, and a
-        // genuinely non-recoverable error carries `details.recoverable ===
-        // false` — both fall through to the terminal handling below. (Task
-        // #944.)
+        // while a delivery job is actually being DRIVEN for this session. The
+        // message_delivery job driving the turn retries the error (PR #2471)
+        // and only its dead-letter is terminal; a merely QUEUED/parked job
+        // cannot retry anything, so an error from non-delivery work
+        // (rehydration's direct streaming start / tool-continuation replays,
+        // which can overlap an unrelated queued job) keeps the
+        // first-error-blocks behavior. The dead-letter settlement publishes
+        // `session.error` with NO `details`, and a genuinely non-recoverable
+        // error carries `details.recoverable === false` — both fall through to
+        // the terminal handling below. (Task #944.)
         //
         // This classification is ADVISORY only: even when it misclassifies
         // (ErrorManager's recoverable taxonomy has diverged from delivery's —
@@ -3911,7 +3925,7 @@ export class TaskAgentManager {
         if (
           isMessageDeliveryV2Enabled() &&
           isRecoverableSessionError(event.details) &&
-          this.hasActiveDeliveryJob(subSessionId)
+          this.hasProcessingDeliveryJob(subSessionId)
         ) {
           return;
         }
