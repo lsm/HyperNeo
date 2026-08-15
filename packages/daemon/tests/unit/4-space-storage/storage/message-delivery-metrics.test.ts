@@ -3,7 +3,46 @@
  */
 
 import { describe, expect, it, beforeEach } from 'bun:test';
-import { DeliveryMetrics } from '../../../../src/lib/agent/message-delivery-metrics';
+import {
+  DeliveryMetrics,
+  emitMessageDeliveryLifecycleEvent,
+  fingerprintDeliveryClaim,
+} from '../../../../src/lib/agent/message-delivery-metrics';
+import {
+  clearStructuredLogSubscribers,
+  subscribeToStructuredLogs,
+} from '../../../../src/lib/logger';
+
+describe('message delivery lifecycle events', () => {
+  it('correlates claims without exposing the full token or payload content', () => {
+    const token = 'secret-claim-token-value';
+    const events: Array<{ message: string; metadata: Record<string, unknown> }> = [];
+    const unsubscribe = subscribeToStructuredLogs((event) => events.push(event));
+    try {
+      const claimFingerprint = fingerprintDeliveryClaim(token);
+      expect(claimFingerprint).toHaveLength(16);
+      expect(claimFingerprint).not.toContain(token);
+      emitMessageDeliveryLifecycleEvent('claim', {
+        jobId: 'job-1',
+        claimFingerprint,
+        sessionId: 'session-1',
+        messageUuid: 'message-1',
+      });
+    } finally {
+      unsubscribe();
+      clearStructuredLogSubscribers();
+    }
+
+    expect(events).toHaveLength(1);
+    expect(events[0].message).toBe('message_delivery.lifecycle');
+    expect(events[0].metadata).toMatchObject({
+      event: 'claim',
+      jobId: 'job-1',
+      claimFingerprint: fingerprintDeliveryClaim(token),
+    });
+    expect(JSON.stringify(events[0])).not.toContain(token);
+  });
+});
 
 describe('DeliveryMetrics (task #861 item 13)', () => {
   let metrics: DeliveryMetrics;

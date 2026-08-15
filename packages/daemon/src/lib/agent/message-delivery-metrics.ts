@@ -38,6 +38,65 @@
  * restart. Every structure is bounded so a long-running daemon does not grow it.
  */
 
+import { createHash } from 'node:crypto';
+import type { JobQueueProcessorSnapshot } from '../../storage/job-queue-processor';
+import { emitStructuredLogEvent } from '../logger';
+
+export type MessageDeliveryLifecycleEventName =
+  | 'claim'
+  | 'slot_acquired'
+  | 'query_ready'
+  | 'sdk_admitted'
+  | 'first_sdk_response'
+  | 'lease_renewed'
+  | 'stale_reclaimed'
+  | 'old_handler_aborted'
+  | 'settled'
+  | 'slot_released'
+  | 'fenced_completion_rejected';
+
+export interface MessageDeliveryLifecycleFields {
+  jobId?: string;
+  claimFingerprint?: string | null;
+  queue?: string;
+  slotClass?: 'capped' | 'exempt';
+  sessionId?: string;
+  messageUuid?: string;
+  role?: string;
+  generation?: number;
+  stage?: string;
+  elapsedMs?: number;
+  outcome?: string;
+  reason?: string;
+  responseType?: string;
+}
+
+export function fingerprintDeliveryClaim(claimToken: string | null): string | null {
+  if (!claimToken) return null;
+  return createHash('sha256').update(claimToken).digest('hex').slice(0, 16);
+}
+
+export function emitMessageDeliveryLifecycleEvent(
+  event: MessageDeliveryLifecycleEventName,
+  fields: MessageDeliveryLifecycleFields
+): void {
+  try {
+    const metadata: Record<string, string | number | boolean | null> = { event };
+    for (const [key, value] of Object.entries(fields)) {
+      if (value !== undefined) metadata[key] = value;
+    }
+    emitStructuredLogEvent({
+      level: event === 'fenced_completion_rejected' ? 'warn' : 'info',
+      args: ['message_delivery.lifecycle'],
+      source: 'logger',
+      module: 'hyperneo:daemon:message-delivery.lifecycle',
+      metadata,
+    });
+  } catch {
+    // Observability must never alter delivery behavior.
+  }
+}
+
 export type ReclaimSkipOutcome =
   | 'alreadyConsumed'
   | 'alreadySubmitted'
@@ -80,6 +139,8 @@ export interface MessageDeliveryDiagnostics {
   staleProcessing: number;
   /** processing rows within the lease window (healthy in-flight turns). */
   activeProcessing: number;
+  oldestProcessingLeaseAgeMs: number | null;
+  processor: JobQueueProcessorSnapshot;
   metrics: DeliveryMetricsSnapshot;
 }
 

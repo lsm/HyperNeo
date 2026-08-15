@@ -200,6 +200,46 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
     });
   });
 
+  describe('live processor snapshots', () => {
+    it('reports bounded message-delivery handler state and clears it after settlement', async () => {
+      let release!: () => void;
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      processor = new JobQueueProcessor(repo, { pollIntervalMs: 5000, maxConcurrent: 2 });
+      processor.register('message_delivery', async (_job, context) => {
+        context?.reportStage?.('query_ready', { generation: 7 });
+        await blocked;
+        return { outcome: 'completed' };
+      });
+      repo.enqueue({
+        queue: 'message_delivery',
+        payload: { sessionId: 'session-1', messageUuid: 'message-1', role: 'turn' },
+      });
+
+      await processor.tick();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const snapshot = processor.snapshot('message_delivery');
+      expect(snapshot.inFlightTotal).toBe(1);
+      expect(snapshot.stageCounts).toEqual({ query_ready: 1 });
+      expect(snapshot.handlers[0]).toMatchObject({
+        queue: 'message_delivery',
+        sessionId: 'session-1',
+        messageUuid: 'message-1',
+        role: 'turn',
+        generation: 7,
+        stage: 'query_ready',
+        aborted: false,
+      });
+      snapshot.handlers.length = 0;
+      expect(processor.snapshot('message_delivery').handlers).toHaveLength(1);
+
+      release();
+      await flush();
+      expect(processor.snapshot('message_delivery').inFlightTotal).toBe(0);
+    });
+  });
+
   // ─── Stale reclamation — intermediate pending state ────────────────────────
 
   describe('stale job reclamation — ordering contract', () => {

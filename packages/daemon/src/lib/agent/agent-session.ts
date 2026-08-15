@@ -271,6 +271,7 @@ import {
   isRetryableErrorResultSubtype,
   isTerminalTurnError,
   MESSAGE_DELIVERY_PARK_MS,
+  type MessageDeliveryAttemptObserver,
   MessageDeliveryRecoverableTurnError,
   MessageDeliveryTerminalTurnError,
   reconcileStrandedDeliveries as reconcileStrandedDeliveriesCore,
@@ -387,6 +388,10 @@ export class AgentSession
    */
   private deliveryTurnStall: DeliveryTurnStallWatchdog | null = null;
   private deliveryTurnStalled = false;
+  private deliveryResponseObserver: {
+    generation: number;
+    observer: MessageDeliveryAttemptObserver;
+  } | null = null;
 
   /**
    * Outstanding `tool_use` IDs for this session (added on `sdk.toolUse.created`,
@@ -2096,7 +2101,8 @@ export class AgentSession
      * it is skipped in the member loop.
      */
     batchUuids?: string[],
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    observer?: MessageDeliveryAttemptObserver
   ): Promise<DriveTurnOutcome> {
     // Timestamp gates the terminal-error read to "fired during THIS turn" — a
     // stale error from a prior turn must not turn a clean turn into a retry.
@@ -2157,6 +2163,8 @@ export class AgentSession
         if (!queryPromise) {
           throw new Error('message_delivery: query did not start; cannot drive turn');
         }
+        const generation = this.getQueryGeneration();
+        observer?.reportStage('query_ready', { generation });
         // Re-check termination AFTER startup, immediately before arming the
         // turn-end waiter — the two statements are adjacent (no await between), so
         // a turn that terminates in the check→arm window cannot be missed: if it
@@ -2295,6 +2303,7 @@ export class AgentSession
           turnEnd,
           acknowledgment,
           admittedBatchUuids,
+          generation,
         };
       },
       signal
@@ -2328,6 +2337,8 @@ export class AgentSession
     this.outstandingToolUseIds.clear();
     // Stall watchdog placeholder; armed once we begin awaiting the turn (below).
     let stallPromise: Promise<void> = new Promise<void>(() => {});
+    let responseObserver: { generation: number; observer: MessageDeliveryAttemptObserver } | null =
+      null;
     try {
       // An alreadyConsumed reclaim skips the feed (admitWithId not called), so
       // `started.acknowledgment` is null — `await null` resolves immediately.
@@ -2366,6 +2377,9 @@ export class AgentSession
         // queue interrupt, or admission timeout before the generator yields is
         // NOT a handoff and must not be counted as one. (Codex review.)
         deliveryMetrics.recordFeed(messageUuid);
+        observer?.reportStage('sdk_admitted', { generation: started.generation });
+        responseObserver = observer ? { generation: started.generation, observer } : null;
+        if (responseObserver) this.deliveryResponseObserver = responseObserver;
         // For the Claude SDK, onSent is the consume signal — flip send_status →
         // 'consumed' SYNCHRONOUSLY (item 12) so reclaimStale almost always sees
         // 'consumed' and skips the re-feed, and signal delivery waiters (LTA /
@@ -2412,6 +2426,9 @@ export class AgentSession
       // on query-close, or acknowledgment rejected) so it isn't left in the map.
       started.turnEnd.cancel();
       this.clearDeliveryTurnStall();
+      if (responseObserver && this.deliveryResponseObserver === responseObserver) {
+        this.deliveryResponseObserver = null;
+      }
     }
     // The turn ended (or the stall watchdog fired). Determine whether it
     // actually produced output: a terminal `result` row after consumption is the
@@ -2528,6 +2545,16 @@ export class AgentSession
     this.deliveryTurnStall?.bump();
   }
 
+  reportFirstDeliverySDKResponse(responseType: string): void {
+    const active = this.deliveryResponseObserver;
+    if (!active || active.generation !== this.getQueryGeneration()) return;
+    this.deliveryResponseObserver = null;
+    active.observer.reportStage('first_sdk_response', {
+      generation: active.generation,
+      responseType,
+    });
+  }
+
   /** Cancel the in-flight stall watchdog (no-op if none armed). */
   private clearDeliveryTurnStall(): void {
     this.deliveryTurnStall?.cancel();
@@ -2561,7 +2588,8 @@ export class AgentSession
     content: string | MessageContent[],
     _parentToolUseId?: string | null,
     claimGuard?: () => boolean,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    observer?: MessageDeliveryAttemptObserver
   ): Promise<FeedSteerOutcome> {
     const action = await withSessionLock(
       this.session.id,
@@ -2577,6 +2605,9 @@ export class AgentSession
         // excluded by this same lock. 'queued' → parked owner, so park this steer.
         if (status === 'processing') {
           if (!this.messageDeliveryValid(messageUuid)) return { kind: 'aborted' as const };
+          if (!this.queryPromise) return { kind: 'promote' as const };
+          const generation = this.getQueryGeneration();
+          observer?.reportStage('query_ready', { generation });
           // ACP: if this steer was already admitted and is still pending subprocess
           // acceptance (a parked re-run), do NOT re-admit — admitWithId is not
           // idempotent, so a second push would duplicate the prompt. Keep awaiting
@@ -2591,7 +2622,7 @@ export class AgentSession
           const acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
             durable: true,
           });
-          return { kind: 'feed' as const, acknowledgment };
+          return { kind: 'feed' as const, acknowledgment, generation };
         }
         if (status === 'queued') return { kind: 'park' as const };
         return { kind: 'promote' as const };
@@ -2630,6 +2661,7 @@ export class AgentSession
     // onSent fired → the steer reached the SDK (actual handoff). Record here,
     // not at admission (see driveDeliveryTurn).
     deliveryMetrics.recordFeed(messageUuid);
+    observer?.reportStage('sdk_admitted', { generation: action.generation });
     // Claude SDK: onSent is the consume signal — flip synchronously (item 12)
     // and signal delivery waiters. ACP is excluded (consume boundary is
     // acceptance, not onSent); see driveDeliveryTurn for the full rationale.

@@ -861,6 +861,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       spaceAgentManager,
       jobQueue,
       jobProcessor,
+      messageDeliveryProcessor,
       reactiveDb,
       liveQueries,
       appMcpManager,

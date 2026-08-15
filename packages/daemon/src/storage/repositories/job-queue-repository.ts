@@ -44,6 +44,10 @@ export interface EnqueueUniquePendingParams extends EnqueueParams {
 export interface ReclaimedJobClaim {
   jobId: string;
   claimToken: string | null;
+  queue: string;
+  sessionId: string | null;
+  messageUuid: string | null;
+  role: string | null;
 }
 
 export interface PayloadMatch {
@@ -283,6 +287,18 @@ export class JobQueueRepository {
         `SELECT 1 FROM job_queue
           WHERE id = ? AND status = 'processing'
             AND json_extract(payload, '$.__claimToken') = ?`
+      )
+      .get(jobId, claimToken);
+  }
+
+  /** True when another processing generation now owns this job row. */
+  isClaimOwnedByAnother(jobId: string, claimToken: string | null): boolean {
+    if (!claimToken) return false;
+    return !!this.db
+      .prepare(
+        `SELECT 1 FROM job_queue
+          WHERE id = ? AND status = 'processing'
+            AND json_extract(payload, '$.__claimToken') != ?`
       )
       .get(jobId, claimToken);
   }
@@ -745,6 +761,17 @@ export class JobQueueRepository {
     return row?.c ?? 0;
   }
 
+  oldestProcessingLeaseAgeMs(queue: string, nowMs = Date.now()): number | null {
+    const row = this.db
+      .prepare(
+        `SELECT MIN(COALESCE(heartbeat_at, started_at)) AS oldest
+           FROM job_queue
+          WHERE queue = ? AND status = 'processing'`
+      )
+      .get(queue) as { oldest: number | null } | undefined;
+    return row?.oldest == null ? null : Math.max(0, nowMs - row.oldest);
+  }
+
   cleanup(beforeMs: number): number {
     // 'failed' is included defensively: the processor never writes it (retries go back to
     // 'pending' and exhausted retries become 'dead'), but the type contract allows it and
@@ -793,11 +820,22 @@ export class JobQueueRepository {
     return this.db.transaction(() => {
       const candidates = this.db
         .prepare(
-          `SELECT id, json_extract(payload, '$.__claimToken') AS claim_token
+          `SELECT id, queue,
+                  json_extract(payload, '$.__claimToken') AS claim_token,
+                  json_extract(payload, '$.sessionId') AS session_id,
+                  json_extract(payload, '$.messageUuid') AS message_uuid,
+                  json_extract(payload, '$.role') AS role
              FROM job_queue
             WHERE status = 'processing' AND COALESCE(heartbeat_at, started_at) < ?`
         )
-        .all(staleBefore) as Array<{ id: string; claim_token: string | null }>;
+        .all(staleBefore) as Array<{
+        id: string;
+        queue: string;
+        claim_token: string | null;
+        session_id: string | null;
+        message_uuid: string | null;
+        role: string | null;
+      }>;
       const reclaimed: ReclaimedJobClaim[] = [];
 
       for (const candidate of candidates) {
@@ -812,7 +850,14 @@ export class JobQueueRepository {
           )
           .run(candidate.id, staleBefore, candidate.claim_token, candidate.claim_token);
         if (result.changes > 0) {
-          reclaimed.push({ jobId: candidate.id, claimToken: candidate.claim_token });
+          reclaimed.push({
+            jobId: candidate.id,
+            claimToken: candidate.claim_token,
+            queue: candidate.queue,
+            sessionId: candidate.session_id,
+            messageUuid: candidate.message_uuid,
+            role: candidate.role,
+          });
         }
       }
 

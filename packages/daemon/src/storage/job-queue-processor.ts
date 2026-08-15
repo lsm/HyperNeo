@@ -1,8 +1,66 @@
+import {
+  emitMessageDeliveryLifecycleEvent,
+  fingerprintDeliveryClaim,
+  type MessageDeliveryLifecycleFields,
+} from '../lib/agent/message-delivery-metrics';
 import type { TableChangeScope } from './reactive-database';
-import type { Job, JobQueueRepository, PayloadMatch } from './repositories/job-queue-repository';
+import type {
+  Job,
+  JobQueueRepository,
+  PayloadMatch,
+  ReclaimedJobClaim,
+} from './repositories/job-queue-repository';
+
+export interface JobHandlerStageDetails {
+  generation?: number;
+  outcome?: string;
+  reason?: string;
+  responseType?: string;
+}
 
 export interface JobHandlerContext {
   signal: AbortSignal;
+  reportStage?: (stage: string, details?: JobHandlerStageDetails) => void;
+}
+
+export interface InFlightJobSnapshot {
+  jobId: string;
+  queue: string;
+  claimFingerprint: string | null;
+  slotClass: 'capped' | 'exempt';
+  sessionId?: string;
+  messageUuid?: string;
+  role?: string;
+  generation?: number;
+  stage: string;
+  ageMs: number;
+  stageAgeMs: number;
+  aborted: boolean;
+}
+
+export interface JobQueueProcessorSnapshot {
+  running: boolean;
+  maxConcurrent: number;
+  inFlightCapped: number;
+  inFlightExempt: number;
+  inFlightTotal: number;
+  activeControllers: number;
+  oldestInFlightAgeMs: number | null;
+  stageCounts: Record<string, number>;
+  handlers: InFlightJobSnapshot[];
+}
+
+interface InFlightClaimRecord {
+  job: Job;
+  controller: AbortController;
+  claimFingerprint: string | null;
+  slotClass: 'capped' | 'exempt';
+  startedAt: number;
+  stage: string;
+  stageChangedAt: number;
+  generation?: number;
+  lastLeaseLogAt: number;
+  settlement?: string;
 }
 
 export type JobHandler = (
@@ -85,7 +143,7 @@ export class JobQueueProcessor {
   // be starved by — nor starve — capped jobs. Both count toward `stop()` drain.
   private inFlightExempt = 0;
   private running = false;
-  private inFlightClaims = new Map<string, Map<string, AbortController>>();
+  private inFlightClaims = new Map<string, Map<string, InFlightClaimRecord>>();
   private tickRequested = false;
   private changeNotifier: ((table: string, scope?: TableChangeScope) => void) | null = null;
   private readonly pollIntervalMs: number;
@@ -164,6 +222,7 @@ export class JobQueueProcessor {
         if (cappedSlots <= 0) break;
         const jobs = this.repo.dequeue(queue, cappedSlots, reg.exemptJobs);
         for (const job of jobs) {
+          this.emitLifecycle('claim', job, 'capped');
           void this.processJob(job, false);
         }
         claimed += jobs.length;
@@ -182,6 +241,7 @@ export class JobQueueProcessor {
         if (!reg.exemptJobs) continue;
         const jobs = this.repo.dequeueExempt(queue, reg.exemptJobs, exemptSlots);
         for (const job of jobs) {
+          this.emitLifecycle('claim', job, 'exempt');
           void this.processJob(job, true);
         }
         claimed += jobs.length;
@@ -198,9 +258,25 @@ export class JobQueueProcessor {
     const reg = this.handlers.get(job.queue);
     const scope = scopeFromJob(job);
     const controller = new AbortController();
-    this.trackInFlightClaim(job, controller);
+    const record = this.trackInFlightClaim(job, controller, exempt ? 'exempt' : 'capped');
+    this.emitLifecycle('slot_acquired', job, record.slotClass, { stage: record.stage });
     const heartbeat = setInterval(() => {
-      if (!this.repo.heartbeat(job.id, job.claimToken)) controller.abort();
+      if (!this.repo.heartbeat(job.id, job.claimToken)) {
+        this.emitLifecycle('old_handler_aborted', job, record.slotClass, {
+          stage: record.stage,
+          reason: 'heartbeat_rejected',
+        });
+        controller.abort();
+        return;
+      }
+      const now = Date.now();
+      if (now - record.lastLeaseLogAt >= 60_000 || record.lastLeaseLogAt === 0) {
+        record.lastLeaseLogAt = now;
+        this.emitLifecycle('lease_renewed', job, record.slotClass, {
+          stage: record.stage,
+          elapsedMs: now - record.startedAt,
+        });
+      }
     }, this.heartbeatIntervalMs);
     if (typeof (heartbeat as { unref?: () => void }).unref === 'function') {
       (heartbeat as { unref: () => void }).unref();
@@ -208,18 +284,53 @@ export class JobQueueProcessor {
     try {
       if (!reg) {
         this.repo.fail(job.id, `No handler registered for queue: ${job.queue}`);
+        record.settlement = 'failed';
         this.notifyChange(scope);
         return;
       }
-      const result = await reg.handler(job, { signal: controller.signal });
+      const reportStage = (stage: string, details?: JobHandlerStageDetails): void => {
+        if (this.getInFlightClaim(job) !== record) return;
+        record.stage = stage;
+        record.stageChangedAt = Date.now();
+        if (details?.generation !== undefined) record.generation = details.generation;
+        if (isLifecycleEventName(stage)) {
+          this.emitLifecycle(stage, job, record.slotClass, {
+            stage,
+            generation: record.generation,
+            outcome: details?.outcome,
+            reason: details?.reason,
+            responseType: details?.responseType,
+            elapsedMs: Date.now() - record.startedAt,
+          });
+        }
+      };
+      const result = await reg.handler(job, { signal: controller.signal, reportStage });
       // message_delivery parks/promotes by requeueing the job itself; the
       // auto-complete here is then a no-op (row no longer 'processing').
-      this.repo.complete(job.id, result ?? undefined, job.claimToken);
+      const completed = this.repo.complete(job.id, result ?? undefined, job.claimToken);
+      if (completed) {
+        record.settlement = 'completed';
+        this.emitLifecycle('settled', job, record.slotClass, {
+          stage: record.stage,
+          outcome: safeHandlerOutcome(result),
+        });
+      } else {
+        record.settlement = classifyNonterminalSettlement(result);
+        if (this.repo.isClaimOwnedByAnother(job.id, job.claimToken)) {
+          this.emitLifecycle('fenced_completion_rejected', job, record.slotClass, {
+            stage: record.stage,
+            reason: 'claim_replaced',
+          });
+        }
+      }
       this.notifyChange(scope);
     } catch (err) {
       // A reclaimed predecessor lost ownership; cancellation is not a job
       // failure and must not burn retries or invoke the dead-letter hook.
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted) {
+        record.settlement = 'aborted';
+        return;
+      }
       const message = err instanceof Error ? err.message : String(err);
       // A handler throws `DeadLetterImmediatelyError` to terminalize without
       // burning the retry budget (e.g. a delivery turn that ended in a
@@ -229,6 +340,18 @@ export class JobQueueProcessor {
         err instanceof DeadLetterImmediatelyError
           ? this.repo.markDead(job.id, message, job.claimToken)
           : this.repo.fail(job.id, message, job.claimToken);
+      record.settlement = updated?.status ?? 'fenced';
+      if (updated) {
+        this.emitLifecycle('settled', job, record.slotClass, {
+          stage: record.stage,
+          outcome: updated.status,
+        });
+      } else if (this.repo.isClaimOwnedByAnother(job.id, job.claimToken)) {
+        this.emitLifecycle('fenced_completion_rejected', job, record.slotClass, {
+          stage: record.stage,
+          reason: 'claim_replaced',
+        });
+      }
       if (updated && updated.status === 'dead' && reg?.onDead) {
         try {
           reg.onDead(updated);
@@ -239,36 +362,134 @@ export class JobQueueProcessor {
       this.notifyChange(scope);
     } finally {
       clearInterval(heartbeat);
-      this.untrackInFlightClaim(job, controller);
+      this.untrackInFlightClaim(job, record);
       if (exempt) this.inFlightExempt--;
       else this.inFlightCapped--;
+      this.emitLifecycle('slot_released', job, record.slotClass, {
+        stage: record.stage,
+        outcome: record.settlement,
+        elapsedMs: Date.now() - record.startedAt,
+      });
       this.requestTick();
     }
   }
 
-  private trackInFlightClaim(job: Job, controller: AbortController): void {
-    if (!job.claimToken) return;
+  private trackInFlightClaim(
+    job: Job,
+    controller: AbortController,
+    slotClass: 'capped' | 'exempt'
+  ): InFlightClaimRecord {
+    const now = Date.now();
+    const record: InFlightClaimRecord = {
+      job,
+      controller,
+      claimFingerprint: fingerprintDeliveryClaim(job.claimToken),
+      slotClass,
+      startedAt: now,
+      stage: 'slot_acquired',
+      stageChangedAt: now,
+      lastLeaseLogAt: 0,
+    };
+    if (!job.claimToken) return record;
     let claims = this.inFlightClaims.get(job.id);
     if (!claims) {
       claims = new Map();
       this.inFlightClaims.set(job.id, claims);
     }
-    claims.set(job.claimToken, controller);
+    claims.set(job.claimToken, record);
+    return record;
   }
 
-  private untrackInFlightClaim(job: Job, controller: AbortController): void {
+  private getInFlightClaim(job: Job): InFlightClaimRecord | undefined {
+    if (!job.claimToken) return undefined;
+    return this.inFlightClaims.get(job.id)?.get(job.claimToken);
+  }
+
+  private untrackInFlightClaim(job: Job, record: InFlightClaimRecord): void {
     if (!job.claimToken) return;
     const claims = this.inFlightClaims.get(job.id);
-    if (claims?.get(job.claimToken) !== controller) return;
+    if (claims?.get(job.claimToken) !== record) return;
     claims.delete(job.claimToken);
     if (claims.size === 0) this.inFlightClaims.delete(job.id);
   }
 
   private reclaimStaleClaims(staleBefore: number): void {
     for (const claim of this.repo.reclaimStale(staleBefore)) {
-      if (!claim.claimToken) continue;
-      this.inFlightClaims.get(claim.jobId)?.get(claim.claimToken)?.abort();
+      const record = claim.claimToken
+        ? this.inFlightClaims.get(claim.jobId)?.get(claim.claimToken)
+        : undefined;
+      const reclaimedJob = record?.job ?? jobFromReclaimedClaim(claim);
+      this.emitLifecycle('stale_reclaimed', reclaimedJob, record?.slotClass, {
+        stage: record?.stage,
+      });
+      if (!record) continue;
+      this.emitLifecycle('old_handler_aborted', record.job, record.slotClass, {
+        stage: record.stage,
+        reason: 'stale_reclaim',
+      });
+      record.controller.abort();
     }
+  }
+
+  snapshot(queue?: string): JobQueueProcessorSnapshot {
+    const now = Date.now();
+    const handlers: InFlightJobSnapshot[] = [];
+    for (const claims of this.inFlightClaims.values()) {
+      for (const record of claims.values()) {
+        if (queue && record.job.queue !== queue) continue;
+        handlers.push({
+          jobId: record.job.id,
+          queue: record.job.queue,
+          claimFingerprint: record.claimFingerprint,
+          slotClass: record.slotClass,
+          sessionId: stringPayload(record.job, 'sessionId'),
+          messageUuid: stringPayload(record.job, 'messageUuid'),
+          role: stringPayload(record.job, 'role'),
+          generation: record.generation,
+          stage: record.stage,
+          ageMs: Math.max(0, now - record.startedAt),
+          stageAgeMs: Math.max(0, now - record.stageChangedAt),
+          aborted: record.controller.signal.aborted,
+        });
+      }
+    }
+    const stageCounts: Record<string, number> = {};
+    for (const handler of handlers) {
+      stageCounts[handler.stage] = (stageCounts[handler.stage] ?? 0) + 1;
+    }
+    const capped = handlers.filter((handler) => handler.slotClass === 'capped').length;
+    const exempt = handlers.length - capped;
+    return {
+      running: this.running,
+      maxConcurrent: this.maxConcurrent,
+      inFlightCapped: queue ? capped : this.inFlightCapped,
+      inFlightExempt: queue ? exempt : this.inFlightExempt,
+      inFlightTotal: handlers.length,
+      activeControllers: handlers.length,
+      oldestInFlightAgeMs:
+        handlers.length > 0 ? Math.max(...handlers.map((handler) => handler.ageMs)) : null,
+      stageCounts,
+      handlers,
+    };
+  }
+
+  private emitLifecycle(
+    event: Parameters<typeof emitMessageDeliveryLifecycleEvent>[0],
+    job: Job,
+    slotClass?: 'capped' | 'exempt',
+    details: Partial<MessageDeliveryLifecycleFields> = {}
+  ): void {
+    if (job.queue !== 'message_delivery') return;
+    emitMessageDeliveryLifecycleEvent(event, {
+      jobId: job.id,
+      queue: job.queue,
+      claimFingerprint: fingerprintDeliveryClaim(job.claimToken),
+      slotClass,
+      sessionId: stringPayload(job, 'sessionId'),
+      messageUuid: stringPayload(job, 'messageUuid'),
+      role: stringPayload(job, 'role'),
+      ...details,
+    });
   }
 
   private requestTick(): void {
@@ -296,4 +517,53 @@ export class JobQueueProcessor {
     this.reclaimStaleClaims(now - this.staleThresholdMs);
     this.lastStaleCheck = now;
   }
+}
+
+function jobFromReclaimedClaim(claim: ReclaimedJobClaim): Job {
+  return {
+    id: claim.jobId,
+    queue: claim.queue,
+    status: 'pending',
+    payload: {
+      ...(claim.sessionId ? { sessionId: claim.sessionId } : {}),
+      ...(claim.messageUuid ? { messageUuid: claim.messageUuid } : {}),
+      ...(claim.role ? { role: claim.role } : {}),
+    },
+    result: null,
+    error: null,
+    priority: 0,
+    maxRetries: 0,
+    retryCount: 0,
+    runAt: 0,
+    createdAt: 0,
+    startedAt: null,
+    heartbeatAt: null,
+    completedAt: null,
+    claimToken: claim.claimToken,
+  };
+}
+
+function stringPayload(job: Job, key: string): string | undefined {
+  return typeof job.payload[key] === 'string' ? job.payload[key] : undefined;
+}
+
+function isLifecycleEventName(
+  stage: string
+): stage is Parameters<typeof emitMessageDeliveryLifecycleEvent>[0] {
+  return stage === 'query_ready' || stage === 'sdk_admitted' || stage === 'first_sdk_response';
+}
+
+function safeHandlerOutcome(result: Record<string, unknown> | void): string {
+  if (!result) return 'completed';
+  if (typeof result.outcome === 'string') return result.outcome;
+  if (typeof result.parked === 'string') return 'parked';
+  return 'completed';
+}
+
+function classifyNonterminalSettlement(result: Record<string, unknown> | void): string {
+  if (!result) return 'not_completed';
+  if (typeof result.parked === 'string') return 'parked';
+  if (result.promoted !== undefined) return 'promoted';
+  if (result.outcome === 'superseded') return 'superseded';
+  return 'not_completed';
 }

@@ -83,6 +83,7 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
 
   return async (job: Job, context): Promise<Record<string, unknown>> => {
     const signal = context?.signal;
+    const reportStage = context?.reportStage;
     const payload = asMessageDeliveryPayload(job.payload);
     if (!payload) {
       // Malformed payload — dead-letter rather than spin.
@@ -213,7 +214,8 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
         alreadyConsumed,
         claimCurrent,
         payload.batchUuids,
-        signal
+        signal,
+        reportStage ? { reportStage } : undefined
       );
       const result = await turn;
       if (result.outcome === 'blocked') {
@@ -261,7 +263,8 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       content,
       payload.parentToolUseId,
       claimCurrent,
-      signal
+      signal,
+      reportStage ? { reportStage } : undefined
     );
     if (result.outcome === 'aborted') {
       // Bridge revalidation found the session archived or the message removed

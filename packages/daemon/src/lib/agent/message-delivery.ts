@@ -625,6 +625,14 @@ export type FeedSteerOutcome =
   | { outcome: 'park' }
   | { outcome: 'aborted' };
 
+/** Safe, delivery-attempt-local lifecycle reporting owned by the job processor. */
+export interface MessageDeliveryAttemptObserver {
+  reportStage(
+    stage: 'query_ready' | 'sdk_admitted' | 'first_sdk_response',
+    details?: { generation?: number; responseType?: string }
+  ): void;
+}
+
 /**
  * The live transport owner for a session (AgentSession implements this). Kept as
  * an interface so the job handler + tests depend on the shape, not the class.
@@ -652,14 +660,16 @@ export interface MessageDeliverySession {
      * the bridge flips them to `consumed` together with the kickoff.
      */
     batchUuids?: string[],
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    observer?: MessageDeliveryAttemptObserver
   ): Promise<DriveTurnOutcome>;
   feedDeliverySteer(
     messageUuid: string,
     content: DeliveryContent,
     parentToolUseId?: string | null,
     claimGuard?: () => boolean,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    observer?: MessageDeliveryAttemptObserver
   ): Promise<FeedSteerOutcome>;
   /**
    * True while the session's human gate is open (an unanswered
