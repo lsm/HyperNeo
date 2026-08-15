@@ -268,6 +268,13 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                   contentSignal.value = result.value ?? '';
                 }
                 removeClearTombstone(targetSessionId);
+                // Clear the IN-MEMORY owed-clear marker too: a stale ref would
+                // make the replay effect treat a LATER landing (the user
+                // navigated away and back) as another owed clear and strip the
+                // new sequence's baseline.
+                if (pendingClearRef.current === targetSessionId) {
+                  pendingClearRef.current = null;
+                }
               });
           }
           return hub
@@ -281,6 +288,9 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                 contentSignal.value = '';
               }
               removeClearTombstone(targetSessionId);
+              if (pendingClearRef.current === targetSessionId) {
+                pendingClearRef.current = null;
+              }
             });
         })
         .catch(() => {

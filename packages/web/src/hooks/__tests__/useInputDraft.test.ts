@@ -1355,6 +1355,56 @@ describe('useInputDraft', () => {
       expect(getDraftBackup('session-A')).toBeNull();
     });
 
+    it('clears the in-memory owed-clear marker once the reconcile commits', async () => {
+      // An owed clear whose landing EXPIRED: the durable tombstone survives,
+      // the marker is gone. The initial settle reconciles it directly against
+      // the daemon's baseline snapshot.
+      localStorage.setItem(
+        'hyperneo_voice_transcript_outbox_v1.clear.session-1',
+        JSON.stringify({ ts: Date.now() })
+      );
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return {
+            session: {
+              metadata: {
+                inputDraft: 'sent text voice',
+                inputDraftVoiceBaseline: 'sent text',
+                inputDraftVoiceBaselineSeq: 1,
+              },
+            },
+          };
+        }
+        if (method === 'session.stripVoiceBaseline') return { updated: true, value: 'voice' };
+        return {};
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      const strips = () =>
+        mockHub.request.mock.calls.filter(([m]) => m === 'session.stripVoiceBaseline').length;
+      expect(strips()).toBe(1);
+      expect(
+        localStorage.getItem('hyperneo_voice_transcript_outbox_v1.clear.session-1')
+      ).toBeNull();
+
+      // A NEW transcript lands for this session while the composer is idle: a
+      // stale in-memory owed-clear ref would treat the landing as another owed
+      // clear and strip the NEW sequence's baseline, deleting draft content
+      // the user never cleared.
+      markVoiceTranscriptLanded('session-1', 'new voice');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(strips()).toBe(1);
+      // No clear is owed — the landing defers behind the non-empty composer.
+      expect(result.current.content).toBe('voice');
+      expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(true);
+    });
+
     it('recovers a fresh backup whose landing marker expired, folding the merged transcripts', async () => {
       // Reload with the landing marker long pruned (>24h) but the draft
       // backup refreshed an hour ago: the user's edits must not die with the
