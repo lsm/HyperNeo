@@ -8224,6 +8224,20 @@ export class SpaceRuntime {
       // `setTaskStatus` directly.
       if (runIsComplete) {
         await this.transitionRunStatusAndEmit(runId, 'done');
+        // Re-read the canonical task before deciding routing: the snapshot
+        // above predates awaits (duplicate-repair, this transition), and
+        // CompletionDetector rereads from the DB — so an external terminal
+        // write landing during one of those awaits (e.g.
+        // complete_validation_task) makes `runIsComplete` true while the
+        // local `canonicalTask` is still stale. Deciding `taskAlreadyResolved`
+        // from the stale row would route a freshly-done task through
+        // dispatchPostApproval (an invalid done→approved attempt) instead of
+        // the resolved branch (result precedence, evidence refresh, sibling
+        // quiesce). (task #918)
+        const refreshedCanonical = this.config.taskRepo.getTask(canonicalTask.id);
+        if (refreshedCanonical) {
+          canonicalTask = refreshedCanonical;
+        }
         const summaryFromArtifact = this.resolvePrimaryResultArtifactSummary(runId);
         const summary = this.resolveCompletionSummary(runId, meta.workflow);
         const reportedSummary = normalizeMeaningfulTaskResult(canonicalTask.reportedSummary);

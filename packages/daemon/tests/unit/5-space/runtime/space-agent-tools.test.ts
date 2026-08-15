@@ -6134,6 +6134,119 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     }
   });
 
+  test('terminal precondition revalidates autonomy lowered mid-flight', async () => {
+    // The entry gate resolved effective autonomy at 5 (space 5, required 5).
+    // An operator lowers the space level to 2 between the gate and the
+    // terminal write — the write must refuse rather than complete work under
+    // revoked authority. The precondition rereads the level synchronously
+    // from the spaces row.
+    const taskId = await createTask('in_progress');
+    const originalGetTask = ctx.taskManager.getTask.bind(ctx.taskManager);
+    let lowered = false;
+    const getTaskSpy = spyOn(ctx.taskManager, 'getTask').mockImplementation(async (id: string) => {
+      if (id === taskId && !lowered) {
+        lowered = true;
+        await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 2 });
+      }
+      return originalGetTask(id);
+    });
+
+    try {
+      const result = await makeHandlers(ctx).complete_validation_task({
+        task_id: taskId,
+        validation_outcome: 'should be refused',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+
+      expect(parsed.success).toBe(false);
+      expect(parsed.error).toContain('effective autonomy was lowered to 2');
+      expect(parsed.error).toContain('submit_for_approval');
+      expect(ctx.taskRepo.getTask(taskId)?.status).toBe('in_progress');
+      expect(ctx.taskRepo.getTask(taskId)?.result).toBeNull();
+    } finally {
+      getTaskSpy.mockRestore();
+    }
+  });
+
+  test('quiesces same-node peer agents, sparing only the caller', async () => {
+    // The reconciliation sweep excludes every execution on the recorded
+    // source NODE, so peers in a multi-slot node would survive in_progress
+    // after the task completes — still able to act on finished work. The
+    // tool narrows the spared set to the caller: same-node peers go idle and
+    // are interrupted; the caller's own execution (mid-tool-call) and
+    // cross-node executions (the runtime sweep's business) are untouched.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-mid-worker',
+      agentName: 'Worker',
+      agentId: ctx.agentId,
+      status: 'in_progress',
+      agentSessionId: 'worker-session-mid',
+    });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-mid-worker',
+      agentName: 'Peer',
+      agentId: ctx.agentId,
+      status: 'in_progress',
+      agentSessionId: 'peer-session',
+    });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-other',
+      agentName: 'Other',
+      agentId: ctx.agentId,
+      status: 'in_progress',
+      agentSessionId: 'other-session',
+    });
+    ctx.db
+      .prepare(
+        `INSERT INTO sessions (
+            id, title, workspace_path, created_at, last_active_at, status, config, metadata,
+            is_worktree, git_branch, processing_state, type, session_context
+          ) VALUES (?, ?, ?, ?, ?, 'active', '{}', '{}', 1, 'feature/validation', ?, 'worker', ?)`
+      )
+      .run(
+        'worker-session-mid',
+        'Mid-node worker',
+        '/tmp/session-workspace',
+        new Date(0).toISOString(),
+        new Date().toISOString(),
+        JSON.stringify({ status: 'idle' }),
+        JSON.stringify({ spaceId: ctx.spaceId, taskId: task.id })
+      );
+    const interrupted: string[] = [];
+    const handlers = makeHandlers(ctx, {
+      mySessionId: 'worker-session-mid',
+      taskAgentManager: {
+        interruptBySessionId: async (sessionId: string) => {
+          interrupted.push(sessionId);
+        },
+      } as unknown as TaskAgentManager,
+    });
+
+    const result = await handlers.complete_validation_task({
+      task_id: task.id,
+      validation_outcome: 'validated; peers should stand down',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(true);
+    expect(parsed.task.status).toBe('done');
+
+    const executionBySession = new Map(
+      ctx.nodeExecutionRepo.listByWorkflowRun(task.workflowRunId!).map((e) => [e.agentSessionId, e])
+    );
+    // The peer is quiesced and interrupted...
+    expect(executionBySession.get('peer-session')?.status).toBe('idle');
+    expect(interrupted).toEqual(['peer-session']);
+    // ...the caller's own execution is spared (mid-tool-call)...
+    expect(executionBySession.get('worker-session-mid')?.status).toBe('in_progress');
+    // ...and cross-node executions are left for the runtime sweep.
+    expect(executionBySession.get('other-session')?.status).toBe('in_progress');
+  });
+
   test('rejects a workflow-backed task whose workflow declares a post-approval route', async () => {
     // A direct done would silently skip the route: the tick loop treats an
     // already-done task as resolved and never calls dispatchPostApproval.

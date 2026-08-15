@@ -709,6 +709,23 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     return config.db;
   }
 
+  /**
+   * Synchronous `spaces.autonomy_level` read for terminal-write revalidation
+   * (the entry gate resolves the level through async managers, which cannot
+   * run inside setTaskStatus' synchronous precondition). Returns null when no
+   * synchronous source is available (worker-built servers without a db
+   * handle) or the column is unset — callers fall back to the entry-gate
+   * snapshot in that case.
+   */
+  function readSpaceAutonomyLevelSync(): number | null {
+    if (!config.db) return null;
+    const row = config.db
+      .prepare('SELECT autonomy_level FROM spaces WHERE id = ? LIMIT 1')
+      .get(spaceId) as { autonomy_level: number | null } | undefined;
+    const level = row?.autonomy_level;
+    return typeof level === 'number' && level >= 1 && level <= 5 ? level : null;
+  }
+
   function parseJsonValue(value: string | null | undefined): unknown {
     if (!value) return null;
     try {
@@ -3747,6 +3764,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
 
       try {
+        // Snapshots the terminal precondition revalidates against (autonomy
+        // can be revoked between the entry gate and the write).
+        const requiredAutonomyLevel = completionAutonomyLevel;
+        const entrySpaceLevel = spaceLevel;
         // Resolve the completing worker's node BEFORE the transition so the
         // source can be committed atomically with `done` (no follow-up write,
         // no observable terminal-without-source window). The tick loop's
@@ -3759,11 +3780,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         // task's run (coordinator/task-agent, or a worker from another run)
         // resolve to none and pass no option.
         let completionSourceNodeId: string | undefined;
+        let completionSourceExecutionId: string | undefined;
         if (mySessionId && task.workflowRunId) {
           const callerExecution = nodeExecutionRepo
             .listByAgentSessionId(mySessionId)
             .find((e) => e.workflowRunId === task.workflowRunId);
           completionSourceNodeId = callerExecution?.workflowNodeId;
+          completionSourceExecutionId = callerExecution?.id;
         }
         // The run every guard above evaluated against — the terminal write is
         // bound to this association remaining unchanged (see the precondition).
@@ -3824,6 +3847,22 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             // which the exact-status SQL predicate cannot see — refuse if the
             // association moved so the newly attached run's guards are
             // evaluated instead of bypassed.
+            // Autonomy revalidation: an operator can lower the space level or
+            // the calling agent's ceiling after the entry gate but before this
+            // write — authority revoked mid-flight must not complete work
+            // under the old policy. The agent-ceiling closure is synchronous;
+            // the space level is reread synchronously from the spaces row,
+            // falling back to the entry-gate snapshot when no synchronous
+            // source exists (worker servers built without a db handle).
+            const agentLevelNow = getCallingAgentAutonomyLevel();
+            const spaceLevelNow = readSpaceAutonomyLevelSync() ?? entrySpaceLevel;
+            const effectiveNow =
+              agentLevelNow == null ? spaceLevelNow : Math.min(spaceLevelNow, agentLevelNow);
+            if (effectiveNow < requiredAutonomyLevel) {
+              throw new Error(
+                `Task ${args.task_id} cannot be completed: effective autonomy was lowered to ${effectiveNow} (required ${requiredAutonomyLevel}) before the write. The completion authority was revoked — use submit_for_approval to request human review.`
+              );
+            }
             const expectedRunId = checkedWorkflowRunId ?? null;
             const actualRunId = current.workflowRunId ?? null;
             if (actualRunId !== expectedRunId) {
@@ -3859,6 +3898,42 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
           },
         });
+
+        // Narrow the reconciliation sweep's spared set to the caller: the
+        // sweep excludes every execution on `postApprovalSourceNodeId`'s
+        // NODE, so same-node peer agents in a multi-slot node would survive
+        // `in_progress` after the task and run complete — still able to issue
+        // tools/messages for finished work. Quiesce them now (idle +
+        // interrupt), mirroring the sweep's own transition/interrupt pair;
+        // the caller's own execution is spared — it is mid-tool-call and
+        // cannot be interrupted from within itself. Best-effort: a failure
+        // here never rolls back the committed done transition.
+        if (updated.workflowRunId && completionSourceNodeId) {
+          try {
+            const peers = nodeExecutionRepo
+              .listByWorkflowRun(updated.workflowRunId)
+              .filter(
+                (execution) =>
+                  execution.workflowNodeId === completionSourceNodeId &&
+                  execution.status === 'in_progress' &&
+                  execution.id !== completionSourceExecutionId
+              );
+            for (const peer of peers) {
+              nodeExecutionRepo.updateStatus(peer.id, 'idle');
+              if (peer.agentSessionId && taskAgentManager) {
+                void taskAgentManager.interruptBySessionId(peer.agentSessionId).catch((err) => {
+                  log.warn(
+                    `complete_validation_task: failed to interrupt same-node peer session ${peer.agentSessionId}: ${err instanceof Error ? err.message : String(err)}`
+                  );
+                });
+              }
+            }
+          } catch (err) {
+            log.warn(
+              `complete_validation_task: same-node peer quiesce failed for task "${updated.id}": ${err instanceof Error ? err.message : String(err)}`
+            );
+          }
+        }
 
         // Best-effort goal terminal handling — must not block completion.
         try {

@@ -552,6 +552,68 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       expect(runEvidenceAfter?.metadata.status).toBe('done');
       expect(runEvidenceAfter?.metadata.completedAt).not.toBeNull();
     });
+
+    test('rereads the canonical task before routing — external done during duplicate repair is not re-routed', async () => {
+      // Interleaving: the tick snapshots the canonical task as in_progress,
+      // then awaits archiveDuplicateRunTasks for a legacy duplicate. An
+      // external terminal write (complete_validation_task) lands during that
+      // await — CompletionDetector rereads the DB and sees `done`, but the
+      // tick's local snapshot is stale. Deciding taskAlreadyResolved from the
+      // stale row would push the freshly-done task through
+      // dispatchPostApproval (invalid done→approved attempt); the reread
+      // routes it through the resolved branch instead, preserving the
+      // external result.
+      const rt = makeRuntimeWithTam();
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: 'node-stale', name: 'Coding', agentId: AGENT_A },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Stale snapshot run');
+      const task = tasks[0];
+      // Legacy duplicate (different title → the run-title match keeps the
+      // original task canonical; the duplicate gets archived on the next
+      // tick's repair pass).
+      const dup = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Legacy per-node task',
+        description: '',
+        status: 'in_progress',
+        workflowRunId: run.id,
+      });
+      seedNodeExec(db, run.id, 'node-stale', 'agent', 'in_progress');
+
+      const originalUpdateTask = taskRepo.updateTask.bind(taskRepo);
+      let externallyCompleted = false;
+      taskRepo.updateTask = ((
+        id: string,
+        params: Parameters<SpaceTaskRepository['updateTask']>[1]
+      ) => {
+        const result = originalUpdateTask(id, params);
+        // The external validation completion lands exactly while the tick is
+        // inside archiveDuplicateRunTasks' write for the duplicate.
+        if (id === dup.id && params.status === 'archived' && !externallyCompleted) {
+          externallyCompleted = true;
+          originalUpdateTask(task.id, {
+            status: 'done',
+            result: 'external validation outcome',
+          });
+        }
+        return result;
+      }) as typeof taskRepo.updateTask;
+
+      try {
+        await rt.executeTick();
+      } finally {
+        taskRepo.updateTask = originalUpdateTask;
+      }
+
+      expect(externallyCompleted).toBe(true);
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+      // The resolved branch ran: the external result survives untouched
+      // (a re-route attempt would have thrown or overwritten it).
+      const finalTask = taskRepo.getTask(task.id);
+      expect(finalTask?.status).toBe('done');
+      expect(finalTask?.result).toBe('external validation outcome');
+    });
   });
 
   // -------------------------------------------------------------------------
