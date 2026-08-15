@@ -279,18 +279,79 @@ const consumedMarkers = new Map<string, string>();
 
 const DRAFT_BACKUP_TTL_MS = 24 * 60 * 60 * 1000;
 
+// Draft backups are TAB-OWNED: each tab defers its own evolving edits under
+// `${prefix}${sessionId}.${tabId}`. A single shared key let one tab's landing
+// consumption retire ANOTHER tab's deferred backup (consumption is local, but
+// the key was not) — the editing tab kept suppressing server saves while its
+// only durable copy was deleted, so a reload before its next edit lost the
+// post-landing text permanently.
+const TAB_ID = generateUUID();
+
+function draftBackupKey(sessionId: string): string {
+  return `${DRAFT_BACKUP_PREFIX}${sessionId}.${TAB_ID}`;
+}
+
+/** A draft backup located in storage, including the exact key it lives under. */
+export interface DraftBackupClaim {
+  key: string;
+  content: string;
+  generation: number;
+}
+
+/**
+ * Scan every TAB-OWNED backup key for `sessionId` and return the FRESHEST
+ * in-TTL claim (the delimiter terminates the session id, so `s1` never matches
+ * `s10`'s keys). null when none exists. Does NOT remove anything — the caller
+ * retires the exact `key` once the content is durably persisted or folded.
+ */
+function freshestDraftBackup(sessionId: string): DraftBackupClaim | null {
+  let freshest: (DraftBackupClaim & { ts: number }) | null = null;
+  try {
+    const staleKeys: string[] = [];
+    const prefix = `${DRAFT_BACKUP_PREFIX}${sessionId}.`;
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(prefix)) continue;
+      const parsed = JSON.parse(localStorage.getItem(key) ?? 'null') as {
+        content?: unknown;
+        ts?: unknown;
+        generation?: unknown;
+      } | null;
+      if (!parsed || typeof parsed.content !== 'string') continue;
+      const ts = typeof parsed.ts === 'number' ? parsed.ts : 0;
+      if (Date.now() - ts >= DRAFT_BACKUP_TTL_MS) {
+        staleKeys.push(key);
+        continue;
+      }
+      if (!freshest || ts >= freshest.ts) {
+        freshest = {
+          key,
+          content: parsed.content,
+          generation: typeof parsed.generation === 'number' ? parsed.generation : 0,
+          ts,
+        };
+      }
+    }
+    for (const key of staleKeys) localStorage.removeItem(key);
+  } catch {
+    /* storage unavailable */
+  }
+  return freshest;
+}
+
 /**
  * Persist the evolving local draft for a session whose landing is deferred
  * (the composer has text, so its server saves are suppressed to protect the
  * landed transcript). A reload or session switch then restores the user's
  * edits instead of losing them, while the server draft keeps the transcript.
  * The landing GENERATION is stored so a reconciliation retires exactly the
- * backup for the landing it merged — not a newer one.
+ * backup for the landing it merged — not a newer one. Written under THIS
+ * tab's key, so another tab's consumption or retirement cannot drop it.
  */
 export function saveDraftBackup(sessionId: string, content: string, generation: number): void {
   try {
     localStorage.setItem(
-      `${DRAFT_BACKUP_PREFIX}${sessionId}`,
+      draftBackupKey(sessionId),
       JSON.stringify({ content, ts: Date.now(), generation })
     );
   } catch {
@@ -328,33 +389,34 @@ export function isLandingLive(sessionId: string): boolean {
 }
 
 export function getDraftBackup(sessionId: string): string | null {
-  try {
-    const raw = localStorage.getItem(`${DRAFT_BACKUP_PREFIX}${sessionId}`);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { content?: string; ts?: number };
-    if (typeof parsed.content !== 'string') return null;
-    if (Date.now() - (parsed.ts ?? 0) >= DRAFT_BACKUP_TTL_MS) {
-      localStorage.removeItem(`${DRAFT_BACKUP_PREFIX}${sessionId}`);
-      return null;
-    }
-    // Restore only while the landing is still live: an EXPIRED landing no
-    // longer suppresses saves, so restoring the backup would let the normal
-    // debounce overwrite the freshly-merged transcript.
-    if (!isLandingLive(sessionId)) return null;
-    return parsed.content;
-  } catch {
-    return null;
-  }
+  const claim = freshestDraftBackup(sessionId);
+  if (!claim) return null;
+  // Restore only while the landing is still live: an EXPIRED landing no
+  // longer suppresses saves, so restoring the backup would let the normal
+  // debounce overwrite the freshly-merged transcript.
+  if (!isLandingLive(sessionId)) return null;
+  return claim.content;
 }
 
 /**
- * Remove the draft backup for `sessionId`. When `generation` is given, only a
- * backup created for that exact landing generation is retired — a backup from
- * a NEWER (or another tab's) landing is preserved.
+ * Remove THIS TAB's draft backup for `sessionId`. When `generation` is given,
+ * only a backup created for that exact landing generation is retired. Only
+ * ever touches this tab's own key: consumption and retirement are local, and
+ * another tab's deferred edits under its own key must survive them — their
+ * tab retires its backup when IT consumes or pushes the content.
  */
 export function clearDraftBackup(sessionId: string, generation?: number): void {
+  removeDraftBackupKey(draftBackupKey(sessionId), generation);
+}
+
+/**
+ * Retire the exact backup key a caller claimed (any tab's — the caller
+ * persisted or folded that content, so the durable copy is superseded). When
+ * `generation` is given, the stored generation must still match: a NEWER
+ * landing can have rewritten the backup while the claim was in flight.
+ */
+export function removeDraftBackupKey(key: string, generation?: number): void {
   try {
-    const key = `${DRAFT_BACKUP_PREFIX}${sessionId}`;
     if (generation !== undefined) {
       const parsed = JSON.parse(localStorage.getItem(key) ?? 'null') as {
         generation?: number;
@@ -417,21 +479,8 @@ export function removeClearTombstone(sessionId: string): void {
 
 export function peekExpiredDraftBackup(
   sessionId: string
-): { content: string; generation: number } | null {
-  try {
-    const raw = localStorage.getItem(`${DRAFT_BACKUP_PREFIX}${sessionId}`);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as {
-      content?: string;
-      ts?: number;
-      generation?: number;
-    };
-    if (typeof parsed.content !== 'string') return null;
-    if (Date.now() - (parsed.ts ?? 0) >= DRAFT_BACKUP_TTL_MS) return null;
-    return { content: parsed.content, generation: parsed.generation ?? 0 };
-  } catch {
-    return null;
-  }
+): { key: string; content: string; generation: number } | null {
+  return freshestDraftBackup(sessionId);
 }
 
 const STORAGE_PREFIX = 'hyperneo_voice_transcript_outbox_v1.entry.';

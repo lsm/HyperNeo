@@ -15,7 +15,9 @@ import { connectionState } from '../../lib/state.ts';
 import {
   getDraftBackup,
   markVoiceTranscriptLanded,
+  peekExpiredDraftBackup,
   resetVoiceTranscriptOutbox,
+  saveDraftBackup,
   voiceTranscriptLandedSignal,
 } from '../../lib/voice/voice-transcript-outbox.ts';
 
@@ -747,10 +749,7 @@ describe('useInputDraft', () => {
       // backup holds their edits, the landing marker holds the transcript, and
       // this reload's initial get merges the pending server-side.
       markVoiceTranscriptLanded('session-1', 'voice');
-      localStorage.setItem(
-        'hyperneo_voice_transcript_outbox_v1.draft.session-1',
-        JSON.stringify({ content: 'hello world', ts: Date.now(), generation: 1 })
-      );
+      saveDraftBackup('session-1', 'hello world', 1);
       mockHub.request.mockResolvedValue({
         // Merged already: draft = baseline + transcript, with the daemon's
         // baseline snapshot carried in the response.
@@ -771,9 +770,7 @@ describe('useInputDraft', () => {
       // the stale baseline ("hello world hello voice").
       expect(result.current.content).toBe('hello world voice');
       expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(false);
-      expect(
-        localStorage.getItem('hyperneo_voice_transcript_outbox_v1.draft.session-1')
-      ).toBeNull();
+      expect(peekExpiredDraftBackup('session-1')).toBeNull();
       // The landing was settled by the INITIAL load — no second refresh get
       // raced the restore.
       expect(mockHub.request.mock.calls.filter(([m]) => m === 'session.get')).toHaveLength(1);
@@ -781,10 +778,7 @@ describe('useInputDraft', () => {
 
     it('does not fold or consume when the reload could not merge (pendingRetained)', async () => {
       markVoiceTranscriptLanded('session-1', 'voice');
-      localStorage.setItem(
-        'hyperneo_voice_transcript_outbox_v1.draft.session-1',
-        JSON.stringify({ content: 'hello world', ts: Date.now(), generation: 1 })
-      );
+      saveDraftBackup('session-1', 'hello world', 1);
       mockHub.request.mockResolvedValue({
         // Draft too full — the pending is still staged server-side.
         session: { metadata: { inputDraft: 'hello world', inputDraftVoicePending: 'voice' } },
@@ -855,10 +849,7 @@ describe('useInputDraft', () => {
       // folded and let the re-enabled save overwrite the merged two-occurrence
       // draft, dropping the voice occurrence.
       markVoiceTranscriptLanded('session-1', 'hello');
-      localStorage.setItem(
-        'hyperneo_voice_transcript_outbox_v1.draft.session-1',
-        JSON.stringify({ content: 'hello', ts: Date.now(), generation: 1 })
-      );
+      saveDraftBackup('session-1', 'hello', 1);
       mockHub.request.mockResolvedValue({
         // merged: both occurrences, baseline snapshot tells them apart
         session: {
@@ -1052,6 +1043,67 @@ describe('useInputDraft', () => {
       expect(flush).toBeTruthy();
     });
 
+    it('requeues a DECLINED backup merge for a departed session and retries it', async () => {
+      // The daemon declines the merge while a newer voice sequence is
+      // unresolved (the draft diverged from its baseline). Dropping the
+      // claim there would strand the backup — the switch was its only other
+      // trigger — so it must requeue with backoff and merge once the
+      // sequence settles.
+      let mergeCalls = 0;
+      mockHub.request.mockImplementation(async (method: string, payload?: { content?: string }) => {
+        if (method === 'session.mergeVoiceDraftBackup') {
+          mergeCalls += 1;
+          return mergeCalls === 1
+            ? { merged: false }
+            : { merged: true, value: payload?.content ?? '' };
+        }
+        return { session: { metadata: { inputDraft: '' } } };
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+      const { result, rerender } = renderHook(({ s }) => useInputDraft(s), {
+        initialProps: { s: 'session-A' },
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      result.current.setContent('A edits');
+      markVoiceTranscriptLanded('session-A', 'voice');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(23 * 60 * 60 * 1000);
+      });
+      result.current.setContent('A edits v2');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000);
+      });
+
+      // Switch away offline, then reconnect: the first merge is DECLINED...
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
+      rerender({ s: 'session-B' });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+      connectionState.value = 'connected';
+      await act(async () => {
+        // Enough for the immediate merge attempt, not the 5s backoff retry.
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      expect(mergeCalls).toBe(1);
+
+      // ...the backoff retry merges, and only then retires the backup.
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(mergeCalls).toBeGreaterThanOrEqual(2);
+      expect(peekExpiredDraftBackup('session-A')).toBeNull();
+    });
+
     it('persists an owed clear across a reload via the tombstone (no backup resurrection)', async () => {
       // First page life: deferred landing with a backup, then the user clears
       // while DISCONNECTED — the owed clear must survive the reload.
@@ -1074,9 +1126,7 @@ describe('useInputDraft', () => {
         await vi.runAllTimersAsync();
       });
       // The backup holds the pre-clear text; the tombstone records the clear.
-      expect(
-        localStorage.getItem('hyperneo_voice_transcript_outbox_v1.draft.session-1')
-      ).not.toBeNull();
+      expect(peekExpiredDraftBackup('session-1')?.content).toBe('sent text');
       expect(
         localStorage.getItem('hyperneo_voice_transcript_outbox_v1.clear.session-1')
       ).not.toBeNull();
@@ -1412,11 +1462,8 @@ describe('useInputDraft', () => {
       // transcripts from the stale baseline, so the restore folds BOTH into
       // the composer instead of clobbering the transcript with the
       // transcript-free backup.
-      const backupKey = 'hyperneo_voice_transcript_outbox_v1.draft.session-1';
-      localStorage.setItem(
-        backupKey,
-        JSON.stringify({ content: 'user edits', ts: Date.now() - 3_600_000, generation: 1 })
-      );
+      saveDraftBackup('session-1', 'user edits', 1);
+      const backupClaim = peekExpiredDraftBackup('session-1');
       mockHub.request.mockResolvedValueOnce({
         session: {
           metadata: { inputDraft: 'old draft voice text', inputDraftVoiceBaseline: 'old draft' },
@@ -1432,7 +1479,8 @@ describe('useInputDraft', () => {
       expect(result.current.content).toBe('user edits voice text');
       // The durable backup retired once its edits (plus transcripts) reached
       // the composer — the enabled saves now own them.
-      expect(localStorage.getItem(backupKey)).toBeNull();
+      expect(peekExpiredDraftBackup('session-1')).toBeNull();
+      expect(backupClaim).not.toBeNull();
     });
 
     it('keeps the server draft when an expired backup cannot be reconciled (no baseline)', async () => {
@@ -1441,11 +1489,8 @@ describe('useInputDraft', () => {
       // restoring the transcript-free backup would clobber them. The server
       // draft wins; the durable backup stays for the departed-session flush,
       // whose daemon-side merge folds-or-declines atomically.
-      const backupKey = 'hyperneo_voice_transcript_outbox_v1.draft.session-1';
-      localStorage.setItem(
-        backupKey,
-        JSON.stringify({ content: 'user edits', ts: Date.now() - 3_600_000, generation: 1 })
-      );
+      saveDraftBackup('session-1', 'user edits', 1);
+      const backupClaim = peekExpiredDraftBackup('session-1');
       mockHub.request.mockResolvedValueOnce({
         session: { metadata: { inputDraft: 'merged draft' } },
       });
@@ -1457,7 +1502,7 @@ describe('useInputDraft', () => {
       });
 
       expect(result.current.content).toBe('merged draft');
-      expect(localStorage.getItem(backupKey)).not.toBeNull();
+      expect(peekExpiredDraftBackup('session-1')?.content).toBe('user edits');
     });
 
     it('consumes the landing when a cancelled refresh still resolved (server merged it)', async () => {

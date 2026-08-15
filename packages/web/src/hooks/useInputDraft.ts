@@ -32,7 +32,6 @@ import { appendDraftText } from '@hyperneo/shared';
 import { connectionManager } from '../lib/connection-manager';
 import { connectionState } from '../lib/state';
 import {
-  clearDraftBackup,
   consumeVoiceTranscriptLanded,
   getDraftBackup,
   getLandingTranscript,
@@ -40,6 +39,7 @@ import {
   isLandingLive,
   peekExpiredDraftBackup,
   removeClearTombstone,
+  removeDraftBackupKey,
   saveClearTombstone,
   saveDraftBackup,
   voiceTranscriptLandedSignal,
@@ -383,7 +383,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           // still-staged pending merges onto the restored draft later).
           if (backup !== null) {
             contentSignal.value = backup;
-            if (!landingLive) clearDraftBackup(sessionId, claimed?.generation);
+            if (!landingLive && claimed) removeDraftBackupKey(claimed.key, claimed.generation);
           }
           return;
         }
@@ -435,7 +435,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         // the suppression) before another backup can be written.
         contentSignal.value = appendDraftText(backup, transcripts);
         if (landingLive) consumeLanding(sessionId, generation);
-        else clearDraftBackup(sessionId, claimed?.generation);
+        else if (claimed) removeDraftBackupKey(claimed.key, claimed.generation);
       }
     );
     return () => {
@@ -626,9 +626,9 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // the earlier one. The switch is otherwise the ONLY trigger and the session
   // ref has already advanced — without this retry the expired-landing backups
   // are never pushed and are eventually pruned.
-  const pendingBackupFlushRef = useRef<Map<string, { content: string; generation: number }>>(
-    new Map()
-  );
+  const pendingBackupFlushRef = useRef<
+    Map<string, { content: string; generation: number; key: string }>
+  >(new Map());
   // Retry retained backup flushes once the connection is restored. A flush
   // whose session is active again is ADOPTED into an idle composer (its edits
   // are newer than the stale server draft; normal saves then persist them) —
@@ -665,7 +665,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       if (!hub) return; // not actually reachable yet — retry on the next change
       const queued = [...pendingBackupFlushRef.current.entries()];
       pendingBackupFlushRef.current.clear();
-      for (const [flushSessionId, { content, generation }] of queued) {
+      for (const [flushSessionId, { content, generation, key }] of queued) {
         if (flushSessionId === currentSessionIdRef.current) {
           if (contentSignal.peek().trim() === '') {
             // ADOPT into the idle composer through the daemon-side MERGE: it
@@ -673,10 +673,10 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             // write (the backup alone is transcript-free), so the durable
             // copy cannot be dropped by a reload before a debounced save. The
             // backup retires only on the acknowledged merge, and only the
-            // generation it captured: a NEWER landing can rewrite the backup
-            // while this update is in flight, and clearing it here would
-            // strand that landing's suppressed edits. A failure or a declined
-            // merge (newer sequence unresolved) re-queues it.
+            // exact key and generation it captured: a NEWER landing can
+            // rewrite the backup while this update is in flight, and clearing
+            // it here would strand that landing's suppressed edits. A failure
+            // or a declined merge (newer sequence unresolved) re-queues it.
             hub
               .request<{ merged?: boolean; value?: string }>('session.mergeVoiceDraftBackup', {
                 sessionId: flushSessionId,
@@ -684,7 +684,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
               })
               .then((result) => {
                 if (!result.merged) {
-                  pendingBackupFlushRef.current.set(flushSessionId, { content, generation });
+                  pendingBackupFlushRef.current.set(flushSessionId, { content, generation, key });
                   scheduleFlushRetry();
                   return;
                 }
@@ -695,19 +695,19 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                     contentSignal.value = result.value ?? content;
                   }
                 }
-                clearDraftBackup(flushSessionId, generation);
+                removeDraftBackupKey(key, generation);
               })
               .catch(() => {
-                pendingBackupFlushRef.current.set(flushSessionId, { content, generation });
+                pendingBackupFlushRef.current.set(flushSessionId, { content, generation, key });
                 scheduleFlushRetry();
               });
           } else {
             // Active content supersedes the backup: the user returned to a
             // non-empty composer (their draft or typing) — its saves are the
             // newer state, and re-queueing the stale backup would let a later
-            // switch overwrite it. Retire the backup (generation-scoped: a
-            // newer landing's backup must survive this retirement).
-            clearDraftBackup(flushSessionId, generation);
+            // switch overwrite it. Retire the backup (key+generation scoped:
+            // a newer landing's backup must survive this retirement).
+            removeDraftBackupKey(key, generation);
           }
           continue;
         }
@@ -717,10 +717,18 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             content,
           })
           .then((result) => {
-            if (result.merged) clearDraftBackup(flushSessionId, generation);
+            if (result.merged) {
+              removeDraftBackupKey(key, generation);
+              return;
+            }
+            // Declined (a newer sequence is unresolved — the draft diverged
+            // from its baseline): requeue with backoff, or the backup would
+            // never retry and could expire without reaching the daemon.
+            pendingBackupFlushRef.current.set(flushSessionId, { content, generation, key });
+            scheduleFlushRetry();
           })
           .catch(() => {
-            pendingBackupFlushRef.current.set(flushSessionId, { content, generation });
+            pendingBackupFlushRef.current.set(flushSessionId, { content, generation, key });
             scheduleFlushRetry();
           });
       }
@@ -775,12 +783,14 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       const flushContent = claimed?.content.trim() || trimmedContent;
       const queueRetry = () => {
         if (claimed?.content.trim()) {
-          // Carry the claimed GENERATION: the retry's acknowledged clear must
-          // retire only the backup it actually persisted, never one a newer
-          // landing wrote in the meantime.
+          // Carry the claimed GENERATION and exact KEY: the retry's
+          // acknowledged merge must retire only the backup it actually
+          // persisted, never one a newer landing wrote in the meantime —
+          // and never another tab's key.
           pendingBackupFlushRef.current.set(prevSessionId, {
             content: claimed.content.trim(),
             generation: claimed.generation,
+            key: claimed.key,
           });
         }
       };
@@ -821,8 +831,10 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           })
           .then((result) => {
             // Acknowledged — now the durable copy is safely superseded,
-            // retired by the generation it held.
-            if (result.merged) clearDraftBackup(prevSessionId, claimed.generation);
+            // retired by its exact key and the generation it held. A declined
+            // merge (newer sequence unresolved) is requeued for retry.
+            if (result.merged) removeDraftBackupKey(claimed.key, claimed.generation);
+            else queueRetry();
           })
           .catch(() => {
             queueRetry();
