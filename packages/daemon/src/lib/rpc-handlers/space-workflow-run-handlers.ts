@@ -1038,6 +1038,11 @@ export function setupSpaceWorkflowRunHandlers(
           lastReason: preCheck.lastReason,
           retryCount: preCheck.retryCount,
           nextRetryAt: preCheck.nextRetryAt ?? null,
+          // The elapsed-ceiling origin too: __firstRetryAt is only re-stamped
+          // when retryCount === 0, so a restored nonzero cycle would
+          // permanently lose its elapsed-time origin and never reach
+          // MAX_RETRY_ELAPSED_MS.
+          localState: { __firstRetryAt: preCheck.localState.__firstRetryAt },
         });
         throw new Error(
           "Retry requested, but the queued action's durable deadline could not be updated " +

@@ -2544,8 +2544,14 @@ function parsesAsAddress(value: string): boolean {
 }
 
 function sameRetryableActionOwner(left: HookActionMeta, right: HookActionMeta): boolean {
+  // The sessionId match is RELAXED to a same-agent-same-node check: when a
+  // worker cannot be rehydrated its execution is reset and respawned with a
+  // NEW session id while the task, node, and agent slot are unchanged — the
+  // old in-memory timer is gone after restart, no future session matches
+  // the persisted meta.sessionId, and an exact-owner check would orphan the
+  // durable action forever (neither replayed nor cleared). Any live session
+  // of the SAME (task, node, agent) is the action's legitimate owner.
   return (
-    left.sessionId === right.sessionId &&
     left.agentName === right.agentName &&
     left.nodeId === right.nodeId &&
     left.taskId === right.taskId
@@ -2638,6 +2644,11 @@ export function clearRetryableHookActionTimer(actionKey: string): void {
   if (!pending) return;
   clearTimeout(pending.timer);
   pendingRetryableHookActions.delete(actionKey);
+}
+
+/** Test seam: whether an in-memory retry timer entry exists for a key. */
+export function isQueuedRetryableActionForTests(actionKey: string): boolean {
+  return pendingRetryableHookActions.has(actionKey);
 }
 
 export function triggerRetryableHookAction(actionKey: string): boolean {

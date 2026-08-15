@@ -28,6 +28,7 @@ import { createSpaceTables } from '../../helpers/space-test-db.ts';
 import {
   buildRetryableActionKey,
   backoffDelayMs,
+  isQueuedRetryableActionForTests,
 } from '../../../../src/lib/space/runtime/workflow-hook-engine.ts';
 import type { CustomHook, HookArtifact, SpaceWorkflow } from '@hyperneo/shared';
 
@@ -922,6 +923,64 @@ describe('WorkflowHookEngine.executeAction', () => {
     );
     expect(array.decision).toBe('deliver');
     expect(array.executionLog.length).toBe(0);
+  });
+
+  test('a replacement session re-arms a durable queued action (round 83)', async () => {
+    // The source worker died unrehydrated; the node respawned with a NEW
+    // session id (same task/node/agent). The old exact-owner check skipped
+    // the durable record forever — the re-armed scheduling must treat any
+    // live (task, node, agent) session as the owner.
+    const RETRY_HOOK = scriptHook('retry_hook', '{"flow":"retry","reason":"waiting"}');
+    const workflow = makeWorkflow({
+      customHooks: [RETRY_HOOK],
+      nodes: [
+        { id: 'n-coding', name: 'Coding', agents: [{ agentId: 'a1', name: 'coder' }] },
+        { id: 'n-review', name: 'Review', agents: [{ agentId: 'a2', name: 'reviewer' }] },
+      ],
+      channels: [{ from: 'Coding', to: 'Review', label: 'c' }],
+      hookBindings: [
+        {
+          hookId: 'retry_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const actionA = { target: 'Review', message: 'orphaned' };
+    const keyA = buildRetryableActionKey('send_message', actionA, META);
+    // Durable record queued by the DEAD session (sessionId 'dead-session').
+    hookStateRepo.update('run-1', 'retry_hook', {
+      expectedVersion: 0,
+      localState: {
+        __queuedRetryableActions: {
+          [keyA]: {
+            actionKey: keyA,
+            hookId: 'retry_hook',
+            methodName: 'send_message',
+            args: actionA,
+            meta: { ...META, sessionId: 'dead-session' },
+            isFollowUp: false,
+            nextRetryAt: Date.now() - 1000,
+            retryAfterMs: 30_000,
+            queuedAt: 1,
+          },
+        },
+      },
+    });
+    const engine = makeEngine(workflow);
+    // The REPLACEMENT session (META.sessionId 'sess-1', same task/node/agent)
+    // rehydrates — the durable action is scheduled for it.
+    engine.scheduleQueuedRetryableActions(
+      { send_message: async () => ({ content: [{ type: 'text', text: 'ok' }] }) },
+      META
+    );
+    // A scheduled action owns an in-memory timer entry with the SAME key
+    // (the old exact-owner check skipped it: 'dead-session' never matches).
+    expect(isQueuedRetryableActionForTests(keyA)).toBe(true);
   });
 
   test("a sibling action's delivery preserves the shared retry bookkeeping", async () => {
