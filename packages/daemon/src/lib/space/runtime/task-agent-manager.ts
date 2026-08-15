@@ -3734,8 +3734,11 @@ export class TaskAgentManager {
           // off the JOB ROW (not the throttled, ambiguity-prone `session.error`
           // broadcast) so an ErrorManager-throttled 4th error cannot leak a
           // bogus completion, and an unrelated recoverable error during a
-          // successful turn cannot suppress it. (Task #944.)
-          if (isMessageDeliveryV2Enabled() && this.hasActiveDeliveryJob(subSessionId)) {
+          // successful turn cannot suppress it. Deliberately NOT gated on the
+          // current v2 flag: after a rollback restart the unconditionally
+          // started processor still claims the boot's active v2 rows, and those
+          // rows — not the flag — own completion. (Task #944.)
+          if (this.hasActiveDeliveryJob(subSessionId)) {
             return;
           }
 
@@ -3902,7 +3905,7 @@ export class TaskAgentManager {
           // suppressed completion when the turn is actually over (live idle
           // state) and nothing else is in flight; if work is still ongoing,
           // the checks make this a no-op. (Task #944 review.)
-          if (isMessageDeliveryV2Enabled()) {
+          {
             const session = this.getSubSession(subSessionId);
             if (session && session.getProcessingState().status === 'idle') {
               completeFromDeliveryState();
@@ -3944,7 +3947,6 @@ export class TaskAgentManager {
         // the node. A wrong deferral delays the block by one immediate
         // dead-letter; it can never flip the outcome.
         if (
-          isMessageDeliveryV2Enabled() &&
           isRecoverableSessionError(event.details) &&
           this.hasProcessingDeliveryJob(subSessionId)
         ) {

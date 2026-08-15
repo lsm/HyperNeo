@@ -391,12 +391,44 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     expect(nodeStatus()).toBe('blocked');
   });
 
-  it('with delivery v2 disabled, a recoverable error blocks the node (legacy behavior)', async () => {
+  it('with delivery v2 disabled and no durable rows, a recoverable error blocks (legacy)', async () => {
     const prev = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
     process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
     try {
+      // A pure-legacy boot has no message_delivery rows; nothing can retry.
+      activeJobs.clear();
+      processingJobs.clear();
       await publishError(RECOVERABLE_DETAILS);
       expect(completed).toBe(false);
+      expect(nodeStatus()).toBe('blocked');
+    } finally {
+      if (prev === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = prev;
+    }
+  });
+
+  it('after a v2 rollback restart, an ACTIVE durable row still owns completion (Codex P2)', async () => {
+    // The processor starts unconditionally and claims the previous boot's
+    // v2 rows; the flag being off now must not re-enable first-idle-completes.
+    // A retryable terminal-result failure idles WITHOUT session.error while
+    // the old job is still active — the idle must stay suppressed.
+    const prev = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+    process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
+    try {
+      await publishIdle(); // job active → suppressed despite the flag
+      expect(completed).toBe(false);
+      expect(nodeStatus()).toBe('in_progress');
+
+      // And its dead-letter still blocks through the row-driven event path.
+      activeJobs.clear();
+      processingJobs.clear();
+      await bus.publish('session.delivery_failed', {
+        sessionId: SUB_SESSION_ID,
+        messageUuid: 'kickoff-uuid',
+        origin: 'space_inject',
+        role: 'turn',
+      });
+      await flush();
       expect(nodeStatus()).toBe('blocked');
     } finally {
       if (prev === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;

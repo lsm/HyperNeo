@@ -596,7 +596,9 @@ The contract (`TaskAgentManager.registerCompletionCallback`):
   delivery-terminal despite `recoverable === true`) only delays the block until
   the immediate dead-letter; `session.delivery_failed` then blocks the node.
 - **Idle while a delivery job is active** (`jobQueue.activeDeliveryMessageUuids`
-  non-empty) is not a completion. A failed turn idles BEFORE the job's
+  non-empty — row-driven, NOT gated on the current v2 flag: after a rollback
+  restart the processor still claims the previous boot's active rows) is not a
+  completion. A failed turn idles BEFORE the job's
   throw→backoff lands; a successful turn idles just before the job row
   completes. Suppressed on both sides of that race.
 - **`session.delivery_settled`** (processor `onComplete` lane hook — job row
@@ -627,7 +629,9 @@ The contract (`TaskAgentManager.registerCompletionCallback`):
   crash still needs the repair — and only the stamped kickoff's OWN delivery
   qualifies (`data.kickoffMessageUuid`): a pending-message flush can run a
   peer handoff as a `role:'turn'` job before the kickoff is enqueued, and
-  that is not the node's work.
+  that is not the node's work. A kickoff that lost the turn arbiter to such a
+  flush is persisted as a `steer`; its consumption counts only when its
+  OWNING turn also terminated (completed → success, dead → block).
 - **`session.delivery_failed`** (processor `onDead` lane hook — published for
   EVERY dead delivery, unlike the settlement's origin-gated `session.error`)
   blocks the node when `role === 'turn'`. This covers recovery-origin

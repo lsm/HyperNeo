@@ -466,6 +466,39 @@ export class JobQueueRepository {
     sinceMs: number,
     messageUuid?: string
   ): 'completed' | 'dead' | null {
+    // Correlated mode (an expected kickoff uuid): inspect THAT delivery's own
+    // row(s), any role. A kickoff that lost the turn arbiter to a concurrent
+    // flush is persisted as a `steer` — its consumption only counts as success
+    // when its OWNING turn also terminated (completed → success, dead → block).
+    if (messageUuid) {
+      const own = this.db
+        .prepare(
+          `SELECT status, json_extract(payload, '$.role') AS role,
+                  json_extract(result, '$.outcome') AS outcome
+             FROM job_queue
+            WHERE queue = 'message_delivery'
+              AND json_extract(payload, '$.messageUuid') = ?
+              AND completed_at IS NOT NULL`
+        )
+        .all(messageUuid) as Array<{ status: string; role: string; outcome: string | null }>;
+      if (own.some((r) => r.status === 'dead')) return 'dead';
+      if (
+        own.some((r) => r.role === 'turn' && r.status === 'completed' && r.outcome === 'completed')
+      ) {
+        return 'completed';
+      }
+      const consumedSteer = own.some(
+        (r) =>
+          r.role === 'steer' &&
+          r.status === 'completed' &&
+          (r.outcome === 'consumed' || r.outcome === 'already_consumed')
+      );
+      if (consumedSteer) {
+        return this.deliveryTurnOutcomeSince(sessionId, sinceMs);
+      }
+      return null;
+    }
+    // Session-scoped mode: the terminal outcome of the session's turn rows.
     const rows = this.db
       .prepare(
         `SELECT status, json_extract(result, '$.outcome') AS outcome
@@ -474,13 +507,9 @@ export class JobQueueRepository {
             AND json_extract(payload, '$.sessionId') = ?
             AND json_extract(payload, '$.role') = 'turn'
             AND completed_at IS NOT NULL
-            AND completed_at >= ?
-            ${messageUuid ? "AND json_extract(payload, '$.messageUuid') = ?" : ''}`
+            AND completed_at >= ?`
       )
-      .all(...(messageUuid ? [sessionId, sinceMs, messageUuid] : [sessionId, sinceMs])) as Array<{
-      status: string;
-      outcome: string | null;
-    }>;
+      .all(sessionId, sinceMs) as Array<{ status: string; outcome: string | null }>;
     for (const row of rows) {
       if (row.status === 'dead') return 'dead';
     }

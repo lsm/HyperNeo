@@ -697,4 +697,76 @@ describe('JobQueueRepository', () => {
       expect(repository.getJob(job3.id)).not.toBeNull();
     });
   });
+
+  describe('deliveryTurnOutcomeSince', () => {
+    const SINCE = Date.now() - 60_000;
+    /** Seed a settled message_delivery row directly (bypassing claim/complete). */
+    const seed = (
+      id: string,
+      messageUuid: string,
+      role: 'turn' | 'steer',
+      status: 'completed' | 'dead' | 'pending',
+      outcome: string | null
+    ) => {
+      db.prepare(
+        `INSERT INTO job_queue (id, queue, status, payload, result, priority, max_retries,
+           retry_count, run_at, created_at, started_at, completed_at)
+         VALUES (?, 'message_delivery', ?, ?, ?, 0, 3, 0, ?, ?, NULL, ?)`
+      ).run(
+        id,
+        status,
+        JSON.stringify({ sessionId: 'sess-1', messageUuid, role }),
+        outcome ? JSON.stringify({ outcome }) : null,
+        SINCE + 1000,
+        SINCE + 1100, // created_at
+        status === 'pending' ? null : SINCE + 2000
+      );
+    };
+
+    it('kickoff as TURN: completed-with-success → completed', () => {
+      seed('j1', 'kick', 'turn', 'completed', 'completed');
+      expect(repository.deliveryTurnOutcomeSince('sess-1', SINCE, 'kick')).toBe('completed');
+    });
+
+    it('kickoff dead-lettered (either role) → dead', () => {
+      seed('j1', 'kick', 'turn', 'dead', null);
+      expect(repository.deliveryTurnOutcomeSince('sess-1', SINCE, 'kick')).toBe('dead');
+      db.prepare('DELETE FROM job_queue').run();
+      seed('j1', 'kick', 'steer', 'dead', null);
+      expect(repository.deliveryTurnOutcomeSince('sess-1', SINCE, 'kick')).toBe('dead');
+    });
+
+    it('kickoff as TURN with non-success outcome → null', () => {
+      seed('j1', 'kick', 'turn', 'completed', 'skipped');
+      expect(repository.deliveryTurnOutcomeSince('sess-1', SINCE, 'kick')).toBeNull();
+    });
+
+    it('kickoff as consumed STEER + owning turn completed → completed', () => {
+      seed('j1', 'kick', 'steer', 'completed', 'consumed');
+      seed('j2', 'peer', 'turn', 'completed', 'completed');
+      expect(repository.deliveryTurnOutcomeSince('sess-1', SINCE, 'kick')).toBe('completed');
+    });
+
+    it('kickoff as consumed STEER + owning turn dead → dead', () => {
+      seed('j1', 'kick', 'steer', 'completed', 'consumed');
+      seed('j2', 'peer', 'turn', 'dead', null);
+      expect(repository.deliveryTurnOutcomeSince('sess-1', SINCE, 'kick')).toBe('dead');
+    });
+
+    it('kickoff as consumed STEER with no terminated owning turn → null (still live)', () => {
+      seed('j1', 'kick', 'steer', 'completed', 'consumed');
+      seed('j2', 'peer', 'turn', 'pending', null);
+      expect(repository.deliveryTurnOutcomeSince('sess-1', SINCE, 'kick')).toBeNull();
+    });
+
+    it('unrelated uuid only → null (correlation filters it out)', () => {
+      seed('j1', 'other', 'turn', 'completed', 'completed');
+      expect(repository.deliveryTurnOutcomeSince('sess-1', SINCE, 'kick')).toBeNull();
+    });
+
+    it('session-scoped mode (no uuid) still resolves turn rows', () => {
+      seed('j1', 'peer', 'turn', 'completed', 'completed');
+      expect(repository.deliveryTurnOutcomeSince('sess-1', SINCE)).toBe('completed');
+    });
+  });
 });
