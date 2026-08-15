@@ -72,8 +72,11 @@ export function markVoiceTranscriptLanded(
   // strictly monotonic from there.
   let seq = Math.max(1, Date.now() + TAB_SEQ_OFFSET);
   let markerExisted = false;
+  let existing: ReturnType<typeof parseLandedMarker> = null;
+  let rawMarker: string | null = null;
   try {
-    const existing = parseLandedMarker(localStorage.getItem(`${LANDED_PREFIX}${sessionId}`));
+    rawMarker = localStorage.getItem(`${LANDED_PREFIX}${sessionId}`);
+    existing = parseLandedMarker(rawMarker);
     if (existing) {
       markerExisted = true;
       seq = Math.max(existing.n + 1, Date.now() + TAB_SEQ_OFFSET);
@@ -96,6 +99,28 @@ export function markVoiceTranscriptLanded(
     }
   }
   markVoiceTranscriptLandedLocal(sessionId, text, false, seq, entryId);
+  // Another tab may have landed entries whose `storage` event this context
+  // has not yet processed — the rewrite must UNION with the persisted
+  // aggregate, not replace it (a replacement drops the earlier transcripts
+  // from every future reconciliation that falls back to the marker). Runs
+  // AFTER the local accumulation above, which restarts the aggregate when no
+  // local landing was live.
+  // ...but skip a marker THIS TAB already consumed (the per-tab ack still
+  // names it): consumption means the sequence's pending fully merged
+  // server-side, so the next sequence legitimately starts a fresh aggregate —
+  // unioning here would re-announce already-merged transcripts.
+  const consumedThisTab = rawMarker !== null && consumedMarkers.get(sessionId) === rawMarker;
+  if (existing?.text && !consumedThisTab) {
+    const local = landingTexts.get(sessionId);
+    if (local === undefined || !local.includes(existing.text)) {
+      landingTexts.set(sessionId, appendDraftText(local ?? '', existing.text));
+    }
+  }
+  if (existing?.ids.length && !consumedThisTab) {
+    const mergedIds = new Set(landingIds.get(sessionId) ?? []);
+    for (const id of existing.ids) mergedIds.add(id);
+    landingIds.set(sessionId, [...mergedIds].slice(-MAX_ENTRIES));
+  }
   try {
     // Timestamp + monotonic counter so two landings within the same Date.now()
     // tick still change the value — a same-value write would not emit a
@@ -182,6 +207,25 @@ function markVoiceTranscriptLandedLocal(
     // A hydrated marker replaces the local id set wholesale — it is the
     // authoritative sequence from the writing tab.
     landingIds.set(sessionId, (markerIds ?? []).slice(-MAX_ENTRIES));
+  }
+}
+
+/**
+ * The EFFECTIVE landing generation for `sessionId`: the process-local signal
+ * when this tab knows the landing, otherwise the persisted marker's counter
+ * (this tab may not have processed the marker's `storage` event yet — writing
+ * a backup as generation 0 in that window would orphan it: a later
+ * generation-matched consumption could never retire it, leaving it restorable
+ * over text the user already sent or cleared).
+ */
+export function getLandingGeneration(sessionId: string): number | undefined {
+  const local = voiceTranscriptLandedSignal.value.get(sessionId);
+  if (local !== undefined) return local;
+  try {
+    const marker = parseLandedMarker(localStorage.getItem(`${LANDED_PREFIX}${sessionId}`));
+    return marker?.n;
+  } catch {
+    return undefined;
   }
 }
 
@@ -356,7 +400,11 @@ export function readTabId(): string {
   return stored;
 }
 
-const TAB_HEARTBEAT_FRESH_MS = 4000;
+// Generous freshness: background tabs throttle timers to ~1/minute, so a
+// short window would call a still-live source tab dead and hand its id to a
+// duplicate. visibilitychange/pageshow/resume refreshes cover the exact
+// duplication moment (the source hides or resumes as the clone opens).
+const TAB_HEARTBEAT_FRESH_MS = 90_000;
 const TAB_HEARTBEAT_INTERVAL_MS = 2000;
 
 const TAB_ID = readTabId();
@@ -375,6 +423,12 @@ try {
     }
   };
   const interval = setInterval(beat, TAB_HEARTBEAT_INTERVAL_MS);
+  // Timer throttling makes the interval unreliable in background tabs;
+  // lifecycle transitions refresh the beat exactly when a clone is likely
+  // being created (this tab hiding or resuming).
+  window.addEventListener('visibilitychange', beat);
+  window.addEventListener('pageshow', beat);
+  window.addEventListener('resume', beat);
   const stop = () => {
     clearInterval(interval);
     try {
@@ -488,14 +542,16 @@ function freshestDraftBackup(sessionId: string): DraftBackupClaim | null {
  * backup for the landing it merged — not a newer one. Written under THIS
  * tab's key, so another tab's consumption or retirement cannot drop it.
  */
-export function saveDraftBackup(sessionId: string, content: string, generation: number): void {
+export function saveDraftBackup(sessionId: string, content: string, generation: number): boolean {
   try {
     localStorage.setItem(
       draftBackupKey(sessionId),
       JSON.stringify({ content, ts: Date.now(), generation })
     );
+    return true;
   } catch {
-    /* backup best-effort */
+    /* backup best-effort — the caller falls back to the normal save */
+    return false;
   }
 }
 

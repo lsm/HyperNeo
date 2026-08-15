@@ -26,6 +26,7 @@ import {
   getPendingTranscripts,
   hasClearTombstone,
   isLandingLive,
+  getLandingGeneration,
   markVoiceTranscriptLanded,
   peekExpiredDraftBackup,
   readTabId,
@@ -894,6 +895,39 @@ describe('voice transcript outbox', () => {
     expect(cloneId).not.toBe('source-tab-id');
     // The clone's id is persisted for ITS reloads.
     expect(sessionStorage.getItem('hyperneo_tab_id')).not.toBe('source-tab-id');
+  });
+
+  it('unions the persisted aggregate when rewriting the marker (unseen cross-tab landing)', () => {
+    // Another tab landed 'first' but this tab has not processed its storage
+    // event. This tab's own landing must not REPLACE the marker's earlier
+    // transcript/ids — reconciliation that falls back to the marker would
+    // otherwise lose the earlier voice input.
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+      JSON.stringify({ v: 1, ts: Date.now(), n: 3, text: 'first', ids: ['e1'] })
+    );
+    markVoiceTranscriptLanded('s1', 'second', 'e2');
+    const marker = JSON.parse(
+      localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1') ?? '{}'
+    );
+    expect(marker.text).toContain('first');
+    expect(marker.text).toContain('second');
+    expect(marker.ids).toContain('e1');
+    expect(marker.ids).toContain('e2');
+    expect(getAnnouncedEntryIds('s1')).toContain('e1');
+  });
+
+  it('reads the landing generation from the marker before the signal hydrates', () => {
+    // This tab has not processed the marker's storage event, so the
+    // process-local signal is empty — a backup saved in that window must
+    // still carry the marker's generation (0 would orphan it: a later
+    // generation-matched consumption could never retire it).
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+      JSON.stringify({ v: 1, ts: Date.now(), n: 7, text: 'agg', ids: [] })
+    );
+    expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(false);
+    expect(getLandingGeneration('s1')).toBe(7);
   });
 
   it('removePendingTranscript drops a single entry', () => {

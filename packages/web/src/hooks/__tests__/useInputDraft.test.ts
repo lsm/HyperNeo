@@ -1763,6 +1763,40 @@ describe('useInputDraft', () => {
       expect(getCalls).toBeGreaterThanOrEqual(2);
     });
 
+    it('falls back to the normal save when the backup write fails (storage full)', () => {
+      // localStorage refuses the draft-backup write (disabled / quota): the
+      // suppression alone would leave the typed text only in the composer
+      // signal — lost to a switch, reload, or close. The normal save runs
+      // instead; the daemon folds any merged transcripts via the echoed draft
+      // version, so the fallback is transcript-safe.
+      const baseStorage = createMemoryStorage();
+      const quotaStorage = createMemoryStorage();
+      quotaStorage.setItem = (k: string, v: string) => {
+        if (k.startsWith('hyperneo_voice_transcript_outbox_v1.draft.')) {
+          throw new DOMException('quota', 'QuotaExceededError');
+        }
+        baseStorage.setItem(k, v);
+      };
+      globalThis.localStorage = quotaStorage as Storage;
+      mockHub.request.mockResolvedValue({ session: { metadata: { inputDraft: '' } } });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      result.current.setContent('typed while landing live');
+      markVoiceTranscriptLanded('session-1', 'voice');
+      return act(async () => {
+        await vi.runAllTimersAsync();
+      }).then(() => {
+        const save = mockHub.request.mock.calls.find(
+          ([m, d]) =>
+            m === 'session.update' &&
+            d?.sessionId === 'session-1' &&
+            d?.metadata?.inputDraft === 'typed while landing live'
+        );
+        expect(save).toBeTruthy();
+      });
+    });
+
     it('recognizes an owed strip that committed with a lost ack (no transcript clear)', async () => {
       // The strip COMMITTED but its response was lost: the server draft is
       // transcript-only and the baseline is gone, while this tab's tombstone

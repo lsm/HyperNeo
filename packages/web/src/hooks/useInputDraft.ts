@@ -35,6 +35,7 @@ import {
   consumeVoiceTranscriptLanded,
   getClearTombstone,
   getDraftBackup,
+  getLandingGeneration,
   getLandingTranscript,
   hasClearTombstone,
   isLandingLive,
@@ -1085,9 +1086,16 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     // stored so the reconciliation retires exactly this landing's backup.
     if (isLandingLive(sessionId)) {
       if (content.trim() !== '') {
-        saveDraftBackup(sessionId, content, voiceTranscriptLandedSignal.value.get(sessionId) ?? 0);
+        const backedUp = saveDraftBackup(sessionId, content, getLandingGeneration(sessionId) ?? 0);
+        if (backedUp) return;
+        // localStorage refused the backup (disabled / quota): suppressing the
+        // save would leave the typed text only in the composer signal — lost
+        // to a switch, reload, or close. Fall through to the NORMAL save: the
+        // daemon's expectedDraftVersion check folds any merged transcripts
+        // into the write, so the fallback is transcript-safe.
+      } else {
+        return;
       }
-      return;
     }
 
     const trimmedContent = content.trim();
