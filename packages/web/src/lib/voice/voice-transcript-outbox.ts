@@ -312,21 +312,81 @@ const DRAFT_BACKUP_TTL_MS = 24 * 60 * 60 * 1000;
 // text the user had sent. The tab id lives in sessionStorage: isolated per
 // browser tab, yet STABLE ACROSS RELOADS of the same tab — exactly the
 // ownership the reload-survival of these records requires.
-function readTabId(): string {
+/** Resolve this context's tab id (exported for the clone-detection tests). */
+export function readTabId(): string {
+  let stored: string | null = null;
   try {
-    const existing = sessionStorage.getItem('hyperneo_tab_id');
-    if (existing) return existing;
-    const id = generateUUID();
-    sessionStorage.setItem('hyperneo_tab_id', id);
-    return id;
+    stored = sessionStorage.getItem('hyperneo_tab_id');
   } catch {
     // sessionStorage unavailable (tests without a stub) — an ephemeral id
     // still keeps this module instance's records distinct from others'.
     return generateUUID();
   }
+  if (!stored) {
+    const id = generateUUID();
+    try {
+      sessionStorage.setItem('hyperneo_tab_id', id);
+    } catch {
+      /* best-effort persistence */
+    }
+    return id;
+  }
+  // CLONED-TAB detection: duplicating a tab (or opening through an opener
+  // that retains it) initializes the copy's sessionStorage from the source,
+  // so both contexts would share the stored id and "tab-owned" keys would
+  // collide — divergent drafts overwrite each other and one context's
+  // consumption removes the other's only durable copy. A heartbeat marks the
+  // id LIVE while its owner runs: a fresh heartbeat at startup means the id
+  // belongs to a still-running context, so this one mints a new id. An
+  // ordinary reload finds no heartbeat (the previous context removed it on
+  // pagehide), preserving identity across reloads; a hard crash's heartbeat
+  // goes stale within the freshness window, so only a restart within seconds
+  // of a crash mints a new id.
+  try {
+    const raw = localStorage.getItem(`hyperneo_tab_heartbeat.${stored}`);
+    const beat = raw === null ? 0 : Number(raw);
+    if (Number.isFinite(beat) && Date.now() - beat < TAB_HEARTBEAT_FRESH_MS) {
+      const id = generateUUID();
+      sessionStorage.setItem('hyperneo_tab_id', id);
+      return id;
+    }
+  } catch {
+    /* storage unavailable — keep the stored id */
+  }
+  return stored;
 }
 
+const TAB_HEARTBEAT_FRESH_MS = 4000;
+const TAB_HEARTBEAT_INTERVAL_MS = 2000;
+
 const TAB_ID = readTabId();
+
+// Mark this tab id LIVE while this context runs, so a cloned copy of it
+// detects the collision and mints its own id. Removed on pagehide so an
+// ordinary reload immediately reclaims the identity.
+try {
+  const heartbeatKey = `hyperneo_tab_heartbeat.${TAB_ID}`;
+  localStorage.setItem(heartbeatKey, String(Date.now()));
+  const beat = () => {
+    try {
+      localStorage.setItem(heartbeatKey, String(Date.now()));
+    } catch {
+      /* best-effort liveness */
+    }
+  };
+  const interval = setInterval(beat, TAB_HEARTBEAT_INTERVAL_MS);
+  const stop = () => {
+    clearInterval(interval);
+    try {
+      localStorage.removeItem(heartbeatKey);
+    } catch {
+      /* best-effort */
+    }
+  };
+  window.addEventListener('pagehide', stop, { once: true });
+} catch {
+  /* storage unavailable — clone detection degrades to the stored id */
+}
 
 // Deterministic per-tab offset that breaks same-millisecond generation ties
 // between concurrently-landing tabs (hash of the tab id; 0 collides only with
@@ -663,12 +723,15 @@ function allEntries(): PendingTranscript[] {
     .sort((a, b) => a.createdAt - b.createdAt);
 }
 
-function writeEntry(entry: PendingTranscript): void {
+/** Whether the entry reached durable storage (false = mirror-only). */
+function writeEntry(entry: PendingTranscript): boolean {
   mirror.set(entry.id, entry);
   try {
     localStorage.setItem(entryKey(entry.id), JSON.stringify(entry));
+    return true;
   } catch {
     /* storage unavailable/full — the mirror holds the entry for this session */
+    return false;
   }
 }
 
@@ -786,13 +849,16 @@ export function isPermanentAppendRefusal(error: unknown): boolean {
  * (optional) is the dedup id used by the INITIAL staging attempt, so when that
  * attempt commits but its ack is lost in a disconnect, the queued retry
  * reuses the same id and the daemon's dedup set skips the double-append.
+ * Returns whether the entry reached DURABLE storage: a localStorage failure
+ * leaves it only in the in-session mirror, which survives until this page
+ * closes — the caller must not promise the user it survives a reload.
  */
-export function enqueueTranscript(sessionId: string, text: string, id?: string): void {
+export function enqueueTranscript(sessionId: string, text: string, id?: string): boolean {
   // Prune BEFORE writing: dropping an expired/over-cap old entry frees the
   // quota the new entry needs, so a near-full localStorage still persists it
   // instead of leaving it only in the in-session mirror (which a reload loses).
   prune();
-  writeEntry({ id: id ?? generateUUID(), sessionId, text, createdAt: Date.now() });
+  const durable = writeEntry({ id: id ?? generateUUID(), sessionId, text, createdAt: Date.now() });
   // A same-tab enqueue emits no `storage` event and the connection-state
   // effect does not re-run while already connected — so kick the first flush
   // here. The flush's own retained-entry logic then schedules the backoff
@@ -800,6 +866,7 @@ export function enqueueTranscript(sessionId: string, text: string, id?: string):
   if (connectionState.value === 'connected') {
     setTimeout(() => void flushPendingTranscripts(), FLUSH_DELAY_MS);
   }
+  return durable;
 }
 
 export function getPendingTranscripts(): PendingTranscript[] {

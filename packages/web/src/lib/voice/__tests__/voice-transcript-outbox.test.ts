@@ -28,6 +28,7 @@ import {
   isLandingLive,
   markVoiceTranscriptLanded,
   peekExpiredDraftBackup,
+  readTabId,
   removeDraftBackupKey,
   removeClearTombstone,
   removePendingTranscript,
@@ -880,6 +881,19 @@ describe('voice transcript outbox', () => {
     // transcript into reconciliations.
     expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(false);
     expect(getLandingTranscript('s1')).toBeNull();
+  });
+
+  it('mints a fresh tab id when the stored id has a live heartbeat (cloned tab)', () => {
+    // Duplicating a tab copies sessionStorage, so the clone would inherit the
+    // source's tab id and "tab-owned" keys would collide. A fresh heartbeat
+    // at startup means the id's owner is still running — this context is a
+    // clone and must mint its own id.
+    sessionStorage.setItem('hyperneo_tab_id', 'source-tab-id');
+    localStorage.setItem('hyperneo_tab_heartbeat.source-tab-id', String(Date.now()));
+    const cloneId = readTabId();
+    expect(cloneId).not.toBe('source-tab-id');
+    // The clone's id is persisted for ITS reloads.
+    expect(sessionStorage.getItem('hyperneo_tab_id')).not.toBe('source-tab-id');
   });
 
   it('removePendingTranscript drops a single entry', () => {

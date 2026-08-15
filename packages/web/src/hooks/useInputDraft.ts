@@ -116,6 +116,12 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // Arm the backup-flush retry backoff from outside the retry effect (the
   // connection subscription alone only fires on connection CHANGES).
   const flushKickRef = useRef<() => void>(() => {});
+  // Claim ids of ACTIVE-CONTENT merges keyed per session: the id must survive
+  // retries so a merge that committed with a lost ack is recognized — a fresh
+  // id per attempt would let the retry rewrite the committed draft, and
+  // requeueing the ORIGINAL backup claim instead could push its
+  // transcript-free content over the active draft the merge committed.
+  const activeMergeClaimsRef = useRef<Map<string, string>>(new Map());
 
   // Consume a landing generation and record it as reconciled — every path
   // that settles a landing goes through here, so the fold guard above and the
@@ -860,18 +866,43 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             // and retire the backup only once that write is acknowledged; a
             // failure requeues the backup claim itself.
             const active = contentSignal.peek().trim();
+            // One claim id per session's active-merge sequence, reused across
+            // retries (the daemon's idempotent replay acknowledges a committed
+            // merge instead of rewriting); retired once the merge commits.
+            const activeClaimId =
+              activeMergeClaimsRef.current.get(flushSessionId) ?? generateUUID();
+            activeMergeClaimsRef.current.set(flushSessionId, activeClaimId);
             hub
               .request<{ merged?: boolean }>('session.mergeVoiceDraftBackup', {
                 sessionId: flushSessionId,
                 content: active,
-                claimId: generateUUID(),
+                claimId: activeClaimId,
               })
               .then((result) => {
-                if (result.merged) removeDraftBackupKey(key, generation);
-                else requeueClaim(flushSessionId, { content, generation, key, claimId, ts });
+                if (result.merged) {
+                  activeMergeClaimsRef.current.delete(flushSessionId);
+                  removeDraftBackupKey(key, generation);
+                  return;
+                }
+                // Still owed: requeue the ACTIVE content under the SAME id —
+                // not the older backup, whose transcript-free text must never
+                // overwrite the draft the active merge committed.
+                requeueClaim(flushSessionId, {
+                  content: active,
+                  generation,
+                  key,
+                  claimId: activeClaimId,
+                  ts,
+                });
               })
               .catch(() => {
-                requeueClaim(flushSessionId, { content, generation, key, claimId, ts });
+                requeueClaim(flushSessionId, {
+                  content: active,
+                  generation,
+                  key,
+                  claimId: activeClaimId,
+                  ts,
+                });
               });
           }
           continue;

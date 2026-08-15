@@ -151,7 +151,9 @@ describe('MessageInput — recording UI', () => {
       if (method === 'voice.transcribe') return transcribeRequest(method, ...rest);
       return {};
     });
-    enqueueTranscript.mockClear();
+    enqueueTranscript.mockReset().mockReturnValue(true);
+    // mockReset (not clear): a previous test's per-test return (e.g. the
+    // memory-backed false) must not leak into the next.
     // Timer-backed rAF so deferred hook work actually runs and can be drained
     // before the stubs are removed. A no-op stub leaves Preact cleanup pending
     // until after unstubAllGlobals, where cancelAnimationFrame no longer exists
@@ -345,6 +347,35 @@ describe('MessageInput — recording UI', () => {
     // No staging RPC was attempted (the socket is dead), and nothing was sent.
     expect(hubRequest.mock.calls.find(([m]) => m === 'session.appendVoiceDraft')).toBeFalsy();
     expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('warns honestly when the outbox could only keep the transcript in memory', async () => {
+    // localStorage refused the write (disabled / quota): the transcript is
+    // mirror-only — delivered on reconnect, but a reload loses it. The toast
+    // must not promise durable preservation.
+    let resolveTranscribe!: (value: { text: string }) => void;
+    transcribeRequest.mockReturnValueOnce(
+      new Promise<{ text: string }>((resolve) => {
+        resolveTranscribe = resolve;
+      })
+    );
+    enqueueTranscript.mockReturnValue(false);
+
+    const onSend = vi.fn(async () => true);
+    const { unmount } = render(<MessageInput sessionId="s1" onSend={onSend} />);
+
+    fireEvent.click(screen.getByLabelText('Stop recording and transcribe'));
+    await waitFor(() => expect(transcribeRequest).toHaveBeenCalledTimes(1));
+    unmount();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
+    resolveTranscribe({ text: 'hello world' });
+
+    await waitFor(() =>
+      expect(toast.info).toHaveBeenCalledWith(
+        'Voice transcript kept in this tab — reconnect before closing it'
+      )
+    );
   });
 
   it('enqueues an AMBIGUOUS staging timeout (append may have committed) even while reconnected', async () => {

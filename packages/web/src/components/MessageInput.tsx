@@ -622,10 +622,15 @@ export default function MessageInput({
           // sends/clears) are all retryable, and the flush replays them with
           // backoff, deduplicated by the shared outbox id.
           if (!isPermanentAppendRefusal(error)) {
-            enqueueTranscript(targetSessionId, transcript, outboxId);
+            const durable = enqueueTranscript(targetSessionId, transcript, outboxId);
+            // localStorage refused the write: the transcript survives only in
+            // this page's memory — delivered on reconnect, but a reload or
+            // close loses it. Say so instead of promising durable preservation.
             return {
               ok: true,
-              message: 'Voice transcript saved — will be delivered when reconnected',
+              message: durable
+                ? 'Voice transcript saved — will be delivered when reconnected'
+                : 'Voice transcript kept in this tab — reconnect before closing it',
             };
           }
           return { ok: false, message: '' };

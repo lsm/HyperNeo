@@ -479,8 +479,7 @@ export function setupSessionHandlers(
         // current version and is applied as-is, while a stale writer (absent
         // or older version — or one that coincidentally ends with the same
         // phrase, which a suffix comparison cannot tell apart) gets the
-        // transcripts folded in. Either way the snapshot clears: this write is
-        // now the reconciliation point.
+        // transcripts folded in.
         const baseline = meta.inputDraftVoiceBaseline;
         const draft = meta.inputDraft ?? '';
         let transcripts = '';
@@ -496,7 +495,19 @@ export function setupSessionHandlers(
             ? appendDraftText(written, transcripts)
             : written;
         (updates.metadata as Partial<SessionMetadata>).inputDraft = folded || null;
-        (updates.metadata as Partial<SessionMetadata>).inputDraftVoiceBaseline = null;
+        // A version-current writer read the merged draft — its write IS the
+        // reconciliation, so the snapshot clears. A STALE writer's fold instead
+        // RE-ANCHORS the baseline to its (pre-merge) content with the sequence
+        // id intact: the folded draft is again exactly baseline + transcripts,
+        // so an in-flight or retrying clear's strip still recognizes the
+        // sequence and reduces the draft to the transcripts alone — clearing
+        // here would strand the strip (declined on the vanished snapshot) and
+        // resurrect text the user had sent or cleared.
+        if (alreadyIncluded) {
+          (updates.metadata as Partial<SessionMetadata>).inputDraftVoiceBaseline = null;
+        } else {
+          (updates.metadata as Partial<SessionMetadata>).inputDraftVoiceBaseline = written;
+        }
         (updates.metadata as Partial<SessionMetadata>).inputDraftVersion = currentVersion + 1;
       } else {
         // A plain draft write (no sequence involved) still bumps the version

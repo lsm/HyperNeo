@@ -720,6 +720,7 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
   let existingPending: string | null;
   let existingDraft: string | null;
   let existingBaseline: string | null | undefined;
+  let existingBaselineSeq: number | null | undefined;
   let existingDraftVersion: number | null | undefined;
   let sessionExists: boolean;
 
@@ -729,6 +730,7 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
     existingPending = null;
     existingDraft = null;
     existingBaseline = undefined;
+    existingBaselineSeq = undefined;
     existingDraftVersion = undefined;
     sessionExists = true;
     sessionManager = {
@@ -741,6 +743,7 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
                 inputDraft: existingDraft,
                 inputDraftVoicePending: existingPending,
                 inputDraftVoiceBaseline: existingBaseline,
+                inputDraftVoiceBaselineSeq: existingBaselineSeq,
                 inputDraftVersion: existingDraftVersion,
               },
             }
@@ -801,10 +804,30 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
       metadata: {
         inputDraft: 'stale edits voice words',
-        inputDraftVoiceBaseline: null,
+        // RE-ANCHORED (not cleared): the folded draft is again baseline +
+        // transcripts, so an in-flight or retrying clear's strip still
+        // recognizes the sequence and reduces the draft to the transcripts —
+        // clearing here would strand the strip and resurrect sent text.
+        inputDraftVoiceBaseline: 'stale edits',
         inputDraftVersion: 1,
       },
     });
+  });
+
+  it('reduces a stale-folded draft to the transcripts on the retrying strip', async () => {
+    // End-to-end shape of the re-anchor: the stale fold re-anchored the
+    // baseline to the stale text; a retrying strip (fresh get, fresh expected)
+    // now strips to transcripts-only, keeping the user's clear effective.
+    existingPending = null;
+    existingDraft = 'stale edits voice words';
+    existingBaseline = 'stale edits';
+    existingBaselineSeq = 1;
+    const handler = messageHubData.handlers.get('session.stripVoiceBaseline');
+    const result = (await handler!(
+      { sessionId: 's1', expected: 'stale edits voice words', expectedSeq: 1 },
+      {}
+    )) as { updated: boolean; value: string };
+    expect(result).toEqual({ updated: true, value: 'voice words' });
   });
 
   it('applies a post-merge save as-is when it already carries the transcripts', async () => {
@@ -847,7 +870,7 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
       metadata: {
         inputDraft: 'please say hello hello',
-        inputDraftVoiceBaseline: null,
+        inputDraftVoiceBaseline: 'please say hello',
         inputDraftVersion: 3,
       },
     });
