@@ -618,6 +618,14 @@ export interface SessionMetadata {
    */
   inputDraftVoiceBaseline?: string | null;
   /**
+   * Monotonic id of the pending sequence the baseline snapshot belongs to
+   * (incremented each time a new sequence starts). The conditional strip
+   * validates BOTH the draft text and this id: a newer sequence can replace
+   * the baseline while leaving the draft text unchanged, and stripping then
+   * would clear the merged transcript the caller meant to keep.
+   */
+  inputDraftVoiceBaselineSeq?: number | null;
+  /**
    * Timestamped log of voice-transcript outbox entry ids merged into
    * `inputDraftVoicePending` (see session.appendVoiceDraft). The client's
    * durable outbox replays entries after a socket drop and uses this to skip a

@@ -520,12 +520,16 @@ export function setupSessionHandlers(
     const metadataUpdate: Partial<SessionMetadata> = { inputDraftVoicePending: pending };
     if (!existingPending.trim()) {
       // A NEW pending sequence starts here: snapshot the draft it will merge
-      // onto. The daemon is the single writer of the merge, so this baseline
-      // is the EXACT pre-sequence draft — regardless of which tabs appended
-      // entries or which tab's get performs the merge. session.get responses
-      // carry it so clients can structurally separate the transcripts from the
-      // stale baseline, and session.stripVoiceBaseline removes it on request.
+      // onto, tagged with a fresh sequence id. The daemon is the single writer
+      // of the merge, so this baseline is the EXACT pre-sequence draft —
+      // regardless of which tabs appended entries or which tab's get performs
+      // the merge. session.get responses carry it so clients can structurally
+      // separate the transcripts from the stale baseline, and
+      // session.stripVoiceBaseline removes it on request — validated against
+      // the SEQUENCE id too, since a newer sequence can replace the baseline
+      // while leaving the draft text itself unchanged.
       metadataUpdate.inputDraftVoiceBaseline = metadata.inputDraft ?? '';
+      metadataUpdate.inputDraftVoiceBaselineSeq = (metadata.inputDraftVoiceBaselineSeq ?? 0) + 1;
     }
     if (dedupId) {
       // Append after the TTL filter above prunes expired ids; the count cap is
@@ -579,18 +583,30 @@ export function setupSessionHandlers(
   // session.appendVoiceDraft) makes this precise: the merged draft is always
   // baseline + pending (joined by appendDraftText), so removing the baseline
   // prefix keeps EVERY transcript of the sequence regardless of which client
-  // knows which entry landed. Conditional on `expected` (the merged draft the
-  // client just read) so a NEWER draft saved by another client in between is
-  // never stomped. Read+write is one synchronous step, like clearInputDraftIf.
+  // knows which entry landed. Conditional on BOTH the draft text the client
+  // just read (`expected` — a NEWER draft saved by another client is never
+  // stomped) and the SEQUENCE id it observed (`expectedSeq` — a newer sequence
+  // can replace the baseline while leaving the draft text unchanged, and
+  // stripping then would clear the merged transcript the caller meant to
+  // keep). Read+write is one synchronous step, like clearInputDraftIf.
   messageHub.onRequest('session.stripVoiceBaseline', async (data, _ctx) => {
-    const { sessionId, expected } = data as { sessionId: string; expected: string };
+    const { sessionId, expected, expectedSeq } = data as {
+      sessionId: string;
+      expected: string;
+      expectedSeq?: number;
+    };
     if (typeof expected !== 'string') throw new Error('Expected draft value is required');
     const session = sessionManager.getSessionFromDB(sessionId);
     if (!session) throw new Error('Session not found');
     const metadata = session.metadata ?? {};
     const baseline = metadata.inputDraftVoiceBaseline;
     const draft = metadata.inputDraft ?? '';
-    if (typeof baseline !== 'string' || draft.trim() !== expected.trim()) {
+    if (
+      typeof baseline !== 'string' ||
+      typeof expectedSeq !== 'number' ||
+      metadata.inputDraftVoiceBaselineSeq !== expectedSeq ||
+      draft.trim() !== expected.trim()
+    ) {
       return { updated: false };
     }
     // Mirror appendDraftText's joining so the remainder is exactly the

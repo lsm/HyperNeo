@@ -300,6 +300,45 @@ export function clearDraftBackup(sessionId: string, generation?: number): void {
  * up front would leave nothing behind when the flush fails on a dropped
  * socket. null when no in-TTL backup exists.
  */
+/**
+ * Persist that the user cleared/sent the composer while a landing was
+ * deferred but the clear-reconcile could not COMMIT (socket down, or the
+ * conditional RPC failed). `pendingClearRef` lives only in memory — without
+ * this tombstone, a reload before reconnection restores the pre-clear draft
+ * backup and resurrects text the user already deleted or sent.
+ */
+export function saveClearTombstone(sessionId: string): void {
+  try {
+    localStorage.setItem(
+      `${CLEAR_TOMBSTONE_PREFIX}${sessionId}`,
+      JSON.stringify({ ts: Date.now() })
+    );
+  } catch {
+    /* tombstone best-effort */
+  }
+}
+
+/** Whether an uncommitted clear is still owed for `sessionId` (TTL-gated). */
+export function hasClearTombstone(sessionId: string): boolean {
+  try {
+    const raw = localStorage.getItem(`${CLEAR_TOMBSTONE_PREFIX}${sessionId}`);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw) as { ts?: number };
+    return Date.now() - (parsed.ts ?? 0) < DRAFT_BACKUP_TTL_MS;
+  } catch {
+    return false;
+  }
+}
+
+/** Drop the tombstone once the clear-reconcile committed server-side. */
+export function removeClearTombstone(sessionId: string): void {
+  try {
+    localStorage.removeItem(`${CLEAR_TOMBSTONE_PREFIX}${sessionId}`);
+  } catch {
+    /* tombstone best-effort */
+  }
+}
+
 export function peekExpiredDraftBackup(
   sessionId: string
 ): { content: string; generation: number } | null {
@@ -322,6 +361,7 @@ export function peekExpiredDraftBackup(
 const STORAGE_PREFIX = 'hyperneo_voice_transcript_outbox_v1.entry.';
 const LANDED_PREFIX = `${STORAGE_PREFIX}landed.`;
 const DRAFT_BACKUP_PREFIX = 'hyperneo_voice_transcript_outbox_v1.draft.';
+const CLEAR_TOMBSTONE_PREFIX = 'hyperneo_voice_transcript_outbox_v1.clear.';
 const MAX_ENTRIES = 20;
 const MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24h — a transcript older than this is stale
 const FLUSH_DELAY_MS = 500; // let subscriptions settle, like outbound-queue
@@ -418,12 +458,15 @@ function prune(): void {
   }
   // Drop expired draft backups proactively — a backup whose session is never
   // reopened would otherwise linger past its TTL with nothing to prune it.
-  // Same collect-then-remove discipline as the marker scan.
+  // Same collect-then-remove discipline as the marker scan. Clear tombstones
+  // follow the same TTL.
   try {
     const staleBackupKeys: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (!key || !key.startsWith(DRAFT_BACKUP_PREFIX)) continue;
+      const isBackup = key?.startsWith(DRAFT_BACKUP_PREFIX);
+      const isTombstone = key?.startsWith(CLEAR_TOMBSTONE_PREFIX);
+      if (!key || (!isBackup && !isTombstone)) continue;
       const parsed = JSON.parse(localStorage.getItem(key) ?? 'null') as { ts?: number } | null;
       if (parsed && now - (parsed.ts ?? 0) >= DRAFT_BACKUP_TTL_MS) staleBackupKeys.push(key);
     }
