@@ -270,7 +270,11 @@ function isCustomHookElement(value: unknown): boolean {
     ) {
       return false;
     }
-    if (f.required !== undefined && typeof f.required !== 'boolean') return false;
+    // `required` must be a PRESENT boolean (mirroring validateCustomHooks):
+    // a missing value passes shape checks but buildHookValidatedHandoffLines
+    // treats it as false — actions send without data the stored contract was
+    // supposed to require.
+    if (typeof f.required !== 'boolean') return false;
   }
   const run = h.run as Record<string, unknown>;
   return (

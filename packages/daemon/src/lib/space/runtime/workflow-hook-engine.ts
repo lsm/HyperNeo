@@ -1458,7 +1458,7 @@ export class WorkflowHookEngine {
           // multi-agent node whose OTHER slot is live must not count as an
           // active holder of this role (the resolver delivers per-actor).
           const roleSlotName = target.startsWith('@role:')
-            ? decodeURIComponent(target.slice(6))
+            ? this.decodeRoleSlotName(target.slice(6))
             : target;
           const roleNodeRoutable = (r: string): boolean => {
             if (!roleActiveLookup) return roleNodeRoutableBase(r);
@@ -1684,7 +1684,7 @@ export class WorkflowHookEngine {
             // RESOLVER PARITY (active-preferred role delivery): when any
             // authorized holder has a live sub-session, only active holders
             // receive the message — suppress the inactive ones' gates.
-            const roleSlotName = decodeURIComponent(t.slice(6));
+            const roleSlotName = this.decodeRoleSlotName(t.slice(6));
             const activeHolders = roleActiveLookup
               ? authorizedHolders.filter(
                   (r) => roleActiveLookup(nodeNameToId.get(r) ?? r, roleSlotName) === true
@@ -2425,9 +2425,22 @@ export class WorkflowHookEngine {
     return [];
   }
 
+  /** Normalize a role name to the underlying SLOT: the resolver accepts an
+   * alternate `@role:actor-role:<slot>` form that resolves holders by the
+   * slot — the activity lookup must compare the slot (NodeExecution.agentName),
+   * never the raw `actor-role:<slot>` string (no execution matches it, so
+   * every holder would read inactive). */
+  private decodeRoleSlotName(role: string): string {
+    const decoded = decodeURIComponent(role);
+    const actorRolePrefix = 'actor-role:';
+    return decoded.startsWith(actorRolePrefix)
+      ? decodeURIComponent(decoded.slice(actorRolePrefix.length))
+      : decoded;
+  }
+
   // -------------------------------------------------------------------------
   // Target resolution helpers (KEEP)
-  // -------------------------------------------------------------------------
+  // -
 
   private resolveTargetEntries(
     target: string,
