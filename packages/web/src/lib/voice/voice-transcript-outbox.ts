@@ -70,11 +70,17 @@ export function markVoiceTranscriptLanded(sessionId: string): void {
  * fire another storage event in the writing tab, which would write again —
  * a cross-tab event/write loop that churns the generation counter.
  */
+// Wall-clock of each session's most recent local landing mark, so a landing
+// deferred past the marker TTL can expire on its own (not just via other-tab
+// marker-removal events) instead of suppressing draft saves forever.
+const landingMarkedAt = new Map<string, number>();
+
 function markVoiceTranscriptLandedLocal(sessionId: string): void {
   const current = voiceTranscriptLandedSignal.value;
   const next = new Map(current);
   next.set(sessionId, (next.get(sessionId) ?? 0) + 1);
   voiceTranscriptLandedSignal.value = next;
+  landingMarkedAt.set(sessionId, Date.now());
 }
 
 /**
@@ -137,7 +143,14 @@ export function saveDraftBackup(sessionId: string, content: string, generation: 
  * tab's process-local signal, or a fresh cross-tab marker in storage.
  */
 export function isLandingLive(sessionId: string): boolean {
-  if (voiceTranscriptLandedSignal.value.has(sessionId)) return true;
+  if (voiceTranscriptLandedSignal.value.has(sessionId)) {
+    const markedAt = landingMarkedAt.get(sessionId);
+    // No timestamp = a manually-set/test landing (always live); production
+    // marks always set one, so a landing aged past the marker TTL here is dead
+    // and dropped, lifting the save-suppression (a fresh marker re-marks).
+    if (markedAt === undefined || Date.now() - markedAt < MAX_AGE_MS) return true;
+    dropLocalLanding(sessionId);
+  }
   try {
     const raw = localStorage.getItem(`${LANDED_PREFIX}${sessionId}`);
     if (!raw) return false;

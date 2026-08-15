@@ -33,6 +33,7 @@ import { connectionState } from '../lib/state';
 import {
   consumeVoiceTranscriptLanded,
   getDraftBackup,
+  isLandingLive,
   saveDraftBackup,
   voiceTranscriptLandedSignal,
 } from '../lib/voice/voice-transcript-outbox';
@@ -214,7 +215,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   const pendingClearRef = useRef<string | null>(null);
   useSignalEffect(() => {
     const generation = voiceTranscriptLandedSignal.value.get(sessionId);
-    if (generation === undefined) return;
+    if (generation === undefined || !isLandingLive(sessionId)) return;
     void connectionState.value;
     const content = contentSignal.value;
     // The composer just emptied (a send/clear) when ITS OWN previous content
@@ -343,7 +344,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     // (restored on reload / when the landing resolves), so protecting the
     // landed transcript does not disable draft durability. The generation is
     // stored so the reconciliation retires exactly this landing's backup.
-    if (voiceTranscriptLandedSignal.value.has(sessionId)) {
+    if (isLandingLive(sessionId)) {
       if (content.trim() !== '') {
         saveDraftBackup(sessionId, content, voiceTranscriptLandedSignal.value.get(sessionId) ?? 0);
       }

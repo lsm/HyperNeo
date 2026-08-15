@@ -22,6 +22,7 @@ import {
   flushPendingTranscripts,
   getDraftBackup,
   getPendingTranscripts,
+  isLandingLive,
   markVoiceTranscriptLanded,
   removePendingTranscript,
   resetVoiceTranscriptOutbox,
@@ -315,6 +316,19 @@ describe('voice transcript outbox', () => {
     // would let the normal save overwrite the freshly-merged transcript.
     expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(false);
     expect(getDraftBackup('s1')).toBeNull();
+  });
+
+  it('treats a landing as live only while a fresh marker exists', () => {
+    markVoiceTranscriptLanded('s1');
+    expect(isLandingLive('s1')).toBe(true);
+  });
+
+  it('treats a landing as dead when only an expired marker remains', () => {
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+      `${Date.now() - 25 * 60 * 60 * 1000}.1`
+    );
+    expect(isLandingLive('s1')).toBe(false);
   });
 
   it('prunes expired draft backups proactively', () => {
