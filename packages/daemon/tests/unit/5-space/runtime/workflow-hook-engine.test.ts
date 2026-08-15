@@ -924,6 +924,55 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(array.executionLog.length).toBe(0);
   });
 
+  test("a sibling action's delivery preserves the shared retry bookkeeping", async () => {
+    // The count/cooldown live on the (run, hook) row SHARED by every gated
+    // action. Action A is queued mid-backoff (retryCount 40, cooldown in the
+    // future); action B delivers — B's reset must NOT clobber A's ceiling
+    // accumulation (A's timer would fire early and its ceiling never land).
+    const PASS = scriptHook('pass_hook', '{"flow":"continue"}');
+    const workflow = makeWorkflow({
+      customHooks: [PASS],
+      hookBindings: [
+        {
+          hookId: 'pass_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    // Arm the shared bookkeeping AND a durable queued record for action A.
+    const actionA = { target: 'Review', message: 'a' };
+    const keyA = buildRetryableActionKey('send_message', actionA, META);
+    hookStateRepo.update('run-1', 'pass_hook', {
+      expectedVersion: 0,
+      localState: {
+        __firstRetryAt: Date.now() - 1000,
+        __queuedRetryableActions: { [keyA]: { actionKey: keyA, hookId: 'pass_hook' } },
+      },
+      retryCount: 40,
+      // No ACTIVE cooldown (A's timer fired and its replay is pending) —
+      // otherwise B would queue behind the shared cooldown instead of
+      // delivering.
+      nextRetryAt: null,
+    });
+    const engine = makeEngine(workflow);
+    // Action B (different message → different key) delivers through the wrapper.
+    const result = await wrappedSend(engine, { target: 'Review', message: 'b' });
+    expect(result.success).toBe(true);
+    // A's bookkeeping SURVIVES B's delivery.
+    const after = hookStateRepo.get('run-1', 'pass_hook');
+    expect(after?.retryCount).toBe(40);
+    expect(after?.localState.__firstRetryAt).toBeDefined();
+    // A's durable queued record also survives (B's delivery only clears
+    // B's own key).
+    const queued = after?.localState.__queuedRetryableActions as Record<string, unknown>;
+    expect(queued?.[keyA]).toBeDefined();
+  });
+
   test('a shared bare slot suppresses the unauthorized node individually', async () => {
     // ['reviewer'] where BOTH Review and Other declare the 'reviewer' slot,
     // but only Review has a node-level channel: the adapter expands the bare

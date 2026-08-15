@@ -392,6 +392,20 @@ export class WorkflowHookEngine {
   }
 
   /** Raw per-action-key queued map for a hook (test/merge-site helper). */
+  /**
+   * Whether the hook still has durable queued actions OTHER than the given
+   * key. The retry bookkeeping (count/cooldown/__firstRetryAt) lives on the
+   * SHARED (run, hook) state row — resetting it on THIS action's
+   * deliver/stop would clobber the ceiling/cooldown that sibling queued
+   * actions on the same hook still depend on (their timers would fire early
+   * and their ceilings never accumulate).
+   */
+  hasOtherQueuedActions(hookId: string, excludeActionKey: string): boolean {
+    const map = this.getQueuedRetryableActionsMap(hookId);
+    if (!map) return false;
+    return Object.keys(map).some((k) => k !== excludeActionKey);
+  }
+
   getQueuedRetryableActionsMap(hookId: string): Record<string, unknown> | undefined {
     const state = this.config.hookStateRepo.get(this.config.workflowRunId, hookId)?.localState;
     const raw = state?.[QUEUED_RETRYABLE_ACTION_STATE_KEY];
@@ -2862,7 +2876,10 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
           // fresh 7-day cycle (repeat indefinitely); the marker makes any
           // subsequent ceiling check immediately terminal again.
           patch.localState.__retryCeilingTerminal = true;
-        } else {
+        } else if (!engine.hasOtherQueuedActions(hookId, actionKey)) {
+          // Reset only when no sibling action is still queued on this hook —
+          // their durable records (cleared of THIS action's key above) keep
+          // depending on the shared count/cooldown.
           patch.retryCount = 0;
           patch.nextRetryAt = null;
           patch.localState.__firstRetryAt = undefined; // fresh cycle on re-block
@@ -2919,9 +2936,11 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
           engine.clearQueuedRetryableActionsForKey(actionKey);
           clearRetryableHookActionTimer(actionKey);
           for (const [hookId, patch] of byHook) {
-            patch.retryCount = 0;
-            patch.nextRetryAt = null;
-            patch.localState.__firstRetryAt = undefined; // fresh cycle on re-block
+            if (!engine.hasOtherQueuedActions(hookId, actionKey)) {
+              patch.retryCount = 0;
+              patch.nextRetryAt = null;
+              patch.localState.__firstRetryAt = undefined; // fresh cycle on re-block
+            }
             engine.persistStateUpdate(hookId, patch);
           }
           return hookResult({
@@ -3108,9 +3127,18 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
     // gate once the state store recovers.
     let deliverPersistFailed = false;
     for (const [hookId, patch] of byHook) {
-      patch.retryCount = 0;
-      patch.nextRetryAt = null;
-      patch.localState.__firstRetryAt = undefined; // fresh cycle on re-block
+      // SHARED-STATE GUARD: the retry bookkeeping lives on the (run, hook)
+      // row shared by every action gated on this hook. THIS action
+      // delivered, but sibling actions still queued on the hook (their
+      // durable records survive this delivery) keep relying on the count /
+      // cooldown / ceiling cycle — resetting it here would fire their timers
+      // early and destroy their ceiling accumulation. Reset only when this
+      // was the last queued action.
+      if (!engine.hasOtherQueuedActions(hookId, actionKey)) {
+        patch.retryCount = 0;
+        patch.nextRetryAt = null;
+        patch.localState.__firstRetryAt = undefined; // fresh cycle on re-block
+      }
       if (!engine.persistStateUpdate(hookId, patch)) {
         deliverPersistFailed = true;
         log.warn(`Failed to persist hook state for ${hookId} on deliver`);
