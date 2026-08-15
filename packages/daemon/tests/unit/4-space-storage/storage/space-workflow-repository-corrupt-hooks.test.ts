@@ -142,6 +142,48 @@ describe('SpaceWorkflowRepository — corrupt hook columns', () => {
     }
   });
 
+  test('unsupported json field type and colliding custom-hook ids fail closed (round 90)', () => {
+    repo.createWorkflow({ spaceId, name: 'WF', nodes: [{ name: 'Only', agentId: 'a1' }] });
+    // 'json' is not a HookDataFieldType — the prompt generator would render
+    // it as a quoted string for a script expecting structured input.
+    corruptColumn(
+      'custom_hooks',
+      JSON.stringify([
+        {
+          id: 'h',
+          requiredData: [{ key: 'payload', type: 'json', required: true }],
+          run: { kind: 'script', source: 'exit 0' },
+        },
+      ])
+    );
+    let wf = repo.getWorkflow(
+      db.prepare('SELECT id FROM space_workflows LIMIT 1').get()?.id as string
+    );
+    expect(wf?.hookBindings?.[0]?.hookId).toBe(CORRUPT_HOOK_BINDINGS_HOOK_ID);
+
+    // Duplicate custom ids / built-in shadow / reserved id (collection-level).
+    for (const hooks of [
+      [
+        { id: 'dup', requiredData: [], run: { kind: 'script', source: 'exit 0' } },
+        { id: 'dup', requiredData: [], run: { kind: 'script', source: 'exit 0' } },
+      ],
+      [{ id: 'pr_ready', requiredData: [], run: { kind: 'script', source: 'exit 0' } }],
+      [
+        {
+          id: '__corrupt_hook_bindings__',
+          requiredData: [],
+          run: { kind: 'script', source: 'exit 0' },
+        },
+      ],
+    ]) {
+      corruptColumn('custom_hooks', JSON.stringify(hooks));
+      wf = repo.getWorkflow(
+        db.prepare('SELECT id FROM space_workflows LIMIT 1').get()?.id as string
+      );
+      expect(wf?.hookBindings?.[0]?.hookId).toBe(CORRUPT_HOOK_BINDINGS_HOOK_ID);
+    }
+  });
+
   test('duplicate hookIds across well-formed bindings fail closed (round 89)', () => {
     // Two individually valid bindings sharing one id: the runtime validator
     // rejects this (state is keyed (runId, hookId) — duplicates share

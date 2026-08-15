@@ -32,6 +32,8 @@ import type {
 } from '@hyperneo/shared';
 import { Logger } from '../../lib/logger';
 import { CORRUPT_HOOK_BINDINGS_HOOK_ID } from '../../lib/space/hook-reserved-ids';
+import { RESERVED_HOOK_IDS } from '../../lib/space/hook-reserved-ids';
+import { BUILT_IN_HOOKS } from '@hyperneo/extensions-hooks';
 import { legacyHookIds } from '../../lib/space/legacy-hook-coverage';
 import { ALL_HOOK_METHODS } from '@hyperneo/shared';
 import {
@@ -262,13 +264,11 @@ function isCustomHookElement(value: unknown): boolean {
     if (!field || typeof field !== 'object' || Array.isArray(field)) return false;
     const f = field as Record<string, unknown>;
     if (typeof f.key !== 'string' || f.key.trim().length === 0) return false;
-    if (
-      f.type !== 'string' &&
-      f.type !== 'number' &&
-      f.type !== 'boolean' &&
-      f.type !== 'link' &&
-      f.type !== 'json'
-    ) {
+    // HookDataFieldType is string/number/boolean/link ONLY — 'json' is not
+    // a supported type (validateCustomHooks rejects it), and the prompt
+    // generator would render it as a quoted string, handing a script
+    // expecting structured JSON a malformed value instead of the marker.
+    if (f.type !== 'string' && f.type !== 'number' && f.type !== 'boolean' && f.type !== 'link') {
       return false;
     }
     // `required` must be a PRESENT boolean (mirroring validateCustomHooks):
@@ -383,9 +383,24 @@ function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
         (other as Record<string, unknown>).hookId === id
     );
   });
-  const customHooksResult = parseHookColumn<CustomHook>(row.custom_hooks, (v) =>
+  // Collection-level parity with validateCustomHooks: duplicate ids, a
+  // custom id shadowing a BUILT-IN hook, or a RESERVED synthetic id — every
+  // element passes individually, but resolveHook silently selects the
+  // built-in/first definition, and a persisted __corrupt_hook_bindings__
+  // custom hook would hijack the corruption marker's diagnostics.
+  let customHooksResult = parseHookColumn<CustomHook>(row.custom_hooks, (v) =>
     isCustomHookElement(v)
   );
+  if (customHooksResult.ok && customHooksResult.value) {
+    const builtInIds = new Set(BUILT_IN_HOOKS.map((hook) => hook.id));
+    const seen = new Set<string>();
+    const offending = customHooksResult.value.some((h) => {
+      if (seen.has(h.id)) return true; // duplicate
+      seen.add(h.id);
+      return builtInIds.has(h.id) || RESERVED_HOOK_IDS.includes(h.id as never);
+    });
+    if (offending) customHooksResult = { ok: false };
+  }
 
   const wf: SpaceWorkflow = {
     id: row.id,

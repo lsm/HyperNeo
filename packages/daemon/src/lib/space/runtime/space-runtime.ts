@@ -137,6 +137,7 @@ import {
 } from './workflow-node-execution-validation';
 import { selectWorkflow } from './workflow-selector';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
+import { CORRUPT_HOOK_BINDINGS_HOOK_ID } from '../hook-reserved-ids';
 
 const log = new Logger('space-runtime');
 const PRIORITY_ORDER: Record<SpaceTaskPriority, number> = {
@@ -5166,6 +5167,20 @@ export class SpaceRuntime {
     const { rawWorkflow, workflow } = workflowResult;
     if (workflow.disabled) {
       throw new Error(`Workflow "${workflow.name}" is disabled and cannot be used for new runs.`);
+    }
+    // CORRUPTION GUARD: a marker-loaded workflow (undecodable hook columns)
+    // must not start a NEW run — the synthetic bindings would be pinned
+    // into the run's immutable definition, so repairing the workflow head
+    // would never heal the run and every hookable action stays blocked
+    // until the task is abandoned. Fail at start time with the repair
+    // recipe instead.
+    if (rawWorkflow.hookBindings?.some((b) => b.hookId === CORRUPT_HOOK_BINDINGS_HOOK_ID)) {
+      throw new Error(
+        `Workflow "${workflow.name}" has a corrupt persisted hook configuration ` +
+          '(its hook_bindings/custom_hooks column could not be decoded — every hookable ' +
+          'action fails closed). New runs cannot start until it is repaired: re-author its ' +
+          'hook bindings in the editor (or clear them deliberately), then retry.'
+      );
     }
     if (!workflow.endNodeId) {
       throw new Error(`Workflow "${workflowId}" is missing endNodeId and cannot be executed.`);
