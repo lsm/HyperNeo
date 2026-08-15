@@ -2090,6 +2090,16 @@ export class AgentSession
     // Timestamp gates the terminal-error read to "fired during THIS turn" — a
     // stale error from a prior turn must not turn a clean turn into a retry.
     const turnStartedAt = Date.now();
+    // Delivery observability: entry snapshot of the session's queue/process
+    // state. When a 0-message startup timeout is diagnosed later, this line
+    // shows whether an orphaned process or a stuck queue predated the attempt.
+    this.logger.debug(
+      `delivery-turn: driving (uuid=${messageUuid} alreadyConsumed=${alreadyConsumed} ` +
+        `queueRunning=${this.messageQueue.isRunning()} queueSize=${this.messageQueue.size()} ` +
+        `trackedPids=[${this.snapshotTrackedAgentProcesses()
+          .map(([pid]) => pid)
+          .join(',')}] sdkSessionId=${this.session.sdkSessionId ?? 'none'})`
+    );
     // Brief critical section (per-session lock): start the query + feed the
     // kickoff so it is the FIRST message the generator yields (a steer grabbing
     // the lock next can't jump ahead). The lock also serializes ensureQueryStarted
@@ -2121,7 +2131,12 @@ export class AgentSession
       if (alreadyConsumed && this.reclaimTurnAlreadySucceeded(messageUuid)) {
         return { kind: 'turn_terminated' as const };
       }
+      const ensureStartedAt = Date.now();
       const queryStartResult = await this.lifecycleManager.ensureQueryStarted();
+      this.logger.debug(
+        `delivery-turn: ensureQueryStarted → ${queryStartResult} ` +
+          `(${Date.now() - ensureStartedAt}ms, uuid=${messageUuid})`
+      );
       if (queryStartResult === 'blocked') {
         return { kind: 'blocked' as const };
       }
@@ -2213,6 +2228,9 @@ export class AgentSession
       // queued while it waits on sdk_resume_choice, so later explicit deferrals
       // are honored (isAgentBusy) and the UI shows blocked-state controls
       // instead of idle. See Codex (#2599).
+      this.logger.warn(
+        `delivery-turn: blocked on sdk_resume_choice (uuid=${messageUuid}); parking job`
+      );
       await this.stateManager.setQueued(messageUuid);
       return { outcome: 'blocked', retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS };
     }
@@ -2244,6 +2262,13 @@ export class AgentSession
       // that never occurred). (Codex review.)
       if (started.acknowledgment) {
         await started.acknowledgment;
+        // Delivery observability: onSent elapsed measures spawn → kickoff-write.
+        // A long window here (approaching STARTUP_TIMEOUT_MS) is the feed
+        // starvation that produces 0-message startup timeouts.
+        this.logger.debug(
+          `delivery-turn: kickoff consumed by SDK ` +
+            `(${Date.now() - turnStartedAt}ms since turn start, uuid=${messageUuid})`
+        );
         // onSent fired → the prompt reached the SDK / subprocess (the ACTUAL
         // handoff). Record the feed here, not at admission: admitWithId only
         // places the row in the in-memory queue, so a provider-startup stall,

@@ -74,7 +74,7 @@ import { computed, signal } from '@preact/signals';
 import { connectionManager } from './connection-manager';
 import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from './signals';
 
-const logger = new Logger('kai:web:spacestore');
+const logger = new Logger('hyperneo:web:spacestore');
 
 export interface SpaceSessionSummary {
   id: string;
