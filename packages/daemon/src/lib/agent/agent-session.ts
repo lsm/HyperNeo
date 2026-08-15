@@ -120,6 +120,17 @@ const DELIVERY_TURN_NO_ACTIVITY_MS = (() => {
 })();
 
 /**
+ * A tracked SDK subprocess handle that does not expose a numeric PID
+ * (VM/container/remote execution spawns). Kept durably so termination can
+ * signal it via its own kill() — there is no PID to process.kill.
+ */
+interface NoPidTrackedProcess {
+  proc: TrackedAgentProcess;
+  exitPromise?: Promise<void>;
+  forceKillTimer?: ReturnType<typeof setTimeout>;
+}
+
+/**
  * AgentSessionInit - Configuration for creating a new AgentSession
  *
  * Used by SpaceRuntimeService and other session creators to create sessions
@@ -386,8 +397,15 @@ export class AgentSession
   processExitedPromise: Promise<void> | null = null;
   private trackedAgentProcesses = new Map<number, TrackedAgentProcess>();
   private trackedAgentProcessExitPromises = new Map<number, Promise<void>>();
-  /** Durable no-PID exit promises — retained until resolved so updateProcessExitedPromise() never drops them. */
-  private noPidExitPromises: Promise<void>[] = [];
+  /**
+   * Durable no-PID handles (VM/container/remote spawns) with their exit
+   * promises and force-kill timers. Single source of truth: termination
+   * signals them via their kill() (no PID to process.kill), and
+   * updateProcessExitedPromise() derives the aggregate wait from them —
+   * so an orphan retained across a reset still blocks later teardown
+   * waits until it exits. Self-clean on exit.
+   */
+  private noPidAgentProcesses: NoPidTrackedProcess[] = [];
   private recentlyExitedAgentRootPids = new Map<number, number>();
   private forceKillTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
@@ -2077,6 +2095,16 @@ export class AgentSession
     // Timestamp gates the terminal-error read to "fired during THIS turn" — a
     // stale error from a prior turn must not turn a clean turn into a retry.
     const turnStartedAt = Date.now();
+    // Delivery observability: entry snapshot of the session's queue/process
+    // state. When a 0-message startup timeout is diagnosed later, this line
+    // shows whether an orphaned process or a stuck queue predated the attempt.
+    this.logger.debug(
+      `delivery-turn: driving (uuid=${messageUuid} alreadyConsumed=${alreadyConsumed} ` +
+        `queueRunning=${this.messageQueue.isRunning()} queueSize=${this.messageQueue.size()} ` +
+        `trackedPids=[${this.snapshotTrackedAgentProcesses()
+          .map(([pid]) => pid)
+          .join(',')}] sdkSessionId=${this.session.sdkSessionId ?? 'none'})`
+    );
     // Brief critical section (per-session lock): start the query + feed the
     // kickoff so it is the FIRST message the generator yields (a steer grabbing
     // the lock next can't jump ahead). The lock also serializes ensureQueryStarted
@@ -2108,7 +2136,12 @@ export class AgentSession
       if (alreadyConsumed && this.reclaimTurnAlreadySucceeded(messageUuid)) {
         return { kind: 'turn_terminated' as const };
       }
+      const ensureStartedAt = Date.now();
       const queryStartResult = await this.lifecycleManager.ensureQueryStarted();
+      this.logger.debug(
+        `delivery-turn: ensureQueryStarted → ${queryStartResult} ` +
+          `(${Date.now() - ensureStartedAt}ms, uuid=${messageUuid})`
+      );
       if (queryStartResult === 'blocked') {
         return { kind: 'blocked' as const };
       }
@@ -2200,6 +2233,9 @@ export class AgentSession
       // queued while it waits on sdk_resume_choice, so later explicit deferrals
       // are honored (isAgentBusy) and the UI shows blocked-state controls
       // instead of idle. See Codex (#2599).
+      this.logger.warn(
+        `delivery-turn: blocked on sdk_resume_choice (uuid=${messageUuid}); parking job`
+      );
       await this.stateManager.setQueued(messageUuid);
       return { outcome: 'blocked', retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS };
     }
@@ -2231,6 +2267,13 @@ export class AgentSession
       // that never occurred). (Codex review.)
       if (started.acknowledgment) {
         await started.acknowledgment;
+        // Delivery observability: onSent elapsed measures spawn → kickoff-write.
+        // A long window here (approaching STARTUP_TIMEOUT_MS) is the feed
+        // starvation that produces 0-message startup timeouts.
+        this.logger.debug(
+          `delivery-turn: kickoff consumed by SDK ` +
+            `(${Date.now() - turnStartedAt}ms since turn start, uuid=${messageUuid})`
+        );
         // onSent fired → the prompt reached the SDK / subprocess (the ACTUAL
         // handoff). Record the feed here, not at admission: admitWithId only
         // places the row in the in-memory queue, so a provider-startup stall,
@@ -2780,18 +2823,26 @@ export class AgentSession
   trackAgentProcess(proc: TrackedAgentProcess): void {
     const pid = proc.pid;
     if (typeof pid !== 'number' || pid <= 0) {
-      // Store no-PID promises in a durable collection so
+      // Store no-PID handles + promises in a durable collection so
       // updateProcessExitedPromise() includes them on every rebuild
-      // (e.g. when a later numeric-PID process is tracked).
+      // (e.g. when a later numeric-PID process is tracked), and
+      // terminateTrackedAgentProcesses() can still signal the handle via its
+      // kill() — no-PID spawns (VM/container/remote execution) have no PID to
+      // process.kill, so the handle is the only termination path. (Codex P2.)
+      const entry: NoPidTrackedProcess = { proc };
       const noPidExitPromise = new Promise<void>((resolve) => {
         proc.once('exit', () => {
           // Self-clean from the durable collection once resolved.
-          const idx = this.noPidExitPromises.indexOf(noPidExitPromise);
-          if (idx >= 0) this.noPidExitPromises.splice(idx, 1);
+          const handleIdx = this.noPidAgentProcesses.indexOf(entry);
+          if (handleIdx >= 0) {
+            if (entry.forceKillTimer) clearTimeout(entry.forceKillTimer);
+            this.noPidAgentProcesses.splice(handleIdx, 1);
+          }
           resolve();
         });
       });
-      this.noPidExitPromises.push(noPidExitPromise);
+      entry.exitPromise = noPidExitPromise;
+      this.noPidAgentProcesses.push(entry);
       this.updateProcessExitedPromise();
       return;
     }
@@ -2846,9 +2897,29 @@ export class AgentSession
   terminateTrackedAgentProcesses(options?: {
     forceDelayMs?: number;
     processes?: Array<[number, TrackedAgentProcess]>;
+    noPidProcesses?: NoPidTrackedProcess[];
   }): void {
     const forceDelayMs = options?.forceDelayMs ?? 2000;
     const processSnapshot = options?.processes ?? [...this.trackedAgentProcesses];
+
+    // No-PID handles (VM/container/remote spawns) are not in the PID map —
+    // signal them via their own kill() with the same SIGTERM→SIGKILL cadence.
+    // Snapshot-scoped like the PID entries: a caller that captured only the
+    // old query's handles (stop() during a replacement start) must not kill
+    // the replacement's no-PID process. (Codex P2, PR #2491.)
+    const noPidSnapshot = options?.noPidProcesses ?? [...this.noPidAgentProcesses];
+    this.signalNoPidTrackedProcesses(noPidSnapshot, 'SIGTERM');
+    for (const entry of noPidSnapshot) {
+      // Ownership guard: skip entries that exited or were replaced.
+      if (!this.noPidAgentProcesses.includes(entry)) continue;
+      const timer = setTimeout(() => {
+        entry.forceKillTimer = undefined;
+        this.signalNoPidTrackedProcess(entry, 'SIGKILL');
+      }, forceDelayMs);
+      timer.unref?.();
+      entry.forceKillTimer = timer;
+    }
+
     if (processSnapshot.length === 0) return;
 
     this.signalTrackedAgentProcesses(processSnapshot, 'SIGTERM');
@@ -2856,6 +2927,34 @@ export class AgentSession
       if (this.trackedAgentProcesses.get(pid) !== proc) continue;
       this.clearForceKillTimer(pid);
       this.scheduleForceKill(pid, proc, forceDelayMs);
+    }
+  }
+
+  /** Snapshot the durable no-PID handles (for scoped termination). */
+  snapshotNoPidTrackedProcesses(): NoPidTrackedProcess[] {
+    return [...this.noPidAgentProcesses];
+  }
+
+  /** Signal the given no-PID tracked handles (best-effort via kill()). */
+  private signalNoPidTrackedProcesses(
+    entries: NoPidTrackedProcess[],
+    signal: NodeJS.Signals
+  ): void {
+    for (const entry of entries) {
+      if (!this.noPidAgentProcesses.includes(entry)) continue;
+      this.signalNoPidTrackedProcess(entry, signal);
+    }
+  }
+
+  private signalNoPidTrackedProcess(entry: NoPidTrackedProcess, signal: NodeJS.Signals): void {
+    if (entry.forceKillTimer) {
+      clearTimeout(entry.forceKillTimer);
+      entry.forceKillTimer = undefined;
+    }
+    try {
+      entry.proc.kill?.(signal);
+    } catch {
+      // Handle may have already exited.
     }
   }
 
@@ -2922,22 +3021,34 @@ export class AgentSession
   }
 
   private updateProcessExitedPromise(): void {
-    const exitPromises = [
-      ...this.trackedAgentProcessExitPromises.values(),
-      ...this.noPidExitPromises,
-    ];
+    // The durable no-PID handles are the source of truth for their exit
+    // promises: an orphan retained across resetProcessExitedPromise() (still
+    // alive, still killable) must stay in the aggregate so a later stop()
+    // waits for it — otherwise the rebuild after tracking a replacement would
+    // silently drop the orphan's wait. (Codex P2, PR #2491.)
+    const noPidPromises = this.noPidAgentProcesses.flatMap((entry) =>
+      entry.exitPromise ? [entry.exitPromise] : []
+    );
+    const exitPromises = [...this.trackedAgentProcessExitPromises.values(), ...noPidPromises];
     this.processExitedPromise =
       exitPromises.length > 0 ? Promise.all(exitPromises).then(() => {}) : null;
   }
 
+  /** Re-derive the aggregated exit-wait promise from the current tracked handles. */
+  refreshProcessExitedPromise(): void {
+    this.updateProcessExitedPromise();
+  }
+
   /**
-   * Clear processExitedPromise and any stale no-PID exit promises.
-   * Called when retry paths time out and abandon the current wait.
-   * Without this, unresolved no-PID promises accumulate and block
-   * future teardown waits for processes that were already abandoned.
+   * Clear the aggregated exit-wait promise (retry paths abandoning the
+   * current wait). The durable per-process exit promises are NOT dropped:
+   * a subsequent trackAgentProcess()/updateProcessExitedPromise() rebuild
+   * re-derives the aggregate from the still-live handles, so an abandoned
+   * but still-alive process keeps blocking later teardown waits until it
+   * actually exits (or is force-killed via its retained handle).
+   * (Codex P2, PR #2491.)
    */
   resetProcessExitedPromise(): void {
-    this.noPidExitPromises.length = 0;
     this.processExitedPromise = null;
   }
 

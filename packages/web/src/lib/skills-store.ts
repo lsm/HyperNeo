@@ -23,7 +23,7 @@ import type {
 import { Logger } from '@hyperneo/shared';
 import { connectionManager } from './connection-manager';
 
-const logger = new Logger('kai:web:skills-store');
+const logger = new Logger('hyperneo:web:skills-store');
 
 const SUBSCRIPTION_ID = 'skills-global';
 
