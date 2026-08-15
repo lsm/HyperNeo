@@ -586,8 +586,9 @@ recoverable one mid-turn while the turn still succeeds.
 The contract (`TaskAgentManager.registerCompletionCallback`):
 
 - **Recoverable `session.error`** (`details.recoverable === true`, v2 on, AND
-  a delivery job currently being DRIVEN for the session — claimed
-  `processing`, not merely queued) does not block the node — without a driven
+  a delivery TURN job currently being DRIVEN for the session — claimed
+  `processing` with role `turn`; a claimed steer is a mid-turn feed whose
+  driving turn owns the retry) does not block the node — without a driven
   job there is no retry and no `delivery_failed` repayment, so errors from
   non-delivery work (rehydration's direct streaming start / tool-continuation
   replays, which can overlap an unrelated merely-queued job) keep the
@@ -606,8 +607,10 @@ The contract (`TaskAgentManager.registerCompletionCallback`):
   else is in flight. A TURN settle completes only when it IS the current
   activation's stamped kickoff (`data.kickoffMessageUuid` — a pending-message
   flush can run a peer handoff as a turn job before the kickoff is enqueued;
-  sessions without a node execution keep the stamp-less path); a promoted
-  steer's turn declines here and self-heals via the reconciliation. A STEER settle
+  sessions without a node execution keep the stamp-less path). A uuid
+  MISMATCH is accepted only when the durable correlated outcome says
+  completed — the kickoff itself settled as a consumed steer and this is its
+  OWNING turn. A STEER settle
   (`consumed`/`already_consumed`) is repayment-ONLY — steers settle at
   mid-turn CONSUMPTION while the agent is still working, so a steer settle
   completes the node only when the session is live-idle AND nothing else is
@@ -631,7 +634,12 @@ The contract (`TaskAgentManager.registerCompletionCallback`):
   peer handoff as a `role:'turn'` job before the kickoff is enqueued, and
   that is not the node's work. A kickoff that lost the turn arbiter to such a
   flush is persisted as a `steer`; its consumption counts only when its
-  OWNING turn also terminated (completed → success, dead → block).
+  OWNING turn also terminated (completed → success, dead → block). The stamp
+  is written BEFORE the inject (a pre-generated id passed as the injection's
+  explicit message id — the inject awaits SDK consumption, so a post-inject
+  stamp would leave a crash window with an unstamped execution under way),
+  and the timer RE-ARMS while a delivery is in flight or the session is not
+  idle, so a turn longer than the delay is still repaired after it ends.
 - **`session.delivery_failed`** (processor `onDead` lane hook — published for
   EVERY dead delivery, unlike the settlement's origin-gated `session.error`)
   blocks the node when `role === 'turn'`. This covers recovery-origin
