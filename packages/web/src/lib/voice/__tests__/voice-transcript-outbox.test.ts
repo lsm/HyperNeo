@@ -475,6 +475,52 @@ describe('voice transcript outbox', () => {
     stopVoiceTranscriptOutboxFlush();
   });
 
+  it('rehydrates the GENERATION from the marker so backup retirement survives reloads', () => {
+    // A previous page life saw TWO landings (generation 2) and saved a
+    // generation-2 draft backup. The reload hydrates the single retained
+    // marker — the generation must come from the marker's counter, or the
+    // consumption would clear with a restarted counter and orphan the backup.
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+      JSON.stringify({ v: 1, ts: Date.now(), n: 2, text: 'agg' })
+    );
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.draft.s1',
+      JSON.stringify({ content: 'edits', ts: Date.now(), generation: 2 })
+    );
+    startVoiceTranscriptOutboxFlush();
+    expect(voiceTranscriptLandedSignal.value.get('s1')).toBe(2);
+    // The matching-generation consumption retires the backup.
+    consumeVoiceTranscriptLanded('s1', 2);
+    expect(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.draft.s1')).toBeNull();
+    stopVoiceTranscriptOutboxFlush();
+  });
+
+  it('keeps a full live queue intact at startup (no slot reservation without an enqueue)', () => {
+    // Exactly MAX live entries (all fresh): startup must NOT enforce the
+    // pre-enqueue slot reservation — that assumes a write follows, and here it
+    // would permanently drop the oldest still-deliverable transcript.
+    const entries = Array.from({ length: 20 }, (_, i) => ({
+      id: `e${i}`,
+      sessionId: 's1',
+      text: `t${i}`,
+      createdAt: Date.now() - i,
+    }));
+    for (const entry of entries) {
+      localStorage.setItem(
+        `hyperneo_voice_transcript_outbox_v1.entry.${entry.id}`,
+        JSON.stringify(entry)
+      );
+    }
+    startVoiceTranscriptOutboxFlush();
+    for (const entry of entries) {
+      expect(
+        localStorage.getItem(`hyperneo_voice_transcript_outbox_v1.entry.${entry.id}`)
+      ).not.toBeNull();
+    }
+    stopVoiceTranscriptOutboxFlush();
+  });
+
   it('removes an entry that the daemon reports as already merged (deduped ack)', async () => {
     enqueueTranscript('s1', 'already landed');
     hubRequest.mockResolvedValueOnce({ success: true, deduped: true });

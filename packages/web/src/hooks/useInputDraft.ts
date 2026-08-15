@@ -589,6 +589,21 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // a later switch. Subscribed explicitly (not via a signal effect) so
   // connection changes do not re-run the component's other signal effects.
   useEffect(() => {
+    // A failed flush while still CONNECTED (RPC timeout / daemon transient)
+    // would never be retried by the connection subscription alone — back off
+    // and retry until it commits.
+    const flushRetryTimerRef: { current: ReturnType<typeof setTimeout> | null } = {
+      current: null,
+    };
+    let flushRetryDelayMs = 5_000;
+    const scheduleFlushRetry = () => {
+      if (flushRetryTimerRef.current) return;
+      flushRetryTimerRef.current = setTimeout(() => {
+        flushRetryTimerRef.current = null;
+        retryBackupFlush();
+      }, flushRetryDelayMs);
+      flushRetryDelayMs = Math.min(flushRetryDelayMs * 2, 60_000);
+    };
     const retryBackupFlush = () => {
       if (connectionState.value !== 'connected') return;
       // An owed clear whose landing expired has no replay effect to retry it —
@@ -606,10 +621,29 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       for (const [flushSessionId, content] of queued) {
         if (flushSessionId === currentSessionIdRef.current) {
           if (contentSignal.peek().trim() === '') {
+            // ADOPT into the idle composer and persist IMMEDIATELY — the
+            // debounced save alone could drop the only durable copy on a
+            // reload or crash before it commits. The backup retires only on
+            // the acknowledged update; a failure re-queues it.
             contentSignal.value = content;
-            clearDraftBackup(flushSessionId);
+            hub
+              .request('session.update', {
+                sessionId: flushSessionId,
+                metadata: { inputDraft: content },
+              })
+              .then(() => {
+                clearDraftBackup(flushSessionId);
+              })
+              .catch(() => {
+                pendingBackupFlushRef.current.set(flushSessionId, content);
+                scheduleFlushRetry();
+              });
           } else {
-            pendingBackupFlushRef.current.set(flushSessionId, content);
+            // Active content supersedes the backup: the user returned to a
+            // non-empty composer (their draft or typing) — its saves are the
+            // newer state, and re-queueing the stale backup would let a later
+            // switch overwrite it. Retire the backup.
+            clearDraftBackup(flushSessionId);
           }
           continue;
         }
@@ -623,10 +657,15 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           })
           .catch(() => {
             pendingBackupFlushRef.current.set(flushSessionId, content);
+            scheduleFlushRetry();
           });
       }
     };
-    return connectionState.subscribe(retryBackupFlush);
+    const unsubscribe = connectionState.subscribe(retryBackupFlush);
+    return () => {
+      unsubscribe();
+      if (flushRetryTimerRef.current) clearTimeout(flushRetryTimerRef.current);
+    };
   }, [contentSignal, reconcileOwedClear]);
   useSignalEffect(() => {
     const content = contentSignal.value;

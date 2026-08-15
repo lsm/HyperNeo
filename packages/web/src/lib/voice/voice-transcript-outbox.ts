@@ -53,10 +53,21 @@ export const voiceTranscriptLandedSignal = signal<ReadonlyMap<string, number>>(n
  * or strip a stale baseline without guessing which part of the merged server
  * draft is the transcript.
  */
-let markerCounter = 0;
 
 export function markVoiceTranscriptLanded(sessionId: string, text?: string): void {
-  markVoiceTranscriptLandedLocal(sessionId, text);
+  // The GENERATION is the marker's persisted counter (not a process-local
+  // count): a reload rehydrates the same generation from the marker, so a
+  // draft backup saved as generation N is still retired by exactly the
+  // consumption of generation N instead of being orphaned by a restarted
+  // counter.
+  let seq = 1;
+  try {
+    const existing = parseLandedMarker(localStorage.getItem(`${LANDED_PREFIX}${sessionId}`));
+    if (existing) seq = existing.n + 1;
+  } catch {
+    /* storage unavailable — start a fresh sequence */
+  }
+  markVoiceTranscriptLandedLocal(sessionId, text, false, seq);
   try {
     // Timestamp + monotonic counter so two landings within the same Date.now()
     // tick still change the value — a same-value write would not emit a
@@ -68,7 +79,7 @@ export function markVoiceTranscriptLanded(sessionId: string, text?: string): voi
       JSON.stringify({
         v: 1,
         ts: Date.now(),
-        n: ++markerCounter,
+        n: seq,
         text: landingTexts.get(sessionId) ?? null,
       })
     );
@@ -102,12 +113,19 @@ const landingTexts = new Map<string, string>();
 function markVoiceTranscriptLandedLocal(
   sessionId: string,
   text?: string | null,
-  replaceAggregate = false
+  replaceAggregate = false,
+  explicitGeneration?: number
 ): void {
   const current = voiceTranscriptLandedSignal.value;
   const hadLiveLanding = current.has(sessionId);
   const next = new Map(current);
-  next.set(sessionId, (next.get(sessionId) ?? 0) + 1);
+  // An explicit (marker-derived) generation is authoritative but never
+  // regresses below one already observed locally.
+  const generation =
+    explicitGeneration !== undefined
+      ? Math.max(current.get(sessionId) ?? 0, explicitGeneration)
+      : (current.get(sessionId) ?? 0) + 1;
+  next.set(sessionId, generation);
   voiceTranscriptLandedSignal.value = next;
   landingMarkedAt.set(sessionId, Date.now());
   if (typeof text === 'string') {
@@ -137,13 +155,26 @@ export function getLandingTranscript(sessionId: string): string | null {
   }
 }
 
-/** Parse a landed marker value; null when absent or from an unknown format. */
-function parseLandedMarker(raw: string | null): { ts: number; text: string | null } | null {
+/**
+ * Parse a landed marker value; null when absent or from an unknown format.
+ * `n` is the persisted generation counter — the process-local signal is
+ * rehydrated from it so generations (and the draft-backup retirement keyed by
+ * them) survive reloads.
+ */
+function parseLandedMarker(raw: string | null): {
+  ts: number;
+  n: number;
+  text: string | null;
+} | null {
   if (!raw) return null;
   try {
-    const parsed = JSON.parse(raw) as { ts?: unknown; text?: unknown };
+    const parsed = JSON.parse(raw) as { ts?: unknown; n?: unknown; text?: unknown };
     if (typeof parsed.ts !== 'number') return null;
-    return { ts: parsed.ts, text: typeof parsed.text === 'string' ? parsed.text : null };
+    return {
+      ts: parsed.ts,
+      n: typeof parsed.n === 'number' ? parsed.n : 0,
+      text: typeof parsed.text === 'string' ? parsed.text : null,
+    };
   } catch {
     return null;
   }
@@ -427,6 +458,22 @@ function removeEntry(id: string): void {
 
 /** Enforce the cap (oldest dropped) and clear expired entries. */
 function prune(): void {
+  pruneExpired();
+  // Enforce the cap on the live (non-expired) set, leaving ONE free slot:
+  // prune runs immediately before a write, so a near-full localStorage at the
+  // cap would otherwise have no room for the new entry and setItem would fail.
+  // (This reservation is why startup calls pruneExpired() directly — with no
+  // enqueue following, reserving a slot here would delete a still-deliverable
+  // transcript merely for reopening the app.)
+  const live = allEntries();
+  if (live.length < MAX_ENTRIES) return;
+  for (const entry of live.slice(0, live.length - (MAX_ENTRIES - 1))) {
+    removeEntry(entry.id);
+  }
+}
+
+/** TTL cleanup only — no capacity reservation; safe outside an enqueue. */
+function pruneExpired(): void {
   const now = Date.now();
   const stored = collectFromStorage();
   // Remove TTL-expired keys outright: allEntries() filters them from reads, so
@@ -473,14 +520,6 @@ function prune(): void {
     for (const key of staleBackupKeys) localStorage.removeItem(key);
   } catch {
     /* storage unavailable */
-  }
-  // Enforce the cap on the live (non-expired) set, leaving ONE free slot:
-  // prune runs immediately before a write, so a near-full localStorage at the
-  // cap would otherwise have no room for the new entry and setItem would fail.
-  const live = allEntries();
-  if (live.length < MAX_ENTRIES) return;
-  for (const entry of live.slice(0, live.length - (MAX_ENTRIES - 1))) {
-    removeEntry(entry.id);
   }
 }
 
@@ -656,7 +695,7 @@ function handleStorageEvent(event: StorageEvent): void {
     if (marker) {
       // The marker is the AUTHORITATIVE aggregate from the writing tab —
       // replace, don't append onto this tab's stale local aggregate.
-      markVoiceTranscriptLandedLocal(sessionId, marker.text, true);
+      markVoiceTranscriptLandedLocal(sessionId, marker.text, true, marker.n);
     } else if (event.newValue === null && localStorage.getItem(key) === null) {
       // Another tab pruned the marker (TTL expired) and no fresh marker was
       // written since — clear this tab's local landing so an expired landing
@@ -681,7 +720,12 @@ function hydrateLandedMarkers(): void {
       if (!key || !key.startsWith(LANDED_PREFIX)) continue;
       const marker = parseLandedMarker(localStorage.getItem(key));
       if (marker && now - marker.ts < MAX_AGE_MS) {
-        markVoiceTranscriptLandedLocal(key.slice(LANDED_PREFIX.length), marker.text, true);
+        markVoiceTranscriptLandedLocal(
+          key.slice(LANDED_PREFIX.length),
+          marker.text,
+          true,
+          marker.n
+        );
       }
     }
   } catch {
@@ -692,11 +736,13 @@ function hydrateLandedMarkers(): void {
 /** Flush when the connection (re)establishes. Mirrors outbound-queue. */
 export function startVoiceTranscriptOutboxFlush(): void {
   if (cleanupAutoFlush) return;
-  // Prune at startup: TTL-expired entries, landed markers, and draft backups
+  // TTL-clean at startup: expired entries, landed markers, and draft backups
   // are filtered from READS anyway, but if the app reopens after >24h and no
-  // new transcript is ever enqueued, nothing else would delete their keys —
-  // prune() otherwise runs only before an enqueue write.
-  prune();
+  // new transcript is ever enqueued, nothing else would delete their keys.
+  // pruneExpired only — the capacity RESERVATION in prune() assumes an
+  // enqueue follows and would otherwise drop a still-deliverable transcript
+  // merely for reopening the app at the cap.
+  pruneExpired();
   hydrateLandedMarkers();
   window.addEventListener('storage', handleStorageEvent);
   cleanupStorageListener = () => window.removeEventListener('storage', handleStorageEvent);
