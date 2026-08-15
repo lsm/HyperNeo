@@ -34,6 +34,35 @@ console.log = () => {};
   log: originalConsoleLog,
 };
 
+// Enforce the documented invariant that unit tests never call real APIs
+// (CLAUDE.md: "clears provider keys, and never calls real APIs"). Key-clearing
+// alone is not enough: provider availability probes funnel through the global
+// fetch with per-probe timeouts (see src/lib/providers/shared/credential-probe.ts),
+// so any provider whose availability check passes without an env key still burns
+// real network round-trips inside the per-test budget — the root of the
+// model-service flakes registered in flaky-tests.json. Loopback stays live for
+// suites that spin up local bridge servers.
+const realFetch = globalThis.fetch.bind(globalThis);
+const loopbackHosts = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
+globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+  let hostname: string | null = null;
+  try {
+    hostname = new URL(href).hostname;
+  } catch {
+    // a non-absolute URL cannot be loopback
+  }
+  if (hostname === null || !loopbackHosts.has(hostname)) {
+    throw new Error(
+      `unit test attempted real network fetch: ${href} — unit tests must not leave the loopback; stub the provider or use tests/online/`
+    );
+  }
+  return realFetch(input as RequestInfo, init);
+}) as typeof fetch;
+
+(globalThis as unknown as Record<string, unknown>).__originalFetch = realFetch;
+
 // Clear all API keys so unit tests don't make real API calls.
 process.env.ANTHROPIC_API_KEY = '';
 process.env.CLAUDE_CODE_OAUTH_TOKEN = '';
