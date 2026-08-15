@@ -5913,17 +5913,15 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
   });
 
-  test('terminal precondition rechecks the run: a cancellation landing before the write aborts completion', async () => {
-    // Interleaving exercise for the terminal run-active recheck. `stopActiveWork`
-    // cancels a `review` task's RUN while deliberately excluding the task row
-    // from its task-cancellation pass, so the run flip is invisible to the
-    // exact-status predicate on the task UPDATE. Simulate that here: the run is
-    // still active at the handler's early guard, and flips to cancelled inside
-    // setTaskStatus' task reread — the last sync point before the precondition.
-    // Without the recheck the completion would commit and mark cancelled work
-    // done; with it, the write aborts and the review state survives.
+  test('rejects a workflow-backed task whose run is blocked', async () => {
+    // The runtime's blocking paths transition the run to `blocked` first and
+    // update the task behind awaits, so a window exists where the run is
+    // blocked but the task row still reads in_progress. A blocked run never
+    // reaches completion detection (`processRunTick` routes it through
+    // blocked-run recovery first), so completing the task would strand the
+    // run or be overwritten by the pending task-block step.
     await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
-    const task = createWorkflowTask(5, { status: 'review' });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
     ctx.nodeExecutionRepo.create({
       workflowRunId: task.workflowRunId!,
       workflowNodeId: 'node-review',
@@ -5931,34 +5929,69 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
       agentId: ctx.agentId,
       status: 'idle',
     });
-    const runId = task.workflowRunId!;
-    const originalGetTask = ctx.taskManager.getTask.bind(ctx.taskManager);
-    let runFlipped = false;
-    const getTaskSpy = spyOn(ctx.taskManager, 'getTask').mockImplementation(
-      async (taskId: string) => {
-        if (taskId === task.id && !runFlipped) {
-          runFlipped = true;
-          ctx.workflowRunRepo.updateRun(runId, { status: 'cancelled' });
-        }
-        return originalGetTask(taskId);
-      }
-    );
+    ctx.workflowRunRepo.updateRun(task.workflowRunId!, { status: 'blocked' });
 
-    try {
-      const result = await makeHandlers(ctx).complete_validation_task({
-        task_id: task.id,
-        validation_outcome: 'validated',
+    const result = await makeHandlers(ctx).complete_validation_task({
+      task_id: task.id,
+      validation_outcome: 'validated',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('blocked workflow run');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
+  });
+
+  test('terminal precondition rechecks the run: a cancellation or block landing before the write aborts completion', async () => {
+    // Interleaving exercise for the terminal run-runnable recheck.
+    // `stopActiveWork` cancels a `review` task's RUN while deliberately
+    // excluding the task row from its task-cancellation pass, and the blocking
+    // paths flip the run to `blocked` before their task update — in both cases
+    // the run change is invisible to the exact-status predicate on the task
+    // UPDATE. Simulate that here: the run is still runnable at the handler's
+    // early guard, and flips inside setTaskStatus' task reread — the last sync
+    // point before the precondition. Without the recheck the completion would
+    // commit on a dead/parked run; with it, the write aborts and the review
+    // state survives.
+    for (const flipTo of ['cancelled', 'blocked'] as const) {
+      await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+      const task = createWorkflowTask(5, { status: 'review' });
+      ctx.nodeExecutionRepo.create({
+        workflowRunId: task.workflowRunId!,
+        workflowNodeId: 'node-review',
+        agentName: 'Review',
+        agentId: ctx.agentId,
+        status: 'idle',
       });
-      const parsed = JSON.parse(result.content[0].text);
+      const runId = task.workflowRunId!;
+      const originalGetTask = ctx.taskManager.getTask.bind(ctx.taskManager);
+      let runFlipped = false;
+      const getTaskSpy = spyOn(ctx.taskManager, 'getTask').mockImplementation(
+        async (taskId: string) => {
+          if (taskId === task.id && !runFlipped) {
+            runFlipped = true;
+            ctx.workflowRunRepo.updateRun(runId, { status: flipTo });
+          }
+          return originalGetTask(taskId);
+        }
+      );
 
-      expect(parsed.success).toBe(false);
-      expect(parsed.error).toContain('cancelled workflow run');
-      expect(parsed.error).toContain('rechecked at the terminal write');
-      // The review state (and its pending fields) survive the aborted write.
-      expect(ctx.taskRepo.getTask(task.id)?.status).toBe('review');
-      expect(ctx.taskRepo.getTask(task.id)?.result).toBeNull();
-    } finally {
-      getTaskSpy.mockRestore();
+      try {
+        const result = await makeHandlers(ctx).complete_validation_task({
+          task_id: task.id,
+          validation_outcome: 'validated',
+        });
+        const parsed = JSON.parse(result.content[0].text);
+
+        expect(parsed.success).toBe(false);
+        expect(parsed.error).toContain(`${flipTo} workflow run`);
+        expect(parsed.error).toContain('rechecked at the terminal write');
+        // The review state (and its pending fields) survive the aborted write.
+        expect(ctx.taskRepo.getTask(task.id)?.status).toBe('review');
+        expect(ctx.taskRepo.getTask(task.id)?.result).toBeNull();
+      } finally {
+        getTaskSpy.mockRestore();
+      }
     }
   });
 

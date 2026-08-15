@@ -3498,7 +3498,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
      *     `postApproval` route are rejected — a direct done would silently skip
      *     the route (the tick loop treats an already-done task as resolved).
      *     They must close through submit_for_approval so the router fires.
-     *   - The no-PR and run-active (not cancelled/done) conditions are
+     *   - The no-PR and run-runnable (run not cancelled/done/blocked) conditions are
      *     re-asserted synchronously inside the terminal write's precondition
      *     against the reread state, closing the window between the early
      *     guards and the commit (e.g. `stopActiveWork` cancels a review task's
@@ -3650,11 +3650,17 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         // (submit_for_approval → approve), which fires the router.
         const run = workflowRunRepo.getRun(task.workflowRunId);
         // Run-status guard: a task can linger in review/in_progress while its
-        // run is already cancelled (cancellation/recovery edge — e.g. shutdown
-        // leaves the task unreconciled). Completing it would mark cancelled
-        // work done, capture success evidence, and unblock dependents. Only
-        // non-terminal runs are eligible.
-        if (run && (run.status === 'cancelled' || run.status === 'done')) {
+        // run is already terminal or waiting — cancelled (cancellation/
+        // recovery edge — e.g. shutdown leaves the task unreconciled), done,
+        // or BLOCKED (the runtime's blocking paths transition the run first
+        // and update the task behind awaits, so a window exists where the run
+        // is blocked but the task row still reads review/in_progress). A
+        // blocked run never reaches completion detection in the tick loop
+        // (`processRunTick` routes it through blocked-run recovery first), so
+        // completing the task would strand the run in blocked limbo or be
+        // overwritten by the pending task-block step. Only runnable
+        // (pending/in_progress) runs are eligible.
+        if (run && run.status !== 'pending' && run.status !== 'in_progress') {
           return jsonResult({
             success: false,
             error: `Task ${args.task_id} belongs to a ${run.status} workflow run; validation-only completion is not applicable. Reconcile or retry the task instead.`,
@@ -3730,12 +3736,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             // Run-active recheck: `stopActiveWork` cancels a `review` task's RUN
             // while deliberately excluding the task row itself from its
             // task-cancellation pass (only in_progress/open/paused tasks are
-            // cancelled), so a run cancellation can land between the handler's
-            // early run read and this write with the task row still reading
-            // `review`/`in_progress` — invisible to the exact-status predicate.
-            // Reread the run inside the same synchronous reread→UPDATE window.
+            // cancelled), and the blocking paths flip the run to `blocked`
+            // before their task update — so a run status change can land
+            // between the handler's early run read and this write with the
+            // task row still reading `review`/`in_progress`, invisible to the
+            // exact-status predicate. Reread the run inside the same
+            // synchronous reread→UPDATE window and require a runnable
+            // (pending/in_progress) run.
             const runNow = workflowRunRepo.getRun(current.workflowRunId);
-            if (runNow && (runNow.status === 'cancelled' || runNow.status === 'done')) {
+            if (runNow && runNow.status !== 'pending' && runNow.status !== 'in_progress') {
               throw new Error(
                 `Task ${args.task_id} belongs to a ${runNow.status} workflow run (rechecked at the terminal write); validation-only completion is not applicable. Reconcile or retry the task instead.`
               );
