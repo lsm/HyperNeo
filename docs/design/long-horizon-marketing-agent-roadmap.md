@@ -198,15 +198,18 @@ Start with a narrow, versionable contract:
 ```ts
 interface SpaceLifecycleSubscriptionFilter {
   labelsAny?: string[];
+  statusesAny?: SpaceLifecycleStatus[];
 }
 ```
 
-- Define normalization and any-match behavior.
+- Define normalization and any-match behavior for each supported field; multiple fields combine with AND.
 - Reject unsupported fields.
-- Migrate **all** built-in template `labels` filters to `labelsAny` before enabling strict rejection, including marketing, product-quality-manager, and research.
-- Backfill or repair already persisted legacy `{ labels: [...] }` subscription rows in the same release so existing agents do not silently lose matching.
+- Migrate **all** built-in template filters before enabling strict rejection:
+  - `labels` filters to `labelsAny` for marketing, product-quality-manager, and research;
+  - coordinator `statuses` filters to typed `statusesAny` or equivalent exact status topics.
+- Backfill or repair already persisted legacy `labels` and `statuses` subscription rows in the same release so existing agents do not silently lose matching.
 
-**Estimate:** 100–170 lines.
+**Estimate:** 120–190 lines.
 
 #### S2. Runtime filter enforcement
 
@@ -246,8 +249,10 @@ interface SpaceLifecycleSubscriptionFilter {
 
 - Relationship-aware list/assign/unassign operations.
 - Same-Space validation and deterministic conflicts.
+- Restrict owner assignment/reassignment/unassignment to the coordinator or explicit human authority. Same-Space validation alone is insufficient because this MCP server is attached to ad-hoc member and LH sessions.
+- Owners, managers, and watchers may read their assignments; only governance authorities mutate the primary owner.
 
-**Estimate:** 100–170 lines.
+**Estimate:** 120–190 lines.
 
 #### G4. Ownership UI
 
@@ -275,9 +280,10 @@ Do not provide payload update/delete methods.
 #### G6. Terminal transition captures outcome report
 
 - Create the report as part of the central reportable terminal transition, not as an optional model-invoked tool. A worker may submit the structured outcome payload before or during completion, but the terminal command/transition must guarantee one report exists even when the worker omits the tool call.
+- Audit every reportable terminal writer and route it through the atomic transition. This must include direct repository writers such as `PostApprovalRouter.route`, whose no-route branch currently completes with `taskRepo.updateTask` and intentionally bypasses `setTaskStatus`.
 - Keep notification/routing asynchronous and non-blocking.
 - Validate the caller/session associated with the linked task/goal when a structured payload is supplied.
-- Optionally project to Forge evidence when a linked scope exists.
+- If a linked Forge scope exists, create a durable pending/failed Forge-projection record with the report and let a reconciler retry that projection; keep the outcome report authoritative.
 
 This is the required behavior currently absent from `mark_complete.goal_update`; without terminal-capture, a normal completion can produce no report.
 
@@ -289,7 +295,8 @@ This is the required behavior currently absent from `mark_complete.goal_update`;
 - Activate/rehydrate the owner session.
 - Deliver through the LH V2 adapter.
 - Use explicit coordinator fallback when the owner is absent or unavailable.
-- Persist routing outcome without blocking task completion.
+- Atomically persist durable routing work with report creation or require the dispatcher to scan every unrouted report. Delivery identity must be deterministic from report ID plus route generation so restart recovery is idempotent.
+- Persist routing outcome without blocking task completion; a committed report must not be lost because the daemon exits before the asynchronous route call starts.
 
 **Dependencies:** G1–G6 and V1–V3.
 
@@ -331,7 +338,7 @@ Forge goal-automation self-nag remains a separate evidence-processing mechanism.
 
 #### R2. Optional single-goal link and bounded context
 
-Each reminder links to zero or one goal. Portfolio reminders remain unlinked and tell the agent to inspect assigned goals.
+Each reminder links to zero or one goal. Portfolio reminders remain unlinked and tell the agent to inspect assigned goals. On create/edit, validate `goal.spaceId === reminder.spaceId`; goal IDs are globally addressable, so a plain foreign key is not enough. Revalidate the link at fire time and treat a cross-Space, deleted, or archived link as unavailable rather than injecting context.
 
 At fire time, include bounded current state:
 
@@ -384,7 +391,7 @@ R1 -> R2 -> R3 -> R4
 V3 -> V4 before reminder V2 migration is considered complete
 ```
 
-Parallel starting points: V1, L1, G1, G5, and R1.
+Parallel starting points: V1, L1, G1, and R1. G5 is **not** an independent starting point; it follows G1 so report routing records can reference the authoritative primary-owner model.
 
 ## Scope intentionally deferred
 
