@@ -684,7 +684,15 @@ export class QueryLifecycleManager {
             orphanExit,
             new Promise((resolve) => setTimeout(resolve, DEFAULT_TERMINATION_TIMEOUT_MS)),
           ]);
-          this.ctx.resetProcessExitedPromise();
+          // Clear the exit tracking ONLY if it still belongs to the orphan. A
+          // concurrent ensureQueryStarted() that saw the queue stopped during
+          // our await may have already started the replacement query, whose
+          // trackAgentProcess() installed a NEW processExitedPromise — clearing
+          // that would drop the replacement's exit tracking and re-open the
+          // workspace-lock collision this guard exists to close. (Codex P1.)
+          if (this.ctx.processExitedPromise === orphanExit) {
+            this.ctx.resetProcessExitedPromise();
+          }
         }
         // Fall through to start a fresh query below
       } else {

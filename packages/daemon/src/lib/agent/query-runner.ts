@@ -1037,7 +1037,13 @@ export class QueryRunner {
             exitPromise,
             new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
           ]);
-          this.ctx.resetProcessExitedPromise();
+          // Clear only if the tracking still belongs to the old subprocess —
+          // a concurrent start during the await may have installed the
+          // replacement's exit promise (same race as the lifecycle manager's
+          // stale-running recovery).
+          if (this.ctx.processExitedPromise === exitPromise) {
+            this.ctx.resetProcessExitedPromise();
+          }
         }
 
         // Use `return await` so this call's finally{} runs only after the retry
@@ -1074,7 +1080,11 @@ export class QueryRunner {
             exitPromise,
             new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
           ]);
-          this.ctx.resetProcessExitedPromise();
+          // Clear only if the tracking still belongs to the old subprocess
+          // (see the startup-timeout retry above for the race rationale).
+          if (this.ctx.processExitedPromise === exitPromise) {
+            this.ctx.resetProcessExitedPromise();
+          }
         }
 
         return await this.runQuery(queryGeneration, 1, recoveryState);
@@ -1132,7 +1142,11 @@ export class QueryRunner {
             exitPromise,
             new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
           ]);
-          this.ctx.resetProcessExitedPromise();
+          // Clear only if the tracking still belongs to the old subprocess
+          // (see the startup-timeout retry above for the race rationale).
+          if (this.ctx.processExitedPromise === exitPromise) {
+            this.ctx.resetProcessExitedPromise();
+          }
         }
 
         return await this.runQuery(queryGeneration, 1, recoveryState);
