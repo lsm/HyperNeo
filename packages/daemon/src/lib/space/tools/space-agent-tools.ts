@@ -3491,6 +3491,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
      *   - Task must be `review` or `in_progress`. `in_progress` is intentionally
      *     eligible (Forge review tasks complete while still in_progress); the
      *     autonomy gate is the control.
+     *   - A `review` task parked at a `task_completion` checkpoint is
+     *     rejected — `submit_for_approval` put it there under an explicit
+     *     human-approval promise, and the human approve/reject flow
+     *     (approve_pending_completion) owns its resolution.
      *   - No-PR: a workflow-backed task whose run has a primary link (PR) is
      *     PR-bound and must use the normal approve/merge path. A task with no
      *     workflow run (standalone — the common Forge self_nag/review shape) is
@@ -3508,11 +3512,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
      *     `mark_complete`) are rejected — those validators wrap the node-agent
      *     completion tools, and this tool ships on an unwrapped server, so the
      *     unwrapped path fails closed instead of bypassing the hook engine.
-     *   - The no-PR and run-runnable (run not cancelled/done/blocked) conditions are
-     *     re-asserted synchronously inside the terminal write's precondition
-     *     against the reread state, closing the window between the early
-     *     guards and the commit (e.g. `stopActiveWork` cancels a review task's
-     *     run while leaving the task row untouched).
+     *   - The workflow run must be `in_progress` (pending/cancelled/done/
+     *     blocked all refuse), and the no-PR, run-status, and run-IDENTITY
+     *     conditions are re-asserted synchronously inside the terminal write's
+     *     precondition against the reread state — the write is bound to the
+     *     run whose guards were checked, so a mid-flight re-attachment to a
+     *     different run refuses rather than bypassing that run's guards.
      *
      * The validation outcome is captured as `task.result`; `approvalSource` is
      * stamped `'agent'` atomically with the done commit on every path
@@ -3626,6 +3631,21 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         });
       }
 
+      // Pending-human-approval guard: a `review` task carrying a
+      // `task_completion` checkpoint is parked there by `submit_for_approval`
+      // under an explicit promise that a HUMAN approves or rejects it. Letting
+      // this tool (or any agent) close it directly to `done` would clear the
+      // checkpoint and bypass that human gate — the exact bypass the review
+      // path exists to prevent. The human review flow (approve_pending_completion
+      // / reject) owns those tasks; a `review` task with no pending checkpoint
+      // remains eligible.
+      if (task.status === 'review' && task.pendingCheckpointType === 'task_completion') {
+        return jsonResult({
+          success: false,
+          error: `Task ${args.task_id} is awaiting human completion approval (pending 'task_completion' checkpoint). complete_validation_task cannot bypass that review — it is resolved through the human approve/reject flow (approve_pending_completion), not by an agent.`,
+        });
+      }
+
       // No-PR guard: a workflow-backed task whose run has a primary link (PR) is
       // PR-bound and must close through the normal approve/merge path. A task
       // with no workflow run (standalone) is no-PR by definition and eligible —
@@ -3668,9 +3688,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         // blocked run never reaches completion detection in the tick loop
         // (`processRunTick` routes it through blocked-run recovery first), so
         // completing the task would strand the run in blocked limbo or be
-        // overwritten by the pending task-block step. Only runnable
-        // (pending/in_progress) runs are eligible.
-        if (run && run.status !== 'pending' && run.status !== 'in_progress') {
+        // overwritten by the pending task-block step. PENDING is equally
+        // ineligible: it is a transient pre-initialization state (the start
+        // path promotes a run to in_progress before attaching its task, and
+        // rehydration excludes pending runs), so a completion landing on a
+        // still-pending run would strand it outside every lifecycle loop.
+        // Only `in_progress` runs are eligible.
+        if (run && run.status !== 'in_progress') {
           return jsonResult({
             success: false,
             error: `Task ${args.task_id} belongs to a ${run.status} workflow run; validation-only completion is not applicable. Reconcile or retry the task instead.`,
@@ -3741,6 +3765,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             .find((e) => e.workflowRunId === task.workflowRunId);
           completionSourceNodeId = callerExecution?.workflowNodeId;
         }
+        // The run every guard above evaluated against — the terminal write is
+        // bound to this association remaining unchanged (see the precondition).
+        const checkedWorkflowRunId = task.workflowRunId;
 
         // `approvalSource: 'agent'` is passed unconditionally: setTaskStatus
         // stamps it atomically with the done commit on BOTH paths — review→done
@@ -3762,19 +3789,34 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           approvalReason: args.reason,
           allowedSourceStatuses: ['review', 'in_progress'],
           ...(completionSourceNodeId !== undefined ? { completionSourceNodeId } : {}),
-          // Re-assert the no-PR condition against the reread state right before
-          // the UPDATE. Runs synchronously (no event-loop yield) between the
-          // reread and the write. HONEST BOUNDS: this bounds the artifact-table
-          // race to the same narrow window every other completion path accepts
-          // — the PR lives in a different table (run artifacts), so a
-          // save_artifact committing between this check and the task UPDATE can
-          // still slip through, exactly as it can under `approve_task`. It does
-          // NOT claim full closure; the STATUS half of the race is closed
-          // atomically by the `WHERE status IN (…)` predicate on the UPDATE
-          // (allowedSourceStatuses above).
+          // Re-assert the run-dependent conditions against the reread state
+          // right before the UPDATE. Runs synchronously (no event-loop yield)
+          // between the reread and the write. HONEST BOUNDS: this bounds the
+          // artifact-table race to the same narrow window every other
+          // completion path accepts — the PR lives in a different table (run
+          // artifacts), so a save_artifact committing between this check and
+          // the task UPDATE can still slip through, exactly as it can under
+          // `approve_task`. It does NOT claim full closure; the STATUS half of
+          // the race is closed atomically by the `WHERE status IN (…)`
+          // predicate on the UPDATE (allowedSourceStatuses above).
           precondition: (current) => {
-            if (!current.workflowRunId) return;
-            const prUrl = runtime.getApprovedPrUrlForRun(current.workflowRunId);
+            // Run-identity binding: every run-dependent guard (autonomy's
+            // workflow, PR, runnable status, canonical ownership, hooks,
+            // post-approval routes) evaluated against the run the task
+            // referenced at entry. `startWorkflowRun({parentTaskId})` can
+            // re-attach a task to a different run WITHOUT changing its status,
+            // which the exact-status SQL predicate cannot see — refuse if the
+            // association moved so the newly attached run's guards are
+            // evaluated instead of bypassed.
+            const expectedRunId = checkedWorkflowRunId ?? null;
+            const actualRunId = current.workflowRunId ?? null;
+            if (actualRunId !== expectedRunId) {
+              throw new Error(
+                `Task ${args.task_id}'s workflow run association changed during completion (expected ${expectedRunId ?? 'none'}, found ${actualRunId ?? 'none'}); refusing so the attached run's guards are evaluated. Re-check and retry if still appropriate.`
+              );
+            }
+            if (!actualRunId) return;
+            const prUrl = runtime.getApprovedPrUrlForRun(actualRunId);
             if (prUrl) {
               throw new Error(
                 `Task ${args.task_id} acquired a PR (${prUrl}) during completion; validation-only completion is for no-PR tasks. Use the normal approve/merge path instead.`
@@ -3788,10 +3830,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             // between the handler's early run read and this write with the
             // task row still reading `review`/`in_progress`, invisible to the
             // exact-status predicate. Reread the run inside the same
-            // synchronous reread→UPDATE window and require a runnable
-            // (pending/in_progress) run.
-            const runNow = workflowRunRepo.getRun(current.workflowRunId);
-            if (runNow && runNow.status !== 'pending' && runNow.status !== 'in_progress') {
+            // synchronous reread→UPDATE window and require an `in_progress`
+            // run (pending/cancelled/done/blocked all refuse).
+            const runNow = workflowRunRepo.getRun(actualRunId);
+            if (runNow && runNow.status !== 'in_progress') {
               throw new Error(
                 `Task ${args.task_id} belongs to a ${runNow.status} workflow run (rechecked at the terminal write); validation-only completion is not applicable. Reconcile or retry the task instead.`
               );

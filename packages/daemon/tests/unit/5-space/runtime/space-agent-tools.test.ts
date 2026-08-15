@@ -5786,6 +5786,9 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
       title: 'Validation gated run',
       description: '',
     });
+    // Validation completion requires a runnable (`in_progress`) run — promote
+    // out of the transient `pending` state exactly as the start path does.
+    ctx.workflowRunRepo.updateRun(run.id, { status: 'in_progress' });
     return ctx.taskRepo.createTask({
       spaceId: ctx.spaceId,
       title: 'Validation task',
@@ -5942,6 +5945,33 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
   });
 
+  test('rejects a workflow-backed task whose run is still pending', async () => {
+    // `pending` is a transient pre-initialization state: the normal start path
+    // promotes a run to in_progress before attaching its task, and
+    // rehydration excludes pending runs. A completion landing on a still-
+    // pending run would strand it outside every lifecycle loop.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-review',
+      agentName: 'Review',
+      agentId: ctx.agentId,
+      status: 'idle',
+    });
+    ctx.workflowRunRepo.updateRun(task.workflowRunId!, { status: 'pending' });
+
+    const result = await makeHandlers(ctx).complete_validation_task({
+      task_id: task.id,
+      validation_outcome: 'validated',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('pending workflow run');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
+  });
+
   test('terminal precondition rechecks the run: a cancellation or block landing before the write aborts completion', async () => {
     // Interleaving exercise for the terminal run-runnable recheck.
     // `stopActiveWork` cancels a `review` task's RUN while deliberately
@@ -5995,6 +6025,72 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     }
   });
 
+  test('terminal precondition refuses a mid-flight re-attachment to a different workflow run', async () => {
+    // `startWorkflowRun({parentTaskId})` can attach a task to a new run
+    // WITHOUT changing its status — invisible to the exact-status SQL
+    // predicate. All run-dependent guards (autonomy's workflow, PR, status,
+    // canonical ownership, hooks, routes) evaluated against the ORIGINAL run;
+    // committing against the new one would bypass the new run's guards. The
+    // precondition binds the write to the checked run association.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-review',
+      agentName: 'Review',
+      agentId: ctx.agentId,
+      status: 'idle',
+    });
+    // A second run the task gets re-attached to mid-flight.
+    const otherWorkflow = ctx.workflowManager.createWorkflow({
+      spaceId: ctx.spaceId,
+      name: `Reattach workflow ${Math.random().toString(36).slice(2, 8)}`,
+      description: '',
+      nodes: [{ id: 'node-other', name: 'Other', agentId: ctx.agentId }],
+      transitions: [],
+      startNodeId: 'node-other',
+      endNodeId: 'node-other',
+      rules: [],
+      completionAutonomyLevel: 5,
+    });
+    const otherRun = ctx.workflowRunRepo.createRun({
+      spaceId: ctx.spaceId,
+      workflowId: otherWorkflow.id,
+      title: 'Reattach run',
+      description: '',
+    });
+    const originalGetTask = ctx.taskManager.getTask.bind(ctx.taskManager);
+    let reattached = false;
+    const getTaskSpy = spyOn(ctx.taskManager, 'getTask').mockImplementation(
+      async (taskId: string) => {
+        if (taskId === task.id && !reattached) {
+          reattached = true;
+          ctx.taskRepo.updateTask(task.id, { workflowRunId: otherRun.id });
+        }
+        return originalGetTask(taskId);
+      }
+    );
+
+    try {
+      const result = await makeHandlers(ctx).complete_validation_task({
+        task_id: task.id,
+        validation_outcome: 'validated',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+
+      expect(parsed.success).toBe(false);
+      expect(parsed.error).toContain('workflow run association changed');
+      // The task survives (still in_progress, now attached to the other run —
+      // the re-attachment itself is legitimate runtime behavior).
+      const after = ctx.taskRepo.getTask(task.id);
+      expect(after?.status).toBe('in_progress');
+      expect(after?.workflowRunId).toBe(otherRun.id);
+      expect(after?.result).toBeNull();
+    } finally {
+      getTaskSpy.mockRestore();
+    }
+  });
+
   test('rejects a workflow-backed task whose workflow declares a post-approval route', async () => {
     // A direct done would silently skip the route: the tick loop treats an
     // already-done task as resolved and never calls dispatchPostApproval.
@@ -6020,6 +6116,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
       title: 'Publish run',
       description: '',
     });
+    ctx.workflowRunRepo.updateRun(run.id, { status: 'in_progress' });
     const task = ctx.taskRepo.createTask({
       spaceId: ctx.spaceId,
       title: 'Publish task',
@@ -6137,6 +6234,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
       title: 'Hook-gated run',
       description: '',
     });
+    ctx.workflowRunRepo.updateRun(run.id, { status: 'in_progress' });
     const task = ctx.taskRepo.createTask({
       spaceId: ctx.spaceId,
       title: 'Hook-gated task',
@@ -6308,6 +6406,33 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
 
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain("'open' status");
+  });
+
+  test('rejects a review task awaiting human completion approval (task_completion checkpoint)', async () => {
+    // `submit_for_approval` parks a task in review under an explicit promise
+    // that a HUMAN approves or rejects it. Closing it directly to done here
+    // would clear the pending checkpoint and bypass that gate — the exact
+    // bypass the review path exists to prevent. The human flow
+    // (approve_pending_completion) owns those tasks.
+    const taskId = await createTask('review');
+    ctx.taskRepo.updateTask(taskId, {
+      pendingCheckpointType: 'task_completion',
+      pendingCompletionReason: 'needs human approval',
+    });
+
+    const result = await makeHandlers(ctx).complete_validation_task({
+      task_id: taskId,
+      validation_outcome: 'should be refused',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('awaiting human completion approval');
+    expect(parsed.error).toContain('approve_pending_completion');
+    // The checkpoint promise survives — the human still owns the decision.
+    const after = ctx.taskRepo.getTask(taskId);
+    expect(after?.status).toBe('review');
+    expect(after?.pendingCheckpointType).toBe('task_completion');
   });
 
   test('rejects an empty validation outcome', async () => {

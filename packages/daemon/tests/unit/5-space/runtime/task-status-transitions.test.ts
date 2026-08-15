@@ -381,6 +381,26 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
     ).rejects.toThrow(/precondition must be synchronous/);
     expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
     expect(taskRepo.getTask(task.id)?.result).toBeNull();
+
+    // A REJECTING async precondition is consumed before the refusal — without
+    // the swallow, the unobserved rejection would surface as an unhandled
+    // rejection and destabilize the daemon (bun fails the file on one, so
+    // reaching the assertions proves the consumption).
+    const rejectingPrecondition = async () => {
+      await Promise.resolve();
+      throw new Error('async check exploded');
+    };
+    await expect(
+      taskManager.setTaskStatus(task.id, 'done', {
+        result: 'validated',
+        precondition: rejectingPrecondition as unknown as () => void,
+      })
+    ).rejects.toThrow(/precondition must be synchronous/);
+    expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+    // Give the microtask queue a turn so an unhandled rejection (if any)
+    // would surface before the test ends.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
   });
 
   test('interleaving: a status change landing after the reread is NOT overwritten by the guarded UPDATE', async () => {

@@ -272,6 +272,10 @@ export class SpaceTaskManager {
         preconditionResult != null &&
         typeof (preconditionResult as { then?: unknown }).then === 'function'
       ) {
+        // Consume the thenable before refusing: if it later rejects and
+        // nothing observes it, the daemon takes an unhandled rejection. We
+        // deliberately do NOT await it — the transition must refuse NOW.
+        Promise.resolve(preconditionResult).catch(() => {});
         throw new Error(
           'setTaskStatus precondition must be synchronous — an async (thenable-returning) ' +
             'precondition was supplied; refusing the transition instead of proceeding ' +
