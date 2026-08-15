@@ -302,11 +302,17 @@ export default function MessageInput({
       return false;
     }
   })();
+  // A recording binds to the composer's sessionId at start: with no session
+  // (task agent not yet spawned, pending workflow overlay) an unmounting
+  // recording could never be adopted by another composer or routed back to.
+  // Offer the mic only once a session exists.
+  const voiceTargetReady = sessionId !== '';
   const voiceControlVisible =
-    (voiceEnabled && voiceConfigured) ||
-    voiceRecorder.isRecording ||
-    voiceRecorder.isStarting ||
-    voiceRecorder.durationLimitHit;
+    ((voiceEnabled && voiceConfigured) ||
+      voiceRecorder.isRecording ||
+      voiceRecorder.isStarting ||
+      voiceRecorder.durationLimitHit) &&
+    voiceTargetReady;
   const voiceSupported = isVoiceRecordingSupported();
   // True throughout the entire voice lifecycle: the RecordingPanel replaces the
   // textarea from the moment the mic is clicked (isStarting) through transcription

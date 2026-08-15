@@ -16,12 +16,45 @@
  * back mid-recording keeps the mic running and the waveform re-attaches.
  */
 
-import { useEffect, useRef } from 'preact/hooks';
+import { createContext } from 'preact';
+import { useContext, useEffect, useRef } from 'preact/hooks';
 import { useSignalEffect } from '@preact/signals';
 import { voiceRecorderStore } from '../lib/voice/voice-recorder-store.ts';
+import {
+  registerVoiceComposer,
+  unregisterVoiceComposer,
+} from '../lib/voice/voice-composer-registry.ts';
 
 export { isVoiceRecordingSupported } from '../lib/voice/voice-recorder-store.ts';
 export type { VoiceRecording } from '../lib/voice/voice-recorder-store.ts';
+
+export interface VoiceSurfaceInfo {
+  /** Identifies the rendering surface (window into the app) a composer is mounted in. */
+  surfaceId: string;
+  /** The Space this surface belongs to, or null for the primary chat surface. */
+  spaceId: string | null;
+  /**
+   * The Space task this surface scopes to (task thread pane, task-context
+   * agent overlay), or null. Recordings started here are stamped with the
+   * task so the global chip reopens the TASK thread — whose composer delivers
+   * through `space.task.sendMessage` with task/agent/node context — instead
+   * of a plain Space session chat.
+   */
+  taskId?: string | null;
+}
+
+/**
+ * Provided by each surface that hosts composers: MainContent ('primary') and
+ * the Space agent overlay. Lets a composer report WHERE it is mounted — the
+ * global recording chip needs this because two surfaces can display the same
+ * session at once, so session equality alone cannot tell whether the
+ * recording's waveform is visible where the user is looking.
+ */
+export const VoiceSurfaceContext = createContext<VoiceSurfaceInfo>({
+  surfaceId: 'primary',
+  spaceId: null,
+  taskId: null,
+});
 
 export function useVoiceRecorder(sessionId: string, options?: { autoAdopt?: boolean }) {
   // Stable per-instance owner token (survives re-renders, unique per mount).
@@ -32,6 +65,21 @@ export function useVoiceRecorder(sessionId: string, options?: { autoAdopt?: bool
   // path cancels "its" recording, which would destroy an unrelated capture
   // adopted in that window.
   const autoAdopt = options?.autoAdopt !== false;
+  const surface = useContext(VoiceSurfaceContext);
+
+  // Register this composer FIRST (effects run in definition order, so this
+  // precedes the adoption effect below): whenever ownership lands on this
+  // instance, the registry already maps its token to this surface and the
+  // global chip can attribute the recording correctly. canAdopt re-registers
+  // when transcription starts/ends — the chip must not treat a temporarily
+  // adoption-refusing composer as "will show the recording".
+  const surfaceId = surface.surfaceId;
+  const surfaceSpaceId = surface.spaceId;
+  const surfaceTaskId = surface.taskId ?? null;
+  useEffect(() => {
+    registerVoiceComposer(ownerId, { surfaceId, sessionId, canAdopt: autoAdopt });
+    return () => unregisterVoiceComposer(ownerId);
+  }, [ownerId, surfaceId, sessionId, autoAdopt]);
 
   // Session changes (mount + retarget) drive both the retarget guard and
   // adoption; ownership transitions re-trigger adoption so a recording freed
@@ -97,9 +145,12 @@ export function useVoiceRecorder(sessionId: string, options?: { autoAdopt?: bool
       return owns() ? voiceRecorderStore.recordingCursor.value : null;
     },
     /** Start a recording owned by this composer; `cursor` is the composer's
-     *  caret/selection at recording start (restored on adoption). */
+     *  caret/selection at recording start (restored on adoption). The
+     *  recording is stamped with this surface's Space (and task) so the
+     *  global chip can later route back through the recording's OWNING
+     *  surface — reopening the task thread for task-scoped recordings. */
     start: (cursor?: { start: number; end: number } | null) =>
-      voiceRecorderStore.start(ownerId, sessionId, cursor),
+      voiceRecorderStore.start(ownerId, sessionId, cursor, surfaceSpaceId, surfaceTaskId),
     stop: voiceRecorderStore.stop,
     /** Cancels only this instance's recording; a no-op for anyone else's. */
     cancel: () => (owns() ? voiceRecorderStore.cancel() : Promise.resolve()),
