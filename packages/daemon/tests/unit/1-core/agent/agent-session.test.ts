@@ -1115,6 +1115,53 @@ describe('AgentSession', () => {
       expect(narrowSpy.mock.calls[0]).toEqual(['test-session-id', 'kick-only', ['kick-only']]);
     });
 
+    it('driveDeliveryTurn refuses to feed a reduced batch when narrowing cannot persist', async () => {
+      // Narrowing is REQUIRED before feeding: if it returns false (claim
+      // cancelled / row gone) the drive aborts WITHOUT admitting the prompt —
+      // never feed a reduced prompt while the durable payload still holds the
+      // superset (ACP acceptance / dead-letter would settle unsent rows).
+      const admitSpy = mock(() => new Promise<void>(() => {}));
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock((_sid: string, uuid: string) =>
+          uuid === 'kick-2'
+            ? { content: 'kickoff', sendStatus: 'enqueued' }
+            : uuid === 'member-2'
+              ? { content: 'member', sendStatus: 'deferred' }
+              : null
+        ),
+        hasTerminalResultAfter: mock(() => false),
+        hasDeliveryTurnEnd: mock(() => false),
+        clearDeliveryTurnEnd: mock(() => {}),
+        getErrorTerminalResultSubtypeAfter: mock(() => null),
+        recordDeliveryTurnEnd: mock(() => {}),
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        isProcessingDelivery: mock(() => true),
+        narrowActiveDeliveryBatchUuids: mock(() => false),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: admitSpy,
+        isRunning: mock(() => false),
+        size: mock(() => 0),
+      };
+
+      await agentSession.stateManager.setProcessing('kick-2');
+      const outcome = await agentSession.driveDeliveryTurn(
+        'kick-2',
+        'estimate',
+        null,
+        false,
+        () => true,
+        ['kick-2', 'member-2']
+      );
+      expect(outcome).toEqual({ outcome: 'aborted' });
+      expect(admitSpy).not.toHaveBeenCalled();
+    });
+
     it('isWaitingForInput sees an unresolved sdk_resume_choice even while parked as queued', async () => {
       // A resume-blocked startup persists the sdk_resume_choice action and
       // parks the session as `queued` — `waiting_for_input` belongs to

@@ -1964,7 +1964,13 @@ sdk_rows_raw AS (
              WHERE jq.queue = 'message_delivery'
                AND jq.status IN ('pending', 'processing')
                AND json_extract(jq.payload, '$.sessionId') = sm.session_id
-               AND json_extract(jq.payload, '$.messageUuid') = sm.sdk_uuid
+               AND (json_extract(jq.payload, '$.messageUuid') = sm.sdk_uuid
+                 OR EXISTS (
+                   SELECT 1 FROM json_each(
+                     CASE WHEN json_type(jq.payload, '$.batchUuids') = 'array'
+                          THEN json_extract(jq.payload, '$.batchUuids') ELSE '[]' END
+                   ) AS je WHERE je.value = sm.sdk_uuid
+                 ))
                AND jq.retry_count > 0
            )
       THEN 'retrying'
@@ -2286,7 +2292,13 @@ sdk_rows AS (
              WHERE jq.queue = 'message_delivery'
                AND jq.status IN ('pending', 'processing')
                AND json_extract(jq.payload, '$.sessionId') = sm.session_id
-               AND json_extract(jq.payload, '$.messageUuid') = sm.sdk_uuid
+               AND (json_extract(jq.payload, '$.messageUuid') = sm.sdk_uuid
+                 OR EXISTS (
+                   SELECT 1 FROM json_each(
+                     CASE WHEN json_type(jq.payload, '$.batchUuids') = 'array'
+                          THEN json_extract(jq.payload, '$.batchUuids') ELSE '[]' END
+                   ) AS je WHERE je.value = sm.sdk_uuid
+                 ))
                AND jq.retry_count > 0
            )
       THEN 'retrying'
@@ -3336,7 +3348,13 @@ WITH top_level AS (
       WHERE jq.queue = 'message_delivery'
         AND jq.status IN ('pending', 'processing')
         AND json_extract(jq.payload, '$.sessionId') = ?1
-        AND json_extract(jq.payload, '$.messageUuid') = sdk_messages.sdk_uuid
+        AND (json_extract(jq.payload, '$.messageUuid') = sdk_messages.sdk_uuid
+        OR EXISTS (
+          SELECT 1 FROM json_each(
+            CASE WHEN json_type(jq.payload, '$.batchUuids') = 'array'
+                 THEN json_extract(jq.payload, '$.batchUuids') ELSE '[]' END
+          ) AS je WHERE je.value = sdk_messages.sdk_uuid
+        ))
       ORDER BY jq.retry_count DESC
       LIMIT 1
     ) AS deliveryRetryInfo
@@ -3419,7 +3437,13 @@ subagent AS (
       WHERE jq.queue = 'message_delivery'
         AND jq.status IN ('pending', 'processing')
         AND json_extract(jq.payload, '$.sessionId') = ?1
-        AND json_extract(jq.payload, '$.messageUuid') = sm.sdk_uuid
+        AND (json_extract(jq.payload, '$.messageUuid') = sm.sdk_uuid
+                 OR EXISTS (
+                   SELECT 1 FROM json_each(
+                     CASE WHEN json_type(jq.payload, '$.batchUuids') = 'array'
+                          THEN json_extract(jq.payload, '$.batchUuids') ELSE '[]' END
+                   ) AS je WHERE je.value = sm.sdk_uuid
+                 ))
       ORDER BY jq.retry_count DESC
       LIMIT 1
     ) AS deliveryRetryInfo

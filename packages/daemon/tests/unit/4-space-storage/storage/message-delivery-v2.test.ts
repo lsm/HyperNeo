@@ -432,12 +432,37 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
         'admitted-a',
       ]);
       expect(repo.activeDeliveryMessageUuids(SESSION)).toEqual(new Set(['kickoff', 'admitted-a']));
-      // No active job → no narrowing (the job settled). Processing IS still
-      // narrowable — the bridge narrows mid-turn, while the job is claimed.
-      const [claimed] = repo.dequeue(MESSAGE_DELIVERY, 1);
-      expect(repo.narrowActiveDeliveryBatchUuids(SESSION, 'kickoff', ['kickoff'])).toBe(true);
-      repo.complete(claimed.id, { ok: true });
+      // The dropped tail stays durably recorded so lifecycle cancellation can
+      // still settle it (archive/reset must not leave it a hidden orphan).
+      const job = repo.listJobs({ queue: MESSAGE_DELIVERY, limit: 10 })[0];
+      expect((job.payload as { droppedBatchUuids?: string[] }).droppedBatchUuids).toEqual([
+        'over-budget-tail',
+      ]);
+      expect(repo.cancelForSessionWithMessages(SESSION)).toEqual(
+        expect.arrayContaining(['kickoff', 'admitted-a', 'over-budget-tail'])
+      );
+      // No active job → no narrowing (the job settled).
       expect(repo.narrowActiveDeliveryBatchUuids(SESSION, 'kickoff', ['kickoff'])).toBe(false);
+    });
+
+    it('getActiveDeliveryRole recognizes a batch member (promote dedup)', () => {
+      // A member of a pending batch owns no job row of its own — the general
+      // idempotency guard must still see it, or a promote (Move to Steer)
+      // inserts an individual steer on top of the combined prompt.
+      repo.enqueue({
+        queue: MESSAGE_DELIVERY,
+        payload: {
+          sessionId: SESSION,
+          messageUuid: 'kickoff',
+          role: 'turn',
+          origin: 'recovery',
+          parentToolUseId: null,
+          batchUuids: ['kickoff', 'member-a'],
+        },
+      });
+      expect(repo.getActiveDeliveryRole(SESSION, 'kickoff')).toBe('turn');
+      expect(repo.getActiveDeliveryRole(SESSION, 'member-a')).toBe('turn');
+      expect(repo.getActiveDeliveryRole(SESSION, 'not-a-member')).toBeNull();
     });
 
     it('deliverBatchAndMarkQueued returns false when ANY member already owns an active job', async () => {

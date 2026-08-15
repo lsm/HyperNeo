@@ -2240,17 +2240,32 @@ export class AgentSession
           // consumer (ACP acceptance consume, dead-letter settlement,
           // batch-aware active lookups) must see exactly what was fed, so
           // dropped tails are neither marked consumed, nor failed on
-          // dead-letter, nor shielded from reconciler redelivery.
+          // dead-letter, nor shielded from reconciler redelivery. Narrowing
+          // is REQUIRED before feeding — never admit a reduced prompt against
+          // a superset payload (ACP acceptance / dead-letter would then
+          // settle rows that were never sent). A transient persistence
+          // failure throws recoverable so the job retries the narrowing+feed;
+          // a row that no longer matches (cancelled claim) aborts.
           if (admittedBatchUuids && admittedBatchUuids.length !== batchUuids.length) {
+            let narrowed = false;
             try {
-              this.db
-                .getJobQueueRepo()
-                ?.narrowActiveDeliveryBatchUuids(this.session.id, messageUuid, admittedBatchUuids);
+              narrowed =
+                this.db
+                  .getJobQueueRepo()
+                  ?.narrowActiveDeliveryBatchUuids(
+                    this.session.id,
+                    messageUuid,
+                    admittedBatchUuids
+                  ) ?? false;
             } catch (error) {
-              // Non-fatal: the payload keeps the superset; consumers then
-              // over-treat members (consumed/failed) — surfaced by the
-              // delivery metrics rather than blocking the feed.
-              this.logger.warn('Failed to narrow batch payload to admitted members:', error);
+              turnEnd.cancel();
+              throw new MessageDeliveryRecoverableTurnError(
+                `batch narrowing failed: ${error instanceof Error ? error.message : String(error)}`
+              );
+            }
+            if (!narrowed) {
+              turnEnd.cancel();
+              return { kind: 'aborted' as const };
             }
           }
         }
