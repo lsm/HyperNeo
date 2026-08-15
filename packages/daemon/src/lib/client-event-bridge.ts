@@ -147,6 +147,15 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
     clientEvent: 'space.workflowRun.deadLoop',
     channel: () => Channels.global(),
   },
+  // A subscribed external event was dropped without delivery (retry budget
+  // exhausted / queue TTL expired) — space-scoped so the owning space's UI
+  // can surface the loss.
+  {
+    event: 'externalEvent.dropped',
+    clientEvent: 'externalEvent.dropped',
+    channel: (p) =>
+      Channels.space((p as unknown as DaemonInternalEventMap['externalEvent.dropped']).spaceId),
+  },
   // Space agent events → space-scoped
   {
     event: 'spaceAgent.created',

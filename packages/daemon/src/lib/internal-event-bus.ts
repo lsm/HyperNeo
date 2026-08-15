@@ -361,10 +361,35 @@ export interface SettingsEvents {
 }
 
 /**
+ * Payload for `externalEvent.dropped` — emitted when a per-subscription
+ * external-event delivery terminalizes as a DROPPED event (retry budget
+ * exhausted or queue TTL expired) so subscribers (UI, notifications) can
+ * surface the loss instead of it accumulating silently as a dead-letter row.
+ * Delivery-level drops only; run/task lifecycle terminal failures
+ * (`target_task_terminal`, `subscription_no_longer_active`, …) stay quiet.
+ */
+export interface ExternalEventDroppedEvent {
+  sessionId?: string;
+  namespaceId?: string;
+  spaceId: string;
+  eventId: string;
+  deliveryKey: string;
+  workflowRunId: string;
+  topic: string;
+  summary: string;
+  /** 'retry_exhausted' | 'ttl_expired' */
+  category: string;
+  reason: string;
+  agentName: string;
+  timestamp: number;
+}
+
+/**
  * External event domain events.
  */
 export interface ExternalEventEvents {
   'externalEvent.published': ExternalEventPublishedPayload;
+  'externalEvent.dropped': ExternalEventDroppedEvent;
 }
 
 /**

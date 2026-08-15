@@ -242,6 +242,18 @@ export interface SpaceRuntimeConfig {
    */
   externalEventDeliveryCooldownMapCap?: number;
   /**
+   * Base delay (ms) for the first scheduled external-event retry; subsequent
+   * retries back off exponentially (`min(base * 2^(n-1), max)`). Defaults to
+   * {@link EXTERNAL_EVENT_RETRY_BASE_DELAY_MS}. Exposed for tests so
+   * retry-exhaustion scenarios complete quickly.
+   */
+  externalEventRetryBaseDelayMs?: number;
+  /**
+   * Ceiling (ms) for the exponential external-event retry backoff. Defaults to
+   * {@link EXTERNAL_EVENT_RETRY_MAX_DELAY_MS}. Exposed for tests.
+   */
+  externalEventRetryMaxDelayMs?: number;
+  /**
    * Completion detector — inspects the canonical `SpaceTask` to decide whether
    * a workflow run is complete or ready for runtime resolution.
    *
@@ -564,7 +576,19 @@ interface TerminalErrorContinueState {
 
 const NON_TERMINAL_IDLE_FAILED_NUDGE_RETRY_MS = 60 * 1000;
 const NON_TERMINAL_IDLE_ATTENTION_LOG_COOLDOWN_MS = 5 * 60 * 1000;
-const EXTERNAL_EVENT_RETRY_DELAY_MS = 1000;
+/**
+ * Base delay for the FIRST scheduled external-event retry. Subsequent retries
+ * back off exponentially: `min(BASE * 2^(attempts - 1), CAP)` — see
+ * {@link SpaceRuntime.externalEventRetryDelayMs} — so a persistently-failing
+ * target is retried at a decreasing rate instead of a constant 1s hammer.
+ */
+const EXTERNAL_EVENT_RETRY_BASE_DELAY_MS = 1000;
+/**
+ * Ceiling for the exponential retry backoff. Keeps the last retries within the
+ * queue TTL window while still spacing them far enough apart that a stuck
+ * target is not re-injected on every periodic flush.
+ */
+const EXTERNAL_EVENT_RETRY_MAX_DELAY_MS = 30_000;
 const EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS = 5;
 const EXTERNAL_EVENT_RATE_WINDOW_MS = 60_000;
 const EXTERNAL_EVENT_RATE_LIMIT_PER_MIN = parsePositiveIntegerEnv(
@@ -737,6 +761,19 @@ function formatCommandError(error: unknown): string {
 function longHorizonSpaceIdFromWorkflowRunId(workflowRunId: string): string | null {
   const prefix = 'long_horizon:';
   return workflowRunId.startsWith(prefix) ? workflowRunId.slice(prefix.length) : null;
+}
+
+/**
+ * Whether an `agent.message.inject` failure is non-retryable: the target's
+ * task/run is terminal, so re-injecting on the next tick can only manufacture
+ * another dead letter. Matches the guard error thrown by
+ * `TaskAgentManager.injectSubSessionMessageWithOrigin` when the canonical task
+ * or run is cancelled/archived/done. Other inject errors (a busy session, a
+ * transient provider failure, `Sub-session not found` while a respawn is in
+ * flight) stay retryable — the bounded retry + backoff path handles them.
+ */
+function isNonRetryableInjectFailure(rawFailureReason: string): boolean {
+  return rawFailureReason.includes('task/run is terminal');
 }
 
 type ExternalEventTaskDecision =
@@ -1056,6 +1093,13 @@ export class SpaceRuntime {
   /** Soft cap on {@link externalEventDeliveryCooldowns}; sweeps expired on arm. */
   private readonly deliveryCooldownMapCap: number;
   /**
+   * Exponential retry-backoff bounds, bound from config at construction so
+   * tests can shrink them; production uses {@link EXTERNAL_EVENT_RETRY_BASE_DELAY_MS}
+   * / {@link EXTERNAL_EVENT_RETRY_MAX_DELAY_MS}.
+   */
+  private readonly retryBaseDelayMs: number;
+  private readonly retryMaxDelayMs: number;
+  /**
    * Pending external-event queue health counters. Defaults to a fresh
    * in-memory instance; the service wires the store's delivery-terminal hook
    * to the same instance (when shared) so terminal outcomes are counted once.
@@ -1127,6 +1171,9 @@ export class SpaceRuntime {
       config.externalEventDeliveryCooldownMs ?? EXTERNAL_EVENT_DELIVERY_COOLDOWN_MS;
     this.deliveryCooldownMapCap =
       config.externalEventDeliveryCooldownMapCap ?? EXTERNAL_EVENT_DELIVERY_COOLDOWN_MAP_CAP;
+    this.retryBaseDelayMs =
+      config.externalEventRetryBaseDelayMs ?? EXTERNAL_EVENT_RETRY_BASE_DELAY_MS;
+    this.retryMaxDelayMs = config.externalEventRetryMaxDelayMs ?? EXTERNAL_EVENT_RETRY_MAX_DELAY_MS;
     this.subscribeExternalEventPublished();
     this.subscribeSdkToolUseCreated();
     this.unsubscribeSpaceResumed = this.config.spaceManager.onSpaceResumedRegister?.((spaceId) =>
@@ -2004,7 +2051,10 @@ export class SpaceRuntime {
         this.clearExternalEventRetry(item.deliveryKey);
         continue;
       }
-      this.clearExternalEventRetry(item.deliveryKey);
+      // The flush takes over dispatch from any scheduled retry — cancel the
+      // timer only. Preserving the attempt count keeps the retry cap bound to
+      // total injections, not consecutive scheduled-retry failures.
+      this.cancelExternalEventRetryTimer(item.deliveryKey);
       dispatched += 1;
       void this.enqueueDeliverableExternalEvent(
         targetWithExecution,
@@ -2059,7 +2109,9 @@ export class SpaceRuntime {
         this.clearExternalEventRetry(item.deliveryKey);
         continue;
       }
-      this.clearExternalEventRetry(item.deliveryKey);
+      // The flush takes over dispatch from any scheduled retry — cancel the
+      // timer only (see flushPendingNodeQueue for the cap-preservation rationale).
+      this.cancelExternalEventRetryTimer(item.deliveryKey);
       dispatched += 1;
       await this.enqueueDeliverableExternalEvent(
         targetWithExecution,
@@ -2807,7 +2859,7 @@ export class SpaceRuntime {
         return;
       }
       void this.deliverToLongHorizonAgent(target, event, deliveryKey);
-    }, EXTERNAL_EVENT_RETRY_DELAY_MS);
+    }, this.externalEventRetryDelayMs(attempts));
     this.externalEventRetryTimers.set(deliveryKey, timer);
   }
 
@@ -3208,12 +3260,18 @@ export class SpaceRuntime {
       }
     } catch (err) {
       const rawFailureReason = err instanceof Error ? err.message : String(err);
-      const terminal = err instanceof MissingCommandHandlerError;
+      // Non-retryable inject failure (task/run terminal) applies to every
+      // coalesced item — terminalize the digest instead of retrying it.
+      const terminal =
+        err instanceof MissingCommandHandlerError || isNonRetryableInjectFailure(rawFailureReason);
       for (const item of items) {
         const failureReason = `deliveryMode:${item.deliveryMode}; digest; ${rawFailureReason}`;
+        const reason = isNonRetryableInjectFailure(rawFailureReason)
+          ? `target_task_terminal; ${rawFailureReason}`
+          : failureReason;
         store.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
           terminal,
-          reason: failureReason,
+          reason,
         });
         if (terminal) {
           this.clearExternalEventRetry(item.deliveryKey);
@@ -3315,10 +3373,17 @@ export class SpaceRuntime {
     } catch (err) {
       const rawFailureReason = err instanceof Error ? err.message : String(err);
       const failureReason = `deliveryMode:${deliveryMode}; ${rawFailureReason}`;
-      const terminal = err instanceof MissingCommandHandlerError;
+      // Non-retryable inject failure (the target's task/run is terminal):
+      // re-injecting on the next tick can only mint another dead letter, so
+      // terminalize immediately instead of burning the retry budget.
+      const terminal =
+        err instanceof MissingCommandHandlerError || isNonRetryableInjectFailure(rawFailureReason);
+      const reason = isNonRetryableInjectFailure(rawFailureReason)
+        ? `target_task_terminal; ${rawFailureReason}`
+        : failureReason;
       store.markDeliveryFailed(event.eventId, deliveryKey, {
         terminal,
-        reason: failureReason,
+        reason,
       });
       if (terminal) {
         this.clearExternalEventRetry(deliveryKey);
@@ -3357,17 +3422,25 @@ export class SpaceRuntime {
       attempts += 1;
       this.externalEventRetryCounts.set(deliveryKey, attempts);
     }
-    if (options.markFailure !== false) {
-      this.config.externalEventStore?.markDeliveryFailed(event.eventId, deliveryKey, {
-        terminal: attempts > EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS,
-        reason: failureReason,
-      });
-    }
     if (attempts > EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS) {
+      // Prefix with a retry-exhaustion marker so the queue-health categorizer
+      // recognizes these as retry_exhausted regardless of the underlying error
+      // message (mirrors the long-horizon retry path). Terminalizes directly —
+      // a prior non-terminal mark would already have consumed the row update.
+      this.config.externalEventStore?.markDeliveryFailed(event.eventId, deliveryKey, {
+        terminal: true,
+        reason: `retry_exhausted; ${failureReason}`,
+      });
       this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(event.eventId);
       this.clearExternalEventRetry(deliveryKey);
       this.clearQueuedDelivery(target, deliveryKey);
       return;
+    }
+    if (options.markFailure !== false) {
+      this.config.externalEventStore?.markDeliveryFailed(event.eventId, deliveryKey, {
+        terminal: false,
+        reason: failureReason,
+      });
     }
     const timer = setTimeout(() => {
       this.externalEventRetryTimers.delete(deliveryKey);
@@ -3394,7 +3467,7 @@ export class SpaceRuntime {
         return;
       }
       void this.deliverExternalEventToWorkflowTarget(target, event, deliveryKey);
-    }, EXTERNAL_EVENT_RETRY_DELAY_MS);
+    }, this.externalEventRetryDelayMs(attempts));
     this.externalEventRetryTimers.set(deliveryKey, timer);
   }
 
@@ -3430,9 +3503,12 @@ export class SpaceRuntime {
     const attempts = options.preserveAttemptCount ? currentAttempts : currentAttempts + 1;
     this.externalEventRetryCounts.set(deliveryKey, attempts);
     if (attempts > EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS) {
+      // Prefix with a retry-exhaustion marker so the queue-health categorizer
+      // recognizes these as retry_exhausted regardless of the underlying error
+      // message (mirrors the long-horizon retry path).
       this.config.externalEventStore?.markDeliveryFailed(event.eventId, deliveryKey, {
         terminal: true,
-        reason: failureReason,
+        reason: `retry_exhausted; ${failureReason}`,
       });
       this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(event.eventId);
       this.clearQueuedDelivery(target, deliveryKey);
@@ -3473,7 +3549,7 @@ export class SpaceRuntime {
         return;
       }
       void this.deliverExternalEventToWorkflowTarget(target, event, deliveryKey);
-    }, EXTERNAL_EVENT_RETRY_DELAY_MS);
+    }, this.externalEventRetryDelayMs(attempts));
     this.externalEventRetryTimers.set(deliveryKey, timer);
   }
 
@@ -3507,6 +3583,36 @@ export class SpaceRuntime {
     if (timer) clearTimeout(timer);
     this.externalEventRetryTimers.delete(deliveryKey);
     this.externalEventRetryCounts.delete(deliveryKey);
+  }
+
+  /**
+   * Cancel a pending retry TIMER without resetting the attempt count.
+   *
+   * Used by the periodic-flush dispatch paths ({@link flushPendingNodeQueue} /
+   * {@link flushPendingNodeQueueAsync}), which take over a delivery's dispatch
+   * from the scheduled retry. Resetting the count there (via
+   * {@link clearExternalEventRetry}) defeated the
+   * `EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS` cap: every periodic re-dispatch that
+   * failed again restarted the count at 0, so a persistently-undeliverable
+   * target was re-injected ~once per tick for its entire TTL window (observed
+   * 10 injections against a cap of 5). The count is only cleared on a genuine
+   * terminal outcome (delivered / terminal failure / retry exhaustion).
+   */
+  private cancelExternalEventRetryTimer(deliveryKey: string): void {
+    const timer = this.externalEventRetryTimers.get(deliveryKey);
+    if (timer) clearTimeout(timer);
+    this.externalEventRetryTimers.delete(deliveryKey);
+  }
+
+  /**
+   * Exponential backoff for scheduled external-event retries:
+   * `min(BASE * 2^(attempts - 1), CAP)` where `attempts` is the 1-based attempt
+   * count that just failed. A persistently-failing target is therefore retried
+   * at increasing intervals instead of a constant rate, and the periodic-flush
+   * re-dispatch (which preserves the attempt count) inherits the same spacing.
+   */
+  private externalEventRetryDelayMs(attempts: number): number {
+    return Math.min(this.retryBaseDelayMs * 2 ** Math.max(0, attempts - 1), this.retryMaxDelayMs);
   }
 
   private getQueuedDelivery(

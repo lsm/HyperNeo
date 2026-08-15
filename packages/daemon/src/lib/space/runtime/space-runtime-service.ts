@@ -82,6 +82,8 @@ import { encodeActorIdComponent, longTermAgentSessionId } from '../long-term-age
 import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus';
 import type { ExternalEventStore } from '../../external-events/external-event-store';
 import {
+  categorizeFailureReason,
+  type DeliveryTerminalEvent,
   type QueueHealthSnapshot,
   ExternalEventQueueMetrics,
 } from '../../external-events/queue-health-metrics';
@@ -296,9 +298,10 @@ export class SpaceRuntimeService {
     // Observe every terminal delivery transition from a single point so
     // delivered/failure-by-reason counters stay accurate regardless of which
     // runtime call path reached the transition.
-    config.externalEventStore?.setDeliveryTerminalHook((event) =>
-      this.queueHealthMetrics.recordDeliveryTerminal(event)
-    );
+    config.externalEventStore?.setDeliveryTerminalHook((event) => {
+      this.queueHealthMetrics.recordDeliveryTerminal(event);
+      this.publishExternalEventDropped(event);
+    });
     this.runtime = new SpaceRuntime({
       ...config,
       nodeExecutionRepo: this.nodeExecutionRepo,
@@ -2205,6 +2208,54 @@ export class SpaceRuntimeService {
    */
   getQueueHealthSnapshot(): QueueHealthSnapshot {
     return this.runtime.getQueueHealthSnapshot();
+  }
+
+  /**
+   * Surface a terminal delivery DROP (retry budget exhausted or queue TTL
+   * expired) as an `externalEvent.dropped` internal event so the UI/notifications
+   * can show the loss instead of it accumulating silently as a dead-letter row.
+   * Only the drop categories are emitted — run/task lifecycle terminal failures
+   * (`target_task_terminal`, `subscription_no_longer_active`, …) are expected
+   * transitions, not lost events. Best-effort: enrichment lookups or a
+   * throwing subscriber must never break the store write that triggered this.
+   */
+  private publishExternalEventDropped(event: DeliveryTerminalEvent): void {
+    if (event.outcome !== 'failed' || !event.reason) return;
+    const category = categorizeFailureReason(event.reason);
+    if (category !== 'retry_exhausted' && category !== 'ttl_expired') return;
+    const store = this.config.externalEventStore;
+    const bus = this.config.internalEventBus;
+    if (!store || !bus) return;
+    try {
+      const record = store.getById(event.eventId);
+      if (!record) return;
+      const delivery = store.getDelivery(event.eventId, event.deliveryKey);
+      if (!delivery) return;
+      void bus
+        .publish('externalEvent.dropped', {
+          sessionId: 'global',
+          namespaceId: record.event.spaceId,
+          spaceId: record.event.spaceId,
+          eventId: event.eventId,
+          deliveryKey: event.deliveryKey,
+          workflowRunId: delivery.workflowRunId,
+          topic: record.event.topic,
+          summary: record.event.summary,
+          category,
+          reason: event.reason,
+          agentName: delivery.agentName,
+          timestamp: Date.now(),
+        })
+        .catch((err: unknown) => {
+          log.warn(
+            `externalEvent.dropped publish failed for ${event.eventId}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
+    } catch (err) {
+      log.warn(
+        `externalEvent.dropped enrichment failed for ${event.eventId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   }
 
   refreshLongHorizonAgentSubscriptions(

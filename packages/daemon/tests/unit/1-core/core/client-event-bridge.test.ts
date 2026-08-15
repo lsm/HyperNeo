@@ -150,9 +150,9 @@ describe('ClientEventBridge', () => {
       bridge.start();
       bridge.start();
 
-      // 24 space + 4 session + 2 conn/auth + 1 config + 2 error = 33 unique events
+      // 25 space + 4 session + 2 conn/auth + 1 config + 2 error = 34 unique events
       // (context.updated has 2 handlers but is 1 unique event key)
-      expect(eventHandlers.size).toBe(33);
+      expect(eventHandlers.size).toBe(34);
     });
   });
 
@@ -163,8 +163,8 @@ describe('ClientEventBridge', () => {
       bridge.start();
       bridge.stop();
 
-      // 34 internalEventBus.subscribe calls total (context.updated has 2 handlers)
-      expect(unsubscribers.length).toBe(34);
+      // 35 internalEventBus.subscribe calls total (context.updated has 2 handlers)
+      expect(unsubscribers.length).toBe(35);
     });
   });
 
@@ -443,6 +443,30 @@ describe('ClientEventBridge', () => {
       eventHandlers.get('spaceWorkflow.deleted')![0](data);
 
       expect(published[0].channel).toEqual({ kind: 'global' });
+    });
+
+    it('forwards externalEvent.dropped to space-scoped channel', () => {
+      const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+      createClientEventBridge(internalEventBus, gateway).start();
+
+      const data = {
+        sessionId: 'global',
+        spaceId: 's-1',
+        eventId: 'evt-1',
+        deliveryKey: 'dk-1',
+        workflowRunId: 'run-1',
+        topic: 'github/o/r/pull_request/1.review_comment_polled',
+        summary: 'PR review comment',
+        category: 'retry_exhausted',
+        reason: 'retry_exhausted; deliveryMode:defer; ...',
+        agentName: 'coder',
+        timestamp: Date.now(),
+      };
+      eventHandlers.get('externalEvent.dropped')![0](data);
+
+      expect(published[0].method).toBe('externalEvent.dropped');
+      expect(published[0].channel).toEqual({ kind: 'space', spaceId: 's-1' });
+      expect(published[0].data).toEqual(data);
     });
   });
 

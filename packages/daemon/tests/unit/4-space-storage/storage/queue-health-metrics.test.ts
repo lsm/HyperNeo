@@ -232,6 +232,11 @@ describe('categorizeFailureReason', () => {
     ['pending_node_queue_overflow', 'cap_eviction'],
     ['run_not_externally_deliverable', 'deliverability'],
     ['target_task_terminal', 'deliverability'],
+    // The inject-failure classification writes the guard error after the marker.
+    [
+      'target_task_terminal; Cannot inject message to session x — task/run is terminal (cancelled)',
+      'deliverability',
+    ],
     ['target_task_reactivation_failed', 'deliverability'],
     ['subscription_no_longer_active', 'deliverability'],
     ['invalid_target_ownership', 'deliverability'],

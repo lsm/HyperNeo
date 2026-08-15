@@ -159,7 +159,9 @@ const FAILURE_CATEGORY_PREFIXES: Array<{
     category: 'deliverability',
     test: (r) =>
       r === 'run_not_externally_deliverable' ||
-      r === 'target_task_terminal' ||
+      // Prefix: the inject-failure classification writes
+      // `target_task_terminal; <guard error>` for a terminal task/run target.
+      r.startsWith('target_task_terminal') ||
       r === 'target_task_reactivation_failed' ||
       r === 'subscription_no_longer_active' ||
       r === 'invalid_target_ownership' ||

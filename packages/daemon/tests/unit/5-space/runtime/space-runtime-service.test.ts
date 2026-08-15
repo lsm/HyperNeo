@@ -66,6 +66,10 @@ import { SpaceAgentManager as AgentMgr } from '../../../../src/lib/space/manager
 import { SpaceWorkflowManager as WorkflowMgr } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager as SpaceMgr } from '../../../../src/lib/space/managers/space-manager.ts';
 import { createTestInternalEventBus } from '../../../helpers/database.ts';
+import { Database } from '../../../../src/storage/sqlite-compat.ts';
+import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store.ts';
+import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
+import { createSpaceTables } from '../../helpers/space-test-db.ts';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -2584,6 +2588,136 @@ describe('SpaceRuntimeService', () => {
   // before its MCP servers were attached. `ready()` now resolves only after
   // *both* the space_chat provisioning AND the member-session sweep have
   // completed, and the daemon bootstrap awaits it before binding Bun.serve.
+
+  describe('externalEvent.dropped surfacing (terminal delivery drops)', () => {
+    function makeDropFixtureStore(): ExternalEventStore {
+      const db = new Database(':memory:');
+      createSpaceTables(db);
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(mockSpace.id, mockSpace.id, '/tmp/drop-test', 'Drop Test', now, now);
+      return new ExternalEventStore(db);
+    }
+
+    function buildDropService(
+      externalEventStore: ExternalEventStore,
+      internalEventBus: SpaceRuntimeServiceConfig['internalEventBus']
+    ): SpaceRuntimeService {
+      return new SpaceRuntimeService({
+        db: {} as BunDatabase,
+        spaceManager: createMockSpaceManager(mockSpace),
+        spaceAgentManager: { listBySpaceId: mock(() => []) } as unknown as SpaceAgentManager,
+        spaceWorkflowManager: {
+          listWorkflows: mock(() => []),
+        } as unknown as SpaceWorkflowManager,
+        workflowRunRepo: {} as SpaceWorkflowRunRepository,
+        taskRepo: {} as SpaceTaskRepository,
+        nodeExecutionRepo: makeNoopNodeExecutionRepo(),
+        tickIntervalMs: 60_000,
+        internalEventBus,
+        externalEventStore,
+      });
+    }
+
+    function seedDroppedDelivery(store: ExternalEventStore): {
+      eventId: string;
+      deliveryKey: string;
+    } {
+      const event: ExternalEvent = {
+        id: 'evt-drop-svc',
+        spaceId: mockSpace.id,
+        source: 'github',
+        topic: 'github/lsm/hyperneo/pull_request/42.review_comment_polled',
+        occurredAt: 1_700_000_000_000,
+        ingestedAt: 1_700_000_001_000,
+        dedupeKey: 'dedupe-drop-svc',
+        summary: 'PR review comment',
+        payload: {},
+      };
+      store.store(event);
+      store.registerExpectedDelivery(event.id, 'dk-drop-svc', {
+        workflowRunId: 'run-1',
+        taskId: 'task-1',
+        nodeId: 'node-1',
+        agentName: 'coder',
+      });
+      return { eventId: event.id, deliveryKey: 'dk-drop-svc' };
+    }
+
+    test('emits externalEvent.dropped when a delivery terminalizes as retry_exhausted', async () => {
+      const store = makeDropFixtureStore();
+      const bus = await createTestInternalEventBus('space-rts-drop');
+      const drops: Array<Record<string, unknown>> = [];
+      bus.subscribe(
+        'externalEvent.dropped',
+        (event) => {
+          drops.push(event as unknown as Record<string, unknown>);
+        },
+        { subscriberName: 'test-drop-observer' }
+      );
+      buildDropService(store, bus);
+
+      const { eventId, deliveryKey } = seedDroppedDelivery(store);
+      store.markDeliveryFailed(eventId, deliveryKey, {
+        terminal: true,
+        reason: 'retry_exhausted; deliveryMode:defer; recoverable failure',
+      });
+
+      expect(drops).toHaveLength(1);
+      expect(drops[0]!.spaceId).toBe(mockSpace.id);
+      expect(drops[0]!.eventId).toBe(eventId);
+      expect(drops[0]!.category).toBe('retry_exhausted');
+      expect(drops[0]!.agentName).toBe('coder');
+      expect(drops[0]!.topic).toContain('review_comment_polled');
+    });
+
+    test('emits externalEvent.dropped when a delivery terminalizes as ttl_expired', async () => {
+      const store = makeDropFixtureStore();
+      const bus = await createTestInternalEventBus('space-rts-drop-ttl');
+      const drops: Array<Record<string, unknown>> = [];
+      bus.subscribe(
+        'externalEvent.dropped',
+        (event) => {
+          drops.push(event as unknown as Record<string, unknown>);
+        },
+        { subscriberName: 'test-drop-observer' }
+      );
+      buildDropService(store, bus);
+
+      const { eventId, deliveryKey } = seedDroppedDelivery(store);
+      store.markDeliveryFailed(eventId, deliveryKey, {
+        terminal: true,
+        reason: 'ttl_expired',
+      });
+
+      expect(drops).toHaveLength(1);
+      expect(drops[0]!.category).toBe('ttl_expired');
+    });
+
+    test('does not emit for run/task lifecycle terminal failures', async () => {
+      const store = makeDropFixtureStore();
+      const bus = await createTestInternalEventBus('space-rts-drop-lifecycle');
+      const drops: Array<Record<string, unknown>> = [];
+      bus.subscribe(
+        'externalEvent.dropped',
+        (event) => {
+          drops.push(event as unknown as Record<string, unknown>);
+        },
+        { subscriberName: 'test-drop-observer' }
+      );
+      buildDropService(store, bus);
+
+      const { eventId, deliveryKey } = seedDroppedDelivery(store);
+      store.markDeliveryFailed(eventId, deliveryKey, {
+        terminal: true,
+        reason: 'subscription_no_longer_active',
+      });
+
+      expect(drops).toHaveLength(0);
+    });
+  });
 
   describe('ready() — startup provisioning gate', () => {
     function makeSession() {

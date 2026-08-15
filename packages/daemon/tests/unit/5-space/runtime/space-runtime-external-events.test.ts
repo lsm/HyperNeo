@@ -313,6 +313,11 @@ describe('SpaceRuntime external event subscriptions', () => {
       commandBus,
       externalEventStore: eventStore,
       taskAgentManager: tam as never,
+      // Pin the retry delays to a flat 1s so this suite's timing-pinned tests
+      // (5.6s exhaustion waits) keep their pre-backoff cadence. The dedicated
+      // 'retry bounds' describe below exercises the real exponential backoff.
+      externalEventRetryBaseDelayMs: 1000,
+      externalEventRetryMaxDelayMs: 1000,
       deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
         longHorizonMessages.push({ agentId, message, idempotencyKey });
         return { delivered: true };
@@ -3202,7 +3207,11 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('failed');
-    expect(delivery.failureReason).toBe('deliveryMode:defer; activation_failed; spawn failed');
+    // Retry exhaustion carries the retry_exhausted marker so the queue-health
+    // categorizer buckets it correctly (mirrors the long-horizon retry path).
+    expect(delivery.failureReason).toBe(
+      'retry_exhausted; deliveryMode:defer; activation_failed; spawn failed'
+    );
     expect(eventStore.getById(event.id)?.state).toBe('failed');
     expect(tam.activationCalls.length).toBeGreaterThanOrEqual(5);
     expect(tam.activationCalls.length).toBeLessThanOrEqual(6);
@@ -5932,7 +5941,9 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('failed');
-    expect(delivery.failureReason).toBe('deliveryMode:defer; node_execution_not_active');
+    expect(delivery.failureReason).toBe(
+      'retry_exhausted; deliveryMode:defer; node_execution_not_active'
+    );
     expect(eventStore.getById(event.id)?.state).toBe('failed');
     expect(tam.activationCalls.length).toBeGreaterThanOrEqual(5);
     expect(tam.activationCalls.length).toBeLessThanOrEqual(6);
@@ -6940,5 +6951,277 @@ describe('SpaceRuntime queue-health snapshot', () => {
     expect(snapshot.counters.enqueue).toBe(0);
     expect(snapshot.gauges.queueDepth).toBe(0);
     expect(snapshot.counters.flushAttempts).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('SpaceRuntime external event retry bounds', () => {
+  let db: Database;
+  let workflowRunRepo: SpaceWorkflowRunRepository;
+  let taskRepo: SpaceTaskRepository;
+  let nodeExecutionRepo: NodeExecutionRepository;
+  let workflowManager: SpaceWorkflowManager;
+  let runtime: SpaceRuntime;
+  let eventStore: ExternalEventStore;
+  let eventService: ExternalEventService;
+  let injected: Array<{ sessionId: string; deliveryMode?: string }>;
+  let tam: MockTaskAgentManager;
+  let bus: ReturnType<typeof createDaemonInternalEventBus>;
+  let droppedEvents: Array<{
+    spaceId: string;
+    eventId: string;
+    category: string;
+    reason: string;
+    agentName: string;
+  }>;
+
+  const RETRY_BASE_DELAY_MS = 20;
+
+  async function startRunWithLiveSession(
+    commandBus: ReturnType<typeof createInternalCommandBus>
+  ): Promise<{ runId: string; taskId: string }> {
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      commandBus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      externalEventRetryBaseDelayMs: RETRY_BASE_DELAY_MS,
+      externalEventRetryMaxDelayMs: 160,
+    });
+    const workflow = workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: `Workflow ${Math.random()}`,
+      description: '',
+      nodes: [{ id: 'code', name: 'Code', agents: [{ agentId: AGENT_ID, name: 'coder' }] }],
+      transitions: [],
+      startNodeId: 'code',
+      rules: [],
+      tags: [],
+    });
+    const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    const task = tasks[0]!;
+    runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-stuck',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-stuck');
+    return { runId: run.id, taskId: task.id };
+  }
+
+  beforeEach(() => {
+    db = makeDb();
+    workflowRunRepo = new SpaceWorkflowRunRepository(db);
+    taskRepo = new SpaceTaskRepository(db);
+    nodeExecutionRepo = new NodeExecutionRepository(db);
+    workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
+    bus = createDaemonInternalEventBus();
+    eventStore = new ExternalEventStore(db);
+    eventService = new ExternalEventService(eventStore, bus);
+    injected = [];
+    droppedEvents = [];
+    tam = new MockTaskAgentManager();
+    // Placeholder runtime replaced by startRunWithLiveSession; afterEach stops it.
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+    });
+    // Observe the drop signal the way SpaceRuntimeService publishes it — via
+    // the store's delivery-terminal hook (the single observation point). The
+    // filter mirrors publishExternalEventDropped: drop categories only.
+    eventStore.setDeliveryTerminalHook((event) => {
+      if (event.outcome !== 'failed' || !event.reason) return;
+      const stripped = event.reason.replace(/^deliveryMode:[^;]*;\s*/, '');
+      const isExhausted = stripped.startsWith('retry_exhausted');
+      const isTtl = stripped === 'ttl_expired';
+      if (!isExhausted && !isTtl) return;
+      const record = eventStore.getById(event.eventId);
+      const delivery = eventStore.getDelivery(event.eventId, event.deliveryKey);
+      droppedEvents.push({
+        spaceId: record?.event.spaceId ?? '',
+        eventId: event.eventId,
+        category: isTtl ? 'ttl_expired' : 'retry_exhausted',
+        reason: event.reason,
+        agentName: delivery?.agentName ?? '',
+      });
+    });
+  });
+
+  afterEach(() => {
+    void runtime.stop();
+  });
+
+  test('a persistently-undeliverable target is injected at most MAX_ATTEMPTS times', async () => {
+    // Every injection fails recoverably — the target can never consume.
+    const commandBus = createInternalCommandBus();
+    let attempts = 0;
+    commandBus.register('agent.message.inject', async (command) => {
+      attempts += 1;
+      injected.push({ sessionId: command.sessionId, deliveryMode: command.deliveryMode });
+      return { ok: false, error: `recoverable failure ${attempts}` };
+    });
+    await startRunWithLiveSession(commandBus);
+
+    const event = makeEvent({ id: 'evt-cap', dedupeKey: 'dedupe-cap' });
+    await eventService.publish(event);
+
+    // Well past the point where the old flush-reset bug would keep re-injecting
+    // (~once per flush cycle for the whole TTL window): 20 * 2^0..4 delays cap
+    // at 160ms; 4s covers the full budget with wide margin.
+    await new Promise((resolve) => setTimeout(resolve, 4_000));
+
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toMatch(/^retry_exhausted; /);
+    expect(eventStore.getById(event.id)?.state).toBe('failed');
+    // The cap bounds TOTAL injections: initial + 5 retries = 6 dispatch
+    // attempts maximum (previously unbounded up to the TTL — 10 observed live).
+    expect(attempts).toBeLessThanOrEqual(6);
+    expect(attempts).toBeGreaterThanOrEqual(5);
+  });
+
+  test('scheduled retry delays back off exponentially', async () => {
+    const commandBus = createInternalCommandBus();
+    const injectionTimes: number[] = [];
+    commandBus.register('agent.message.inject', async (command) => {
+      injectionTimes.push(Date.now());
+      injected.push({ sessionId: command.sessionId, deliveryMode: command.deliveryMode });
+      return { ok: false, error: 'recoverable failure' };
+    });
+    await startRunWithLiveSession(commandBus);
+
+    await eventService.publish(makeEvent({ id: 'evt-backoff', dedupeKey: 'dedupe-backoff' }));
+    await new Promise((resolve) => setTimeout(resolve, 4_000));
+
+    // Gaps between consecutive injections grow until the cap
+    // (20ms, 40ms, 80ms, 160ms, 160ms).
+    expect(injectionTimes.length).toBeGreaterThanOrEqual(4);
+    const gaps: number[] = [];
+    for (let i = 1; i < injectionTimes.length; i++) {
+      gaps.push(injectionTimes[i]! - injectionTimes[i - 1]!);
+    }
+    expect(gaps.length).toBeGreaterThanOrEqual(3);
+    // Growth while below the cap: each of the first three gaps at least 1.5x
+    // its predecessor (exponential with scheduling slack factored out).
+    expect(gaps[0]!).toBeLessThan(200);
+    expect(gaps[1]!).toBeGreaterThan(gaps[0]! * 1.5 - 5);
+    expect(gaps[2]!).toBeGreaterThan(gaps[1]! * 1.5 - 5);
+    // Once the cap is reached the gap plateaus at the cap instead of growing.
+    for (let i = 3; i < gaps.length; i++) {
+      expect(gaps[i]!).toBeGreaterThanOrEqual(gaps[i - 1]! - 5);
+      expect(gaps[i]!).toBeLessThanOrEqual(200);
+    }
+  });
+
+  test('a target that recovers mid-window still receives the event', async () => {
+    const commandBus = createInternalCommandBus();
+    let failFirstN = 2;
+    commandBus.register('agent.message.inject', async (command) => {
+      injected.push({ sessionId: command.sessionId, deliveryMode: command.deliveryMode });
+      if (failFirstN > 0) {
+        failFirstN -= 1;
+        return { ok: false, error: 'transient failure' };
+      }
+      return { ok: true };
+    });
+    await startRunWithLiveSession(commandBus);
+
+    const event = makeEvent({ id: 'evt-recover', dedupeKey: 'dedupe-recover' });
+    await eventService.publish(event);
+    // Third attempt succeeds (after 20ms + 40ms backoff) — well inside TTL.
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(injected.length).toBeGreaterThanOrEqual(2);
+    expect(delivery.state).toBe('delivered');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+  });
+
+  test('terminal task inject failure terminalizes the delivery immediately', async () => {
+    const commandBus = createInternalCommandBus();
+    let terminalAttempts = 0;
+    commandBus.register('agent.message.inject', async (command) => {
+      terminalAttempts += 1;
+      injected.push({ sessionId: command.sessionId, deliveryMode: command.deliveryMode });
+      // The exact guard error TaskAgentManager throws for a terminal task/run.
+      return {
+        ok: false,
+        error: 'Cannot inject message to session abc — task/run is terminal (cancelled)',
+      };
+    });
+    await startRunWithLiveSession(commandBus);
+
+    const event = makeEvent({ id: 'evt-terminal', dedupeKey: 'dedupe-terminal' });
+    await eventService.publish(event);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('failed');
+    expect(delivery.failureReason).toContain('target_task_terminal');
+    // No retry budget burned — exactly one injection attempt.
+    expect(terminalAttempts).toBe(1);
+    expect(eventStore.getById(event.id)?.state).toBe('failed');
+  });
+
+  test('retry-exhausted and ttl-expired drops are surfaced as drop signals', async () => {
+    // (a) retry exhaustion emits the drop observation.
+    const commandBus = createInternalCommandBus();
+    commandBus.register('agent.message.inject', async (command) => {
+      injected.push({ sessionId: command.sessionId, deliveryMode: command.deliveryMode });
+      return { ok: false, error: 'recoverable failure' };
+    });
+    const { runId, taskId } = await startRunWithLiveSession(commandBus);
+
+    const exhausted = makeEvent({ id: 'evt-drop-exhausted', dedupeKey: 'dedupe-drop-exhausted' });
+    await eventService.publish(exhausted);
+    await new Promise((resolve) => setTimeout(resolve, 4_000));
+    expect(eventStore.listDeliveries(exhausted.id)[0]!.state).toBe('failed');
+
+    const exhaustionDrop = droppedEvents.find((d) => d.eventId === exhausted.id);
+    expect(exhaustionDrop).toBeDefined();
+    expect(exhaustionDrop!.category).toBe('retry_exhausted');
+    expect(exhaustionDrop!.spaceId).toBe(SPACE_ID);
+    expect(exhaustionDrop!.agentName).toBe('coder');
+
+    // (b) TTL expiry emits the drop observation. Publish a second event while
+    // injections still fail, then backdate it past the TTL so the next flush
+    // expires it instead of delivering.
+    const ttlEvent = makeEvent({ id: 'evt-drop-ttl', dedupeKey: 'dedupe-drop-ttl' });
+    await eventService.publish(ttlEvent);
+    expect(eventStore.listDeliveries(ttlEvent.id)[0]!.state).toBe('pending');
+    db.prepare(`UPDATE space_external_events SET created_at = ? WHERE id = ?`).run(
+      Date.now() - 301_000,
+      ttlEvent.id
+    );
+    runtime.flushPendingNodeQueue({
+      workflowRunId: runId,
+      taskId,
+      nodeId: 'code',
+      agentName: 'coder',
+      sessionId: 'session-stuck',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(eventStore.listDeliveries(ttlEvent.id)[0]!.state).toBe('failed');
+    const ttlDrop = droppedEvents.find((d) => d.eventId === ttlEvent.id);
+    expect(ttlDrop).toBeDefined();
+    expect(ttlDrop!.category).toBe('ttl_expired');
+    expect(ttlDrop!.agentName).toBe('coder');
   });
 });

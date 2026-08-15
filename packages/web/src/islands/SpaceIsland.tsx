@@ -18,6 +18,7 @@ import { GLASS_PRIMARY_BUTTON_CLASS, GlassRouteShell } from '../components/space
 import { SpacePageHeader } from '../components/space/SpacePageHeader';
 import { TaskAuxiliaryPanel } from '../components/space/TaskAuxiliaryPanel';
 import { createSession } from '../lib/api-helpers';
+import { connectionManager } from '../lib/connection-manager';
 import {
   closeOverlayHistory,
   navigateBack,
@@ -220,6 +221,46 @@ export default function SpaceIsland({
     spaceStore.selectSpace(spaceId).catch(() => {
       // Error is tracked in spaceStore.error
     });
+  }, [spaceId]);
+
+  // Surface dropped external events (retry budget exhausted / queue TTL
+  // expired) for THIS space so a lost PR review comment or CI event is visible
+  // instead of silently dead-lettering. Events for other spaces are ignored;
+  // one burst of drops on the same topic collapses into a single toast.
+  useEffect(() => {
+    let cancelled = false;
+    let unsubscribe: (() => void) | undefined;
+    const toastedTopics = new Set<string>();
+
+    void (async () => {
+      const hub = await connectionManager.getHub();
+      if (cancelled) return;
+      unsubscribe = hub.onEvent<{
+        spaceId: string;
+        eventId: string;
+        topic: string;
+        summary: string;
+        category: string;
+        agentName: string;
+      }>('externalEvent.dropped', (event) => {
+        if (event.spaceId !== spaceId) return;
+        if (toastedTopics.has(event.topic)) return;
+        toastedTopics.add(event.topic);
+        const detail =
+          event.category === 'ttl_expired'
+            ? 'expired before delivery'
+            : 'exhausted delivery retries';
+        toast.warning(
+          `External event dropped for ${event.agentName}: ${event.summary} (${detail})`,
+          8000
+        );
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
   }, [spaceId]);
 
   // Reset task-dialog state when leaving the Tasks view or switching spaces
