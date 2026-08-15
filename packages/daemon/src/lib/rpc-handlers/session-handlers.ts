@@ -56,11 +56,13 @@ const STRANDED_PROBE_TIMEOUT_MS = 3000;
 
 /**
  * How long a voice-append dedup id stays recognizable (see
- * session.appendVoiceDraft). Mirrors the client outbox's 24h entry TTL: an
- * entry can be retried for that whole window after an ambiguous timeout, so
- * its id must remain in the dedup log at least as long.
+ * session.appendVoiceDraft). The client outbox expires an entry 24h after it
+ * ENQUEUES — which happens after the staging RPC rejects — while the daemon
+ * logs the id at COMMIT time, strictly earlier. The margin covers that
+ * ambiguity window (a staging timeout plus requeue latency), so the id
+ * outlives every retry the client can still issue.
  */
-const VOICE_APPEND_LOG_TTL_MS = 24 * 60 * 60 * 1000;
+const VOICE_APPEND_LOG_TTL_MS = 24 * 60 * 60 * 1000 + 5 * 60 * 1000;
 
 function raceWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T | 'timeout'> {
   let timer: ReturnType<typeof setTimeout> | undefined;

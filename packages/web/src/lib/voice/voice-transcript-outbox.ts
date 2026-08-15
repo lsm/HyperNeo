@@ -64,21 +64,31 @@ export function markVoiceTranscriptLanded(
   // draft backup saved as generation N is still retired by exactly the
   // consumption of generation N instead of being orphaned by a restarted
   // counter.
-  let seq = 1;
+  // Collision-resistant allocation: two tabs can read the SAME marker and
+  // both pick existing.n + 1 before either writes, and equal generations let a
+  // refresh consume a NEWER landing as though it never arrived. The wall
+  // clock (plus a per-tab offset hashed from the tab id) breaks the tie — a
+  // later landing always observes the winner's n, so the counter stays
+  // strictly monotonic from there.
+  let seq = Math.max(1, Date.now() + TAB_SEQ_OFFSET);
+  let markerExisted = false;
   try {
     const existing = parseLandedMarker(localStorage.getItem(`${LANDED_PREFIX}${sessionId}`));
-    if (existing) seq = existing.n + 1;
+    if (existing) {
+      markerExisted = true;
+      seq = Math.max(existing.n + 1, Date.now() + TAB_SEQ_OFFSET);
+    }
   } catch {
     /* storage unavailable — start a fresh sequence */
   }
-  if (seq === 1) {
+  if (!markerExisted) {
     // A fresh GENERATION EPOCH: the previous sequence's marker expired, so
-    // its counters restart at 1. The epoch's SUPERSEDE record is keyed by
+    // its counters restart. The epoch's SUPERSEDE record is keyed by
     // generation number and must not outlive the epoch — a stale
-    // generation-5 record would suppress every backup of the new epoch's
-    // generation-1..4 landings (their generations compare lower regardless
-    // of their newer timestamps), making them unrestorable while their
-    // landing suppresses the owner's server saves.
+    // higher-generation record would suppress every backup of the new
+    // epoch's lower-numbered landings (their generations compare lower
+    // regardless of their newer timestamps), making them unrestorable while
+    // their landing suppresses the owner's server saves.
     try {
       localStorage.removeItem(`${SUPERSEDED_PREFIX}${sessionId}`);
     } catch {
@@ -317,6 +327,15 @@ function readTabId(): string {
 }
 
 const TAB_ID = readTabId();
+
+// Deterministic per-tab offset that breaks same-millisecond generation ties
+// between concurrently-landing tabs (hash of the tab id; 0 collides only with
+// itself, and a tab cannot race itself on the single-threaded event loop).
+const TAB_SEQ_OFFSET = (() => {
+  let hash = 0;
+  for (let i = 0; i < TAB_ID.length; i++) hash = (hash * 31 + TAB_ID.charCodeAt(i)) % 997;
+  return hash;
+})();
 
 function draftBackupKey(sessionId: string): string {
   return `${DRAFT_BACKUP_PREFIX}${sessionId}.${TAB_ID}`;

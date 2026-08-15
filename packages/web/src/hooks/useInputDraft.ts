@@ -113,6 +113,9 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // tell a write derived from the CURRENT draft (applied as-is) from a stale
   // in-flight save (transcripts folded in) — a suffix comparison cannot.
   const draftVersionsRef = useRef<Map<string, number>>(new Map());
+  // Arm the backup-flush retry backoff from outside the retry effect (the
+  // connection subscription alone only fires on connection CHANGES).
+  const flushKickRef = useRef<() => void>(() => {});
 
   // Consume a landing generation and record it as reconciled — every path
   // that settles a landing goes through here, so the fold guard above and the
@@ -260,6 +263,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           session?: {
             metadata?: {
               inputDraft?: string;
+              inputDraftVoicePending?: string | null;
               inputDraftVoiceBaseline?: string | null;
               inputDraftVoiceBaselineSeq?: number | null;
               inputDraftVoiceLastStrippedSeq?: number | null;
@@ -284,6 +288,38 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
               pendingClearRef.current = null;
             }
             return;
+          }
+          if ((meta.inputDraftVoicePending ?? '').trim() !== '') {
+            // The get RETAINED the pending (draft too full): stripping now
+            // would clear the draft while the transcript stays staged — and
+            // with the landing expired there is no replay effect to issue the
+            // merging session.get, leaving the transcript invisible until a
+            // later navigation. Clear the stale baseline CONDITIONALLY first,
+            // then a fresh get merges the pending onto the clean draft.
+            return hub
+              .request<{ cleared?: boolean }>('session.clearInputDraftIf', {
+                sessionId: targetSessionId,
+                expected: meta.inputDraft ?? '',
+              })
+              .then((result) => {
+                if (!result.cleared) return; // raced a newer draft — stays owed
+                return hub
+                  .request<{ session?: { metadata?: { inputDraft?: string } } }>('session.get', {
+                    sessionId: targetSessionId,
+                  })
+                  .then((merged) => {
+                    if (currentSessionIdRef.current === targetSessionId) {
+                      contentSignal.value = merged.session?.metadata?.inputDraft ?? '';
+                    }
+                    removeClearTombstone(targetSessionId);
+                    if (pendingClearRef.current === targetSessionId) {
+                      pendingClearRef.current = null;
+                    }
+                  });
+              })
+              .catch(() => {
+                /* stays owed — the reconnect subscription retries */
+              });
           }
           if (
             typeof meta.inputDraftVoiceBaseline === 'string' &&
@@ -815,11 +851,28 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
               });
           } else {
             // Active content supersedes the backup: the user returned to a
-            // non-empty composer (their draft or typing) — its saves are the
-            // newer state, and re-queueing the stale backup would let a later
-            // switch overwrite it. Retire the backup (key+generation scoped:
-            // a newer landing's backup must survive this retirement).
-            removeDraftBackupKey(key, generation);
+            // non-empty composer (their draft or typing). But that content is
+            // only scheduled through the normal debounced save — deleting the
+            // durable copy NOW would lose the draft to a reload, crash, or
+            // second disconnect before the save is acknowledged, while the
+            // daemon still holds the older value. Persist the ACTIVE content
+            // through the daemon-side merge (transcripts folded atomically)
+            // and retire the backup only once that write is acknowledged; a
+            // failure requeues the backup claim itself.
+            const active = contentSignal.peek().trim();
+            hub
+              .request<{ merged?: boolean }>('session.mergeVoiceDraftBackup', {
+                sessionId: flushSessionId,
+                content: active,
+                claimId: generateUUID(),
+              })
+              .then((result) => {
+                if (result.merged) removeDraftBackupKey(key, generation);
+                else requeueClaim(flushSessionId, { content, generation, key, claimId, ts });
+              })
+              .catch(() => {
+                requeueClaim(flushSessionId, { content, generation, key, claimId, ts });
+              });
           }
           continue;
         }
@@ -844,9 +897,13 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           });
       }
     };
+    flushKickRef.current = () => {
+      if (connectionState.value === 'connected') scheduleFlushRetry();
+    };
     const unsubscribe = connectionState.subscribe(retryBackupFlush);
     return () => {
       unsubscribe();
+      flushKickRef.current = () => {};
       if (flushRetryTimerRef.current) clearTimeout(flushRetryTimerRef.current);
     };
   }, [contentSignal, reconcileOwedClear]);
@@ -880,6 +937,25 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       // losing the more recent edits.
       const prevHasLanding = isLandingLive(prevSessionId);
       if (prevHasLanding) {
+        // The live landing blocks the departed session's plain flush, but its
+        // save-suppressed backup must not be ABANDONED: nothing rechecks an
+        // inactive session when the marker later expires, so a user who never
+        // returns loses the only copy to TTL pruning. Schedule the claim
+        // through the merge queue instead — the daemon-side merge preserves
+        // any transcripts regardless of sequence state (staged re-anchors,
+        // merged folds), so an early push is safe and converges with the
+        // final backup the user writes if they return.
+        const liveClaim = peekExpiredDraftBackup(prevSessionId);
+        if (liveClaim?.content.trim()) {
+          pendingBackupFlushRef.current.set(prevSessionId, {
+            content: liveClaim.content.trim(),
+            generation: liveClaim.generation,
+            key: liveClaim.key,
+            claimId: generateUUID(),
+            ts: liveClaim.ts,
+          });
+          flushKickRef.current();
+        }
         prevSessionIdRef.current = sessionId;
         return;
       }

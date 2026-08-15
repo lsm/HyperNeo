@@ -204,15 +204,19 @@ describe('voice transcript outbox', () => {
   });
 
   it('does not consume a landing superseded by a newer one', () => {
-    markVoiceTranscriptLanded('s1'); // generation 1
-    markVoiceTranscriptLanded('s1'); // generation 2
-    // A refresh that observed generation 1 finishing after the second landing
-    // must not consume the shared entry — generation 2 still needs a refresh.
-    consumeVoiceTranscriptLanded('s1', 1);
+    markVoiceTranscriptLanded('s1'); // generation N
+    const first = voiceTranscriptLandedSignal.value.get('s1') ?? 0;
+    markVoiceTranscriptLanded('s1'); // generation N+1
+    const second = voiceTranscriptLandedSignal.value.get('s1') ?? 0;
+    expect(second).toBeGreaterThan(first);
+    // A refresh that observed the FIRST generation finishing after the second
+    // landing must not consume the shared entry — the newer one still needs a
+    // refresh.
+    consumeVoiceTranscriptLanded('s1', first);
     expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(true);
-    expect(voiceTranscriptLandedSignal.value.get('s1')).toBe(2);
-    // The refresh that observed generation 2 consumes it.
-    consumeVoiceTranscriptLanded('s1', 2);
+    expect(voiceTranscriptLandedSignal.value.get('s1')).toBe(second);
+    // The refresh that observed the newer generation consumes it.
+    consumeVoiceTranscriptLanded('s1', second);
     expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(false);
   });
 
@@ -294,7 +298,7 @@ describe('voice transcript outbox', () => {
 
   it('keeps the shared landed marker when a tab consumes its landing', () => {
     markVoiceTranscriptLanded('s1');
-    consumeVoiceTranscriptLanded('s1', 1);
+    consumeVoiceTranscriptLanded('s1', voiceTranscriptLandedSignal.value.get('s1') ?? 0);
     expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(false);
     // Consumption is local to this tab — the marker stays so a LATER tab can
     // hydrate it (TTL prunes it).
@@ -309,7 +313,7 @@ describe('voice transcript outbox', () => {
 
   it('treats a NEWER marker as live again after an earlier one was consumed', () => {
     markVoiceTranscriptLanded('s1');
-    consumeVoiceTranscriptLanded('s1', 1);
+    consumeVoiceTranscriptLanded('s1', voiceTranscriptLandedSignal.value.get('s1') ?? 0);
     expect(isLandingLive('s1')).toBe(false);
     // A second landing (same tab here; another tab in production rewrites the
     // marker with a fresh counter) is a NEW landing — live again.
@@ -321,19 +325,20 @@ describe('voice transcript outbox', () => {
     // Backups live under TAB-OWNED keys — locate this tab's through the API.
     const claimOf = () => peekExpiredDraftBackup('s1');
     // A NEWER-generation backup survives a stale (mismatched-generation) consume.
-    markVoiceTranscriptLanded('s1'); // generation 1
-    markVoiceTranscriptLanded('s1'); // generation 2
-    saveDraftBackup('s1', 'newer edit', 2);
+    markVoiceTranscriptLanded('s1'); // generation N
+    markVoiceTranscriptLanded('s1'); // generation N+1
+    const newestGen = voiceTranscriptLandedSignal.value.get('s1') ?? 0;
+    saveDraftBackup('s1', 'newer edit', newestGen);
     const newerClaim = claimOf();
     expect(newerClaim?.content).toBe('newer edit');
-    consumeVoiceTranscriptLanded('s1', 1);
+    consumeVoiceTranscriptLanded('s1', (newestGen ?? 2) - 1);
     expect(claimOf()?.content).toBe('newer edit');
     expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(true);
 
     // The matching-generation backup is retired on reconcile — a reload must
     // show the freshly-merged transcript, not text the user sent/cleared.
-    saveDraftBackup('s1', 'gen2 edit', 2);
-    consumeVoiceTranscriptLanded('s1', 2);
+    saveDraftBackup('s1', 'gen2 edit', newestGen);
+    consumeVoiceTranscriptLanded('s1', newestGen);
     expect(claimOf()).toBeNull();
   });
 
@@ -448,7 +453,8 @@ describe('voice transcript outbox', () => {
 
     // Consumption implies a full merge cleared the server-side pending — the
     // next landing sequence starts a fresh aggregate.
-    consumeVoiceTranscriptLanded('s1', 2);
+    const secondGen = voiceTranscriptLandedSignal.value.get('s1') ?? 0;
+    consumeVoiceTranscriptLanded('s1', secondGen);
     markVoiceTranscriptLanded('s1', 'third');
     expect(getLandingTranscript('s1')).toBe('third');
   });
@@ -830,12 +836,13 @@ describe('voice transcript outbox', () => {
       'hyperneo_voice_transcript_outbox_v1.superseded.s1',
       JSON.stringify({ generation: 5, beforeTs: Date.now() })
     );
-    // No retained marker — the counter restarts.
+    // No retained marker — a fresh epoch begins (its generation is
+    // clock-scaled, but the epoch RESET is what matters).
     markVoiceTranscriptLanded('s1', 'new voice', 'e1');
-    expect(voiceTranscriptLandedSignal.value.get('s1')).toBe(1);
+    expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(true);
     expect(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.superseded.s1')).toBeNull();
-    // A backup of the new epoch's generation-1 landing is restorable.
-    saveDraftBackup('s1', 'fresh edits', 1);
+    // A backup of the new epoch's landing is restorable.
+    saveDraftBackup('s1', 'fresh edits', voiceTranscriptLandedSignal.value.get('s1') ?? 1);
     expect(peekExpiredDraftBackup('s1')?.content).toBe('fresh edits');
   });
 
