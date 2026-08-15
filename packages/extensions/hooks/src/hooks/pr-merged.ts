@@ -27,8 +27,11 @@ export const prMergedHook: Hook = {
       // concurrent pr_ready replacement (the prior reviewed PR closed) can
       // swap the run's identity while this lookup was in flight — approving
       // completion for the OLD PR while the run now points at an unmerged
-      // one. Re-read the identity; a change re-verifies against the new PR.
-      const current = getPrimaryLink(ctx);
+      // one. The re-read MUST be repo-backed (refreshArtifacts): the
+      // snapshot ctx.readArtifacts() carries predates the chain and cannot
+      // observe the replacement. A change re-verifies the new PR.
+      const fresh = ctx.refreshArtifacts?.();
+      const current = fresh ? getPrimaryLink(ctx, fresh) : undefined;
       if (current === undefined || !samePrLink(current, link)) {
         return {
           flow: 'retry',

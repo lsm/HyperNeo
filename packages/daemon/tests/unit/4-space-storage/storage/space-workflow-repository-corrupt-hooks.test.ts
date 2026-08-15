@@ -122,6 +122,11 @@ describe('SpaceWorkflowRepository — corrupt hook columns', () => {
       // Non-empty callers naming only a DIFFERENT node: shape-valid but can
       // never authorize the acting node — the resolver filters it (ungated).
       '[{"hookId":"pr_ready","sourceNode":"Only","method":"send_message","enabled":true,"authorizedCallers":[{"sourceNode":"Elsewhere"}]}]',
+      // targetNode on a non-routed method / absent on send_message: the
+      // resolver rejects target-bearing non-send_message bindings and needs
+      // a target for send_message — both load "valid" but gate nothing.
+      '[{"hookId":"gate","sourceNode":"Only","method":"mark_complete","targetNode":"Review","enabled":true,"authorizedCallers":[{"sourceNode":"Only"}]}]',
+      '[{"hookId":"gate","sourceNode":"Only","method":"send_message","enabled":true,"authorizedCallers":[{"sourceNode":"Only"}]}]',
     ]) {
       corruptColumn('hook_bindings', bad);
       const wf = repo.getWorkflow(
@@ -163,6 +168,9 @@ describe('SpaceWorkflowRepository — corrupt hook columns', () => {
         {
           hookId: 'pr_ready',
           sourceNode: 'Only',
+          // targetNode is REQUIRED for send_message (the runtime validator's
+          // routed-method rule this decoder mirrors).
+          targetNode: 'Only',
           method: 'send_message',
           order: 0,
           enabled: true,

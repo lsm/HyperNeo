@@ -1,4 +1,4 @@
-import type { HookContext } from '@hyperneo/shared/types/workflow-hooks';
+import type { HookArtifact, HookContext } from '@hyperneo/shared/types/workflow-hooks';
 import { parsePrLink } from './github';
 
 /**
@@ -23,12 +23,12 @@ export const VALIDATED_PR_ARTIFACT_KEY = '__pr_validated__';
  * `link` is the v2 field name; `url` is tolerated while the broader url→link
  * rename finishes (steps 4–5).
  */
-export function getPrimaryLink(ctx: HookContext): string | undefined {
+export function getPrimaryLink(ctx: HookContext, artifacts?: HookArtifact[]): string | undefined {
   // ctx.readArtifacts() is freshest-first; the OLDEST validated stamp is the
   // immutable identity (a later same-key stamp from another node must not swap
   // it), so take the last match rather than the first.
   let value: string | undefined;
-  for (const artifact of ctx.readArtifacts()) {
+  for (const artifact of artifacts ?? ctx.readArtifacts()) {
     if (artifact.artifactType !== 'link' || artifact.artifactKey !== VALIDATED_PR_ARTIFACT_KEY)
       continue;
     const data = artifact.data as Record<string, unknown> | undefined;

@@ -24,6 +24,7 @@ function makeCtx(artifacts: HookArtifact[]): HookContext {
     queueFollowUp: () => {},
     writeArtifact: () => {},
     readArtifacts: () => artifacts,
+    refreshArtifacts: () => artifacts,
   };
 }
 
@@ -61,6 +62,7 @@ describe('pr_merged — identity binding', () => {
       queueFollowUp: () => {},
       writeArtifact: () => {},
       readArtifacts: () => artifacts,
+      refreshArtifacts: () => artifacts,
     };
     setGhRunnerForTests(async () => {
       call += 1;

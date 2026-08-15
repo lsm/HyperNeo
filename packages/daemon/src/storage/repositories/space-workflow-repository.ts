@@ -186,7 +186,15 @@ function isHookBindingElement(value: unknown): boolean {
     b.sourceNode.trim().length > 0 &&
     typeof b.method === 'string' &&
     ALL_HOOK_METHODS.includes(b.method as (typeof ALL_HOOK_METHODS)[number]) &&
-    (b.targetNode === undefined || typeof b.targetNode === 'string') &&
+    // ROUTING PARITY (mirrors the create/update validator and
+    // resolveMatchingBindings): a targetNode is REQUIRED for send_message
+    // (routed) and FORBIDDEN for every non-routed method — the resolver
+    // rejects target-bearing bindings on non-send_message methods, so a
+    // persisted row like {method:'mark_complete', targetNode:'Review'} would
+    // load "valid" but gate nothing.
+    (b.method === 'send_message'
+      ? typeof b.targetNode === 'string' && b.targetNode.trim().length > 0
+      : b.targetNode === undefined) &&
     typeof b.enabled === 'boolean' &&
     (b.order === undefined || typeof b.order === 'number') &&
     // A non-empty caller array is REQUIRED (mirroring the create/update

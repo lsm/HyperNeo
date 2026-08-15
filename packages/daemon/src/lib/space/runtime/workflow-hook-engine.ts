@@ -1890,6 +1890,18 @@ export class WorkflowHookEngine {
         }
       },
       readArtifacts: () => artifacts.map((entry) => entry.artifact),
+      // REPO-BACKED fresh read for hooks verifying a durable fact mid-chain:
+      // the snapshot above predates the chain, so it cannot observe a
+      // concurrent write (e.g. a pr_ready identity replacement landing while
+      // this hook awaits GitHub). Unreadable persistence throws — the engine
+      // maps a hook exception to an override-ineligible execution stop.
+      refreshArtifacts: () => {
+        const fresh = this.readArtifactsForCtx();
+        if (fresh === null) {
+          throw new Error('artifact store unreadable during refreshArtifacts');
+        }
+        return fresh.map((entry) => entry.artifact);
+      },
     };
 
     return { ctx, recordedState, queuedFollowUps, writtenArtifacts };

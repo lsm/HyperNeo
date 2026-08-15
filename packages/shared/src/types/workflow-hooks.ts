@@ -102,6 +102,14 @@ export interface HookContext {
   queueFollowUp(targetNode: string, message: string): void;
   writeArtifact(artifact: HookArtifactInput): void;
   readArtifacts(): HookArtifact[];
+  /**
+   * REPO-BACKED fresh artifact read (optional). `readArtifacts()` is a
+   * snapshot captured before the hook chain ran — a hook that must verify
+   * a durable fact was not changed concurrently (e.g. the run's stamped PR
+   * identity replaced by another action mid-chain) re-reads through this,
+   * which reflects persistence at call time. Absent on minimal contexts.
+   */
+  refreshArtifacts?(): HookArtifact[];
 }
 
 // ---------------------------------------------------------------------------
