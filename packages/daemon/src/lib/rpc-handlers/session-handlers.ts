@@ -54,6 +54,14 @@ const log = new Logger('session-handlers');
  */
 const STRANDED_PROBE_TIMEOUT_MS = 3000;
 
+/**
+ * How long a voice-append dedup id stays recognizable (see
+ * session.appendVoiceDraft). Mirrors the client outbox's 24h entry TTL: an
+ * entry can be retried for that whole window after an ambiguous timeout, so
+ * its id must remain in the dedup log at least as long.
+ */
+const VOICE_APPEND_LOG_TTL_MS = 24 * 60 * 60 * 1000;
+
 function raceWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T | 'timeout'> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   return Promise.race([
@@ -480,15 +488,25 @@ export function setupSessionHandlers(
     // Idempotent replay guard for the client's durable outbox: the socket can
     // drop just after a successful write but before the ack, and a retry would
     // merge the transcript a second time. Skip when this entry's id already
-    // merged. A SET (not just the last id) is retained so an out-of-order
-    // replay — two tabs flushing the shared outbox, or an entry that timed out
-    // after committing and is retried after a later one committed — still
-    // dedups. Only consulted when the client passes a dedupId; the live
-    // one-shot staging path passes none and behaves exactly as before. The
-    // read→write stays one synchronous step (no await between the check and
-    // the updateSession DB write), so concurrent writers cannot interleave.
-    const processedIds = metadata.inputDraftVoiceAppendIds ?? [];
-    if (dedupId && processedIds.includes(dedupId)) {
+    // merged. A LOG of timestamped ids (not just the last id) is retained so an
+    // out-of-order replay — two tabs flushing the shared outbox, or an entry
+    // that timed out after committing and is retried after a later one
+    // committed — still dedups. Entries are kept for the client outbox's retry
+    // lifetime (24h), NOT a small count cap: an entry can remain retryable for
+    // that whole window while unrelated direct appends flow in, and a count
+    // bound alone would evict its id and let the eventual replay double-append.
+    // Only consulted when the client passes a dedupId; the live one-shot
+    // staging path passes none and behaves exactly as before. The read→write
+    // stays one synchronous step (no await between the check and the
+    // updateSession DB write), so concurrent writers cannot interleave.
+    const appendLogTtlCutoff = Date.now() - VOICE_APPEND_LOG_TTL_MS;
+    const processedLog = (metadata.inputDraftVoiceAppendLog ?? []).filter(
+      (entry) =>
+        typeof entry?.id === 'string' &&
+        typeof entry?.ts === 'number' &&
+        entry.ts > appendLogTtlCutoff
+    );
+    if (dedupId && processedLog.some((entry) => entry.id === dedupId)) {
       return { success: true, deduped: true };
     }
     const existingPending = metadata.inputDraftVoicePending ?? '';
@@ -501,10 +519,12 @@ export function setupSessionHandlers(
     if (!fits) throw new Error('Pending voice draft is at the character limit');
     const metadataUpdate: Partial<SessionMetadata> = { inputDraftVoicePending: pending };
     if (dedupId) {
-      // Keep only the most recent ids — far beyond the client's 20-entry cap,
-      // while bounding the metadata so it cannot grow without limit.
-      const appendIds = [...processedIds, dedupId].slice(-50);
-      metadataUpdate.inputDraftVoiceAppendIds = appendIds;
+      // Append after the TTL filter above prunes expired ids; the count cap is
+      // only a backstop so metadata cannot grow without limit within the TTL.
+      metadataUpdate.inputDraftVoiceAppendLog = [
+        ...processedLog,
+        { id: dedupId, ts: Date.now() },
+      ].slice(-500);
     }
     const updates: UpdateSessionRequest = { metadata: metadataUpdate };
     await sessionManager.updateSession(sessionId, updates as Partial<Session>);
@@ -542,6 +562,37 @@ export function setupSessionHandlers(
       }
     );
     return { cleared: true };
+  });
+
+  // Atomically set the input draft to `value` ONLY if it still equals
+  // `expected` — the conditional-set sibling of session.clearInputDraftIf. The
+  // voice landing's clear-before-merge reconciliation uses this to strip a
+  // stale baseline the transcript was merged onto (draft := transcript) without
+  // stomping a NEWER draft another client saved between this client's read and
+  // write. Read+write is one synchronous step, like clearInputDraftIf.
+  messageHub.onRequest('session.updateInputDraftIf', async (data, _ctx) => {
+    const { sessionId, expected, value } = data as {
+      sessionId: string;
+      expected: string;
+      value: string;
+    };
+    if (typeof expected !== 'string') throw new Error('Expected draft value is required');
+    if (typeof value !== 'string') throw new Error('New draft value is required');
+    const session = sessionManager.getSessionFromDB(sessionId);
+    if (!session) throw new Error('Session not found');
+    if ((session.metadata?.inputDraft ?? '').trim() !== expected.trim()) {
+      return { updated: false };
+    }
+    const updates: UpdateSessionRequest = { metadata: { inputDraft: value } };
+    await sessionManager.updateSession(sessionId, updates as Partial<Session>);
+    messageHub.event(
+      'session.updated',
+      { ...updates, sessionId },
+      {
+        channel: `session:${sessionId}`,
+      }
+    );
+    return { updated: true };
   });
 
   messageHub.onRequest('session.delete', async (data, _ctx) => {
