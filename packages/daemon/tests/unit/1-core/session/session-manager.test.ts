@@ -1447,6 +1447,33 @@ describe('SessionManager', () => {
         // Should update session to clear draft
         expect(mockDb.updateSession).toHaveBeenCalled();
       });
+
+      it('bumps inputDraftVersion when the sent-message draft clear runs', async () => {
+        // Another tab's debounced save still holds the PRE-send version; the
+        // stale-vs-current equality check in session.update would treat that
+        // write as current and resurrect the sent content — the clear must
+        // invalidate prior versions like every other draft mutation.
+        const handler = eventHandlers.get('message.persisted');
+
+        (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+          id: 'test-id',
+          metadata: { inputDraft: 'test draft', inputDraftVersion: 4 },
+        });
+
+        await handler?.({
+          sessionId: 'test-id',
+          userMessageText: 'test message',
+          needsWorkspaceInit: false,
+          hasDraftToClear: true,
+        });
+
+        expect(mockDb.updateSession).toHaveBeenCalledWith(
+          'test-id',
+          expect.objectContaining({
+            metadata: expect.objectContaining({ inputDraft: null, inputDraftVersion: 5 }),
+          })
+        );
+      });
     });
 
     describe('MCP registry / skills change handlers', () => {

@@ -1033,12 +1033,17 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         if (!claimed) {
           // No voice backup involved — a plain draft write.
           hub
-            .request('session.update', {
+            .request<{ draftVersion?: number }>('session.update', {
               sessionId: prevSessionId,
               expectedDraftVersion: draftVersionsRef.current.get(prevSessionId),
               metadata: {
                 inputDraft: flushContent || null,
               },
+            })
+            .then((ack) => {
+              if (typeof ack?.draftVersion === 'number') {
+                draftVersionsRef.current.set(prevSessionId, ack.draftVersion);
+              }
             })
             .catch(() => {
               /* ignore flush errors */
@@ -1111,14 +1116,17 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       const hub = connectionManager.getHubIfConnected();
       if (hub) {
         hub
-          .request('session.update', {
+          .request<{ draftVersion?: number }>('session.update', {
             sessionId,
             expectedDraftVersion: draftVersionsRef.current.get(sessionId),
             metadata: {
               inputDraft: null,
             },
           })
-          .then(() => {
+          .then((ack) => {
+            if (typeof ack?.draftVersion === 'number') {
+              draftVersionsRef.current.set(sessionId, ack.draftVersion);
+            }
             // Deletion CONFIRMED server-side: drop the retry marker so a later
             // switch flush cannot null a NEWER draft another client saved in
             // the meantime. A rejected clear keeps the marker and retries.
@@ -1140,7 +1148,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       if (!hub) return;
 
       try {
-        await hub.request('session.update', {
+        const ack = await hub.request<{ draftVersion?: number }>('session.update', {
           sessionId,
           // Echo the draft version this composer last READ: the daemon applies
           // the write as-is only when it matches (a mismatch marks a stale
@@ -1150,6 +1158,14 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             inputDraft: trimmedContent,
           },
         });
+        // Advance the cache to the APPLIED version: without it, a concurrent
+        // daemon-side bump (another tab's folded save) would leave this
+        // composer echoing a stale version forever, and every later edit
+        // would be misclassified as stale and folded (duplicating the
+        // transcript it already contains).
+        if (typeof ack?.draftVersion === 'number') {
+          draftVersionsRef.current.set(sessionId, ack.draftVersion);
+        }
       } catch {
         // Ignore draft save errors
       }

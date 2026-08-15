@@ -109,14 +109,24 @@ export function markVoiceTranscriptLanded(
   // names it): consumption means the sequence's pending fully merged
   // server-side, so the next sequence legitimately starts a fresh aggregate —
   // unioning here would re-announce already-merged transcripts.
+  //
+  // Identity is decided by ENTRY ID, never by substring: a separate
+  // occurrence can legitimately CONTAIN another entry's phrase ('hello' vs
+  // 'hello world'), and a substring check would silently drop the earlier
+  // dictated occurrence while the marker still advertises both ids. The
+  // persisted aggregate appends when ANY persisted id is not yet ours, and
+  // no-id markers (test-only writes) never trigger the union.
   const consumedThisTab = rawMarker !== null && consumedMarkers.get(sessionId) === rawMarker;
-  if (existing?.text && !consumedThisTab) {
-    const local = landingTexts.get(sessionId);
-    if (local === undefined || !local.includes(existing.text)) {
-      landingTexts.set(sessionId, appendDraftText(local ?? '', existing.text));
+  if (!consumedThisTab && existing?.text) {
+    const ours = new Set(landingIds.get(sessionId) ?? []);
+    if (existing.ids.some((id) => !ours.has(id))) {
+      landingTexts.set(
+        sessionId,
+        appendDraftText(landingTexts.get(sessionId) ?? '', existing.text)
+      );
     }
   }
-  if (existing?.ids.length && !consumedThisTab) {
+  if (!consumedThisTab && existing?.ids.length) {
     const mergedIds = new Set(landingIds.get(sessionId) ?? []);
     for (const id of existing.ids) mergedIds.add(id);
     landingIds.set(sessionId, [...mergedIds].slice(-MAX_ENTRIES));

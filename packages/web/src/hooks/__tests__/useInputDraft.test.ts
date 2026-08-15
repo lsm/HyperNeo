@@ -1797,6 +1797,45 @@ describe('useInputDraft', () => {
       });
     });
 
+    it('advances the cached draft version from acknowledged saves', async () => {
+      // A concurrent daemon-side bump (another tab's folded save) must not
+      // leave this composer echoing a stale version forever — every later
+      // edit would then be folded as stale, duplicating the transcript the
+      // local draft already contains. The save's ack carries the APPLIED
+      // version and the cache advances.
+      let version = 1;
+      mockHub.request.mockImplementation(
+        async (method: string, payload?: { expectedDraftVersion?: number }) => {
+          if (method === 'session.get') {
+            return { session: { metadata: { inputDraft: '', inputDraftVersion: version } } };
+          }
+          if (method === 'session.update') {
+            version += 1;
+            return { success: true, draftVersion: version };
+          }
+          return {};
+        }
+      );
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      result.current.setContent('first edit');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // The acknowledged save advanced the daemon version to 2; the NEXT save
+      // must echo 2 — not the stale get-time version 1.
+      result.current.setContent('second edit');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      const saves = mockHub.request.mock.calls.filter(([m]) => m === 'session.update');
+      expect(saves[saves.length - 1][1]?.expectedDraftVersion).toBe(2);
+    });
+
     it('recognizes an owed strip that committed with a lost ack (no transcript clear)', async () => {
       // The strip COMMITTED but its response was lost: the server draft is
       // transcript-only and the baseline is gone, while this tab's tombstone

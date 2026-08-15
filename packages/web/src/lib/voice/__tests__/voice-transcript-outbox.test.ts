@@ -917,6 +917,21 @@ describe('voice transcript outbox', () => {
     expect(getAnnouncedEntryIds('s1')).toContain('e1');
   });
 
+  it('unions by ENTRY identity, not substring (distinct occurrence preserved)', () => {
+    // Tab A landed 'hello' (e1); tab B lands 'hello world' (e2) before
+    // processing A's storage event. B's aggregate CONTAINS A's phrase, but
+    // the entries are distinct — A's dictated occurrence must survive in the
+    // rewritten marker even though a substring check would call it included.
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+      JSON.stringify({ v: 1, ts: Date.now(), n: 3, text: 'hello', ids: ['e1'] })
+    );
+    markVoiceTranscriptLanded('s1', 'hello world', 'e2');
+    expect(getLandingTranscript('s1')).toContain('hello world hello');
+    expect(getAnnouncedEntryIds('s1')).toContain('e1');
+    expect(getAnnouncedEntryIds('s1')).toContain('e2');
+  });
+
   it('reads the landing generation from the marker before the signal hydrates', () => {
     // This tab has not processed the marker's storage event, so the
     // process-local signal is empty — a backup saved in that window must

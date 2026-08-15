@@ -385,10 +385,18 @@ export class SessionManager {
             });
           }
 
-          // STEP 2: Clear draft if it matches the sent message content
+          // STEP 2: Clear draft if it matches the sent message content.
+          // Bump inputDraftVersion like every other draft mutation: another
+          // tab's debounced save still holds the PRE-send version, and the
+          // stale-vs-current equality check in session.update would otherwise
+          // treat that write as current and resurrect the sent content.
           if (hasDraftToClear) {
+            const beforeClear = this.getSessionFromDB(sessionId);
             await this.sessionLifecycle.update(sessionId, {
-              metadata: { inputDraft: null },
+              metadata: {
+                inputDraft: null,
+                inputDraftVersion: (beforeClear?.metadata?.inputDraftVersion ?? 0) + 1,
+              },
             } as Partial<Session>);
           }
         } catch (error) {

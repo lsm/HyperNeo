@@ -535,7 +535,16 @@ export function setupSessionHandlers(
 
     // Room channel broadcasts removed with legacy Room feature retirement.
 
-    return { success: true };
+    // Echo the applied version when this write bumped it, so the client
+    // advances its cached version on the acknowledgement — without it, every
+    // later edit from that composer would echo the pre-write version and be
+    // misclassified as stale (folded) by the daemon.
+    const appliedVersion = (updates.metadata as Partial<SessionMetadata> | undefined)
+      ?.inputDraftVersion;
+    return {
+      success: true,
+      ...(appliedVersion !== undefined ? { draftVersion: appliedVersion } : {}),
+    };
   });
 
   // Stage a voice transcript that completed AFTER its composer unmounted (the
@@ -640,9 +649,17 @@ export function setupSessionHandlers(
     if ((session.metadata?.inputDraft ?? '').trim() !== expected.trim()) {
       return { cleared: false };
     }
+    // A staged voice sequence re-anchors its baseline to the CLEARED draft:
+    // the pending merges onto the (now empty) draft at the next session.get,
+    // and a baseline still naming the old non-empty draft would make every
+    // later reconciliation extract no transcript — letting a stale
+    // session.update overwrite the only merged copy after the pending field
+    // cleared.
+    const staged = (session.metadata?.inputDraftVoicePending ?? '').trim() !== '';
     const updates: UpdateSessionRequest = {
       metadata: {
         inputDraft: null,
+        ...(staged ? { inputDraftVoiceBaseline: '' } : {}),
         inputDraftVersion: (session.metadata?.inputDraftVersion ?? 0) + 1,
       },
     };
@@ -774,7 +791,17 @@ export function setupSessionHandlers(
       else if (draft.startsWith(`${baseline} `)) transcripts = draft.slice(baseline.length + 1);
       else if (draft.startsWith(baseline)) transcripts = draft.slice(baseline.length);
       else return { merged: false };
+      // The COMPLETE combination must fit, as the append and session.get
+      // merge paths require: appendDraftText silently slices at the character
+      // limit, and committing a truncated draft while reporting merged:true
+      // would let the client retire its only durable copy of the lost tail.
+      // Decline instead — the claim retries once the draft has room.
       const value = appendDraftText(trimmed, transcripts);
+      const fits =
+        transcripts === '' ||
+        value === `${trimmed} ${transcripts}` ||
+        value === `${trimmed}${transcripts}`;
+      if (!fits) return { merged: false };
       metadataUpdate.inputDraft = value || null;
       metadataUpdate.inputDraftVoiceBaseline = null;
     }

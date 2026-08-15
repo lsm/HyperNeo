@@ -1344,6 +1344,42 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     expect(replay.merged).toBe(true);
   });
 
+  it('declines the merge when backup + transcripts would truncate at the limit', async () => {
+    // appendDraftText silently slices at the character limit; committing a
+    // truncated draft while reporting merged:true would let the client retire
+    // its only durable copy of the lost tail. Decline — the claim retries
+    // once the draft has room.
+    existingPending = null;
+    existingBaseline = 'old';
+    existingBaselineSeq = 1;
+    existingDraft = `old ${'x'.repeat(99_000)}`;
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    const result = (await handler!({ sessionId: 's1', content: 'y'.repeat(5_000) }, {})) as {
+      merged: boolean;
+    };
+    expect(result).toEqual({ merged: false });
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('re-anchors a staged baseline when clearInputDraftIf clears the draft', async () => {
+    // The retained-pending reconciliation clears a draft while the voice
+    // pending is still staged: the baseline must follow the CLEARED draft,
+    // or the next get's merge (onto empty) aligns with nothing and every
+    // later reconciliation extracts no transcript.
+    const handler = messageHubData.handlers.get('session.clearInputDraftIf');
+    existingDraft = 'full draft';
+    existingPending = 'voice';
+    existingBaseline = 'full draft';
+    const result = (await handler!({ sessionId: 's1', expected: 'full draft' }, {})) as {
+      cleared: boolean;
+    };
+    expect(result.cleared).toBe(true);
+    const write = sessionManager.updateSession.mock.calls[0][1] as {
+      metadata: Record<string, unknown>;
+    };
+    expect(write.metadata.inputDraftVoiceBaseline).toBe('');
+  });
+
   it('retains every claim for the full retry lifetime (no count cap)', async () => {
     const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
     // More than 20 backup claims can commit inside the 24h retry window; a
