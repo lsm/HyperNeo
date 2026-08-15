@@ -252,6 +252,30 @@ describe('SpaceWorkflowManager — legacy migration completeness (round 81)', ()
     expect(raw.hooks).toContain('review_posted');
   });
 
+  test('two placements of one validator id need TWO bindings (round 85)', () => {
+    // Legacy workflows may place the same validator on two routes; v2
+    // forbids one hook id on multiple bindings, so a single pr_ready
+    // binding cannot cover both placements — the workflow stays
+    // fail-closed rather than silently dropping the second route's gate.
+    const id = seedLegacyWorkflow();
+    // Two placements of pr_ready + one of review_posted.
+    db.prepare(`UPDATE space_workflows SET hooks = ? WHERE id = ?`).run(
+      '[{"id":"a1","validator":{"id":"pr_ready"}},{"id":"a2","validator":{"id":"pr_ready"}},{"id":"x","validator":{"id":"review_posted"}}]',
+      id
+    );
+    // One binding per id: pr_ready has 1 binding for 2 placements.
+    expect(() =>
+      manager.updateWorkflow(id, {
+        hookBindings: [bindingFor('pr_ready'), bindingFor('review_posted')],
+      })
+    ).toThrow(/missing v2 bindings for: pr_ready/);
+    // Legacy column untouched.
+    const raw = db.prepare(`SELECT hooks FROM space_workflows WHERE id = ?`).get(id) as {
+      hooks: string;
+    };
+    expect(raw.hooks).toContain('a2');
+  });
+
   test('a REPLACEMENT binding list must itself cover the legacy ids (round 82)', () => {
     // hookBindings replaces wholesale: an update supplying only hook B while
     // the row's existing bindings covered hook A must REFUSE — the union

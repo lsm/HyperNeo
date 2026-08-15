@@ -19,9 +19,18 @@ import type { HookBinding } from '@hyperneo/shared';
  * falling back to the instance id for legacy script hooks whose instance
  * id WAS the gate identity. Returns empty for absent/non-array/shapeless
  * values. */
+/** Parse the PER-PLACEMENT gate ids out of a legacy `hooks` JSON array. The
+ * legacy instance `id` is NOT generally the v2 hook id: the built-in Coding
+ * template stored `id: 'code-pr-ready'` with `validator.id: 'pr_ready'`,
+ * and its v2 replacement binding uses `hookId: 'pr_ready'`. Coverage keys
+ * on the VALIDATOR id (the gate identity the v2 binding must recreate),
+ * falling back to the instance id for legacy script hooks whose instance
+ * id WAS the gate identity. Entries are deliberately NOT deduped: two hook
+ * instances sharing a validator id are two placements that each need a v2
+ * binding. Returns empty for absent/non-array/shapeless values. */
 export function legacyHookIds(legacyHooks: unknown): string[] {
   if (!Array.isArray(legacyHooks)) return [];
-  const ids = new Set<string>();
+  const list: string[] = [];
   for (const entry of legacyHooks) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
     const record = entry as Record<string, unknown>;
@@ -34,9 +43,9 @@ export function legacyHookIds(legacyHooks: unknown): string[] {
           : undefined;
     const id =
       typeof validatorId === 'string' && validatorId.trim().length > 0 ? validatorId : record.id;
-    if (typeof id === 'string' && id.trim().length > 0) ids.add(id);
+    if (typeof id === 'string' && id.trim().length > 0) list.push(id);
   }
-  return [...ids];
+  return list;
 }
 
 export interface LegacyHookCoverage {
@@ -54,7 +63,21 @@ export function legacyHookCoverage(
 ): LegacyHookCoverage {
   const ids = legacyHookIds(legacyHooks);
   if (ids.length === 0) return { complete: true, missing: [] };
-  const bound = new Set((bindings ?? []).filter((b) => b.enabled !== false).map((b) => b.hookId));
-  const missing = ids.filter((id) => !bound.has(id));
+  // Count PER PLACEMENT, not per distinct id: a legacy workflow may place
+  // the same validator id on two routes, and v2 currently FORBIDS placing
+  // one hook id on multiple bindings — a set-based check would let a single
+  // binding satisfy both placements while the second route's gate is
+  // silently dropped. Every placement needs a distinct enabled binding;
+  // since v2 cannot place one id twice, an under-covered workflow stays
+  // fail-closed until multi-placement is supported or the routes are
+  // re-authored with distinct hooks.
+  const enabled = (bindings ?? []).filter((b) => b.enabled !== false);
+  const missing: string[] = [];
+  const placementCounts = new Map<string, number>();
+  for (const id of ids) placementCounts.set(id, (placementCounts.get(id) ?? 0) + 1);
+  for (const [id, placements] of placementCounts) {
+    const boundCount = enabled.filter((b) => b.hookId === id).length;
+    if (boundCount < placements) missing.push(id);
+  }
   return { complete: missing.length === 0, missing };
 }
