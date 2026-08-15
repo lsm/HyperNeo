@@ -24,6 +24,7 @@ import { validateGlobPattern } from '../external-events/topic-validator';
 import { MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
 import { BUILT_IN_HOOKS } from '@hyperneo/extensions-hooks';
 import { CORRUPT_HOOK_BINDINGS_HOOK_ID, RESERVED_HOOK_IDS } from './hook-reserved-ids';
+import { legacyHookCoverage } from './legacy-hook-coverage';
 
 const BUILT_IN_HOOK_IDS = new Set(BUILT_IN_HOOKS.map((h) => h.id));
 import type {
@@ -570,6 +571,21 @@ export function exportWorkflow(
       return exported;
     });
     result.channels = exportedChannels;
+  }
+  // REFUSE on PARTIAL legacy coverage: v4 carries no `hooks` field, so
+  // exporting legacy [A,B] with bindings covering only [A] would recreate a
+  // workflow gated by [A] alone — gate B silently dropped. The export must
+  // be refused until the migration is complete (or the legacy hooks are
+  // deliberately re-authored).
+  if (legacyHooks && Array.isArray(legacyHooks) && legacyHooks.length > 0) {
+    const coverage = legacyHookCoverage(legacyHooks, workflow.hookBindings);
+    if (!coverage.complete) {
+      throw new Error(
+        `Workflow "${workflow.name}" still carries legacy hooks without complete v2 ` +
+          `coverage (missing: ${coverage.missing.join(', ')}). Exporting would silently drop ` +
+          'those gates. Complete the migration first, then re-export.'
+      );
+    }
   }
   // REFUSE the export when the synthetic corrupt-column marker is present
   // (mirroring the legacy-hook refusal above): the marker means the

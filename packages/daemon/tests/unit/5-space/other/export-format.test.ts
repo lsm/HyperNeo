@@ -2606,6 +2606,49 @@ describe('custom hooks — export schema parity with runtime validation', () => 
   });
 });
 
+describe('partial-legacy-coverage export refusal (round 84)', () => {
+  test('legacy [A,B] with bindings covering only [A] refuses to export', () => {
+    const workflow = makeWorkflow({
+      hookBindings: [
+        {
+          hookId: 'pr_ready',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding' }],
+        },
+      ],
+    });
+    // Legacy gates [pr_ready, review_posted]; coverage is partial.
+    (workflow as { hooks?: unknown[] }).hooks = [
+      { id: 'x1', validator: { id: 'pr_ready' } },
+      { id: 'x2', validator: { id: 'review_posted' } },
+    ];
+    expect(() => exportWorkflow(workflow, [])).toThrow(/complete v2 coverage.*review_posted/);
+  });
+
+  test('COMPLETE legacy coverage exports', () => {
+    const workflow = makeWorkflow({
+      hookBindings: [
+        {
+          hookId: 'pr_ready',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding' }],
+        },
+      ],
+    });
+    (workflow as { hooks?: unknown[] }).hooks = [{ id: 'x1', validator: { id: 'pr_ready' } }];
+    const exported = exportWorkflow(workflow, []);
+    expect(exported.hookBindings).toHaveLength(1);
+  });
+});
+
 describe('corrupt-marker export refusal', () => {
   test('a marker-loaded workflow refuses to export with a repair message', () => {
     // The marker means the persisted hook configuration is undecodable and

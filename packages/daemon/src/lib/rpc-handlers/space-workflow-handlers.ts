@@ -572,7 +572,12 @@ export function setupSpaceWorkflowHandlers(
       }
     }
 
-    const { id, spaceId: _spaceId, ...updateParams } = params;
+    // clearLegacyHooks is MANAGER-INTERNAL (set only by the verified
+    // migration branch after the legacy-coverage check): a caller-supplied
+    // flag with no hookBindings would skip the coverage check entirely and
+    // strip a legacy-bearing workflow's gates. Strip it from the RPC
+    // payload — the only path that sets it is updateWorkflow itself.
+    const { id, spaceId: _spaceId, clearLegacyHooks: _clearLegacyHooks, ...updateParams } = params;
 
     const workflow = workflowManager.updateWorkflow(id, updateParams);
     if (!workflow) {

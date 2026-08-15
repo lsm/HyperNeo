@@ -455,6 +455,13 @@ export class SpaceWorkflowManager {
         : (params.hookBindings ?? [])
     ).filter((b) => b.hookId !== CORRUPT_HOOK_BINDINGS_HOOK_ID);
 
+    // Caller-supplied clearLegacyHooks is never honored (the shared-type
+    // doc says so; this enforces it): always start from false and let the
+    // verified-migration branch below set it. A raw flag with no
+    // hookBindings would otherwise skip the coverage check and strip the
+    // legacy gates.
+    params = { ...params, clearLegacyHooks: false };
+
     // LEGACY MIGRATION COMPLETENESS: supplying v2 bindings for a workflow
     // that still carries legacy hooks is the migration act — but only when
     // the new bindings COVER every legacy hook id. A partial set would run

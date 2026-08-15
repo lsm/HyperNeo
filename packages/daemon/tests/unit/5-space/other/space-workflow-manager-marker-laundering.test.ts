@@ -225,6 +225,21 @@ describe('SpaceWorkflowManager — legacy migration completeness (round 81)', ()
     };
   }
 
+  test('a caller-supplied clearLegacyHooks flag is never honored (round 84)', () => {
+    const id = seedLegacyWorkflow();
+    // Direct RPC-shaped payload: {id, clearLegacyHooks: true} with NO
+    // hookBindings — the coverage check must still gate (the flag is
+    // manager-internal; the manager resets it before its branch).
+    manager.updateWorkflow(id, {
+      clearLegacyHooks: true,
+      description: 'attempted strip',
+    } as never);
+    const raw = db.prepare(`SELECT hooks FROM space_workflows WHERE id = ?`).get(id) as {
+      hooks: string | null;
+    };
+    expect(raw.hooks).toContain('pr_ready');
+  });
+
   test('a PARTIAL binding set is refused with the missing legacy ids', () => {
     const id = seedLegacyWorkflow();
     expect(() => manager.updateWorkflow(id, { hookBindings: [bindingFor('pr_ready')] })).toThrow(
