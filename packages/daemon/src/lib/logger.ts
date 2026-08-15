@@ -35,7 +35,7 @@ export class Logger {
 
   constructor(prefix: string) {
     // Create a shared logger with the daemon namespace prefix
-    this.sharedLogger = createLogger(`kai:daemon:${prefix.toLowerCase()}`);
+    this.sharedLogger = createLogger(`hyperneo:daemon:${prefix.toLowerCase()}`);
   }
 
   log(...args: unknown[]): void {

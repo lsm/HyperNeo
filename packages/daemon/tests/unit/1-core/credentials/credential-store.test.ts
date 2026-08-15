@@ -242,7 +242,7 @@ describe('KeychainStatusCredentialStore', () => {
 
   beforeEach(() => {
     originalConfig = getLoggerConfig();
-    configureLogger({ level: LogLevel.WARN, filter: ['kai:daemon:*'] });
+    configureLogger({ level: LogLevel.WARN, filter: ['hyperneo:daemon:*'] });
     logEvents = [];
     unsubscribe = subscribeToStructuredLogs((event) => {
       logEvents.push({ level: event.level, message: event.message });

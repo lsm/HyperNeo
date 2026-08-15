@@ -9,6 +9,12 @@ export default defineConfig({
   test: {
     environment: 'node',
     globals: true,
+    // Generous per-test budget: several suites pay real setup cost per test
+    // (migration files replay the full schema chain; model-service tests
+    // register the provider stack). The vitest 5s default is calibrated for
+    // isolated fast tests and intermittently kills correct tests on loaded
+    // CI runners — the exact flakes registered in flaky-tests.json.
+    testTimeout: 15_000,
     // Run files serially within a shard: several suites rely on module-level
     // state (provider registry, SDK mock) and are not parallel-safe at the
     // file level, matching the historical `bun test --jobs=1` behaviour.

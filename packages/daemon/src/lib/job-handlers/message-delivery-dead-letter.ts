@@ -37,11 +37,19 @@ export async function settleMessageDeliveryDeadLetter(
   payload: MessageDeliveryPayload,
   settlement: MessageDeliveryDeadLetterSettlement
 ): Promise<void> {
-  const flipped = settlement.markDeliveryFailedByUuid(payload.sessionId, payload.messageUuid);
-  if (flipped) {
+  // Batch-aware: a dead-lettered batched turn terminalizes every member row
+  // (they own no job of their own — without this they'd linger `enqueued`,
+  // hidden by pagination, with nothing left to deliver them).
+  const uuids = [payload.messageUuid, ...(payload.batchUuids ?? [])];
+  const flippedIds: string[] = [];
+  for (const uuid of new Set(uuids)) {
+    const flipped = settlement.markDeliveryFailedByUuid(payload.sessionId, uuid);
+    if (flipped) flippedIds.push(flipped);
+  }
+  if (flippedIds.length > 0) {
     // Fire-and-forget BUT guarded: a rejecting messages.statusChanged subscriber
     // must not surface as an unhandled rejection in the dead-letter path. (Codex P1.)
-    void settlement.publishStatusChanged(payload.sessionId, [flipped]).catch(() => {});
+    void settlement.publishStatusChanged(payload.sessionId, flippedIds).catch(() => {});
   }
   // Only a dead-lettered KICKOFF (the node's initial turn) should mark the
   // execution blocked. `space_inject` is also the origin for ordinary peer/human

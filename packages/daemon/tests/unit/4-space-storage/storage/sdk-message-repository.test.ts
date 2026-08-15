@@ -1681,6 +1681,49 @@ describe('SDKMessageRepository', () => {
     it('returns null when the uuid is unknown', () => {
       expect(repository.markDeliveryConsumedByUuid('session-1', 'no-such-uuid')).toBeNull();
     });
+
+    it('markDeliveryConsumedByUuids flips kickoff + members in one atomic call', () => {
+      const kickoffId = repository.saveUserMessage(
+        'session-1',
+        createUserMessage('kickoff', 'uuid-kick'),
+        'enqueued'
+      );
+      const memberId = repository.saveUserMessage(
+        'session-1',
+        createUserMessage('member', 'uuid-member'),
+        'enqueued'
+      );
+      repository.saveUserMessage(
+        'session-1',
+        createUserMessage('deferred member', 'uuid-def-member'),
+        'deferred'
+      );
+
+      const flipped = repository.markDeliveryConsumedByUuids('session-1', [
+        'uuid-kick',
+        'uuid-member',
+        'uuid-def-member',
+        'uuid-kick', // duplicate — must not double-flip
+      ]);
+
+      expect(flipped.sort()).toEqual([kickoffId, memberId].sort());
+      expect(repository.getMessagesByStatus('session-1', 'enqueued').length).toBe(0);
+      expect(repository.getMessagesByStatus('session-1', 'consumed').length).toBe(2);
+      // The deferred member is not a consume candidate — stays deferred.
+      expect(repository.getMessagesByStatus('session-1', 'deferred').length).toBe(1);
+    });
+
+    it('markDeliveryFailedByUuidInclusive does NOT fail a deferred row (user hold survives dead-letter)', () => {
+      repository.saveUserMessage(
+        'session-1',
+        createUserMessage('excluded member', 'uuid-excl'),
+        'deferred'
+      );
+      // A dead-lettered batch must not terminalize a member the user deferred
+      // out of the prompt before delivery.
+      expect(repository.markDeliveryFailedByUuidInclusive('session-1', 'uuid-excl')).toBeNull();
+      expect(repository.getMessagesByStatus('session-1', 'deferred').length).toBe(1);
+    });
   });
 
   describe('markDeliveryRetryableByUuid (recoverable no-result turn → retry re-feed)', () => {
@@ -3257,6 +3300,28 @@ describe('SDKMessageRepository', () => {
 
       expect(turnOf(u2)).toBe(2);
       expect(turnOf(u3)).toBe(3);
+    });
+
+    // A batched queue flush is ONE provider prompt: sharedTurn assigns every
+    // member the SAME turn index instead of N artificial MAX+1 turns (which
+    // would burn the compact feed's recent-turn allowance and attach the
+    // response to the last artificial turn).
+    it('assigns ONE shared turn to a batched flush consumed together (sharedTurn)', () => {
+      linkTaskSession('session-1', 'task-1');
+      repository.saveUserMessage('session-1', createUserMessage('go'), 'consumed'); // turn 1
+      const u2 = repository.saveUserMessage('session-1', createUserMessage('two'), 'enqueued');
+      const u3 = repository.saveUserMessage('session-1', createUserMessage('three'), 'enqueued');
+      const u4 = repository.saveUserMessage('session-1', createUserMessage('four'), 'enqueued');
+
+      repository.updateMessageStatus([u2, u3, u4], 'consumed', { sharedTurn: true });
+
+      expect(turnOf(u2)).toBe(2);
+      expect(turnOf(u3)).toBe(2);
+      expect(turnOf(u4)).toBe(2);
+      // The next ordinary anchor continues after the shared turn.
+      const u5 = repository.saveUserMessage('session-1', createUserMessage('five'), 'enqueued');
+      repository.updateMessageStatus([u5], 'consumed');
+      expect(turnOf(u5)).toBe(3);
     });
 
     // recoverOrphanedConsumedMessages flips already-consumed (already-anchored)

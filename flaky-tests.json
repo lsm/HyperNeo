@@ -25,36 +25,12 @@
       "addedAt": "2026-06-26"
     },
     {
-      "id": "daemon-migration-74-timeout",
-      "suite": "daemon-unit",
-      "path": "packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-74_test.ts",
-      "namePattern": "Migration 74",
-      "reason": "Known intermittent timeout in migration 74 schema cleanup tests.",
-      "addedAt": "2026-05-28"
-    },
-    {
       "id": "daemon-model-service-shared-id",
       "suite": "daemon-unit",
       "path": "packages/daemon/tests/unit/1-core/core/model-service.test.ts",
       "namePattern": "preserve both provider entries for shared model IDs",
       "reason": "Known intermittent shared model ID provider cache/registry isolation failure.",
       "addedAt": "2026-05-28"
-    },
-    {
-      "id": "daemon-migration-29-timeout",
-      "suite": "daemon-unit",
-      "path": "packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-29_test.ts",
-      "namePattern": "Migration 29",
-      "reason": "Known intermittent timeout in migration 29 CHECK-constraint tests (runMigrations setup exceeds the 5s test timeout on loaded CI runners).",
-      "addedAt": "2026-08-01"
-    },
-    {
-      "id": "daemon-migration-124-timeout",
-      "suite": "daemon-unit",
-      "path": "packages/daemon/tests/unit/4-space-storage/storage/migrations/migration-124_test.ts",
-      "namePattern": "Migration 124",
-      "reason": "Known intermittent timeout in migration 124 schema-simplification tests (runMigrations setup exceeds the 5s test timeout on loaded CI runners).",
-      "addedAt": "2026-08-01"
     }
   ]
 }

@@ -29,7 +29,27 @@
  * - `stmt.run()` returns `{ changes, lastInsertRowid }` — identical shape.
  */
 
-import { DatabaseSync, StatementSync } from 'node:sqlite';
+/**
+ * `node:sqlite` must be imported via a computed specifier: Bun standalone
+ * executables (`bun build --compile`) do not embed this builtin, and a statically
+ * resolvable reference anywhere in the module graph makes the compiled binary
+ * abort at startup with "No such built-in module: node:sqlite" — even though
+ * `sqlite-compat.ts` only loads this module under Node. Bun's bundler folds
+ * literal concatenation in dynamic-import specifiers of *entry* modules, but
+ * not when the concatenation sits in a lazily-imported child module like this
+ * one, so the split specifier keeps the reference runtime-only. The type is
+ * still sourced statically via the erased `typeof import(...)` below.
+ */
+import type * as NodeSqlite from 'node:sqlite';
+
+const { DatabaseSync, StatementSync } = (await import('node:' + 'sqlite')) as typeof NodeSqlite;
+
+// Restore the type-space meanings a class import would have provided (the
+// destructured consts above exist only in value space). A same-named type alias
+// and const coexist, so downstream `type { DatabaseSync }` / `StatementSync`
+// annotations see the instance types exactly as before.
+type DatabaseSync = NodeSqlite.DatabaseSync;
+type StatementSync = NodeSqlite.StatementSync;
 
 /**
  * A `StatementSync` wrapper matching bun:sqlite's `Statement` contract:
@@ -202,9 +222,8 @@ export class Database extends DatabaseSync {
   }
 }
 
+export type { CompatStatement as Statement, DatabaseSync };
 export { StatementSync };
-export type { DatabaseSync };
-export type { CompatStatement as Statement };
 /**
  * The handle type repositories/tests receive. Kept as `Database` so existing
  * `import type { Database as BunDatabase }` call sites keep working after the

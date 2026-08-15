@@ -38,18 +38,20 @@
  * docs/features/message-delivery-v2.md §8–§10.
  */
 
-import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import { DeadLetterImmediatelyError, type JobHandler } from '../../storage/job-queue-processor';
+import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import {
   asMessageDeliveryPayload,
+  buildBatchedDeliveryContent,
+  type DeliveryLoadResult,
+  flattenDeliveryText,
   isUniqueConstraintError,
   MAX_ACP_STEER_PARKS,
   MAX_STEER_PARKS,
   MESSAGE_DELIVERY_PARK_MS,
-  type DeliveryLoadResult,
   type MessageDeliverySession,
 } from '../agent/message-delivery';
-import { deliveryMetrics, type DeliveryMetrics } from '../agent/message-delivery-metrics';
+import { type DeliveryMetrics, deliveryMetrics } from '../agent/message-delivery-metrics';
 import { Logger } from '../logger';
 
 export interface MessageDeliveryHandlerDeps {
@@ -113,8 +115,11 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       // The job may already be claimed between archive's persisted barrier and
       // cancelForSessionWithMessages. Terminalize before returning/completing;
       // otherwise cancellation no longer sees this completed job and its hidden
-      // enqueued SDK row survives forever.
-      deps.markDeliveryFailed?.(payload.sessionId, payload.messageUuid);
+      // enqueued SDK row survives forever. Batch members terminalize with the
+      // kickoff (they own no job row).
+      for (const uuid of new Set([payload.messageUuid, ...(payload.batchUuids ?? [])])) {
+        deps.markDeliveryFailed?.(payload.sessionId, uuid);
+      }
       await deps.getSession(payload.sessionId)?.settleSkippedDelivery?.(payload.messageUuid);
       return { outcome: 'archived' };
     }
@@ -175,6 +180,38 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     }
     const alreadyConsumed = sendStatus === 'consumed';
 
+    // Batched queue flush (payload.batchUuids): combine every still-usable
+    // member's content into ONE delimited prompt so the model reads the whole
+    // queue from the first token. Rebuilt from the durable payload on every
+    // claim/reclaim, so a crashed batch turn recombines identically. Members
+    // whose row is gone, user-deferred, or failed are skipped — the combined
+    // turn must not resurrect them. A `consumed` member (flipped with the
+    // kickoff by a prior attempt) is kept so a reclaim recombines the original
+    // batch.
+    //
+    // NOTE: this handler-side combination is only a PRE-ADMISSION estimate —
+    // the bridge revalidates every member and rebuilds the prompt under the
+    // per-session lock immediately before feeding (a member can be
+    // deleted/deferred between this snapshot and the feed), and enforces the
+    // BATCH_DELIVERY_MAX_CHARS budget so the combined prompt can never outgrow
+    // the provider's request limit.
+    let turnContent = content;
+    if (payload.role === 'turn' && payload.batchUuids && payload.batchUuids.length > 1) {
+      const texts: string[] = [];
+      for (const uuid of payload.batchUuids) {
+        const member =
+          uuid === payload.messageUuid ? loaded : deps.getMessageContent(payload.sessionId, uuid);
+        if (!member) continue;
+        if (member.sendStatus === 'deferred' || member.sendStatus === 'failed') continue;
+        const text = flattenDeliveryText(member.content);
+        if (text === null) continue;
+        texts.push(text);
+      }
+      if (texts.length > 1) {
+        turnContent = buildBatchedDeliveryContent(texts);
+      }
+    }
+
     if (payload.role === 'turn') {
       // The bridge holds the per-session lock only for ensureQueryStarted +
       // kickoff feed; the turn await runs unlocked (so steering proceeds). The
@@ -183,10 +220,11 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       if (!claimCurrent()) return { outcome: 'stale_attempt' };
       const turn = session.driveDeliveryTurn(
         payload.messageUuid,
-        content,
+        turnContent,
         payload.parentToolUseId,
         alreadyConsumed,
-        claimCurrent
+        claimCurrent,
+        payload.batchUuids
       );
       const heartbeat = setInterval(
         () => deps.jobQueue.touchStartedAt(job.id, job.claimToken),

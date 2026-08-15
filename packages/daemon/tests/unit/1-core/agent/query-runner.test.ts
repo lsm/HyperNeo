@@ -66,6 +66,7 @@ describe('QueryRunner', () => {
   let onModelsFetchedSpy: ReturnType<typeof mock>;
   let onMarkApiSuccessSpy: ReturnType<typeof mock>;
   let trackAgentProcessSpy: ReturnType<typeof mock>;
+  let terminateTrackedAgentProcessesSpy: ReturnType<typeof mock>;
 
   beforeEach(() => {
     mockSession = {
@@ -95,6 +96,7 @@ describe('QueryRunner', () => {
 
     // Create callback spies
     trackAgentProcessSpy = mock(() => {});
+    terminateTrackedAgentProcessesSpy = mock(() => {});
     onSDKMessageSpy = mock(async () => {});
     onSlashCommandsFetchedSpy = mock(async () => {});
     onModelsFetchedSpy = mock(async () => {});
@@ -228,6 +230,7 @@ describe('QueryRunner', () => {
         this.processExitedPromise = null;
       }),
       trackAgentProcess: trackAgentProcessSpy,
+      terminateTrackedAgentProcesses: terminateTrackedAgentProcessesSpy,
 
       // Methods for state coordination
       incrementQueryGeneration: () => ++queryGeneration,
@@ -1486,6 +1489,21 @@ describe('QueryRunner', () => {
       expect(ctx.queryObject).toBeNull();
     });
 
+    it('should force-terminate orphaned SDK processes before retrying after startup timeout', async () => {
+      // Clean-slate guard: a startup-timeout spawn may be orphaned (spawned but
+      // never fed, or hung past cooperative close()) and collide with the retry's
+      // fresh spawn. The retry must force-kill the tracked set first so the retry
+      // starts from a clean process slate.
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      // The auto-retry path must have asked to terminate tracked subprocesses
+      // (SIGTERM + scheduled SIGKILL), not just cooperatively close queryObject.
+      expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalled();
+    });
+
     it('should await processExitedPromise before retrying after startup timeout', async () => {
       // Verify the retry path waits for the old subprocess to exit
       // before spawning a replacement.
@@ -1522,6 +1540,40 @@ describe('QueryRunner', () => {
       expect(callOrder).toContain('process-exited');
       // processExitedPromise should be cleared after the wait
       expect(ctx.processExitedPromise).toBeNull();
+    });
+
+    it('should abandon the retry when a replacement query took ownership during the exit wait', async () => {
+      // Codex P1 (PR #2491): the retry's recursive runQuery() bypasses
+      // start()'s queue-running guard. If a replacement query started while
+      // the retry awaited the old subprocess's exit, recursing with the stale
+      // generation would spawn a competing query overwriting the
+      // replacement's queryObject. The retry must be abandoned instead.
+      buildSpy.mockClear();
+      let resolveExit: () => void;
+      const exitPromise = new Promise<void>((resolve) => {
+        resolveExit = resolve;
+      });
+      const ctx = createContext({
+        queryObject: {
+          close: () => {},
+          [Symbol.asyncIterator]: function* () {},
+        } as unknown as import('@anthropic-ai/claude-agent-sdk').Query,
+        processExitedPromise: exitPromise,
+      });
+      runner = new QueryRunner(ctx);
+
+      runner.start();
+      // Let the first attempt reach the catch block (build rejects with the
+      // timeout error), then simulate: (1) a replacement start bumping the
+      // query generation, (2) the old subprocess exiting.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      ctx.incrementQueryGeneration();
+      resolveExit!();
+      await ctx.queryPromise?.catch(() => {});
+
+      // The retry was abandoned — runQuery must not have been re-entered
+      // (options build runs exactly once, for the first attempt only).
+      expect(buildSpy).toHaveBeenCalledTimes(1);
     });
   });
 
