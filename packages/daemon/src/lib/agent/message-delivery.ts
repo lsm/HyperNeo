@@ -429,6 +429,21 @@ export function isCompletedTurnResult(result: Record<string, unknown> | null): b
 }
 
 /**
+ * Whether a COMPLETED STEER job's persisted `result` represents a handoff the
+ * delivery layer actually delivered (`consumed` on feed, `already_consumed` on
+ * a reclaimed accepted steer). Like {@link isCompletedTurnResult}, this
+ * excludes the non-delivery outcomes (`skipped`/`aborted`/`stale_attempt`/
+ * `archived`/`no_content`). A steer settles at mid-turn consumption, so the
+ * event alone is not a node-completion signal — but when the steer was the
+ * LAST active job (the owning turn already settled while the ACP steer waited
+ * on acceptance), its settlement must be published so consumers can repay the
+ * suppressed terminal idle. (Task #944 review.)
+ */
+export function isSettledSteerResult(result: Record<string, unknown> | null): boolean {
+  return result?.outcome === 'consumed' || result?.outcome === 'already_consumed';
+}
+
+/**
  * Narrow an unknown payload to a {@link MessageDeliveryPayload}. The handler
  * validates its own job's payload shape before acting.
  */

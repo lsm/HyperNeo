@@ -585,8 +585,11 @@ recoverable one mid-turn while the turn still succeeds.
 
 The contract (`TaskAgentManager.registerCompletionCallback`):
 
-- **Recoverable `session.error`** (`details.recoverable === true`, v2 on) does
-  not block the node. The classification is advisory: even a misclassification
+- **Recoverable `session.error`** (`details.recoverable === true`, v2 on, AND
+  an active delivery job for the session) does not block the node — without an
+  in-flight job there is no retry and no `delivery_failed` repayment, so
+  errors from non-delivery work (rehydration's direct streaming start /
+  tool-continuation replays) keep the first-error-blocks behavior. The classification is advisory: even a misclassification
   (ErrorManager's taxonomy has diverged from delivery's — auth is
   delivery-terminal despite `recoverable === true`) only delays the block until
   the immediate dead-letter; `session.delivery_failed` then blocks the node.
@@ -596,10 +599,12 @@ The contract (`TaskAgentManager.registerCompletionCallback`):
   completes. Suppressed on both sides of that race.
 - **`session.delivery_settled`** (processor `onComplete` lane hook — job row
   `processing`→`completed`, parks excluded) completes the node when nothing
-  else is in flight, and only for `role === 'turn'`: a steer settles at
-  mid-turn CONSUMPTION while the agent is still working, so it must never
-  complete the node (the owning turn's settle always follows — its job
-  completes at turn end). This repays the suppressed idle after a successful
+  else is in flight. A TURN settle is the completion signal; a STEER settle
+  (`consumed`/`already_consumed`) is repayment-ONLY — steers settle at
+  mid-turn CONSUMPTION while the agent is still working, so a steer settle
+  completes the node only when the session is live-idle AND nothing else is
+  in flight (the ACP shape: the owning turn settled while its steer waited on
+  acceptance, leaving the steer as the last active job). This repays the suppressed idle after a successful
   retry, and completes a successful turn that carried an unrelated recoverable
   error. A one-shot delayed reconciliation (default 30s,
   `HYPERNEO_DELIVERY_SETTLE_RECONCILE_MS`) repays a settle lost to a daemon

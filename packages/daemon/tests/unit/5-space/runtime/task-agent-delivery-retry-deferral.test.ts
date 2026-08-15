@@ -22,7 +22,10 @@
  * exercised through the real internalEventBus.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { isCompletedTurnResult } from '../../../../src/lib/agent/message-delivery';
+import {
+  isCompletedTurnResult,
+  isSettledSteerResult,
+} from '../../../../src/lib/agent/message-delivery';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
 import { settleMessageDeliveryDeadLetter } from '../../../../src/lib/job-handlers/message-delivery-dead-letter';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager';
@@ -431,6 +434,72 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     expect(isCompletedTurnResult({ outcome: 'archived' })).toBe(false);
     expect(isCompletedTurnResult({ outcome: 'stale_attempt' })).toBe(false);
     expect(isCompletedTurnResult(null)).toBe(false);
+    // Steer settlements: only genuinely delivered handoffs qualify.
+    expect(isSettledSteerResult({ outcome: 'consumed' })).toBe(true);
+    expect(isSettledSteerResult({ outcome: 'already_consumed' })).toBe(true);
+    expect(isSettledSteerResult({ outcome: 'skipped', sendStatus: 'submitted' })).toBe(false);
+    expect(isSettledSteerResult({ outcome: 'aborted' })).toBe(false);
+    expect(isSettledSteerResult(null)).toBe(false);
+  });
+
+  it('a settled STEER that was the last job repays the suppressed idle (ACP shape)', async () => {
+    // The owning turn finished while an ACP steer was parked awaiting
+    // acceptance: the turn's idle AND settle were both suppressed (steer
+    // active). The accepted steer later settles ('already_consumed') as the
+    // LAST active job — its settlement must repay the completion.
+    await publishIdle(); // suppressed — kickoff job active
+    activeJobs.delete('kickoff-uuid');
+    activeJobs.add('steer-uuid');
+    await bus.publish('session.delivery_settled', {
+      sessionId: SUB_SESSION_ID,
+      messageUuid: 'kickoff-uuid',
+      role: 'turn',
+    }); // ignored — steer still in flight
+    await flush();
+    expect(completed).toBe(false);
+
+    activeJobs.clear(); // steer settles — nothing in flight, session idle
+    await bus.publish('session.delivery_settled', {
+      sessionId: SUB_SESSION_ID,
+      messageUuid: 'steer-uuid',
+      role: 'steer',
+    });
+    await flush();
+    expect(completed).toBe(true);
+  });
+
+  it('a settled STEER does not complete the node while the turn is still running', async () => {
+    // Steer consumed mid-turn (no other job active in the fixture) but the
+    // live processing state says the session is still working — the steer
+    // settlement must not fire completion.
+    const subSessions = (manager as unknown as { subSessions: Map<string, Map<string, unknown>> })
+      .subSessions;
+    for (const nodeMap of subSessions.values()) {
+      const session = nodeMap.get(SUB_SESSION_ID) as
+        | { getProcessingState: () => { status: string } }
+        | undefined;
+      if (session) session.getProcessingState = () => ({ status: 'processing' });
+    }
+    activeJobs.clear();
+    await bus.publish('session.delivery_settled', {
+      sessionId: SUB_SESSION_ID,
+      messageUuid: 'steer-uuid',
+      role: 'steer',
+    });
+    await flush();
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('in_progress');
+  });
+
+  it('a recoverable error with NO active delivery job blocks (non-delivery work)', async () => {
+    // Rehydration path shape: the listener registers, the session starts
+    // streaming / replays tool continuations directly — no delivery job can
+    // retry an error from that work, and no delivery_failed will repay it.
+    // The deferral must not apply; the error blocks as before this PR.
+    activeJobs.clear();
+    await publishError(RECOVERABLE_DETAILS);
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('blocked');
   });
 
   it('a dead-lettered STEER does not block the node (mid-turn handoff failure)', async () => {

@@ -3737,18 +3737,21 @@ export class TaskAgentManager {
       fireCompletion();
     };
 
-    // A delivery job settled successfully. Only a TURN settle is a node-
-    // completion signal: a steer settles at mid-turn CONSUMPTION while the
-    // agent is still working — completing on it would tear down the error
-    // listeners mid-work and let a later turn failure go unblocked. The owning
-    // turn's own settle (always later — its job completes at turn end) decides.
-    // When nothing else is in flight, this repays the idle suppressed above
-    // (retry succeeded after a recoverable error, or a successful turn whose
-    // idle raced the job completion). (Task #944.)
+    // A delivery job settled successfully. A TURN settle is the node-completion
+    // signal (nothing else in flight ⇒ repay the idle suppressed above). A
+    // STEER settle is repayment-ONLY: steers settle at mid-turn consumption
+    // while the agent is still working, so it completes the node only when the
+    // turn is actually over (live idle state) AND nothing else is in flight —
+    // the ACP case where the owning turn settled while its steer waited on
+    // acceptance, leaving the steer as the last active job. (Task #944.)
     const unsubscribeSettled = this.config.internalEventBus.subscribe(
       'session.delivery_settled',
       (event) => {
-        if (event.role !== 'turn') return;
+        if (event.role === 'steer') {
+          const session = this.getSubSession(subSessionId);
+          if (!session) return;
+          if (session.getProcessingState().status !== 'idle') return; // turn still running
+        }
         completeFromDeliveryState();
       },
       { sessionId: subSessionId, subscriberName: 'TaskAgentManager.subSessionDeliverySettled' }
@@ -3837,10 +3840,15 @@ export class TaskAgentManager {
           // been the LAST active job holding down a suppressed terminal idle
           // (the turn's settle was ignored while the steer was in flight, and
           // no success settlement or later idle is coming). Repay the
-          // suppressed completion when nothing else is in flight; if work is
-          // still ongoing, the active-job check inside makes this a no-op.
-          // (Task #944 review.)
-          if (isMessageDeliveryV2Enabled()) completeFromDeliveryState();
+          // suppressed completion when the turn is actually over (live idle
+          // state) and nothing else is in flight; if work is still ongoing,
+          // the checks make this a no-op. (Task #944 review.)
+          if (isMessageDeliveryV2Enabled()) {
+            const session = this.getSubSession(subSessionId);
+            if (session && session.getProcessingState().status === 'idle') {
+              completeFromDeliveryState();
+            }
+          }
           return;
         }
         fireTerminalError(DEAD_LETTER_SESSION_ERROR);
@@ -3857,15 +3865,17 @@ export class TaskAgentManager {
         if (fired) return; // Already handled by completion path
 
         // A RECOVERABLE error during a delivery-driven turn (transient provider
-        // 5xx / connection / timeout) must be INVISIBLE to Space: the
-        // message_delivery job retries it (PR #2471), and only the job
-        // dead-lettering is terminal. The dead-letter settlement publishes
-        // `session.error` with NO `details`, and a genuinely non-recoverable
-        // error carries `details.recoverable === false` — both fall through to
-        // the terminal handling below. Gated on delivery v2 so the legacy
-        // inline path keeps its first-error-blocks behavior. The subsequent
-        // idle is suppressed separately via the active-job check above — this
-        // branch only declines to block. (Task #944.)
+        // 5xx / connection / timeout) must be INVISIBLE to Space — but ONLY
+        // while a delivery job is actually in flight to retry it. The
+        // message_delivery job retries the error (PR #2471) and only its
+        // dead-letter is terminal; without an active job there is no retry and
+        // no `session.delivery_failed` repayment, so an error from non-delivery
+        // work (rehydration's direct streaming start / tool-continuation
+        // replays) keeps the first-error-blocks behavior. The dead-letter
+        // settlement publishes `session.error` with NO `details`, and a
+        // genuinely non-recoverable error carries `details.recoverable ===
+        // false` — both fall through to the terminal handling below. (Task
+        // #944.)
         //
         // This classification is ADVISORY only: even when it misclassifies
         // (ErrorManager's recoverable taxonomy has diverged from delivery's —
@@ -3873,7 +3883,11 @@ export class TaskAgentManager {
         // dead-letters immediately and `session.delivery_failed` above blocks
         // the node. A wrong deferral delays the block by one immediate
         // dead-letter; it can never flip the outcome.
-        if (isMessageDeliveryV2Enabled() && isRecoverableSessionError(event.details)) {
+        if (
+          isMessageDeliveryV2Enabled() &&
+          isRecoverableSessionError(event.details) &&
+          this.hasActiveDeliveryJob(subSessionId)
+        ) {
           return;
         }
 
