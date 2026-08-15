@@ -28,11 +28,16 @@
 
 import { useEffect, useRef, useCallback, useMemo } from 'preact/hooks';
 import { useSignal, useSignalEffect } from '@preact/signals';
+import { appendDraftText } from '@hyperneo/shared';
 import { connectionManager } from '../lib/connection-manager';
 import { connectionState } from '../lib/state';
 import {
   consumeVoiceTranscriptLanded,
+  getDraftBackup,
+  getLandingGeneration,
+  getLandingTranscript,
   isLandingLive,
+  saveDraftBackup,
   voiceTranscriptLandedSignal,
 } from '../lib/voice/voice-transcript-outbox';
 
@@ -95,7 +100,12 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     (
       targetSessionId: string,
       isCancelled: () => boolean,
-      onResult?: (ok: boolean, pendingRetained?: boolean, wasCancelled?: boolean) => void
+      onResult?: (
+        ok: boolean,
+        pendingRetained?: boolean,
+        wasCancelled?: boolean,
+        draft?: string
+      ) => void
     ): void => {
       const hub = connectionManager.getHubIfConnected();
       if (!hub) {
@@ -115,7 +125,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           if (!cancelled && draft) {
             contentSignal.value = draft;
           }
-          onResult?.(true, pendingRetained, cancelled);
+          onResult?.(true, pendingRetained, cancelled, draft);
         })
         .catch(() => {
           // A stale request (session changed / hook unmounted while this get
@@ -152,11 +162,64 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     loadDraft(
       sessionId,
       () => cancelled,
-      (_ok, _pendingRetained, wasCancelled) => {
+      (ok, pendingRetained, wasCancelled, draft) => {
         // Only a load that was NOT cancelled (session still current) marks the
         // initial load settled; a stale rejection must not settle a newer load.
         if (wasCancelled) return;
         initialLoadSettledRef.current = sessionId;
+        // Restore any draft backup from a deferred-landing session (the user's
+        // edits persisted locally while the server draft kept the transcript),
+        // so a reload does not lose what they were typing. The fold below
+        // reconciles the transcripts so the re-enabled saves persist BOTH
+        // instead of clobbering the merged transcript with the
+        // transcript-free backup.
+        const backup = getDraftBackup(sessionId);
+        const generation = voiceTranscriptLandedSignal.value.get(sessionId);
+        const landingLive = generation !== undefined && isLandingLive(sessionId);
+        if (!ok) {
+          // The load failed: restore only while a LIVE landing keeps saves
+          // suppressed (the refresh retries). An expired landing cannot
+          // suppress, and restoring its backup against an unreadable draft
+          // could clobber an unknown merged transcript — leave it in storage.
+          if (backup !== null && landingLive) contentSignal.value = backup;
+          return;
+        }
+        if (pendingRetained) {
+          // Still staged (draft too full): restore the edits; a LIVE landing
+          // stays deferred for the refresh below.
+          if (backup !== null) contentSignal.value = backup;
+          return;
+        }
+        // The initial get has ALREADY merged any staged transcript server-side,
+        // so settle the landing right here instead of racing a second refresh
+        // get against the restore above:
+        // - with a backup: fold the transcripts into it, so the re-enabled
+        //   saves persist the combined draft rather than clobbering the merged
+        //   transcript with the transcript-free backup;
+        // - without a backup: the loaded draft already contains the transcript.
+        // The aggregate is exact for in-tab sequences, but a cross-tab
+        // concurrent flush can leave it under-inclusive, so it only wins when
+        // the merged draft actually ends with it.
+        const transcript = landingLive ? getLandingTranscript(sessionId) : null;
+        if (backup === null) {
+          if (landingLive) consumeLanding(sessionId, generation);
+          return;
+        }
+        if (transcript && draft?.endsWith(transcript)) {
+          // Appended blindly rather than substring-checked: the user's draft
+          // may legitimately contain the same PHRASE as the transcript, and a
+          // presence check would then drop the new voice occurrence when the
+          // re-enabled save overwrites the merged (two-occurrence) draft. The
+          // transcripts provably never reached the backup: every fold path
+          // that puts them into local content consumes the landing (lifting
+          // the suppression) before another backup can be written.
+          contentSignal.value = appendDraftText(backup, transcript);
+          if (landingLive) consumeLanding(sessionId, generation); // also retires the backup
+          return;
+        }
+        // Transcripts unknown or not yet merged: a LIVE landing defers to the
+        // refresh below (restore now; it owns the fold).
+        if (landingLive) contentSignal.value = backup;
       }
     );
     return () => {
@@ -224,7 +287,8 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
 
     // Skip save logic entirely when there is no session — draft is ephemeral.
     if (!sessionId) return;
-    // Clear existing timeout
+    // Clear any scheduled debounce FIRST, so a save scheduled before a landing
+    // fired cannot later issue a stale write while we suppress for the landing.
     if (draftSaveTimeoutRef.current) {
       clearTimeout(draftSaveTimeoutRef.current);
       draftSaveTimeoutRef.current = null;
@@ -238,6 +302,15 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       const prevSessionId = prevSessionIdRef.current;
       const last = lastSeenContentRef.current;
       const trimmedContent = last.sessionId === prevSessionId ? last.content.trim() : '';
+
+      // A departed session with a PENDING landing is skipped — its merged
+      // transcript must not be overwritten by stale local text; the backup
+      // keeps the edits for a reload/return. The session ref still advances
+      // below so the active session is not stuck matching an old landing.
+      if (isLandingLive(prevSessionId)) {
+        prevSessionIdRef.current = sessionId;
+        return;
+      }
 
       const hub = connectionManager.getHubIfConnected();
       if (hub && (trimmedContent || (last.sessionId === prevSessionId && last.cleared))) {
@@ -254,6 +327,27 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       }
     }
     prevSessionIdRef.current = sessionId;
+
+    // While a landing is pending for THIS session, the server draft may have
+    // been updated (this tab's or another tab's refresh merged the landed
+    // transcript), so this tab's local copy is stale and a debounced save would
+    // overwrite the transcript. Suppress until the landing is consumed by the
+    // idle refresh — but PERSIST the evolving local draft to the draft backup
+    // (restored on reload / when the landing resolves), so protecting the
+    // landed transcript does not disable draft durability. The generation is
+    // stored so the reconciliation retires exactly this landing's backup.
+    if (isLandingLive(sessionId)) {
+      if (content.trim() !== '') {
+        const backedUp = saveDraftBackup(sessionId, content, getLandingGeneration(sessionId) ?? 0);
+        if (backedUp) return;
+        // localStorage refused the backup (disabled / quota): suppressing the
+        // save would leave the typed text only in the composer signal — lost
+        // to a switch, reload, or close. Fall through to the NORMAL save: the
+        // typed text is newer than the server draft and must not vanish.
+      } else {
+        return;
+      }
+    }
 
     const trimmedContent = content.trim();
 

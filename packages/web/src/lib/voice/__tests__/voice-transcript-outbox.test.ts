@@ -21,9 +21,13 @@ import {
   enqueueTranscript,
   flushPendingTranscripts,
   getPendingTranscripts,
+  saveDraftBackup,
   removePendingTranscript,
+  getDraftBackup,
+  getLandingGeneration,
   isLandingLive,
   getLandingTranscript,
+  peekExpiredDraftBackup,
   markVoiceTranscriptLanded,
   resetVoiceTranscriptOutbox,
   startVoiceTranscriptOutboxFlush,
@@ -622,5 +626,41 @@ describe('voice transcript outbox', () => {
     // transcript into reconciliations.
     expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(false);
     expect(getLandingTranscript('s1')).toBeNull();
+  });
+  it('retires the backup for the consumed landing generation, not a newer one', () => {
+    const claimOf = () => peekExpiredDraftBackup('s1');
+    // A NEWER-generation backup survives a stale (mismatched-generation) consume.
+    markVoiceTranscriptLanded('s1'); // generation N
+    markVoiceTranscriptLanded('s1'); // generation N+1
+    const newestGen = voiceTranscriptLandedSignal.value.get('s1') ?? 0;
+    saveDraftBackup('s1', 'newer edit', newestGen);
+    const newerClaim = claimOf();
+    expect(newerClaim?.content).toBe('newer edit');
+    consumeVoiceTranscriptLanded('s1', (newestGen ?? 2) - 1);
+    expect(claimOf()?.content).toBe('newer edit');
+    expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(true);
+
+    // The matching-generation backup is retired on reconcile — a reload must
+    // show the freshly-merged transcript, not text the user sent/cleared.
+    saveDraftBackup('s1', 'gen2 edit', newestGen);
+    consumeVoiceTranscriptLanded('s1', newestGen);
+    expect(claimOf()).toBeNull();
+  });
+
+  it('does not restore a draft backup whose landing has expired', () => {
+    saveDraftBackup('s1', 'stale edits', 1);
+    // No live landing (signal empty, marker absent) — restoring the backup
+    // would let the normal save overwrite the freshly-merged transcript.
+    expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(false);
+    expect(getDraftBackup('s1')).toBeNull();
+  });
+
+  it('prunes expired draft backups proactively', () => {
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.draft.s1',
+      JSON.stringify({ content: 'stale', ts: Date.now() - 25 * 60 * 60 * 1000 })
+    );
+    enqueueTranscript('s1', 'fresh'); // triggers prune, which scans backups too
+    expect(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.draft.s1')).toBeNull();
   });
 });
