@@ -240,6 +240,24 @@ describe('WorkflowHookStateRepository.consumeApprovalsIfCurrentBatch', () => {
     expect(repo.get(runId, 'hook_b')?.localState.humanApproved).toBe(true);
   });
 
+  test('in-transaction validation: a later mismatch rolls back the earlier clear (round 87)', () => {
+    // Validation now runs INSIDE the transaction: clearing hook_a then
+    // validating hook_b (mismatched token) rolls hook_a's clear back — the
+    // pre-tx validation window (consume + re-approve between phases) let
+    // the tx clear the NEWER approval by its current version unchecked.
+    arm('hook_a', 1);
+    arm('hook_b', 2);
+    // Observe that hook_a's update executes BEFORE hook_b's validation
+    // fails, proving the rollback (not validation ordering) keeps the state.
+    const result = repo.consumeApprovalsIfCurrentBatch(runId, [
+      { hookId: 'hook_a', approvedAt: 1 },
+      { hookId: 'hook_b', approvedAt: 999 }, // mismatched
+    ]);
+    expect(result).toBe('token-mismatch');
+    expect(repo.get(runId, 'hook_a')?.localState.humanApproved).toBe(true);
+    expect(repo.get(runId, 'hook_b')?.localState.humanApproved).toBe(true);
+  });
+
   test('not-pending aborts the whole batch', () => {
     arm('hook_a', 1);
     const result = repo.consumeApprovalsIfCurrentBatch(runId, [

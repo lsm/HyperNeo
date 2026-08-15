@@ -57,8 +57,25 @@ export const reviewPostedHook: Hook = {
     if (!evidence.ok) return githubFailureToFlow(evidence);
 
     const { formalReviewCount, commentEvidenceCount, ownPr } = evidence.data;
-    if (formalReviewCount >= 1) return { flow: 'continue' };
-    if (ownPr && commentEvidenceCount >= 1) return { flow: 'continue' };
+    if (formalReviewCount >= 1 || (ownPr && commentEvidenceCount >= 1)) {
+      // Bind the POSITIVE decision to the identity it was made about: a
+      // concurrent pr_ready replacement can swap the run's identity while
+      // this lookup was in flight — approving feedback for the OLD PR while
+      // the run now points at a different one. The re-read MUST be
+      // repo-backed (refreshArtifacts), mirroring pr_merged; a change
+      // retries and re-verifies the new identity.
+      const fresh = ctx.refreshArtifacts?.();
+      const current = fresh ? getPrimaryLink(ctx, fresh) : undefined;
+      if (current === undefined || !samePrLink(current, link)) {
+        return {
+          flow: 'retry',
+          reason:
+            "The run's reviewed PR identity changed while the evidence was being fetched; " +
+            're-evaluating against the current identity.',
+        };
+      }
+      return { flow: 'continue' };
+    }
     return {
       flow: 'stop',
       reason: 'No fresh GitHub review evidence: post a visible review before sending feedback.',

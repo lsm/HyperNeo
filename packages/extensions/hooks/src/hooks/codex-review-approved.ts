@@ -1,6 +1,6 @@
 import type { Hook, HookAction, HookReturn } from '@hyperneo/shared/types/workflow-hooks';
 import { ghGetCodexApproval, githubFailureToFlow } from '../github';
-import { getPrimaryLink } from '../primary-link';
+import { getPrimaryLink, samePrLink } from '../primary-link';
 
 /**
  * `codex_review_approved` — opt-in (off by default) gate: codex must have
@@ -28,7 +28,24 @@ export const codexReviewApprovedHook: Hook = {
     }
     const result = await ghGetCodexApproval(ctx, link);
     if (!result.ok) return githubFailureToFlow(result);
-    if (result.data.approved) return { flow: 'continue' };
+    if (result.data.approved) {
+      // Bind the POSITIVE decision to the identity it was made about: a
+      // concurrent pr_ready replacement can swap the run's identity while
+      // this lookup was in flight — approving the OLD PR while the run now
+      // points at a potentially unapproved one. Repo-backed re-read
+      // (refreshArtifacts), mirroring pr_merged; a change retries.
+      const fresh = ctx.refreshArtifacts?.();
+      const current = fresh ? getPrimaryLink(ctx, fresh) : undefined;
+      if (current === undefined || !samePrLink(current, link)) {
+        return {
+          flow: 'retry',
+          reason:
+            "The run's reviewed PR identity changed while the codex approval was being " +
+            'verified; re-evaluating against the current identity.',
+        };
+      }
+      return { flow: 'continue' };
+    }
     return { flow: 'retry', reason: 'codex review bot approval missing for the current PR.' };
   },
 };

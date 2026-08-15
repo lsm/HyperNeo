@@ -31,6 +31,7 @@ import { createLongHorizonAgentTables } from './long-horizon-agents';
 import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration';
 import { legacyHookCoverage } from '../../lib/space/legacy-hook-coverage';
 import type { HookBinding } from '@hyperneo/shared';
+import { isHookBindingElement } from '../repositories/space-workflow-repository';
 
 /**
  * Run all database migrations
@@ -12623,7 +12624,7 @@ export function migration197Defers(db: BunDatabase): boolean {
     if (unconverted && unconverted.n > 0) return true;
     const partialRows = db
       .prepare(
-        `SELECT w.hooks, w.hook_bindings
+        `SELECT w.id AS workflow_id, w.hooks, w.hook_bindings
            FROM space_workflows w
           WHERE w.hooks IS NOT NULL
             AND w.hooks != '[]'
@@ -12631,7 +12632,7 @@ export function migration197Defers(db: BunDatabase): boolean {
             AND w.hook_bindings IS NOT NULL
             AND w.hook_bindings NOT IN ('', '[]', 'null')`
       )
-      .all() as Array<{ hooks: string; hook_bindings: string }>;
+      .all() as Array<{ workflow_id: string; hooks: string; hook_bindings: string }>;
     for (const row of partialRows) {
       let legacyParsed: unknown;
       let bindingsParsed: unknown;
@@ -12651,21 +12652,30 @@ export function migration197Defers(db: BunDatabase): boolean {
       // the repository — the drop would destroy the recoverable legacy
       // definitions and leave the workflow permanently fail-closed. Malformed
       // → defer (keep the legacy column).
+      // REPOSITORY-EQUIVALENT validation: the decoder's own element
+      // validator (method enum, node references, caller shape, routing
+      // rule) with the row's node names and declared slots — a binding the
+      // repository would decode as CORRUPT must not count as coverage for
+      // this destructive drop.
+      const rowNodes = db
+        .prepare(`SELECT name, config FROM space_workflow_nodes WHERE workflow_id = ?`)
+        .all(row.workflow_id) as Array<{ name: string; config: string | null }>;
+      const rowNodeNames = new Set(rowNodes.map((n) => n.name));
+      const rowNodeSlots = new Map(
+        rowNodes.map((n) => {
+          let agents: Array<{ name?: unknown }> = [];
+          try {
+            agents = n.config ? (JSON.parse(n.config).agents ?? []) : [];
+          } catch {
+            agents = [];
+          }
+          return [n.name, new Set(agents.map((a) => String(a.name)))];
+        })
+      );
       const bindingsAreWellFormed =
         Array.isArray(bindingsParsed) &&
         bindingsParsed.length > 0 &&
-        bindingsParsed.every(
-          (b) =>
-            !!b &&
-            typeof b === 'object' &&
-            !Array.isArray(b) &&
-            typeof (b as Record<string, unknown>).hookId === 'string' &&
-            typeof (b as Record<string, unknown>).sourceNode === 'string' &&
-            typeof (b as Record<string, unknown>).method === 'string' &&
-            typeof (b as Record<string, unknown>).enabled === 'boolean' &&
-            Array.isArray((b as Record<string, unknown>).authorizedCallers) &&
-            ((b as Record<string, unknown>).authorizedCallers as unknown[]).length > 0
-        );
+        bindingsParsed.every((b) => isHookBindingElement(b, rowNodeNames, rowNodeSlots));
       if (!bindingsAreWellFormed) return true;
       const coverage = legacyHookCoverage(legacyParsed, bindingsParsed as HookBinding[]);
       if (!coverage.complete) return true;

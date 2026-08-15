@@ -61,23 +61,73 @@ export function legacyHookCoverage(
   legacyHooks: unknown,
   bindings: HookBinding[] | undefined
 ): LegacyHookCoverage {
-  const ids = legacyHookIds(legacyHooks);
-  if (ids.length === 0) return { complete: true, missing: [] };
-  // Count PER PLACEMENT, not per distinct id: a legacy workflow may place
-  // the same validator id on two routes, and v2 currently FORBIDS placing
-  // one hook id on multiple bindings — a set-based check would let a single
-  // binding satisfy both placements while the second route's gate is
-  // silently dropped. Every placement needs a distinct enabled binding;
-  // since v2 cannot place one id twice, an under-covered workflow stays
-  // fail-closed until multi-placement is supported or the routes are
-  // re-authored with distinct hooks.
+  const placements = legacyPlacements(legacyHooks);
+  if (placements.length === 0) return { complete: true, missing: [] };
+  // Coverage matches each legacy PLACEMENT'S ROUTE, not just the id count:
+  // a `pr_ready` binding on a different target or method satisfies an
+  // id-only count while the legacy gate's actual route stays ungated (and
+  // the manager/migration can then delete the original definition). Each
+  // placement consumes ONE enabled binding with the SAME id, method, and
+  // target; a binding covers at most one placement (v2 forbids one id on
+  // multiple routes anyway).
   const enabled = (bindings ?? []).filter((b) => b.enabled !== false);
+  const used = new Set<number>();
   const missing: string[] = [];
-  const placementCounts = new Map<string, number>();
-  for (const id of ids) placementCounts.set(id, (placementCounts.get(id) ?? 0) + 1);
-  for (const [id, placements] of placementCounts) {
-    const boundCount = enabled.filter((b) => b.hookId === id).length;
-    if (boundCount < placements) missing.push(id);
+  for (const p of placements) {
+    // A placement that NAMES a target requires the binding's target to match;
+    // a legacy record with no routing field constrains only id + method (it
+    // did not record which route it gated, so any route counts as covering).
+    const match = enabled.findIndex(
+      (b, i) =>
+        !used.has(i) &&
+        b.hookId === p.id &&
+        b.method === p.method &&
+        (p.target === undefined || b.targetNode === p.target)
+    );
+    if (match === -1) {
+      missing.push(p.id);
+    } else {
+      used.add(match);
+    }
   }
   return { complete: missing.length === 0, missing };
+}
+
+/** One legacy gate placement: the validator identity plus its ROUTE. */
+export interface LegacyHookPlacement {
+  id: string;
+  method: string;
+  sourceNode?: string;
+  target?: string;
+}
+
+/** Parse per-placement legacy gate descriptors (id + route). The method
+ * defaults to send_message (the legacy-gated MCP action); the target comes
+ * from the legacy hook's routing fields when present. */
+export function legacyPlacements(legacyHooks: unknown): LegacyHookPlacement[] {
+  if (!Array.isArray(legacyHooks)) return [];
+  const out: LegacyHookPlacement[] = [];
+  for (const entry of legacyHooks) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const record = entry as Record<string, unknown>;
+    const validator = record.validator;
+    const validatorRec =
+      validator && typeof validator === 'object' && !Array.isArray(validator)
+        ? (validator as Record<string, unknown>)
+        : undefined;
+    const validatorId = typeof validator === 'string' ? validator : validatorRec?.id;
+    const id =
+      typeof validatorId === 'string' && validatorId.trim().length > 0 ? validatorId : record.id;
+    if (typeof id !== 'string' || id.trim().length === 0) continue;
+    const method =
+      typeof record.method === 'string'
+        ? record.method
+        : typeof validatorRec?.method === 'string'
+          ? (validatorRec.method as string)
+          : 'send_message';
+    const sourceNode = typeof record.sourceNode === 'string' ? record.sourceNode : undefined;
+    const target = typeof record.targetNode === 'string' ? record.targetNode : undefined;
+    out.push({ id, method, sourceNode, target });
+  }
+  return out;
 }

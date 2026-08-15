@@ -276,6 +276,47 @@ describe('SpaceWorkflowManager — legacy migration completeness (round 81)', ()
     expect(raw.hooks).toContain('a2');
   });
 
+  test('coverage matches the placement ROUTE, not just the id (round 87)', () => {
+    // Legacy pr_ready gates Coding → Review; a pr_ready binding on a
+    // DIFFERENT target satisfies an id-only count while the real route
+    // stays ungated (and the update would clear the legacy definition).
+    const id = seedLegacyWorkflow();
+    db.prepare(`UPDATE space_workflows SET hooks = ? WHERE id = ?`).run(
+      '[{"id":"pr_ready","targetNode":"Review"}]',
+      id
+    );
+    expect(() =>
+      manager.updateWorkflow(id, {
+        hookBindings: [
+          {
+            hookId: 'pr_ready',
+            sourceNode: 'Only',
+            targetNode: 'Elsewhere',
+            method: 'send_message',
+            order: 0,
+            enabled: true,
+            authorizedCallers: [{ sourceNode: 'Only' }],
+          },
+        ],
+      })
+    ).toThrow(/missing v2 bindings for: pr_ready/);
+    // Same id+target, DIFFERENT method: also uncovered.
+    expect(() =>
+      manager.updateWorkflow(id, {
+        hookBindings: [
+          {
+            hookId: 'pr_ready',
+            sourceNode: 'Only',
+            method: 'mark_complete',
+            order: 0,
+            enabled: true,
+            authorizedCallers: [{ sourceNode: 'Only' }],
+          },
+        ],
+      })
+    ).toThrow(/missing v2 bindings for: pr_ready/);
+  });
+
   test('a REPLACEMENT binding list must itself cover the legacy ids (round 82)', () => {
     // hookBindings replaces wholesale: an update supplying only hook B while
     // the row's existing bindings covered hook A must REFUSE — the union

@@ -35,12 +35,19 @@ describe('Migration 194 deferred hooks drop', () => {
         {
           hookId: 'pr_ready',
           sourceNode: 'W',
+          targetNode: 'W',
           method: 'send_message',
           enabled: true,
           authorizedCallers: [{ sourceNode: 'W' }],
         },
       ])
     );
+    // Node rows so repository-equivalent binding validation can resolve
+    // node references (the fixtures' bindings reference node 'W').
+    db.prepare(
+      `INSERT INTO space_workflow_nodes (id, workflow_id, name, config, created_at, updated_at)
+       VALUES ('n-w', 'wf-1', 'W', ?, 1, 1)`
+    ).run(JSON.stringify({ agents: [{ agentId: 'a1', name: 'worker' }] }));
     db.prepare(
       `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, definition_version, created_at, updated_at)
        VALUES ('run-1', 'sp-1', 'wf-1', 'R', 'in_progress', NULL, 1, 1)`
@@ -238,6 +245,30 @@ describe('Migration 194 deferred hooks drop', () => {
     }
   });
 
+  test('repository-equivalent validation: a bad METHOD defers the drop (round 87)', () => {
+    const db = makeLegacyDb();
+    try {
+      db.prepare(`UPDATE space_workflows SET hook_bindings = ? WHERE id = 'wf-1'`).run(
+        JSON.stringify([
+          {
+            hookId: 'pr_ready',
+            sourceNode: 'W',
+            targetNode: 'W',
+            method: 'send_messag',
+            enabled: true,
+            authorizedCallers: [{ sourceNode: 'W' }],
+          },
+        ])
+      );
+      db.prepare(`UPDATE space_workflow_runs SET status = 'done' WHERE id = 'run-1'`).run();
+      const result = runMigration197(db);
+      expect(result).toBe(false);
+      expect(hasHooksColumn(db)).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
   test('a shape-valid binding missing required fields defers the drop (round 86)', () => {
     // hookId matches the legacy id but the binding lacks sourceNode/method/
     // enabled/callers — the repository decodes it as CORRUPT, so dropping
@@ -276,6 +307,7 @@ describe('Migration 194 deferred hooks drop', () => {
           {
             hookId: 'pr_ready',
             sourceNode: 'W',
+            targetNode: 'W',
             method: 'send_message',
             enabled: true,
             authorizedCallers: [{ sourceNode: 'W' }],
@@ -304,6 +336,7 @@ describe('Migration 194 deferred hooks drop', () => {
           {
             hookId: 'pr_ready',
             sourceNode: 'W',
+            targetNode: 'W',
             method: 'send_message',
             enabled: true,
             authorizedCallers: [{ sourceNode: 'W' }],

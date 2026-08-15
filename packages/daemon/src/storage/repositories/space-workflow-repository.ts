@@ -157,7 +157,7 @@ function parseHookColumn<T>(
 }
 
 /** Structural check for a decoded HookAuthorizedCallers entry. */
-function isAuthorizedCallerElement(
+export function isAuthorizedCallerElement(
   value: unknown,
   nodeNames: Set<string>,
   nodeSlots: Map<string, Set<string>>
@@ -190,7 +190,7 @@ function isAuthorizedCallerElement(
  * a typo'd method or a shapeless caller entry would otherwise load as a
  * "valid" binding that resolveMatchingBindings silently never matches,
  * gating nothing. */
-function isHookBindingElement(
+export function isHookBindingElement(
   value: unknown,
   nodeNames: Set<string>,
   nodeSlots: Map<string, Set<string>>

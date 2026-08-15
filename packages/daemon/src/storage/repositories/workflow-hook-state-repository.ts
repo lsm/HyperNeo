@@ -96,6 +96,10 @@ function rowToSnapshot(row: HookStateRow): HookStateSnapshot {
   };
 }
 
+/** Internal sentinel aborting the batch-consume transaction when a token
+ * validation fails INSIDE the transaction (rolls back with nothing cleared). */
+class BATCH_CONSUME_ABORT extends Error {}
+
 export class WorkflowHookStateRepository {
   constructor(private db: BunDatabase) {}
 
@@ -213,37 +217,48 @@ export class WorkflowHookStateRepository {
   ): 'consumed' | 'not-pending' | 'token-mismatch' | 'conflict' {
     if (entries.length === 0) return 'consumed';
     for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        // Phase 1 (inside the tx): validate every token against the current
-        // rows — any failure aborts with NOTHING cleared.
+      // Validate AND clear inside ONE transaction: validating before the
+      // transaction starts left a window where another action consumed an
+      // observed approval and the operator approved a NEWER stop — the tx
+      // then re-read the newer row, cleared it by its current version
+      // WITHOUT rechecking the token, and returned 'consumed', delivering
+      // on an approval intended for a different violation. A sentinel abort
+      // rolls the whole transaction back with NOTHING cleared.
+      let outcome: 'consumed' | 'not-pending' | 'token-mismatch' | null = null;
+      const tx = this.db.transaction(() => {
         for (const { hookId, approvedAt } of entries) {
           const current = this.get(runId, hookId);
-          if (!current || current.localState.humanApproved !== true) return 'not-pending';
-          if (current.localState.humanApprovedAt !== approvedAt) return 'token-mismatch';
-        }
-        // Phase 2 (same tx): clear them all. The version guards re-check the
-        // rows this transaction just read; a concurrent writer between the
-        // phases would fail an update and roll the whole transaction back.
-        let cleared = false;
-        const tx = this.db.transaction(() => {
-          for (const { hookId } of entries) {
-            const current = this.get(runId, hookId);
-            if (!current) throw new Error('row vanished during batch consume');
-            const result = this.update(runId, hookId, {
-              expectedVersion: current.version,
-              localState: {
-                humanApproved: undefined,
-                humanApprovedAt: undefined,
-                humanRejectionReason: undefined,
-              },
-            });
-            if (!result) throw new Error('version conflict during batch consume');
+          if (!current || current.localState.humanApproved !== true) {
+            outcome = 'not-pending';
+            throw new BATCH_CONSUME_ABORT();
           }
-          cleared = true;
-        });
+          // Revalidate the EXACT token immediately before its clear — the
+          // row read here is the row cleared below, in this transaction.
+          if (current.localState.humanApprovedAt !== approvedAt) {
+            outcome = 'token-mismatch';
+            throw new BATCH_CONSUME_ABORT();
+          }
+          const result = this.update(runId, hookId, {
+            expectedVersion: current.version,
+            localState: {
+              humanApproved: undefined,
+              humanApprovedAt: undefined,
+              humanRejectionReason: undefined,
+            },
+          });
+          if (!result) throw new Error('version conflict during batch consume');
+        }
+        outcome = 'consumed';
+      });
+      try {
         tx();
-        if (cleared) return 'consumed';
-      } catch {
+        if (outcome === 'consumed') return 'consumed';
+        if (outcome === 'not-pending' || outcome === 'token-mismatch') return outcome;
+      } catch (err) {
+        if (err instanceof BATCH_CONSUME_ABORT) {
+          // Validated-abort: nothing cleared; surface the outcome.
+          if (outcome === 'not-pending' || outcome === 'token-mismatch') return outcome;
+        }
         // retry on version conflict or transient repo error
       }
     }
