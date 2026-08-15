@@ -1259,19 +1259,20 @@ export function setupSessionHandlers(
     }
 
     const db = sessionManager.getDatabase();
-    const messages = db
+    const all = db
       .getMessagesByStatus(targetSessionId, status)
-      .filter((message) => isSDKUserMessage(message))
-      .slice(0, limit)
-      .map((message) => ({
-        dbId: message.dbId,
-        uuid: message.uuid ?? '',
-        timestamp: message.timestamp,
-        status,
-        text: extractMessageText(message.message.content),
-      }));
+      .filter((message) => isSDKUserMessage(message));
+    // `total` lets the queue-preview UI distinguish "N messages" from "first N
+    // of M" when the client's limit truncates the list.
+    const messages = all.slice(0, limit).map((message) => ({
+      dbId: message.dbId,
+      uuid: message.uuid ?? '',
+      timestamp: message.timestamp,
+      status,
+      text: extractMessageText(message.message.content),
+    }));
 
-    return { messages };
+    return { messages, total: all.length };
   });
 
   // Remove a message that has not yet been consumed by the SDK.

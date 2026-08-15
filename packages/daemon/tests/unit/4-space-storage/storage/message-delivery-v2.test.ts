@@ -19,9 +19,12 @@ import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
 import {
   ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
   awaitDeliveryConsumption,
+  buildBatchedDeliveryContent,
   deliverAndMarkQueued,
+  deliverBatchAndMarkQueued,
   deliverMessage,
   drainDeliveryWaitersOnTerminalSDKMessage,
+  flattenDeliveryText,
   isRetryableErrorResultSubtype,
   isTerminalTurnError,
   isUniqueConstraintError,
@@ -63,6 +66,15 @@ function setupRepo(): { db: Database; repo: JobQueueRepository } {
     );
     CREATE INDEX idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC);
     CREATE INDEX idx_job_queue_status ON job_queue(status);
+    -- Minimal delivery-row projection: narrowActiveDeliveryBatchUuids reads
+    -- pending-state membership from sdk_messages (a full schema table in
+    -- production).
+    CREATE TABLE sdk_messages (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      sdk_uuid TEXT NOT NULL,
+      send_status TEXT
+    );
   `);
   // The atomic role arbiter — the v2 substrate.
   runMigration182(db as unknown as Parameters<typeof runMigration182>[0]);
@@ -346,6 +358,151 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       repo.complete(turn.id, { ok: true });
       expect(repo.activeDeliveryMessageUuids(SESSION)).toEqual(new Set(['msg-b']));
     });
+
+    it('includes batchUuids members of an active batched turn (batch-aware)', () => {
+      // A queue-flush batch turn carries its members in the payload; without
+      // the batch-aware union the reconciler/legacy replays would re-enqueue
+      // the members individually and duplicate the batched prompt.
+      repo.enqueue({
+        queue: MESSAGE_DELIVERY,
+        payload: {
+          sessionId: SESSION,
+          messageUuid: 'batch-kickoff',
+          role: 'turn',
+          origin: 'recovery',
+          parentToolUseId: null,
+          batchUuids: ['batch-kickoff', 'batch-member-2', 'batch-member-3'],
+        },
+      });
+      expect(repo.activeDeliveryMessageUuids(SESSION)).toEqual(
+        new Set(['batch-kickoff', 'batch-member-2', 'batch-member-3'])
+      );
+    });
+  });
+
+  describe('batched flush content helpers', () => {
+    it('flattenDeliveryText flattens strings and text-only arrays; rejects non-text', () => {
+      expect(flattenDeliveryText('hello')).toBe('hello');
+      expect(flattenDeliveryText('')).toBeNull();
+      expect(
+        flattenDeliveryText([
+          { type: 'text', text: 'a' },
+          { type: 'text', text: 'b' },
+        ])
+      ).toBe('a\nb');
+      expect(flattenDeliveryText([{ type: 'text', text: 'a' }, { type: 'image' }])).toBeNull();
+      expect(flattenDeliveryText([])).toBeNull();
+    });
+
+    it('buildBatchedDeliveryContent numbers and delimits every message', () => {
+      expect(buildBatchedDeliveryContent(['one', 'two'])).toBe(
+        '--- message 1 of 2 ---\none\n\n--- message 2 of 2 ---\ntwo'
+      );
+    });
+  });
+
+  describe('batched flush — ownership + lookup guards', () => {
+    it('getActiveDeliveryBatchUuids resolves the active batch payload (null when none)', () => {
+      expect(repo.getActiveDeliveryBatchUuids(SESSION, 'kickoff')).toBeNull();
+      repo.enqueue({
+        queue: MESSAGE_DELIVERY,
+        payload: {
+          sessionId: SESSION,
+          messageUuid: 'kickoff',
+          role: 'turn',
+          origin: 'recovery',
+          parentToolUseId: null,
+          batchUuids: ['kickoff', 'member-a'],
+        },
+      });
+      expect(repo.getActiveDeliveryBatchUuids(SESSION, 'kickoff')).toEqual(['kickoff', 'member-a']);
+    });
+
+    it('narrowActiveDeliveryBatchUuids shrinks the payload to the admitted set', () => {
+      repo.enqueue({
+        queue: MESSAGE_DELIVERY,
+        payload: {
+          sessionId: SESSION,
+          messageUuid: 'kickoff',
+          role: 'turn',
+          origin: 'recovery',
+          parentToolUseId: null,
+          batchUuids: ['kickoff', 'admitted-a', 'over-budget-tail', 'user-deferred-tail'],
+        },
+      });
+      // Pending tail → recorded for lifecycle settlement; user-deferred tail →
+      // NOT recorded (cancellation must not fail the user's queued message).
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, sdk_uuid, send_status)
+         VALUES ('m1', ?, 'over-budget-tail', 'enqueued'),
+                ('m2', ?, 'user-deferred-tail', 'deferred')`
+      ).run(SESSION, SESSION);
+      expect(
+        repo.narrowActiveDeliveryBatchUuids(SESSION, 'kickoff', ['kickoff', 'admitted-a'])
+      ).toBe(true);
+      // Every payload consumer (ACP acceptance consume, dead-letter, active
+      // lookups) now sees exactly what was fed — the tail is no longer
+      // batch-owned, consumed, or failed with the batch.
+      expect(repo.getActiveDeliveryBatchUuids(SESSION, 'kickoff')).toEqual([
+        'kickoff',
+        'admitted-a',
+      ]);
+      expect(repo.activeDeliveryMessageUuids(SESSION)).toEqual(new Set(['kickoff', 'admitted-a']));
+      // The settleable dropped tail stays durably recorded so lifecycle
+      // cancellation can still settle it (archive/reset must not leave it a
+      // hidden orphan) — the user-deferred one is excluded.
+      const job = repo.listJobs({ queue: MESSAGE_DELIVERY, limit: 10 })[0];
+      expect((job.payload as { droppedBatchUuids?: string[] }).droppedBatchUuids).toEqual([
+        'over-budget-tail',
+      ]);
+      const cancelled = repo.cancelForSessionWithMessages(SESSION);
+      expect(cancelled).toEqual(
+        expect.arrayContaining(['kickoff', 'admitted-a', 'over-budget-tail'])
+      );
+      expect(cancelled).not.toContain('user-deferred-tail');
+      // No active job → no narrowing (the job settled).
+      expect(repo.narrowActiveDeliveryBatchUuids(SESSION, 'kickoff', ['kickoff'])).toBe(false);
+    });
+
+    it('getActiveDeliveryRole recognizes a batch member (promote dedup)', () => {
+      // A member of a pending batch owns no job row of its own — the general
+      // idempotency guard must still see it, or a promote (Move to Steer)
+      // inserts an individual steer on top of the combined prompt.
+      repo.enqueue({
+        queue: MESSAGE_DELIVERY,
+        payload: {
+          sessionId: SESSION,
+          messageUuid: 'kickoff',
+          role: 'turn',
+          origin: 'recovery',
+          parentToolUseId: null,
+          batchUuids: ['kickoff', 'member-a'],
+        },
+      });
+      expect(repo.getActiveDeliveryRole(SESSION, 'kickoff')).toBe('turn');
+      expect(repo.getActiveDeliveryRole(SESSION, 'member-a')).toBe('turn');
+      expect(repo.getActiveDeliveryRole(SESSION, 'not-a-member')).toBeNull();
+    });
+
+    it('deliverBatchAndMarkQueued returns false when ANY member already owns an active job', async () => {
+      // The oldest queued UUID owns a surviving steer job (startup/replay) —
+      // batching only the unowned tail would reorder the queue behind it, so
+      // the whole batch must fall back to per-message delivery.
+      deliverMessage(repo, SESSION, 'turn-anchor', { origin: 'chat' });
+      deliverMessage(repo, SESSION, 'uuid-old', { origin: 'chat' }); // → steer
+      const batched = await deliverBatchAndMarkQueued({
+        jobQueue: repo,
+        sessionId: SESSION,
+        messageUuids: ['uuid-old', 'uuid-mid', 'uuid-new'],
+        origin: 'recovery',
+      });
+      expect(batched).toBe(false);
+      // Nothing new was enqueued by the batch attempt.
+      const uuids = repo
+        .listJobs({ queue: MESSAGE_DELIVERY, limit: 50 })
+        .map((j) => (j.payload as { messageUuid: string }).messageUuid);
+      expect(uuids.sort()).toEqual(['turn-anchor', 'uuid-old']);
+    });
   });
 
   describe('isProcessingDelivery — terminal-idle turn-end marker gate', () => {
@@ -377,6 +534,7 @@ class MockSession implements MessageDeliverySession {
   lastContent?: unknown;
   lastParentToolUseId?: string | null;
   lastAlreadyConsumed = false;
+  lastBatchUuids?: string[];
   /** Toggle for the human-gate-open park exemption (Codex #11). */
   waitingForInput = false;
 
@@ -384,13 +542,16 @@ class MockSession implements MessageDeliverySession {
     uuid: string,
     content: unknown,
     parentToolUseId?: string | null,
-    alreadyConsumed = false
+    alreadyConsumed = false,
+    _claimGuard?: () => boolean,
+    batchUuids?: string[]
   ): Promise<DriveTurnOutcome> {
     this.driveCalls++;
     this.lastUuid = uuid;
     this.lastContent = content;
     this.lastParentToolUseId = parentToolUseId;
     this.lastAlreadyConsumed = alreadyConsumed;
+    this.lastBatchUuids = batchUuids;
     if (this.shouldThrow) throw new Error('turn exploded');
     if (this.driveOutcomeByUuid && uuid in this.driveOutcomeByUuid) {
       return this.driveOutcomeByUuid[uuid];
@@ -457,6 +618,75 @@ describe('message-delivery v2 — handler (conformance)', () => {
     const result = await handler(job);
     expect(result).toEqual({ outcome: 'completed' });
     expect(session.driveCalls).toBe(1);
+  });
+
+  it('batched turn job → combines member contents into one delimited prompt + passes batchUuids', async () => {
+    const session = new MockSession();
+    repo.enqueue({
+      queue: MESSAGE_DELIVERY,
+      payload: {
+        sessionId: SESSION,
+        messageUuid: 'kickoff',
+        role: 'turn',
+        origin: 'recovery',
+        parentToolUseId: null,
+        batchUuids: ['kickoff', 'member-2', 'member-3'],
+      },
+    });
+    const [job] = repo.dequeue(MESSAGE_DELIVERY, 1);
+    const contents: Record<string, string> = {
+      kickoff: 'first text',
+      'member-2': 'second text',
+      'member-3': 'third text',
+    };
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: (_sid, uuid) => ({
+        content: contents[uuid] ?? '',
+        sendStatus: 'enqueued',
+      }),
+    });
+    const result = await handler(job);
+    expect(result).toEqual({ outcome: 'completed' });
+    expect(session.lastContent).toBe(
+      '--- message 1 of 3 ---\nfirst text\n\n--- message 2 of 3 ---\nsecond text\n\n--- message 3 of 3 ---\nthird text'
+    );
+    expect(session.lastBatchUuids).toEqual(['kickoff', 'member-2', 'member-3']);
+  });
+
+  it('batched turn job → skips members whose row is gone or user-deferred', async () => {
+    const session = new MockSession();
+    repo.enqueue({
+      queue: MESSAGE_DELIVERY,
+      payload: {
+        sessionId: SESSION,
+        messageUuid: 'kickoff',
+        role: 'turn',
+        origin: 'recovery',
+        parentToolUseId: null,
+        batchUuids: ['kickoff', 'deleted-member', 'deferred-member'],
+      },
+    });
+    const [job] = repo.dequeue(MESSAGE_DELIVERY, 1);
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: (_sid, uuid) => {
+        if (uuid === 'kickoff') return { content: 'only one left', sendStatus: 'enqueued' };
+        if (uuid === 'deferred-member') {
+          return { content: 'deferred', sendStatus: 'deferred' };
+        }
+        return null; // deleted-member: content gone
+      },
+    });
+    await handler(job);
+    // Only the kickoff remains usable in the handler-side estimate — plain
+    // single content. The RAW payload batchUuids still hand off to the bridge
+    // (it revalidates under the session lock before feeding), so the bridge —
+    // not this snapshot — decides the admitted set.
+    expect(session.lastContent).toBe('only one left');
+    expect(session.lastBatchUuids).toEqual(['kickoff', 'deleted-member', 'deferred-member']);
   });
 
   it('blocked startup → parks (requeue) and the job stays pending (§13: blocked→parked, not failed)', async () => {
