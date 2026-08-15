@@ -547,12 +547,12 @@ export function setupSessionHandlers(
       metadataUpdate.inputDraftVoiceBaselineSeq = (metadata.inputDraftVoiceBaselineSeq ?? 0) + 1;
     }
     if (dedupId) {
-      // Append after the TTL filter above prunes expired ids; the count cap is
-      // only a backstop so metadata cannot grow without limit within the TTL.
-      metadataUpdate.inputDraftVoiceAppendLog = [
-        ...processedLog,
-        { id: dedupId, ts: Date.now() },
-      ].slice(-500);
+      // Append after the TTL filter above prunes expired ids. NO count cap:
+      // logged ids come only from outbox flushes (each tab's outbox holds at
+      // most 20 entries), so growth within the TTL is inherently bounded —
+      // and a count cap could evict an id whose outbox entry is still
+      // retryable, letting its eventual replay double-append.
+      metadataUpdate.inputDraftVoiceAppendLog = [...processedLog, { id: dedupId, ts: Date.now() }];
     }
     const updates: UpdateSessionRequest = { metadata: metadataUpdate };
     await sessionManager.updateSession(sessionId, updates as Partial<Session>);

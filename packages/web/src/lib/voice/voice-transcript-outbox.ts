@@ -495,13 +495,22 @@ export function retireDraftBackupClaim(claim: {
   removeDraftBackupKey(claim.key, claim.generation);
   try {
     const sessionId = claim.key.slice(DRAFT_BACKUP_PREFIX.length, claim.key.lastIndexOf('.'));
-    // The marker only ever moves FORWARD: claims are freshest-at-their-time,
-    // so a later retire has a newer timestamp for an equal-or-greater
-    // generation and overwriting keeps the strongest supersede point.
-    localStorage.setItem(
-      `${SUPERSEDED_PREFIX}${sessionId}`,
-      JSON.stringify({ generation: claim.generation, beforeTs: claim.ts })
-    );
+    // The marker only ever moves FORWARD: an older claim's merge can
+    // acknowledge AFTER a newer generation's (responses race), and letting
+    // the late acknowledgement overwrite the marker would un-supersede a
+    // sibling the newer marker had already ruled out. Retain whichever
+    // marker is strongest.
+    const existing = readSuperseded(sessionId);
+    const stronger =
+      !!existing &&
+      (existing.generation > claim.generation ||
+        (existing.generation === claim.generation && existing.beforeTs >= claim.ts));
+    if (!stronger) {
+      localStorage.setItem(
+        `${SUPERSEDED_PREFIX}${sessionId}`,
+        JSON.stringify({ generation: claim.generation, beforeTs: claim.ts })
+      );
+    }
   } catch {
     /* marker best-effort — the claimed key itself is already retired */
   }

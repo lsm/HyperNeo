@@ -782,6 +782,44 @@ describe('voice transcript outbox', () => {
     expect(next?.content).toBe('live edits');
   });
 
+  it('keeps the supersede marker monotonic across racing acknowledgements', () => {
+    // A newer generation's merge acknowledges FIRST; an older claim's late
+    // acknowledgement must not move the marker backward and un-supersede a
+    // sibling the newer marker already ruled out.
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.superseded.s1',
+      JSON.stringify({ generation: 2, beforeTs: Date.now() + 5000 })
+    );
+    const lateOlderClaim = {
+      key: 'hyperneo_voice_transcript_outbox_v1.draft.s1.late-tab',
+      generation: 1,
+      ts: Date.now(),
+    };
+    localStorage.setItem(
+      lateOlderClaim.key,
+      JSON.stringify({ content: 'older edits', ts: lateOlderClaim.ts, generation: 1 })
+    );
+    retireDraftBackupClaim(lateOlderClaim);
+    // The stronger (generation-2) marker survives the late write.
+    expect(
+      JSON.parse(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.superseded.s1') ?? '{}')
+    ).toEqual({ generation: 2, beforeTs: expect.any(Number) });
+    // A same-generation LATER claim still advances the marker.
+    const newerClaim = {
+      key: 'hyperneo_voice_transcript_outbox_v1.draft.s1.newest-tab',
+      generation: 2,
+      ts: Date.now() + 6000,
+    };
+    localStorage.setItem(
+      newerClaim.key,
+      JSON.stringify({ content: 'newest edits', ts: newerClaim.ts, generation: 2 })
+    );
+    retireDraftBackupClaim(newerClaim);
+    expect(
+      JSON.parse(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.superseded.s1') ?? '{}')
+    ).toEqual({ generation: 2, beforeTs: newerClaim.ts });
+  });
+
   it('delivers the OLDEST batch when concurrent enqueues exceed the cap', () => {
     // Two tabs' pre-write prunes cannot see each other's writes, so more
     // than 20 live keys can exist. The flush batch must start at the OLDEST

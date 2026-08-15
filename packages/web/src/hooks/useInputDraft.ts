@@ -521,15 +521,15 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     const justCleared =
       prevReplayContentRef.current.sessionId === sessionId &&
       prevReplayContentRef.current.content.trim() !== '';
-    // A clear owed from the LOAD (persisted tombstone re-armed at settle)
-    // overrides the deferral: the non-empty content here is the server's
-    // merged draft — not user typing — and leaving it would resurrect the
-    // sent text until the next manual clear. Once the user interacts (a
-    // previous content recorded for this session), typing defers as usual.
-    const owedClearFromLoad =
-      pendingClearRef.current === sessionId && prevReplayContentRef.current.sessionId !== sessionId;
+    // An owed clear overrides the non-empty deferral: the content is the
+    // SERVER's merged draft (applied by the failed attempt's own get), not
+    // user typing — deferring here would leave text the user already sent
+    // resurrected for the rest of this page life. Genuine typing still wins:
+    // it re-runs this effect, whose cleanup cancels the chain's stale gets,
+    // and the reconcile-on-cancel fold merges the transcripts into the typed
+    // text instead of overwriting it.
     prevReplayContentRef.current = { sessionId, content };
-    if (content.trim() !== '' && !owedClearFromLoad) return;
+    if (content.trim() !== '' && pendingClearRef.current !== sessionId) return;
     let cancelled = false;
     // A clear is owed but cannot commit yet: keep it in memory for the next
     // effect run AND persist a tombstone so a RELOAD before the reconnect
@@ -624,7 +624,15 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             .then((result) => {
               if (!stillCurrent()) return;
               if (result.updated) {
-                contentSignal.value = result.value ?? '';
+                // Apply the stripped value only while the composer still
+                // shows what the chain's get applied (or is empty): typing
+                // since that get is NEWER user state — its reconcile-on-cancel
+                // fold already merged the transcripts into the typed text,
+                // and overwriting it here would drop the keystrokes.
+                const currentContent = contentSignal.peek();
+                if (currentContent.trim() === '' || currentContent === (draft ?? '')) {
+                  contentSignal.value = result.value ?? '';
+                }
                 consumeLanding(sessionId, generation);
               } else {
                 refresh(); // raced a newer writer/sequence — adopt the server's draft

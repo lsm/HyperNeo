@@ -1439,6 +1439,77 @@ describe('useInputDraft', () => {
       expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(true);
     });
 
+    it('retries an owed clear even while the composer holds the merged draft', async () => {
+      // The owed-clear chain's get fills the composer with the merged
+      // baseline+transcript, then the strip REJECTS (socket dropped). The
+      // non-empty deferral must not swallow the retry: the content is the
+      // SERVER's draft, not user typing, and deferring it would leave the
+      // already-sent text resurrected for the rest of the page life.
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return {
+            session: {
+              metadata: {
+                inputDraft: 'sent text voice',
+                inputDraftVoiceBaseline: 'sent text',
+                inputDraftVoiceBaselineSeq: 1,
+              },
+            },
+          };
+        }
+        if (method === 'session.stripVoiceBaseline') throw new Error('socket dropped');
+        return {};
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // A live landing defers behind the user's text; the user then sends.
+      result.current.setContent('sent text');
+      markVoiceTranscriptLanded('session-1', 'voice');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      result.current.clear();
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // First pass: the chain's get applied the merged draft, the strip
+      // failed, the clear stays owed with the composer holding the merged text.
+      expect(result.current.content).toBe('sent text voice');
+      expect(hasClearTombstone('session-1')).toBe(true);
+      expect(
+        mockHub.request.mock.calls.filter(([m]) => m === 'session.stripVoiceBaseline').length
+      ).toBeGreaterThan(0);
+
+      // A reconnect (or any re-run) must RETRY the owed clear despite the
+      // non-empty composer — the transcript-only result replaces the
+      // resurrected baseline once the strip succeeds.
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return {
+            session: {
+              metadata: {
+                inputDraft: 'sent text voice',
+                inputDraftVoiceBaseline: 'sent text',
+                inputDraftVoiceBaselineSeq: 1,
+              },
+            },
+          };
+        }
+        if (method === 'session.stripVoiceBaseline') return { updated: true, value: 'voice' };
+        return {};
+      });
+      connectionState.value = 'connected';
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('voice');
+      expect(hasClearTombstone('session-1')).toBe(false);
+    });
+
     it('versions an unversioned owed tombstone with the sequence before stripping', async () => {
       // The original owe ran offline (no get had happened), so the tombstone
       // carries no baselineSeq. The reconcile learns the sequence from its

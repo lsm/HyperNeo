@@ -928,20 +928,22 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     expect(sessionManager.updateSession).not.toHaveBeenCalled();
   });
 
-  it('accumulates processed ids and retains far more than a small count cap', async () => {
+  it('accumulates processed ids with no count cap — only the TTL bounds the log', async () => {
     // An outbox entry can stay retryable for its whole 24h TTL while unrelated
-    // direct appends keep recording ids — a 50-cap would evict the retryable
-    // id and let its eventual replay double-append. 60 fresh ids all survive.
-    existingAppendLog = Array.from({ length: 60 }, (_, i) => ({
+    // appends keep recording ids — ANY count cap (50, 500) would evict the
+    // retryable id and let its eventual replay double-append. Logged ids come
+    // only from outbox flushes (each tab's outbox caps at 20 entries), so
+    // growth within the TTL is inherently bounded; 600 fresh ids all survive.
+    existingAppendLog = Array.from({ length: 600 }, (_, i) => ({
       id: `entry-${i}`,
       ts: Date.now(),
     }));
     const handler = messageHubData.handlers.get('session.appendVoiceDraft');
-    await handler!({ sessionId: 's1', text: 'hello', dedupId: 'entry-60' }, {});
+    await handler!({ sessionId: 's1', text: 'hello', dedupId: 'entry-600' }, {});
     const write = sessionManager.updateSession.mock.calls[0][1] as {
       metadata: { inputDraftVoiceAppendLog: Array<{ id: string }> };
     };
-    expect(write.metadata.inputDraftVoiceAppendLog).toHaveLength(61);
+    expect(write.metadata.inputDraftVoiceAppendLog).toHaveLength(601);
     expect(write.metadata.inputDraftVoiceAppendLog.map((e) => e.id)).toContain('entry-0');
   });
 
