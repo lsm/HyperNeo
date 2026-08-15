@@ -8,6 +8,7 @@
  * `resolve.alias` in `vitest.config.ts` (see `tests/sdk-mock.ts`).
  */
 
+import * as nodeNet from 'node:net';
 import { configureLogger, LogLevel } from '@hyperneo/shared';
 import { resetProviderRegistry } from '../src/lib/providers/registry';
 
@@ -55,23 +56,37 @@ type ListeningServer = {
   address(): { address: string; port: number } | string | null;
   on(event: string, listener: () => void): unknown;
 };
-const loopbackOrAnyAddress = (address: string): boolean =>
-  ['127.0.0.1', '::1', 'localhost', '::', '0.0.0.0'].includes(address);
 
-const netServerProto = (
-  require('node:net') as typeof import('node:net')
-).Server.prototype as { listen: (...args: unknown[]) => unknown };
-const originalListen = netServerProto.listen;
-netServerProto.listen = function patchedListen(this: ListeningServer, ...args: unknown[]) {
-  this.on('listening', () => {
-    const address = this.address();
-    if (address && typeof address === 'object' && loopbackOrAnyAddress(address.address)) {
-      testServerPorts.add(address.port);
-      this.on('close', () => testServerPorts.delete(address.port));
-    }
-  });
-  return originalListen.apply(this, args);
+// `new URL('http://[::1]:x/')` reports hostname '[::1]' (bracketed) while
+// `server.address()` reports '::1' — normalize before comparing.
+const normalizeHost = (host: string): string => host.replace(/^\[/, '').replace(/\]$/, '');
+const loopbackOrAnyAddress = (host: string): boolean =>
+  ['127.0.0.1', '::1', 'localhost', '::', '0.0.0.0'].includes(normalizeHost(host));
+
+// The setup file is evaluated once per test file within a worker; guard the
+// prototype patch so repeated evaluations do not stack wrappers.
+type PatchableListen = ((this: ListeningServer, ...args: unknown[]) => unknown) & {
+  __unitFetchGuard?: boolean;
 };
+const netServerProto = nodeNet.Server.prototype as unknown as { listen: PatchableListen };
+if (!netServerProto.listen.__unitFetchGuard) {
+  const originalListen = netServerProto.listen;
+  const patchedListen = function patchedListen(
+    this: ListeningServer,
+    ...args: unknown[]
+  ): unknown {
+    this.on('listening', () => {
+      const address = this.address();
+      if (address && typeof address === 'object' && loopbackOrAnyAddress(address.address)) {
+        testServerPorts.add(address.port);
+        this.on('close', () => testServerPorts.delete(address.port));
+      }
+    });
+    return originalListen.apply(this, args);
+  } as PatchableListen;
+  patchedListen.__unitFetchGuard = true;
+  netServerProto.listen = patchedListen;
+}
 
 const guardError = (href: string): Error =>
   new Error(
@@ -82,6 +97,8 @@ const isAllowedUrl = (url: URL): boolean =>
   loopbackOrAnyAddress(url.hostname) &&
   url.port !== '' &&
   testServerPorts.has(Number(url.port));
+
+const REDIRECT_STATUSES = [301, 302, 303, 307, 308];
 
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
@@ -95,36 +112,45 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promis
     throw guardError(href);
   }
 
-  // Follow redirects manually so each hop is re-validated against the guard.
-  let method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
-  let headers = init?.headers;
-  let body: BodyInit | undefined = init?.body;
+  // Caller-controlled redirect modes keep their native semantics; only the
+  // default follow mode needs the guard's hop-by-hop re-validation.
+  if (init?.redirect === 'manual' || init?.redirect === 'error') {
+    return realFetch(input as RequestInfo, init);
+  }
+
+  // First hop passes the original input so a Request object's method/headers/
+  // body survive; redirect hops are rebuilt from init (stream bodies cannot be
+  // re-sent — acceptable for loopback test servers, which don't redirect bodies).
+  let currentUrl = url;
+  let currentInit = init;
+  let firstHop = true;
   for (let hop = 0; ; hop += 1) {
     if (hop >= 20) throw new Error(`unit-test fetch exceeded 20 redirects: ${href}`);
-    const response = await realFetch(url, {
-      ...init,
-      method,
-      headers,
-      body,
+    const response = await realFetch(firstHop ? (input as RequestInfo) : currentUrl, {
+      ...currentInit,
       redirect: 'manual',
     });
-    if (![301, 302, 303, 307, 308].includes(response.status)) {
+    if (!REDIRECT_STATUSES.includes(response.status)) {
       return response;
     }
     const location = response.headers.get('location');
     if (!location) {
       return response;
     }
-    const next = new URL(location, url);
+    const next = new URL(location, currentUrl);
     if (!isAllowedUrl(next)) {
       throw guardError(next.href);
     }
-    if (response.status === 303 || ((response.status === 301 || response.status === 302) && method === 'POST')) {
-      method = 'GET';
-      body = undefined;
-      headers = undefined;
+    if (
+      response.status === 303 ||
+      ((response.status === 301 || response.status === 302) &&
+        (currentInit?.method ?? 'GET').toUpperCase() === 'POST')
+    ) {
+      // Method downgrade drops the body and its content-describing headers.
+      currentInit = { ...currentInit, method: 'GET', body: undefined, headers: undefined };
     }
-    url = next;
+    currentUrl = next;
+    firstHop = false;
   }
 }) as typeof fetch;
 
