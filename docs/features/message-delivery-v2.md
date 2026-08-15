@@ -596,11 +596,22 @@ The contract (`TaskAgentManager.registerCompletionCallback`):
   completes. Suppressed on both sides of that race.
 - **`session.delivery_settled`** (processor `onComplete` lane hook — job row
   `processing`→`completed`, parks excluded) completes the node when nothing
-  else is in flight. This repays the suppressed idle after a successful retry,
-  and completes a successful turn that carried an unrelated recoverable error.
+  else is in flight, and only for `role === 'turn'`: a steer settles at
+  mid-turn CONSUMPTION while the agent is still working, so it must never
+  complete the node (the owning turn's settle always follows — its job
+  completes at turn end). This repays the suppressed idle after a successful
+  retry, and completes a successful turn that carried an unrelated recoverable
+  error. A one-shot delayed reconciliation (default 30s,
+  `HYPERNEO_DELIVERY_SETTLE_RECONCILE_MS`) repays a settle lost to a daemon
+  crash between the job row's completion and the publication: an idle session
+  with history and no active jobs is genuinely stranded, not an imminent turn
+  (activation enqueues its job within milliseconds).
 - **`session.delivery_failed`** (processor `onDead` lane hook — published for
   EVERY dead delivery, unlike the settlement's origin-gated `session.error`)
   blocks the node when `role === 'turn'`. This covers recovery-origin
   re-enqueued kickoffs that dead-letter with no `session.error` at all. Steers
   never block: a failed mid-turn handoff must not fail a node whose kickoff
-  succeeded.
+  succeeded — but when a dead steer was the LAST active job holding down a
+  suppressed terminal idle (the turn's settle was ignored while the steer was
+  in flight), it repays the suppressed completion instead of stranding the
+  node.

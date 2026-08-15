@@ -401,9 +401,15 @@ export interface SessionEvents {
    * `session.error` (published with no `details`). Emitted from the job
    * processor's `onComplete` lane hook; TaskAgentManager uses it to complete a
    * workflow node whose post-error idle was suppressed while the delivery job
-   * was still retrying (task #944).
+   * was still retrying (task #944). `role` matters: only a TURN settle is a
+   * node-completion signal — a steer settles at mid-turn CONSUMPTION while the
+   * agent is still working, so it must never complete the node.
    */
-  'session.delivery_settled': { sessionId: string; messageUuid: string };
+  'session.delivery_settled': {
+    sessionId: string;
+    messageUuid: string;
+    role?: string;
+  };
   /**
    * A durable message_delivery job for the session DEAD-LETTERED (exhausted
    * its retry budget, or was forced dead via DeadLetterImmediatelyError).

@@ -64,6 +64,11 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
   let activeJobs: Set<string>;
 
   beforeEach(() => {
+    // Shorten the crash-window reconciliation delay (read at subscribe time in
+    // registerCompletionCallback) so the reconciliation tests run in tens of
+    // ms. Tests that must stay timer-free keep an active job or rely on paths
+    // that do not consult it.
+    process.env.HYPERNEO_DELIVERY_SETTLE_RECONCILE_MS = '15';
     db = new BunDatabase(':memory:');
     createSpaceTables(db);
 
@@ -128,6 +133,7 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     subSessions.get(task.id)!.set(SUB_SESSION_ID, {
       id: SUB_SESSION_ID,
       getSDKMessageCount: () => 5,
+      getProcessingState: () => ({ status: 'idle' }),
     });
 
     completed = false;
@@ -137,6 +143,7 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
   });
 
   afterEach(() => {
+    delete process.env.HYPERNEO_DELIVERY_SETTLE_RECONCILE_MS;
     db.close();
   });
 
@@ -157,6 +164,7 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     await bus.publish('session.delivery_settled', {
       sessionId: SUB_SESSION_ID,
       messageUuid: 'kickoff-uuid',
+      role: 'turn',
     });
     await flush();
   };
@@ -219,12 +227,88 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     await bus.publish('session.delivery_settled', {
       sessionId: SUB_SESSION_ID,
       messageUuid: 'kickoff-uuid',
+      role: 'turn',
     });
     await flush();
     expect(completed).toBe(false); // steer still in flight
 
     await settleDelivery(); // last job settles
     expect(completed).toBe(true);
+  });
+
+  it('a STEER settle never completes the node mid-work (Codex P1)', async () => {
+    // A steer is consumed mid-turn while the agent is still working — its job
+    // settles at consumption. Even with nothing else tracked active, this must
+    // NOT fire completion (it would tear down the error listeners while the
+    // turn is running, so a later failure could no longer block the node).
+    activeJobs.clear();
+    activeJobs.add('turn-uuid'); // the owning turn's job — still driving
+    await bus.publish('session.delivery_settled', {
+      sessionId: SUB_SESSION_ID,
+      messageUuid: 'steer-uuid',
+      role: 'steer',
+    });
+    await flush();
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('in_progress');
+
+    // The owning turn's settle (always later — its job completes at turn end)
+    // is what completes the node.
+    await settleDelivery();
+    expect(completed).toBe(true);
+  });
+
+  it('a dead-lettered STEER repays a suppressed idle when it was the last job (Codex P2)', async () => {
+    // Kickoff turn succeeded but its settle was suppressed while a steer was
+    // in flight; the steer then dead-letters. The failed handoff must not fail
+    // the node — and must not strand it either: with nothing else in flight,
+    // it repays the suppressed completion.
+    await publishIdle(); // suppressed — kickoff job active
+    activeJobs.delete('kickoff-uuid');
+    await bus.publish('session.delivery_settled', {
+      sessionId: SUB_SESSION_ID,
+      messageUuid: 'kickoff-uuid',
+      role: 'turn',
+    }); // ignored — steer still active
+    await flush();
+    activeJobs.clear(); // steer now dead — nothing in flight
+    await bus.publish('session.delivery_failed', {
+      sessionId: SUB_SESSION_ID,
+      messageUuid: 'steer-uuid',
+      origin: 'space_inject',
+      role: 'steer',
+    });
+    await flush();
+    expect(completed).toBe(true); // repaid, NOT blocked
+    expect(nodeStatus()).toBe('in_progress'); // not blocked
+  });
+
+  it('reconciles a settle lost to a daemon crash (delayed idle+jobless check)', async () => {
+    // Crash between the job row's completion and the settle publication: the
+    // idle was suppressed, no event is coming. The delayed reconciliation
+    // fires completion for an idle session with no active jobs.
+    await publishIdle(); // suppressed — job active
+    activeJobs.clear(); // job completed; settle event LOST
+    const timerFired = new Promise<void>((resolve) => setTimeout(resolve, 60));
+    await timerFired;
+    expect(completed).toBe(true);
+  });
+
+  it('reconciliation does not fire while a job is active or the session is processing', async () => {
+    await publishIdle(); // suppressed — job active
+    // Session still processing a retry turn: reconciliation timer elapses but
+    // must not complete.
+    const subSessions = (manager as unknown as { subSessions: Map<string, Map<string, unknown>> })
+      .subSessions;
+    for (const nodeMap of subSessions.values()) {
+      const session = nodeMap.get(SUB_SESSION_ID) as
+        | { getProcessingState: () => { status: string } }
+        | undefined;
+      if (session) session.getProcessingState = () => ({ status: 'processing' });
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 60));
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('in_progress');
   });
 
   it('the dead-letter settlement (session.error with no details) blocks the node', async () => {
@@ -277,9 +361,8 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     // Codex P2: the settlement's session.error is gated to space_inject+turn,
     // so a recovery-origin re-enqueued kickoff dead-letters with no terminal
     // session.error. `session.delivery_failed` (published for every dead
-    // delivery) must still block it.
-    await publishIdle(); // suppressed — job active
-    activeJobs.clear();
+    // delivery) must still block it. (The dead row no longer occupies the
+    // active set, but the block path does not consult it.)
     await bus.publish('session.delivery_failed', {
       sessionId: SUB_SESSION_ID,
       messageUuid: 'kickoff-uuid',

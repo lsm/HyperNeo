@@ -144,6 +144,21 @@ import {
 const log = new Logger('task-agent-manager');
 const AGENT_MESSAGE_ENVELOPE_HEADER = /^─── Message from ([^\n]+) ───\n\n/;
 
+/**
+ * Delay for the one-shot delivery-settle reconciliation in
+ * `registerCompletionCallback` (task #944): after a daemon crash between the
+ * job row's completion and the `session.delivery_settled` publication, no
+ * future event repays the suppressed idle. The delay must comfortably exceed
+ * the activation window — at (re)activation the handoff inject enqueues its
+ * delivery job within milliseconds, so a still-jobless idle session this much
+ * later is genuinely stranded, not an imminent turn. Operator-tunable (and
+ * test-shortened) via env.
+ */
+function deliverySettleReconcileMs(): number {
+  const override = Number(process.env.HYPERNEO_DELIVERY_SETTLE_RECONCILE_MS);
+  return Number.isFinite(override) && override > 0 ? override : 30_000;
+}
+
 /** Central escalation target referenced by workflow slot prompts for misrouted tasks. */
 const WORKFLOW_ESCALATION_TARGET = 'space-agent';
 const AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK = '\n\n─── Reply ───\nTo reply, use: ';
@@ -3707,24 +3722,59 @@ export class TaskAgentManager {
       { sessionId: subSessionId, subscriberName: 'TaskAgentManager.subSessionCompletion' }
     );
 
-    // A delivery job settled successfully. When nothing else is in flight this
-    // is the genuine completion for a turn whose idle was suppressed above
+    // Complete the node from a DELIVERY-LAYER terminal signal: nothing else is
+    // in flight, the session exists, and it has actually processed work. Shared
+    // by the turn-settle handler, the steer dead-letter repayment, and the
+    // delayed crash-window reconciliation below. (Task #944.)
+    const completeFromDeliveryState = (): void => {
+      if (fired) return;
+      if (this.hasActiveDeliveryJob(subSessionId)) return; // another job owns the session
+
+      const session = this.getSubSession(subSessionId);
+      if (!session) return;
+      if (session.getSDKMessageCount() === 0) return; // Not started yet
+
+      fireCompletion();
+    };
+
+    // A delivery job settled successfully. Only a TURN settle is a node-
+    // completion signal: a steer settles at mid-turn CONSUMPTION while the
+    // agent is still working — completing on it would tear down the error
+    // listeners mid-work and let a later turn failure go unblocked. The owning
+    // turn's own settle (always later — its job completes at turn end) decides.
+    // When nothing else is in flight, this repays the idle suppressed above
     // (retry succeeded after a recoverable error, or a successful turn whose
     // idle raced the job completion). (Task #944.)
     const unsubscribeSettled = this.config.internalEventBus.subscribe(
       'session.delivery_settled',
-      () => {
-        if (fired) return;
-        if (this.hasActiveDeliveryJob(subSessionId)) return; // another job owns the session
-
-        const session = this.getSubSession(subSessionId);
-        if (!session) return;
-        if (session.getSDKMessageCount() === 0) return; // Not started yet
-
-        fireCompletion();
+      (event) => {
+        if (event.role !== 'turn') return;
+        completeFromDeliveryState();
       },
       { sessionId: subSessionId, subscriberName: 'TaskAgentManager.subSessionDeliverySettled' }
     );
+
+    // Crash-window reconciliation (task #944 review): the settle publication is
+    // fire-and-forget, so a daemon exit between the job row's completion and
+    // the event reaching this subscriber loses the signal permanently — the
+    // earlier idle was already suppressed (job was active), the completed job
+    // is never re-claimed, and restart rehydration publishes no fresh idle
+    // (`restoreFromDatabase` sets state without broadcasting). Re-check once,
+    // delayed past the activation window: at (re)activation the handoff inject
+    // enqueues its delivery job within milliseconds, so a still-jobless idle
+    // session this far in is a genuinely stranded completion, not an imminent
+    // turn. Unref'd so it never holds the process open.
+    const reconcileTimer = setTimeout(() => {
+      if (fired) return;
+      if (!isMessageDeliveryV2Enabled()) return;
+      const session = this.getSubSession(subSessionId);
+      if (!session) return;
+      if (session.getProcessingState().status !== 'idle') return;
+      completeFromDeliveryState();
+    }, deliverySettleReconcileMs());
+    if (typeof (reconcileTimer as { unref?: () => void }).unref === 'function') {
+      (reconcileTimer as { unref: () => void }).unref();
+    }
 
     // Block the node on a terminal failure exactly once and tear down the
     // listeners. Shared by the `session.error` and `session.delivery_failed`
@@ -3757,7 +3807,18 @@ export class TaskAgentManager {
       'session.delivery_failed',
       (event) => {
         if (fired) return;
-        if (event.role !== 'turn') return;
+        if (event.role !== 'turn') {
+          // A dead STEER never fails the node (a failed mid-turn handoff must
+          // not fail a node whose kickoff turn succeeded) — but it may have
+          // been the LAST active job holding down a suppressed terminal idle
+          // (the turn's settle was ignored while the steer was in flight, and
+          // no success settlement or later idle is coming). Repay the
+          // suppressed completion when nothing else is in flight; if work is
+          // still ongoing, the active-job check inside makes this a no-op.
+          // (Task #944 review.)
+          if (isMessageDeliveryV2Enabled()) completeFromDeliveryState();
+          return;
+        }
         fireTerminalError(DEAD_LETTER_SESSION_ERROR);
       },
       { sessionId: subSessionId, subscriberName: 'TaskAgentManager.subSessionDeliveryFailed' }
@@ -3797,8 +3858,10 @@ export class TaskAgentManager {
       { sessionId: subSessionId, subscriberName: 'TaskAgentManager.subSessionError' }
     );
 
-    // Store a combined unsubscribe that tears down all listeners at once.
+    // Store a combined unsubscribe that tears down all listeners + the
+    // reconcile timer at once.
     this.sessionListeners.set(subSessionId, () => {
+      clearTimeout(reconcileTimer);
       unsubscribeUpdated();
       unsubscribeSettled();
       unsubscribeDeliveryFailed();

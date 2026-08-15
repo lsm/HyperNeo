@@ -1087,7 +1087,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         // not retried) publishes `session.delivery_settled` — the terminal
         // SUCCESS signal for consumers that deferred a decision while the job
         // was retrying. TaskAgentManager completes the workflow node on it when
-        // the post-error idle was suppressed (task #944). Fire-and-forget: a
+        // the post-error idle was suppressed (task #944). The `role` matters:
+        // only a TURN settle may complete a node — a steer settles at mid-turn
+        // consumption while the agent is still working. Fire-and-forget: a
         // rejecting subscriber must not surface in the processor loop.
         onComplete: (job) => {
           const payload = asMessageDeliveryPayload(job.payload);
@@ -1096,6 +1098,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             .publish('session.delivery_settled', {
               sessionId: payload.sessionId,
               messageUuid: payload.messageUuid,
+              role: payload.role,
             })
             .catch(() => {});
         },
