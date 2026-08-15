@@ -686,6 +686,13 @@ function handleStorageEvent(event: StorageEvent): void {
   const key = event.key;
   if (!key) return; // localStorage.clear()
   if (key.startsWith(STORAGE_PREFIX) && !key.startsWith(LANDED_PREFIX)) {
+    if (event.newValue === null) {
+      // Another tab flushed this shared entry and removed its key — drop the
+      // local mirror too, or allEntries() (where the mirror wins on conflict)
+      // would resurrect the entry here and replay an already-delivered id as
+      // a false landing.
+      mirror.delete(key.slice(STORAGE_PREFIX.length));
+    }
     if (connectionState.value === 'connected') {
       setTimeout(() => void flushPendingTranscripts(), FLUSH_DELAY_MS);
     }

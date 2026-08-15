@@ -568,6 +568,27 @@ describe('voice transcript outbox', () => {
     stopVoiceTranscriptOutboxFlush();
   });
 
+  it('drops the local mirror when another tab removes a shared entry key', () => {
+    // Tab A enqueues (mirror + shared key); connected tab B flushes the shared
+    // entry and removes its key. A's mirror must follow the removal, or
+    // allEntries() (mirror wins on conflict) resurrects the entry here and
+    // replays an already-delivered id as a FALSE landing that suppresses
+    // draft saves.
+    enqueueTranscript('s1', 'shared text');
+    expect(getPendingTranscripts()).toHaveLength(1);
+    const [entry] = getPendingTranscripts();
+    localStorage.removeItem(`hyperneo_voice_transcript_outbox_v1.entry.${entry.id}`);
+    startVoiceTranscriptOutboxFlush();
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key: `hyperneo_voice_transcript_outbox_v1.entry.${entry.id}`,
+        newValue: null,
+      })
+    );
+    expect(getPendingTranscripts()).toHaveLength(0);
+    stopVoiceTranscriptOutboxFlush();
+  });
+
   it('adds a landing to the signal when another tab writes a landed marker', () => {
     startVoiceTranscriptOutboxFlush();
     window.dispatchEvent(

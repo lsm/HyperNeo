@@ -442,6 +442,21 @@ export function setupSessionHandlers(
       sessionId: string;
     };
 
+    // A draft write while a voice pending sequence is staged must refresh the
+    // sequence's BASELINE snapshot: the pending eventually merges onto
+    // whatever draft is current at merge time, and a stale baseline would make
+    // reconciliation treat concurrently-typed text as transcript (restoring it
+    // twice, or preserving already-sent text through a strip). The pending
+    // itself lives in a separate field this update never touches, so a plain
+    // metadata write here only re-anchors the merge point.
+    const draftWrite = (updates.metadata as Partial<SessionMetadata> | undefined)?.inputDraft;
+    if (draftWrite !== undefined) {
+      const existing = sessionManager.getSessionFromDB(targetSessionId);
+      if ((existing?.metadata?.inputDraftVoicePending ?? '').trim() !== '') {
+        (updates.metadata as Partial<SessionMetadata>).inputDraftVoiceBaseline = draftWrite ?? '';
+      }
+    }
+
     // Get roomId before updating to include in event payload
     const agentSessionForUpdate = sessionManager.getSession(targetSessionId);
     const roomIdForUpdate = agentSessionForUpdate?.getSessionData().context?.roomId;

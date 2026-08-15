@@ -581,7 +581,9 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // the earlier one. The switch is otherwise the ONLY trigger and the session
   // ref has already advanced — without this retry the expired-landing backups
   // are never pushed and are eventually pruned.
-  const pendingBackupFlushRef = useRef<Map<string, string>>(new Map());
+  const pendingBackupFlushRef = useRef<Map<string, { content: string; generation: number }>>(
+    new Map()
+  );
   // Retry retained backup flushes once the connection is restored. A flush
   // whose session is active again is ADOPTED into an idle composer (its edits
   // are newer than the stale server draft; normal saves then persist them) —
@@ -618,13 +620,16 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       if (!hub) return; // not actually reachable yet — retry on the next change
       const queued = [...pendingBackupFlushRef.current.entries()];
       pendingBackupFlushRef.current.clear();
-      for (const [flushSessionId, content] of queued) {
+      for (const [flushSessionId, { content, generation }] of queued) {
         if (flushSessionId === currentSessionIdRef.current) {
           if (contentSignal.peek().trim() === '') {
             // ADOPT into the idle composer and persist IMMEDIATELY — the
             // debounced save alone could drop the only durable copy on a
             // reload or crash before it commits. The backup retires only on
-            // the acknowledged update; a failure re-queues it.
+            // the acknowledged update, and only the generation it captured: a
+            // NEWER landing can rewrite the backup while this update is in
+            // flight, and clearing it here would strand that landing's
+            // suppressed edits. A failure re-queues it.
             contentSignal.value = content;
             hub
               .request('session.update', {
@@ -632,18 +637,19 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                 metadata: { inputDraft: content },
               })
               .then(() => {
-                clearDraftBackup(flushSessionId);
+                clearDraftBackup(flushSessionId, generation);
               })
               .catch(() => {
-                pendingBackupFlushRef.current.set(flushSessionId, content);
+                pendingBackupFlushRef.current.set(flushSessionId, { content, generation });
                 scheduleFlushRetry();
               });
           } else {
             // Active content supersedes the backup: the user returned to a
             // non-empty composer (their draft or typing) — its saves are the
             // newer state, and re-queueing the stale backup would let a later
-            // switch overwrite it. Retire the backup.
-            clearDraftBackup(flushSessionId);
+            // switch overwrite it. Retire the backup (generation-scoped: a
+            // newer landing's backup must survive this retirement).
+            clearDraftBackup(flushSessionId, generation);
           }
           continue;
         }
@@ -653,10 +659,10 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             metadata: { inputDraft: content },
           })
           .then(() => {
-            clearDraftBackup(flushSessionId);
+            clearDraftBackup(flushSessionId, generation);
           })
           .catch(() => {
-            pendingBackupFlushRef.current.set(flushSessionId, content);
+            pendingBackupFlushRef.current.set(flushSessionId, { content, generation });
             scheduleFlushRetry();
           });
       }
@@ -711,7 +717,13 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       const flushContent = claimed?.content.trim() || trimmedContent;
       const queueRetry = () => {
         if (claimed?.content.trim()) {
-          pendingBackupFlushRef.current.set(prevSessionId, claimed.content.trim());
+          // Carry the claimed GENERATION: the retry's acknowledged clear must
+          // retire only the backup it actually persisted, never one a newer
+          // landing wrote in the meantime.
+          pendingBackupFlushRef.current.set(prevSessionId, {
+            content: claimed.content.trim(),
+            generation: claimed.generation,
+          });
         }
       };
       const pushBackup = () => {

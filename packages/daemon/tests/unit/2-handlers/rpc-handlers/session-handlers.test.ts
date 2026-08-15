@@ -709,6 +709,68 @@ describe('Session RPC Handlers — models.list', () => {
   });
 });
 
+describe('Session RPC Handlers — session.update voice baseline refresh', () => {
+  let messageHubData: ReturnType<typeof createMockMessageHub>;
+  let eventBus: ReturnType<typeof createMockInternalEventBus>;
+  let sessionManager: {
+    getSession: ReturnType<typeof mock>;
+    getSessionFromDB: ReturnType<typeof mock>;
+    updateSession: ReturnType<typeof mock>;
+  };
+  let existingPending: string | null;
+  let sessionExists: boolean;
+
+  beforeEach(async () => {
+    messageHubData = createMockMessageHub();
+    eventBus = createMockInternalEventBus();
+    existingPending = null;
+    sessionExists = true;
+    sessionManager = {
+      getSession: mock(() => null),
+      getSessionFromDB: mock(() =>
+        sessionExists ? { id: 's1', metadata: { inputDraftVoicePending: existingPending } } : null
+      ),
+      updateSession: mock(async () => {}),
+    } as unknown as SessionManager;
+
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(messageHubData.hub, sessionManager, eventBus, {} as SpaceManager);
+  });
+
+  it('re-anchors the baseline to the new draft when a pending sequence is staged', async () => {
+    // A voice pending exists; another tab's normal draft save lands between
+    // the sequence start and its merge. The pending will merge onto the NEW
+    // draft, so the baseline must follow it — or reconciliation would treat
+    // the concurrently-typed text as transcript.
+    existingPending = 'voice';
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!({ sessionId: 's1', metadata: { inputDraft: 'a b' } }, {});
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: 'a b', inputDraftVoiceBaseline: 'a b' },
+    });
+  });
+
+  it('leaves the baseline untouched when no pending sequence is staged', async () => {
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!({ sessionId: 's1', metadata: { inputDraft: 'plain edit' } }, {});
+    const write = sessionManager.updateSession.mock.calls[0][1] as {
+      metadata: Record<string, unknown>;
+    };
+    expect(write.metadata.inputDraftVoiceBaseline).toBeUndefined();
+  });
+
+  it('anchors a cleared draft to an empty baseline (pending merges onto nothing)', async () => {
+    existingPending = 'voice';
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!({ sessionId: 's1', metadata: { inputDraft: null } }, {});
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: null, inputDraftVoiceBaseline: '' },
+    });
+  });
+});
+
 describe('Session RPC Handlers — session.appendVoiceDraft', () => {
   let messageHubData: ReturnType<typeof createMockMessageHub>;
   let eventBus: ReturnType<typeof createMockInternalEventBus>;
