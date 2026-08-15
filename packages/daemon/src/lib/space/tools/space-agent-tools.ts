@@ -3899,38 +3899,54 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           },
         });
 
-        // Narrow the reconciliation sweep's spared set to the caller: the
-        // sweep excludes every execution on `postApprovalSourceNodeId`'s
-        // NODE, so same-node peer agents in a multi-slot node would survive
-        // `in_progress` after the task and run complete — still able to issue
-        // tools/messages for finished work. Quiesce them now (idle +
-        // interrupt), mirroring the sweep's own transition/interrupt pair;
-        // the caller's own execution is spared — it is mid-tool-call and
-        // cannot be interrupted from within itself. Best-effort: a failure
-        // here never rolls back the committed done transition.
-        if (updated.workflowRunId && completionSourceNodeId) {
+        // Quiesce the run's workers so none survives the completion
+        // `in_progress` (the reconciliation sweep spares whole NODES — the
+        // recorded source node, or endNodeId as its fallback — so workers on
+        // those nodes would otherwise keep issuing tools/messages for
+        // finished work). Two shapes:
+        //   - WORKER caller: quiesce same-node peers, sparing only the
+        //     caller's own execution (mid-tool-call; it cannot be interrupted
+        //     from within itself).
+        //   - EXTERNAL caller (coordinator / long-horizon / ad-hoc member —
+        //     no node execution in the run): nobody in the run submitted this
+        //     verdict, and the sweep's endNodeId fallback would spare the
+        //     entire end node; quiesce every active run worker (the caller's
+        //     session is not among them).
+        // Best-effort: a failure never rolls back the committed done
+        // transition.
+        if (updated.workflowRunId) {
           try {
-            const peers = nodeExecutionRepo
+            const quiesce = (execution: { id: string; agentSessionId: string | null }) => {
+              nodeExecutionRepo.updateStatus(execution.id, 'idle');
+              if (execution.agentSessionId && taskAgentManager) {
+                void taskAgentManager
+                  .interruptBySessionId(execution.agentSessionId)
+                  .catch((err) => {
+                    log.warn(
+                      `complete_validation_task: failed to interrupt run worker session ${execution.agentSessionId}: ${err instanceof Error ? err.message : String(err)}`
+                    );
+                  });
+              }
+            };
+            const activeExecutions = nodeExecutionRepo
               .listByWorkflowRun(updated.workflowRunId)
-              .filter(
+              .filter((execution) => execution.status === 'in_progress');
+            if (completionSourceNodeId) {
+              for (const peer of activeExecutions.filter(
                 (execution) =>
                   execution.workflowNodeId === completionSourceNodeId &&
-                  execution.status === 'in_progress' &&
                   execution.id !== completionSourceExecutionId
-              );
-            for (const peer of peers) {
-              nodeExecutionRepo.updateStatus(peer.id, 'idle');
-              if (peer.agentSessionId && taskAgentManager) {
-                void taskAgentManager.interruptBySessionId(peer.agentSessionId).catch((err) => {
-                  log.warn(
-                    `complete_validation_task: failed to interrupt same-node peer session ${peer.agentSessionId}: ${err instanceof Error ? err.message : String(err)}`
-                  );
-                });
+              )) {
+                quiesce(peer);
+              }
+            } else {
+              for (const worker of activeExecutions) {
+                quiesce(worker);
               }
             }
           } catch (err) {
             log.warn(
-              `complete_validation_task: same-node peer quiesce failed for task "${updated.id}": ${err instanceof Error ? err.message : String(err)}`
+              `complete_validation_task: run-worker quiesce failed for task "${updated.id}": ${err instanceof Error ? err.message : String(err)}`
             );
           }
         }

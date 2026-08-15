@@ -6247,6 +6247,53 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     expect(executionBySession.get('other-session')?.status).toBe('in_progress');
   });
 
+  test('an external (execution-less) completion quiesces every active run worker', async () => {
+    // A coordinator/long-horizon/ad-hoc caller has no node execution in the
+    // run, so no source node is recorded and the reconciliation sweep's
+    // endNodeId fallback would spare the entire end node — workers that never
+    // submitted this verdict would survive in_progress. The tool quiesces
+    // every active execution of the run instead (the caller's session is not
+    // among them, so there is nothing to spare).
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-review',
+      agentName: 'Review',
+      agentId: ctx.agentId,
+      status: 'in_progress',
+      agentSessionId: 'end-node-session',
+    });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-mid-worker',
+      agentName: 'Worker',
+      agentId: ctx.agentId,
+      status: 'in_progress',
+      agentSessionId: 'mid-node-session',
+    });
+    const interrupted: string[] = [];
+    const handlers = makeHandlers(ctx, {
+      taskAgentManager: {
+        interruptBySessionId: async (sessionId: string) => {
+          interrupted.push(sessionId);
+        },
+      } as unknown as TaskAgentManager,
+    });
+
+    const result = await handlers.complete_validation_task({
+      task_id: task.id,
+      validation_outcome: 'coordinator completed externally',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(true);
+    expect(parsed.task.status).toBe('done');
+
+    const executions = ctx.nodeExecutionRepo.listByWorkflowRun(task.workflowRunId!);
+    expect(executions.map((e) => e.status)).toEqual(['idle', 'idle']);
+    expect(interrupted.sort()).toEqual(['end-node-session', 'mid-node-session']);
+  });
+
   test('rejects a workflow-backed task whose workflow declares a post-approval route', async () => {
     // A direct done would silently skip the route: the tick loop treats an
     // already-done task as resolved and never calls dispatchPostApproval.
