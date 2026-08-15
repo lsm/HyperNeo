@@ -50,7 +50,6 @@ console.log = () => {};
 // environment-independent. Redirects are disabled outright (redirect:'error')
 // rather than followed — a test server 3xx can never smuggle a fetch to a
 // real API, and no unit-tested server emits redirects.
-const realFetch = globalThis.fetch.bind(globalThis);
 
 // The setup file is evaluated once per test file while a worker (and its
 // prototype patch) persists across files — the registry must live on
@@ -115,7 +114,10 @@ const guardError = (href: string): Error =>
   );
 
 const isAllowedUrl = (url: URL): boolean => {
-  if (url.port === '') {
+  // The URL host must be loopback no matter what the server bound — a
+  // wildcard-bound server never licenses non-loopback destinations.
+  const host = normalizeHost(url.hostname);
+  if (!LOOPBACK_ADDRESSES.has(host) || url.port === '') {
     return false;
   }
   const bound = guardStash.boundPorts.get(Number(url.port));
@@ -125,7 +127,6 @@ const isAllowedUrl = (url: URL): boolean => {
   if ([...ANY_ADDRESSES].some((any) => bound.has(any))) {
     return true;
   }
-  const host = normalizeHost(url.hostname);
   if (bound.has(host)) {
     return true;
   }
@@ -133,39 +134,51 @@ const isAllowedUrl = (url: URL): boolean => {
   return host === 'localhost' && (bound.has('127.0.0.1') || bound.has('::1'));
 };
 
-globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-  const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-  let url: URL;
-  try {
-    url = new URL(href);
-  } catch {
-    throw guardError(href);
-  }
-  if (!isAllowedUrl(url)) {
-    throw guardError(href);
-  }
-
-  // Caller-controlled redirect modes keep their native semantics.
-  if (init?.redirect === 'manual' || init?.redirect === 'error') {
-    return realFetch(input as RequestInfo, init);
-  }
-  if (!init && input instanceof Request && input.redirect !== 'follow') {
-    return realFetch(input);
-  }
-
-  try {
-    return await realFetch(input as RequestInfo, { ...init, redirect: 'error' });
-  } catch (error) {
-    if (error instanceof TypeError && /redirect/i.test(error.message)) {
-      throw new Error(
-        `unit-test fetch to ${href} followed a redirect — test servers must not redirect in unit tests (see tests/vitest.setup.ts)`
-      );
+type GuardedFetch = typeof fetch & { __unitFetchGuard?: boolean };
+const currentFetch = globalThis.fetch as GuardedFetch;
+// Install once per worker: on re-evaluation globalThis.fetch is already the
+// guard, and re-installing would wrap it around itself.
+if (!currentFetch.__unitFetchGuard) {
+  const realFetch = currentFetch.bind(globalThis);
+  const guardedFetch = (async (
+    input: RequestInfo | URL,
+    init?: RequestInit
+  ): Promise<Response> => {
+    const href =
+      typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    let url: URL;
+    try {
+      url = new URL(href);
+    } catch {
+      throw guardError(href);
     }
-    throw error;
-  }
-}) as typeof fetch;
+    if (!isAllowedUrl(url)) {
+      throw guardError(href);
+    }
 
-(globalThis as unknown as Record<string, unknown>).__originalFetch = realFetch;
+    // Caller-controlled redirect modes keep their native semantics; init does
+    // not override a Request object's own mode when it omits `redirect`.
+    const requestedRedirect =
+      init?.redirect ?? (input instanceof Request ? input.redirect : undefined);
+    if (requestedRedirect === 'manual' || requestedRedirect === 'error') {
+      return realFetch(input as RequestInfo, init);
+    }
+
+    try {
+      return await realFetch(input as RequestInfo, { ...init, redirect: 'error' });
+    } catch (error) {
+      if (error instanceof TypeError && /redirect/i.test(error.message)) {
+        throw new Error(
+          `unit-test fetch to ${href} followed a redirect — test servers must not redirect in unit tests (see tests/vitest.setup.ts)`
+        );
+      }
+      throw error;
+    }
+  }) as GuardedFetch;
+  guardedFetch.__unitFetchGuard = true;
+  globalThis.fetch = guardedFetch;
+  (globalThis as unknown as Record<string, unknown>).__originalFetch = realFetch;
+}
 
 // Clear all API keys so unit tests don't make real API calls.
 process.env.ANTHROPIC_API_KEY = '';
