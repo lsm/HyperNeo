@@ -31,7 +31,6 @@ import { settleMessageDeliveryDeadLetter } from '../../../../src/lib/job-handler
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
-import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
@@ -63,7 +62,8 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
   let nodeExecRepo: NodeExecutionRepository;
   let bus: ReturnType<typeof createDaemonInternalEventBus>;
   let manager: TaskAgentManager;
-  let sdkRepo: SDKMessageRepository;
+  /** Durable turn-delivery outcome stand-in for the reconcile path. */
+  let turnOutcome: 'completed' | 'dead' | null;
   let executionId: string;
   let completed: boolean;
   /** Mutable stand-in for the session's active message_delivery job set. */
@@ -118,21 +118,17 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     bus = createDaemonInternalEventBus();
 
     activeJobs = new Set(['kickoff-uuid']);
-    sdkRepo = new SDKMessageRepository(db as never);
-    // The reconcile path reads current-activation evidence from sdk_messages.
-    // Seed the parent session row so per-test message inserts satisfy the FK.
-    const sessionNow = new Date().toISOString();
-    db.prepare(
-      `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata)
-       VALUES (?, 'sub', ?, ?, 'active', '{}', '{}')`
-    ).run(SUB_SESSION_ID, sessionNow, sessionNow);
+    // Stand-in for the durable turn-delivery outcome the reconcile reads
+    // (deliveryTurnOutcomeSince): null = no settled turn for this activation.
+    turnOutcome = null;
     const config = {
       db: {
         getDatabase: () => db,
-        // hasActiveDeliveryJob resolves the active delivery-job set from here.
-        getJobQueueRepo: () => ({ activeDeliveryMessageUuids: () => activeJobs }),
-        // The reconcile timer reads hasMessagesSince from here.
-        getSDKMessageRepo: () => sdkRepo,
+        // hasActiveDeliveryJob / reconciliation resolve job state from here.
+        getJobQueueRepo: () => ({
+          activeDeliveryMessageUuids: () => activeJobs,
+          deliveryTurnOutcomeSince: () => turnOutcome,
+        }),
       },
       taskRepo,
       nodeExecutionRepo: nodeExecRepo,
@@ -193,14 +189,6 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     await flush();
   };
   const nodeStatus = (): string | undefined => nodeExecRepo.getById(executionId)?.status;
-
-  /** Seed a raw sdk_messages row (current-activation evidence for reconcile). */
-  const seedSdkMessage = (id: string, timestampIso: string): void => {
-    db.prepare(
-      `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
-       VALUES (?, ?, 'assistant', '{}', ?)`
-    ).run(id, SUB_SESSION_ID, timestampIso);
-  };
 
   it('a recoverable error does not block the node, and the retry settles it as complete', async () => {
     await publishError(RECOVERABLE_DETAILS);
@@ -315,24 +303,36 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     expect(nodeStatus()).toBe('in_progress'); // not blocked
   });
 
-  it('reconciles a settle lost to a daemon crash (delayed idle+jobless check)', async () => {
+  it('reconciles a settle lost to a daemon crash (durable completed turn)', async () => {
     // Crash between the job row's completion and the settle publication: the
-    // idle was suppressed, no event is coming. The delayed reconciliation
-    // fires completion for an idle session with no active jobs — and with
-    // SDK output postdating the execution start (current-activation evidence).
-    seedSdkMessage('turn-output', new Date().toISOString());
+    // idle was suppressed, no event is coming. The durable row says the turn
+    // completed successfully for this activation — the delayed reconciliation
+    // fires completion.
+    turnOutcome = 'completed';
     await publishIdle(); // suppressed — job active
     activeJobs.clear(); // job completed; settle event LOST
     await new Promise<void>((resolve) => setTimeout(resolve, 60));
     expect(completed).toBe(true);
   });
 
+  it('reconciles a lost dead-letter publication by BLOCKING (durable dead turn)', async () => {
+    // Crash between the job row going dead and the delivery_failed
+    // publication: the idle was suppressed while the job was active; the dead
+    // row is absent from hasActiveDeliveryJob. Transcript rows (the failed
+    // turn's partial output) must NOT satisfy the reconcile — the durable dead
+    // turn row makes it BLOCK instead. (Codex P2.)
+    turnOutcome = 'dead';
+    await publishIdle(); // suppressed — job active
+    activeJobs.clear(); // job dead; delivery_failed event LOST
+    await new Promise<void>((resolve) => setTimeout(resolve, 60));
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('blocked');
+  });
+
   it('reconciliation ignores a reused session whose kickoff was never enqueued (Codex P2)', async () => {
     // Crash between registering the callback and enqueuing the next kickoff on
-    // a REUSED session: idle, historical transcript, no active job. The
-    // historical messages predate this execution's start — they are NOT proof
-    // the current turn ran, so the timer must not complete the node.
-    seedSdkMessage('old-history', '2020-01-01T00:00:00.000Z');
+    // a REUSED session: idle, historical transcript, no active job. No turn
+    // job settled for THIS activation — the timer must not complete the node.
     await new Promise<void>((resolve) => setTimeout(resolve, 60));
     expect(completed).toBe(false);
     expect(nodeStatus()).toBe('in_progress');

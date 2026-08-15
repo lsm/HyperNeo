@@ -3757,21 +3757,23 @@ export class TaskAgentManager {
       { sessionId: subSessionId, subscriberName: 'TaskAgentManager.subSessionDeliverySettled' }
     );
 
-    // Crash-window reconciliation (task #944 review): the settle publication is
-    // fire-and-forget, so a daemon exit between the job row's completion and
-    // the event reaching this subscriber loses the signal permanently — the
-    // earlier idle was already suppressed (job was active), the completed job
-    // is never re-claimed, and restart rehydration publishes no fresh idle
-    // (`restoreFromDatabase` sets state without broadcasting). Re-check once,
-    // delayed past the activation window, and ONLY with current-activation
-    // evidence: SDK output that postdates the execution's start. A reused
-    // session idles with a full HISTORICAL transcript, and a crash between
-    // registering this callback and enqueuing the next kickoff would otherwise
-    // falsely complete the new execution whose turn never ran. The evidence
-    // check is consistent with the active-job check: a kickoff that WAS
-    // enqueued has a job row (pending/processing) and is suppressed there, so
-    // "no job + output since start" is exactly the lost-settle shape. Unref'd
-    // so it never holds the process open.
+    // Crash-window reconciliation (task #944 review): both settlement
+    // publications are fire-and-forget, so a daemon exit between the job row's
+    // terminal transition and the event reaching this subscriber loses the
+    // signal permanently — the earlier idle was already suppressed (job was
+    // active), a completed/dead row is never re-claimed, and restart
+    // rehydration publishes no fresh idle (`restoreFromDatabase` sets state
+    // without broadcasting). Re-check once, delayed past the activation
+    // window, deriving the decision from the DURABLE job row —
+    // `deliveryTurnOutcomeSince(startedAt)`: a `dead` turn row for the current
+    // activation BLOCKS (repaying a lost `session.delivery_failed`
+    // publication), a `completed`-with-success-result turn row COMPLETES, and
+    // anything else (no job for this activation — never enqueued, or only
+    // non-success outcomes) declines. This is strictly stronger than
+    // transcript-based evidence: a reused session's historical rows can never
+    // qualify, and a dead-lettered turn whose error/result rows postdate the
+    // activation start can never complete. Unref'd so it never holds the
+    // process open.
     const reconcileTimer = setTimeout(() => {
       // Best-effort by nature (the event-driven paths are primary); a throw
       // here must never surface as an unhandled timer exception.
@@ -3784,13 +3786,14 @@ export class TaskAgentManager {
         const execution = this.config.nodeExecutionRepo.getByAgentSessionId(subSessionId);
         const startedAt = execution?.startedAt ?? execution?.createdAt;
         if (!startedAt) return;
-        if (
-          !this.config.db
-            .getSDKMessageRepo()
-            .hasMessagesSince(subSessionId, new Date(startedAt).toISOString())
-        ) {
+        const outcome = this.config.db
+          .getJobQueueRepo()
+          .deliveryTurnOutcomeSince(subSessionId, startedAt);
+        if (outcome === 'dead') {
+          fireTerminalError(DEAD_LETTER_SESSION_ERROR);
           return;
         }
+        if (outcome !== 'completed') return;
         completeFromDeliveryState();
       } catch (err) {
         log.debug(

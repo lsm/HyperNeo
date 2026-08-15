@@ -1,5 +1,5 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
+import type { Database as BunDatabase } from '../sqlite-compat';
 
 export type JobStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'dead';
 
@@ -421,6 +421,39 @@ export class JobQueueRepository {
     return out;
   }
 
+  /**
+   * The durable terminal outcome of the session's TURN delivery jobs settled
+   * at/after `sinceMs` (the current node execution's start): `'dead'` when any
+   * dead-lettered (blocks — a lost `session.delivery_failed` publication is
+   * repaid), `'completed'` when any completed with a genuinely successful turn
+   * result (`outcome === 'completed'`, mirroring `isCompletedTurnResult` —
+   * non-success completions are NOT a success settlement), else `null`.
+   * Scoped to the current activation so a reused session's prior-activation
+   * rows cannot qualify. Used by TaskAgentManager's crash-window
+   * reconciliation, which must derive its decision from the durable job row,
+   * not from arbitrary recent transcript rows. (Task #944 review.)
+   */
+  deliveryTurnOutcomeSince(sessionId: string, sinceMs: number): 'completed' | 'dead' | null {
+    const rows = this.db
+      .prepare(
+        `SELECT status, json_extract(result, '$.outcome') AS outcome
+           FROM job_queue
+          WHERE queue = 'message_delivery'
+            AND json_extract(payload, '$.sessionId') = ?
+            AND json_extract(payload, '$.role') = 'turn'
+            AND completed_at IS NOT NULL
+            AND completed_at >= ?`
+      )
+      .all(sessionId, sinceMs) as Array<{ status: string; outcome: string | null }>;
+    for (const row of rows) {
+      if (row.status === 'dead') return 'dead';
+    }
+    for (const row of rows) {
+      if (row.status === 'completed' && row.outcome === 'completed') return 'completed';
+    }
+    return null;
+  }
+
   complete(
     jobId: string,
     result?: Record<string, unknown>,
@@ -458,7 +491,7 @@ export class JobQueueRepository {
     const maxRetries = row.max_retries as number;
 
     if (retryCount < maxRetries) {
-      const delay = Math.pow(2, retryCount) * 1000;
+      const delay = 2 ** retryCount * 1000;
       this.db
         .prepare(
           `UPDATE job_queue SET retry_count = retry_count + 1, status = 'pending', error = ?, run_at = ?, started_at = NULL WHERE id = ?`

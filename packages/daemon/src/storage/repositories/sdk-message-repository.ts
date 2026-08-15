@@ -1970,22 +1970,6 @@ export class SDKMessageRepository {
   }
 
   /**
-   * Whether the session has ANY SDK message at/after `sinceIso` (ISO-8601).
-   * Used by TaskAgentManager's delivery-settle reconciliation as
-   * current-activation evidence: a genuine turn completion produced messages
-   * after the node execution started, while a kickoff that was never even
-   * enqueued (crash inside the activation window) leaves the newest message
-   * predating the activation — a reused session's historical transcript is
-   * NOT proof the current execution's turn ran. (Task #944 review.)
-   */
-  hasMessagesSince(sessionId: string, sinceIso: string): boolean {
-    const row = this.db
-      .prepare(`SELECT 1 FROM sdk_messages WHERE session_id = ? AND timestamp >= ? LIMIT 1`)
-      .get(sessionId, sinceIso) as { 1: number } | undefined | null;
-    return row != null;
-  }
-
-  /**
    * The subtype of the MOST RECENT NON-success terminal `result` after the
    * message identified by `uuid` (e.g. `error_max_budget_usd`), or null when
    * none exists. Companion of {@link hasTerminalResultAfter}: the bridge uses

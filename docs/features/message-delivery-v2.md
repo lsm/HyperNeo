@@ -607,15 +607,15 @@ The contract (`TaskAgentManager.registerCompletionCallback`):
   acceptance, leaving the steer as the last active job). This repays the suppressed idle after a successful
   retry, and completes a successful turn that carried an unrelated recoverable
   error. A one-shot delayed reconciliation (default 30s,
-  `HYPERNEO_DELIVERY_SETTLE_RECONCILE_MS`) repays a settle lost to a daemon
-  crash between the job row's completion and the publication: an idle session
-  with no active jobs is a candidate only with CURRENT-ACTIVATION evidence —
-  SDK output postdating the node execution's start
-  (`hasMessagesSince`). A reused session's historical transcript alone is not
-  proof the current execution's turn ran (a crash between registering the
-  completion callback and enqueuing the next kickoff would otherwise falsely
-  complete it), and a kickoff that WAS enqueued has a job row and is
-  suppressed by the active-job check instead.
+  `HYPERNEO_DELIVERY_SETTLE_RECONCILE_MS`) repays a settlement lost to a
+  daemon crash between the job row's terminal transition and the publication —
+  deriving its decision from the DURABLE job row via
+  `deliveryTurnOutcomeSince(execution.startedAt)`: a `dead` turn row for the
+  current activation BLOCKS (repaying a lost `session.delivery_failed`
+  publication), a `completed`-with-success-result turn row COMPLETES, anything
+  else declines. This is strictly stronger than transcript evidence: a reused
+  session's historical rows can never qualify, and a dead-lettered turn whose
+  partial output postdates the activation start can never complete.
 - **`session.delivery_failed`** (processor `onDead` lane hook — published for
   EVERY dead delivery, unlike the settlement's origin-gated `session.error`)
   blocks the node when `role === 'turn'`. This covers recovery-origin
