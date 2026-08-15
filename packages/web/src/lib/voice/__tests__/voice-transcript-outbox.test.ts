@@ -20,10 +20,12 @@ import {
   consumeVoiceTranscriptLanded,
   enqueueTranscript,
   flushPendingTranscripts,
+  getDraftBackup,
   getPendingTranscripts,
   markVoiceTranscriptLanded,
   removePendingTranscript,
   resetVoiceTranscriptOutbox,
+  saveDraftBackup,
   startVoiceTranscriptOutboxFlush,
   stopVoiceTranscriptOutboxFlush,
   voiceTranscriptLandedSignal,
@@ -290,6 +292,40 @@ describe('voice transcript outbox', () => {
     expect(
       localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1')
     ).not.toBeNull();
+  });
+
+  it('does not clear the draft backup when a tab consumes its landing', () => {
+    saveDraftBackup('s1', 'editing');
+    markVoiceTranscriptLanded('s1');
+    consumeVoiceTranscriptLanded('s1', 1);
+    // Consumption is local — another tab's deferred-landing draft backup must
+    // not be erased; TTL prunes it.
+    expect(getDraftBackup('s1')).toBe('editing');
+  });
+
+  it('prunes expired draft backups proactively', () => {
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.draft.s1',
+      JSON.stringify({ content: 'stale', ts: Date.now() - 25 * 60 * 60 * 1000 })
+    );
+    enqueueTranscript('s1', 'fresh'); // triggers prune, which scans backups too
+    expect(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.draft.s1')).toBeNull();
+  });
+
+  it('clears a local landing when another tab prunes its marker', () => {
+    markVoiceTranscriptLanded('s1');
+    startVoiceTranscriptOutboxFlush();
+    // Another tab pruned the marker (removing the shared key) — this tab must
+    // clear its local landing so the save-suppression lifts.
+    localStorage.removeItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1');
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key: 'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+        newValue: null,
+      })
+    );
+    expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(false);
+    stopVoiceTranscriptOutboxFlush();
   });
 
   it('writes distinct landed-marker values for repeated landings (cross-tab storage events)', () => {

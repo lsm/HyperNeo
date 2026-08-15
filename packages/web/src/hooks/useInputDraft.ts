@@ -60,6 +60,10 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   const contentSignal = useSignal('');
   const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevSessionIdRef = useRef<string | null>(null);
+  // The live session id, so a cancelled get can tell "the user typed" (same
+  // session — reconcile the merged transcript into the local draft) from "the
+  // hook moved to another session" (never touch the new session's content).
+  const currentSessionIdRef = useRef(sessionId);
   // The sessionId whose initial draft load has settled. While a session's
   // initial load is still in flight, the signal is transiently '' — letting the
   // save effect issue its immediate "empty → clear" write in that window can
@@ -89,7 +93,8 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     (
       targetSessionId: string,
       isCancelled: () => boolean,
-      onResult?: (ok: boolean, pendingRetained?: boolean, wasCancelled?: boolean) => void
+      onResult?: (ok: boolean, pendingRetained?: boolean, wasCancelled?: boolean) => void,
+      reconcileOnCancel?: boolean
     ): void => {
       const hub = connectionManager.getHubIfConnected();
       if (!hub) {
@@ -105,7 +110,23 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         .then((response) => {
           const cancelled = isCancelled();
           const draft = response.session?.metadata?.inputDraft;
-          if (!cancelled && draft) contentSignal.value = draft;
+          if (!cancelled && draft) {
+            contentSignal.value = draft;
+          } else if (
+            cancelled &&
+            reconcileOnCancel &&
+            currentSessionIdRef.current === targetSessionId &&
+            draft &&
+            !contentSignal.peek().includes(draft)
+          ) {
+            // A cancelled REPLAY get still merged the transcript server-side.
+            // Fold the merged result into the local typed text so a subsequent
+            // save does not overwrite it (consuming the landing below re-enables
+            // saves). Scoped to the SAME session — a stale get from a moved-on
+            // session must never touch the new session's content.
+            const current = contentSignal.peek();
+            contentSignal.value = current ? `${current} ${draft}` : draft;
+          }
           const pendingRetained = !!response.session?.metadata?.inputDraftVoicePending;
           onResult?.(true, pendingRetained, cancelled);
         })
@@ -133,6 +154,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     // this, loading A -> B -> back to A would see the stale marker for A and
     // clear A's durable draft while A's fresh get is still in flight.
     initialLoadSettledRef.current = null;
+    currentSessionIdRef.current = sessionId;
 
     // Clear content immediately to prevent showing stale draft
     contentSignal.value = '';
@@ -217,7 +239,11 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           // landing is handled — leaving it pending would let a later clear
           // delete the merged transcript.
           if (ok && !pendingRetained) consumeVoiceTranscriptLanded(sessionId, generation);
-        }
+        },
+        // A replay get cancelled by typing must reconcile the merged transcript
+        // into the local draft (see loadDraft) so the re-enabled save does not
+        // overwrite it.
+        true
       );
     };
     if (justCleared || pendingClearRef.current === sessionId) {

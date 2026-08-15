@@ -86,13 +86,27 @@ function markVoiceTranscriptLandedLocal(sessionId: string): void {
 }
 
 /**
+ * Drop a session from the LOCAL landing map (no localStorage write). Used when
+ * another tab pruned the shared marker (TTL expired): an expired landing must
+ * not keep this tab's save-suppression active forever. The caller guards
+ * against concurrent fresh landings before invoking.
+ */
+function dropLocalLanding(sessionId: string): void {
+  const current = voiceTranscriptLandedSignal.value;
+  if (!current.has(sessionId)) return;
+  const next = new Map(current);
+  next.delete(sessionId);
+  voiceTranscriptLandedSignal.value = next;
+}
+
+/**
  * Forget the landing of generation `generation` once its session's composer
  * has refreshed for it — but only if no NEWER landing arrived meanwhile (the
  * count is unchanged), so a landing that landed mid-refresh keeps its own
- * pending refresh. The cross-tab landed MARKER is deliberately KEPT (TTL
- * prunes it): consumption is local to this tab, and a later tab must still be
- * able to hydrate the marker if it opens while the daemon is unavailable.
- * Also clears this session's draft backup (the refresh reconciled it).
+ * pending refresh. The cross-tab landed MARKER and the draft BACKUP are
+ * deliberately KEPT (TTL prunes them): consumption is local to this tab, so a
+ * later tab must still be able to hydrate the marker, and another tab's own
+ * draft backup must not be erased by this tab's consumption.
  */
 export function consumeVoiceTranscriptLanded(sessionId: string, generation: number): void {
   const current = voiceTranscriptLandedSignal.value;
@@ -100,7 +114,6 @@ export function consumeVoiceTranscriptLanded(sessionId: string, generation: numb
   const next = new Map(current);
   next.delete(sessionId);
   voiceTranscriptLandedSignal.value = next;
-  clearDraftBackup(sessionId);
 }
 
 const DRAFT_BACKUP_TTL_MS = 24 * 60 * 60 * 1000;
@@ -235,6 +248,18 @@ function prune(): void {
       if (!key || !key.startsWith(LANDED_PREFIX)) continue;
       const ts = Number(localStorage.getItem(key) ?? 0);
       if (now - ts >= MAX_AGE_MS) localStorage.removeItem(key);
+    }
+  } catch {
+    /* storage unavailable */
+  }
+  // Drop expired draft backups proactively — a backup whose session is never
+  // reopened would otherwise linger past its TTL with nothing to prune it.
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(DRAFT_BACKUP_PREFIX)) continue;
+      const parsed = JSON.parse(localStorage.getItem(key) ?? 'null') as { ts?: number } | null;
+      if (parsed && now - (parsed.ts ?? 0) >= DRAFT_BACKUP_TTL_MS) localStorage.removeItem(key);
     }
   } catch {
     /* storage unavailable */
@@ -415,8 +440,16 @@ function handleStorageEvent(event: StorageEvent): void {
     if (connectionState.value === 'connected') {
       setTimeout(() => void flushPendingTranscripts(), FLUSH_DELAY_MS);
     }
-  } else if (key.startsWith(LANDED_PREFIX) && event.newValue !== null) {
-    markVoiceTranscriptLandedLocal(key.slice(LANDED_PREFIX.length));
+  } else if (key.startsWith(LANDED_PREFIX)) {
+    const sessionId = key.slice(LANDED_PREFIX.length);
+    if (event.newValue !== null) {
+      markVoiceTranscriptLandedLocal(sessionId);
+    } else if (localStorage.getItem(key) === null) {
+      // Another tab pruned the marker (TTL expired) and no fresh marker was
+      // written since — clear this tab's local landing so an expired landing
+      // does not keep the save-suppression active forever.
+      dropLocalLanding(sessionId);
+    }
   }
 }
 

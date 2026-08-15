@@ -695,8 +695,10 @@ describe('useInputDraft', () => {
         await vi.runAllTimersAsync();
       });
       // The landing is consumed — a later clear must not delete the merged
-      // transcript.
+      // transcript — and the merged transcript was folded into the local typed
+      // text so a subsequent save does not overwrite it.
       expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(false);
+      expect(result.current.content).toBe('typing transcript');
     });
 
     it('cancels a scheduled save when a landing arrives before it fires', async () => {
