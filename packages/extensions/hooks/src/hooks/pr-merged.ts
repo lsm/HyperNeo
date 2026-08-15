@@ -1,6 +1,6 @@
 import type { Hook, HookAction, HookReturn } from '@hyperneo/shared/types/workflow-hooks';
 import { ghGetPr, githubFailureToFlow } from '../github';
-import { getPrimaryLink } from '../primary-link';
+import { getPrimaryLink, samePrLink } from '../primary-link';
 
 /**
  * `pr_merged` — the `mark_complete` merge gate. The run's reviewed PR must be
@@ -22,7 +22,23 @@ export const prMergedHook: Hook = {
     const result = await ghGetPr(ctx, link);
     if (!result.ok) return githubFailureToFlow(result);
 
-    if (result.data.state === 'MERGED') return { flow: 'continue' };
+    if (result.data.state === 'MERGED') {
+      // Bind the POSITIVE decision to the identity it was made about: a
+      // concurrent pr_ready replacement (the prior reviewed PR closed) can
+      // swap the run's identity while this lookup was in flight — approving
+      // completion for the OLD PR while the run now points at an unmerged
+      // one. Re-read the identity; a change re-verifies against the new PR.
+      const current = getPrimaryLink(ctx);
+      if (current === undefined || !samePrLink(current, link)) {
+        return {
+          flow: 'retry',
+          reason:
+            "The run's reviewed PR identity changed while the merge was being verified; " +
+            're-verifying against the current identity.',
+        };
+      }
+      return { flow: 'continue' };
+    }
     if (result.data.state === 'OPEN') return { flow: 'retry', reason: 'PR is not merged yet.' };
     return { flow: 'stop', reason: `PR state is ${result.data.state}; expected MERGED.` };
   },

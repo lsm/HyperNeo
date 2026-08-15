@@ -535,6 +535,26 @@ describe('createPrMergedGate', () => {
     expect(result).toEqual({ ok: true });
   });
 
+  test('refuses when the identity swaps during the lookup (round 76)', async () => {
+    // The gate resolved PR A as MERGED, but a concurrent pr_ready replacement
+    // swapped the run's identity to PR B mid-lookup — completing the task for
+    // A while the run points at B must refuse.
+    let currentUrl = PR_URL;
+    const gate = createPrMergedGate({
+      resolvePrUrl: () => currentUrl,
+      getPrState: async () => {
+        currentUrl = 'https://github.com/lsm/HyperNeo/pull/5678';
+        return 'MERGED';
+      },
+    });
+    const result = await gate(task);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('identity changed during verification');
+      expect(result.error).toContain('mark_complete again');
+    }
+  });
+
   test('blocks while the PR is OPEN (merge not yet done)', async () => {
     const gate = createPrMergedGate(makeGateDeps({ state: 'OPEN' }));
     const result = await gate(task);

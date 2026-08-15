@@ -132,12 +132,23 @@ export interface WorkflowHookEngineConfig {
    * entries, which the router hard-returns when they are not the recorded
    * reply target. */
   replyRoutingLookup?: (fromAgentName: string) => string | null | undefined;
+  /** Whether the given workflow node currently has a LIVE sub-session
+   * (mirrors the message resolver's active-preferred role delivery: when
+   * any holder of a role is active, only active holders receive it). When
+   * provided, '@role:' targets suppress inactive holders' gates; absent
+   * (tests, other constructors) the topology-only behavior applies. */
+  roleHolderActiveLookup?: (nodeId: string) => boolean;
   notifySourceSession?: (sessionId: string, message: string) => Promise<void>;
   onHookStateUpdated?: (
     hookId: string,
     hookState: import('@hyperneo/shared').HookStateSnapshot
   ) => void;
 }
+
+/** Sentinel thrown by binding resolution when the ROUTING store is
+ * unreadable — caught at the top of executeAction and mapped to an
+ * override-ineligible infrastructure stop. */
+class INFRASTRUCTURE_ROUTING_STOP extends Error {}
 
 // ---------------------------------------------------------------------------
 // Constants & helpers
@@ -486,7 +497,26 @@ export class WorkflowHookEngine {
     params: Record<string, unknown>,
     meta: HookActionMeta
   ): Promise<HookActionOutcome> {
-    const bindings = this.resolveMatchingBindings(methodName, params, meta);
+    let bindings: HookBinding[];
+    try {
+      bindings = this.resolveMatchingBindings(methodName, params, meta);
+    } catch (err) {
+      if (err instanceof INFRASTRUCTURE_ROUTING_STOP) {
+        return {
+          decision: 'stop',
+          finalParams: params,
+          followUpRequests: [],
+          stateUpdates: [],
+          executionLog: [],
+          userState: {
+            status: 'blocked',
+            humanOverrideEligible: false,
+            reason: err.message,
+          },
+        };
+      }
+      throw err;
+    }
 
     // Identity of THIS action — the same fingerprint the wrapper stamps as
     // `__blockedActionKey` when the chain stops, and approveHook copies into
@@ -1192,6 +1222,7 @@ export class WorkflowHookEngine {
 
     const fromNode = nodeName;
     const nodeIdToName = new Map(workflow.nodes.map((n) => [n.id, n.name]));
+    const nodeNameToId = new Map(workflow.nodes.map((n) => [n.name, n.id]));
     const nodeNames = new Set(workflow.nodes.map((n) => n.name));
     const resolver = new ChannelResolver(workflow.channels ?? []);
     // ADAPTER PARITY for bare-slot resolution ORDER: the adapter's
@@ -1205,6 +1236,7 @@ export class WorkflowHookEngine {
     // diverge whenever a later-declared node's execution was created first,
     // suppressing a gate for a handoff the router actually delivers
     // (fail-open of the whole boundary this engine builds).
+    let executionsUnreadable = false;
     const slotExecutionNodes = new Map<string, string[]>();
     try {
       for (const exec of this.config.nodeExecutionRepo.listByWorkflowRun(
@@ -1218,9 +1250,22 @@ export class WorkflowHookEngine {
         }
       }
     } catch {
-      // Unreadable executions fall back to declaration order below.
+      executionsUnreadable = true;
     }
 
+    if (executionsUnreadable) {
+      // INFRASTRUCTURE STOP: the routing store is unreadable. The router's
+      // own target translation reads the same repository and would fail the
+      // send — but a side-effecting hook evaluated here against fallback
+      // declaration-order routing could already have stamped the run's
+      // immutable PR identity for an attempt that never delivers. Fail
+      // closed BEFORE any hook runs (override-ineligible); the sentinel is
+      // caught at the top of executeAction.
+      throw new INFRASTRUCTURE_ROUTING_STOP(
+        'Node execution store unreadable — hook routing cannot be resolved reliably; ' +
+          'the action is blocked rather than evaluated against fallback routing data.'
+      );
+    }
     const actionTargets = new Set<string>();
     // Nodes whose requested resolution was NON-ROUTABLE (per-target, not
     // global: a mixed multicast's routable parts keep their gates).
@@ -1343,7 +1388,7 @@ export class WorkflowHookEngine {
           // holders individually, so a shared slot/role name must not make
           // every resolving node routable when only one has an authorized
           // worker.
-          const roleNodeRoutable = (r: string): boolean => {
+          const roleNodeRoutableBase = (r: string): boolean => {
             if (!nodeNames.has(r)) return false;
             const slots = nodeSlots.get(r) ?? [];
             return (
@@ -1353,6 +1398,21 @@ export class WorkflowHookEngine {
               ) ||
               resolver.canSend(meta.agentName, r)
             );
+          };
+          // RESOLVER PARITY: the message resolver delivers a role to ACTIVE
+          // holders only when at least one is active — an inactive holder's
+          // node never receives the message, so its gate must not run (a
+          // side-effecting hook on an undelivered role send). Applied per
+          // resolved-node against the same authorized-holder set.
+          const roleActiveLookup = this.config.roleHolderActiveLookup;
+          const roleNodeRoutable = (r: string): boolean => {
+            if (!roleActiveLookup) return roleNodeRoutableBase(r);
+            const holders = resolvedTargets.filter((h) => roleNodeRoutableBase(h));
+            const activeHolders = holders.filter(
+              (h) => roleActiveLookup(nodeNameToId.get(h) ?? h) === true
+            );
+            if (activeHolders.length > 0 && !activeHolders.includes(r)) return false;
+            return roleNodeRoutableBase(r);
           };
           const roleUnauthorized =
             target.startsWith('@role:') && !resolvedTargets.some((r) => roleNodeRoutable(r));
@@ -1552,16 +1612,31 @@ export class WorkflowHookEngine {
             // receive the role message; unauthorized resolutions are
             // suppressed individually (a shared slot name must not authorize
             // every node that declares it).
-            for (const resolved of resolvedTargets) {
-              if (!nodeNames.has(resolved)) continue;
+            const roleActiveLookup = this.config.roleHolderActiveLookup;
+            const nodeAuthorizedRole = (resolved: string): boolean => {
               const slots = nodeSlots.get(resolved) ?? [];
-              const nodeAuthorized =
+              return (
                 isRoutableTarget(resolved) ||
                 slots.some(
                   (sl) => resolver.canSend(fromNode, sl) || resolver.canSend(meta.agentName, sl)
                 ) ||
-                resolver.canSend(meta.agentName, resolved);
-              if (!nodeAuthorized) {
+                resolver.canSend(meta.agentName, resolved)
+              );
+            };
+            const authorizedHolders = resolvedTargets.filter(
+              (r) => nodeNames.has(r) && nodeAuthorizedRole(r)
+            );
+            // RESOLVER PARITY (active-preferred role delivery): when any
+            // authorized holder has a live sub-session, only active holders
+            // receive the message — suppress the inactive ones' gates.
+            const activeHolders = roleActiveLookup
+              ? authorizedHolders.filter((r) => roleActiveLookup(nodeNameToId.get(r) ?? r) === true)
+              : authorizedHolders;
+            const roleDeliverable =
+              activeHolders.length > 0 ? new Set(activeHolders) : new Set(authorizedHolders);
+            for (const resolved of resolvedTargets) {
+              if (!nodeNames.has(resolved)) continue;
+              if (!roleDeliverable.has(resolved)) {
                 arrayResolvedNodes.delete(resolved);
                 nonRoutableResolvedNodes.add(resolved);
               }

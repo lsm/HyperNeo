@@ -5577,6 +5577,11 @@ export class TaskAgentManager {
           const registry = this.config.replyRoutingRegistry;
           return registry ? registry.get(taskId, fromAgentName) : null;
         },
+        // Live-session signal for '@role:' targets — mirrors the message
+        // resolver's active-preferred role delivery (only active holders
+        // receive a role when any holder is active), so an inactive
+        // holder's gate does not run off an undelivered role send.
+        roleHolderActiveLookup: (nodeId) => this.subSessions.get(taskId)?.has(nodeId) === true,
         notifySourceSession: async (sessionId, message) => {
           // Hook-failure notice — a synthetic inject, but NOT a node→node
           // handoff, so it must not trigger a resetContextPerTurn clear.

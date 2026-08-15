@@ -1624,6 +1624,118 @@ describe('WorkflowHookEngine.executeAction', () => {
     hookStateRepo.consumeApprovalIfCurrent = origSingleA;
   });
 
+  test('a role target suppresses inactive holders when an active holder exists', async () => {
+    // RESOLVER PARITY: when any authorized holder of a role has a live
+    // sub-session, the resolver delivers ONLY to active holders — an
+    // inactive holder's node never receives the message, so its gate must
+    // not run. Nodes Review and Other both declare 'reviewer' with channels
+    // from Coding; only Review has a live session (per the lookup).
+    const workflow = makeWorkflow({
+      customHooks: [
+        scriptHook('review_hook', '{"flow":"stop","reason":"review"}'),
+        scriptHook('other_hook', '{"flow":"stop","reason":"other"}'),
+      ],
+      nodes: [
+        { id: 'n-coding', name: 'Coding', agents: [{ agentId: 'a1', name: 'coder' }] },
+        { id: 'n-review', name: 'Review', agents: [{ agentId: 'a2', name: 'reviewer' }] },
+        { id: 'n-other', name: 'Other', agents: [{ agentId: 'a3', name: 'reviewer' }] },
+      ],
+      channels: [
+        { from: 'Coding', to: 'Review', label: 'Coding → Review' },
+        { from: 'Coding', to: 'Other', label: 'Coding → Other' },
+      ],
+      hookBindings: [
+        {
+          hookId: 'review_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+        {
+          hookId: 'other_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Other',
+          method: 'send_message',
+          order: 1,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: new NodeExecutionRepository(db),
+      artifactRepo,
+      hookStateRepo,
+      workspacePath: process.cwd(),
+      roleHolderActiveLookup: (nodeId) => nodeId === 'n-review',
+    });
+    // Scalar form.
+    const scalar = await engine.executeAction(
+      'send_message',
+      { target: '@role:reviewer', message: 'role' },
+      META
+    );
+    expect(scalar.decision).toBe('stop');
+    expect(scalar.blockingHookId).toBe('review_hook');
+    expect(scalar.executionLog.length).toBe(1);
+    expect(scalar.executionLog[0]?.hookId).toBe('review_hook');
+    // Array form.
+    const array = await engine.executeAction(
+      'send_message',
+      { target: ['@role:reviewer'], message: 'role' },
+      META
+    );
+    expect(array.decision).toBe('stop');
+    expect(array.blockingHookId).toBe('review_hook');
+    expect(array.executionLog.length).toBe(1);
+  });
+
+  test('an unreadable execution store stops the action before any hook runs', async () => {
+    // The router's own target translation reads the same repository — while
+    // it is unreadable the send would fail anyway, and a hook evaluated
+    // against declaration-order fallback routing could stamp the run's
+    // identity for an attempt that never delivers. Infrastructure stop,
+    // override-ineligible, no hook executed.
+    class FailingExecRepo extends NodeExecutionRepository {
+      override listByWorkflowRun(): never {
+        throw new Error('store down');
+      }
+    }
+    const workflow = makeWorkflow({
+      customHooks: [STOP_HOOK],
+      hookBindings: [
+        {
+          hookId: 'stop_hook',
+          sourceNode: 'Coding',
+          targetNode: 'Review',
+          method: 'send_message',
+          order: 0,
+          enabled: true,
+          authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+        },
+      ],
+    });
+    const engine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: new FailingExecRepo(db),
+      artifactRepo,
+      hookStateRepo,
+      workspacePath: process.cwd(),
+    });
+    const outcome = await engine.executeAction('send_message', sendParams(), META);
+    expect(outcome.decision).toBe('stop');
+    expect(outcome.userState.humanOverrideEligible).toBe(false);
+    expect(outcome.userState.reason).toContain('unreadable');
+    // No hook ran (empty log — the stop precedes the chain).
+    expect(outcome.executionLog.length).toBe(0);
+  });
+
   test('a marker-loaded workflow fails every hookable action closed', async () => {
     // End-to-end for the corrupt-column marker: the repository loads a
     // corrupt hook_bindings column as per-(node × method) bindings whose

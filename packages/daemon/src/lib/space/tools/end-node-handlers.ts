@@ -161,7 +161,24 @@ export function createPrMergedGate(
       };
     }
 
-    if (state === 'MERGED') return { ok: true };
+    if (state === 'MERGED') {
+      // Bind the POSITIVE decision to the identity it was made about: a
+      // concurrent pr_ready replacement can swap the run's identity while
+      // the state lookup was in flight — completing the task for the OLD
+      // PR while the run now points at an unmerged one. Re-resolve; a
+      // change refuses (the next mark_complete re-verifies the new PR).
+      const currentUrl = resolvePrUrl(task);
+      if (currentUrl !== prUrl) {
+        return {
+          ok: false,
+          error:
+            `mark_complete merge gate: the run's PR identity changed during verification ` +
+            `(${prUrl} → ${currentUrl || 'none'}). The task stays approved; call mark_complete ` +
+            'again to verify the current PR.',
+        };
+      }
+      return { ok: true };
+    }
     if (state === 'OPEN') {
       return {
         ok: false,
