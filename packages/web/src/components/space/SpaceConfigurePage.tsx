@@ -6,6 +6,7 @@ import { spaceStore } from '../../lib/space-store';
 import { currentSpaceConfigureTabSignal, currentSpaceIdSignal } from '../../lib/signals';
 import { navigateToSpaceConfigure } from '../../lib/router';
 import { cn } from '../../lib/utils';
+import { GLASS_SURFACE } from './glass-workspace';
 
 const SpaceWorkerAgentList = lazy(() =>
   import('./SpaceWorkerAgentList').then((m) => ({ default: m.SpaceWorkerAgentList }))
@@ -37,7 +38,7 @@ const CONFIGURE_TABS: Array<{
 }> = [
   { id: 'agents', label: 'Worker Agents', count: ({ agentCount }) => agentCount },
   { id: 'workflows', label: 'Workflows', count: ({ workflowCount }) => workflowCount },
-  { id: 'settings', label: 'General', count: () => 1 },
+  { id: 'settings', label: 'Settings', count: () => 1 },
 ];
 
 interface SpaceConfigurePageProps {
@@ -134,7 +135,10 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
             }
           >
             <TabList
-              class="flex h-[52px] flex-shrink-0 items-center gap-1 border-b border-white/10"
+              class={cn(
+                'mt-1 flex w-full flex-shrink-0 gap-1 self-start rounded-2xl border p-1.5 sm:w-auto',
+                GLASS_SURFACE
+              )}
               data-testid="space-configure-tab-bar"
             >
               {CONFIGURE_TABS.map((tab) => (
@@ -142,14 +146,21 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
                   key={tab.id}
                   data-testid={`space-configure-tab-${tab.id}`}
                   class={cn(
-                    'flex h-[52px] items-center gap-2 border-b-2 px-3 text-sm font-medium transition-colors',
+                    'flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition sm:flex-none',
                     activeTab === tab.id
-                      ? 'border-blue-400 text-gray-100'
-                      : 'border-transparent text-gray-400 hover:text-gray-200'
+                      ? 'bg-amber-400/15 text-amber-100'
+                      : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
                   )}
                 >
                   <span>{tab.label}</span>
-                  <span class="rounded-full bg-white/5 px-1.5 py-px text-xs text-gray-400">
+                  <span
+                    class={cn(
+                      'rounded-full px-1.5 py-px text-xs',
+                      activeTab === tab.id
+                        ? 'bg-black/20 text-current'
+                        : 'bg-white/10 text-gray-400'
+                    )}
+                  >
                     {tab.count({
                       agentCount: workerAgentCount,
                       workflowCount: workflows.length,

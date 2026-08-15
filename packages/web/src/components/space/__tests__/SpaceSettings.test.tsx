@@ -4,19 +4,18 @@
  *
  * Tests:
  * - Renders space name, description, workspace path
- * - Renders instructions and backgroundContext editors
- * - Save Changes button only shown when form is dirty
+ * - Renders instructions and backgroundContext editors (Instructions sub-tab)
+ * - Save Changes button only shown when form is dirty (across form sub-tabs)
  * - Calls space.update RPC with trimmed values on save (including instructions/backgroundContext)
  * - Discard button resets form to original values (including instructions/backgroundContext)
  * - Shows error when not connected
- * - Archive button calls space.archive and navigates away
- * - Delete button calls space.delete and navigates away
- * - Archive button is disabled when space is already archived
+ * - Archive/Delete live on the Advanced sub-tab and call their RPCs
  * - Export bundle button calls spaceExport.bundle
+ * - Runtime sub-tab drives concurrency
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, waitFor, cleanup } from '@testing-library/preact';
+import { render, fireEvent, waitFor, cleanup, screen } from '@testing-library/preact';
 
 const mockRequest = vi.fn();
 const mockGetHubIfConnected = vi.fn();
@@ -58,6 +57,10 @@ vi.mock('../SpaceExternalEventsSettings', () => ({
   SpaceExternalEventsSettings: ({ spaceId }) => (
     <div data-testid="space-external-events-settings">External events for {spaceId}</div>
   ),
+}));
+
+vi.mock('../SpaceMcpSettings', () => ({
+  SpaceMcpSettings: ({ spaceId }) => <div data-testid="space-mcp-settings">MCP for {spaceId}</div>,
 }));
 
 vi.mock('../visual-editor/WorkflowModelSelect', () => ({
@@ -109,6 +112,11 @@ function makeSpace(overrides: Partial<Space> = {}): Space {
   };
 }
 
+/** Open one of the settings sub-tabs (general/instructions/runtime/tools/advanced). */
+function openTab(tab: string) {
+  fireEvent.click(screen.getByTestId(`space-settings-tab-${tab}`));
+}
+
 // Mock window.confirm globally
 const mockConfirm = vi.fn();
 beforeEach(() => {
@@ -130,9 +138,21 @@ describe('SpaceSettings', () => {
     cleanup();
   });
 
+  it('renders the sub-tab navigation with General active by default', () => {
+    const space = makeSpace();
+    render(<SpaceSettings space={space} />);
+    const general = screen.getByTestId('space-settings-tab-general');
+    expect(general.getAttribute('aria-selected')).toBe('true');
+    expect(
+      screen.getByTestId('space-settings-tab-instructions').getAttribute('aria-selected')
+    ).toBe('false');
+    expect(screen.getByTestId('space-settings-tab-tools')).toBeTruthy();
+    expect(screen.getByTestId('space-settings-tab-advanced')).toBeTruthy();
+  });
+
   it('renders space name and description', () => {
     const space = makeSpace();
-    const { getByDisplayValue, getByText } = render(<SpaceSettings space={space} />);
+    const { getByDisplayValue } = render(<SpaceSettings space={space} />);
     expect(getByDisplayValue('My Space')).toBeTruthy();
     expect(getByDisplayValue('Original description')).toBeTruthy();
   });
@@ -154,6 +174,15 @@ describe('SpaceSettings', () => {
     const { getByDisplayValue, getByText } = render(<SpaceSettings space={space} />);
     fireEvent.input(getByDisplayValue('My Space'), { target: { value: 'New Name' } });
     expect(getByText('Save Changes')).toBeTruthy();
+  });
+
+  it('marks form sub-tabs with an unsaved-changes dot when dirty', () => {
+    const space = makeSpace();
+    const { getByDisplayValue } = render(<SpaceSettings space={space} />);
+    expect(screen.queryByLabelText('unsaved changes')).toBeNull();
+    fireEvent.input(getByDisplayValue('My Space'), { target: { value: 'New Name' } });
+    // One dot per form tab (general, instructions, runtime).
+    expect(screen.getAllByLabelText('unsaved changes').length).toBe(3);
   });
 
   it('calls space.update with trimmed values on save', async () => {
@@ -222,6 +251,7 @@ describe('SpaceSettings', () => {
 
     const space = makeSpace();
     const { getByText } = render(<SpaceSettings space={space} />);
+    openTab('advanced');
     fireEvent.click(getByText('Archive'));
 
     await waitFor(() => {
@@ -234,6 +264,7 @@ describe('SpaceSettings', () => {
     mockConfirm.mockReturnValue(false);
     const space = makeSpace();
     const { getByText } = render(<SpaceSettings space={space} />);
+    openTab('advanced');
     fireEvent.click(getByText('Archive'));
     expect(mockRequest).not.toHaveBeenCalled();
   });
@@ -241,6 +272,7 @@ describe('SpaceSettings', () => {
   it('Archive button is disabled when space is already archived', () => {
     const space = makeSpace({ status: 'archived' });
     const { getByText } = render(<SpaceSettings space={space} />);
+    openTab('advanced');
     const archiveBtn = getByText('Archive').closest('button')!;
     expect(archiveBtn.disabled).toBe(true);
   });
@@ -252,6 +284,7 @@ describe('SpaceSettings', () => {
 
     const space = makeSpace();
     const { getByText } = render(<SpaceSettings space={space} />);
+    openTab('advanced');
     fireEvent.click(getByText('Delete'));
 
     await waitFor(() => {
@@ -264,6 +297,7 @@ describe('SpaceSettings', () => {
     mockConfirm.mockReturnValue(false);
     const space = makeSpace();
     const { getByText } = render(<SpaceSettings space={space} />);
+    openTab('advanced');
     fireEvent.click(getByText('Delete'));
     expect(mockRequest).not.toHaveBeenCalled();
   });
@@ -290,6 +324,7 @@ describe('SpaceSettings', () => {
 
     const space = makeSpace();
     const { getByText } = render(<SpaceSettings space={space} />);
+    openTab('advanced');
     fireEvent.click(getByText('Archive'));
 
     // Button should be disabled while in-flight
@@ -312,6 +347,7 @@ describe('SpaceSettings', () => {
 
     const space = makeSpace();
     const { getByText } = render(<SpaceSettings space={space} />);
+    openTab('advanced');
     fireEvent.click(getByText('Delete'));
 
     // Button should be disabled while in-flight
@@ -328,16 +364,18 @@ describe('SpaceSettings', () => {
       backgroundContext: 'Bun + Hono backend',
     });
     const { getByDisplayValue, getByText } = render(<SpaceSettings space={space} />);
+    openTab('instructions');
     expect(getByDisplayValue('Use TypeScript strict mode')).toBeTruthy();
     expect(getByDisplayValue('Bun + Hono backend')).toBeTruthy();
-    // Check labels are rendered
-    expect(getByText('Instructions')).toBeTruthy();
+    // Check labels are rendered (the block heading, not the sub-tab button)
+    expect(getByText('Instructions', { selector: 'h3' })).toBeTruthy();
     expect(getByText('Background context', { exact: false })).toBeTruthy();
   });
 
   it('shows Save Changes when instructions is changed', () => {
     const space = makeSpace();
     const { getByPlaceholderText, getByText } = render(<SpaceSettings space={space} />);
+    openTab('instructions');
     fireEvent.input(
       getByPlaceholderText(
         'e.g. Always use TypeScript strict mode. Prefer functional components...'
@@ -350,6 +388,7 @@ describe('SpaceSettings', () => {
   it('shows Save Changes when backgroundContext is changed', () => {
     const space = makeSpace();
     const { getByPlaceholderText, getByText } = render(<SpaceSettings space={space} />);
+    openTab('instructions');
     fireEvent.input(
       getByPlaceholderText(
         'e.g. This project uses Bun + Hono backend, Preact frontend with Tailwind CSS...'
@@ -364,11 +403,9 @@ describe('SpaceSettings', () => {
     mockRequest.mockResolvedValue({});
 
     const space = makeSpace();
-    const { getByDisplayValue, getByPlaceholderText, getByText } = render(
-      <SpaceSettings space={space} />
-    );
+    const { getByPlaceholderText, getByText } = render(<SpaceSettings space={space} />);
+    openTab('instructions');
 
-    fireEvent.input(getByDisplayValue('My Space'), { target: { value: 'Updated' } });
     fireEvent.input(
       getByPlaceholderText(
         'e.g. Always use TypeScript strict mode. Prefer functional components...'
@@ -386,7 +423,7 @@ describe('SpaceSettings', () => {
     await waitFor(() => {
       expect(mockRequest).toHaveBeenCalledWith('space.update', {
         id: 'space-1',
-        name: 'Updated',
+        name: 'My Space',
         description: 'Original description',
         instructions: 'Use strict mode',
         backgroundContext: 'Bun + Hono',
@@ -403,6 +440,7 @@ describe('SpaceSettings', () => {
       backgroundContext: 'Original context',
     });
     const { getByDisplayValue, getByText, queryByText } = render(<SpaceSettings space={space} />);
+    openTab('instructions');
 
     // Change instructions
     fireEvent.input(getByDisplayValue('Original instructions'), {
@@ -423,8 +461,18 @@ describe('SpaceSettings', () => {
       backgroundContext: 'world!',
     });
     const { getByText } = render(<SpaceSettings space={space} />);
+    openTab('instructions');
     expect(getByText('5 characters')).toBeTruthy();
     expect(getByText('6 characters')).toBeTruthy();
+  });
+
+  it('renders MCP and external-events settings on the Tools tab', () => {
+    const space = makeSpace();
+    render(<SpaceSettings space={space} />);
+    expect(screen.queryByTestId('space-mcp-settings')).toBeNull();
+    openTab('tools');
+    expect(screen.getByTestId('space-mcp-settings')).toBeTruthy();
+    expect(screen.getByTestId('space-external-events-settings')).toBeTruthy();
   });
 
   it('calls spaceExport.bundle when Export Bundle is clicked', async () => {
@@ -433,6 +481,7 @@ describe('SpaceSettings', () => {
 
     const space = makeSpace();
     const { getByText } = render(<SpaceSettings space={space} />);
+    openTab('advanced');
     fireEvent.click(getByText('Export Bundle'));
 
     await waitFor(() => {
@@ -444,6 +493,7 @@ describe('SpaceSettings', () => {
     it('renders concurrency slider with current value', () => {
       const space = makeSpace({ maxConcurrentTasks: 3 });
       const { container, getByTestId } = render(<SpaceSettings space={space} />);
+      openTab('runtime');
       expect(getByTestId('concurrent-tasks-value').textContent).toBe('3');
       expect(container.querySelector('[data-testid="concurrent-tasks-slider"]')).toBeTruthy();
     });
@@ -451,6 +501,7 @@ describe('SpaceSettings', () => {
     it('shows Save Changes when concurrency is changed', () => {
       const space = makeSpace({ maxConcurrentTasks: 1 });
       const { getByTestId, getByText } = render(<SpaceSettings space={space} />);
+      openTab('runtime');
       fireEvent.input(getByTestId('concurrent-tasks-slider'), { target: { value: '5' } });
       expect(getByText('Save Changes')).toBeTruthy();
     });
@@ -461,6 +512,7 @@ describe('SpaceSettings', () => {
 
       const space = makeSpace({ maxConcurrentTasks: 1 });
       const { getByTestId, getByText } = render(<SpaceSettings space={space} />);
+      openTab('runtime');
       fireEvent.input(getByTestId('concurrent-tasks-slider'), { target: { value: '4' } });
       fireEvent.click(getByText('Save Changes'));
 
@@ -475,6 +527,7 @@ describe('SpaceSettings', () => {
     it('Discard resets concurrency to original value', () => {
       const space = makeSpace({ maxConcurrentTasks: 2 });
       const { getByTestId, getByText, queryByText } = render(<SpaceSettings space={space} />);
+      openTab('runtime');
       fireEvent.input(getByTestId('concurrent-tasks-slider'), { target: { value: '8' } });
       expect(getByText('Save Changes')).toBeTruthy();
 

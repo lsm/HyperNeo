@@ -15,7 +15,6 @@ import { useCallback, useEffect, useState } from 'preact/hooks';
 import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
 import { SpaceCreateTaskDialog } from '../components/space/SpaceCreateTaskDialog';
 import { GLASS_PRIMARY_BUTTON_CLASS, GlassRouteShell } from '../components/space/glass-workspace';
-import { SpacePageHeader } from '../components/space/SpacePageHeader';
 import { TaskAuxiliaryPanel } from '../components/space/TaskAuxiliaryPanel';
 import { createSession } from '../lib/api-helpers';
 import {
@@ -556,18 +555,16 @@ export default function SpaceIsland({
   if (viewMode === 'configure' && space) {
     return (
       <>
-        <div
-          class="flex-1 flex flex-col overflow-hidden bg-app-content"
-          data-testid="space-configure-view"
-          {...baseLayerProps}
+        <GlassRouteShell
+          pageTitle="Settings"
+          appearance="hero"
+          surfaceKey="configure"
+          testId="space-configure-view"
+          baseLayerProps={baseLayerProps}
+          fallback={lazyFallback}
         >
-          <SpacePageHeader pageTitle="Settings" />
-          <div class="flex-1 min-w-0 overflow-hidden flex flex-col">
-            <Suspense fallback={lazyFallback}>
-              <SpaceConfigurePage space={space} />
-            </Suspense>
-          </div>
-        </div>
+          <SpaceConfigurePage space={space} />
+        </GlassRouteShell>
         {overlay}
       </>
     );

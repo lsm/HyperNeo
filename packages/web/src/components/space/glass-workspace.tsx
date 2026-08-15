@@ -56,7 +56,8 @@ type GlassSurfaceKey =
   | 'memories'
   | 'forge'
   | 'tasks'
-  | 'sessions';
+  | 'sessions'
+  | 'configure';
 
 interface GlassRouteShellProps {
   pageTitle: string;
