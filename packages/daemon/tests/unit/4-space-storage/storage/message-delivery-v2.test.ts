@@ -19,9 +19,11 @@ import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
 import {
   ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
   awaitDeliveryConsumption,
+  buildBatchedDeliveryContent,
   deliverAndMarkQueued,
   deliverMessage,
   drainDeliveryWaitersOnTerminalSDKMessage,
+  flattenDeliveryText,
   isRetryableErrorResultSubtype,
   isTerminalTurnError,
   isUniqueConstraintError,
@@ -346,6 +348,47 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       repo.complete(turn.id, { ok: true });
       expect(repo.activeDeliveryMessageUuids(SESSION)).toEqual(new Set(['msg-b']));
     });
+
+    it('includes batchUuids members of an active batched turn (batch-aware)', () => {
+      // A queue-flush batch turn carries its members in the payload; without
+      // the batch-aware union the reconciler/legacy replays would re-enqueue
+      // the members individually and duplicate the batched prompt.
+      repo.enqueue({
+        queue: MESSAGE_DELIVERY,
+        payload: {
+          sessionId: SESSION,
+          messageUuid: 'batch-kickoff',
+          role: 'turn',
+          origin: 'recovery',
+          parentToolUseId: null,
+          batchUuids: ['batch-kickoff', 'batch-member-2', 'batch-member-3'],
+        },
+      });
+      expect(repo.activeDeliveryMessageUuids(SESSION)).toEqual(
+        new Set(['batch-kickoff', 'batch-member-2', 'batch-member-3'])
+      );
+    });
+  });
+
+  describe('batched flush content helpers', () => {
+    it('flattenDeliveryText flattens strings and text-only arrays; rejects non-text', () => {
+      expect(flattenDeliveryText('hello')).toBe('hello');
+      expect(flattenDeliveryText('')).toBeNull();
+      expect(
+        flattenDeliveryText([
+          { type: 'text', text: 'a' },
+          { type: 'text', text: 'b' },
+        ])
+      ).toBe('a\nb');
+      expect(flattenDeliveryText([{ type: 'text', text: 'a' }, { type: 'image' }])).toBeNull();
+      expect(flattenDeliveryText([])).toBeNull();
+    });
+
+    it('buildBatchedDeliveryContent numbers and delimits every message', () => {
+      expect(buildBatchedDeliveryContent(['one', 'two'])).toBe(
+        '--- message 1 of 2 ---\none\n\n--- message 2 of 2 ---\ntwo'
+      );
+    });
   });
 
   describe('isProcessingDelivery — terminal-idle turn-end marker gate', () => {
@@ -377,6 +420,7 @@ class MockSession implements MessageDeliverySession {
   lastContent?: unknown;
   lastParentToolUseId?: string | null;
   lastAlreadyConsumed = false;
+  lastBatchUuids?: string[];
   /** Toggle for the human-gate-open park exemption (Codex #11). */
   waitingForInput = false;
 
@@ -384,13 +428,16 @@ class MockSession implements MessageDeliverySession {
     uuid: string,
     content: unknown,
     parentToolUseId?: string | null,
-    alreadyConsumed = false
+    alreadyConsumed = false,
+    _claimGuard?: () => boolean,
+    batchUuids?: string[]
   ): Promise<DriveTurnOutcome> {
     this.driveCalls++;
     this.lastUuid = uuid;
     this.lastContent = content;
     this.lastParentToolUseId = parentToolUseId;
     this.lastAlreadyConsumed = alreadyConsumed;
+    this.lastBatchUuids = batchUuids;
     if (this.shouldThrow) throw new Error('turn exploded');
     if (this.driveOutcomeByUuid && uuid in this.driveOutcomeByUuid) {
       return this.driveOutcomeByUuid[uuid];
@@ -457,6 +504,73 @@ describe('message-delivery v2 — handler (conformance)', () => {
     const result = await handler(job);
     expect(result).toEqual({ outcome: 'completed' });
     expect(session.driveCalls).toBe(1);
+  });
+
+  it('batched turn job → combines member contents into one delimited prompt + passes batchUuids', async () => {
+    const session = new MockSession();
+    repo.enqueue({
+      queue: MESSAGE_DELIVERY,
+      payload: {
+        sessionId: SESSION,
+        messageUuid: 'kickoff',
+        role: 'turn',
+        origin: 'recovery',
+        parentToolUseId: null,
+        batchUuids: ['kickoff', 'member-2', 'member-3'],
+      },
+    });
+    const [job] = repo.dequeue(MESSAGE_DELIVERY, 1);
+    const contents: Record<string, string> = {
+      kickoff: 'first text',
+      'member-2': 'second text',
+      'member-3': 'third text',
+    };
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: (_sid, uuid) => ({
+        content: contents[uuid] ?? '',
+        sendStatus: 'enqueued',
+      }),
+    });
+    const result = await handler(job);
+    expect(result).toEqual({ outcome: 'completed' });
+    expect(session.lastContent).toBe(
+      '--- message 1 of 3 ---\nfirst text\n\n--- message 2 of 3 ---\nsecond text\n\n--- message 3 of 3 ---\nthird text'
+    );
+    expect(session.lastBatchUuids).toEqual(['kickoff', 'member-2', 'member-3']);
+  });
+
+  it('batched turn job → skips members whose row is gone or user-deferred', async () => {
+    const session = new MockSession();
+    repo.enqueue({
+      queue: MESSAGE_DELIVERY,
+      payload: {
+        sessionId: SESSION,
+        messageUuid: 'kickoff',
+        role: 'turn',
+        origin: 'recovery',
+        parentToolUseId: null,
+        batchUuids: ['kickoff', 'deleted-member', 'deferred-member'],
+      },
+    });
+    const [job] = repo.dequeue(MESSAGE_DELIVERY, 1);
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: (_sid, uuid) => {
+        if (uuid === 'kickoff') return { content: 'only one left', sendStatus: 'enqueued' };
+        if (uuid === 'deferred-member') {
+          return { content: 'deferred', sendStatus: 'deferred' };
+        }
+        return null; // deleted-member: content gone
+      },
+    });
+    await handler(job);
+    // Only the kickoff remains usable — no batch prompt, plain single content,
+    // and no batchUuids (the bridge must not flip phantom members).
+    expect(session.lastContent).toBe('only one left');
+    expect(session.lastBatchUuids).toBeUndefined();
   });
 
   it('blocked startup → parks (requeue) and the job stays pending (§13: blocked→parked, not failed)', async () => {

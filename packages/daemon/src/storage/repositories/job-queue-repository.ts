@@ -1,5 +1,5 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
+import type { Database as BunDatabase } from '../sqlite-compat';
 
 export type JobStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'dead';
 
@@ -307,7 +307,9 @@ export class JobQueueRepository {
   /**
    * Cancel active jobs and return their message UUIDs so lifecycle callers can
    * terminalize the matching persisted prompts instead of leaving hidden
-   * `enqueued` rows behind.
+   * `enqueued` rows behind. Batch-aware: members of a coalesced turn's
+   * `batchUuids` are included (they own no job row, but their prompts are as
+   * undelivered as the kickoff's).
    */
   cancelForSessionWithMessages(sessionId: string, queue: string = 'message_delivery'): string[] {
     return this.db.transaction(() => {
@@ -315,6 +317,18 @@ export class JobQueueRepository {
         .prepare(
           `SELECT json_extract(payload, '$.messageUuid') AS message_uuid
              FROM job_queue
+            WHERE queue = ?
+              AND json_extract(payload, '$.sessionId') = ?
+              AND status IN ('pending', 'processing')`
+        )
+        .all(queue, sessionId) as Array<{ message_uuid: string | null }>;
+      const batchRows = this.db
+        .prepare(
+          `SELECT je.value AS message_uuid
+             FROM job_queue, json_each(
+                  CASE WHEN json_type(payload, '$.batchUuids') = 'array'
+                       THEN json_extract(payload, '$.batchUuids') ELSE '[]' END
+                ) AS je
             WHERE queue = ?
               AND json_extract(payload, '$.sessionId') = ?
               AND status IN ('pending', 'processing')`
@@ -328,7 +342,7 @@ export class JobQueueRepository {
               AND status IN ('pending', 'processing')`
         )
         .run(queue, sessionId);
-      return rows.flatMap((row) =>
+      return [...rows, ...batchRows].flatMap((row) =>
         typeof row.message_uuid === 'string' ? [row.message_uuid] : []
       );
     })();
@@ -403,6 +417,11 @@ export class JobQueueRepository {
    * replay would deliver the same message (duplicate). Empty when v2 is off (no
    * message_delivery jobs exist), so legacy behavior is unchanged. See
    * message-delivery-v2.md §10 + Codex review (legacy-replay race).
+   *
+   * Batch-aware: UUIDs listed in an active job's `batchUuids` (queue-flush
+   * coalesced turns) are included — they own no job row of their own, so
+   * without this the orphan reconciler / legacy replays would re-enqueue the
+   * members individually and duplicate the batched prompt.
    */
   activeDeliveryMessageUuids(sessionId: string): Set<string> {
     const rows = this.db
@@ -416,6 +435,23 @@ export class JobQueueRepository {
       .all(sessionId) as Array<{ uuid: string | null }>;
     const out = new Set<string>();
     for (const r of rows) {
+      if (typeof r.uuid === 'string') out.add(r.uuid);
+    }
+    // Members of batched turns (payload.batchUuids arrays). The CASE guard
+    // keeps json_each from erroring on payloads without a batchUuids array.
+    const batchRows = this.db
+      .prepare(
+        `SELECT je.value AS uuid
+           FROM job_queue, json_each(
+                CASE WHEN json_type(payload, '$.batchUuids') = 'array'
+                     THEN json_extract(payload, '$.batchUuids') ELSE '[]' END
+              ) AS je
+          WHERE queue = 'message_delivery'
+            AND json_extract(payload, '$.sessionId') = ?
+            AND status IN ('pending', 'processing')`
+      )
+      .all(sessionId) as Array<{ uuid: string | null }>;
+    for (const r of batchRows) {
       if (typeof r.uuid === 'string') out.add(r.uuid);
     }
     return out;
@@ -458,7 +494,7 @@ export class JobQueueRepository {
     const maxRetries = row.max_retries as number;
 
     if (retryCount < maxRetries) {
-      const delay = Math.pow(2, retryCount) * 1000;
+      const delay = 2 ** retryCount * 1000;
       this.db
         .prepare(
           `UPDATE job_queue SET retry_count = retry_count + 1, status = 'pending', error = ?, run_at = ?, started_at = NULL WHERE id = ?`

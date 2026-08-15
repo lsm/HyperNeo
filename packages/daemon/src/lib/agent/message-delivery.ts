@@ -19,8 +19,8 @@
 
 import type { MessageContent } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import { DeadLetterImmediatelyError } from '../../storage/job-queue-processor';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import { MESSAGE_DELIVERY } from '../job-queue-constants';
 
 /**
@@ -67,6 +67,19 @@ export type MessageDeliveryPayload = {
   role: MessageDeliveryRole;
   origin: MessageDeliveryOrigin;
   parentToolUseId?: string | null;
+  /**
+   * Batched queue flush (turn-end replay / manual trigger): when the flush
+   * found MULTIPLE pending messages and no turn was active, they are coalesced
+   * into ONE turn whose kickoff is `messageUuid` and whose prompt combines
+   * every listed UUID's content with numbered delimiters (see
+   * {@link buildBatchedDeliveryContent}) — the model sees the whole queue from
+   * the first token instead of answering N steers one at a time. `messageUuid`
+   * is always `batchUuids[0]`; the bridge flips every member to `consumed`
+   * together with the kickoff. Members carry no jobs of their own — the
+   * batch-aware lookups (`activeDeliveryMessageUuids`, cancel) must include
+   * them. Omitted for ordinary single-message delivery.
+   */
+  batchUuids?: string[];
 };
 
 /**
@@ -288,6 +301,92 @@ export function deliverMessage(
 export { MESSAGE_DELIVERY };
 
 /**
+ * Flatten a delivery content to plain text for batching. Returns null when the
+ * content carries non-text blocks (e.g. images) — such messages must NOT be
+ * folded into a combined prompt (the blocks would be dropped), so the flush
+ * delivers them individually instead.
+ */
+export function flattenDeliveryText(content: DeliveryContent): string | null {
+  if (typeof content === 'string') return content.length > 0 ? content : null;
+  const texts: string[] = [];
+  for (const block of content) {
+    if (block.type !== 'text' || typeof block.text !== 'string') return null; // non-text block
+    texts.push(block.text);
+  }
+  return texts.length > 0 ? texts.join('\n') : null;
+}
+
+/**
+ * Combine the flushed queue's message texts into ONE delimited prompt so the
+ * model reads the entire batch before acting (numbered, queue order). Pure —
+ * the handler rebuilds this from `batchUuids` on every claim/reclaim so a
+ * crashed batch turn recombines identically.
+ */
+export function buildBatchedDeliveryContent(texts: string[]): string {
+  const total = texts.length;
+  return texts.map((text, i) => `--- message ${i + 1} of ${total} ---\n${text}`).join('\n\n');
+}
+
+/**
+ * Enqueue ONE batched turn job for a queue flush with multiple pending
+ * messages (see {@link MessageDeliveryPayload.batchUuids}). `messageUuids[0]`
+ * becomes the kickoff. Returns false — WITHOUT enqueueing anything — when a
+ * batch is not applicable: fewer than two usable UUIDs, a member already owns
+ * an active job (a concurrent deliverer), or the atomic active-turn index
+ * rejected the `role:'turn'` insert (a turn went active between flush and
+ * enqueue). Callers fall back to per-message delivery
+ * ({@link deliverAndMarkQueued}) on false.
+ */
+export async function deliverBatchAndMarkQueued(args: {
+  jobQueue: JobQueueRepository;
+  stateManager?: {
+    setQueuedIfIdle(messageId: string): Promise<boolean>;
+    getState(): { status: string };
+  };
+  sessionId: string;
+  messageUuids: string[];
+  origin: MessageDeliveryOrigin;
+}): Promise<boolean> {
+  return await withSessionLock(args.sessionId, async () => {
+    // Exclude UUIDs that already own an active delivery job (idempotency —
+    // same contract as deliverMessage's getActiveDeliveryRole guard, but
+    // batch-aware via activeDeliveryMessageUuids).
+    const active = args.jobQueue.activeDeliveryMessageUuids(args.sessionId);
+    const usable = args.messageUuids.filter((uuid) => !active.has(uuid));
+    if (usable.length < 2) return false;
+
+    try {
+      args.jobQueue.enqueue({
+        queue: MESSAGE_DELIVERY,
+        payload: {
+          sessionId: args.sessionId,
+          messageUuid: usable[0],
+          role: 'turn',
+          origin: args.origin,
+          parentToolUseId: null,
+          batchUuids: usable,
+        },
+        maxRetries: MESSAGE_DELIVERY_MAX_RETRIES,
+      });
+    } catch (err) {
+      if (!isUniqueConstraintError(err)) throw err;
+      // A turn went active mid-flush — not batchable. Fall back per-message.
+      return false;
+    }
+
+    if (args.stateManager) {
+      try {
+        await args.stateManager.setQueuedIfIdle(usable[0]);
+      } catch {
+        // Non-fatal — the durable job is already enqueued; the handler will
+        // drive the turn. Mirrors deliverAndMarkQueued.
+      }
+    }
+    return true;
+  });
+}
+
+/**
  * Minimal db view the orphan reconciler needs: the persisted nonterminal user
  * messages for a session. Kept as an interface so the reconciler is unit-testable
  * with a real SDKMessageRepository or a stub. See {@link reconcileStrandedDeliveries}.
@@ -423,12 +522,16 @@ export function asMessageDeliveryPayload(
   const role = payload.role;
   if (typeof sessionId !== 'string' || typeof messageUuid !== 'string') return null;
   if (role !== 'turn' && role !== 'steer') return null;
+  const batchUuids = Array.isArray(payload.batchUuids)
+    ? payload.batchUuids.filter((u): u is string => typeof u === 'string' && u.length > 0)
+    : undefined;
   return {
     sessionId,
     messageUuid,
     role,
     origin: typeof payload.origin === 'string' ? (payload.origin as MessageDeliveryOrigin) : 'chat',
     parentToolUseId: typeof payload.parentToolUseId === 'string' ? payload.parentToolUseId : null,
+    ...(batchUuids && batchUuids.length > 0 ? { batchUuids } : {}),
   };
 }
 
@@ -523,7 +626,12 @@ export interface MessageDeliverySession {
     content: DeliveryContent,
     parentToolUseId?: string | null,
     alreadyConsumed?: boolean,
-    claimGuard?: () => boolean
+    claimGuard?: () => boolean,
+    /**
+     * Batched queue flush: UUIDs whose content was folded into `content`;
+     * the bridge flips them to `consumed` together with the kickoff.
+     */
+    batchUuids?: string[]
   ): Promise<DriveTurnOutcome>;
   feedDeliverySteer(
     messageUuid: string,

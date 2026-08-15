@@ -63,39 +63,37 @@
 
 import type {
   AgentProcessingState,
-  MessageContent,
-  Session,
-  SessionType,
-  SessionContext,
-  SessionFeatures,
-  SessionConfig,
-  SessionMetadata,
+  ChatMessage,
   ContextInfo,
-  QuestionDraftResponse,
-  MessageHub,
   CurrentModelInfo,
+  DeclarativeToolGuard,
+  FallbackModelEntry,
+  McpServerConfig,
+  MessageContent,
+  MessageHub,
+  MessageOrigin,
+  Provider,
+  QuestionDraftResponse,
+  RewindMode,
   RewindPreview,
   RewindResult,
-  RewindMode,
   SelectiveRewindPreview,
   SelectiveRewindResult,
-  SystemPromptConfig,
-  McpServerConfig,
-  Provider,
-  FallbackModelEntry,
-} from '@hyperneo/shared';
-import type {
-  ChatMessage,
-  MessageOrigin,
+  Session,
+  SessionConfig,
+  SessionContext,
+  SessionFeatures,
+  SessionMetadata,
+  SessionType,
   SkillEnablementOverride,
-  DeclarativeToolGuard,
+  SystemPromptConfig,
 } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import { Database } from '../../storage/database';
+import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
+import type { Database } from '../../storage/database';
 import { ErrorManager, type StructuredError } from '../error-manager';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
 import { SettingsManager } from '../settings-manager';
-import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
 
 export const RECENTLY_EXITED_ROOT_PID_RETENTION_MS = 15 * 60 * 1000;
 
@@ -234,61 +232,61 @@ export interface AgentSessionRuntimeOptions {
   ) => Promise<{ success: boolean; error?: string }>;
 }
 
-// Extracted components
-import { MessageQueue } from './message-queue';
-import {
-  MESSAGE_DELIVERY_PARK_MS,
-  MessageDeliveryRecoverableTurnError,
-  MessageDeliveryTerminalTurnError,
-  classifyReclaimTermination,
-  deliverMessage,
-  isMessageDeliveryV2Enabled,
-  isRetryableErrorResultSubtype,
-  isTerminalTurnError,
-  reconcileStrandedDeliveries as reconcileStrandedDeliveriesCore,
-  signalDeliveryConsumed,
-  withSessionLock,
-  type DriveTurnOutcome,
-  type FeedSteerOutcome,
-} from './message-delivery';
-import { deliveryMetrics } from './message-delivery-metrics';
-import { DeliveryTurnStallWatchdog } from './delivery-turn-stall-watchdog';
-import { ProcessingStateManager } from './processing-state-manager';
-import { ContextTracker } from './context-tracker';
-import { SDKMessageHandler, type SDKMessageHandlerContext } from './sdk-message-handler';
-import { QueryOptionsBuilder, type QueryOptionsBuilderContext } from './query-options-builder';
-import {
-  QueryLifecycleManager,
-  type QueryLifecycleManagerContext,
-} from './query-lifecycle-manager';
-import { ModelSwitchHandler, type ModelSwitchHandlerContext } from './model-switch-handler';
+import { isSDKResultSuccess, isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
+import { AcpQueryRunner } from '../acp/acp-query-runner';
+import { resolveModelAlias } from '../model-service';
+import { getProviderRegistry } from '../providers/factory.js';
 import {
   AskUserQuestionHandler,
   type AskUserQuestionHandlerContext,
 } from './ask-user-question-handler';
-import {
-  QueryRunner,
-  type QueryRunnerContext,
-  type OriginalEnvVars,
-  type TrackedAgentProcess,
-} from './query-runner';
-import { AcpQueryRunner } from '../acp/acp-query-runner';
-import type { QueryLike } from './query-like';
-import { InterruptHandler, type InterruptHandlerContext } from './interrupt-handler';
-import { SDKRuntimeConfig, type SDKRuntimeConfigContext } from './sdk-runtime-config';
+import { ContextTracker } from './context-tracker';
+import { DeliveryTurnStallWatchdog } from './delivery-turn-stall-watchdog';
 import {
   EventSubscriptionSetup,
   type EventSubscriptionSetupContext,
 } from './event-subscription-setup';
-import { QueryModeHandler, type QueryModeHandlerContext } from './query-mode-handler';
-import { SlashCommandManager, type SlashCommandManagerContext } from './slash-command-manager';
-import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler';
-import { SessionConfigHandler, type SessionConfigHandlerContext } from './session-config-handler';
-import { RateLimitWatchdog } from './rate-limit-watchdog';
 import { resolveFallbackChain } from './fallback-recovery';
-import { getProviderRegistry } from '../providers/factory.js';
-import { isSDKResultSuccess, isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
-import { resolveModelAlias } from '../model-service';
+import { InterruptHandler, type InterruptHandlerContext } from './interrupt-handler';
+import {
+  classifyReclaimTermination,
+  type DriveTurnOutcome,
+  deliverMessage,
+  type FeedSteerOutcome,
+  isMessageDeliveryV2Enabled,
+  isRetryableErrorResultSubtype,
+  isTerminalTurnError,
+  MESSAGE_DELIVERY_PARK_MS,
+  MessageDeliveryRecoverableTurnError,
+  MessageDeliveryTerminalTurnError,
+  reconcileStrandedDeliveries as reconcileStrandedDeliveriesCore,
+  signalDeliveryConsumed,
+  withSessionLock,
+} from './message-delivery';
+import { deliveryMetrics } from './message-delivery-metrics';
+// Extracted components
+import { MessageQueue } from './message-queue';
+import { ModelSwitchHandler, type ModelSwitchHandlerContext } from './model-switch-handler';
+import { ProcessingStateManager } from './processing-state-manager';
+import {
+  QueryLifecycleManager,
+  type QueryLifecycleManagerContext,
+} from './query-lifecycle-manager';
+import type { QueryLike } from './query-like';
+import { QueryModeHandler, type QueryModeHandlerContext } from './query-mode-handler';
+import { QueryOptionsBuilder, type QueryOptionsBuilderContext } from './query-options-builder';
+import {
+  type OriginalEnvVars,
+  QueryRunner,
+  type QueryRunnerContext,
+  type TrackedAgentProcess,
+} from './query-runner';
+import { RateLimitWatchdog } from './rate-limit-watchdog';
+import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler';
+import { SDKMessageHandler, type SDKMessageHandlerContext } from './sdk-message-handler';
+import { SDKRuntimeConfig, type SDKRuntimeConfigContext } from './sdk-runtime-config';
+import { SessionConfigHandler, type SessionConfigHandlerContext } from './session-config-handler';
+import { SlashCommandManager, type SlashCommandManagerContext } from './slash-command-manager';
 
 /**
  * AgentSession - Pure facade that delegates to specialized handlers
@@ -2067,7 +2065,14 @@ export class AgentSession
     content: string | MessageContent[],
     _parentToolUseId?: string | null,
     alreadyConsumed = false,
-    claimGuard?: () => boolean
+    claimGuard?: () => boolean,
+    /**
+     * Batched queue flush: the UUIDs whose content was folded into `content`.
+     * Flipped to `consumed` (and their consumption waiters signaled) together
+     * with the kickoff. `messageUuid` (the kickoff) may be a member itself —
+     * it is skipped in the member loop.
+     */
+    batchUuids?: string[]
   ): Promise<DriveTurnOutcome> {
     // Timestamp gates the terminal-error read to "fired during THIS turn" — a
     // stale error from a prior turn must not turn a clean turn into a retry.
@@ -2241,6 +2246,16 @@ export class AgentSession
         if (this.session.config.provider !== 'acp') {
           const consumeSignalMs = Date.now();
           this.markDeliveryConsumed(messageUuid);
+          // Batched queue flush: the kickoff's prompt folded the members in —
+          // flip + signal them together with the kickoff so their rows don't
+          // linger `enqueued` (reconciler would re-deliver them individually).
+          if (batchUuids) {
+            for (const memberUuid of batchUuids) {
+              if (memberUuid === messageUuid) continue;
+              this.markDeliveryConsumed(memberUuid);
+              signalDeliveryConsumed(this.session.id, memberUuid);
+            }
+          }
           deliveryMetrics.recordResidualWindow(Date.now() - consumeSignalMs);
           signalDeliveryConsumed(this.session.id, messageUuid);
         }
