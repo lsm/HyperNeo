@@ -47,10 +47,19 @@ console.log = () => {};
 // bound in this process (e.g. the copilot embedded server tests): patching
 // net.Server.prototype.listen records them, so ambient developer-machine
 // services (Ollama on localhost:11434, …) stay blocked and results remain
-// environment-independent. Redirects are followed manually so every hop is
-// re-validated — a test server 3xx cannot smuggle a fetch to a real API.
+// environment-independent. Redirects are disabled outright (redirect:'error')
+// rather than followed — a test server 3xx can never smuggle a fetch to a
+// real API, and no unit-tested server emits redirects.
 const realFetch = globalThis.fetch.bind(globalThis);
-const testServerPorts = new Set<number>();
+
+// The setup file is evaluated once per test file while a worker (and its
+// prototype patch) persists across files — the registry must live on
+// globalThis so every evaluation shares one set.
+type UnitFetchGuardStash = { boundPorts: Map<number, Set<string>> };
+const stash = (globalThis as unknown as Record<string, unknown>);
+const guardStash = (stash.__unitFetchGuard ??= {
+  boundPorts: new Map<number, Set<string>>(),
+}) as UnitFetchGuardStash;
 
 type ListeningServer = {
   address(): { address: string; port: number } | string | null;
@@ -60,11 +69,13 @@ type ListeningServer = {
 // `new URL('http://[::1]:x/')` reports hostname '[::1]' (bracketed) while
 // `server.address()` reports '::1' — normalize before comparing.
 const normalizeHost = (host: string): string => host.replace(/^\[/, '').replace(/\]$/, '');
-const loopbackOrAnyAddress = (host: string): boolean =>
-  ['127.0.0.1', '::1', 'localhost', '::', '0.0.0.0'].includes(normalizeHost(host));
+const ANY_ADDRESSES = new Set(['::', '0.0.0.0']);
+const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', 'localhost']);
+const loopbackOrAnyAddress = (host: string): boolean => {
+  const normalized = normalizeHost(host);
+  return ANY_ADDRESSES.has(normalized) || LOOPBACK_ADDRESSES.has(normalized);
+};
 
-// The setup file is evaluated once per test file within a worker; guard the
-// prototype patch so repeated evaluations do not stack wrappers.
 type PatchableListen = ((this: ListeningServer, ...args: unknown[]) => unknown) & {
   __unitFetchGuard?: boolean;
 };
@@ -78,8 +89,18 @@ if (!netServerProto.listen.__unitFetchGuard) {
     this.on('listening', () => {
       const address = this.address();
       if (address && typeof address === 'object' && loopbackOrAnyAddress(address.address)) {
-        testServerPorts.add(address.port);
-        this.on('close', () => testServerPorts.delete(address.port));
+        const hosts = guardStash.boundPorts.get(address.port) ?? new Set<string>();
+        hosts.add(normalizeHost(address.address));
+        guardStash.boundPorts.set(address.port, hosts);
+        this.on('close', () => {
+          const remaining = guardStash.boundPorts.get(address.port);
+          if (remaining) {
+            remaining.delete(normalizeHost(address.address));
+            if (remaining.size === 0) {
+              guardStash.boundPorts.delete(address.port);
+            }
+          }
+        });
       }
     });
     return originalListen.apply(this, args);
@@ -93,12 +114,24 @@ const guardError = (href: string): Error =>
     `unit test attempted real network fetch: ${href} — unit tests may only reach loopback servers they spawned; stub the provider or move the test to tests/online/ (see tests/vitest.setup.ts)`
   );
 
-const isAllowedUrl = (url: URL): boolean =>
-  loopbackOrAnyAddress(url.hostname) &&
-  url.port !== '' &&
-  testServerPorts.has(Number(url.port));
-
-const REDIRECT_STATUSES = [301, 302, 303, 307, 308];
+const isAllowedUrl = (url: URL): boolean => {
+  if (url.port === '') {
+    return false;
+  }
+  const bound = guardStash.boundPorts.get(Number(url.port));
+  if (!bound) {
+    return false;
+  }
+  if ([...ANY_ADDRESSES].some((any) => bound.has(any))) {
+    return true;
+  }
+  const host = normalizeHost(url.hostname);
+  if (bound.has(host)) {
+    return true;
+  }
+  // 'localhost' in a URL may resolve to either loopback family.
+  return host === 'localhost' && (bound.has('127.0.0.1') || bound.has('::1'));
+};
 
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
@@ -112,45 +145,23 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promis
     throw guardError(href);
   }
 
-  // Caller-controlled redirect modes keep their native semantics; only the
-  // default follow mode needs the guard's hop-by-hop re-validation.
+  // Caller-controlled redirect modes keep their native semantics.
   if (init?.redirect === 'manual' || init?.redirect === 'error') {
     return realFetch(input as RequestInfo, init);
   }
+  if (!init && input instanceof Request && input.redirect !== 'follow') {
+    return realFetch(input);
+  }
 
-  // First hop passes the original input so a Request object's method/headers/
-  // body survive; redirect hops are rebuilt from init (stream bodies cannot be
-  // re-sent — acceptable for loopback test servers, which don't redirect bodies).
-  let currentUrl = url;
-  let currentInit = init;
-  let firstHop = true;
-  for (let hop = 0; ; hop += 1) {
-    if (hop >= 20) throw new Error(`unit-test fetch exceeded 20 redirects: ${href}`);
-    const response = await realFetch(firstHop ? (input as RequestInfo) : currentUrl, {
-      ...currentInit,
-      redirect: 'manual',
-    });
-    if (!REDIRECT_STATUSES.includes(response.status)) {
-      return response;
+  try {
+    return await realFetch(input as RequestInfo, { ...init, redirect: 'error' });
+  } catch (error) {
+    if (error instanceof TypeError && /redirect/i.test(error.message)) {
+      throw new Error(
+        `unit-test fetch to ${href} followed a redirect — test servers must not redirect in unit tests (see tests/vitest.setup.ts)`
+      );
     }
-    const location = response.headers.get('location');
-    if (!location) {
-      return response;
-    }
-    const next = new URL(location, currentUrl);
-    if (!isAllowedUrl(next)) {
-      throw guardError(next.href);
-    }
-    if (
-      response.status === 303 ||
-      ((response.status === 301 || response.status === 302) &&
-        (currentInit?.method ?? 'GET').toUpperCase() === 'POST')
-    ) {
-      // Method downgrade drops the body and its content-describing headers.
-      currentInit = { ...currentInit, method: 'GET', body: undefined, headers: undefined };
-    }
-    currentUrl = next;
-    firstHop = false;
+    throw error;
   }
 }) as typeof fetch;
 
