@@ -524,23 +524,25 @@ export class JobQueueRepository {
           (r.outcome === 'consumed' || r.outcome === 'already_consumed')
       );
       if (consumedSteer) {
-        // Scope to the turn that OWNED the steer: the earliest turn terminal
-        // at/after the steer's consumption (the one that was running when it
-        // was fed). A LATER turn's dead row (e.g. an unrelated steer promoted
-        // after completion was suppressed) must not fail an activation whose
-        // kickoff was already consumed successfully.
-        // (Task #944 review.)
+        // Scope to the turn that OWNED the steer: the turn ACTIVE when the
+        // steer entered delivery (its job row's creation), matched by claim
+        // window [started_at, completed_at]. Keying on creation — not the
+        // steer row's completion — covers the ACP shape where the accepted
+        // steer stays parked and completes ('already_consumed') on a LATER
+        // claim, after its owning turn already finished; a completion-keyed
+        // match would miss that owner (or pick a later unrelated turn). A
+        // LATER turn's dead row must still not fail an activation whose
+        // kickoff was consumed successfully. (Task #944 review.)
         const steerRow = this.db
           .prepare(
-            `SELECT completed_at FROM job_queue
+            `SELECT created_at FROM job_queue
               WHERE queue = 'message_delivery'
                 AND json_extract(payload, '$.messageUuid') = ?
-                AND completed_at IS NOT NULL
-              ORDER BY completed_at ASC LIMIT 1`
+              ORDER BY created_at ASC LIMIT 1`
           )
-          .get(messageUuid) as { completed_at: number } | undefined;
+          .get(messageUuid) as { created_at: number } | undefined;
         if (!steerRow) return null;
-        const owner = this.db
+        const ownerWindow = this.db
           .prepare(
             `SELECT status, json_extract(result, '$.outcome') AS outcome
                FROM job_queue
@@ -548,12 +550,32 @@ export class JobQueueRepository {
                 AND json_extract(payload, '$.sessionId') = ?
                 AND json_extract(payload, '$.role') = 'turn'
                 AND completed_at IS NOT NULL
+                AND started_at IS NOT NULL
+                AND started_at <= ?
                 AND completed_at >= ?
               ORDER BY completed_at ASC LIMIT 1`
           )
-          .get(sessionId, steerRow.completed_at) as
+          .get(sessionId, steerRow.created_at, steerRow.created_at) as
           | { status: string; outcome: string | null }
           | undefined;
+        // Fallback for retried owners whose LAST claim postdates the steer's
+        // creation: the earliest turn terminal at/after creation.
+        const owner =
+          ownerWindow ??
+          (this.db
+            .prepare(
+              `SELECT status, json_extract(result, '$.outcome') AS outcome
+                 FROM job_queue
+                WHERE queue = 'message_delivery'
+                  AND json_extract(payload, '$.sessionId') = ?
+                  AND json_extract(payload, '$.role') = 'turn'
+                  AND completed_at IS NOT NULL
+                  AND completed_at >= ?
+                ORDER BY completed_at ASC LIMIT 1`
+            )
+            .get(sessionId, steerRow.created_at) as
+            | { status: string; outcome: string | null }
+            | undefined);
         if (!owner) return null;
         if (owner.status === 'dead') return 'dead';
         return owner.status === 'completed' && owner.outcome === 'completed' ? 'completed' : null;

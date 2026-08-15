@@ -706,20 +706,22 @@ describe('JobQueueRepository', () => {
       messageUuid: string,
       role: 'turn' | 'steer',
       status: 'completed' | 'dead' | 'pending',
-      outcome: string | null
+      outcome: string | null,
+      times?: { createdAt?: number; startedAt?: number | null; completedAt?: number | null }
     ) => {
       db.prepare(
         `INSERT INTO job_queue (id, queue, status, payload, result, priority, max_retries,
            retry_count, run_at, created_at, started_at, completed_at)
-         VALUES (?, 'message_delivery', ?, ?, ?, 0, 3, 0, ?, ?, NULL, ?)`
+         VALUES (?, 'message_delivery', ?, ?, ?, 0, 3, 0, ?, ?, ?, ?)`
       ).run(
         id,
         status,
         JSON.stringify({ sessionId: 'sess-1', messageUuid, role }),
         outcome ? JSON.stringify({ outcome }) : null,
         SINCE + 1000,
-        SINCE + 1100, // created_at
-        status === 'pending' ? null : SINCE + 2000
+        times?.createdAt ?? SINCE + 1100,
+        times?.startedAt === undefined ? null : times.startedAt,
+        times?.completedAt ?? (status === 'pending' ? null : SINCE + 2000)
       );
     };
 
@@ -757,6 +759,27 @@ describe('JobQueueRepository', () => {
       seed('j1', 'kick', 'steer', 'completed', 'consumed');
       seed('j2', 'peer', 'turn', 'pending', null);
       expect(repository.deliveryTurnOutcomeSince('sess-1', SINCE, 'kick')).toBeNull();
+    });
+
+    it('ACP shape: owner turn completed BEFORE the steer row completes → matched via creation window', () => {
+      // The accepted steer stays parked and completes ('already_consumed') on
+      // a LATER claim, after its owning turn already finished. The owner is
+      // matched by the turn active at the steer's CREATION.
+      const T0 = SINCE + 1000; // owner claimed
+      const T1 = SINCE + 1500; // steer created (fed mid-turn)
+      const T2 = SINCE + 2000; // owner completed
+      const T3 = SINCE + 5000; // steer row finally completes
+      seed('j-owner', 'peer', 'turn', 'completed', 'completed', {
+        createdAt: T0,
+        startedAt: T0,
+        completedAt: T2,
+      });
+      seed('j-kick', 'kick', 'steer', 'completed', 'already_consumed', {
+        createdAt: T1,
+        startedAt: T1,
+        completedAt: T3,
+      });
+      expect(repository.deliveryTurnOutcomeSince('sess-1', SINCE, 'kick')).toBe('completed');
     });
 
     it('unrelated uuid only → null (correlation filters it out)', () => {
