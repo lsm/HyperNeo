@@ -1681,6 +1681,49 @@ describe('SDKMessageRepository', () => {
     it('returns null when the uuid is unknown', () => {
       expect(repository.markDeliveryConsumedByUuid('session-1', 'no-such-uuid')).toBeNull();
     });
+
+    it('markDeliveryConsumedByUuids flips kickoff + members in one atomic call', () => {
+      const kickoffId = repository.saveUserMessage(
+        'session-1',
+        createUserMessage('kickoff', 'uuid-kick'),
+        'enqueued'
+      );
+      const memberId = repository.saveUserMessage(
+        'session-1',
+        createUserMessage('member', 'uuid-member'),
+        'enqueued'
+      );
+      repository.saveUserMessage(
+        'session-1',
+        createUserMessage('deferred member', 'uuid-def-member'),
+        'deferred'
+      );
+
+      const flipped = repository.markDeliveryConsumedByUuids('session-1', [
+        'uuid-kick',
+        'uuid-member',
+        'uuid-def-member',
+        'uuid-kick', // duplicate — must not double-flip
+      ]);
+
+      expect(flipped.sort()).toEqual([kickoffId, memberId].sort());
+      expect(repository.getMessagesByStatus('session-1', 'enqueued').length).toBe(0);
+      expect(repository.getMessagesByStatus('session-1', 'consumed').length).toBe(2);
+      // The deferred member is not a consume candidate — stays deferred.
+      expect(repository.getMessagesByStatus('session-1', 'deferred').length).toBe(1);
+    });
+
+    it('markDeliveryFailedByUuidInclusive does NOT fail a deferred row (user hold survives dead-letter)', () => {
+      repository.saveUserMessage(
+        'session-1',
+        createUserMessage('excluded member', 'uuid-excl'),
+        'deferred'
+      );
+      // A dead-lettered batch must not terminalize a member the user deferred
+      // out of the prompt before delivery.
+      expect(repository.markDeliveryFailedByUuidInclusive('session-1', 'uuid-excl')).toBeNull();
+      expect(repository.getMessagesByStatus('session-1', 'deferred').length).toBe(1);
+    });
   });
 
   describe('markDeliveryRetryableByUuid (recoverable no-result turn → retry re-feed)', () => {

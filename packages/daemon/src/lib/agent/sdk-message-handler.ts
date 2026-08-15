@@ -520,6 +520,45 @@ export class SDKMessageHandler {
     );
     if (consumed) {
       signalDeliveryConsumed(this.ctx.session.id, messageId);
+      this.consumeBatchMembersAtAcceptance(messageId);
+    }
+  }
+
+  /**
+   * Batched queue flush on an ACP session: the kickoff's prompt folded the
+   * members in, and ACP's consume boundary is acceptance (here) — not onSent.
+   * Flip the members with the kickoff or their rows stay `enqueued` and the
+   * orphan reconciler re-delivers them individually, repeating already-executed
+   * prompts. The membership is read from the durable job payload
+   * (`getActiveDeliveryBatchUuids`), so a crash + reclaim between admission and
+   * acceptance resolves the same batch. Best-effort: a throw here must not
+   * break the kickoff's acceptance path (the members are then picked up by the
+   * reconciler after the job settles).
+   */
+  private consumeBatchMembersAtAcceptance(kickoffUuid: string): void {
+    try {
+      const jobQueue = this.ctx.db.getJobQueueRepo?.();
+      const repo = this.ctx.db.getSDKMessageRepo();
+      if (!jobQueue || !repo) return;
+      const members = jobQueue.getActiveDeliveryBatchUuids?.(this.ctx.session.id, kickoffUuid);
+      if (!members) return;
+      const uuids = members.filter((uuid) => uuid !== kickoffUuid);
+      if (uuids.length === 0) return;
+      const flippedIds = repo.markDeliveryConsumedByUuids(this.ctx.session.id, uuids);
+      if (flippedIds.length > 0) {
+        void this.ctx.internalEventBus
+          .publish('messages.statusChanged', {
+            sessionId: this.ctx.session.id,
+            messageIds: flippedIds,
+            status: 'consumed',
+          })
+          .catch(() => {});
+      }
+      for (const uuid of uuids) {
+        signalDeliveryConsumed(this.ctx.session.id, uuid);
+      }
+    } catch (err) {
+      this.logger.warn('Failed to consume batch members at ACP acceptance:', err);
     }
   }
 

@@ -328,14 +328,28 @@ export function buildBatchedDeliveryContent(texts: string[]): string {
 }
 
 /**
+ * Character budget for a batched flush prompt. An unbounded concatenation of
+ * arbitrarily many queued messages can exceed the provider's request/context
+ * limit, making the batch permanently undeliverable (every retry rebuilds the
+ * same oversized prompt and the dead-letter then fails every member). The
+ * handler admits members while the combined prompt fits; the remainder stays
+ * `enqueued` and is delivered by the reconciler after the batch turn
+ * completes. ~200k chars ≈ 50k tokens — generous against real queues, far
+ * below any modern context window.
+ */
+export const BATCH_DELIVERY_MAX_CHARS = 200_000;
+
+/**
  * Enqueue ONE batched turn job for a queue flush with multiple pending
  * messages (see {@link MessageDeliveryPayload.batchUuids}). `messageUuids[0]`
  * becomes the kickoff. Returns false — WITHOUT enqueueing anything — when a
- * batch is not applicable: fewer than two usable UUIDs, a member already owns
- * an active job (a concurrent deliverer), or the atomic active-turn index
- * rejected the `role:'turn'` insert (a turn went active between flush and
- * enqueue). Callers fall back to per-message delivery
- * ({@link deliverAndMarkQueued}) on false.
+ * batch is not applicable: fewer than two UUIDs, ANY requested UUID already
+ * owning an active job (batching only the unowned tail would reorder the
+ * queue behind an existing steer — fall back so per-message delivery
+ * preserves ownership and order), or the atomic active-turn index rejected
+ * the `role:'turn'` insert (a turn went active between flush and enqueue).
+ * Callers fall back to per-message delivery ({@link deliverAndMarkQueued}) on
+ * false.
  */
 export async function deliverBatchAndMarkQueued(args: {
   jobQueue: JobQueueRepository;
@@ -348,12 +362,13 @@ export async function deliverBatchAndMarkQueued(args: {
   origin: MessageDeliveryOrigin;
 }): Promise<boolean> {
   return await withSessionLock(args.sessionId, async () => {
-    // Exclude UUIDs that already own an active delivery job (idempotency —
-    // same contract as deliverMessage's getActiveDeliveryRole guard, but
-    // batch-aware via activeDeliveryMessageUuids).
-    const active = args.jobQueue.activeDeliveryMessageUuids(args.sessionId);
-    const usable = args.messageUuids.filter((uuid) => !active.has(uuid));
+    const usable = args.messageUuids;
     if (usable.length < 2) return false;
+    // ANY active member disqualifies the batch (see the doc above) — same
+    // idempotency guard as deliverMessage, but batch-aware via
+    // activeDeliveryMessageUuids.
+    const active = args.jobQueue.activeDeliveryMessageUuids(args.sessionId);
+    if (usable.some((uuid) => active.has(uuid))) return false;
 
     try {
       args.jobQueue.enqueue({

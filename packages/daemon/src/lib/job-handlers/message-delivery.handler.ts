@@ -188,11 +188,16 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     // turn must not resurrect them. A `consumed` member (flipped with the
     // kickoff by a prior attempt) is kept so a reclaim recombines the original
     // batch.
+    //
+    // NOTE: this handler-side combination is only a PRE-ADMISSION estimate —
+    // the bridge revalidates every member and rebuilds the prompt under the
+    // per-session lock immediately before feeding (a member can be
+    // deleted/deferred between this snapshot and the feed), and enforces the
+    // BATCH_DELIVERY_MAX_CHARS budget so the combined prompt can never outgrow
+    // the provider's request limit.
     let turnContent = content;
-    let batchUuids: string[] | undefined;
     if (payload.role === 'turn' && payload.batchUuids && payload.batchUuids.length > 1) {
       const texts: string[] = [];
-      const members: string[] = [];
       for (const uuid of payload.batchUuids) {
         const member =
           uuid === payload.messageUuid ? loaded : deps.getMessageContent(payload.sessionId, uuid);
@@ -201,11 +206,9 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
         const text = flattenDeliveryText(member.content);
         if (text === null) continue;
         texts.push(text);
-        members.push(uuid);
       }
       if (texts.length > 1) {
         turnContent = buildBatchedDeliveryContent(texts);
-        batchUuids = members;
       }
     }
 
@@ -221,7 +224,7 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
         payload.parentToolUseId,
         alreadyConsumed,
         claimCurrent,
-        batchUuids
+        payload.batchUuids
       );
       const heartbeat = setInterval(
         () => deps.jobQueue.touchStartedAt(job.id, job.claimToken),

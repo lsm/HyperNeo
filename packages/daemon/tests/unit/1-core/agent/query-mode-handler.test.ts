@@ -577,7 +577,7 @@ describe('QueryModeHandler', () => {
       expect(payloads.every((p) => !('batchUuids' in JSON.parse(p.payload)))).toBe(true);
     });
 
-    it('handleQueryTrigger delivers non-text messages individually alongside the batch', async () => {
+    it('handleQueryTrigger does NOT batch a mixed flush (image between texts preserves queue order)', async () => {
       getMessagesByStatusSpy.mockReturnValue([
         { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
         {
@@ -596,14 +596,41 @@ describe('QueryModeHandler', () => {
       const result = await handler.handleQueryTrigger();
 
       expect(result).toEqual({ success: true, messageCount: 3 });
-      // The two text messages batch into one turn; the image message keeps its
-      // own job (a steer into the batched turn).
+      // Batching only the texts would deliver text C before the earlier image
+      // B — the whole flush falls back to per-message (first turn, rest steer)
+      // so queue order is preserved.
       const jobs = deliveryUuids();
-      const batch = jobs.find((j) => j.uuid === 'uuid-1');
-      expect(batch?.role).toBe('turn');
-      const image = jobs.find((j) => j.uuid === 'uuid-2');
-      expect(image?.role).toBe('steer');
+      expect(jobs).toHaveLength(3);
+      expect(jobs.find((j) => j.uuid === 'uuid-1')?.role).toBe('turn');
+      expect(jobs.find((j) => j.uuid === 'uuid-2')?.role).toBe('steer');
+      expect(jobs.find((j) => j.uuid === 'uuid-3')?.role).toBe('steer');
+      const payloads = jobsDb
+        .prepare(`SELECT payload FROM job_queue WHERE queue = 'message_delivery'`)
+        .all() as Array<{ payload: string }>;
+      expect(payloads.every((p) => !('batchUuids' in JSON.parse(p.payload)))).toBe(true);
+    });
+
+    it('handleQueryTrigger does NOT batch a flush containing an SDK slash command', async () => {
+      getMessagesByStatusSpy.mockReturnValue([
+        {
+          dbId: 'db-1',
+          uuid: 'uuid-1',
+          type: 'user',
+          message: { role: 'user', content: '/compact' },
+        },
+        { dbId: 'db-2', uuid: 'uuid-2', type: 'user', message: { role: 'user', content: 'note' } },
+      ] as unknown as SDKMessage[]);
+
+      handler = new QueryModeHandler(createContext());
+      const result = await handler.handleQueryTrigger();
+
+      expect(result).toEqual({ success: true, messageCount: 2 });
+      // A batch delimiter prefix would turn the command into literal prompt
+      // text — per-message delivery keeps it standalone.
+      const jobs = deliveryUuids();
       expect(jobs).toHaveLength(2);
+      expect(jobs.find((j) => j.uuid === 'uuid-1')?.role).toBe('turn');
+      expect(jobs.find((j) => j.uuid === 'uuid-2')?.role).toBe('steer');
     });
 
     it('sendEnqueuedMessagesOnTurnEnd enqueues a durable job per enqueued message', async () => {

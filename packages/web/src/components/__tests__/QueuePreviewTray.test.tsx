@@ -119,3 +119,47 @@ describe('QueuePreviewTray — inline cap + full-queue modal', () => {
     ).toBe('Page 1 of 2');
   });
 });
+
+describe('QueuePreviewTray — review round 2 fixes', () => {
+  afterEach(cleanup);
+
+  it('does not reopen the modal when its queue refills after emptying', () => {
+    // Regression: removing every message of the open group left modalGroup
+    // set; a later message in that group silently re-blocked the chat with
+    // an auto-opened modal.
+    const { container, rerender } = render(
+      <QueuePreviewTray currentTurnMessages={[]} nextTurnMessages={makeMessages(5, 'next')} />
+    );
+    fireEvent.click(container.querySelector('[data-testid="queued-show-all"]')!);
+    expect(document.body.querySelector('[data-testid="queued-modal-list"]')).toBeTruthy();
+
+    // Queue empties (all moved/removed) while the other group keeps the
+    // tray mounted.
+    rerender(
+      <QueuePreviewTray currentTurnMessages={makeMessages(2, 'steer')} nextTurnMessages={[]} />
+    );
+    // The selection resets — a NEW next message must not auto-open the modal.
+    rerender(
+      <QueuePreviewTray
+        currentTurnMessages={makeMessages(2, 'steer')}
+        nextTurnMessages={makeMessages(1, 'next')}
+      />
+    );
+    expect(document.body.querySelector('[data-testid="queued-modal-list"]')).toBeNull();
+  });
+
+  it('flags not-loaded messages when the server total exceeds the loaded list', () => {
+    const { container } = render(
+      <QueuePreviewTray
+        currentTurnMessages={[]}
+        nextTurnMessages={makeMessages(5, 'next')}
+        nextTurnTotal={1200}
+      />
+    );
+    fireEvent.click(container.querySelector('[data-testid="queued-show-all"]')!);
+    expect(
+      document.body.querySelector('[data-testid="queued-modal-unloaded-note"]')?.textContent
+    ).toContain('1195 more not loaded');
+    expect(document.body.querySelector('[data-testid="queued-modal-page-label"]')).toBeNull();
+  });
+});

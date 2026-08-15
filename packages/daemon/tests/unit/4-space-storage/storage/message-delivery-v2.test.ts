@@ -21,6 +21,7 @@ import {
   awaitDeliveryConsumption,
   buildBatchedDeliveryContent,
   deliverAndMarkQueued,
+  deliverBatchAndMarkQueued,
   deliverMessage,
   drainDeliveryWaitersOnTerminalSDKMessage,
   flattenDeliveryText,
@@ -391,6 +392,44 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
     });
   });
 
+  describe('batched flush — ownership + lookup guards', () => {
+    it('getActiveDeliveryBatchUuids resolves the active batch payload (null when none)', () => {
+      expect(repo.getActiveDeliveryBatchUuids(SESSION, 'kickoff')).toBeNull();
+      repo.enqueue({
+        queue: MESSAGE_DELIVERY,
+        payload: {
+          sessionId: SESSION,
+          messageUuid: 'kickoff',
+          role: 'turn',
+          origin: 'recovery',
+          parentToolUseId: null,
+          batchUuids: ['kickoff', 'member-a'],
+        },
+      });
+      expect(repo.getActiveDeliveryBatchUuids(SESSION, 'kickoff')).toEqual(['kickoff', 'member-a']);
+    });
+
+    it('deliverBatchAndMarkQueued returns false when ANY member already owns an active job', async () => {
+      // The oldest queued UUID owns a surviving steer job (startup/replay) —
+      // batching only the unowned tail would reorder the queue behind it, so
+      // the whole batch must fall back to per-message delivery.
+      deliverMessage(repo, SESSION, 'turn-anchor', { origin: 'chat' });
+      deliverMessage(repo, SESSION, 'uuid-old', { origin: 'chat' }); // → steer
+      const batched = await deliverBatchAndMarkQueued({
+        jobQueue: repo,
+        sessionId: SESSION,
+        messageUuids: ['uuid-old', 'uuid-mid', 'uuid-new'],
+        origin: 'recovery',
+      });
+      expect(batched).toBe(false);
+      // Nothing new was enqueued by the batch attempt.
+      const uuids = repo
+        .listJobs({ queue: MESSAGE_DELIVERY, limit: 50 })
+        .map((j) => (j.payload as { messageUuid: string }).messageUuid);
+      expect(uuids.sort()).toEqual(['turn-anchor', 'uuid-old']);
+    });
+  });
+
   describe('isProcessingDelivery — terminal-idle turn-end marker gate', () => {
     it('true only for a job currently processing; false when pending or absent', () => {
       deliverMessage(repo, SESSION, 'proc', { origin: 'chat' });
@@ -567,10 +606,12 @@ describe('message-delivery v2 — handler (conformance)', () => {
       },
     });
     await handler(job);
-    // Only the kickoff remains usable — no batch prompt, plain single content,
-    // and no batchUuids (the bridge must not flip phantom members).
+    // Only the kickoff remains usable in the handler-side estimate — plain
+    // single content. The RAW payload batchUuids still hand off to the bridge
+    // (it revalidates under the session lock before feeding), so the bridge —
+    // not this snapshot — decides the admitted set.
     expect(session.lastContent).toBe('only one left');
-    expect(session.lastBatchUuids).toBeUndefined();
+    expect(session.lastBatchUuids).toEqual(['kickoff', 'deleted-member', 'deferred-member']);
   });
 
   it('blocked startup → parks (requeue) and the job stays pending (§13: blocked→parked, not failed)', async () => {

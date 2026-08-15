@@ -260,10 +260,13 @@ import {
 import { resolveFallbackChain } from './fallback-recovery';
 import { InterruptHandler, type InterruptHandlerContext } from './interrupt-handler';
 import {
+  BATCH_DELIVERY_MAX_CHARS,
+  buildBatchedDeliveryContent,
   classifyReclaimTermination,
   type DriveTurnOutcome,
   deliverMessage,
   type FeedSteerOutcome,
+  flattenDeliveryText,
   isMessageDeliveryV2Enabled,
   isRetryableErrorResultSubtype,
   isTerminalTurnError,
@@ -2212,6 +2215,8 @@ export class AgentSession
       // query is running. See Codex (#2592). Durable so a yielded-but-unresumed
       // kickoff does not TTL-out into a duplicate re-feed (#3742616720).
       let acknowledgment: Promise<void> | null = null;
+      let admittedBatchUuids: string[] | undefined;
+      let feedContent: string | MessageContent[] = content;
       if (!alreadyConsumed) {
         // Re-fence the lease AGAIN right before admission: ensureQueryStarted
         // awaits provider startup, so the event loop can suspend past the stale
@@ -2222,11 +2227,27 @@ export class AgentSession
           turnEnd.cancel();
           return { kind: 'aborted' as const };
         }
-        acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
+        // Batched queue flush: revalidate every member + rebuild the prompt
+        // from the durable rows UNDER THIS LOCK — a member deleted or
+        // user-deferred between the handler's snapshot and the feed must not
+        // reach the provider, and the combined prompt must respect the
+        // BATCH_DELIVERY_MAX_CHARS budget. See rebuildBatchDeliveryContent.
+        if (batchUuids && batchUuids.length > 1) {
+          const rebuilt = this.rebuildBatchDeliveryContent(messageUuid, content, batchUuids);
+          feedContent = rebuilt.content;
+          admittedBatchUuids = rebuilt.admittedUuids;
+        }
+        acknowledgment = this.messageQueue.admitWithId(messageUuid, feedContent, false, {
           durable: true,
         });
       }
-      return { kind: 'driving' as const, queryPromise, turnEnd, acknowledgment };
+      return {
+        kind: 'driving' as const,
+        queryPromise,
+        turnEnd,
+        acknowledgment,
+        admittedBatchUuids,
+      };
     });
     if (started.kind === 'blocked') {
       // Mirror the legacy startQueryAndEnqueue path: report the session as
@@ -2288,19 +2309,20 @@ export class AgentSession
         // is acceptance (markMessageAccepted). (Codex.)
         if (this.session.config.provider !== 'acp') {
           const consumeSignalMs = Date.now();
-          this.markDeliveryConsumed(messageUuid);
-          // Batched queue flush: the kickoff's prompt folded the members in —
-          // flip + signal them together with the kickoff so their rows don't
-          // linger `enqueued` (reconciler would re-deliver them individually).
-          if (batchUuids) {
-            for (const memberUuid of batchUuids) {
+          // Batched queue flush: the kickoff's prompt folded the admitted
+          // members in — flip them ATOMICALLY with the kickoff (see
+          // markDeliveryBatchConsumed) so a crash between flips can't leave
+          // members `enqueued` under a consumed kickoff (the reconciler would
+          // re-deliver them individually, repeating executed prompts).
+          this.markDeliveryBatchConsumed(started.admittedBatchUuids ?? [messageUuid]);
+          deliveryMetrics.recordResidualWindow(Date.now() - consumeSignalMs);
+          signalDeliveryConsumed(this.session.id, messageUuid);
+          if (started.admittedBatchUuids) {
+            for (const memberUuid of started.admittedBatchUuids) {
               if (memberUuid === messageUuid) continue;
-              this.markDeliveryConsumed(memberUuid);
               signalDeliveryConsumed(this.session.id, memberUuid);
             }
           }
-          deliveryMetrics.recordResidualWindow(Date.now() - consumeSignalMs);
-          signalDeliveryConsumed(this.session.id, messageUuid);
         }
       }
       // Arm the stall watchdog now that the kickoff is consumed (or this is a
@@ -2716,6 +2738,75 @@ export class AgentSession
         })
         .catch(() => {});
     }
+  }
+
+  /**
+   * Atomic variant of {@link markDeliveryConsumed} for batched queue flushes:
+   * the kickoff and every admitted member flip to `consumed` in ONE database
+   * transaction. A crash between two separate flips would leave the members
+   * `enqueued` while the (consumed) reclaim skips the re-feed — the reconciler
+   * would then deliver them individually, repeating already-executed prompts.
+   * One statusChanged broadcast carries every flipped row.
+   */
+  private markDeliveryBatchConsumed(uuids: string[]): void {
+    const flippedIds = this.db
+      .getSDKMessageRepo()
+      .markDeliveryConsumedByUuids(this.session.id, uuids);
+    if (flippedIds.length > 0) {
+      void this.internalEventBus
+        .publish('messages.statusChanged', {
+          sessionId: this.session.id,
+          messageIds: flippedIds,
+          status: 'consumed',
+        })
+        .catch(() => {});
+    }
+  }
+
+  /**
+   * Revalidate a batched flush's members and rebuild the combined prompt from
+   * the durable rows, under the caller's session lock (immediately before
+   * feeding). Members removed or user-deferred since the handler's snapshot
+   * are dropped — their content must not reach the provider. Admission stops
+   * at {@link BATCH_DELIVERY_MAX_CHARS} so the combined prompt can never
+   * outgrow the provider's request limit; the remainder stays `enqueued`
+   * (shielded from the reconciler by the batch-aware active-job lookups until
+   * this job completes, then delivered individually). Returns the feed content
+   * plus the admitted UUIDs (`undefined` when only the kickoff survives — its
+   * raw content feeds, no batch flip).
+   */
+  private rebuildBatchDeliveryContent(
+    kickoffUuid: string,
+    kickoffContent: string | MessageContent[],
+    batchUuids: string[]
+  ): { content: string | MessageContent[]; admittedUuids?: string[] } {
+    const repo = this.db.getSDKMessageRepo();
+    const texts: string[] = [];
+    const admitted: string[] = [];
+    let kickoffRaw: string | MessageContent[] | null = null;
+    let budget = BATCH_DELIVERY_MAX_CHARS;
+    for (const uuid of batchUuids) {
+      const row = repo.getDeliveryContent(this.session.id, uuid);
+      if (!row) continue;
+      if (row.sendStatus === 'deferred' || row.sendStatus === 'failed') continue;
+      const text = flattenDeliveryText(row.content);
+      if (text === null) continue;
+      const cost = text.length + 32; // delimiter overhead per message
+      if (texts.length > 0 && budget < cost) break; // the kickoff is always admitted
+      budget -= cost;
+      if (uuid === kickoffUuid) kickoffRaw = row.content;
+      texts.push(text);
+      admitted.push(uuid);
+    }
+    if (texts.length === 0) {
+      // No usable row (snapshot raced full removal) — the kickoff itself
+      // passed messageDeliveryValid above, so fall back to its content.
+      return { content: kickoffContent };
+    }
+    if (texts.length === 1) {
+      return { content: kickoffRaw ?? kickoffContent };
+    }
+    return { content: buildBatchedDeliveryContent(texts), admittedUuids: admitted };
   }
 
   /**

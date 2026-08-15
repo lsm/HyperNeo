@@ -128,13 +128,16 @@ export class QueryModeHandler {
   }
 
   /**
-   * Deliver a queue flush under durable delivery (v2). When multiple
-   * plain-text messages flush together AND no turn is active, they are
-   * coalesced into ONE batched turn (payload.batchUuids — the handler
-   * combines the contents with numbered delimiters) so the model reads the
-   * whole queue before acting, instead of answering N steers one at a time.
-   * Messages that cannot be folded (non-text content, e.g. images), and the
-   * whole flush when a turn is active or the batch enqueue is rejected, fall
+   * Deliver a queue flush under durable delivery (v2). When the flush is
+   * entirely foldable plain-text messages (≥2) AND no turn is active, they are
+   * coalesced into ONE batched turn (payload.batchUuids — the handler combines
+   * the contents with numbered delimiters) so the model reads the whole queue
+   * before acting, instead of answering N steers one at a time. ANY
+   * non-foldable message in the flush (non-text content like images, or an SDK
+   * slash command that must reach the SDK standalone) disables batching for
+   * the whole flush — batching only the foldable subset would reorder the
+   * queue (a later text arriving before an earlier image/command). A turn
+   * active at enqueue time, or any member already owning a job, also falls
    * back to per-message delivery — the pre-batch first-turn/rest-steer
    * behavior.
    */
@@ -146,33 +149,24 @@ export class QueryModeHandler {
     const pending = messages.filter(
       (msg) => isSDKUserMessage(msg) && typeof msg.uuid === 'string' && msg.uuid.length > 0
     );
-    const batchable = new Set(
-      pending
-        .filter((msg) => {
-          if (!isSDKUserMessage(msg)) return false;
-          const content = msg.message.content;
-          return flattenDeliveryText(content ?? '') !== null;
-        })
-        .map((msg) => msg.uuid as string)
-    );
-    const batchUuids = pending
-      .filter((msg) => batchable.has(msg.uuid as string))
-      .map((m) => m.uuid as string);
-    const individual = pending.filter((msg) => !batchable.has(msg.uuid as string));
+    const allBatchable = pending.every((msg) => {
+      if (!isSDKUserMessage(msg)) return false;
+      const text = flattenDeliveryText(msg.message.content ?? '');
+      // SDK slash commands (e.g. a deferred /compact) must reach the SDK as a
+      // standalone command — a batch delimiter prefix would turn the command
+      // into literal prompt text.
+      return text !== null && !text.startsWith('/');
+    });
 
-    if (batchUuids.length >= 2) {
+    if (allBatchable && pending.length >= 2) {
       const batched = await deliverBatchAndMarkQueued({
         jobQueue,
         stateManager: this.ctx.stateManager,
         sessionId: this.ctx.session.id,
-        messageUuids: batchUuids,
+        messageUuids: pending.map((m) => m.uuid as string),
         origin,
       });
-      if (batched) {
-        // Non-foldable stragglers steer into the batched turn.
-        await this.deliverEachUnderV2(individual, origin);
-        return;
-      }
+      if (batched) return;
     }
     await this.deliverEachUnderV2(pending, origin);
   }

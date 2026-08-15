@@ -2118,11 +2118,15 @@ export class SDKMessageRepository {
    * `message-delivery-dead-letter.ts` + docs/features/message-delivery-v2.md.
    */
   markDeliveryFailedByUuidInclusive(sessionId: string, uuid: string): string | null {
+    // `deferred` is deliberately EXCLUDED: a deferred row is an explicit user
+    // hold (or a batch member excluded from the prompt before delivery), never
+    // something this dead-letter delivered — flipping it to `failed` would
+    // destroy the user's queue intent.
     const row = this.db
       .prepare(
         `SELECT id FROM sdk_messages
            WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-             AND send_status IN ('enqueued', 'deferred', 'submitted', 'consumed')
+             AND send_status IN ('enqueued', 'submitted', 'consumed')
            ORDER BY timestamp ASC LIMIT 1`
       )
       .get(sessionId, uuid) as { id: string } | undefined;
@@ -2173,6 +2177,35 @@ export class SDKMessageRepository {
     if (!row) return null;
     this.updateMessageStatus([row.id], 'consumed');
     return row.id;
+  }
+
+  /**
+   * Atomic multi-row variant of {@link markDeliveryConsumedByUuid} for batched
+   * queue flushes: the kickoff and every admitted member flip to `consumed` in
+   * ONE transaction. A crash between the kickoff's flip and the members' would
+   * otherwise leave the members `enqueued` while the (consumed) reclaim skips
+   * the re-feed — the reconciler would then deliver them individually,
+   * repeating already-executed prompts. Returns the flipped db ids in the
+   * caller's UUID order (skips rows not in a consumable state).
+   */
+  markDeliveryConsumedByUuids(sessionId: string, uuids: string[]): string[] {
+    return this.db.transaction(() => {
+      const ids: string[] = [];
+      for (const uuid of new Set(uuids)) {
+        const row = this.db
+          .prepare(
+            `SELECT id FROM sdk_messages
+               WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+                 AND send_status IN ('enqueued', 'submitted')
+               ORDER BY timestamp ASC LIMIT 1`
+          )
+          .get(sessionId, uuid) as { id: string } | undefined;
+        if (!row) continue;
+        this.updateMessageStatus([row.id], 'consumed');
+        ids.push(row.id);
+      }
+      return ids;
+    })();
   }
 
   /**

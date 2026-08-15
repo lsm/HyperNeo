@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { Modal } from './ui/Modal.tsx';
 
 export interface QueuePreviewMessage {
@@ -33,6 +33,13 @@ interface QueuePreviewRowProps {
 interface QueuePreviewTrayProps {
   currentTurnMessages: QueuePreviewMessage[];
   nextTurnMessages: QueuePreviewMessage[];
+  /**
+   * Server-side queue sizes (when known). The loaded arrays are capped by the
+   * fetch limit; the modal uses the totals so its count stays honest and it
+   * can flag not-loaded messages.
+   */
+  currentTurnTotal?: number;
+  nextTurnTotal?: number;
   className?: string;
   onDeferMessage?: (message: QueuePreviewMessage) => void;
   onPromoteMessage?: (message: QueuePreviewMessage) => void;
@@ -192,6 +199,8 @@ function QueuePreviewRow({
 export function QueuePreviewTray({
   currentTurnMessages,
   nextTurnMessages,
+  currentTurnTotal,
+  nextTurnTotal,
   className = '',
   onDeferMessage,
   onPromoteMessage,
@@ -201,12 +210,29 @@ export function QueuePreviewTray({
   const [modalGroup, setModalGroup] = useState<'current' | 'next' | null>(null);
   const [page, setPage] = useState(0);
 
+  // Reset the modal selection when its queue empties (every message
+  // removed/moved while the other group keeps the tray mounted): a stale
+  // selection would silently REOPEN the modal when that queue next receives a
+  // message (e.g. Next items becoming Steer at a turn boundary), blocking the
+  // chat UI without user action.
+  useEffect(() => {
+    if (modalGroup === null) return;
+    const empty =
+      modalGroup === 'current' ? currentTurnMessages.length === 0 : nextTurnMessages.length === 0;
+    if (empty) setModalGroup(null);
+  }, [modalGroup, currentTurnMessages.length, nextTurnMessages.length]);
+
   if (currentTurnMessages.length === 0 && nextTurnMessages.length === 0) {
     return null;
   }
 
   const modalMessages =
     modalGroup === 'current' ? currentTurnMessages : modalGroup === 'next' ? nextTurnMessages : [];
+  // The server-side total (when reported) — the loaded array may be truncated
+  // by the fetch limit, and the modal must not claim a truncated list is full.
+  const modalTotal =
+    modalGroup === 'current' ? currentTurnTotal : modalGroup === 'next' ? nextTurnTotal : undefined;
+  const unloaded = Math.max(0, (modalTotal ?? modalMessages.length) - modalMessages.length);
   const totalPages = Math.max(1, Math.ceil(modalMessages.length / QUEUE_MODAL_PAGE_SIZE));
   // Clamp so deleting the last row of the final page falls back to a valid one.
   const currentPage = Math.min(page, totalPages - 1);
@@ -253,11 +279,16 @@ export function QueuePreviewTray({
         <Modal
           isOpen
           onClose={() => setModalGroup(null)}
-          title={`${modalGroup === 'current' ? 'Steer' : 'Next'} queue — ${modalMessages.length} ${
-            modalMessages.length === 1 ? 'message' : 'messages'
-          }`}
+          title={`${modalGroup === 'current' ? 'Steer' : 'Next'} queue — ${
+            modalTotal ?? modalMessages.length
+          } ${(modalTotal ?? modalMessages.length) === 1 ? 'message' : 'messages'}`}
           size="lg"
         >
+          {unloaded > 0 && (
+            <p class="mb-2 text-xs text-gray-400" data-testid="queued-modal-unloaded-note">
+              Showing the first {modalMessages.length} queued messages ({unloaded} more not loaded).
+            </p>
+          )}
           <QueuePreviewRow
             label={modalGroup === 'current' ? 'Steer' : 'Next'}
             messages={pageMessages}

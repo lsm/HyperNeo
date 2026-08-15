@@ -387,6 +387,38 @@ export class JobQueueRepository {
   }
 
   /**
+   * The `batchUuids` of the active (pending/processing) message_delivery job
+   * whose kickoff is `kickoffUuid`, or null when none. Used by the ACP
+   * acceptance path (SdkMessageHandler.markMessageAccepted) to consume a
+   * batched flush's members together with the kickoff — the membership lives
+   * in the durable payload, so a crash + reclaim between admission and
+   * acceptance still resolves the same batch.
+   */
+  getActiveDeliveryBatchUuids(sessionId: string, kickoffUuid: string): string[] | null {
+    const row = this.db
+      .prepare(
+        `SELECT json_extract(payload, '$.batchUuids') AS batch
+           FROM job_queue
+          WHERE queue = 'message_delivery'
+            AND json_extract(payload, '$.sessionId') = ?
+            AND json_extract(payload, '$.messageUuid') = ?
+            AND json_type(payload, '$.batchUuids') = 'array'
+            AND status IN ('pending', 'processing')
+          ORDER BY created_at DESC LIMIT 1`
+      )
+      .get(sessionId, kickoffUuid) as { batch: string | null } | undefined;
+    if (typeof row?.batch !== 'string') return null;
+    try {
+      const parsed = JSON.parse(row.batch) as unknown;
+      return Array.isArray(parsed)
+        ? parsed.filter((u): u is string => typeof u === 'string')
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * True when a `message_delivery` job for (sessionId, messageUuid) is
    * currently `processing` — a turn the handler is actively driving. The
    * terminal-idle turn-end marker gate uses this to distinguish "the delivery
