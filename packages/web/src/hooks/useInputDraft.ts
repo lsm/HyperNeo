@@ -229,6 +229,65 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     [contentSignal]
   );
 
+  // Reconcile an owed clear when NO live landing remains (its marker expired
+  // past the TTL while the tombstone is still fresh): the replay effect exits
+  // at its liveness guard, so reconcile directly against the daemon — a fresh
+  // get performs (or reveals) the merge, then the baseline strip keeps only
+  // the transcripts, or a conditional clear removes the stale pre-clear draft
+  // when nothing ever merged. The tombstone is retired only once a reconcile
+  // commits, so a dropped socket retries on the next reconnect.
+  const reconcileOwedClear = useCallback(
+    (targetSessionId: string): void => {
+      const hub = connectionManager.getHubIfConnected();
+      if (!hub) return;
+      hub
+        .request<{
+          session?: {
+            metadata?: {
+              inputDraft?: string;
+              inputDraftVoiceBaseline?: string | null;
+              inputDraftVoiceBaselineSeq?: number | null;
+            };
+          };
+        }>('session.get', { sessionId: targetSessionId })
+        .then((response) => {
+          const meta = response.session?.metadata ?? {};
+          if (
+            typeof meta.inputDraftVoiceBaseline === 'string' &&
+            typeof meta.inputDraftVoiceBaselineSeq === 'number'
+          ) {
+            return hub
+              .request<{ updated?: boolean; value?: string }>('session.stripVoiceBaseline', {
+                sessionId: targetSessionId,
+                expected: meta.inputDraft ?? '',
+                expectedSeq: meta.inputDraftVoiceBaselineSeq,
+              })
+              .then((result) => {
+                if (currentSessionIdRef.current === targetSessionId && result.updated) {
+                  contentSignal.value = result.value ?? '';
+                }
+                removeClearTombstone(targetSessionId);
+              });
+          }
+          return hub
+            .request('session.clearInputDraftIf', {
+              sessionId: targetSessionId,
+              expected: meta.inputDraft ?? '',
+            })
+            .then(() => {
+              if (currentSessionIdRef.current === targetSessionId) {
+                contentSignal.value = '';
+              }
+              removeClearTombstone(targetSessionId);
+            });
+        })
+        .catch(() => {
+          /* stays owed — the reconnect subscription retries */
+        });
+    },
+    [contentSignal]
+  );
+
   // Load draft on session change
   useEffect(() => {
     // Clear content immediately when sessionId changes
@@ -266,12 +325,21 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         // as the connection allows, and leave the landing for it to consume.
         if (hasClearTombstone(sessionId)) {
           pendingClearRef.current = sessionId;
-          // Re-trigger the replay effect directly: the settle-time draft
-          // application changed content while that effect was dormant (it
-          // cannot subscribe to content before its settled guard without
-          // re-running on every keystroke), and the owed clear must reconcile
-          // the merged draft instead of leaving the sent text on screen.
-          voiceTranscriptLandedSignal.value = new Map(voiceTranscriptLandedSignal.value);
+          if (isLandingLive(sessionId)) {
+            // Re-trigger the replay effect directly: the settle-time draft
+            // application changed content while that effect was dormant (it
+            // cannot subscribe to content before its settled guard without
+            // re-running on every keystroke), and the owed clear must
+            // reconcile the merged draft instead of leaving the sent text on
+            // screen.
+            voiceTranscriptLandedSignal.value = new Map(voiceTranscriptLandedSignal.value);
+          } else {
+            // The landing EXPIRED (its marker pruned) while the tombstone is
+            // still fresh: the replay effect would exit at the liveness guard
+            // and the merged pre-clear text would resurrect. Reconcile the
+            // owed clear directly against the daemon's baseline snapshot.
+            void reconcileOwedClear(sessionId);
+          }
           return;
         }
         // Restore any draft backup from a deferred-landing session (the user's
@@ -326,7 +394,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     return () => {
       cancelled = true;
     };
-  }, [sessionId, contentSignal, loadDraft, consumeLanding]);
+  }, [sessionId, contentSignal, loadDraft, consumeLanding, reconcileOwedClear]);
 
   // Refresh the mounted draft when the outbox lands a transcript for this
   // session (e.g. after a page reload or reconnect replay). The pending field
@@ -518,10 +586,31 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   useEffect(() => {
     const retryBackupFlush = () => {
       if (connectionState.value !== 'connected') return;
+      // An owed clear whose landing expired has no replay effect to retry it —
+      // reconcile it directly for the active session.
+      if (
+        !isLandingLive(currentSessionIdRef.current) &&
+        hasClearTombstone(currentSessionIdRef.current)
+      ) {
+        reconcileOwedClear(currentSessionIdRef.current);
+      }
       const pending = pendingBackupFlushRef.current;
       if (!pending) return;
       pendingBackupFlushRef.current = null;
-      if (pending.sessionId === currentSessionIdRef.current) return;
+      if (pending.sessionId === currentSessionIdRef.current) {
+        // The user is back on the departed session: ADOPT the backup into an
+        // idle composer — its edits are newer than the stale server draft —
+        // and let normal saves persist them. A composer with text (the user
+        // typed since returning, or a newer draft loaded) supersedes the
+        // backup; the durable copy stays and a later switch retries it.
+        if (contentSignal.peek().trim() === '') {
+          contentSignal.value = pending.content;
+          clearDraftBackup(pending.sessionId);
+        } else {
+          pendingBackupFlushRef.current = pending;
+        }
+        return;
+      }
       const hub = connectionManager.getHubIfConnected();
       if (!hub) {
         pendingBackupFlushRef.current = pending; // not actually reachable yet
@@ -540,7 +629,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         });
     };
     return connectionState.subscribe(retryBackupFlush);
-  }, []);
+  }, [contentSignal, reconcileOwedClear]);
   useSignalEffect(() => {
     const content = contentSignal.value;
 

@@ -1112,6 +1112,101 @@ describe('useInputDraft', () => {
       ).toBeNull();
     });
 
+    it('reconciles an owed clear directly when its landing expired (tombstone only)', async () => {
+      // The landing marker aged past its TTL and was pruned, but the owed
+      // clear tombstone is fresh: no replay effect will fire, so the settle
+      // handler must reconcile against the daemon directly.
+      localStorage.setItem(
+        'hyperneo_voice_transcript_outbox_v1.clear.session-1',
+        JSON.stringify({ ts: Date.now() })
+      );
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return {
+            session: {
+              metadata: {
+                inputDraft: 'sent text voice',
+                inputDraftVoiceBaseline: 'sent text',
+                inputDraftVoiceBaselineSeq: 1,
+              },
+            },
+          };
+        }
+        if (method === 'session.stripVoiceBaseline') {
+          return { updated: true, value: 'voice' };
+        }
+        return {};
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // The strip runs without any live landing; the sent text does not
+      // resurrect and the tombstone retires.
+      const stripCall = mockHub.request.mock.calls.find(
+        ([m]) => m === 'session.stripVoiceBaseline'
+      );
+      expect(stripCall).toBeTruthy();
+      expect(result.current.content).toBe('voice');
+      expect(
+        localStorage.getItem('hyperneo_voice_transcript_outbox_v1.clear.session-1')
+      ).toBeNull();
+    });
+
+    it('adopts a retained backup flush when the user returns to its session', async () => {
+      mockHub.request.mockResolvedValue({ session: { metadata: { inputDraft: '' } } });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+      const { result, rerender } = renderHook(({ s }) => useInputDraft(s), {
+        initialProps: { s: 'session-A' },
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      result.current.setContent('A edits');
+      markVoiceTranscriptLanded('session-A', 'voice');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(23 * 60 * 60 * 1000);
+      });
+      result.current.setContent('A edits v2');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000);
+      });
+
+      // Switch away offline (flush retained), come back to A, then reconnect
+      // with an idle composer: the backup's edits are adopted into the
+      // composer rather than dropped.
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
+      rerender({ s: 'session-B' });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      rerender({ s: 'session-A' });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('');
+
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+      connectionState.value = 'connected';
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('A edits v2');
+      expect(getDraftBackup('session-A')).toBeNull();
+    });
+
     it('does not fold a cancelled replay whose pending was RETAINED (not merged)', async () => {
       let resolveGet!: (value: unknown) => void;
       mockHub.request
