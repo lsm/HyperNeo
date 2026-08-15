@@ -640,4 +640,6 @@ The contract (`TaskAgentManager.registerCompletionCallback`):
   succeeded — but when a dead steer was the LAST active job holding down a
   suppressed terminal idle (the turn's settle was ignored while the steer was
   in flight), it repays the suppressed completion instead of stranding the
-  node.
+  node — EXCEPT the kickoff itself when it was persisted as a steer (it lost
+  the turn arbiter to a flush): ITS dead-letter is the node's failed kickoff
+  and blocks (correlated via `data.kickoffMessageUuid`).
