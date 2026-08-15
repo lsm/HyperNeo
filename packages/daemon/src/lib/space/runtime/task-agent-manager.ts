@@ -33,27 +33,28 @@
  * registered `onComplete` callbacks are fired.
  */
 
+import { generateUUID, isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
+import { DEAD_LETTER_SESSION_ERROR } from '../../../lib/job-handlers/message-delivery-dead-letter';
 import type {
-  McpServerConfig,
-  MessageContent,
-  MessageHub,
-  MessageImage,
-  MessageInputKind,
-  MessageOrigin,
-  NodeExecution,
-  Session,
   Space,
   SpaceTask,
   SpaceWorkflow,
   SpaceWorkflowRun,
+  NodeExecution,
+  MessageHub,
+  McpServerConfig,
+  MessageContent,
+  MessageImage,
+  MessageInputKind,
+  MessageOrigin,
   WorkflowNode,
   WorkflowNodeAgent,
+  Session,
 } from '@hyperneo/shared';
-import { generateUUID, isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
-import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import type { SkillsManager } from '../../skills-manager';
+import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository';
 import type { UUID } from 'crypto';
-import type { ActorResolver } from '../../../../../messaging/src/contracts';
-import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session';
 import { AgentSession } from '../../../lib/agent/agent-session';
 import {
@@ -62,27 +63,26 @@ import {
   deliveryConsumptionTimeoutMs,
   isMessageDeliveryV2Enabled,
 } from '../../../lib/agent/message-delivery';
-import { DEAD_LETTER_SESSION_ERROR } from '../../../lib/job-handlers/message-delivery-dead-letter';
+import { validateImageSizes } from '../../session/message-persistence';
 import type { Database } from '../../../storage/database';
 import type { ReactiveDatabase } from '../../../storage/reactive-database';
-import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository';
-import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
-import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
-import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
+import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
+import type { SessionManager } from '../../session-manager';
+import type { SpaceManager } from '../managers/space-manager';
+import type { SpaceAgentManager } from '../managers/space-agent-manager';
+import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
+import type { SpaceRuntimeService } from './space-runtime-service';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
-import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
-import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
-import { validateImageSizes } from '../../session/message-persistence';
-import type { SessionManager } from '../../session-manager';
-import type { SkillsManager } from '../../skills-manager';
-import type { SpaceAgentManager } from '../managers/space-agent-manager';
-import type { SpaceManager } from '../managers/space-manager';
-import { SpaceTaskManager } from '../managers/space-task-manager';
-import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
+import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository';
+import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository';
+import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository';
+import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types';
+import type { ActorResolver } from '../../../../../messaging/src/contracts';
+import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
 import type { SpaceWorktreeManager } from '../managers/space-worktree-manager';
-import type { SpaceRuntimeService } from './space-runtime-service';
+import { SpaceTaskManager } from '../managers/space-task-manager';
 /** Agent identity metadata for sub-session creation. */
 export interface SubSessionMemberInfo {
   /** ID of the SpaceWorkerAgent config this sub-session uses */
@@ -92,54 +92,53 @@ export interface SubSessionMemberInfo {
   /** Workflow node ID — used to link the sub-session to its NodeExecution record */
   nodeId?: string;
 }
-
-import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository';
-import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
-import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
-import type { DbQueryMcpServer } from '../../db-query/tools';
-import { validateGlobPattern } from '../../external-events/topic-validator';
-import { Logger } from '../../logger';
-import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager';
-import {
-  type AgentMessageLevel,
-  extractReplyToSessionId,
-  formatAgentMessage,
-} from '../agent-message-envelope';
-import {
-  buildCustomAgentTaskMessage,
-  resolveAgentInit,
-  type SlotOverrides,
-} from '../agents/custom-agent';
-import type { EvolutionScopeService } from '../evolution-scope-service';
-import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
-import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools';
+import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
 import {
   createEndNodeHandlers,
   createMarkCompleteHandler,
   createPrMergedGate,
 } from '../tools/end-node-handlers';
-import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
-import { jsonResult } from '../tools/tool-result';
 import { builtInWorkflowRequiresPrMerge } from '../workflows/built-in-workflows';
-import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator';
-import { AgentMessageRouter } from './agent-message-router';
-import type { WorkflowArtifactProfile } from './artifact-profile';
-import { ChannelResolver } from './channel-resolver';
-import { ChannelRouter } from './channel-router';
 import { createGithubConnector } from './connectors/github-connector';
-import { HookExecutor } from './hook-executor';
 import { collectDispatchablePostApprovalRoutes } from './post-approval-router';
-import type { ReplyRoutingRegistry } from './reply-routing-registry';
-import {
-  clearAllRetryableHookActionTimers,
-  QUEUED_RETRYABLE_ACTION_STATE_KEY,
-  WorkflowHookEngine,
-} from './workflow-hook-engine';
+import { jsonResult } from '../tools/tool-result';
 import {
   assertExecutionValidAgainstWorkflow,
   PermanentSpawnError,
   validateTaskAllowsSpawn,
 } from './workflow-node-execution-validation';
+import type { DbQueryMcpServer } from '../../db-query/tools';
+import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager';
+import { ChannelResolver } from './channel-resolver';
+import { ChannelRouter } from './channel-router';
+import { AgentMessageRouter } from './agent-message-router';
+import type { ReplyRoutingRegistry } from './reply-routing-registry';
+import type { WorkflowArtifactProfile } from './artifact-profile';
+import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository';
+import type { EvolutionScopeService } from '../evolution-scope-service';
+import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools';
+import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator';
+import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
+import { validateGlobPattern } from '../../external-events/topic-validator';
+import { HookExecutor } from './hook-executor';
+import {
+  clearAllRetryableHookActionTimers,
+  QUEUED_RETRYABLE_ACTION_STATE_KEY,
+  WorkflowHookEngine,
+} from './workflow-hook-engine';
+import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
+import {
+  buildCustomAgentTaskMessage,
+  resolveAgentInit,
+  type SlotOverrides,
+} from '../agents/custom-agent';
+import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager';
+import { Logger } from '../../logger';
+import {
+  formatAgentMessage,
+  extractReplyToSessionId,
+  type AgentMessageLevel,
+} from '../agent-message-envelope';
 
 const log = new Logger('task-agent-manager');
 const AGENT_MESSAGE_ENVELOPE_HEADER = /^─── Message from ([^\n]+) ───\n\n/;
@@ -3645,7 +3644,10 @@ export class TaskAgentManager {
    * Register a completion callback for a sub-session.
    * Subscribes to InternalEventBus<DaemonInternalEventMap> session.updated events for the session.
    * The callback is called at most once when the session first goes idle.
-   * Also subscribes to session.error to mark the group member as 'failed'.
+   * Also subscribes to session.error / session.delivery_failed to mark the
+   * group member as 'failed', and session.delivery_settled (plus a delayed
+   * crash reconciliation) to complete a turn whose idle was suppressed while
+   * a delivery job was retrying. See task #944.
    */
   registerCompletionCallback(subSessionId: string, callback: () => Promise<void>): void {
     // Add to callback list
@@ -3861,7 +3863,8 @@ export class TaskAgentManager {
 
     // Subscribe to session.error to mark the session as fired so that a subsequent idle
     // transition does not overwrite the error state.
-    // Also self-unsubscribes both listeners to prevent multiple invocations.
+    // Also self-unsubscribes every listener (+ the reconcile timer) to prevent
+    // multiple invocations.
     const unsubscribeError = this.config.internalEventBus.subscribe(
       'session.error',
       (event) => {

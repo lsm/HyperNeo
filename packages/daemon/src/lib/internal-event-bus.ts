@@ -27,6 +27,7 @@
 
 import type { GlobalSettings } from '@hyperneo/shared';
 import type { ExternalEventPublishedPayload } from './external-events/external-event-service';
+import type { MessageDeliveryOrigin, MessageDeliveryRole } from './agent/message-delivery';
 
 export interface HandlerFailure {
   /** Subscriber name that registered the failing handler. */
@@ -408,7 +409,7 @@ export interface SessionEvents {
   'session.delivery_settled': {
     sessionId: string;
     messageUuid: string;
-    role?: string;
+    role?: MessageDeliveryRole;
   };
   /**
    * A durable message_delivery job for the session DEAD-LETTERED (exhausted
@@ -423,8 +424,8 @@ export interface SessionEvents {
   'session.delivery_failed': {
     sessionId: string;
     messageUuid: string;
-    origin?: string;
-    role?: string;
+    origin?: MessageDeliveryOrigin;
+    role?: MessageDeliveryRole;
   };
   /**
    * A session has paused after rate/usage-limit exhaustion with no fallback

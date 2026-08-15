@@ -410,7 +410,7 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     await bus.publish('session.delivery_failed', {
       sessionId: SUB_SESSION_ID,
       messageUuid: 'kickoff-uuid',
-      origin: 'system', // NOT space_inject — settlement's session.error gate skips it
+      origin: 'recovery', // NOT space_inject — the settlement's session.error gate skips it (matches reconcileStrandedDeliveries' re-enqueue origin)
       role: 'turn',
     });
     await flush();
