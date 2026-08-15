@@ -1516,6 +1516,66 @@ describe('useInputDraft', () => {
       expect(hasClearTombstone('session-1')).toBe(false);
     });
 
+    it('folds the stripped transcripts into typing that began mid-strip', async () => {
+      // The clear chain's get applied the merged draft; the user typed
+      // BEFORE the strip acknowledged. The transcript-only strip result must
+      // not overwrite the newer typing — but consuming the landing without
+      // folding would lift the save suppression while the strip already
+      // cleared the daemon baseline, so the next plain save would replace
+      // the transcript-only server draft with transcript-free typing and
+      // lose the voice text permanently.
+      let resolveStrip: ((v: { updated: boolean; value?: string }) => void) | null = null;
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return {
+            session: {
+              metadata: {
+                inputDraft: 'sent text voice',
+                inputDraftVoiceBaseline: 'sent text',
+                inputDraftVoiceBaselineSeq: 1,
+              },
+            },
+          };
+        }
+        if (method === 'session.stripVoiceBaseline') {
+          return new Promise((resolve) => {
+            resolveStrip = resolve;
+          });
+        }
+        return {};
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // A live landing defers behind the user's text; the user then sends.
+      result.current.setContent('sent text');
+      markVoiceTranscriptLanded('session-1', 'voice');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      result.current.clear();
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // The chain's get applied the merged draft; the strip is in flight.
+      expect(result.current.content).toBe('sent text voice');
+      // Typing began after the get resolved, before the strip acknowledged.
+      result.current.setContent('sent text and more typing');
+      await act(async () => {
+        resolveStrip?.({ updated: true, value: 'voice' });
+        await vi.runAllTimersAsync();
+      });
+      // The transcripts are FOLDED into the newer typing (the strip was
+      // never cancelled, so no reconcile-on-cancel fold ran for them), so
+      // the re-enabled saves carry BOTH instead of clobbering the
+      // transcript-only server draft.
+      expect(result.current.content).toBe('sent text and more typing voice');
+      expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(false);
+    });
+
     it('versions an unversioned owed tombstone with the sequence before stripping', async () => {
       // The original owe ran offline (no get had happened), so the tombstone
       // carries no baselineSeq. The reconcile learns the sequence from its
@@ -1618,6 +1678,51 @@ describe('useInputDraft', () => {
 
       expect(result.current.content).toBe('user edits');
       expect(peekExpiredDraftBackup('session-1')?.content).toBe('user edits');
+    });
+
+    it('reschedules a departed-session backup merge declined on its first attempt', async () => {
+      // The first merge attempt runs while CONNECTED and is DECLINED (a
+      // newer sequence is unresolved): queueRetry must arm the backoff pass,
+      // or the claim idles in localStorage until the TTL prunes it — no
+      // connection transition or later switch ever revisits it.
+      let attempts = 0;
+      mockHub.request.mockImplementation(async (method: string, payload?: { content?: string }) => {
+        if (method === 'session.mergeVoiceDraftBackup') {
+          attempts += 1;
+          return attempts === 1
+            ? { merged: false }
+            : { merged: true, value: payload?.content ?? '' };
+        }
+        return { session: { metadata: { inputDraft: '' } } };
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+      connectionState.value = 'connected'; // the armed kick only fires while connected
+      const { result, rerender } = renderHook(({ s }) => useInputDraft(s), {
+        initialProps: { s: 'session-A' },
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // The switch-flush effect re-runs on the content CHANGE the session
+      // switch applies, so session-A must hold text before departing.
+      result.current.setContent('edits');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      saveDraftBackup('session-A', 'edits', 1);
+
+      rerender({ s: 'session-B' });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10);
+      });
+      expect(attempts).toBe(1); // the first, declined attempt — nothing else fires yet
+
+      // No connection change occurs: only the armed backoff pass can retry.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect(attempts).toBeGreaterThanOrEqual(2);
+      expect(peekExpiredDraftBackup('session-A')).toBeNull(); // retired on the ack'd merge
     });
 
     it('queues a live-landing backup for merge when the user switches away', async () => {

@@ -761,12 +761,23 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
               if (result.updated) {
                 // Apply the stripped value only while the composer still
                 // shows what the chain's get applied (or is empty): typing
-                // since that get is NEWER user state — its reconcile-on-cancel
-                // fold already merged the transcripts into the typed text,
-                // and overwriting it here would drop the keystrokes.
+                // since that get is NEWER user state, and overwriting it
+                // here would drop the keystrokes. But that typing never
+                // received the transcripts anywhere (this chain was not
+                // CANCELLED, so the reconcile-on-cancel fold never ran), and
+                // the strip just cleared the daemon baseline — consuming
+                // without folding would lift the save suppression so the
+                // next plain save replaces the transcript-only server draft
+                // with transcript-free typing, losing the voice text
+                // permanently. Fold the stripped transcripts into the newer
+                // content (blind append — the once-per-generation fold
+                // discipline) so the re-enabled save carries BOTH.
                 const currentContent = contentSignal.peek();
+                const stripped = result.value ?? '';
                 if (currentContent.trim() === '' || currentContent === (draft ?? '')) {
-                  contentSignal.value = result.value ?? '';
+                  contentSignal.value = stripped;
+                } else if (stripped.trim() !== '') {
+                  contentSignal.value = appendDraftText(currentContent, stripped);
                 }
                 consumeLanding(sessionId, generation);
               } else {
@@ -1098,6 +1109,14 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             claimId: flushClaimId ?? generateUUID(),
             ts: claimed.ts,
           });
+          // Arm the retry pass NOW: this first attempt failed while
+          // CONNECTED (the merge was declined or the RPC errored), so
+          // neither the connection subscription (fires only on CHANGES)
+          // nor a later switch will revisit the claim — without this it
+          // idles in localStorage until the TTL prunes it. The kick is a
+          // no-op while disconnected (the reconnect subscription owns that
+          // case).
+          flushKickRef.current();
         }
       };
       const pushBackup = () => {
