@@ -173,12 +173,6 @@ jobs:
           # rewind/ is hash-split 2-way by scripts/test-online.sh (rewind-a/b).
           - rewind-a
           - rewind-b
-          # Room tests temporarily disabled during refactoring
-          # - room-1
-          # - room-multi-agent
-          # - room-replan
-          # - room-planner
-          # - room-reviewer
           # rpc/ is hash-split 6-way by scripts/test-online.sh (rpc-a…rpc-f).
           - rpc-a
           - rpc-b
@@ -306,7 +300,7 @@ jobs:
           --results-dir test-results/daemon-online-${{ matrix.module }}
           --report test-results/flaky-quarantine-daemon-online-${{ matrix.module }}.json
           --
-          bash -lc 'cd packages/daemon && node_modules/.bin/vitest run --config vitest.online.config.ts $(cd ../.. && scripts/test-online.sh ${{ matrix.module }} | sed "s|^packages/daemon/||")
+          bash -lc 'set -o pipefail; cd packages/daemon && paths=$(cd ../.. && scripts/test-online.sh ${{ matrix.module }}) && [ -n "$paths" ] || exit 1; node_modules/.bin/vitest run --config vitest.online.config.ts $paths
           --coverage
           --coverage.reporter=lcov
           --coverage.reportsDirectory=coverage-online-${{ matrix.module }}

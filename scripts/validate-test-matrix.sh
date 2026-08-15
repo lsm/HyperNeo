@@ -386,16 +386,6 @@ module_values() {
 	' "$1"
 }
 
-# Count online test_path VALUES — from the include-block maps _module_values
-# (main.yml) and _real_module_values (real-api-tests.yml), set later — that
-# EXACTLY equal $1. Scoping ownership to these parsed maps (instead of a
-# whole-file grep) means a test_path in an UNRELATED job's matrix can't pose as
-# coverage, and the match is exact (a file under a dir is not a dir-level owner).
-online_value_count() {
-	awk -F'\t' -v p="$1" '$2 == p' <<<"$_module_values
-$_real_module_values" | wc -l | tr -d ' '
-}
-
 # True (exit 0) if vitest config $1 has `    <prop>: <value>` directly under
 # test: (4-space indent) with <value> the COMPLETE property — the closing `]` of
 # the array must be followed by `,` or EOL, so a `.map()`/expression appended
@@ -1303,18 +1293,23 @@ elif runner_shell_override "$REPO_ROOT/.github/workflows/main.yml" 'vitest.onlin
 	err "main.yml online runner step (or its job) sets a non-default shell — a no-exec shell (e.g. bash -n {0}) would make the step succeed having run ZERO online tests while this guard reports them covered"
 	echo "     → remove the shell: override (use the default shell)" >&2
 else
-	# After `vitest run`, only the resolver command substitution (the one
-	# selector) and coverage-neutral flags (--config, --coverage*, --reporter,
+	# After `vitest run`, only the resolver-produced $paths (the one selector)
+	# and coverage-neutral flags (--config, --coverage*, --reporter,
 	# --outputFile.*, --color) may appear. A selection flag like
 	# --exclude=<glob> or --testNamePattern would omit files while the ownership
 	# walk reports them covered. (The config file itself is guarded separately,
-	# so --config is safe.) The resolver substitution — $(cd ../.. &&
-	# scripts/test-online.sh <module> | sed "s|^packages/daemon/||") — is
-	# allowlisted as a bracket expression so no '/' delimiter collides.
+	# so --config is safe.)
+	#
+	# The resolver assignment (`paths=$(cd ../.. && scripts/test-online.sh
+	# <module>)`) is allowlisted with a bracket expression so no '/' delimiter
+	# collides; `[^)]*` bounds it to ONE substitution — a greedy `.*` would span
+	# first-`$(cd`-to-last-`)` and blank a `--testNamePattern` sandwiched
+	# before a trailing second substitution (the resolver body contains no `)`).
 	_oextra=$(printf '%s' "$_online_main" \
 		| sed 's/.*vitest run//' \
-		| sed -E -e 's/[$][(]cd[[:space:]].*[)]( |$)/ /g' \
+		| sed -E -e 's/paths=[$][(]cd[[:space:]][^)]*[)]//g' \
 		         -e 's/[$][{][{][[:space:]]*matrix[.]module[[:space:]]*[}][}]//g' \
+		         -e 's/[$]paths//g' \
 		         -e 's/--config vitest[.]online[.]config[.]ts//g' \
 		         -e 's/--reporter[[:space:]]+[^[:space:]]+//g' \
 		         -e 's/--reporter=[^[:space:]]+//g' \
@@ -1335,9 +1330,12 @@ else
 	elif [ "$(printf '%s' "$_online_main" | grep -oF 'vitest run' | wc -l | tr -d ' ')" -gt 1 ]; then
 		err "main.yml online runner has multiple 'vitest run' invocations — the first could exit 0 (e.g. --help), so the fallback never executes"
 		echo "     → use exactly one 'vitest run' invocation" >&2
+	elif ! printf '%s' "$_online_main" | sed 's/.*vitest run//' | grep -qF '$paths'; then
+		err "main.yml online runner has the module resolution only BEFORE 'vitest run' (e.g. resolved to a variable that is then discarded) — vitest would receive no positional and run the entire online suite unfiltered while this guard reports each module covered"
+		echo "     → pass the resolved paths as the positional AFTER 'vitest run' (\$paths)" >&2
 	elif [ -n "$_oextra" ]; then
 		err "main.yml online runner has a selection flag or extra arg after 'vitest run' — e.g. --exclude=<glob>/--testNamePattern would omit files while the ownership walk reports them covered"
-		echo "     → keep only the test-online.sh resolution plus --config/--coverage*/--reporter/--outputFile.* flags" >&2
+		echo "     → keep only the resolved \$paths plus --config/--coverage*/--reporter/--outputFile.* flags" >&2
 	fi
 fi
 _online_real=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/real-api-tests.yml" 'bun test' 'daemon-real-api')
@@ -1777,30 +1775,28 @@ while IFS= read -r _p; do
 done < <(awk -F'\t' '{print $1}' "$ONLINE_COVERED_TMP" | sort -u)
 
 # A module directory is "covered" iff some mocked module's resolution owns its
-# files; otherwise it must be listed in EXEMPT_DIRS (intentionally disabled)
-# or owned by a real-API row (cross-provider). Deriving coverage from the
-# resolution — instead of a static allow-list — catches a directory whose CI
-# shard was removed or commented out (e.g. glm/providers below).
-#
-# Each EXEMPT_DIRS entry is a directory intentionally NOT run by CI, documented
-# so the exemption is explicit rather than hidden in an allow-list:
-#   benchmark : manual-only (describe.skip by default)
-#   glm       : disabled — GLM online tests are flaky (commented out in main.yml)
-#   providers : disabled — codex bridge needs OPENAI_API_KEY, copilot has a
-#               credential issue (commented out in main.yml)
-#   sandbox   : disabled — not wired to a CI matrix shard
-EXEMPT_DIRS="benchmark glm providers sandbox"
+# files; otherwise it must be exempt (intentionally disabled) or owned by a
+# real-API row (cross-provider). Deriving coverage from the resolution —
+# instead of a static allow-list — catches a directory whose CI shard was
+# removed or commented out (e.g. glm/providers below). The exempt list is
+# shared with scripts/test-online.sh (ONLINE_EXEMPT_DIRS, sourced above), so
+# this guard and test-online.sh --verify cannot drift apart. cross-provider
+# sits in that list too (real-API-only; mocked ownership of its files is
+# rejected in the per-file walk below).
+EXEMPT_DIRS="$ONLINE_EXEMPT_DIRS"
 for dir in "$ONLINE_DIR"/*/; do
 	[ -d "$dir" ] || continue
 	dirname=$(basename "$dir")
-	if [[ " $EXEMPT_DIRS " == *" $dirname "* ]]; then
+	if [ "$dirname" != "cross-provider" ] && [[ " $EXEMPT_DIRS " == *" $dirname "* ]]; then
 		# Exempt dirs are intentionally not run, so NO owner may exist — neither
-		# a mocked module resolution nor a real-API test_path under it.
-		file_under=$(awk -F'\t' -v p="^$dirname/" '$1 ~ p' "$ONLINE_COVERED_TMP" | wc -l | tr -d ' ')
+		# a mocked module resolution nor a real-API test_path under it. The map
+		# ($1) and real-API values ($2) are both daemon-package-relative
+		# (tests/online/<dir>/…), so the patterns share that prefix.
+		file_under=$(awk -F'\t' -v p="^tests/online/$dirname/" '$1 ~ p' "$ONLINE_COVERED_TMP" | wc -l | tr -d ' ')
 		real_under=$(awk -F'\t' -v p="^tests/online/$dirname/" '$2 ~ p' <<<"$_real_module_values" | wc -l | tr -d ' ')
 		if [ "${file_under:-0}" -gt 0 ] || [ "${real_under:-0}" -gt 0 ]; then
 			err "online exempt directory 'tests/online/$dirname' has an owner (a mocked module resolution or a real-API test_path under it) — that would re-enable an intentionally disabled module"
-			echo "     → remove the owner, or drop the dir from EXEMPT_DIRS" >&2
+			echo "     → remove the owner, or drop the dir from ONLINE_EXEMPT_DIRS in scripts/test-online.sh" >&2
 		fi
 		continue
 	fi

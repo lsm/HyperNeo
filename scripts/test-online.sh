@@ -11,17 +11,17 @@
 #
 # Usage:
 #   scripts/test-online.sh <module>           # print the module's test paths
-#                                             # (repo-root-relative, one per line)
+#                                             # (daemon-package-relative, one per line)
 #   scripts/test-online.sh --verify           # validate config + CI matrix wiring
 #   scripts/test-online.sh --list             # print every configured module
 #
-# CI (test-daemon-online in .github/workflows.main.yml) does:
+# CI (test-daemon-online in .github/workflows/main.yml) does:
 #   paths=$(scripts/test-online.sh "rpc-b")
 #   cd packages/daemon && vitest run --config vitest.online.config.ts $paths
 #
-# The output paths are repo-root-relative (packages/daemon/tests/online/…)
-# because the runner executes from packages/daemon — same convention as the
-# matrix test_path values this replaces.
+# Output paths are daemon-package-relative (tests/online/…): the runner
+# executes vitest from packages/daemon, and the vitest.online.config include
+# is rooted there, so the paths work as positionals with no rewriting.
 #
 # When sourced, exposes only ONLINE_MODULES / ONLINE_HASH_SPLIT_SPECS /
 # online_module_paths / ONLINE_TEST_ROOT and skips execution (guard at bottom).
@@ -51,14 +51,18 @@ source "$REPO_ROOT/scripts/lib/shard-split.sh"
 #
 # Split sizing (CI test-step medians, Aug 2026 — see task #912; each job adds
 # ~50s fixed setup/coverage overhead):
-#   space    4 files  ~178s → 4-way ≈ 45s/shard  (kills the old 212s space-2 job)
-#   rpc     19 files  ~309s → 6-way ≈ 52s/shard
-#   rewind   2 files  ~159s → 2-way ≈ 80s/shard
-#   features 4 files  ~119s → 3-way ≈ 40s/shard
+#   space    4 files  ~178s → 4-way (kills the old 212s space-2 job)
+#   rpc     19 files  ~309s → 6-way
+#   rewind   2 files  ~159s → 2-way
+#   features 4 files  ~119s → 3-way
+# The hash balances FILE COUNT, not per-file duration — a bucket holding one
+# heavy file (e.g. space-a's task-agent-lifecycle) stays slow. The per-shard
+# numbers above are the arithmetic mean; actual buckets ranged ~7–69s test
+# time at these counts. Re-check with the next CI balance report.
 # Small dirs (agent-sdk/components/convo/coordinator/git/lifecycle/mcp/sdk/
 # websocket) stay whole — a split's fixed overhead dominates below ~120s of
-# test time. (convo hash-splits only at 3-way, which leaves an empty bucket —
-# its two files hash together — so it stays whole.)
+# test time. convo is the one dir that CANNOT split: both of its files hash to
+# bucket 0 mod 2 (a 2-way split would leave bucket 1 empty), so it stays whole.
 ONLINE_HASH_SPLIT_SPECS=(
 	"features|3|features/*.test.ts"
 	"rewind|2|rewind/*.test.ts"
@@ -80,6 +84,17 @@ ONLINE_MODULES=(
 	"websocket|websocket/*.test.ts"
 )
 
+# Online test directories intentionally NOT run by the mocked-online matrix.
+# validate-test-matrix.sh reads this same variable (it sources this file), so
+# the guard and --verify cannot drift apart. Each entry must stay documented:
+#   benchmark      : manual-only (describe.skip by default)
+#   glm            : disabled — GLM online tests are flaky (commented out in main.yml)
+#   providers      : disabled — codex bridge needs OPENAI_API_KEY, copilot has a
+#                    credential issue (commented out in main.yml)
+#   sandbox        : disabled — not wired to a CI matrix shard
+#   cross-provider : real-key shards, manual-only in real-api-tests.yml
+ONLINE_EXEMPT_DIRS="benchmark glm providers sandbox cross-provider"
+
 # Map a hash-split module's suffix letter to a 0-based bucket index (a→0 … z→25).
 online_suffix_to_index() {
 	local s="$1"
@@ -96,8 +111,14 @@ online_index_to_suffix() {
 	printf '%s' "${letters:i:1}"
 }
 
+# Strip the repo-root + packages/daemon prefix from an absolute path, yielding
+# the daemon-package-relative form (tests/online/…) the runner passes to vitest.
+online_rel_path() {
+	printf '%s\n' "${1#"$REPO_ROOT/packages/daemon/"}"
+}
+
 # Resolve a hash-split module name (e.g. rpc-b) to its bucket's files.
-# Prints repo-root-relative test paths, 0 on a match, 1 if $1 is not a split.
+# Prints daemon-package-relative test paths, 0 on a match, 1 if $1 is not a split.
 online_hash_split_resolve() {
 	local module="$1"
 	local spec prefix count globs suffix bucket
@@ -107,11 +128,12 @@ online_hash_split_resolve() {
 			"$prefix"-*)
 				suffix="${module#"$prefix"-}"
 				bucket=$(online_suffix_to_index "$suffix") || return 1
-				local abs=() g
+				local abs=() g f
 				local IFS=';'
 				for g in $globs; do abs+=("$ONLINE_TEST_ROOT/$g"); done
-				shard_split_bucket "$REPO_ROOT" "$count" "$bucket" "${abs[@]}" \
-					| sed "s|^$REPO_ROOT/||"
+				while IFS= read -r f; do
+					online_rel_path "$f"
+				done < <(shard_split_bucket "$REPO_ROOT" "$count" "$bucket" "${abs[@]}")
 				return $?
 				;;
 		esac
@@ -119,13 +141,14 @@ online_hash_split_resolve() {
 	return 1
 }
 
-# Map an online module name to its test paths (repo-root-relative, one per
-# line). Returns 0 on success, 1 for an unknown module.
+# Map an online module name to its test paths (daemon-package-relative, one
+# per line). Returns 0 on success, 1 for an unknown module.
 online_module_paths() {
 	local module="$1"
 	local resolved
 	if resolved=$(online_hash_split_resolve "$module"); then
-		# Drop stderr noise; an empty bucket still resolves (guarded by --verify).
+		# An empty bucket still resolves; --verify and the runner's empty guard
+		# (main.yml) catch that case loudly.
 		[ -n "$resolved" ] || return 0
 		printf '%s\n' "$resolved"
 		return 0
@@ -143,7 +166,7 @@ online_module_paths() {
 				# leave the pattern literal.
 				pat="$ONLINE_TEST_ROOT/$g"
 				for f in $pat; do
-					[ -f "$f" ] && printf '%s\n' "${f#"$REPO_ROOT"/}"
+					[ -f "$f" ] && online_rel_path "$f"
 				done
 			done
 			return 0
@@ -202,7 +225,8 @@ verify_online_modules() {
 			continue
 		fi
 		while IFS= read -r p; do
-			if [ ! -f "$REPO_ROOT/$p" ]; then
+			# Paths are daemon-package-relative; re-anchor for the disk check.
+			if [ ! -f "$REPO_ROOT/packages/daemon/$p" ]; then
 				echo "  ERROR: online module '$module' references missing path: $p" >&2
 				errors=$((errors + 1))
 			fi
@@ -324,22 +348,17 @@ verify_online_modules() {
 	fi
 
 	# 5. Every online test file on disk must be owned by exactly one configured
-	#    module (or live in a documented exempt dir).
-	#      benchmark : manual-only (describe.skip by default)
-	#      glm       : disabled — GLM online tests are flaky (commented out in main.yml)
-	#      providers : disabled — codex bridge needs OPENAI_API_KEY, copilot has a
-	#                  credential issue (commented out in main.yml)
-	#      sandbox   : disabled — not wired to a CI matrix shard
-	#      cross-provider : real-key shards, manual-only in real-api-tests.yml
-	local exempt="benchmark glm providers sandbox cross-provider"
+	#    module (or live in a documented exempt dir — see ONLINE_EXEMPT_DIRS).
+	#    covered_all is daemon-package-relative (tests/online/…), so the disk
+	#    walk's absolute paths get the same prefix stripped before comparing.
 	local dir dn covered_all
 	covered_all=$(online_all_modules | while IFS= read -r module; do online_module_paths "$module"; done | sort -u)
 	for dir in "$ONLINE_TEST_ROOT"/*/; do
 		[ -d "$dir" ] || continue
 		dn=$(basename "$dir")
-		if [[ " $exempt " == *" $dn "* ]]; then continue; fi
+		if [[ " $ONLINE_EXEMPT_DIRS " == *" $dn "* ]]; then continue; fi
 		while IFS= read -r f; do
-			local rel="${f#"$REPO_ROOT"/}"
+			local rel="${f#"$REPO_ROOT/packages/daemon/"}"
 			if ! grep -qxF "$rel" <<<"$covered_all"; then
 				echo "  ERROR: online test file not covered by any module: $rel" >&2
 				echo "     → add its directory glob to scripts/test-online.sh (or document the dir as exempt)" >&2
