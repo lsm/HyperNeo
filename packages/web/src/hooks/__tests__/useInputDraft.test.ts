@@ -328,8 +328,10 @@ describe('useInputDraft', () => {
     });
 
     it('defers the outbox refresh until an active composer is cleared, then applies it', async () => {
-      mockHub.request.mockResolvedValueOnce({ session: { metadata: { inputDraft: '' } } });
-      mockHub.request.mockResolvedValue({ session: { metadata: { inputDraft: 'transcript' } } });
+      mockHub.request
+        .mockResolvedValueOnce({ session: { metadata: { inputDraft: '' } } }) // initial
+        .mockResolvedValueOnce({ session: { metadata: { inputDraft: 'transcript' } } }) // deferred get
+        .mockResolvedValueOnce({ updated: true, value: 'transcript' }); // strip
       vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
       const { result } = renderHook(() => useInputDraft('session-1'));
@@ -346,7 +348,8 @@ describe('useInputDraft', () => {
       expect(result.current.content).toBe('user typing');
       expect(mockHub.request.mock.calls.filter(([m]) => m === 'session.get')).toHaveLength(1);
 
-      // Once the composer is idle again, the deferred refresh runs.
+      // Once the composer is idle again, the deferred clear-reconcile runs:
+      // the get merges, the daemon-side strip keeps only the transcripts.
       result.current.clear();
       await act(async () => {
         await vi.runAllTimersAsync();
@@ -488,7 +491,7 @@ describe('useInputDraft', () => {
         if (method === 'session.get') {
           return { session: { metadata: { inputDraft: 'text to send transcript' } } };
         }
-        if (method === 'session.updateInputDraftIf') return { updated: true };
+        if (method === 'session.stripVoiceBaseline') return { updated: true, value: 'transcript' };
         return {};
       });
       vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
@@ -513,13 +516,12 @@ describe('useInputDraft', () => {
         await vi.runAllTimersAsync();
       });
       const stripCall = mockHub.request.mock.calls.find(
-        ([m]) => m === 'session.updateInputDraftIf'
+        ([m]) => m === 'session.stripVoiceBaseline'
       );
       expect(stripCall).toBeTruthy();
       expect(stripCall![1]).toEqual({
         sessionId: 'session-1',
         expected: 'text to send transcript',
-        value: 'transcript',
       });
       expect(result.current.content).toBe('transcript');
       expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(false);
@@ -681,7 +683,7 @@ describe('useInputDraft', () => {
         .mockResolvedValueOnce({
           session: { metadata: { inputDraft: 'text to send transcript' } }, // retry get: merged
         })
-        .mockResolvedValue({ updated: true }); // the conditional strip
+        .mockResolvedValue({ updated: true, value: 'transcript' }); // the strip
       vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
       const { result } = renderHook(() => useInputDraft('session-1'));
@@ -704,7 +706,7 @@ describe('useInputDraft', () => {
       });
       expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(true);
       expect(
-        mockHub.request.mock.calls.filter(([m]) => m === 'session.updateInputDraftIf')
+        mockHub.request.mock.calls.filter(([m]) => m === 'session.stripVoiceBaseline')
       ).toHaveLength(0);
       expect(
         mockHub.request.mock.calls.filter(([m]) => m === 'session.clearInputDraftIf')
@@ -750,7 +752,11 @@ describe('useInputDraft', () => {
         JSON.stringify({ content: 'hello world', ts: Date.now(), generation: 1 })
       );
       mockHub.request.mockResolvedValue({
-        session: { metadata: { inputDraft: 'hello voice' } }, // merged already
+        // Merged already: draft = baseline + transcript, with the daemon's
+        // baseline snapshot carried in the response.
+        session: {
+          metadata: { inputDraft: 'hello voice', inputDraftVoiceBaseline: 'hello' },
+        },
       });
       vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
@@ -803,7 +809,12 @@ describe('useInputDraft', () => {
         if (method === 'session.get') {
           return { session: { metadata: { inputDraft: 'baseline first second' } } };
         }
-        if (method === 'session.updateInputDraftIf') return { updated: true };
+        // The daemon's baseline snapshot is exact across every entry of the
+        // sequence, regardless of which tabs appended or which marker knows
+        // what — the strip keeps BOTH transcripts.
+        if (method === 'session.stripVoiceBaseline') {
+          return { updated: true, value: 'first second' };
+        }
         return {};
       });
       vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
@@ -825,16 +836,15 @@ describe('useInputDraft', () => {
         await vi.runAllTimersAsync();
       });
 
-      // The strip must keep the WHOLE aggregate (both transcripts), not just
-      // the latest landing's text.
+      // The strip keeps the WHOLE sequence (both transcripts), not just the
+      // latest landing's text.
       const stripCall = mockHub.request.mock.calls.find(
-        ([m]) => m === 'session.updateInputDraftIf'
+        ([m]) => m === 'session.stripVoiceBaseline'
       );
       expect(stripCall).toBeTruthy();
       expect(stripCall![1]).toEqual({
         sessionId: 'session-1',
         expected: 'baseline first second',
-        value: 'first second',
       });
       expect(result.current.content).toBe('first second');
     });
@@ -850,7 +860,10 @@ describe('useInputDraft', () => {
         JSON.stringify({ content: 'hello', ts: Date.now(), generation: 1 })
       );
       mockHub.request.mockResolvedValue({
-        session: { metadata: { inputDraft: 'hello hello' } }, // merged: both occurrences
+        // merged: both occurrences, baseline snapshot tells them apart
+        session: {
+          metadata: { inputDraft: 'hello hello', inputDraftVoiceBaseline: 'hello' },
+        },
       });
       vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 

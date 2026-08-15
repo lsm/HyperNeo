@@ -609,6 +609,15 @@ export interface SessionMetadata {
    */
   inputDraftVoicePending?: string | null;
   /**
+   * Snapshot of `inputDraft` taken when the CURRENT pending voice sequence
+   * started (the first session.appendVoiceDraft onto an empty
+   * inputDraftVoicePending). The merged draft is always baseline + pending, so
+   * reconciliation can structurally separate the transcripts from the stale
+   * baseline — exactly, regardless of which tabs appended or merged. Cleared
+   * by session.stripVoiceBaseline; absent = no unstripped sequence.
+   */
+  inputDraftVoiceBaseline?: string | null;
+  /**
    * Timestamped log of voice-transcript outbox entry ids merged into
    * `inputDraftVoicePending` (see session.appendVoiceDraft). The client's
    * durable outbox replays entries after a socket drop and uses this to skip a

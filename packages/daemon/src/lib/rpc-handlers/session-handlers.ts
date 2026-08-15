@@ -518,6 +518,15 @@ export function setupSessionHandlers(
       pending === `${existingPending}${text}` || pending === `${existingPending} ${text}`;
     if (!fits) throw new Error('Pending voice draft is at the character limit');
     const metadataUpdate: Partial<SessionMetadata> = { inputDraftVoicePending: pending };
+    if (!existingPending.trim()) {
+      // A NEW pending sequence starts here: snapshot the draft it will merge
+      // onto. The daemon is the single writer of the merge, so this baseline
+      // is the EXACT pre-sequence draft — regardless of which tabs appended
+      // entries or which tab's get performs the merge. session.get responses
+      // carry it so clients can structurally separate the transcripts from the
+      // stale baseline, and session.stripVoiceBaseline removes it on request.
+      metadataUpdate.inputDraftVoiceBaseline = metadata.inputDraft ?? '';
+    }
     if (dedupId) {
       // Append after the TTL filter above prunes expired ids; the count cap is
       // only a backstop so metadata cannot grow without limit within the TTL.
@@ -564,26 +573,36 @@ export function setupSessionHandlers(
     return { cleared: true };
   });
 
-  // Atomically set the input draft to `value` ONLY if it still equals
-  // `expected` — the conditional-set sibling of session.clearInputDraftIf. The
-  // voice landing's clear-before-merge reconciliation uses this to strip a
-  // stale baseline the transcript was merged onto (draft := transcript) without
-  // stomping a NEWER draft another client saved between this client's read and
-  // write. Read+write is one synchronous step, like clearInputDraftIf.
-  messageHub.onRequest('session.updateInputDraftIf', async (data, _ctx) => {
-    const { sessionId, expected, value } = data as {
-      sessionId: string;
-      expected: string;
-      value: string;
-    };
+  // Atomically strip the pre-sequence baseline from the input draft, keeping
+  // only the merged voice transcripts — the EXACT server-side counterpart of
+  // the client's clear-before-merge reconciliation. The baseline snapshot (see
+  // session.appendVoiceDraft) makes this precise: the merged draft is always
+  // baseline + pending (joined by appendDraftText), so removing the baseline
+  // prefix keeps EVERY transcript of the sequence regardless of which client
+  // knows which entry landed. Conditional on `expected` (the merged draft the
+  // client just read) so a NEWER draft saved by another client in between is
+  // never stomped. Read+write is one synchronous step, like clearInputDraftIf.
+  messageHub.onRequest('session.stripVoiceBaseline', async (data, _ctx) => {
+    const { sessionId, expected } = data as { sessionId: string; expected: string };
     if (typeof expected !== 'string') throw new Error('Expected draft value is required');
-    if (typeof value !== 'string') throw new Error('New draft value is required');
     const session = sessionManager.getSessionFromDB(sessionId);
     if (!session) throw new Error('Session not found');
-    if ((session.metadata?.inputDraft ?? '').trim() !== expected.trim()) {
+    const metadata = session.metadata ?? {};
+    const baseline = metadata.inputDraftVoiceBaseline;
+    const draft = metadata.inputDraft ?? '';
+    if (typeof baseline !== 'string' || draft.trim() !== expected.trim()) {
       return { updated: false };
     }
-    const updates: UpdateSessionRequest = { metadata: { inputDraft: value } };
+    // Mirror appendDraftText's joining so the remainder is exactly the
+    // transcripts (no leading separator).
+    let value: string;
+    if (draft === baseline) value = '';
+    else if (draft.startsWith(`${baseline} `)) value = draft.slice(baseline.length + 1);
+    else if (draft.startsWith(baseline)) value = draft.slice(baseline.length);
+    else return { updated: false }; // draft diverged from the snapshot
+    const updates: UpdateSessionRequest = {
+      metadata: { inputDraft: value || null, inputDraftVoiceBaseline: null },
+    };
     await sessionManager.updateSession(sessionId, updates as Partial<Session>);
     messageHub.event(
       'session.updated',
@@ -592,7 +611,7 @@ export function setupSessionHandlers(
         channel: `session:${sessionId}`,
       }
     );
-    return { updated: true };
+    return { updated: true, value };
   });
 
   messageHub.onRequest('session.delete', async (data, _ctx) => {

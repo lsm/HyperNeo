@@ -538,7 +538,7 @@ describe('voice transcript outbox', () => {
   it('does not re-write the landed marker when handling a cross-tab storage event', () => {
     // A storage event for a landed marker must update only the local signal —
     // re-persisting the marker would fire another event in the writer and loop.
-    const raw = JSON.stringify({ v: 1, ts: 12345, n: 1, text: 'x' });
+    const raw = JSON.stringify({ v: 1, ts: Date.now(), n: 1, text: 'x' });
     localStorage.setItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s4', raw);
     startVoiceTranscriptOutboxFlush();
     window.dispatchEvent(
@@ -549,6 +549,24 @@ describe('voice transcript outbox', () => {
     );
     expect(voiceTranscriptLandedSignal.value.has('s4')).toBe(true);
     expect(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s4')).toBe(raw);
+    stopVoiceTranscriptOutboxFlush();
+  });
+
+  it('prunes expired entries at startup even if nothing is ever enqueued again', () => {
+    // The app reopens >24h after transcripts were queued: reads filter the
+    // entries out, but without a startup prune their keys would linger forever
+    // (prune otherwise runs only before an enqueue write).
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.stale',
+      JSON.stringify({
+        id: 'stale',
+        sessionId: 's1',
+        text: 'old',
+        createdAt: Date.now() - 25 * 60 * 60 * 1000,
+      })
+    );
+    startVoiceTranscriptOutboxFlush();
+    expect(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.stale')).toBeNull();
     stopVoiceTranscriptOutboxFlush();
   });
 

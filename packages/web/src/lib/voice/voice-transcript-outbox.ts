@@ -292,23 +292,28 @@ export function clearDraftBackup(sessionId: string, generation?: number): void {
 }
 
 /**
- * Read AND remove the draft backup for `sessionId`, bypassing the
+ * Read (WITHOUT removing) the draft backup for `sessionId`, bypassing the
  * landing-liveness gate the restore path applies. Used when a landing EXPIRED
- * while the session's saves were suppressed into that backup: the expired
- * backup would otherwise be rejected on restore and pruned — claiming it into
- * the departing session's flush is the only way those edits reach the server.
- * null when no in-TTL backup exists.
+ * while the session's saves were suppressed into that backup: the departed
+ * session's flush pushes it to the server draft, and the durable copy is
+ * retired ONLY after that update is acknowledged — claiming it destructively
+ * up front would leave nothing behind when the flush fails on a dropped
+ * socket. null when no in-TTL backup exists.
  */
-export function claimDraftBackup(sessionId: string): string | null {
+export function peekExpiredDraftBackup(
+  sessionId: string
+): { content: string; generation: number } | null {
   try {
-    const key = `${DRAFT_BACKUP_PREFIX}${sessionId}`;
-    const raw = localStorage.getItem(key);
+    const raw = localStorage.getItem(`${DRAFT_BACKUP_PREFIX}${sessionId}`);
     if (!raw) return null;
-    localStorage.removeItem(key);
-    const parsed = JSON.parse(raw) as { content?: string; ts?: number };
+    const parsed = JSON.parse(raw) as {
+      content?: string;
+      ts?: number;
+      generation?: number;
+    };
     if (typeof parsed.content !== 'string') return null;
     if (Date.now() - (parsed.ts ?? 0) >= DRAFT_BACKUP_TTL_MS) return null;
-    return parsed.content;
+    return { content: parsed.content, generation: parsed.generation ?? 0 };
   } catch {
     return null;
   }
@@ -644,6 +649,11 @@ function hydrateLandedMarkers(): void {
 /** Flush when the connection (re)establishes. Mirrors outbound-queue. */
 export function startVoiceTranscriptOutboxFlush(): void {
   if (cleanupAutoFlush) return;
+  // Prune at startup: TTL-expired entries, landed markers, and draft backups
+  // are filtered from READS anyway, but if the app reopens after >24h and no
+  // new transcript is ever enqueued, nothing else would delete their keys —
+  // prune() otherwise runs only before an enqueue write.
+  prune();
   hydrateLandedMarkers();
   window.addEventListener('storage', handleStorageEvent);
   cleanupStorageListener = () => window.removeEventListener('storage', handleStorageEvent);

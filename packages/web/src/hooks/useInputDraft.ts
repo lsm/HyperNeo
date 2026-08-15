@@ -32,14 +32,33 @@ import { appendDraftText } from '@hyperneo/shared';
 import { connectionManager } from '../lib/connection-manager';
 import { connectionState } from '../lib/state';
 import {
-  claimDraftBackup,
+  clearDraftBackup,
   consumeVoiceTranscriptLanded,
   getDraftBackup,
   getLandingTranscript,
   isLandingLive,
+  peekExpiredDraftBackup,
   saveDraftBackup,
   voiceTranscriptLandedSignal,
 } from '../lib/voice/voice-transcript-outbox';
+
+/**
+ * Structurally extract the merged voice transcripts from a server draft using
+ * the daemon's baseline snapshot: the merged draft is always baseline +
+ * pending (appendDraftText-joined), so the transcripts are exactly the draft
+ * minus the baseline prefix. null when the structure is unknown (no snapshot,
+ * or the draft diverged from it) — callers fall back to the landing aggregate.
+ */
+function transcriptsFromMerge(
+  draft: string | undefined,
+  baseline: string | null | undefined
+): string | null {
+  if (typeof baseline !== 'string' || draft === undefined) return null;
+  if (draft === baseline) return '';
+  if (draft.startsWith(`${baseline} `)) return draft.slice(baseline.length + 1);
+  if (draft.startsWith(baseline)) return draft.slice(baseline.length);
+  return null;
+}
 
 export interface UseInputDraftResult {
   /** Current content value */
@@ -103,7 +122,8 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         ok: boolean,
         pendingRetained?: boolean,
         wasCancelled?: boolean,
-        draft?: string
+        draft?: string,
+        baseline?: string | null
       ) => void,
       reconcileOnCancel?: boolean
     ): void => {
@@ -114,13 +134,20 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       }
       hub
         .request<{
-          session: { metadata?: { inputDraft?: string; inputDraftVoicePending?: string | null } };
+          session: {
+            metadata?: {
+              inputDraft?: string;
+              inputDraftVoicePending?: string | null;
+              inputDraftVoiceBaseline?: string | null;
+            };
+          };
         }>('session.get', {
           sessionId: targetSessionId,
         })
         .then((response) => {
           const cancelled = isCancelled();
           const draft = response.session?.metadata?.inputDraft;
+          const baseline = response.session?.metadata?.inputDraftVoiceBaseline;
           const pendingRetained = !!response.session?.metadata?.inputDraftVoicePending;
           if (!cancelled && draft) {
             contentSignal.value = draft;
@@ -135,20 +162,23 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             currentSessionIdRef.current === targetSessionId
           ) {
             // A cancelled REPLAY get still merged the transcript server-side.
-            // Fold ONLY the aggregate transcript (known from the landing state
-            // — the rest of the merged draft is the stale pre-landing baseline)
-            // into the local typed text so a subsequent save does not overwrite
-            // it (consuming the landing below re-enables saves). Appended
-            // blindly, NOT via a substring check: the user may legitimately
-            // have typed the same phrase, and skipping then would drop the
-            // voice occurrence. Scoped to the SAME session — a stale get from a
-            // moved-on session must never touch the new session's content.
-            const transcript = getLandingTranscript(targetSessionId);
+            // Fold ONLY the transcripts — extracted structurally from the
+            // daemon's baseline snapshot (the rest of the merged draft is the
+            // stale pre-landing baseline), falling back to the landing
+            // aggregate when no snapshot exists — into the local typed text so
+            // a subsequent save does not overwrite it (consuming the landing
+            // below re-enables saves). Appended blindly, NOT via a substring
+            // check: the user may legitimately have typed the same phrase, and
+            // skipping then would drop the voice occurrence. Scoped to the
+            // SAME session — a stale get from a moved-on session must never
+            // touch the new session's content.
+            const transcript =
+              transcriptsFromMerge(draft, baseline) ?? getLandingTranscript(targetSessionId);
             if (transcript) {
               contentSignal.value = appendDraftText(contentSignal.peek(), transcript);
             }
           }
-          onResult?.(true, pendingRetained, cancelled, draft);
+          onResult?.(true, pendingRetained, cancelled, draft, baseline);
         })
         .catch(() => {
           // A stale request (session changed / hook unmounted while this get
@@ -186,7 +216,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     loadDraft(
       sessionId,
       () => cancelled,
-      (ok, pendingRetained, wasCancelled) => {
+      (ok, pendingRetained, wasCancelled, draft, baseline) => {
         if (wasCancelled) return; // session changed / unmounted — not our load
         // Only a load that was NOT cancelled (session still current) marks the
         // initial load settled; a stale rejection must not settle a newer load.
@@ -199,10 +229,11 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         // The initial get has ALREADY merged any staged transcript server-side
         // (pendingRetained false), so settle the landing right here instead of
         // racing a second refresh get against the restore above:
-        // - with a backup: fold the transcript into it (unless already
-        //   contained — the user may have kept typing after an earlier merge),
-        //   so the re-enabled saves persist the combined draft rather than
-        //   clobbering the merged transcript with the transcript-free backup;
+        // - with a backup: fold the transcripts into it (extracted
+        //   structurally from the daemon's baseline snapshot — exact across
+        //   tabs and duplicate phrases alike), so the re-enabled saves persist
+        //   the combined draft rather than clobbering the merged transcript
+        //   with the transcript-free backup;
         // - without a backup: the loaded draft already contains the transcript.
         // A retained pending (draft too full) keeps the landing pending for the
         // deferred refresh path below.
@@ -210,17 +241,31 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         if (!ok || pendingRetained || generation === undefined || !isLandingLive(sessionId)) {
           return;
         }
-        const transcript = getLandingTranscript(sessionId);
-        if (backup !== null && !transcript) return; // text unknown — defer to the refresh
-        if (backup !== null && transcript) {
+        // Prefer the server's structural answer; fall back to the landing
+        // aggregate (verified against the draft's tail) when it covers MORE —
+        // the aggregate is exact for in-tab sequences (a multi-sequence merge
+        // can leave text the current baseline snapshot no longer spans), but a
+        // cross-tab concurrent flush can leave it under-inclusive, so it only
+        // wins when the merged draft actually ends with it.
+        let transcripts = transcriptsFromMerge(draft, baseline);
+        const aggregate = getLandingTranscript(sessionId);
+        if (
+          aggregate &&
+          draft?.endsWith(aggregate) &&
+          aggregate.length > (transcripts?.length ?? -1)
+        ) {
+          transcripts = aggregate;
+        }
+        if (backup !== null && transcripts === null) return; // unknown — defer to the refresh
+        if (backup !== null && transcripts) {
           // Appended blindly rather than substring-checked: the user's draft
           // may legitimately contain the same PHRASE as the transcript, and a
           // presence check would then drop the new voice occurrence when the
           // re-enabled save overwrites the merged (two-occurrence) draft. The
-          // aggregate provably never reached the backup: every fold path that
-          // puts it into local content consumes the landing (lifting the
-          // suppression) before another backup can be written.
-          contentSignal.value = appendDraftText(contentSignal.peek(), transcript);
+          // transcripts provably never reached the backup: every fold path
+          // that puts them into local content consumes the landing (lifting
+          // the suppression) before another backup can be written.
+          contentSignal.value = appendDraftText(contentSignal.peek(), transcripts);
         }
         consumeVoiceTranscriptLanded(sessionId, generation);
       }
@@ -322,7 +367,6 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             pendingClearRef.current = sessionId; // get failed — retry on reconnect
             return;
           }
-          const transcript = getLandingTranscript(sessionId);
           if (pendingRetained) {
             // Still staged: clear the stale baseline the merge would land on —
             // CONDITIONALLY, so a newer draft saved meanwhile survives — then
@@ -340,33 +384,29 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
               });
             return;
           }
-          // Merged — by this get or another tab's. Strip a stale baseline the
-          // transcript was appended onto (draft := transcript), but only
-          // conditionally and never the transcript itself; anything else
-          // (newer edits from elsewhere, transcript absent or embedded) is
-          // adopted as-is.
-          if (transcript && draft && draft !== transcript && draft.endsWith(transcript)) {
-            hub
-              .request<{ updated?: boolean }>('session.updateInputDraftIf', {
-                sessionId,
-                expected: draft,
-                value: transcript,
-              })
-              .then((result) => {
-                if (cancelled) return;
-                if (result.updated) {
-                  contentSignal.value = transcript;
-                  consumeVoiceTranscriptLanded(sessionId, generation);
-                } else {
-                  refresh(); // raced a newer writer — adopt the server's draft
-                }
-              })
-              .catch(() => {
-                pendingClearRef.current = sessionId;
-              });
-            return;
-          }
-          consumeVoiceTranscriptLanded(sessionId, generation);
+          // Merged — by this get or another tab's. Ask the DAEMON to strip the
+          // pre-sequence baseline (draft := transcripts): its baseline
+          // snapshot is exact across tabs and every entry of the sequence, so
+          // the strip never discards a transcript another tab merged; the
+          // `expected` guard keeps a NEWER draft saved meanwhile intact. A
+          // declined strip (no snapshot / raced) just adopts the server draft.
+          hub
+            .request<{ updated?: boolean; value?: string }>('session.stripVoiceBaseline', {
+              sessionId,
+              expected: draft ?? '',
+            })
+            .then((result) => {
+              if (cancelled) return;
+              if (result.updated) {
+                contentSignal.value = result.value ?? '';
+                consumeVoiceTranscriptLanded(sessionId, generation);
+              } else {
+                refresh(); // raced a newer writer — adopt the server's draft
+              }
+            })
+            .catch(() => {
+              pendingClearRef.current = sessionId;
+            });
         },
         true
       );
@@ -429,11 +469,13 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       if (!prevHasLanding && hub) {
         // While the landing was live, saves were suppressed into the draft
         // backup and lastSeenContent went stale — with the landing gone, that
-        // backup is the freshest record. Claim it (read+remove, bypassing the
-        // liveness gate the restore applies) so the departed session's edits
-        // reach the server instead of dying with the expired marker.
-        const claimed = claimDraftBackup(prevSessionId);
-        const flushContent = claimed?.trim() || trimmedContent;
+        // backup is the freshest record. PEEK it (read WITHOUT removing — the
+        // flush is best-effort, and destroying the only durable copy before
+        // the update is acknowledged would lose those edits if the socket
+        // drops mid-flush) so the departed session's edits reach the server
+        // instead of dying with the expired marker.
+        const claimed = peekExpiredDraftBackup(prevSessionId);
+        const flushContent = claimed?.content.trim() || trimmedContent;
         if (flushContent || (last.sessionId === prevSessionId && last.cleared)) {
           hub
             .request('session.update', {
@@ -442,8 +484,12 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                 inputDraft: flushContent || null,
               },
             })
+            .then(() => {
+              // Acknowledged — now the durable copy is safely superseded.
+              if (claimed) clearDraftBackup(prevSessionId);
+            })
             .catch(() => {
-              /* ignore flush errors */
+              /* ignore flush errors — the backup stays for a later retry */
             });
         }
       }
