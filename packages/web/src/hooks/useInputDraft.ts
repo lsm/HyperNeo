@@ -341,9 +341,12 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     // idle refresh, which itself owns the clear-before-merge for an explicit
     // send/clear — but PERSIST the evolving local draft to the draft backup
     // (restored on reload / when the landing resolves), so protecting the
-    // landed transcript does not disable draft durability.
+    // landed transcript does not disable draft durability. The generation is
+    // stored so the reconciliation retires exactly this landing's backup.
     if (voiceTranscriptLandedSignal.value.has(sessionId)) {
-      if (content.trim() !== '') saveDraftBackup(sessionId, content);
+      if (content.trim() !== '') {
+        saveDraftBackup(sessionId, content, voiceTranscriptLandedSignal.value.get(sessionId) ?? 0);
+      }
       return;
     }
 

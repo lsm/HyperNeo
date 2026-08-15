@@ -294,13 +294,19 @@ describe('voice transcript outbox', () => {
     ).not.toBeNull();
   });
 
-  it('does not clear the draft backup when a tab consumes its landing', () => {
-    saveDraftBackup('s1', 'editing');
+  it('retires the backup for the consumed landing generation, not a newer one', () => {
+    // A NEWER-generation backup survives a stale consume.
     markVoiceTranscriptLanded('s1');
+    saveDraftBackup('s1', 'newer edit', 2);
     consumeVoiceTranscriptLanded('s1', 1);
-    // Consumption is local — another tab's deferred-landing draft backup must
-    // not be erased; TTL prunes it.
-    expect(getDraftBackup('s1')).toBe('editing');
+    expect(getDraftBackup('s1')).toBe('newer edit');
+
+    // The matching-generation backup is retired on reconcile — a reload must
+    // show the freshly-merged transcript, not text the user sent/cleared.
+    markVoiceTranscriptLanded('s1');
+    saveDraftBackup('s1', 'gen1 edit', 1);
+    consumeVoiceTranscriptLanded('s1', 1);
+    expect(getDraftBackup('s1')).toBeNull();
   });
 
   it('prunes expired draft backups proactively', () => {

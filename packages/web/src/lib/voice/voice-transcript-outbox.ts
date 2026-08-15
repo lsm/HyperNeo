@@ -36,14 +36,6 @@ export interface PendingTranscript {
 }
 
 /**
- * Sessions for which the outbox landed an entry since the last time a mounted
- * composer refreshed for them — a SET so later landings for other sessions
- * cannot erase a deferred one. A mounted composer for a session in the set
- * refreshes its draft (the pending field is otherwise only merged by the
- * daemon during session.get, which the composer runs only on session change),
- * then consumes its own session via `consumeVoiceTranscriptLanded`.
- */
-/**
  * Per-session GENERATION of landings awaiting a mounted-composer refresh. Two
  * entries landing for the same session while one refresh is in flight would
  * collapse into a single set membership; the generation lets the refresh
@@ -114,6 +106,9 @@ export function consumeVoiceTranscriptLanded(sessionId: string, generation: numb
   const next = new Map(current);
   next.delete(sessionId);
   voiceTranscriptLandedSignal.value = next;
+  // Retire the backup created for THIS landing: a reload must show the
+  // freshly-merged transcript, not the text the user already sent/cleared.
+  clearDraftBackup(sessionId, generation);
 }
 
 const DRAFT_BACKUP_TTL_MS = 24 * 60 * 60 * 1000;
@@ -123,12 +118,14 @@ const DRAFT_BACKUP_TTL_MS = 24 * 60 * 60 * 1000;
  * (the composer has text, so its server saves are suppressed to protect the
  * landed transcript). A reload or session switch then restores the user's
  * edits instead of losing them, while the server draft keeps the transcript.
+ * The landing GENERATION is stored so a reconciliation retires exactly the
+ * backup for the landing it merged — not a newer one.
  */
-export function saveDraftBackup(sessionId: string, content: string): void {
+export function saveDraftBackup(sessionId: string, content: string, generation: number): void {
   try {
     localStorage.setItem(
       `${DRAFT_BACKUP_PREFIX}${sessionId}`,
-      JSON.stringify({ content, ts: Date.now() })
+      JSON.stringify({ content, ts: Date.now(), generation })
     );
   } catch {
     /* backup best-effort */
@@ -151,9 +148,21 @@ export function getDraftBackup(sessionId: string): string | null {
   }
 }
 
-export function clearDraftBackup(sessionId: string): void {
+/**
+ * Remove the draft backup for `sessionId`. When `generation` is given, only a
+ * backup created for that exact landing generation is retired — a backup from
+ * a NEWER (or another tab's) landing is preserved.
+ */
+export function clearDraftBackup(sessionId: string, generation?: number): void {
   try {
-    localStorage.removeItem(`${DRAFT_BACKUP_PREFIX}${sessionId}`);
+    const key = `${DRAFT_BACKUP_PREFIX}${sessionId}`;
+    if (generation !== undefined) {
+      const parsed = JSON.parse(localStorage.getItem(key) ?? 'null') as {
+        generation?: number;
+      } | null;
+      if (parsed?.generation !== generation) return;
+    }
+    localStorage.removeItem(key);
   } catch {
     /* backup best-effort */
   }
