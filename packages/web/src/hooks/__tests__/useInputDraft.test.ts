@@ -14,9 +14,11 @@ import { connectionManager } from '../../lib/connection-manager.ts';
 import { connectionState } from '../../lib/state.ts';
 import {
   getDraftBackup,
+  hasClearTombstone,
   markVoiceTranscriptLanded,
   peekExpiredDraftBackup,
   resetVoiceTranscriptOutbox,
+  saveClearTombstone,
   saveDraftBackup,
   voiceTranscriptLandedSignal,
 } from '../../lib/voice/voice-transcript-outbox.ts';
@@ -1127,9 +1129,7 @@ describe('useInputDraft', () => {
       });
       // The backup holds the pre-clear text; the tombstone records the clear.
       expect(peekExpiredDraftBackup('session-1')?.content).toBe('sent text');
-      expect(
-        localStorage.getItem('hyperneo_voice_transcript_outbox_v1.clear.session-1')
-      ).not.toBeNull();
+      expect(hasClearTombstone('session-1')).toBe(true);
       first.unmount();
 
       // Reload (new hook, same storage): the pre-clear backup must NOT be
@@ -1165,16 +1165,11 @@ describe('useInputDraft', () => {
       expect(second.result.current.content).toBe('voice');
       expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(false);
       // The tombstone is retired once the reconcile committed.
-      expect(
-        localStorage.getItem('hyperneo_voice_transcript_outbox_v1.clear.session-1')
-      ).toBeNull();
+      expect(hasClearTombstone('session-1')).toBe(false);
     });
 
     it('keeps the owed-clear tombstone when the conditional reconcile is declined', async () => {
-      localStorage.setItem(
-        'hyperneo_voice_transcript_outbox_v1.clear.session-1',
-        JSON.stringify({ ts: Date.now() })
-      );
+      saveClearTombstone('session-1');
       mockHub.request.mockImplementation(async (method: string) => {
         if (method === 'session.get') {
           return {
@@ -1206,19 +1201,14 @@ describe('useInputDraft', () => {
       // Nothing was applied and the tombstone stays — the reconnect
       // subscription retries with a fresh read of the raced state.
       expect(result.current.content).toBe('sent text voice');
-      expect(
-        localStorage.getItem('hyperneo_voice_transcript_outbox_v1.clear.session-1')
-      ).not.toBeNull();
+      expect(hasClearTombstone('session-1')).toBe(true);
     });
 
     it('reconciles an owed clear directly when its landing expired (tombstone only)', async () => {
       // The landing marker aged past its TTL and was pruned, but the owed
       // clear tombstone is fresh: no replay effect will fire, so the settle
       // handler must reconcile against the daemon directly.
-      localStorage.setItem(
-        'hyperneo_voice_transcript_outbox_v1.clear.session-1',
-        JSON.stringify({ ts: Date.now() })
-      );
+      saveClearTombstone('session-1');
       mockHub.request.mockImplementation(async (method: string) => {
         if (method === 'session.get') {
           return {
@@ -1253,9 +1243,7 @@ describe('useInputDraft', () => {
       );
       expect(stripCall).toBeTruthy();
       expect(result.current.content).toBe('voice');
-      expect(
-        localStorage.getItem('hyperneo_voice_transcript_outbox_v1.clear.session-1')
-      ).toBeNull();
+      expect(hasClearTombstone('session-1')).toBe(false);
     });
 
     it('adopts a retained backup flush when the user returns to its session', async () => {
@@ -1409,10 +1397,7 @@ describe('useInputDraft', () => {
       // An owed clear whose landing EXPIRED: the durable tombstone survives,
       // the marker is gone. The initial settle reconciles it directly against
       // the daemon's baseline snapshot.
-      localStorage.setItem(
-        'hyperneo_voice_transcript_outbox_v1.clear.session-1',
-        JSON.stringify({ ts: Date.now() })
-      );
+      saveClearTombstone('session-1');
       mockHub.request.mockImplementation(async (method: string) => {
         if (method === 'session.get') {
           return {
@@ -1437,9 +1422,7 @@ describe('useInputDraft', () => {
       const strips = () =>
         mockHub.request.mock.calls.filter(([m]) => m === 'session.stripVoiceBaseline').length;
       expect(strips()).toBe(1);
-      expect(
-        localStorage.getItem('hyperneo_voice_transcript_outbox_v1.clear.session-1')
-      ).toBeNull();
+      expect(hasClearTombstone('session-1')).toBe(false);
 
       // A NEW transcript lands for this session while the composer is idle: a
       // stale in-memory owed-clear ref would treat the landing as another owed
@@ -1453,6 +1436,39 @@ describe('useInputDraft', () => {
       // No clear is owed — the landing defers behind the non-empty composer.
       expect(result.current.content).toBe('voice');
       expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(true);
+    });
+
+    it('recognizes an owed strip that committed with a lost ack (no transcript clear)', async () => {
+      // The strip COMMITTED but its response was lost: the server draft is
+      // transcript-only and the baseline is gone, while this tab's tombstone
+      // still owes the clear. The reconcile must adopt the draft instead of
+      // falling into the no-baseline conditional clear, which would delete
+      // the voice input the strip preserved.
+      saveClearTombstone('session-1', 3);
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return {
+            session: {
+              metadata: { inputDraft: 'voice', inputDraftVoiceLastStrippedSeq: 3 },
+            },
+          };
+        }
+        return {};
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      expect(result.current.content).toBe('voice');
+      expect(hasClearTombstone('session-1')).toBe(false);
+      // No conditional clear was issued against the transcript-only draft.
+      const clearCall = mockHub.request.mock.calls.find(
+        ([m, d]) => m === 'session.clearInputDraftIf' && d?.sessionId === 'session-1'
+      );
+      expect(clearCall).toBeFalsy();
     });
 
     it('recovers a fresh backup whose landing marker expired, folding the merged transcripts', async () => {

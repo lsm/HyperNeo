@@ -279,13 +279,30 @@ const consumedMarkers = new Map<string, string>();
 
 const DRAFT_BACKUP_TTL_MS = 24 * 60 * 60 * 1000;
 
-// Draft backups are TAB-OWNED: each tab defers its own evolving edits under
-// `${prefix}${sessionId}.${tabId}`. A single shared key let one tab's landing
-// consumption retire ANOTHER tab's deferred backup (consumption is local, but
-// the key was not) — the editing tab kept suppressing server saves while its
-// only durable copy was deleted, so a reload before its next edit lost the
-// post-landing text permanently.
-const TAB_ID = generateUUID();
+// Draft backups and clear tombstones are TAB-OWNED: each tab defers its own
+// evolving edits / owed clears under `${prefix}${sessionId}.${tabId}`. A
+// single shared key let one tab's landing consumption retire ANOTHER tab's
+// deferred backup or owed clear (consumption is local, but the keys were not)
+// — the editing tab kept suppressing server saves while its only durable copy
+// was deleted, or its clear intent vanished so a retained backup resurrected
+// text the user had sent. The tab id lives in sessionStorage: isolated per
+// browser tab, yet STABLE ACROSS RELOADS of the same tab — exactly the
+// ownership the reload-survival of these records requires.
+function readTabId(): string {
+  try {
+    const existing = sessionStorage.getItem('hyperneo_tab_id');
+    if (existing) return existing;
+    const id = generateUUID();
+    sessionStorage.setItem('hyperneo_tab_id', id);
+    return id;
+  } catch {
+    // sessionStorage unavailable (tests without a stub) — an ephemeral id
+    // still keeps this module instance's records distinct from others'.
+    return generateUUID();
+  }
+}
+
+const TAB_ID = readTabId();
 
 function draftBackupKey(sessionId: string): string {
   return `${DRAFT_BACKUP_PREFIX}${sessionId}.${TAB_ID}`;
@@ -430,6 +447,36 @@ export function removeDraftBackupKey(key: string, generation?: number): void {
 }
 
 /**
+ * Retire a claimed backup whose content just became durable (persisted to the
+ * server draft, or folded into a composer with saves enabled) AND sweep the
+ * SUPERSEDED siblings: other tabs' backups of the SAME landing generation,
+ * which are by construction older edits of the same deferral window. Without
+ * the sweep, the freshest claim retires and a later reload restores the
+ * stalest remaining sibling as "freshest", overwriting the newer server draft
+ * with obsolete edits. A sibling a still-deferring tab rewrites AFTER this
+ * sweep carries a newer timestamp and survives.
+ */
+export function retireDraftBackupClaim(key: string, generation: number): void {
+  removeDraftBackupKey(key, generation);
+  try {
+    const sessionId = key.slice(DRAFT_BACKUP_PREFIX.length, key.lastIndexOf('.'));
+    const prefix = `${DRAFT_BACKUP_PREFIX}${sessionId}.`;
+    const supersededKeys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const sibling = localStorage.key(i);
+      if (!sibling || !sibling.startsWith(prefix) || sibling === key) continue;
+      const parsed = JSON.parse(localStorage.getItem(sibling) ?? 'null') as {
+        generation?: number;
+      } | null;
+      if (parsed?.generation === generation) supersededKeys.push(sibling);
+    }
+    for (const sibling of supersededKeys) localStorage.removeItem(sibling);
+  } catch {
+    /* sweep best-effort — the claimed key itself is already retired */
+  }
+}
+
+/**
  * Read (WITHOUT removing) the draft backup for `sessionId`, bypassing the
  * landing-liveness gate the restore path applies. Used when a landing EXPIRED
  * while the session's saves were suppressed into that backup: the departed
@@ -443,35 +490,48 @@ export function removeDraftBackupKey(key: string, generation?: number): void {
  * deferred but the clear-reconcile could not COMMIT (socket down, or the
  * conditional RPC failed). `pendingClearRef` lives only in memory — without
  * this tombstone, a reload before reconnection restores the pre-clear draft
- * backup and resurrects text the user already deleted or sent.
+ * backup and resurrects text the user already deleted or sent. Written under
+ * THIS tab's key: another tab's owed clear must survive this tab's landing
+ * consumption (which retires only its own tombstone). `baselineSeq`, when
+ * known, names the voice sequence the reconcile was about to strip, so a
+ * retry can recognize a strip that COMMITTED but whose ack was lost.
  */
-export function saveClearTombstone(sessionId: string): void {
+export function saveClearTombstone(sessionId: string, baselineSeq?: number): void {
   try {
     localStorage.setItem(
-      `${CLEAR_TOMBSTONE_PREFIX}${sessionId}`,
-      JSON.stringify({ ts: Date.now() })
+      `${CLEAR_TOMBSTONE_PREFIX}${sessionId}.${TAB_ID}`,
+      JSON.stringify({ ts: Date.now(), baselineSeq })
     );
   } catch {
     /* tombstone best-effort */
   }
 }
 
-/** Whether an uncommitted clear is still owed for `sessionId` (TTL-gated). */
-export function hasClearTombstone(sessionId: string): boolean {
+/** The owed clear's record for THIS tab, if one is still within its TTL. */
+export function getClearTombstone(sessionId: string): { ts: number; baselineSeq?: number } | null {
   try {
-    const raw = localStorage.getItem(`${CLEAR_TOMBSTONE_PREFIX}${sessionId}`);
-    if (!raw) return false;
-    const parsed = JSON.parse(raw) as { ts?: number };
-    return Date.now() - (parsed.ts ?? 0) < DRAFT_BACKUP_TTL_MS;
+    const raw = localStorage.getItem(`${CLEAR_TOMBSTONE_PREFIX}${sessionId}.${TAB_ID}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { ts?: number; baselineSeq?: number };
+    if (typeof parsed.ts !== 'number') return null;
+    if (Date.now() - parsed.ts >= DRAFT_BACKUP_TTL_MS) return null;
+    return typeof parsed.baselineSeq === 'number'
+      ? { ts: parsed.ts, baselineSeq: parsed.baselineSeq }
+      : { ts: parsed.ts };
   } catch {
-    return false;
+    return null;
   }
 }
 
-/** Drop the tombstone once the clear-reconcile committed server-side. */
+/** Whether an uncommitted clear is still owed for `sessionId` (TTL-gated). */
+export function hasClearTombstone(sessionId: string): boolean {
+  return getClearTombstone(sessionId) !== null;
+}
+
+/** Drop THIS TAB's tombstone once its clear-reconcile committed server-side. */
 export function removeClearTombstone(sessionId: string): void {
   try {
-    localStorage.removeItem(`${CLEAR_TOMBSTONE_PREFIX}${sessionId}`);
+    localStorage.removeItem(`${CLEAR_TOMBSTONE_PREFIX}${sessionId}.${TAB_ID}`);
   } catch {
     /* tombstone best-effort */
   }
@@ -593,7 +653,21 @@ function pruneExpired(): void {
       const marker = parseLandedMarker(localStorage.getItem(key));
       if (!marker || now - marker.ts >= MAX_AGE_MS) staleMarkerKeys.push(key);
     }
-    for (const key of staleMarkerKeys) localStorage.removeItem(key);
+    for (const key of staleMarkerKeys) {
+      localStorage.removeItem(key);
+      // localStorage removals do not emit a `storage` event in the WRITING
+      // tab, so this tab's own expired landing state would linger: a later
+      // landing for the same session would treat it as a live aggregate
+      // prefix and republish "old + new", re-announcing the already-merged
+      // old transcript into reconciliations. Drop it here — but only when
+      // the LOCAL mark is equally expired (a fresh local mark with a stale
+      // marker means the marker write failed; the landing itself is live).
+      const sessionId = key.slice(LANDED_PREFIX.length);
+      const markedAt = landingMarkedAt.get(sessionId);
+      if (markedAt === undefined || now - markedAt >= MAX_AGE_MS) {
+        dropLocalLanding(sessionId);
+      }
+    }
   } catch {
     /* storage unavailable */
   }
@@ -652,7 +726,11 @@ export function enqueueTranscript(sessionId: string, text: string, id?: string):
 }
 
 export function getPendingTranscripts(): PendingTranscript[] {
-  return allEntries().slice(-MAX_ENTRIES);
+  // OLDEST-first batch when concurrent enqueueing leaves more live keys than
+  // the cap (each tab's pre-write prune cannot see the others' writes): the
+  // newer-first slice would deliver the hidden older transcript AFTER the
+  // newer ones, reversing the order the user dictated them in.
+  return allEntries().slice(0, MAX_ENTRIES);
 }
 
 export function removePendingTranscript(id: string): void {

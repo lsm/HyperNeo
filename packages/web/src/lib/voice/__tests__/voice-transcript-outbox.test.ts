@@ -24,12 +24,16 @@ import {
   getDraftBackup,
   getLandingTranscript,
   getPendingTranscripts,
+  hasClearTombstone,
   isLandingLive,
   markVoiceTranscriptLanded,
   peekExpiredDraftBackup,
   removeDraftBackupKey,
+  removeClearTombstone,
   removePendingTranscript,
   resetVoiceTranscriptOutbox,
+  retireDraftBackupClaim,
+  saveClearTombstone,
   saveDraftBackup,
   startVoiceTranscriptOutboxFlush,
   stopVoiceTranscriptOutboxFlush,
@@ -722,6 +726,88 @@ describe('voice transcript outbox', () => {
     startVoiceTranscriptOutboxFlush();
     expect(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.stale')).toBeNull();
     stopVoiceTranscriptOutboxFlush();
+  });
+
+  it("keeps ANOTHER tab's owed-clear tombstone when consuming a landing", () => {
+    // Tab B owes a clear (persisted under ITS tab-owned tombstone key) while
+    // this tab refreshes and consumes the shared landing — the consumption is
+    // local and retires only THIS tab's tombstone (consumeLanding calls
+    // removeClearTombstone), never tab B's clear intent, or tab B's retained
+    // backup could resurrect text its user already sent.
+    markVoiceTranscriptLanded('s1', 'voice', 'e1');
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.clear.s1.foreign-tab',
+      JSON.stringify({ ts: Date.now() })
+    );
+    saveClearTombstone('s1');
+    consumeVoiceTranscriptLanded('s1', voiceTranscriptLandedSignal.value.get('s1') ?? 1);
+    removeClearTombstone('s1'); // what consumeLanding does on landing settlement
+    expect(hasClearTombstone('s1')).toBe(false); // own tombstone retired
+    expect(
+      localStorage.getItem('hyperneo_voice_transcript_outbox_v1.clear.s1.foreign-tab')
+    ).not.toBeNull();
+  });
+
+  it('retireDraftBackupClaim sweeps same-generation siblings, keeps newer generations', () => {
+    markVoiceTranscriptLanded('s1', 'voice', 'e1'); // generation 1
+    // Two tabs deferred edits for the same landing; the freshest (ours) is
+    // claimed and made durable — the older sibling is SUPERSEDED and must go,
+    // or a later reload would restore its obsolete edits as "freshest".
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.draft.s1.older-tab',
+      JSON.stringify({ content: 'older edits', ts: Date.now() - 1000, generation: 1 })
+    );
+    saveDraftBackup('s1', 'newer edits', 1);
+    const claim = peekExpiredDraftBackup('s1');
+    expect(claim?.content).toBe('newer edits');
+    // A NEWER landing's backup must survive the sweep.
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.draft.s1.future-tab',
+      JSON.stringify({ content: 'gen 2 edits', ts: Date.now(), generation: 2 })
+    );
+    retireDraftBackupClaim(claim?.key ?? '', 1);
+    expect(
+      localStorage.getItem('hyperneo_voice_transcript_outbox_v1.draft.s1.older-tab')
+    ).toBeNull();
+    expect(
+      localStorage.getItem('hyperneo_voice_transcript_outbox_v1.draft.s1.future-tab')
+    ).not.toBeNull();
+  });
+
+  it('delivers the OLDEST batch when concurrent enqueues exceed the cap', () => {
+    // Two tabs' pre-write prunes cannot see each other's writes, so more
+    // than 20 live keys can exist. The flush batch must start at the OLDEST
+    // entry, or the hidden older transcript would append AFTER the newer
+    // ones and reverse the order the user dictated them in.
+    for (let i = 0; i < 25; i++) {
+      localStorage.setItem(
+        `hyperneo_voice_transcript_outbox_v1.entry.over-${i}`,
+        JSON.stringify({
+          id: `over-${i}`,
+          sessionId: 's1',
+          text: `t${i}`,
+          createdAt: Date.now() + i,
+        })
+      );
+    }
+    const pending = getPendingTranscripts();
+    expect(pending).toHaveLength(20);
+    expect(pending[0].text).toBe('t0'); // oldest-first
+    expect(pending[19].text).toBe('t19');
+  });
+
+  it('drops this tab’s own local landing state when its expired marker is pruned', () => {
+    markVoiceTranscriptLanded('s1', 'old voice', 'e1');
+    expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(true);
+    vi.useFakeTimers();
+    vi.advanceTimersByTime(25 * 60 * 60 * 1000);
+    enqueueTranscript('s1', 'fresh'); // triggers pruneExpired, which prunes the marker
+    // localStorage removals emit no storage event in the WRITING tab — the
+    // prune itself must drop the local landing, or a later landing for this
+    // session would republish "old + new" and re-announce the merged old
+    // transcript into reconciliations.
+    expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(false);
+    expect(getLandingTranscript('s1')).toBeNull();
   });
 
   it('removePendingTranscript drops a single entry', () => {

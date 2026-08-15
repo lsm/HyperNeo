@@ -638,6 +638,21 @@ export interface SessionMetadata {
    * double-append. `ts` is ms since epoch.
    */
   inputDraftVoiceAppendLog?: Array<{ id: string; ts: number }> | null;
+  /**
+   * The sequence id whose baseline the LAST session.stripVoiceBaseline
+   * removed. Lets a strip whose ACKNOWLEDGEMENT was lost be recognized as
+   * committed on retry (the client's owed-clear reconcile would otherwise
+   * treat the transcript-only draft as a sequence that never merged and
+   * clear it). Absent = no strip has committed.
+   */
+  inputDraftVoiceLastStrippedSeq?: number | null;
+  /**
+   * The claim id of the LAST session.mergeVoiceDraftBackup commit. The client
+   * mints one id per queued backup claim and reuses it across retries, so a
+   * merge whose acknowledgement was lost is acknowledged idempotently on
+   * retry instead of rewriting the draft with the transcript-free backup.
+   */
+  inputDraftVoiceMergeClaim?: { id: string; ts: number } | null;
   removedOutputs?: string[]; // UUIDs of messages whose tool_result outputs were removed from SDK session file
   resolvedQuestions?: Record<string, ResolvedQuestion>; // Resolved AskUserQuestion responses, keyed by toolUseId
   // Cost tracking: SDK reports cumulative cost per run, but resets on agent restart

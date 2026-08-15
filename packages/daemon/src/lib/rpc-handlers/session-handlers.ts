@@ -631,8 +631,16 @@ export function setupSessionHandlers(
     else if (draft.startsWith(`${baseline} `)) value = draft.slice(baseline.length + 1);
     else if (draft.startsWith(baseline)) value = draft.slice(baseline.length);
     else return { updated: false }; // draft diverged from the snapshot
+    // Record WHICH sequence was stripped: a strip whose acknowledgement was
+    // lost leaves the client still owing its clear, and its retry must
+    // recognize the transcript-only draft as already-stripped rather than
+    // clearing it as a sequence that never merged.
     const updates: UpdateSessionRequest = {
-      metadata: { inputDraft: value || null, inputDraftVoiceBaseline: null },
+      metadata: {
+        inputDraft: value || null,
+        inputDraftVoiceBaseline: null,
+        inputDraftVoiceLastStrippedSeq: expectedSeq,
+      },
     };
     await sessionManager.updateSession(sessionId, updates as Partial<Session>);
     messageHub.event(
@@ -658,11 +666,22 @@ export function setupSessionHandlers(
   // means a newer writer intervened — decline rather than guess, the client
   // retries. Read+write is one synchronous step, like stripVoiceBaseline.
   messageHub.onRequest('session.mergeVoiceDraftBackup', async (data, _ctx) => {
-    const { sessionId, content } = data as { sessionId: string; content: string };
+    const { sessionId, content, claimId } = data as {
+      sessionId: string;
+      content: string;
+      claimId?: string;
+    };
     if (typeof content !== 'string') throw new Error('Backup content is required');
     const session = sessionManager.getSessionFromDB(sessionId);
     if (!session) throw new Error('Session not found');
     const metadata = session.metadata ?? {};
+    // Idempotent replay: this claim's merge already COMMITTED but its ack was
+    // lost. Rewriting now would take the baseline-null branch (the first
+    // commit cleared it) and replace the combined draft with the
+    // transcript-free backup, permanently dropping the voice text.
+    if (claimId && metadata.inputDraftVoiceMergeClaim?.id === claimId) {
+      return { merged: true, value: metadata.inputDraft ?? '' };
+    }
     const baseline = metadata.inputDraftVoiceBaseline;
     const draft = metadata.inputDraft ?? '';
     const trimmed = content.trim();
@@ -685,6 +704,11 @@ export function setupSessionHandlers(
       const value = appendDraftText(trimmed, transcripts);
       metadataUpdate.inputDraft = value || null;
       metadataUpdate.inputDraftVoiceBaseline = null;
+    }
+    if (claimId) {
+      // Record the committed claim AFTER the branches above, so a retry of
+      // THIS merge is recognized before any branch can rewrite the draft.
+      metadataUpdate.inputDraftVoiceMergeClaim = { id: claimId, ts: Date.now() };
     }
     const updates: UpdateSessionRequest = { metadata: metadataUpdate };
     await sessionManager.updateSession(sessionId, updates as Partial<Session>);

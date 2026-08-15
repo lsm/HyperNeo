@@ -783,6 +783,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
   let existingDraft: string | null;
   let existingBaseline: string | null | undefined;
   let existingBaselineSeq: number | null | undefined;
+  let existingMergeClaim: { id: string; ts: number } | null;
   let sessionExists: boolean;
 
   beforeEach(async () => {
@@ -793,6 +794,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     existingDraft = null;
     existingBaseline = undefined;
     existingBaselineSeq = undefined;
+    existingMergeClaim = null;
     sessionExists = true;
     sessionManager = {
       getSessionFromDB: mock(() =>
@@ -805,6 +807,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
                 inputDraftVoiceBaseline: existingBaseline,
                 inputDraftVoiceBaselineSeq: existingBaselineSeq,
                 inputDraftVoiceAppendLog: existingAppendLog,
+                inputDraftVoiceMergeClaim: existingMergeClaim,
               },
             }
           : null
@@ -1024,7 +1027,13 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     )) as { updated: boolean; value: string };
     expect(result).toEqual({ updated: true, value: 'first second' });
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: { inputDraft: 'first second', inputDraftVoiceBaseline: null },
+      metadata: {
+        inputDraft: 'first second',
+        inputDraftVoiceBaseline: null,
+        // Records WHICH sequence was stripped, so a client retrying the strip
+        // after a lost ack can recognize it as committed.
+        inputDraftVoiceLastStrippedSeq: 3,
+      },
     });
   });
 
@@ -1056,7 +1065,11 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     )) as { updated: boolean; value: string };
     expect(result).toEqual({ updated: true, value: '' });
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: { inputDraft: null, inputDraftVoiceBaseline: null },
+      metadata: {
+        inputDraft: null,
+        inputDraftVoiceBaseline: null,
+        inputDraftVoiceLastStrippedSeq: 1,
+      },
     });
   });
 
@@ -1157,6 +1170,41 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     expect(result).toEqual({ merged: true, value: '' });
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
       metadata: { inputDraft: null },
+    });
+  });
+
+  it('acknowledges a retry of an already-committed claim without rewriting (mergeVoiceDraftBackup)', async () => {
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    // The first merge committed (draft := backup + transcripts, baseline
+    // cleared) but its acknowledgement was lost; the client retries under the
+    // SAME claim id. Rewriting would take the baseline-null branch and
+    // replace the combined draft with the transcript-free backup.
+    existingBaseline = 'old';
+    existingBaselineSeq = 1;
+    existingDraft = 'old voice';
+    existingMergeClaim = { id: 'claim-1', ts: Date.now() };
+    const result = (await handler!(
+      { sessionId: 's1', content: 'user edits', claimId: 'claim-1' },
+      {}
+    )) as { merged: boolean; value: string };
+    expect(result).toEqual({ merged: true, value: 'old voice' });
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('records the committed claim id alongside the merged draft', async () => {
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    existingPending = null;
+    existingBaseline = 'old';
+    existingBaselineSeq = 1;
+    existingDraft = 'old voice';
+    await handler!({ sessionId: 's1', content: 'user edits', claimId: 'claim-2' }, {});
+    const write = sessionManager.updateSession.mock.calls[0][1] as {
+      metadata: Record<string, unknown>;
+    };
+    expect(write.metadata.inputDraft).toBe('user edits voice');
+    expect(write.metadata.inputDraftVoiceMergeClaim).toEqual({
+      id: 'claim-2',
+      ts: expect.any(Number),
     });
   });
 });
