@@ -56,7 +56,7 @@ console.log = () => {};
 // prototype patch) persists across files — the registry must live on
 // globalThis so every evaluation shares one set.
 type UnitFetchGuardStash = { boundPorts: Map<number, Set<string>> };
-const stash = (globalThis as unknown as Record<string, unknown>);
+const stash = globalThis as unknown as Record<string, unknown>;
 const guardStash = (stash.__unitFetchGuard ??= {
   boundPorts: new Map<number, Set<string>>(),
 }) as UnitFetchGuardStash;
@@ -82,10 +82,7 @@ type PatchableListen = ((this: ListeningServer, ...args: unknown[]) => unknown) 
 const netServerProto = nodeNet.Server.prototype as unknown as { listen: PatchableListen };
 if (!netServerProto.listen.__unitFetchGuard) {
   const originalListen = netServerProto.listen;
-  const patchedListen = function patchedListen(
-    this: ListeningServer,
-    ...args: unknown[]
-  ): unknown {
+  const patchedListen = function patchedListen(this: ListeningServer, ...args: unknown[]): unknown {
     this.on('listening', () => {
       const address = this.address();
       if (address && typeof address === 'object' && loopbackOrAnyAddress(address.address)) {
@@ -152,12 +149,8 @@ const currentFetch = globalThis.fetch as GuardedFetch;
 // guard, and re-installing would wrap it around itself.
 if (!currentFetch.__unitFetchGuard) {
   const realFetch = currentFetch.bind(globalThis);
-  const guardedFetch = (async (
-    input: RequestInfo | URL,
-    init?: RequestInit
-  ): Promise<Response> => {
-    const href =
-      typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+  const guardedFetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     let url: URL;
     try {
       url = new URL(href);
@@ -183,7 +176,9 @@ if (!currentFetch.__unitFetchGuard) {
       // message is just "fetch failed"; the detail lives in error.cause.
       const cause = (error as { cause?: unknown }).cause;
       const detail =
-        error instanceof Error ? `${error.message} ${cause instanceof Error ? cause.message : ''}` : '';
+        error instanceof Error
+          ? `${error.message} ${cause instanceof Error ? cause.message : ''}`
+          : '';
       if (error instanceof TypeError && /redirect/i.test(detail)) {
         throw new Error(
           `unit-test fetch to ${href} followed a redirect — test servers must not redirect in unit tests (see tests/vitest.setup.ts)`
