@@ -1541,6 +1541,40 @@ describe('QueryRunner', () => {
       // processExitedPromise should be cleared after the wait
       expect(ctx.processExitedPromise).toBeNull();
     });
+
+    it('should abandon the retry when a replacement query took ownership during the exit wait', async () => {
+      // Codex P1 (PR #2491): the retry's recursive runQuery() bypasses
+      // start()'s queue-running guard. If a replacement query started while
+      // the retry awaited the old subprocess's exit, recursing with the stale
+      // generation would spawn a competing query overwriting the
+      // replacement's queryObject. The retry must be abandoned instead.
+      buildSpy.mockClear();
+      let resolveExit: () => void;
+      const exitPromise = new Promise<void>((resolve) => {
+        resolveExit = resolve;
+      });
+      const ctx = createContext({
+        queryObject: {
+          close: () => {},
+          [Symbol.asyncIterator]: function* () {},
+        } as unknown as import('@anthropic-ai/claude-agent-sdk').Query,
+        processExitedPromise: exitPromise,
+      });
+      runner = new QueryRunner(ctx);
+
+      runner.start();
+      // Let the first attempt reach the catch block (build rejects with the
+      // timeout error), then simulate: (1) a replacement start bumping the
+      // query generation, (2) the old subprocess exiting.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      ctx.incrementQueryGeneration();
+      resolveExit!();
+      await ctx.queryPromise?.catch(() => {});
+
+      // The retry was abandoned — runQuery must not have been re-entered
+      // (options build runs exactly once, for the first attempt only).
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('auto-recovery removal regression guards (Task 2.3)', () => {

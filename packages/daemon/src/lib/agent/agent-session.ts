@@ -399,13 +399,13 @@ export class AgentSession
   processExitedPromise: Promise<void> | null = null;
   private trackedAgentProcesses = new Map<number, TrackedAgentProcess>();
   private trackedAgentProcessExitPromises = new Map<number, Promise<void>>();
-  /** Durable no-PID exit promises — retained until resolved so updateProcessExitedPromise() never drops them. */
-  private noPidExitPromises: Promise<void>[] = [];
   /**
-   * Durable no-PID handles — kept alongside {@link noPidExitPromises} so
-   * terminateTrackedAgentProcesses() can signal them via their kill(). Without
-   * this, a hung no-PID spawn (VM/container/remote execution) survives
-   * termination because there is no PID to process.kill.
+   * Durable no-PID handles (VM/container/remote spawns) with their exit
+   * promises and force-kill timers. Single source of truth: termination
+   * signals them via their kill() (no PID to process.kill), and
+   * updateProcessExitedPromise() derives the aggregate wait from them —
+   * so an orphan retained across a reset still blocks later teardown
+   * waits until it exits. Self-clean on exit.
    */
   private noPidAgentProcesses: NoPidTrackedProcess[] = [];
   private recentlyExitedAgentRootPids = new Map<number, number>();
@@ -2793,8 +2793,6 @@ export class AgentSession
       const noPidExitPromise = new Promise<void>((resolve) => {
         proc.once('exit', () => {
           // Self-clean from the durable collection once resolved.
-          const idx = this.noPidExitPromises.indexOf(noPidExitPromise);
-          if (idx >= 0) this.noPidExitPromises.splice(idx, 1);
           const handleIdx = this.noPidAgentProcesses.indexOf(entry);
           if (handleIdx >= 0) {
             if (entry.forceKillTimer) clearTimeout(entry.forceKillTimer);
@@ -2805,7 +2803,6 @@ export class AgentSession
       });
       entry.exitPromise = noPidExitPromise;
       this.noPidAgentProcesses.push(entry);
-      this.noPidExitPromises.push(noPidExitPromise);
       this.updateProcessExitedPromise();
       return;
     }
@@ -2984,27 +2981,29 @@ export class AgentSession
   }
 
   private updateProcessExitedPromise(): void {
-    const exitPromises = [
-      ...this.trackedAgentProcessExitPromises.values(),
-      ...this.noPidExitPromises,
-    ];
+    // The durable no-PID handles are the source of truth for their exit
+    // promises: an orphan retained across resetProcessExitedPromise() (still
+    // alive, still killable) must stay in the aggregate so a later stop()
+    // waits for it — otherwise the rebuild after tracking a replacement would
+    // silently drop the orphan's wait. (Codex P2, PR #2491.)
+    const noPidPromises = this.noPidAgentProcesses.flatMap((entry) =>
+      entry.exitPromise ? [entry.exitPromise] : []
+    );
+    const exitPromises = [...this.trackedAgentProcessExitPromises.values(), ...noPidPromises];
     this.processExitedPromise =
       exitPromises.length > 0 ? Promise.all(exitPromises).then(() => {}) : null;
   }
 
   /**
-   * Clear processExitedPromise and any stale no-PID exit promises.
-   * Called when retry paths time out and abandon the current wait.
-   * Without this, unresolved no-PID promises accumulate and block
-   * future teardown waits for processes that were already abandoned.
-   *
-   * The durable no-PID HANDLES are intentionally kept: they are the only way
-   * to kill a still-live no-PID process later (stop / stale-state recovery).
-   * They self-clean when the process exits or after a forced termination.
+   * Clear the aggregated exit-wait promise (retry paths abandoning the
+   * current wait). The durable per-process exit promises are NOT dropped:
+   * a subsequent trackAgentProcess()/updateProcessExitedPromise() rebuild
+   * re-derives the aggregate from the still-live handles, so an abandoned
+   * but still-alive process keeps blocking later teardown waits until it
+   * actually exits (or is force-killed via its retained handle).
    * (Codex P2, PR #2491.)
    */
   resetProcessExitedPromise(): void {
-    this.noPidExitPromises.length = 0;
     this.processExitedPromise = null;
   }
 
