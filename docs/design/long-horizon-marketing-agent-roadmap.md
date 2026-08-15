@@ -64,15 +64,16 @@ Workers report facts and recommendations. They do not directly manage durable go
 
 1. At most one LH assignment with relationship `owner` per goal.
 2. `manager` and `watcher` remain many-to-many and are not mutation-authoritative by default.
-3. One immutable outcome report is created per reportable terminal generation.
-4. Task completion does not depend on successful report notification.
+3. One immutable outcome report is created atomically with each reportable terminal transition, keyed by a durable task terminal generation.
+4. Task completion does not depend on successful report notification, but terminal capture cannot be skipped by a worker.
 5. Notification retries cannot duplicate reports or recipient inbox messages.
 6. Workers may propose rolling-state changes but cannot apply them after migration.
-7. Only the current owner, an explicit fallback coordinator, or human authority may decide and apply a report.
+7. Only the current owner, an explicit fallback coordinator, or human authority may decide and apply a report; current ownership is validated inside the decision transaction.
 8. Decision and goal mutation are atomic and idempotent.
 9. Applied updates continue through `SpaceGoalService` so goal events and recurring-goal rules remain authoritative.
 10. Forge evidence is a retryable projection, not the outcome source of truth.
-11. Restrictions ship only after owner routing and decision/apply paths work.
+11. Lifecycle events are durably captured in the same transaction as their domain mutation, with asynchronous post-commit publication and reconciliation.
+12. Restrictions ship only after owner routing and decision/apply paths work.
 
 ## Delivery architecture
 
@@ -164,13 +165,15 @@ Task-agent and Space-chat injection require separate later migration because the
 #### L3. Goal-service producer wiring
 
 - Emit goal creation, status, progress, check-in, and task-trigger events.
-- Publish only after committed mutations.
+- Persist an outbox lifecycle-event record in the same transaction as the goal mutation.
+- Publish the outbox record asynchronously after commit; a relay/reconciler must recover committed-but-unpublished records.
 
 **Estimate:** 130–220 lines.
 
 #### L4. Task-manager producer wiring
 
 - Emit task creation and meaningful status transitions after successful updates.
+- Persist each task lifecycle outbox record atomically with its state transition; do not rely on a separate post-commit publisher call.
 
 **Estimate:** 130–220 lines.
 
@@ -200,7 +203,8 @@ interface SpaceLifecycleSubscriptionFilter {
 
 - Define normalization and any-match behavior.
 - Reject unsupported fields.
-- Migrate the marketing template from ambiguous `labels`.
+- Migrate **all** built-in template `labels` filters to `labelsAny` before enabling strict rejection, including marketing, product-quality-manager, and research.
+- Backfill or repair already persisted legacy `{ labels: [...] }` subscription rows in the same release so existing agents do not silently lose matching.
 
 **Estimate:** 100–170 lines.
 
@@ -224,11 +228,12 @@ interface SpaceLifecycleSubscriptionFilter {
 
 #### G1. Primary-owner invariant
 
-- Add a partial unique constraint for one `owner` per goal.
+- First reconcile pre-existing duplicate `owner` rows deterministically or require an explicit repair decision, because existing databases may already contain multiple owners for a goal.
+- Only after reconciliation/add data-repair coverage, add a partial unique constraint for one `owner` per goal.
 - Preserve multiple managers/watchers.
 - Make unassignment relationship-specific.
 
-**Estimate:** 110–180 lines.
+**Estimate:** 130–220 lines.
 
 #### G2. Owner resolver and atomic reassignment
 
@@ -261,17 +266,22 @@ Add a narrow `space_goal_outcome_reports` model with:
 - immutable outcome summary, observations, recommendations, proposed goal update, and evidence references;
 - creation and routing metadata.
 
-Use terminal generation rather than only task ID because tasks can reopen. Do not provide payload update/delete methods.
+Before this schema, add a durable task terminal-generation identifier to the task/terminal transition. Every reportable transition into a terminal status must atomically allocate or advance that generation, and the report uniqueness key must be `(task_id, terminal_generation)` rather than a timestamp such as `completedAt`, which is assigned too late and may change on reopen/re-completion.
+
+Do not provide payload update/delete methods.
 
 **Estimate:** 150–230 lines.
 
-#### G6. Worker outcome-report tool
+#### G6. Terminal transition captures outcome report
 
-- Validate the caller is associated with the linked task/goal.
-- Insert idempotently without mutating goal state.
+- Create the report as part of the central reportable terminal transition, not as an optional model-invoked tool. A worker may submit the structured outcome payload before or during completion, but the terminal command/transition must guarantee one report exists even when the worker omits the tool call.
+- Keep notification/routing asynchronous and non-blocking.
+- Validate the caller/session associated with the linked task/goal when a structured payload is supplied.
 - Optionally project to Forge evidence when a linked scope exists.
 
-**Estimate:** 140–220 lines.
+This is the required behavior currently absent from `mark_complete.goal_update`; without terminal-capture, a normal completion can produce no report.
+
+**Estimate:** 170–250 lines.
 
 #### G7. Owner routing through V2
 
@@ -287,9 +297,11 @@ Use terminal generation rather than only task ID because tasks can reopen. Do no
 
 #### G8. Owner decision and atomic apply
 
-- List/read reports for the owner.
+- List/read reports for the primary owner.
+- Define coordinator and human read/list/decision authorization in this same PR so a report routed through fallback cannot remain undiscoverable.
 - Accept as proposed, apply edited, acknowledge without mutation, or reject.
 - Atomically transition disposition and update the goal.
+- Validate current ownership inside the same transaction that claims the report and updates the goal: a checked-but-since-reassigned owner must lose the claim. Coordinator and human override remain explicit exceptions.
 - Reference the report in the goal event.
 - Apply recurring-goal progress rules.
 
