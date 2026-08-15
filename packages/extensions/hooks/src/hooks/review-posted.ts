@@ -66,7 +66,10 @@ export const reviewPostedHook: Hook = {
       // retries and re-verifies the new identity.
       const fresh = ctx.refreshArtifacts?.();
       const current = fresh ? getPrimaryLink(ctx, fresh) : undefined;
-      if (current === undefined || !samePrLink(current, link)) {
+      // Only a DIVERGENT identity retries: these hooks legitimately run
+      // before any pr_ready stamp (no __pr_validated__ exists yet), and
+      // requiring one would retry forever on a valid positive result.
+      if (current !== undefined && !samePrLink(current, link)) {
         return {
           flow: 'retry',
           reason:

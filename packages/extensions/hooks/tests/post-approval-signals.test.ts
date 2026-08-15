@@ -4,6 +4,10 @@ import { postApprovalOnlyHook } from '../src/hooks/post-approval-only';
 import { prReadyHook } from '../src/hooks/pr-ready';
 import { reviewPostedHook } from '../src/hooks/review-posted';
 import { VALIDATED_PR_ARTIFACT_KEY } from '../src/primary-link';
+import { setGraphqlRunnerForTests } from '../src/github';
+
+import { afterEach } from 'bun:test';
+afterEach(() => setGraphqlRunnerForTests(null));
 
 const REVIEWED_PR = 'https://github.com/org/repo/pull/42';
 
@@ -170,6 +174,41 @@ describe('review_posted — stamped-identity binding', () => {
     );
     expect(ret.flow).toBe('stop');
     expect(ret.reason).toContain('999');
+  });
+
+  test('positive evidence with NO stamped identity continues (round 88)', async () => {
+    // review_posted legitimately runs without an earlier pr_ready binding:
+    // the post-lookup recheck must treat "no identity exists" as consistent
+    // (only a DIVERGENT identity retries), else a found review loops retry
+    // forever. refreshArtifacts returns no stamp → continue.
+    setGraphqlRunnerForTests(async () => ({
+      ok: true as const,
+      // A formal review newer than the run start: positive evidence.
+      data: {
+        data: {
+          viewer: { login: 'operator' },
+          repository: {
+            pullRequest: {
+              author: { login: 'operator' },
+              reviews: {
+                nodes: [{ state: 'COMMENTED', publishedAt: new Date().toISOString() }],
+                pageInfo: { hasPreviousPage: false },
+              },
+              comments: { nodes: [] },
+            },
+          },
+        },
+      },
+    }));
+    const ret = await reviewPostedHook.run(
+      sendAction({ pr_link: REVIEWED_PR }),
+      stubCtx({
+        runStartedAt: Date.now() - 60_000,
+        readArtifacts: () => [],
+        refreshArtifacts: () => [],
+      })
+    );
+    expect(ret.flow).toBe('continue');
   });
 
   test('a supplied link matching the stamp proceeds to the evidence check (no stamp → supplied trusted)', async () => {
