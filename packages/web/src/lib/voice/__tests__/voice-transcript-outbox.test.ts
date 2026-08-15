@@ -526,6 +526,41 @@ describe('voice transcript outbox', () => {
     hubRequest.mockResolvedValueOnce({ success: true, deduped: true });
     await flushPendingTranscripts();
     expect(getPendingTranscripts()).toHaveLength(0);
+    // No prior landing announced this transcript — the deduped ack is the
+    // only signal it merged, so the landing IS announced here.
+    expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(true);
+  });
+
+  it('does not announce a SECOND landing for an already-announced deduped entry', async () => {
+    // Another tab's append committed this transcript and its landing was
+    // refreshed and CONSUMED there; the retained marker still names the text.
+    // This tab's concurrent flush gets a deduped ack — announcing another
+    // landing would be false (no pending is staged) and could let a later
+    // clear-reconcile resurrect the already-merged transcript.
+    enqueueTranscript('s1', 'shared');
+    markVoiceTranscriptLanded('s1', 'shared');
+    consumeVoiceTranscriptLanded('s1', voiceTranscriptLandedSignal.value.get('s1') ?? 1);
+    expect(getLandingTranscript('s1')).toBe('shared'); // retained marker names it
+    hubRequest.mockResolvedValueOnce({ success: true, deduped: true });
+    await flushPendingTranscripts();
+    expect(getPendingTranscripts()).toHaveLength(0);
+    expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(false);
+  });
+
+  it('cleans an entry whose TTL expires in a long-lived tab on the next flush', async () => {
+    enqueueTranscript('s1', 'ages out');
+    // The entry expires (24h pass) while the tab stays open: reads filter it,
+    // and without this flush-path cleanup its key would linger forever (the
+    // startup prune never re-runs).
+    vi.useFakeTimers();
+    await vi.advanceTimersByTimeAsync(25 * 60 * 60 * 1000);
+    expect(getPendingTranscripts()).toHaveLength(0);
+    await flushPendingTranscripts();
+    expect(getPendingTranscripts()).toHaveLength(0);
+    const keys = Object.keys(localStorage) as string[];
+    expect(keys.some((k) => k.startsWith('hyperneo_voice_transcript_outbox_v1.entry.'))).toBe(
+      false
+    );
   });
 
   it('does nothing when the connection is down', async () => {

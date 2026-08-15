@@ -624,7 +624,13 @@ export async function flushPendingTranscripts(): Promise<void> {
   const hub = connectionManager.getHubIfConnected();
   if (!hub) return;
   const pending = getPendingTranscripts();
-  if (pending.length === 0) return;
+  if (pending.length === 0) {
+    // An expired-but-still-stored entry hides from reads — a long-lived tab
+    // never re-runs the startup prune, so clean it here rather than leaving
+    // the key in localStorage forever.
+    pruneExpired();
+    return;
+  }
 
   flushInProgress = true;
   let delivered = 0;
@@ -638,14 +644,28 @@ export async function flushPendingTranscripts(): Promise<void> {
       if (!connectionManager.getHubIfConnected()) break; // dropped mid-flush
       if (deferredSessions.has(entry.sessionId)) continue;
       try {
-        await hub.request('session.appendVoiceDraft', {
+        const result = (await hub.request('session.appendVoiceDraft', {
           sessionId: entry.sessionId,
           text: entry.text,
           dedupId: entry.id,
-        });
+        })) as { deduped?: boolean };
         removePendingTranscript(entry.id);
         delivered += 1;
-        markVoiceTranscriptLanded(entry.sessionId, entry.text);
+        // A DEDUPED ack means another tab's append already committed this
+        // transcript — that tab announced the landing. Announcing a SECOND one
+        // here is wrong whenever the first was already handled: its landing
+        // may have been consumed (or its marker aged out only past the TTL),
+        // and a fresh generation with no staged pending would let a later
+        // clear-reconcile resurrect the already-merged transcript. Skip only
+        // when the retained landing text still names THIS transcript; when the
+        // marker is gone (or never existed), this ack is the only signal the
+        // transcript merged and the landing must be announced.
+        const alreadyAnnounced =
+          result.deduped === true &&
+          (getLandingTranscript(entry.sessionId) ?? '').includes(entry.text);
+        if (!alreadyAnnounced) {
+          markVoiceTranscriptLanded(entry.sessionId, entry.text);
+        }
       } catch (error) {
         // Socket dropped mid-flush: keep for the next reconnect. Otherwise the
         // daemon answered while connected: a timeout is ambiguous (the append
@@ -658,6 +678,11 @@ export async function flushPendingTranscripts(): Promise<void> {
     }
   } finally {
     flushInProgress = false;
+    // TTL-clean on every pass: a long-lived tab never re-runs the startup
+    // prune, and an entry that ages past the TTL mid-retry would otherwise
+    // leave its key in localStorage forever (reads filter it, so nothing else
+    // would remove it).
+    pruneExpired();
   }
   // Retained entries (timeout / retryable refusal) need another pass; the
   // connection-state effect won't re-fire while already connected, and no
