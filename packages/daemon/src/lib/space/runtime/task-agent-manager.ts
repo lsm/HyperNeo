@@ -3106,7 +3106,6 @@ export class TaskAgentManager {
     return undefined;
   }
 
-  /** Returns a sub-session by its session ID, or undefined if not found. */
   /**
    * The current node execution's kickoff correlation state for the session:
    * null when the session has NO execution (keep unconditional behavior);
@@ -3146,6 +3145,7 @@ export class TaskAgentManager {
     return this.config.db.getJobQueueRepo().hasProcessingDeliveryForSession(subSessionId);
   }
 
+  /** Returns a sub-session by its session ID, or undefined if not found. */
   getSubSession(subSessionId: string): AgentSession | undefined {
     for (const [, nodeMap] of this.subSessions) {
       const session = nodeMap.get(subSessionId);
