@@ -29,6 +29,12 @@
 import { useEffect, useRef, useCallback, useMemo } from 'preact/hooks';
 import { useSignal, useSignalEffect } from '@preact/signals';
 import { connectionManager } from '../lib/connection-manager';
+import { connectionState } from '../lib/state';
+import {
+  consumeVoiceTranscriptLanded,
+  isLandingLive,
+  voiceTranscriptLandedSignal,
+} from '../lib/voice/voice-transcript-outbox';
 
 export interface UseInputDraftResult {
   /** Current content value */
@@ -59,6 +65,68 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // wipe the server-side draft (including a voice transcript the daemon merged
   // while serving the load) before the loaded value is re-persisted.
   const initialLoadSettledRef = useRef<string | null>(null);
+  // The landing generation whose reconciliation was already folded into local
+  // content (or consumed). Overlapping refresh gets can both observe the same
+  // merged draft; without this, each cancelled response blindly appends the
+  // full transcript and one voice occurrence becomes two.
+  const foldedLandingRef = useRef<Map<string, number>>(new Map());
+
+  // Consume a landing generation and record it as reconciled — every path
+  // that settles a landing goes through here, so the fold guard above stays
+  // consistent with what was actually handled.
+  const consumeLanding = useCallback((sessionId: string, generation: number): void => {
+    foldedLandingRef.current.set(sessionId, generation);
+    consumeVoiceTranscriptLanded(sessionId, generation);
+  }, []);
+
+  // Fetch the server draft into the signal, guarded against staleness (the
+  // session may have changed or the hook unmounted while the get was in
+  // flight). Shared by the initial session-change load and the outbox-replay
+  // refresh below. The daemon merges any staged voice transcript
+  // (inputDraftVoicePending) into inputDraft atomically while serving the
+  // request, so the draft here already includes it — no client-side merge.
+  // `onResult` runs once the load has settled: `ok` is whether the get
+  // succeeded (no hub counts as a failure), `pendingRetained` reports whether
+  // the daemon KEPT `inputDraftVoicePending` (draft too full to merge — the
+  // transcript is still staged, so a landing must not be consumed as
+  // delivered), `wasCancelled` reports whether the effect was torn down while
+  // the get was in flight.
+  const loadDraft = useCallback(
+    (
+      targetSessionId: string,
+      isCancelled: () => boolean,
+      onResult?: (ok: boolean, pendingRetained?: boolean, wasCancelled?: boolean) => void
+    ): void => {
+      const hub = connectionManager.getHubIfConnected();
+      if (!hub) {
+        onResult?.(false);
+        return;
+      }
+      hub
+        .request<{
+          session: { metadata?: { inputDraft?: string; inputDraftVoicePending?: string | null } };
+        }>('session.get', {
+          sessionId: targetSessionId,
+        })
+        .then((response) => {
+          const cancelled = isCancelled();
+          const draft = response.session?.metadata?.inputDraft;
+          const pendingRetained = !!response.session?.metadata?.inputDraftVoicePending;
+          if (!cancelled && draft) {
+            contentSignal.value = draft;
+          }
+          onResult?.(true, pendingRetained, cancelled);
+        })
+        .catch(() => {
+          // A stale request (session changed / hook unmounted while this get
+          // was in flight) must not report a failure that settles a NEWER
+          // load — mirror the success path's cancellation guard.
+          if (isCancelled()) return;
+          onResult?.(false);
+        });
+    },
+    [contentSignal]
+  );
 
   // Load draft on session change
   useEffect(() => {
@@ -81,37 +149,63 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     // get is in flight, the cleanup flips `cancelled` so the resolved draft is
     // not written into a signal now backing a different session.
     let cancelled = false;
-    const loadDraft = async () => {
-      const hub = connectionManager.getHubIfConnected();
-      if (!hub) {
+    loadDraft(
+      sessionId,
+      () => cancelled,
+      (_ok, _pendingRetained, wasCancelled) => {
+        // Only a load that was NOT cancelled (session still current) marks the
+        // initial load settled; a stale rejection must not settle a newer load.
+        if (wasCancelled) return;
         initialLoadSettledRef.current = sessionId;
-        return;
       }
-
-      try {
-        const response = await hub.request<{
-          session: { metadata?: { inputDraft?: string } };
-        }>('session.get', { sessionId });
-        if (cancelled) return;
-        // The daemon merges any staged voice transcript (inputDraftVoicePending)
-        // into inputDraft atomically while serving this request, so the draft
-        // here already includes it — no client-side merge needed.
-        const draft = response.session?.metadata?.inputDraft;
-        if (draft) {
-          contentSignal.value = draft;
-        }
-      } catch {
-        // Ignore errors loading draft
-      } finally {
-        if (!cancelled) initialLoadSettledRef.current = sessionId;
-      }
-    };
-
-    loadDraft();
+    );
     return () => {
       cancelled = true;
     };
-  }, [sessionId, contentSignal]);
+  }, [sessionId, contentSignal, loadDraft]);
+
+  // Refresh the mounted draft when the outbox lands a transcript for this
+  // session (e.g. after a page reload or reconnect replay). The pending field
+  // is otherwise merged only during session.get, which runs on session change —
+  // without this, a replay into an already-open composer stays invisible until
+  // the next navigation. Guard on an IDLE composer: the get overwrites the
+  // local signal, so reloading over in-progress typing would lose keystrokes.
+  // Reading contentSignal (not peek()) subscribes the effect to typing, so a
+  // landing while the composer has text DEFERS (the session stays in the map)
+  // until it clears, and a keystroke that lands mid-get re-runs the effect
+  // whose cleanup aborts the stale get — the server draft can never clobber
+  // newer keystrokes. Reading connectionState re-runs the effect when the
+  // connection is restored, so a refresh that failed on a dropped socket
+  // retries once the session.get can succeed again. The landing of generation
+  // `generation` is consumed only after a refresh that observed exactly that
+  // generation AND saw the pending fully merged — a newer landing or a
+  // retained pending (draft too full) keeps a refresh pending.
+  useSignalEffect(() => {
+    const generation = voiceTranscriptLandedSignal.value.get(sessionId);
+    if (generation === undefined || !isLandingLive(sessionId)) return;
+    // Wait for the initial load: its settle handler owns applying the loaded
+    // draft, and a refresh racing it could write a stale merged draft over
+    // the fresher load.
+    if (initialLoadSettledRef.current !== sessionId) return;
+    void connectionState.value;
+    const content = contentSignal.value;
+    if (content.trim() !== '') return; // defer behind the user's typing
+    let cancelled = false;
+    loadDraft(
+      sessionId,
+      () => cancelled,
+      (ok, pendingRetained, _wasCancelled) => {
+        // Consume even when this run was cancelled mid-get: a RESOLVED get
+        // already merged (and cleared) the pending server-side, so the
+        // landing is handled — leaving it pending would let a later clear
+        // delete the merged transcript.
+        if (ok && !pendingRetained) consumeLanding(sessionId, generation);
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  });
 
   // Save draft with debouncing - uses useSignalEffect to react to signal changes
   // Last state observed for each session while it was active. The flush below

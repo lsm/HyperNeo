@@ -17,13 +17,18 @@ vi.mock('../../connection-manager', () => ({
 }));
 
 import {
+  consumeVoiceTranscriptLanded,
   enqueueTranscript,
   flushPendingTranscripts,
   getPendingTranscripts,
   removePendingTranscript,
+  isLandingLive,
+  getLandingTranscript,
+  markVoiceTranscriptLanded,
   resetVoiceTranscriptOutbox,
   startVoiceTranscriptOutboxFlush,
   stopVoiceTranscriptOutboxFlush,
+  voiceTranscriptLandedSignal,
 } from '../voice-transcript-outbox.ts';
 import { connectionManager } from '../../connection-manager.ts';
 import { connectionState } from '../../state.ts';
@@ -278,6 +283,9 @@ describe('voice transcript outbox', () => {
     hubRequest.mockResolvedValueOnce({ success: true, deduped: true });
     await flushPendingTranscripts();
     expect(getPendingTranscripts()).toHaveLength(0);
+    // No prior landing announced this transcript — the deduped ack is the
+    // only signal it merged, so the landing IS announced here.
+    expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(true);
   });
 
   it('cleans an entry whose TTL expires in a long-lived tab on the next flush', async () => {
@@ -405,5 +413,214 @@ describe('voice transcript outbox', () => {
     const rest = getPendingTranscripts();
     expect(rest).toHaveLength(1);
     expect(rest[0].text).toBe('b');
+  });
+  it('fires the landed signal after a successful replay', async () => {
+    enqueueTranscript('s1', 'landed');
+    await flushPendingTranscripts();
+    expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(true);
+  });
+
+  it('does not consume a landing superseded by a newer one', () => {
+    markVoiceTranscriptLanded('s1'); // generation N
+    const first = voiceTranscriptLandedSignal.value.get('s1') ?? 0;
+    markVoiceTranscriptLanded('s1'); // generation N+1
+    const second = voiceTranscriptLandedSignal.value.get('s1') ?? 0;
+    expect(second).toBeGreaterThan(first);
+    // A refresh that observed the FIRST generation finishing after the second
+    // landing must not consume the shared entry — the newer one still needs a
+    // refresh.
+    consumeVoiceTranscriptLanded('s1', first);
+    expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(true);
+    expect(voiceTranscriptLandedSignal.value.get('s1')).toBe(second);
+    // The refresh that observed the newer generation consumes it.
+    consumeVoiceTranscriptLanded('s1', second);
+    expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(false);
+  });
+
+  it('cleans up stale landed markers even when the live queue is under the cap', () => {
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.stale',
+      JSON.stringify({ v: 1, ts: Date.now() - 25 * 60 * 60 * 1000, n: 1, text: 'old' })
+    );
+    enqueueTranscript('s1', 'one'); // under the cap — marker cleanup still runs
+    expect(
+      localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.stale')
+    ).toBeNull();
+  });
+
+  it('keeps the shared landed marker when a tab consumes its landing', () => {
+    markVoiceTranscriptLanded('s1');
+    consumeVoiceTranscriptLanded('s1', voiceTranscriptLandedSignal.value.get('s1') ?? 0);
+    expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(false);
+    // Consumption is local to this tab — the marker stays so a LATER tab can
+    // hydrate it (TTL prunes it).
+    expect(
+      localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1')
+    ).not.toBeNull();
+    // The retained marker must NOT read as live in the CONSUMING tab — or the
+    // save-suppression it lifted would re-engage and disable server-side draft
+    // durability until the marker's TTL expires.
+    expect(isLandingLive('s1')).toBe(false);
+  });
+
+  it('treats a NEWER marker as live again after an earlier one was consumed', () => {
+    markVoiceTranscriptLanded('s1');
+    consumeVoiceTranscriptLanded('s1', voiceTranscriptLandedSignal.value.get('s1') ?? 0);
+    expect(isLandingLive('s1')).toBe(false);
+    // A second landing (same tab here; another tab in production rewrites the
+    // marker with a fresh counter) is a NEW landing — live again.
+    markVoiceTranscriptLanded('s1');
+    expect(isLandingLive('s1')).toBe(true);
+  });
+
+  it('treats a landing as live only while a fresh marker exists', () => {
+    markVoiceTranscriptLanded('s1');
+    expect(isLandingLive('s1')).toBe(true);
+  });
+
+  it('treats a landing as dead when only an expired marker remains', () => {
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+      JSON.stringify({ v: 1, ts: Date.now() - 25 * 60 * 60 * 1000, n: 1, text: 'old' })
+    );
+    expect(isLandingLive('s1')).toBe(false);
+  });
+
+  it('clears a local landing when another tab prunes its marker', () => {
+    markVoiceTranscriptLanded('s1');
+    startVoiceTranscriptOutboxFlush();
+    // Another tab pruned the marker (removing the shared key) — this tab must
+    // clear its local landing so the save-suppression lifts.
+    localStorage.removeItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1');
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key: 'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+        newValue: null,
+      })
+    );
+    expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(false);
+    stopVoiceTranscriptOutboxFlush();
+  });
+
+  it('writes distinct landed-marker values for repeated landings (cross-tab storage events)', () => {
+    markVoiceTranscriptLanded('s1');
+    const first = localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1');
+    markVoiceTranscriptLanded('s1');
+    const second = localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1');
+    // A same-value write would not emit a storage event in other tabs, which
+    // would then never learn of the second landing.
+    expect(first).not.toBe(second);
+    // The marker is JSON carrying the landing's timestamp, monotonic counter,
+    // and the transcript text (needed by backup reconciliation). The counter
+    // is module-global, so assert the RELATIVE bump rather than absolute n.
+    const firstParsed = JSON.parse(first ?? '{}') as { ts?: number; n?: number };
+    const secondParsed = JSON.parse(second ?? '{}') as { ts?: number; n?: number };
+    // The generation carries a per-tab offset (concurrent-landing collision
+    // resistance), so same-tab repeats bump by MORE than one — assert
+    // monotonicity rather than an exact step.
+    expect(secondParsed.n).toBeGreaterThan(firstParsed.n ?? 0);
+    expect(typeof firstParsed.ts).toBe('number');
+  });
+
+  it('carries the transcript text in the landed marker for reconciliation', () => {
+    markVoiceTranscriptLanded('s1', 'the transcript');
+    // The consuming/reloading tab learns WHICH part of the merged server draft
+    // is the transcript.
+    expect(getLandingTranscript('s1')).toBe('the transcript');
+    consumeVoiceTranscriptLanded('s1', 1);
+    // The marker survives consumption; its text stays recoverable for the
+    // reconcile paths that run after the landing is settled (cross-tab text
+    // recovery from the marker alone is covered by the hydration test).
+    expect(getLandingTranscript('s1')).toBe('the transcript');
+  });
+
+  it('aggregates the texts of a live landing sequence (multiple queued entries)', () => {
+    // Two outbox entries for one session land while the refresh is deferred —
+    // the daemon accumulates BOTH into inputDraftVoicePending, so the
+    // reconciliation text must be the aggregate, not just the latest entry's.
+    markVoiceTranscriptLanded('s1', 'first');
+    markVoiceTranscriptLanded('s1', 'second');
+    expect(getLandingTranscript('s1')).toBe('first second');
+    const marker = JSON.parse(
+      localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1') ?? '{}'
+    ) as { text?: string };
+    expect(marker.text).toBe('first second');
+
+    // Consumption implies a full merge cleared the server-side pending — the
+    // next landing sequence starts a fresh aggregate.
+    const secondGen = voiceTranscriptLandedSignal.value.get('s1') ?? 0;
+    consumeVoiceTranscriptLanded('s1', secondGen);
+    markVoiceTranscriptLanded('s1', 'third');
+    expect(getLandingTranscript('s1')).toBe('third');
+  });
+
+  it('lets a cross-tab marker REPLACE the local aggregate (authoritative)', () => {
+    markVoiceTranscriptLanded('s1', 'local sequence');
+    startVoiceTranscriptOutboxFlush();
+    // Another tab (which already consumed the earlier landing) lands a fresh
+    // transcript — its marker aggregate supersedes this tab's stale local one.
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key: 'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+        newValue: JSON.stringify({ v: 1, ts: Date.now(), n: 9, text: 'authoritative' }),
+      })
+    );
+    expect(getLandingTranscript('s1')).toBe('authoritative');
+    stopVoiceTranscriptOutboxFlush();
+  });
+
+  it('hydrates existing landed markers into the signal at startup', () => {
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.s9',
+      JSON.stringify({ v: 1, ts: Date.now(), n: 1, text: 'hello' })
+    );
+    startVoiceTranscriptOutboxFlush();
+    expect(voiceTranscriptLandedSignal.value.has('s9')).toBe(true);
+    expect(getLandingTranscript('s9')).toBe('hello');
+    stopVoiceTranscriptOutboxFlush();
+  });
+
+  it('adds a landing to the signal when another tab writes a landed marker', () => {
+    startVoiceTranscriptOutboxFlush();
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key: 'hyperneo_voice_transcript_outbox_v1.entry.landed.s3',
+        newValue: JSON.stringify({ v: 1, ts: Date.now(), n: 1, text: 'cross-tab' }),
+      })
+    );
+    expect(voiceTranscriptLandedSignal.value.has('s3')).toBe(true);
+    expect(getLandingTranscript('s3')).toBe('cross-tab');
+    stopVoiceTranscriptOutboxFlush();
+  });
+
+  it('does not re-write the landed marker when handling a cross-tab storage event', () => {
+    // A storage event for a landed marker must update only the local signal —
+    // re-persisting the marker would fire another event in the writer and loop.
+    const raw = JSON.stringify({ v: 1, ts: Date.now(), n: 1, text: 'x' });
+    localStorage.setItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s4', raw);
+    startVoiceTranscriptOutboxFlush();
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key: 'hyperneo_voice_transcript_outbox_v1.entry.landed.s4',
+        newValue: raw,
+      })
+    );
+    expect(voiceTranscriptLandedSignal.value.has('s4')).toBe(true);
+    expect(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s4')).toBe(raw);
+    stopVoiceTranscriptOutboxFlush();
+  });
+
+  it('drops this tab’s own local landing state when its expired marker is pruned', () => {
+    markVoiceTranscriptLanded('s1', 'old voice', 'e1');
+    expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(true);
+    vi.useFakeTimers();
+    vi.advanceTimersByTime(25 * 60 * 60 * 1000);
+    enqueueTranscript('s1', 'fresh'); // triggers pruneExpired, which prunes the marker
+    // localStorage removals emit no storage event in the WRITING tab — the
+    // prune itself must drop the local landing, or a later landing for this
+    // session would republish "old + new" and re-announce the merged old
+    // transcript into reconciliations.
+    expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(false);
+    expect(getLandingTranscript('s1')).toBeNull();
   });
 });

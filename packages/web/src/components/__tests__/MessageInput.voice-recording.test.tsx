@@ -118,9 +118,11 @@ vi.mock('../../lib/connection-manager', () => ({
 }));
 
 const enqueueTranscript = vi.hoisted(() => vi.fn());
+const markVoiceTranscriptLanded = vi.hoisted(() => vi.fn());
 const isPermanentAppendRefusal = vi.hoisted(() => vi.fn(() => false));
 vi.mock('../../lib/voice/voice-transcript-outbox.ts', () => ({
   enqueueTranscript,
+  markVoiceTranscriptLanded,
   isPermanentAppendRefusal,
 }));
 
@@ -144,6 +146,7 @@ describe('MessageInput — recording UI', () => {
       return {};
     });
     enqueueTranscript.mockReset().mockReturnValue(true);
+    markVoiceTranscriptLanded.mockClear();
     // Timer-backed rAF so deferred hook work actually runs and can be drained
     // before the stubs are removed. A no-op stub leaves Preact cleanup pending
     // until after unstubAllGlobals, where cancelAnimationFrame no longer exists

@@ -36,6 +36,7 @@ import { connectionManager } from '../lib/connection-manager';
 import {
   enqueueTranscript,
   isPermanentAppendRefusal,
+  markVoiceTranscriptLanded,
 } from '../lib/voice/voice-transcript-outbox.ts';
 import type { SessionStore } from '../lib/session-store.ts';
 import { globalSettings, isAgentWorking } from '../lib/state.ts';
@@ -615,6 +616,13 @@ export default function MessageInput({
           text: transcript,
           dedupId: outboxId,
         });
+        // Announce the landing: the user may have REOPENED the session while
+        // transcription finished, and that composer's only session.get already
+        // ran — without a landing mark the staged transcript stays invisible
+        // until the next navigation or reload. The pendingRetained and
+        // character-limit paths announce nothing extra; the mark's refresh is
+        // deferred behind a non-empty composer exactly like the replay path.
+        markVoiceTranscriptLanded(targetSessionId, transcript, outboxId);
       };
       // Last-resort preservation: stage the transcript into the pending draft
       // field. Used for 'stay', for a composer too full to splice into, and as

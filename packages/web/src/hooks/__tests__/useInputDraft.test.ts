@@ -11,6 +11,12 @@ import { renderHook, act } from '@testing-library/preact';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useInputDraft } from '../useInputDraft.ts';
 import { connectionManager } from '../../lib/connection-manager.ts';
+import { connectionState } from '../../lib/state.ts';
+import {
+  markVoiceTranscriptLanded,
+  resetVoiceTranscriptOutbox,
+  voiceTranscriptLandedSignal,
+} from '../../lib/voice/voice-transcript-outbox.ts';
 
 // Mock the connection manager
 vi.mock('../../lib/connection-manager.ts', () => ({
@@ -18,6 +24,22 @@ vi.mock('../../lib/connection-manager.ts', () => ({
     getHubIfConnected: vi.fn(),
   },
 }));
+
+function createMemoryStorage(): Storage {
+  const store = new Map<string, string>();
+  return {
+    get length() {
+      return store.size;
+    },
+    clear: () => store.clear(),
+    getItem: (k: string) => store.get(k) ?? null,
+    key: (i: number) => [...store.keys()][i] ?? null,
+    removeItem: (k: string) => void store.delete(k),
+    setItem: (k: string, v: string) => void store.set(k, String(v)),
+  } as Storage;
+}
+
+const originalStorage = globalThis.localStorage;
 
 describe('useInputDraft', () => {
   const mockHub = {
@@ -35,11 +57,15 @@ describe('useInputDraft', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+    globalThis.localStorage = createMemoryStorage();
+    resetVoiceTranscriptOutbox();
     // Default: no hub connected
     vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
   });
 
   afterEach(() => {
+    globalThis.localStorage = originalStorage;
+    connectionState.value = 'connecting';
     vi.useRealTimers();
   });
 
@@ -224,6 +250,146 @@ describe('useInputDraft', () => {
   });
 
   describe('draft loading', () => {
+    it('refreshes the mounted draft when the outbox lands a transcript for its session', async () => {
+      // The initial get sees no draft; the replay's get returns the landed one.
+      mockHub.request.mockResolvedValueOnce({ session: { metadata: { inputDraft: '' } } });
+      mockHub.request.mockResolvedValue({ session: { metadata: { inputDraft: 'transcript' } } });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // The composer is mounted with an empty draft when the outbox replays.
+      expect(result.current.content).toBe('');
+
+      voiceTranscriptLandedSignal.value = new Map([['session-1', 1]]);
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // The replay triggered a second session.get, whose merge surfaced the
+      // landed transcript into the draft — no navigation required.
+      expect(mockHub.request).toHaveBeenCalledWith('session.get', { sessionId: 'session-1' });
+      expect(result.current.content).toBe('transcript');
+    });
+
+    it('does not clobber in-progress typing when a replay lands for its session', async () => {
+      mockHub.request.mockResolvedValue({
+        session: { metadata: { inputDraft: 'server text' } },
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      result.current.setContent('user typing');
+      voiceTranscriptLandedSignal.value = new Map([['session-1', 1]]);
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // The get overwrites the local signal — reloading over typing would lose
+      // keystrokes, so an idle-only refresh leaves the draft untouched.
+      expect(result.current.content).toBe('user typing');
+    });
+
+    it('keeps the landing pending when the refresh get fails, then applies it on a later trigger', async () => {
+      mockHub.request
+        .mockResolvedValueOnce({ session: { metadata: { inputDraft: '' } } }) // initial
+        .mockRejectedValueOnce(new Error('socket closed')) // replay get fails
+        .mockResolvedValue({ session: { metadata: { inputDraft: 'transcript' } } }); // retry
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('');
+
+      // Landing fires; the refresh get fails — the landing must NOT be consumed,
+      // or a reconnect could never retry the refresh for the mounted composer.
+      voiceTranscriptLandedSignal.value = new Map([['session-1', 1]]);
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('');
+      expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(true);
+
+      // A later landing event re-triggers the effect; the retry succeeds.
+      voiceTranscriptLandedSignal.value = new Map([['session-1', 1]]);
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('transcript');
+      expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(false);
+    });
+
+    it('retries a failed refresh when the connection is restored', async () => {
+      mockHub.request
+        .mockResolvedValueOnce({ session: { metadata: { inputDraft: '' } } }) // initial
+        .mockRejectedValueOnce(new Error('socket closed')) // refresh get fails
+        .mockResolvedValue({ session: { metadata: { inputDraft: 'transcript' } } }); // retry
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      connectionState.value = 'disconnected';
+
+      // Landing fires; the refresh get fails on the dropped socket — the
+      // landing stays pending for a retry.
+      voiceTranscriptLandedSignal.value = new Map([['session-1', 1]]);
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('');
+      expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(true);
+
+      // The connection restores → the effect re-runs (it reads connectionState)
+      // → the pending landing is retried and applied.
+      connectionState.value = 'connected';
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('transcript');
+      expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(false);
+    });
+
+    it('does not apply a draft whose session.get resolved after the session changed', async () => {
+      // Each session.get gets its own deferred promise so we can resolve
+      // session-1's slow get only after the hook has moved on to session-2.
+      const gets: Array<{ resolve: (value: unknown) => void }> = [];
+      mockHub.request.mockImplementation(() => {
+        let resolve!: (value: unknown) => void;
+        const promise = new Promise((r) => {
+          resolve = r;
+        });
+        gets.push({ resolve });
+        return promise;
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result, rerender } = renderHook(({ sessionId }) => useInputDraft(sessionId), {
+        initialProps: { sessionId: 'session-1' },
+      });
+
+      // Switch to session-2 BEFORE session-1's get resolves.
+      rerender({ sessionId: 'session-2' });
+
+      await act(async () => {
+        // session-1's get finally resolves with its (now stale) draft.
+        gets[0]?.resolve({ session: { metadata: { inputDraft: 'session-1 draft' } } });
+        await vi.runAllTimersAsync();
+      });
+
+      // The stale session-1 draft must not bleed into the session-2 composer.
+      expect(result.current.content).not.toBe('session-1 draft');
+    });
+
     it('should load draft from session when hub is connected', async () => {
       mockHub.request.mockResolvedValue({
         session: { metadata: { inputDraft: 'Saved draft' } },
