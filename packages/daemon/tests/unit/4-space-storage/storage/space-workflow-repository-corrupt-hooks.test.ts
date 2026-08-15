@@ -127,6 +127,9 @@ describe('SpaceWorkflowRepository — corrupt hook columns', () => {
       // a target for send_message — both load "valid" but gate nothing.
       '[{"hookId":"gate","sourceNode":"Only","method":"mark_complete","targetNode":"Review","enabled":true,"authorizedCallers":[{"sourceNode":"Only"}]}]',
       '[{"hookId":"gate","sourceNode":"Only","method":"send_message","enabled":true,"authorizedCallers":[{"sourceNode":"Only"}]}]',
+      // A typo'd slot: nonblank and on the right node, but not DECLARED
+      // there — no real worker's agentName matches it (ungated).
+      '[{"hookId":"gate","sourceNode":"Only","targetNode":"Only","method":"send_message","enabled":true,"authorizedCallers":[{"sourceNode":"Only","agentSlots":["codre"]}]}]',
     ]) {
       corruptColumn('hook_bindings', bad);
       const wf = repo.getWorkflow(

@@ -156,7 +156,11 @@ function parseHookColumn<T>(
 }
 
 /** Structural check for a decoded HookAuthorizedCallers entry. */
-function isAuthorizedCallerElement(value: unknown, nodeNames: Set<string>): boolean {
+function isAuthorizedCallerElement(
+  value: unknown,
+  nodeNames: Set<string>,
+  nodeSlots: Map<string, Set<string>>
+): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const c = value as Record<string, unknown>;
   return (
@@ -164,10 +168,17 @@ function isAuthorizedCallerElement(value: unknown, nodeNames: Set<string>): bool
     nodeNames.has(c.sourceNode) &&
     (c.agentSlots === undefined ||
       (Array.isArray(c.agentSlots) &&
-        // Non-blank slot strings only: a whitespace-only slot can never match
-        // a caller (the runtime validator rejects it on create), so a
-        // persisted row carrying one is corruption, not configuration.
-        c.agentSlots.every((slot) => typeof slot === 'string' && slot.trim().length > 0)))
+        // Every slot must be a NON-BLANK string DECLARED on the caller's own
+        // node (mirroring validateCaller): a typo like "codre" passes a
+        // nonblank-only check but no real worker's agentName ever matches
+        // agentSlots.includes(...), so the binding would never authorize —
+        // loading it "valid" gates nothing.
+        c.agentSlots.every(
+          (slot) =>
+            typeof slot === 'string' &&
+            slot.trim().length > 0 &&
+            (nodeSlots.get(c.sourceNode as string)?.has(slot) ?? false)
+        )))
   );
 }
 
@@ -176,7 +187,11 @@ function isAuthorizedCallerElement(value: unknown, nodeNames: Set<string>): bool
  * a typo'd method or a shapeless caller entry would otherwise load as a
  * "valid" binding that resolveMatchingBindings silently never matches,
  * gating nothing. */
-function isHookBindingElement(value: unknown, nodeNames: Set<string>): boolean {
+function isHookBindingElement(
+  value: unknown,
+  nodeNames: Set<string>,
+  nodeSlots: Map<string, Set<string>>
+): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const b = value as Record<string, unknown>;
   return (
@@ -207,7 +222,7 @@ function isHookBindingElement(value: unknown, nodeNames: Set<string>): boolean {
     // "valid" would gate nothing. ([] would pass a bare every() vacuously.)
     Array.isArray(b.authorizedCallers) &&
     b.authorizedCallers.length > 0 &&
-    b.authorizedCallers.every((c) => isAuthorizedCallerElement(c, nodeNames)) &&
+    b.authorizedCallers.every((c) => isAuthorizedCallerElement(c, nodeNames, nodeSlots)) &&
     // At least one caller MUST name the binding's OWN source node (mirroring
     // the create/update validator): a non-empty list naming only OTHER nodes
     // passes the shape checks but can never authorize the acting node, so
@@ -336,8 +351,11 @@ function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
   const layout = parseJson<Record<string, { x: number; y: number }> | null>(row.layout, null);
   const channels = parseJson<WorkflowChannel[] | null>(row.channels, null);
   const nodeNames = new Set(nodes.map((n) => n.name));
+  const nodeSlots = new Map(
+    nodes.map((n) => [n.name, new Set((n.agents ?? []).map((a) => a.name))])
+  );
   const hookBindingsResult = parseHookColumn<HookBinding>(row.hook_bindings, (value) =>
-    isHookBindingElement(value, nodeNames)
+    isHookBindingElement(value, nodeNames, nodeSlots)
   );
   const customHooksResult = parseHookColumn<CustomHook>(row.custom_hooks, isCustomHookElement);
 
