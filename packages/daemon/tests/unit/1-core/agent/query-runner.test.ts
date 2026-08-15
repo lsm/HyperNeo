@@ -1121,6 +1121,43 @@ describe('QueryRunner', () => {
       expect(results.length).toBeLessThanOrEqual(2);
     });
 
+    it('does not wait for iterator cleanup when abort wins a pending next', async () => {
+      runner = createRunner();
+
+      let returnCalled = false;
+      const never = new Promise<IteratorResult<unknown>>(() => {});
+      const mockQuery = {
+        [Symbol.asyncIterator]: () => ({
+          next: () => never,
+          return: () => {
+            returnCalled = true;
+            return never;
+          },
+        }),
+      };
+      const abortController = new AbortController();
+      const generator = runner.createAbortableQuery(
+        mockQuery as unknown as Query,
+        abortController.signal
+      );
+      const completion = (async () => {
+        for await (const _message of generator) {
+          // No message should be yielded.
+        }
+      })();
+
+      await Promise.resolve();
+      abortController.abort();
+
+      await Promise.race([
+        completion,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('abortable query remained blocked')), 100)
+        ),
+      ]);
+      expect(returnCalled).toBe(true);
+    });
+
     it('should cleanup iterator on completion', async () => {
       runner = createRunner();
 

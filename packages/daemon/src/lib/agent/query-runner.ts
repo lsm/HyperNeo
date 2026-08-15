@@ -814,6 +814,12 @@ export class QueryRunner {
         });
       }
 
+      // Publish this attempt's abort controller before arming its timer. The
+      // timer closes over this exact controller so it cannot miss the narrow
+      // setup window or abort a replacement query through mutable shared state.
+      const abortController = new AbortController();
+      this.ctx.queryAbortController = abortController;
+
       // Set up startup timeout
       const queryStartTime = Date.now();
       let startupTimeoutReached = false;
@@ -846,10 +852,9 @@ export class QueryRunner {
                 .join(',')}] sdkSessionId=${session.sdkSessionId ?? 'none'}`
           );
 
-          // Actively abort a stuck startup so finally{} cleanup runs and the
-          // session can recover without requiring manual reset.
-          const abortController = this.ctx.queryAbortController;
-          if (abortController && !abortController.signal.aborted) {
+          // Actively abort this exact attempt so iterator cleanup and retry can
+          // proceed without touching a replacement query's controller.
+          if (!abortController.signal.aborted) {
             abortController.abort();
           }
         }
@@ -867,10 +872,6 @@ export class QueryRunner {
       if (!queryObject) {
         throw new Error('Query object is null after initialization');
       }
-
-      // Create abort controller for this query
-      const abortController = new AbortController();
-      this.ctx.queryAbortController = abortController;
 
       let messageCount = 0;
 
@@ -1815,8 +1816,10 @@ export class QueryRunner {
     });
     const onAbort = () => resolveAbort(abortResult);
 
+    let abortWonPendingNext = false;
     try {
       if (signal.aborted) {
+        abortWonPendingNext = true;
         return;
       }
 
@@ -1824,10 +1827,10 @@ export class QueryRunner {
 
       while (!signal.aborted) {
         const nextPromise = iterator.next();
-
         const result = await Promise.race([nextPromise, abortPromise]);
 
         if ('aborted' in result || signal.aborted) {
+          abortWonPendingNext = true;
           break;
         }
 
@@ -1840,7 +1843,16 @@ export class QueryRunner {
     } finally {
       signal.removeEventListener('abort', onAbort);
       try {
-        await iterator.return?.();
+        const cleanup = iterator.return?.();
+        if (cleanup) {
+          if (abortWonPendingNext) {
+            // Async iterators may serialize return() behind the unresolved next().
+            // Cleanup is still requested, but startup recovery must not await it.
+            void cleanup.catch(() => {});
+          } else {
+            await cleanup;
+          }
+        }
       } catch {
         // Ignore cleanup errors
       }
