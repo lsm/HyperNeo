@@ -75,12 +75,7 @@ describe('Migration 29: Space system tables', () => {
 
   beforeEach(() => {
     cloneCounter += 1;
-    testDir = join(
-      process.cwd(),
-      'tmp',
-      'test-migration-29',
-      `test-${Date.now()}-${cloneCounter}`
-    );
+    testDir = join(process.cwd(), 'tmp', 'test-migration-29', `test-${Date.now()}-${cloneCounter}`);
     db = openMigratedClone(templatePath, testDir);
   });
 
