@@ -453,6 +453,29 @@ export class SpaceWorkflowManager {
         ? (existing.hookBindings ?? [])
         : (params.hookBindings ?? [])
     ).filter((b) => b.hookId !== CORRUPT_HOOK_BINDINGS_HOOK_ID);
+
+    // ANTI-LAUNDERING: the marker must never REACH PERSISTENCE. The filter
+    // above only protects VALIDATION — an ordinary editor save (the visual
+    // editor round-trips existing bindings verbatim) or the startup restamp
+    // would write the synthetic bindings as real JSON, after which the
+    // column decodes cleanly into a permanently unresolvable hook set that
+    // no validation can ever flag again. Strip reserved ids from the
+    // caller-supplied bindings before they reach updateWorkflow (and
+    // replace the marker wholesale when params carries real bindings).
+    const callerBindings = params.hookBindings;
+    if (
+      callerBindings !== undefined &&
+      callerBindings !== null &&
+      callerBindings.some((b) => b.hookId === CORRUPT_HOOK_BINDINGS_HOOK_ID)
+    ) {
+      const cleaned = callerBindings.filter((b) => b.hookId !== CORRUPT_HOOK_BINDINGS_HOOK_ID);
+      params = { ...params, hookBindings: cleaned };
+      if (cleaned.length === 0) {
+        logger.warn(
+          `Workflow ${id}: caller-supplied hookBindings contained only the corrupt-column marker; clearing bindings (repair the corrupt column or re-author hooks).`
+        );
+      }
+    }
     const effectiveCustomHooks =
       params.customHooks === undefined ? (existing.customHooks ?? []) : (params.customHooks ?? []);
     this.validateHooks(effectiveBindings, effectiveCustomHooks, effectiveNodes);

@@ -5552,8 +5552,15 @@ export class TaskAgentManager {
           },
         },
         'This run pins a pre-v2 workflow whose legacy hooks cannot be enforced after the ' +
-          'hooks-v2 cutover. Re-create the hooks as v2 hook bindings on the workflow, then ' +
-          'restart the task — executing without them would bypass the gates.'
+          'hooks-v2 cutover — executing without them would bypass the gates. ' +
+          'REMEDIATION: this workflow itself must be migrated. Built-in workflows ' +
+          'migrate automatically on the next daemon restart once their runs finish ' +
+          '(the startup restamp installs v2 hook bindings). A CUSTOM workflow with ' +
+          'legacy hooks does not migrate automatically: archive this task, then ' +
+          "either re-create the workflow's hooks as v2 hook bindings via the visual " +
+          'editor / spaceWorkflow.update (clearing the legacy hooks), or delete and ' +
+          're-create the workflow. Until then every hookable action on runs of this ' +
+          'workflow is blocked by design, and the workflow cannot be exported.'
       );
     } else if (hasV2Bindings && workflow) {
       hookEngine = new WorkflowHookEngine({

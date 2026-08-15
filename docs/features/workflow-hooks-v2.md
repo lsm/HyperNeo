@@ -193,7 +193,46 @@ re-seeded, not migrated.
 7. **tests** — retire the old hook-shape suites; add chain/flow and
    prompt-generation coverage.
 
-## 10. Deferred / out of scope
+## 10. Operational remediation after the cutover
+
+Two post-upgrade states need operator action. Both fail CLOSED (every
+hookable action on an affected workflow is blocked; nothing runs ungated).
+
+### Corrupt hook columns (`__corrupt_hook_bindings__`)
+
+The repository loads a workflow whose persisted `hook_bindings`/`custom_hooks`
+column cannot be decoded (bad JSON, wrong shape, or any element the
+create/update validator would reject — method enum, node references, callers,
+custom-hook fields) with a synthetic marker binding whose reserved id resolves
+to no hook. Every hookable action stops with that diagnosable id, and
+`exportWorkflow` refuses the export with a repair message.
+
+**Remediation:** re-author the workflow's hook bindings in the visual editor
+(or via `spaceWorkflow.update`), or clear them deliberately. Editor saves and
+the startup restamp strip the marker before persisting — the synthetic state
+can never launder itself into real configuration. Unrelated edits are NOT
+wedged (the marker is filtered from validation) and leave the corrupt column
+untouched, so the fail-closed protection persists until the column is healed.
+
+### Legacy pre-v2 hooks (custom workflows)
+
+A CUSTOM workflow whose immutable definition still carries the legacy `hooks`
+array blocks every hookable action on its runs after the cutover (the
+`__legacy_hooks__` guard) — there is no automatic translation, by design.
+Built-in workflows migrate automatically: the startup restamp installs v2
+`hook_bindings` once their runs finish (migration 197 defers the legacy-column
+drop until then).
+
+**Remediation:** archive the affected task, then either re-create the
+workflow's hooks as v2 hook bindings (visual editor or `spaceWorkflow.update`,
+clearing the legacy hooks) or delete and re-create the workflow. Until then
+runs of that workflow stay blocked and the workflow cannot be exported.
+
+**Known limitation (step-6 deferral):** there is no visual editor for v2 hook
+bindings yet — authoring today goes through the workflow RPCs/import. The
+web editor rework is tracked as the follow-up step 6 of this plan.
+
+## 11. Deferred / out of scope
 
 Persisted-state migration (explicitly skipped), hook versioning across spaces,
 per-binding `requiredData` overrides, an editor marketplace for sharing custom

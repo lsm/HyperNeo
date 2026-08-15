@@ -502,15 +502,27 @@ export class WorkflowHookEngine {
       bindings = this.resolveMatchingBindings(methodName, params, meta);
     } catch (err) {
       if (err instanceof INFRASTRUCTURE_ROUTING_STOP) {
+        // Attribute the stop to the LEGACY_GUARD reserved id so the wrapper
+        // persists a state row and the task pane's hook banner surfaces it
+        // (an empty executionLog would leave the stop invisible in
+        // listHookStates — the action errors with no diagnosable banner).
         return {
           decision: 'stop',
           finalParams: params,
           followUpRequests: [],
           stateUpdates: [],
-          executionLog: [],
+          executionLog: [
+            {
+              hookId: LEGACY_GUARD_HOOK_ID,
+              flow: 'stop',
+              reason: err.message,
+              timestamp: Date.now(),
+            },
+          ],
           userState: {
             status: 'blocked',
             humanOverrideEligible: false,
+            hookId: LEGACY_GUARD_HOOK_ID,
             reason: err.message,
           },
         };

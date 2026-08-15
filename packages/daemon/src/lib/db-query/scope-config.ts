@@ -86,7 +86,11 @@ const COLUMN_BLACKLISTS: Record<string, string[]> = {
   inbox_items: ['raw_event', 'security_check'],
   job_queue: ['payload'],
   space_agents: ['system_prompt'],
-  space_workflows: ['config', 'gates', 'channels', 'hooks'],
+  // hook_bindings/custom_hooks are redacted: a custom hook's `run.source`
+  // is arbitrary bash the daemon executes — db_query must never leak it to
+  // agent sessions. (The retired `hooks` column is kept listed for older
+  // DBs where migration 197 deferred its drop.)
+  space_workflows: ['config', 'gates', 'channels', 'hooks', 'hook_bindings', 'custom_hooks'],
   tasks: ['restrictions'], // internal use — agent-imposed task constraints
   space_workflow_nodes: ['config'],
 };

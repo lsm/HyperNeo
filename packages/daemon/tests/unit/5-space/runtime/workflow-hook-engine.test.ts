@@ -1732,8 +1732,11 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(outcome.decision).toBe('stop');
     expect(outcome.userState.humanOverrideEligible).toBe(false);
     expect(outcome.userState.reason).toContain('unreadable');
-    // No hook ran (empty log — the stop precedes the chain).
-    expect(outcome.executionLog.length).toBe(0);
+    // No hook ran, but the stop is ATTRIBUTED to the reserved guard id so
+    // the wrapper persists a state row and the banner can surface it.
+    expect(outcome.executionLog.length).toBe(1);
+    expect(outcome.executionLog[0]?.hookId).toBe('__legacy_hooks__');
+    expect(outcome.userState.hookId).toBe('__legacy_hooks__');
   });
 
   test('a marker-loaded workflow fails every hookable action closed', async () => {

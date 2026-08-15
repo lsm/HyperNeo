@@ -35,6 +35,7 @@ import { QA_SYSTEM_CONTRACT } from '../agents/system-contracts.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 import { CODER_OWNED_MERGE_INSTRUCTIONS } from './post-approval-merge-template.ts';
 import { computeWorkflowHash } from './template-hash.ts';
+import { CORRUPT_HOOK_BINDINGS_HOOK_ID } from '../hook-reserved-ids';
 
 const builtInSeederLog = new Logger('seed-built-in-workflows');
 
@@ -2304,7 +2305,12 @@ export function seedBuiltInWorkflows(
           template.hookBindings,
           template.nodes,
           mergedNodes,
-          row.hookBindings
+          // ANTI-LAUNDERING: never feed the corrupt-column marker into the
+          // merge — the restamp persists its output, and synthetic marker
+          // bindings written as real JSON decode cleanly into a permanently
+          // unresolvable hook set. Strip reserved ids from the stored row's
+          // bindings first (the restamp REPLACES the column wholesale).
+          (row.hookBindings ?? []).filter((b) => b.hookId !== CORRUPT_HOOK_BINDINGS_HOOK_ID)
         );
         // The merge helpers above only ADD missing template pieces — they never
         // drop nodes/channels/bindings/gates the stored row still has but the
