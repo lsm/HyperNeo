@@ -79,7 +79,13 @@ export function markVoiceTranscriptLanded(
     existing = parseLandedMarker(rawMarker);
     if (existing) {
       markerExisted = true;
-      seq = Math.max(existing.n + 1, Date.now() + TAB_SEQ_OFFSET);
+      // The COUNTER path carries the per-tab offset too: when a large prior
+      // generation dominates the clock, two tabs reading the same marker
+      // would otherwise pick the identical existing.n + 1 — equal
+      // generations let a refresh consume a NEWER landing as though none
+      // arrived. Offsets differ per tab, so the picks collide only on a
+      // 1-in-997 hash collision.
+      seq = Math.max(existing.n + 1 + TAB_SEQ_OFFSET, Date.now() + TAB_SEQ_OFFSET);
     }
   } catch {
     /* storage unavailable — start a fresh sequence */
@@ -117,9 +123,32 @@ export function markVoiceTranscriptLanded(
   // persisted aggregate appends when ANY persisted id is not yet ours, and
   // no-id markers (test-only writes) never trigger the union.
   const consumeMarker = (marker: ReturnType<typeof parseLandedMarker>): void => {
-    if (!marker?.text) return;
+    if (!marker) return;
     const ours = new Set(landingIds.get(sessionId) ?? []);
-    if (marker.ids.some((id) => !ours.has(id))) {
+    // ENTRY granularity: append ONLY the entries whose ids we lack — merging
+    // the whole aggregate would duplicate entries the local sequence already
+    // holds (local [e1,e3] vs marker [e1,e2] appends only e2). Pre-entries
+    // markers fall back to the aggregate append keyed by the id set.
+    if (marker.entries.length > 0) {
+      let appended = false;
+      for (const entry of marker.entries) {
+        if (ours.has(entry.id)) continue;
+        landingTexts.set(sessionId, appendDraftText(landingTexts.get(sessionId) ?? '', entry.text));
+        ours.add(entry.id);
+        appended = true;
+      }
+      if (appended) {
+        landingIds.set(sessionId, [...ours].slice(-MAX_ENTRIES));
+        const known = new Set((landingEntries.get(sessionId) ?? []).map((e) => e.id));
+        const mergedEntries = [
+          ...(landingEntries.get(sessionId) ?? []),
+          ...marker.entries.filter((e) => !known.has(e.id)),
+        ];
+        landingEntries.set(sessionId, mergedEntries.slice(-MAX_ENTRIES));
+      }
+      return;
+    }
+    if (marker.text && marker.ids.some((id) => !ours.has(id))) {
       landingTexts.set(sessionId, appendDraftText(landingTexts.get(sessionId) ?? '', marker.text));
     }
     if (marker.ids.length) {
@@ -159,6 +188,7 @@ export function markVoiceTranscriptLanded(
           n: seq,
           text: landingTexts.get(sessionId) ?? null,
           ids: landingIds.get(sessionId) ?? [],
+          entries: landingEntries.get(sessionId) ?? [],
         })
       );
       markerRaw = localStorage.getItem(key);
@@ -197,6 +227,18 @@ const landingTexts = new Map<string, string>();
 // transcript, and a text match would then silently skip announcing the new
 // entry's genuine landing.
 const landingIds = new Map<string, string[]>();
+// PER-ENTRY landing records (id + text), the authoritative granularity for
+// marker merges: a persisted aggregate is only appendable as a WHOLE, so
+// merging by ID set alone duplicates entries the local aggregate already
+// holds (local [e1,e3] vs marker [e1,e2] must append ONLY e2's text). The
+// marker carries these records; the derived text/ids fields stay for
+// compatibility with every reader of the aggregate.
+export interface LandingEntry {
+  id: string;
+  text: string;
+}
+const landingEntries = new Map<string, LandingEntry[]>();
+let syntheticEntryCounter = 0;
 
 function markVoiceTranscriptLandedLocal(
   sessionId: string,
@@ -204,7 +246,8 @@ function markVoiceTranscriptLandedLocal(
   replaceAggregate = false,
   explicitGeneration?: number,
   entryId?: string,
-  markerIds?: string[]
+  markerIds?: string[],
+  markerEntries?: LandingEntry[]
 ): void {
   const current = voiceTranscriptLandedSignal.value;
   const hadLiveLanding = current.has(sessionId);
@@ -225,6 +268,22 @@ function markVoiceTranscriptLandedLocal(
     const prev = hadLiveLanding && !replaceAggregate ? (landingTexts.get(sessionId) ?? '') : '';
     landingTexts.set(sessionId, prev ? appendDraftText(prev, text) : text);
   }
+  if (typeof text === 'string') {
+    // Record the per-entry (id, text) pair at the same granularity the marker
+    // merges at — a fresh landing appends; a hydration replaces wholesale.
+    // The record's id (explicit or synthetic) also joins the announced-id set:
+    // consumeMarker matches identity by id, and a synthetic id missing from
+    // the set would let a tab re-append its OWN earlier entry.
+    const record: LandingEntry = {
+      id: entryId ?? `synthetic-${++syntheticEntryCounter}`,
+      text,
+    };
+    const fresh = hadLiveLanding && !replaceAggregate;
+    const prevEntries = fresh ? (landingEntries.get(sessionId) ?? []) : [];
+    landingEntries.set(sessionId, [...prevEntries, record].slice(-MAX_ENTRIES));
+    const prevIds = fresh ? (landingIds.get(sessionId) ?? []) : [];
+    landingIds.set(sessionId, [...new Set([...prevIds, record.id])].slice(-MAX_ENTRIES));
+  }
   if (entryId !== undefined) {
     // Accumulate the announced id alongside the aggregate text (bounded to the
     // outbox cap — the sequence can announce at most that many entries).
@@ -234,6 +293,7 @@ function markVoiceTranscriptLandedLocal(
     // A hydrated marker replaces the local id set wholesale — it is the
     // authoritative sequence from the writing tab.
     landingIds.set(sessionId, (markerIds ?? []).slice(-MAX_ENTRIES));
+    if (markerEntries) landingEntries.set(sessionId, markerEntries.slice(-MAX_ENTRIES));
   }
 }
 
@@ -301,18 +361,41 @@ function parseLandedMarker(raw: string | null): {
   n: number;
   text: string | null;
   ids: string[];
+  entries: LandingEntry[];
 } | null {
   if (!raw) return null;
   try {
-    const parsed = JSON.parse(raw) as { ts?: unknown; n?: unknown; text?: unknown; ids?: unknown };
+    const parsed = JSON.parse(raw) as {
+      ts?: unknown;
+      n?: unknown;
+      text?: unknown;
+      ids?: unknown;
+      entries?: unknown;
+    };
     if (typeof parsed.ts !== 'number') return null;
+    const entries: LandingEntry[] = Array.isArray(parsed.entries)
+      ? parsed.entries.filter(
+          (e): e is LandingEntry =>
+            !!e &&
+            typeof (e as LandingEntry).id === 'string' &&
+            typeof (e as LandingEntry).text === 'string'
+        )
+      : [];
+    // Derived for compatibility with readers of the aggregate form.
+    let text: string | null = typeof parsed.text === 'string' ? parsed.text : null;
+    if (text === null && entries.length > 0) {
+      text = entries.reduce((acc, e) => appendDraftText(acc, e.text), '');
+    }
+    let ids: string[] = Array.isArray(parsed.ids)
+      ? parsed.ids.filter((id): id is string => typeof id === 'string')
+      : [];
+    if (ids.length === 0 && entries.length > 0) ids = entries.map((e) => e.id);
     return {
       ts: parsed.ts,
       n: typeof parsed.n === 'number' ? parsed.n : 0,
-      text: typeof parsed.text === 'string' ? parsed.text : null,
-      ids: Array.isArray(parsed.ids)
-        ? parsed.ids.filter((id): id is string => typeof id === 'string')
-        : [],
+      text,
+      ids,
+      entries,
     };
   } catch {
     return null;
@@ -333,6 +416,7 @@ function dropLocalLanding(sessionId: string): void {
   voiceTranscriptLandedSignal.value = next;
   landingTexts.delete(sessionId);
   landingIds.delete(sessionId);
+  landingEntries.delete(sessionId);
 }
 
 /**
@@ -921,14 +1005,26 @@ function pruneExpired(): void {
   // Collect-then-remove: removing while iterating by index shifts later keys
   // into the current index and silently skips them.
   try {
-    const staleMarkerKeys: string[] = [];
+    const staleMarkers: Array<{ key: string; raw: string | null }> = [];
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       if (!key || !key.startsWith(LANDED_PREFIX)) continue;
-      const marker = parseLandedMarker(localStorage.getItem(key));
-      if (!marker || now - marker.ts >= MAX_AGE_MS) staleMarkerKeys.push(key);
+      const raw = localStorage.getItem(key);
+      const marker = parseLandedMarker(raw);
+      if (!marker || now - marker.ts >= MAX_AGE_MS) staleMarkers.push({ key, raw });
     }
-    for (const key of staleMarkerKeys) {
+    for (const { key, raw } of staleMarkers) {
+      // COMPARE-AND-DELETE: another tab can write a FRESH landing to the same
+      // key between this scan and the removal — deleting it would broadcast a
+      // removal event that makes every tab drop its fresh local landing,
+      // lifting draft-save suppression over the newly merged transcript.
+      let current: string | null = null;
+      try {
+        current = localStorage.getItem(key);
+      } catch {
+        current = null;
+      }
+      if (current !== raw) continue;
       localStorage.removeItem(key);
       // localStorage removals do not emit a `storage` event in the WRITING
       // tab, so this tab's own expired landing state would linger: a later
@@ -1101,27 +1197,26 @@ export async function flushPendingTranscripts(): Promise<void> {
       if (!connectionManager.getHubIfConnected()) break; // dropped mid-flush
       if (deferredSessions.has(entry.sessionId)) continue;
       try {
-        const result = (await hub.request('session.appendVoiceDraft', {
+        await hub.request('session.appendVoiceDraft', {
           sessionId: entry.sessionId,
           text: entry.text,
           dedupId: entry.id,
-        })) as { deduped?: boolean };
+        });
         removePendingTranscript(entry.id);
         delivered += 1;
-        // A DEDUPED ack means another tab's append already committed this
-        // transcript — that tab announced the landing. Announcing a SECOND one
-        // here is wrong whenever the first was already handled: its landing
-        // may have been consumed (or its marker aged out only past the TTL),
-        // and a fresh generation with no staged pending would let a later
-        // clear-reconcile resurrect the already-merged transcript. Identity is
-        // matched by ENTRY ID (never by transcript text — a retained marker
-        // from an older sequence can legitimately contain the same phrase as
-        // a newer transcript, and a text match would then skip announcing the
-        // new entry's genuine landing). When the id is not on record (or the
-        // marker is gone), this ack is the only signal the transcript merged
-        // and the landing must be announced.
-        const alreadyAnnounced =
-          result.deduped === true && getAnnouncedEntryIds(entry.sessionId).includes(entry.id);
+        // Announcing a landing for an entry that was ALREADY announced (by
+        // this tab or another) is wrong: the first announcement may already
+        // have been consumed (or its marker aged out past the TTL), and a
+        // fresh generation with no staged pending would let a later
+        // clear-reconcile resurrect the already-merged transcript. Identity
+        // is matched by ENTRY ID against the announced set, REGARDLESS of
+        // whether THIS response was the deduplicated one — two tabs flushing
+        // the same shared entry race, and the tab whose ack lands LAST (even
+        // the original, non-deduped ack) must not re-announce what the other
+        // already announced. When the id is not on record (or the marker is
+        // gone), this ack is the only signal the transcript merged and the
+        // landing must be announced.
+        const alreadyAnnounced = getAnnouncedEntryIds(entry.sessionId).includes(entry.id);
         if (!alreadyAnnounced) {
           markVoiceTranscriptLanded(entry.sessionId, entry.text, entry.id);
         }
@@ -1186,7 +1281,15 @@ function handleStorageEvent(event: StorageEvent): void {
     if (marker) {
       // The marker is the AUTHORITATIVE aggregate from the writing tab —
       // replace, don't append onto this tab's stale local aggregate.
-      markVoiceTranscriptLandedLocal(sessionId, marker.text, true, marker.n, undefined, marker.ids);
+      markVoiceTranscriptLandedLocal(
+        sessionId,
+        marker.text,
+        true,
+        marker.n,
+        undefined,
+        marker.ids,
+        marker.entries
+      );
     } else if (event.newValue === null && localStorage.getItem(key) === null) {
       // Another tab pruned the marker (TTL expired) and no fresh marker was
       // written since — clear this tab's local landing so an expired landing
@@ -1217,7 +1320,8 @@ function hydrateLandedMarkers(): void {
           true,
           marker.n,
           undefined,
-          marker.ids
+          marker.ids,
+          marker.entries
         );
       }
     }
@@ -1282,5 +1386,6 @@ export function resetVoiceTranscriptOutbox(): void {
   landingMarkedAt.clear();
   landingTexts.clear();
   landingIds.clear();
+  landingEntries.clear();
   consumedMarkers.clear();
 }

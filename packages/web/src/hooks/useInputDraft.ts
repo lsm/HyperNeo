@@ -325,7 +325,13 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                 expected: meta.inputDraft ?? '',
               })
               .then((result) => {
-                if (!result.cleared) return; // raced a newer draft — stays owed
+                if (!result.cleared) {
+                  // Raced a newer draft — stays owed; no replay effect exists
+                  // (landing expired) and connectionState did not change, so
+                  // arm the bounded retry pass explicitly.
+                  flushKickRef.current();
+                  return;
+                }
                 return hub
                   .request<{ session?: { metadata?: { inputDraft?: string } } }>('session.get', {
                     sessionId: targetSessionId,
@@ -1241,12 +1247,17 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         );
         if (typeof ack?.draftValue === 'string') {
           // The daemon FOLDED transcripts into this write: its value is the
-          // true draft. Adopt it when the composer still shows what we sent;
+          // true draft. Adopt it when THIS session's composer still shows what
+          // we sent (the shared contentSignal could otherwise belong to a
+          // different session whose composer happens to hold the same text);
           // if the user typed meanwhile, leave the version cache STALE so the
           // next save folds onto the newer content — advancing without
           // adopting would let that save apply as-is and clear the baseline,
           // deleting the transcript from the draft.
-          if (contentSignal.peek().trim() === trimmedContent) {
+          if (
+            currentSessionIdRef.current === sessionId &&
+            contentSignal.peek().trim() === trimmedContent
+          ) {
             contentSignal.value = ack.draftValue;
             advanceDraftVersion(sessionId, ack.draftVersion);
           }

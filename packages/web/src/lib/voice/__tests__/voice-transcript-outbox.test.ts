@@ -425,7 +425,10 @@ describe('voice transcript outbox', () => {
     // is module-global, so assert the RELATIVE bump rather than absolute n.
     const firstParsed = JSON.parse(first ?? '{}') as { ts?: number; n?: number };
     const secondParsed = JSON.parse(second ?? '{}') as { ts?: number; n?: number };
-    expect(secondParsed.n).toBe((firstParsed.n ?? 0) + 1);
+    // The generation carries a per-tab offset (concurrent-landing collision
+    // resistance), so same-tab repeats bump by MORE than one — assert
+    // monotonicity rather than an exact step.
+    expect(secondParsed.n).toBeGreaterThan(firstParsed.n ?? 0);
     expect(typeof firstParsed.ts).toBe('number');
   });
 
