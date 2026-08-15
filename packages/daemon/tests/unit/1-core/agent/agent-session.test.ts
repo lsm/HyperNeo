@@ -302,6 +302,38 @@ describe('AgentSession', () => {
       expect([...agentSession.getTrackedAgentRootPids()]).toEqual([12345]);
     });
 
+    it('terminates no-PID tracked handles via their kill() (Codex P2, PR #2491)', async () => {
+      const agentSession = createAgentSession();
+      let fireExit: (() => void) | null = null;
+      const noPidProc = {
+        // No pid — the VM/container/remote spawn path.
+        once: mock((_event: string, handler: () => void) => {
+          if (_event === 'exit') fireExit = handler;
+          return noPidProc;
+        }),
+        kill: mock(() => true),
+      };
+
+      agentSession.trackAgentProcess(noPidProc as never);
+      agentSession.terminateTrackedAgentProcesses({ forceDelayMs: 10 });
+
+      // SIGTERM is signaled immediately via the handle's kill().
+      expect(noPidProc.kill).toHaveBeenCalledWith('SIGTERM');
+
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      // The deferred SIGKILL fired for the no-PID handle too.
+      expect(noPidProc.kill).toHaveBeenCalledWith('SIGKILL');
+
+      // Natural exit self-cleans the durable handle collection.
+      fireExit?.();
+      agentSession.terminateTrackedAgentProcesses({ forceDelayMs: 5 });
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      const sigtermCalls = (noPidProc.kill as ReturnType<typeof mock>).mock.calls.filter(
+        (args) => args[0] === 'SIGTERM'
+      ).length;
+      expect(sigtermCalls).toBe(1); // not re-signaled after exit
+    });
+
     it('binds deferred SIGKILL to the process snapshot being terminated', async () => {
       const agentSession = createAgentSession();
       processKillSpy = spyOn(process, 'kill').mockImplementation(() => true);

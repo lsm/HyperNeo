@@ -122,6 +122,17 @@ const DELIVERY_TURN_NO_ACTIVITY_MS = (() => {
 })();
 
 /**
+ * A tracked SDK subprocess handle that does not expose a numeric PID
+ * (VM/container/remote execution spawns). Kept durably so termination can
+ * signal it via its own kill() — there is no PID to process.kill.
+ */
+interface NoPidTrackedProcess {
+  proc: TrackedAgentProcess;
+  exitPromise?: Promise<void>;
+  forceKillTimer?: ReturnType<typeof setTimeout>;
+}
+
+/**
  * AgentSessionInit - Configuration for creating a new AgentSession
  *
  * Used by SpaceRuntimeService and other session creators to create sessions
@@ -390,6 +401,13 @@ export class AgentSession
   private trackedAgentProcessExitPromises = new Map<number, Promise<void>>();
   /** Durable no-PID exit promises — retained until resolved so updateProcessExitedPromise() never drops them. */
   private noPidExitPromises: Promise<void>[] = [];
+  /**
+   * Durable no-PID handles — kept alongside {@link noPidExitPromises} so
+   * terminateTrackedAgentProcesses() can signal them via their kill(). Without
+   * this, a hung no-PID spawn (VM/container/remote execution) survives
+   * termination because there is no PID to process.kill.
+   */
+  private noPidAgentProcesses: NoPidTrackedProcess[] = [];
   private recentlyExitedAgentRootPids = new Map<number, number>();
   private forceKillTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
@@ -2765,17 +2783,28 @@ export class AgentSession
   trackAgentProcess(proc: TrackedAgentProcess): void {
     const pid = proc.pid;
     if (typeof pid !== 'number' || pid <= 0) {
-      // Store no-PID promises in a durable collection so
+      // Store no-PID handles + promises in a durable collection so
       // updateProcessExitedPromise() includes them on every rebuild
-      // (e.g. when a later numeric-PID process is tracked).
+      // (e.g. when a later numeric-PID process is tracked), and
+      // terminateTrackedAgentProcesses() can still signal the handle via its
+      // kill() — no-PID spawns (VM/container/remote execution) have no PID to
+      // process.kill, so the handle is the only termination path. (Codex P2.)
+      const entry: NoPidTrackedProcess = { proc };
       const noPidExitPromise = new Promise<void>((resolve) => {
         proc.once('exit', () => {
           // Self-clean from the durable collection once resolved.
           const idx = this.noPidExitPromises.indexOf(noPidExitPromise);
           if (idx >= 0) this.noPidExitPromises.splice(idx, 1);
+          const handleIdx = this.noPidAgentProcesses.indexOf(entry);
+          if (handleIdx >= 0) {
+            if (entry.forceKillTimer) clearTimeout(entry.forceKillTimer);
+            this.noPidAgentProcesses.splice(handleIdx, 1);
+          }
           resolve();
         });
       });
+      entry.exitPromise = noPidExitPromise;
+      this.noPidAgentProcesses.push(entry);
       this.noPidExitPromises.push(noPidExitPromise);
       this.updateProcessExitedPromise();
       return;
@@ -2834,6 +2863,21 @@ export class AgentSession
   }): void {
     const forceDelayMs = options?.forceDelayMs ?? 2000;
     const processSnapshot = options?.processes ?? [...this.trackedAgentProcesses];
+
+    // No-PID handles (VM/container/remote spawns) are not in the PID map —
+    // signal them via their own kill() with the same SIGTERM→SIGKILL cadence.
+    // Without this, a hung no-PID spawn survives termination because there is
+    // no PID to process.kill. (Codex P2, PR #2491.)
+    this.signalNoPidTrackedProcesses('SIGTERM');
+    for (const entry of [...this.noPidAgentProcesses]) {
+      const timer = setTimeout(() => {
+        entry.forceKillTimer = undefined;
+        this.signalNoPidTrackedProcess(entry, 'SIGKILL');
+      }, forceDelayMs);
+      timer.unref?.();
+      entry.forceKillTimer = timer;
+    }
+
     if (processSnapshot.length === 0) return;
 
     this.signalTrackedAgentProcesses(processSnapshot, 'SIGTERM');
@@ -2841,6 +2885,25 @@ export class AgentSession
       if (this.trackedAgentProcesses.get(pid) !== proc) continue;
       this.clearForceKillTimer(pid);
       this.scheduleForceKill(pid, proc, forceDelayMs);
+    }
+  }
+
+  /** Signal every live no-PID tracked handle (best-effort via kill()). */
+  private signalNoPidTrackedProcesses(signal: NodeJS.Signals): void {
+    for (const entry of [...this.noPidAgentProcesses]) {
+      this.signalNoPidTrackedProcess(entry, signal);
+    }
+  }
+
+  private signalNoPidTrackedProcess(entry: NoPidTrackedProcess, signal: NodeJS.Signals): void {
+    if (entry.forceKillTimer) {
+      clearTimeout(entry.forceKillTimer);
+      entry.forceKillTimer = undefined;
+    }
+    try {
+      entry.proc.kill?.(signal);
+    } catch {
+      // Handle may have already exited.
     }
   }
 
@@ -2923,6 +2986,10 @@ export class AgentSession
    */
   resetProcessExitedPromise(): void {
     this.noPidExitPromises.length = 0;
+    for (const entry of this.noPidAgentProcesses) {
+      if (entry.forceKillTimer) clearTimeout(entry.forceKillTimer);
+    }
+    this.noPidAgentProcesses.length = 0;
     this.processExitedPromise = null;
   }
 
