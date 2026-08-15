@@ -316,14 +316,20 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
           <SpaceRuntimeStatusControl />
         </section>
 
-        {/* Primary surfaces as count + navigation shortcuts, plus the two
-            attention cards (blocked / rate-limited vs awaiting review). */}
-        <div class="grid grid-cols-3 gap-3 lg:grid-cols-5">
+        {/* Attention first (Blocked = blocked + rate/usage-limited, then
+            awaiting review), followed by the Agents and Sessions surfaces. */}
+        <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <StatCard
-            label="Tasks"
-            count={tasks.length}
+            label="Blocked"
+            count={needsAttentionTasks.length}
             color="border-amber-800/40 text-amber-300"
-            onClick={() => navigateToSpaceTasks(routeSpaceId)}
+            onClick={() => navigateToSpaceTasks(routeSpaceId, 'action')}
+          />
+          <StatCard
+            label="In review"
+            count={inReviewTasks.length}
+            color="border-purple-800/30 text-purple-300"
+            onClick={() => navigateToSpaceTasks(routeSpaceId, 'action')}
           />
           <StatCard
             label="Agents"
@@ -336,18 +342,6 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
             count={sessions.length}
             color="border-sky-800/30 text-sky-300"
             onClick={() => navigateToSpaceSessions(routeSpaceId)}
-          />
-          <StatCard
-            label="Needs attention"
-            count={needsAttentionTasks.length}
-            color="border-amber-800/40 text-amber-300"
-            onClick={() => navigateToSpaceTasks(routeSpaceId, 'action')}
-          />
-          <StatCard
-            label="In review"
-            count={inReviewTasks.length}
-            color="border-purple-800/30 text-purple-300"
-            onClick={() => navigateToSpaceTasks(routeSpaceId, 'action')}
           />
         </div>
 

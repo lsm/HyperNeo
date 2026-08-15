@@ -131,16 +131,24 @@ describe('SpaceOverview', () => {
     expect(getByText('Space not found')).toBeTruthy();
   });
 
-  it('renders Tasks/Agents/Sessions stat cards with counts', () => {
+  it('renders Blocked/In-review/Agents/Sessions stat cards with counts', () => {
     mockSpace.value = makeSpace();
-    mockTasks.value = [makeTask('t1', 'open'), makeTask('t2', 'done')];
+    mockTasks.value = [
+      makeTask('t1', 'open'),
+      makeTask('t2', 'done'),
+      makeTask('t3', 'blocked'),
+      makeTask('t4', 'review'),
+    ];
     mockAgents.value = [{ id: 'a1' }, { id: 'a2' }, { id: 'a3' }];
     mockSessions.value = [{ id: 's1' }];
 
-    const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
-    expect(getByRole('button', { name: /^Tasks: 2/ })).toBeTruthy();
+    const { getByRole, queryByRole } = render(<SpaceOverview spaceId="space-1" />);
+    expect(getByRole('button', { name: 'Blocked: 1' })).toBeTruthy();
+    expect(getByRole('button', { name: 'In review: 1' })).toBeTruthy();
     expect(getByRole('button', { name: 'Agents: 3' })).toBeTruthy();
     expect(getByRole('button', { name: 'Sessions: 1' })).toBeTruthy();
+    // The total-Tasks card is intentionally gone.
+    expect(queryByRole('button', { name: /^Tasks:/ })).toBeNull();
   });
 
   it('renders glass controls and flat activity surfaces', () => {
@@ -237,37 +245,22 @@ describe('SpaceOverview', () => {
     expect(activityButtons.length).toBe(5);
   });
 
-  it('Tasks stat card count tracks the task total', () => {
+  it('Blocked card count tracks actionable non-review tasks', () => {
     mockSpace.value = makeSpace();
-    mockTasks.value = [makeTask('t1', 'open')];
+    mockTasks.value = [makeTask('t1', 'blocked')];
     const { rerender, getByRole } = render(<SpaceOverview spaceId="space-1" />);
-    expect(getByRole('button', { name: /^Tasks: 1/ })).toBeTruthy();
+    expect(getByRole('button', { name: 'Blocked: 1' })).toBeTruthy();
 
-    mockTasks.value = [makeTask('t1', 'open'), makeTask('t2', 'open'), makeTask('t3', 'done')];
+    mockTasks.value = [makeTask('t1', 'blocked'), makeTask('t2', 'rate_limited')];
     rerender(<SpaceOverview spaceId="space-1" />);
-    expect(getByRole('button', { name: /^Tasks: 3/ })).toBeTruthy();
-  });
-
-  it('renders separate Needs attention and In review cards', () => {
-    mockSpace.value = makeSpace();
-    // 1 blocked (attention), 2 review (in review), 1 open, 1 done.
-    mockTasks.value = [
-      makeTask('t1', 'open'),
-      makeTask('t2', 'review'),
-      makeTask('t3', 'review'),
-      makeTask('t4', 'blocked'),
-      makeTask('t5', 'done'),
-    ];
-    const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
-    expect(getByRole('button', { name: 'Needs attention: 1' })).toBeTruthy();
-    expect(getByRole('button', { name: 'In review: 2' })).toBeTruthy();
+    expect(getByRole('button', { name: 'Blocked: 2' })).toBeTruthy();
   });
 
   it('attention cards stay zero when nothing is actionable', () => {
     mockSpace.value = makeSpace();
     mockTasks.value = [makeTask('t1', 'open'), makeTask('t2', 'done')];
     const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
-    expect(getByRole('button', { name: 'Needs attention: 0' })).toBeTruthy();
+    expect(getByRole('button', { name: 'Blocked: 0' })).toBeTruthy();
     expect(getByRole('button', { name: 'In review: 0' })).toBeTruthy();
   });
 
@@ -320,18 +313,24 @@ describe('SpaceOverview', () => {
       mockSessions.value = [{ id: 's1' }];
     });
 
-    it('Tasks card navigates to the Tasks page', () => {
+    it('Blocked card navigates to the Action tab', () => {
       const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
-      fireEvent.click(getByRole('button', { name: /^Tasks:/ }));
-      expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-1');
+      fireEvent.click(getByRole('button', { name: /^Blocked:/ }));
+      expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-1', 'action');
+    });
+
+    it('In review card navigates to the Action tab', () => {
+      const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
+      fireEvent.click(getByRole('button', { name: /^In review:/ }));
+      expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-1', 'action');
     });
 
     it('uses the route space id for navigation', () => {
       const { getByRole } = render(
         <SpaceOverview spaceId="space-1" navigationSpaceId="space-slug" />
       );
-      fireEvent.click(getByRole('button', { name: /^Tasks:/ }));
-      expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-slug');
+      fireEvent.click(getByRole('button', { name: /^Blocked:/ }));
+      expect(navigateToSpaceTasksMock).toHaveBeenCalledWith('space-slug', 'action');
     });
 
     it('Agents card navigates to the Agents page', () => {
@@ -348,7 +347,8 @@ describe('SpaceOverview', () => {
 
     it('stat cards have cursor-pointer class', () => {
       const { getByRole } = render(<SpaceOverview spaceId="space-1" />);
-      expect(getByRole('button', { name: /^Tasks:/ }).className).toContain('cursor-pointer');
+      expect(getByRole('button', { name: /^Blocked:/ }).className).toContain('cursor-pointer');
+      expect(getByRole('button', { name: /^In review:/ }).className).toContain('cursor-pointer');
       expect(getByRole('button', { name: 'Agents: 1' }).className).toContain('cursor-pointer');
       expect(getByRole('button', { name: 'Sessions: 1' }).className).toContain('cursor-pointer');
     });
