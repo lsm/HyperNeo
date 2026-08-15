@@ -163,7 +163,11 @@ function isAuthorizedCallerElement(value: unknown): boolean {
     typeof c.sourceNode === 'string' &&
     c.sourceNode.trim().length > 0 &&
     (c.agentSlots === undefined ||
-      (Array.isArray(c.agentSlots) && c.agentSlots.every((slot) => typeof slot === 'string')))
+      (Array.isArray(c.agentSlots) &&
+        // Non-blank slot strings only: a whitespace-only slot can never match
+        // a caller (the runtime validator rejects it on create), so a
+        // persisted row carrying one is corruption, not configuration.
+        c.agentSlots.every((slot) => typeof slot === 'string' && slot.trim().length > 0)))
   );
 }
 
@@ -185,8 +189,13 @@ function isHookBindingElement(value: unknown): boolean {
     (b.targetNode === undefined || typeof b.targetNode === 'string') &&
     typeof b.enabled === 'boolean' &&
     (b.order === undefined || typeof b.order === 'number') &&
-    (b.authorizedCallers === undefined ||
-      (Array.isArray(b.authorizedCallers) && b.authorizedCallers.every(isAuthorizedCallerElement)))
+    // A non-empty caller array is REQUIRED (mirroring the create/update
+    // validator): an omitted or empty list can never authorize a caller, so
+    // resolveMatchingBindings ignores the binding entirely — loading it as
+    // "valid" would gate nothing. ([] would pass a bare every() vacuously.)
+    Array.isArray(b.authorizedCallers) &&
+    b.authorizedCallers.length > 0 &&
+    b.authorizedCallers.every(isAuthorizedCallerElement)
   );
 }
 

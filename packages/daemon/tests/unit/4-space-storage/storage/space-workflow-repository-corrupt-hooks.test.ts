@@ -109,6 +109,25 @@ describe('SpaceWorkflowRepository — corrupt hook columns', () => {
     expect(wf?.hookBindings?.[0]?.hookId).toBe(CORRUPT_HOOK_BINDINGS_HOOK_ID);
   });
 
+  test('an omitted/empty caller list or blank slot fails closed', async () => {
+    // [] passes a bare every() vacuously and an omitted list is undefined —
+    // both load "valid" but can never authorize a caller, so the runtime
+    // ignores the binding entirely (ungated). A whitespace-only slot can
+    // never match either.
+    repo.createWorkflow({ spaceId, name: 'WF', nodes: [{ name: 'Only', agentId: 'a1' }] });
+    for (const bad of [
+      '[{"hookId":"pr_ready","sourceNode":"Only","method":"send_message","enabled":true}]',
+      '[{"hookId":"pr_ready","sourceNode":"Only","method":"send_message","enabled":true,"authorizedCallers":[]}]',
+      '[{"hookId":"pr_ready","sourceNode":"Only","method":"send_message","enabled":true,"authorizedCallers":[{"sourceNode":"Only","agentSlots":["   "]}]}]',
+    ]) {
+      corruptColumn('hook_bindings', bad);
+      const wf = repo.getWorkflow(
+        db.prepare('SELECT id FROM space_workflows LIMIT 1').get()?.id as string
+      );
+      expect(wf?.hookBindings?.[0]?.hookId).toBe(CORRUPT_HOOK_BINDINGS_HOOK_ID);
+    }
+  });
+
   test('a malformed custom hook entry fails closed', () => {
     repo.createWorkflow({ spaceId, name: 'WF', nodes: [{ name: 'Only', agentId: 'a1' }] });
     corruptColumn('custom_hooks', '[{"id":"x"}]');
