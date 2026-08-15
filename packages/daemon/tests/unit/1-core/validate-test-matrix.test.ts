@@ -23,6 +23,7 @@ const MUTATED_TARGETS = [
   '.github/workflows/main.yml',
   '.github/workflows/real-api-tests.yml',
   'packages/web/vitest.config.ts',
+  'scripts/test-online.sh',
 ];
 const _snapshots = new Map<string, string>();
 beforeAll(() => {
@@ -384,8 +385,8 @@ describe('validate-test-matrix.sh', () => {
         path.join(REPO_ROOT, '.github/workflows/main.yml'),
         (s) =>
           s.replace(
-            "bash -lc 'cd packages/daemon && node_modules/.bin/vitest run",
-            'bash -lc "true" "cd packages/daemon && node_modules/.bin/vitest run'
+            'bash -lc \'set -o pipefail; cd packages/daemon && paths=$(cd ../.. && scripts/test-online.sh ${{ matrix.module }}) && [ -n "$paths" ] || exit 1; node_modules/.bin/vitest run',
+            'bash -lc "true" "set -o pipefail; cd packages/daemon && paths=$(cd ../.. && scripts/test-online.sh ${{ matrix.module }}) && [ -n \\"$paths\\" ] || exit 1; node_modules/.bin/vitest run'
           ),
         'does not EXECUTE'
       );
@@ -508,6 +509,133 @@ describe('validate-test-matrix.sh', () => {
             '          - module: agent-sdk\n            replica: b\n'
           ),
         'non-allowlisted key'
+      );
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects a hand-listed test_path reintroduced in an online include row',
+    () => {
+      // test-daemon-online include rows must carry module/mock_sdk/timeout
+      // only — a test_path row silently bypasses the runner's test-online.sh
+      // resolution while the resolution-driven ownership walk keeps reporting
+      // the same file covered by its module (duplicate runs).
+      expectGuardRejects(
+        path.join(REPO_ROOT, '.github/workflows/main.yml'),
+        (s) =>
+          s.replace(
+            '          - module: agent-sdk\n            mock_sdk: true\n',
+            '          - module: agent-sdk\n            test_path: tests/online/agent/agent-session-sdk.test.ts\n            mock_sdk: true\n'
+          ),
+        'non-allowlisted key'
+      );
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects an online runner that bypasses test-online.sh resolution',
+    () => {
+      // The mocked-online runner must resolve ${{ matrix.module }} through
+      // scripts/test-online.sh; a fixed positional (here: one rpc file) runs
+      // that one file in EVERY matrix job while the guard's resolution-driven
+      // ownership walk reports every module's files covered.
+      expectGuardRejects(
+        path.join(REPO_ROOT, '.github/workflows/main.yml'),
+        (s) =>
+          s.replace(
+            'paths=$(cd ../.. && scripts/test-online.sh ${{ matrix.module }}) && [ -n "$paths" ] || exit 1; node_modules/.bin/vitest run --config vitest.online.config.ts $paths',
+            'paths=tests/online/rpc/rpc-config-handlers.test.ts; node_modules/.bin/vitest run --config vitest.online.config.ts $paths'
+          ),
+        'does not resolve its module'
+      );
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects an online matrix module dropped from scripts/test-online.sh',
+    () => {
+      // A matrix module the resolver cannot resolve expands to zero vitest
+      // positionals → an unfiltered run of the ENTIRE online suite while this
+      // guard would otherwise report every file covered by its module.
+      // Simulate by renaming the websocket axis entry to a module with no
+      // configuration row.
+      expectGuardRejects(
+        path.join(REPO_ROOT, '.github/workflows/main.yml'),
+        (s) => s.replace('          - websocket\n', '          - websocket-x\n'),
+        'resolves to 0 files'
+      );
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects a mocked module glob that reaches a real-API-only directory',
+    () => {
+      // cross-provider files are owned by paid real-API rows; a mocked module
+      // whose glob reaches into the directory duplicates every run through
+      // Dev Proxy. The ownership walk must catch the cross-workspace owner.
+      expectGuardRejects(
+        path.join(REPO_ROOT, 'scripts/test-online.sh'),
+        (s) => s.replace('"mcp|mcp/*.test.ts"', '"mcp|mcp/*.test.ts;cross-provider/*.test.ts"'),
+        'real-API-only'
+      );
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects a mocked module glob that reaches an exempt directory',
+    () => {
+      // Exempt dirs (e.g. glm) are intentionally disabled; a module glob that
+      // resolves their files re-enables them. The exempt check compares the
+      // daemon-package-relative map paths, so the pattern must carry the
+      // tests/online/ prefix (previously it never matched — dead check).
+      expectGuardRejects(
+        path.join(REPO_ROOT, 'scripts/test-online.sh'),
+        (s) => s.replace('"mcp|mcp/*.test.ts"', '"mcp|mcp/*.test.ts;glm/*.test.ts"'),
+        're-enable an intentionally disabled module'
+      );
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects a runner that discards the module resolution before vitest run',
+    () => {
+      // The resolution must FEED vitest: resolving into a variable that is
+      // then redirected to /dev/null leaves vitest with zero positionals →
+      // the entire online suite runs unfiltered while every textual detector
+      // (marker present, marker executed, no dead prefix) still passes.
+      expectGuardRejects(
+        path.join(REPO_ROOT, '.github/workflows/main.yml'),
+        (s) =>
+          s.replace(
+            'node_modules/.bin/vitest run --config vitest.online.config.ts $paths',
+            'node_modules/.bin/vitest run --config vitest.online.config.ts'
+          ),
+        'no positional'
+      );
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects a selection flag hidden before a second command substitution',
+    () => {
+      // The resolver-substitution allowlist must be bounded to ONE
+      // substitution: a greedy match spanning first-$(-to-last-) blanks a
+      // --testNamePattern sandwiched before a trailing second substitution.
+      expectGuardRejects(
+        path.join(REPO_ROOT, '.github/workflows/main.yml'),
+        (s) =>
+          s.replace(
+            'node_modules/.bin/vitest run --config vitest.online.config.ts $paths',
+            'node_modules/.bin/vitest run --config vitest.online.config.ts $paths --testNamePattern=never $(cd ../.. && echo x)'
+          ),
+        'selection flag or extra arg'
       );
     },
     TIMEOUT
@@ -672,13 +800,14 @@ it(
     // -lc body, not executed. strip_quotes on the -lc body catches it.
     const wf = path.join(REPO_ROOT, '.github/workflows/main.yml');
     const original = fs.readFileSync(wf, 'utf-8');
-    const anchor = "bash -lc 'cd packages/daemon && node_modules/.bin/vitest run";
+    const anchor =
+      'bash -lc \'set -o pipefail; cd packages/daemon && paths=$(cd ../.. && scripts/test-online.sh ${{ matrix.module }}) && [ -n "$paths" ] || exit 1; node_modules/.bin/vitest run';
     expect(original.includes(anchor)).toBe(true);
     fs.writeFileSync(
       wf,
       original.replace(
         anchor,
-        'bash -lc \'echo "cd packages/daemon && node_modules/.bin/vitest run'
+        'bash -lc \'echo "set -o pipefail; cd packages/daemon && paths=$(cd ../.. && scripts/test-online.sh ${{ matrix.module }}) && [ -n \\"$paths\\"] || exit 1; node_modules/.bin/vitest run'
       )
     );
     try {
