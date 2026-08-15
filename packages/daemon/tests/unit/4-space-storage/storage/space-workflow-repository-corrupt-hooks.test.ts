@@ -119,6 +119,9 @@ describe('SpaceWorkflowRepository — corrupt hook columns', () => {
       '[{"hookId":"pr_ready","sourceNode":"Only","method":"send_message","enabled":true}]',
       '[{"hookId":"pr_ready","sourceNode":"Only","method":"send_message","enabled":true,"authorizedCallers":[]}]',
       '[{"hookId":"pr_ready","sourceNode":"Only","method":"send_message","enabled":true,"authorizedCallers":[{"sourceNode":"Only","agentSlots":["   "]}]}]',
+      // Non-empty callers naming only a DIFFERENT node: shape-valid but can
+      // never authorize the acting node — the resolver filters it (ungated).
+      '[{"hookId":"pr_ready","sourceNode":"Only","method":"send_message","enabled":true,"authorizedCallers":[{"sourceNode":"Elsewhere"}]}]',
     ]) {
       corruptColumn('hook_bindings', bad);
       const wf = repo.getWorkflow(

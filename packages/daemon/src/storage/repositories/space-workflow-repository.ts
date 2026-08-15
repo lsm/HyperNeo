@@ -195,7 +195,15 @@ function isHookBindingElement(value: unknown): boolean {
     // "valid" would gate nothing. ([] would pass a bare every() vacuously.)
     Array.isArray(b.authorizedCallers) &&
     b.authorizedCallers.length > 0 &&
-    b.authorizedCallers.every(isAuthorizedCallerElement)
+    b.authorizedCallers.every(isAuthorizedCallerElement) &&
+    // At least one caller MUST name the binding's OWN source node (mirroring
+    // the create/update validator): a non-empty list naming only OTHER nodes
+    // passes the shape checks but can never authorize the acting node, so
+    // resolveMatchingBindings filters the binding out — ungated.
+    b.authorizedCallers.some(
+      (c) =>
+        !!c && typeof c === 'object' && (c as Record<string, unknown>).sourceNode === b.sourceNode
+    )
   );
 }
 
