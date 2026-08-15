@@ -192,6 +192,77 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(hookStateRepo.get('run-1', 'pass_hook')?.localState.humanApproved).toBeUndefined();
   });
 
+  test('an artifact-write failure under a policy stop disables the override (round 88)', async () => {
+    // pr_ready's shape: stamp the validated-PR identity AND stop on
+    // unresolved threads. The gh seam succeeds (threads found); the
+    // artifact repo fails on the stamp claim. The stop STANDS but becomes
+    // override-INELIGIBLE — approving it would deliver without the stamp,
+    // and the next attempt would read another caller's identity as a
+    // mismatch.
+    const { setGhRunnerForTests, setGraphqlRunnerForTests } = await import(
+      '@hyperneo/extensions-hooks'
+    );
+    setGhRunnerForTests(async () => ({
+      ok: true,
+      data: JSON.stringify({ state: 'OPEN', mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' }),
+    }));
+    setGraphqlRunnerForTests(async () => ({
+      ok: true,
+      data: {
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                nodes: [{ isResolved: false, comments: { nodes: [{ url: 'u' }] } }],
+                pageInfo: { hasNextPage: false, endCursor: 'c' },
+              },
+            },
+          },
+        },
+      },
+    }));
+    class FailingClaimRepo extends WorkflowRunArtifactRepository {
+      override claimIdentityStamp(): never {
+        throw new Error('artifact store down');
+      }
+    }
+    const engine = new WorkflowHookEngine({
+      workflow: makeWorkflow({
+        hookBindings: [
+          {
+            hookId: 'pr_ready',
+            sourceNode: 'Coding',
+            targetNode: 'Review',
+            method: 'send_message',
+            order: 0,
+            enabled: true,
+            authorizedCallers: [{ sourceNode: 'Coding', agentSlots: ['coder'] }],
+          },
+        ],
+      }),
+      workflowRunId: 'run-1',
+      nodeExecutionRepo: new NodeExecutionRepository(db),
+      artifactRepo: new FailingClaimRepo(db),
+      hookStateRepo,
+      workspacePath: process.cwd(),
+    });
+    try {
+      const outcome = await engine.executeAction(
+        'send_message',
+        sendParams({ pr_link: 'https://github.com/org/repo/pull/7' }),
+        META
+      );
+      expect(outcome.decision).toBe('stop');
+      expect(outcome.userState.humanOverrideEligible).toBe(false);
+      expect(outcome.executionLog.some((e) => e.reason?.includes('unpersisted side effect'))).toBe(
+        true
+      );
+    } finally {
+      setGhRunnerForTests(null);
+      setGraphqlRunnerForTests(null);
+    }
+  });
+
   test('a script-failure stop is override-INELIGIBLE (execution failure)', async () => {
     // A script exiting non-zero FAILED TO COMPLETE — that is an execution
     // failure, not a decision, so an approval must not deliver through it.

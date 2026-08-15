@@ -82,6 +82,11 @@ export function legacyHookCoverage(
         !used.has(i) &&
         b.hookId === p.id &&
         b.method === p.method &&
+        // A placement that records a SOURCE requires the binding's source to
+        // match: a QA→Review binding must not migrate a Coding→Review gate
+        // (same id/method/target, different sender) — the original handoff
+        // would stay ungated after the legacy column is cleared/dropped.
+        (p.sourceNode === undefined || b.sourceNode === p.sourceNode) &&
         (p.target === undefined || b.targetNode === p.target)
     );
     if (match === -1) {

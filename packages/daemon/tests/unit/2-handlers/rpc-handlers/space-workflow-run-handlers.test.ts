@@ -1520,6 +1520,10 @@ describe('space-workflow-run-handlers', () => {
                 queuedAt: 1,
               },
             },
+            // The elapsed-ceiling origin the restore must put back (it is
+            // only re-stamped when retryCount === 0, so losing it permanently
+            // disables the elapsed ceiling for this cycle).
+            __firstRetryAt: 777_777,
           },
           lastFlow: 'retry',
           lastReason: 'Waiting.',
@@ -1548,6 +1552,8 @@ describe('space-workflow-run-handlers', () => {
       const restored = hookStateRepo.repo.get('run-1', 'pr_ready');
       expect(restored?.lastFlow).toBe('retry');
       expect(restored?.retryCount).toBe(5);
+      // The elapsed-ceiling origin is restored too (round 88 pin).
+      expect(restored?.localState.__firstRetryAt).toBe(777_777);
     });
   });
 

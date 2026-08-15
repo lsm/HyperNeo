@@ -317,6 +317,30 @@ describe('SpaceWorkflowManager — legacy migration completeness (round 81)', ()
     ).toThrow(/missing v2 bindings for: pr_ready/);
   });
 
+  test('a placement recording a SOURCE requires the binding source to match (round 88)', () => {
+    const id = seedLegacyWorkflow();
+    db.prepare(`UPDATE space_workflows SET hooks = ? WHERE id = ?`).run(
+      '[{"id":"pr_ready","sourceNode":"Coding","targetNode":"Review"}]',
+      id
+    );
+    // Same id/method/target, WRONG source — must not migrate Coding's gate.
+    expect(() =>
+      manager.updateWorkflow(id, {
+        hookBindings: [
+          {
+            hookId: 'pr_ready',
+            sourceNode: 'QA',
+            targetNode: 'Review',
+            method: 'send_message',
+            order: 0,
+            enabled: true,
+            authorizedCallers: [{ sourceNode: 'QA' }],
+          },
+        ],
+      })
+    ).toThrow(/missing v2 bindings for: pr_ready/);
+  });
+
   test('a REPLACEMENT binding list must itself cover the legacy ids (round 82)', () => {
     // hookBindings replaces wholesale: an update supplying only hook B while
     // the row's existing bindings covered hook A must REFUSE — the union

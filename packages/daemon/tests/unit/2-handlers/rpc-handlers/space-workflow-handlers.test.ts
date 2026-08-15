@@ -470,6 +470,17 @@ describe('space-workflow-handlers', () => {
   // ─── spaceWorkflow.update ──────────────────────────────────────────────────
 
   describe('spaceWorkflow.update', () => {
+    it('strips a caller-supplied clearLegacyHooks flag before forwarding (round 88)', async () => {
+      await call('spaceWorkflow.update', {
+        id: mockWorkflow.id,
+        clearLegacyHooks: true,
+        name: 'attempted strip',
+      });
+      const passed = workflowManager.updateWorkflow.mock.calls[0][1] as Record<string, unknown>;
+      expect(passed.clearLegacyHooks).toBeUndefined();
+      expect(passed.name).toBe('attempted strip');
+    });
+
     beforeEach(() => setup());
 
     it('updates a workflow and emits spaceWorkflow.updated', async () => {

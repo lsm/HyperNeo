@@ -1039,6 +1039,26 @@ export class WorkflowHookEngine {
         reason: terminal.reason,
         timestamp: Date.now(),
       });
+    } else if (failedArtifactWrite && terminal && terminal.kind === 'stop') {
+      // The hook ALSO returned an ordinary policy stop while its artifact
+      // write failed (e.g. pr_ready stamps AND stops). Overlapping calls
+      // for different PRs: the loser of the first-writer claim shows an
+      // override-ELIGIBLE stop; approving it delivers without the stamp,
+      // and the retry then sees the winner's identity as a mismatch. The
+      // stop stays (fail closed), but becomes override-INELIGIBLE — an
+      // approval must not deliver past an unpersisted side effect.
+      terminal = {
+        ...terminal,
+        overrideIneligible: true,
+      };
+      executionLog.push({
+        hookId: failedArtifactWrite.hookId,
+        flow: 'stop',
+        reason:
+          'Hook artifact persistence failed alongside the hook’s stop decision; the override ' +
+          'is disabled (delivering would skip the hook’s unpersisted side effects).',
+        timestamp: Date.now(),
+      });
     }
 
     const sourceNode =
@@ -2564,6 +2584,17 @@ function sameRetryableActionOwner(left: HookActionMeta, right: HookActionMeta): 
   // the persisted meta.sessionId, and an exact-owner check would orphan the
   // durable action forever (neither replayed nor cleared). Any live session
   // of the SAME (task, node, agent) is the action's legitimate owner.
+  //
+  // KNOWN TRADE (loss → potential duplication): the durable record's KEY
+  // still embeds the DEAD session's meta.sessionId, so after a respawn the
+  // re-armed OLD record and a REPLACEMENT session re-issuing the same send
+  // create two durable records / two timers — both deliver when the gate
+  // opens, and neither clear path removes the other. The alternative
+  // (exact-session matching) permanently orphans accepted handoffs, which
+  // is strictly worse; the duplication window is one respawn + one
+  // re-issue, and downstream hooks (pr_ready's identity CAS, approvals)
+  // are idempotent or one-shot. If this proves observable in practice,
+  // re-keying the durable map on the relaxed identity would close it.
   return (
     left.agentName === right.agentName &&
     left.nodeId === right.nodeId &&

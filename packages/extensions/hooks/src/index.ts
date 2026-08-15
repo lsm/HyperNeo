@@ -24,6 +24,9 @@ import { reviewPostedHook } from './hooks/review-posted';
 import { fetchPrView } from './github';
 export { samePrLink, VALIDATED_PR_ARTIFACT_KEY } from './primary-link';
 export { GH_INFRA_ERROR_PREFIX } from './github';
+// Test seams: substituting the gh/GraphQL transports (used by daemon and
+// hook tests to exercise the built-ins' GitHub flows without spawning gh).
+export { setGhRunnerForTests, setGraphqlRunnerForTests } from './github';
 
 /** The built-in hook registry. The daemon loads these by id. */
 export const BUILT_IN_HOOKS: readonly Hook[] = [
