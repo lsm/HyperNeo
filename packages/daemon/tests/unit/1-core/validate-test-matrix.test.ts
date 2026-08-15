@@ -514,6 +514,63 @@ describe('validate-test-matrix.sh', () => {
   );
 
   it(
+    'rejects a hand-listed test_path reintroduced in an online include row',
+    () => {
+      // test-daemon-online include rows must carry module/mock_sdk/timeout
+      // only — a test_path row silently bypasses the runner's test-online.sh
+      // resolution while the resolution-driven ownership walk keeps reporting
+      // the same file covered by its module (duplicate runs).
+      expectGuardRejects(
+        path.join(REPO_ROOT, '.github/workflows/main.yml'),
+        (s) =>
+          s.replace(
+            '          - module: agent-sdk\n            mock_sdk: true\n',
+            '          - module: agent-sdk\n            test_path: tests/online/agent/agent-session-sdk.test.ts\n            mock_sdk: true\n'
+          ),
+        'non-allowlisted key'
+      );
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects an online runner that bypasses test-online.sh resolution',
+    () => {
+      // The mocked-online runner must resolve ${{ matrix.module }} through
+      // scripts/test-online.sh; a fixed positional (here: one rpc file) runs
+      // that one file in EVERY matrix job while the guard's resolution-driven
+      // ownership walk reports every module's files covered.
+      expectGuardRejects(
+        path.join(REPO_ROOT, '.github/workflows/main.yml'),
+        (s) =>
+          s.replace(
+            '$(cd ../.. && scripts/test-online.sh ${{ matrix.module }} | sed "s|^packages/daemon/||")',
+            'tests/online/rpc/rpc-config-handlers.test.ts'
+          ),
+        'does not resolve its module'
+      );
+    },
+    TIMEOUT
+  );
+
+  it(
+    'rejects an online matrix module dropped from scripts/test-online.sh',
+    () => {
+      // A matrix module the resolver cannot resolve expands to zero vitest
+      // positionals → an unfiltered run of the ENTIRE online suite while this
+      // guard would otherwise report every file covered by its module.
+      // Simulate by renaming the websocket axis entry to a module with no
+      // configuration row.
+      expectGuardRejects(
+        path.join(REPO_ROOT, '.github/workflows/main.yml'),
+        (s) => s.replace('          - websocket\n', '          - websocket-x\n'),
+        'resolves to 0 files'
+      );
+    },
+    TIMEOUT
+  );
+
+  it(
     "does not leak a second job's module axis into the online axis set",
     () => {
       // _axis_modules must reset injob at the next job key; otherwise a later
