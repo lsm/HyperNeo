@@ -379,7 +379,7 @@ the delivery path must handle.
   does not drive) for sessions whose persisted status is `archived`.
 - **Dedicated delivery budget (#3742774839):** `message_delivery` runs on its own
   `JobQueueProcessor` instance (`HYPERNEO_MESSAGE_DELIVERY_MAX_CONCURRENT`, default
-  8), so long-lived turns no longer share/starve the main processor's budget
+  64), so long-lived turns no longer share/starve the main processor's budget
   (task schedules, long-horizon reminders, GitHub polling, cleanup, memory
   consolidation). Steers still exempt-bypass the delivery budget. Cross-lane
   contention is now zero.

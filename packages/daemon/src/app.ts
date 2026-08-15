@@ -369,7 +369,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // shared-processor surgery. Steers still exempt-bypass THIS budget. See
     // message-delivery-v2.md + Codex (#3742774839).
     const messageDeliveryMaxConcurrent =
-      Number(process.env.HYPERNEO_MESSAGE_DELIVERY_MAX_CONCURRENT) || 8;
+      Number(process.env.HYPERNEO_MESSAGE_DELIVERY_MAX_CONCURRENT) || 64;
     const messageDeliveryProcessor = new JobQueueProcessor(jobQueue, {
       pollIntervalMs: 1000,
       maxConcurrent: messageDeliveryMaxConcurrent,
