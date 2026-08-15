@@ -1732,11 +1732,24 @@ describe('WorkflowHookEngine.executeAction', () => {
     expect(outcome.decision).toBe('stop');
     expect(outcome.userState.humanOverrideEligible).toBe(false);
     expect(outcome.userState.reason).toContain('unreadable');
-    // No hook ran, but the stop is ATTRIBUTED to the reserved guard id so
-    // the wrapper persists a state row and the banner can surface it.
+    // No hook ran; the stop is attributed to the TRANSIENT routing id (NOT
+    // the permanent legacy guard) so the wrapper persists a state row and
+    // the banner can surface it — and a later successful evaluation clears
+    // the row, dismissing the banner.
     expect(outcome.executionLog.length).toBe(1);
-    expect(outcome.executionLog[0]?.hookId).toBe('__legacy_hooks__');
-    expect(outcome.userState.hookId).toBe('__legacy_hooks__');
+    expect(outcome.executionLog[0]?.hookId).toBe('__routing_unavailable__');
+    expect(outcome.userState.hookId).toBe('__routing_unavailable__');
+    // Simulate the stale row, then a successful action on a healthy store:
+    // the stale stop clears.
+    hookStateRepo.update('run-1', '__routing_unavailable__', {
+      expectedVersion: 0,
+      lastFlow: 'stop',
+      lastReason: 'Node execution store unreadable',
+    });
+    const healthy = makeEngine(workflow);
+    const recovered = await healthy.executeAction('send_message', sendParams(), META);
+    expect(recovered.decision).toBe('stop'); // the stop hook still gates
+    expect(hookStateRepo.get('run-1', '__routing_unavailable__')?.lastFlow).toBe('continue');
   });
 
   test('a marker-loaded workflow fails every hookable action closed', async () => {

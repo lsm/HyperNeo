@@ -236,6 +236,21 @@ export function useRunHookStates(runId: string | null | undefined): {
               reason: state.lastReason,
               state,
             })),
+          // TRANSIENT routing-store outage: distinct from the permanent
+          // legacy guard (the engine clears the row once routing
+          // evaluation succeeds again, dismissing this banner).
+          ...[...hookStateMap.values()]
+            .filter(
+              (state) => state.hookId === '__routing_unavailable__' && state.lastFlow === 'stop'
+            )
+            .map((state) => ({
+              hookId: state.hookId,
+              status: 'blocked_by_hook' as const,
+              overrideEligible: false,
+              label: 'Routing temporarily unavailable',
+              reason: state.lastReason,
+              state,
+            })),
         ];
 
   return {

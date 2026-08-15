@@ -276,7 +276,15 @@ function isCustomHookElement(value: unknown): boolean {
     (run.interpreter === undefined || typeof run.interpreter === 'string') &&
     typeof run.source === 'string' &&
     run.source.trim().length > 0 &&
-    (run.timeoutMs === undefined || typeof run.timeoutMs === 'number')
+    // validateCustomHooks caps the timeout at 120s and requires positive
+    // finite values — a corrupt row with e.g. timeoutMs 1e9 would otherwise
+    // pass decoding and hand that value straight to the kill timer, letting
+    // a sleeping script hold the protected tool call for days.
+    (run.timeoutMs === undefined ||
+      (typeof run.timeoutMs === 'number' &&
+        Number.isFinite(run.timeoutMs) &&
+        run.timeoutMs > 0 &&
+        run.timeoutMs <= 120_000))
   );
 }
 
@@ -759,6 +767,14 @@ export class SpaceWorkflowRepository {
     if (params.handle !== undefined) {
       fields.push('handle = ?');
       values.push(params.handle ?? null);
+    }
+    // The ONLY write path retiring the legacy pre-v2 hooks column. Guarded
+    // by the manager's coverage check (the manager sets this flag only when
+    // new bindings cover every legacy hook id) — clearing without complete
+    // coverage would silently skip the remaining legacy gates.
+    if (params.clearLegacyHooks === true) {
+      fields.push('hooks = ?');
+      values.push(null);
     }
 
     const hasNodeReplacement = params.nodes !== undefined;

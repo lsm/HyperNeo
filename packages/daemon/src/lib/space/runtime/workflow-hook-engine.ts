@@ -53,7 +53,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { ChannelResolver } from './channel-resolver';
-import { LEGACY_GUARD_HOOK_ID } from '../hook-reserved-ids';
+import { LEGACY_GUARD_HOOK_ID, ROUTING_UNAVAILABLE_HOOK_ID } from '../hook-reserved-ids';
 import { isBuiltInHook, resolveHook } from './hook-registry';
 import {
   GH_INFRA_ERROR_PREFIX,
@@ -502,10 +502,12 @@ export class WorkflowHookEngine {
       bindings = this.resolveMatchingBindings(methodName, params, meta);
     } catch (err) {
       if (err instanceof INFRASTRUCTURE_ROUTING_STOP) {
-        // Attribute the stop to the LEGACY_GUARD reserved id so the wrapper
-        // persists a state row and the task pane's hook banner surfaces it
-        // (an empty executionLog would leave the stop invisible in
-        // listHookStates — the action errors with no diagnosable banner).
+        // Attribute the stop to the TRANSIENT routing id (distinct from the
+        // PERMANENT legacy guard — the web banner synthesizes a
+        // non-dismissible "Legacy workflow hooks" message for that id) so
+        // the wrapper persists a state row and the banner surfaces the
+        // outage. The row clears automatically on the next successful
+        // routing evaluation (see the recovery block after resolution).
         return {
           decision: 'stop',
           finalParams: params,
@@ -513,7 +515,7 @@ export class WorkflowHookEngine {
           stateUpdates: [],
           executionLog: [
             {
-              hookId: LEGACY_GUARD_HOOK_ID,
+              hookId: ROUTING_UNAVAILABLE_HOOK_ID,
               flow: 'stop',
               reason: err.message,
               timestamp: Date.now(),
@@ -522,12 +524,33 @@ export class WorkflowHookEngine {
           userState: {
             status: 'blocked',
             humanOverrideEligible: false,
-            hookId: LEGACY_GUARD_HOOK_ID,
+            hookId: ROUTING_UNAVAILABLE_HOOK_ID,
             reason: err.message,
           },
         };
       }
       throw err;
+    }
+
+    // TRANSIENT-STATE RECOVERY: a prior action's routing-store failure left
+    // a persistent __routing_unavailable__ stop; this action's routing
+    // evaluation SUCCEEDED, so the outage is over — clear the stale row or
+    // the web banner (synthesized from the state row) stays stuck on a
+    // non-dismissible "routing unavailable" message forever. Cheap: one
+    // read per action, written only when a stale stop exists.
+    try {
+      const staleRoutingStop = this.config.hookStateRepo.get(
+        this.config.workflowRunId,
+        ROUTING_UNAVAILABLE_HOOK_ID
+      );
+      if (staleRoutingStop?.lastFlow === 'stop') {
+        this.persistStateUpdate(ROUTING_UNAVAILABLE_HOOK_ID, {
+          lastFlow: 'continue',
+          lastReason: null,
+        });
+      }
+    } catch {
+      // State store also unavailable — nothing to clear coherently.
     }
 
     // Identity of THIS action — the same fingerprint the wrapper stamps as

@@ -39,6 +39,7 @@ import {
 import { KNOWN_TOPIC_FROM_SOURCES } from '../runtime/parse-pr-url';
 import { slugify, validateSlug } from '../slug';
 import { CORRUPT_HOOK_BINDINGS_HOOK_ID } from '../hook-reserved-ids';
+import { legacyHookCoverage } from '../legacy-hook-coverage';
 
 const logger = new Logger('SpaceWorkflowManager');
 const RESERVED_WORKFLOW_AGENT_NAMES = new Set(['space-agent', 'task-agent']);
@@ -453,6 +454,33 @@ export class SpaceWorkflowManager {
         ? (existing.hookBindings ?? [])
         : (params.hookBindings ?? [])
     ).filter((b) => b.hookId !== CORRUPT_HOOK_BINDINGS_HOOK_ID);
+
+    // LEGACY MIGRATION COMPLETENESS: supplying v2 bindings for a workflow
+    // that still carries legacy hooks is the migration act — but only when
+    // the new bindings COVER every legacy hook id. A partial set would run
+    // only the new gates and silently skip the rest (and migration 197
+    // would then drop the legacy definitions permanently). Refuse with the
+    // missing ids; on complete coverage, clear the legacy column in the
+    // SAME update (atomic — the run either sees both or neither).
+    const existingLegacyHooks = (existing as { hooks?: unknown } | null)?.hooks;
+    if (
+      params.hookBindings !== undefined &&
+      params.hookBindings !== null &&
+      Array.isArray(existingLegacyHooks) &&
+      existingLegacyHooks.length > 0
+    ) {
+      const coverage = legacyHookCoverage(existingLegacyHooks, [
+        ...(existing.hookBindings ?? []),
+        ...params.hookBindings,
+      ]);
+      if (!coverage.complete) {
+        throw new WorkflowValidationError(
+          `hookBindings: this workflow still carries legacy hooks that must ALL be recreated ` +
+            `before the legacy definitions can be retired — missing v2 bindings for: ${coverage.missing.join(', ')}.`
+        );
+      }
+      params = { ...params, clearLegacyHooks: true };
+    }
 
     // ANTI-LAUNDERING: the marker must never REACH PERSISTENCE. The filter
     // above only protects VALIDATION — an ordinary editor save (the visual

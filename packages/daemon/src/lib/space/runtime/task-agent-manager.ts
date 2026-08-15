@@ -138,6 +138,7 @@ import {
   extractReplyToSessionId,
   type AgentMessageLevel,
 } from '../agent-message-envelope';
+import { legacyHookCoverage } from '../legacy-hook-coverage';
 
 const log = new Logger('task-agent-manager');
 const AGENT_MESSAGE_ENVELOPE_HEADER = /^─── Message from ([^\n]+) ───\n\n/;
@@ -5520,7 +5521,13 @@ export class TaskAgentManager {
     const legacyHooks = (workflow as { hooks?: unknown } | null | undefined)?.hooks;
     const hasLegacyHooks = Array.isArray(legacyHooks) && legacyHooks.length > 0;
     const hasV2Bindings = !!workflow?.hookBindings && workflow.hookBindings.length > 0;
-    if (workflow && hasLegacyHooks && !hasV2Bindings) {
+    // COVERAGE, not mere presence: any nonempty v2 binding list previously
+    // bypassed this guard while legacy gates remained unrecreated — a
+    // partially migrated workflow ran only the new bindings and silently
+    // skipped the rest. The guard stays fail-closed until EVERY legacy hook
+    // id has an enabled v2 binding.
+    const legacyCoverage = legacyHookCoverage(legacyHooks, workflow?.hookBindings);
+    if (workflow && hasLegacyHooks && !legacyCoverage.complete) {
       log.error(
         `Run ${workflowRunId} pins a pre-v2 workflow definition carrying legacy hooks with no v2 hookBindings; ` +
           'blocking gated actions (fail closed) — re-create the hooks as v2 bindings on the workflow to resume.'

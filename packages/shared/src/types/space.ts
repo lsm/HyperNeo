@@ -2386,6 +2386,15 @@ export interface UpdateSpaceWorkflowParams {
   /** Replaces the v2 custom hooks. Pass `[]` or `null` to clear. */
   customHooks?: CustomHook[] | null;
   /**
+   * Clears the retired legacy pre-v2 `hooks` column in the same update —
+   * the ONLY write path that retires legacy definitions. The manager sets
+   * this automatically when new hookBindings are supplied for a workflow
+   * that still carries legacy hooks AND the bindings cover every legacy
+   * hook id (the completeness check that keeps partial migrations
+   * fail-closed); it is not accepted from arbitrary callers alone.
+   */
+  clearLegacyHooks?: boolean;
+  /**
    * Replaces the tag list. Pass `[]` or `null` to clear all tags.
    * See `SpaceWorkflow.tags` for runtime semantics (used by the deterministic fallback selector).
    */

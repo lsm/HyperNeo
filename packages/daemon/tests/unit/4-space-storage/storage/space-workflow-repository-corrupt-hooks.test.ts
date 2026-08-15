@@ -154,6 +154,12 @@ describe('SpaceWorkflowRepository — corrupt hook columns', () => {
     // requiredData [null] / empty run object: survive shape checks and
     // explode later (handoff-line building reads field.required at startup).
     corruptColumn('custom_hooks', '[{"id":"h","requiredData":[null],"run":{}}]');
+    // An out-of-cap timeoutMs bypasses validateCustomHooks' 120s bound and
+    // hands the value to the kill timer.
+    corruptColumn(
+      'custom_hooks',
+      '[{"id":"h","requiredData":[],"run":{"kind":"script","source":"exit 0","timeoutMs":1000000000}}]'
+    );
     wf = repo.getWorkflow(db.prepare('SELECT id FROM space_workflows LIMIT 1').get()?.id as string);
     expect(wf?.hookBindings?.[0]?.hookId).toBe(CORRUPT_HOOK_BINDINGS_HOOK_ID);
   });

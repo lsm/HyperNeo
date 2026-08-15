@@ -29,6 +29,8 @@ import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import { createEvolutionTables } from './evolution';
 import { createLongHorizonAgentTables } from './long-horizon-agents';
 import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration';
+import { legacyHookCoverage } from '../../lib/space/legacy-hook-coverage';
+import type { HookBinding } from '@hyperneo/shared';
 
 /**
  * Run all database migrations
@@ -12600,6 +12602,14 @@ export function migration197Defers(db: BunDatabase): boolean {
     // non-empty on restamped built-ins too (the restamp writes hook_bindings;
     // only THIS migration retires the column), so the gate is "legacy hooks
     // present AND bindings absent".
+    // Two unconverted shapes, evaluated in ONE pass:
+    //   (a) legacy hooks with NO v2 bindings at all;
+    //   (b) legacy hooks with a PARTIAL binding set — "any nonempty
+    //       hook_bindings" is NOT conversion (remaining legacy gates would
+    //       be silently skipped, and the drop would make that permanent).
+    //       Conversion requires every legacy hook id to have an enabled v2
+    //       binding (JSON parsing in SQL is not available; fetch the small
+    //       candidate set and evaluate coverage in JS).
     const unconverted = db
       .prepare(
         `SELECT COUNT(*) AS n
@@ -12611,6 +12621,29 @@ export function migration197Defers(db: BunDatabase): boolean {
       )
       .get() as { n: number } | undefined;
     if (unconverted && unconverted.n > 0) return true;
+    const partialRows = db
+      .prepare(
+        `SELECT w.hooks, w.hook_bindings
+           FROM space_workflows w
+          WHERE w.hooks IS NOT NULL
+            AND w.hooks != '[]'
+            AND w.hooks != ''
+            AND w.hook_bindings IS NOT NULL
+            AND w.hook_bindings NOT IN ('', '[]', 'null')`
+      )
+      .all() as Array<{ hooks: string; hook_bindings: string }>;
+    for (const row of partialRows) {
+      let legacyParsed: unknown;
+      let bindingsParsed: unknown;
+      try {
+        legacyParsed = JSON.parse(row.hooks);
+        bindingsParsed = JSON.parse(row.hook_bindings);
+      } catch {
+        return true; // undecodable → defer (fail closed)
+      }
+      const coverage = legacyHookCoverage(legacyParsed, bindingsParsed as HookBinding[]);
+      if (!coverage.complete) return true;
+    }
     // Any non-terminal run (pinned OR NOT — the restamp also defers while
     // runs are active, so a pinned run's workflow head can be equally
     // ungated), OR any approved post-approval task (the run may already be
