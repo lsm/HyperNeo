@@ -601,7 +601,11 @@ The contract (`TaskAgentManager.registerCompletionCallback`):
   completes. Suppressed on both sides of that race.
 - **`session.delivery_settled`** (processor `onComplete` lane hook — job row
   `processing`→`completed`, parks excluded) completes the node when nothing
-  else is in flight. A TURN settle is the completion signal; a STEER settle
+  else is in flight. A TURN settle completes only when it IS the current
+  activation's stamped kickoff (`data.kickoffMessageUuid` — a pending-message
+  flush can run a peer handoff as a turn job before the kickoff is enqueued;
+  sessions without a node execution keep the stamp-less path); a promoted
+  steer's turn declines here and self-heals via the reconciliation. A STEER settle
   (`consumed`/`already_consumed`) is repayment-ONLY — steers settle at
   mid-turn CONSUMPTION while the agent is still working, so a steer settle
   completes the node only when the session is live-idle AND nothing else is

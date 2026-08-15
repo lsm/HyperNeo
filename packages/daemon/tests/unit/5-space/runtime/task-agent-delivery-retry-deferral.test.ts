@@ -465,6 +465,43 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     expect(isSettledSteerResult(null)).toBe(false);
   });
 
+  it('a flushed PEER turn settle does not complete the node live (Codex P1)', async () => {
+    // The flush's peer handoff runs as a turn job after the callback is
+    // registered but BEFORE the kickoff is injected — no stamp exists yet, so
+    // its live settlement must not complete the unstarted node.
+    nodeExecRepo.update(executionId, { data: null }); // kickoff not injected yet
+    activeJobs.clear();
+    processingJobs.clear();
+    await bus.publish('session.delivery_settled', {
+      sessionId: SUB_SESSION_ID,
+      messageUuid: 'peer-flush-uuid', // the PEER's turn — not the kickoff
+      role: 'turn',
+    });
+    await flush();
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('in_progress');
+
+    // The actual kickoff (stamped) settling is what completes the node.
+    nodeExecRepo.update(executionId, { data: { kickoffMessageUuid: 'kickoff-uuid' } });
+    await settleDelivery();
+    expect(completed).toBe(true);
+  });
+
+  it('a turn settle for a session with NO execution row keeps the stamp-less path', async () => {
+    // Post-approval merger shape: no node_executions row → no stamp to check →
+    // the settle still completes (nothing to falsely complete).
+    nodeExecRepo.update(executionId, { agentSessionId: null }); // detach the row
+    activeJobs.clear();
+    processingJobs.clear();
+    await bus.publish('session.delivery_settled', {
+      sessionId: SUB_SESSION_ID,
+      messageUuid: 'any-turn-uuid',
+      role: 'turn',
+    });
+    await flush();
+    expect(completed).toBe(true); // callback fired via the stamp-less path
+  });
+
   it('a settled STEER that was the last job repays the suppressed idle (ACP shape)', async () => {
     // The owning turn finished while an ACP steer was parked awaiting
     // acceptance: the turn's idle AND settle were both suppressed (steer

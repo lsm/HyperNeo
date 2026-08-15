@@ -3774,6 +3774,27 @@ export class TaskAgentManager {
           const session = this.getSubSession(subSessionId);
           if (!session) return;
           if (session.getProcessingState().status !== 'idle') return; // turn still running
+          completeFromDeliveryState();
+          return;
+        }
+        // TURN settle: only the current activation's OWN kickoff completes the
+        // node. createSubSession's fire-and-forget pending-message flush can
+        // run a peer handoff as a `role:'turn'` job after the callback is
+        // registered but before the kickoff is injected — no stamp exists yet,
+        // and that turn is not this node's work (same correlation the delayed
+        // reconciliation uses). A promoted steer's turn (uuid ≠ kickoff)
+        // declines here and self-heals via the reconciliation, which finds the
+        // kickoff's own settled row. Sessions WITHOUT a node execution (the
+        // post-approval merger) keep the stamp-less behavior — there is no
+        // execution to falsely complete.
+        const execution = this.config.nodeExecutionRepo.getByAgentSessionId(subSessionId);
+        if (execution) {
+          const kickoffMessageUuid = (
+            execution.data as { kickoffMessageUuid?: unknown } | null | undefined
+          )?.kickoffMessageUuid;
+          if (typeof kickoffMessageUuid !== 'string' || event.messageUuid !== kickoffMessageUuid) {
+            return;
+          }
         }
         completeFromDeliveryState();
       },
