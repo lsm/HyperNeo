@@ -3520,6 +3520,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
      *     `postApproval` route are rejected — a direct done would silently skip
      *     the route (the tick loop treats an already-done task as resolved).
      *     They must close through submit_for_approval so the router fires.
+     *   - The workflow run must belong to THIS space, be `in_progress`
+     *     (pending/cancelled/done/blocked all refuse), carry node executions,
+     *     and resolve its workflow definition — an unresolvable or foreign
+     *     run refuses rather than being treated as unconstrained.
      *   - Workflow-backed completions apply the tick loop's canonical-task
      *     selection (`pickCanonicalRunTask`) and reject non-canonical
      *     duplicates — the tick archives duplicates, which would discard the
@@ -3529,12 +3533,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
      *     `mark_complete`) are rejected — those validators wrap the node-agent
      *     completion tools, and this tool ships on an unwrapped server, so the
      *     unwrapped path fails closed instead of bypassing the hook engine.
-     *   - The workflow run must be `in_progress` (pending/cancelled/done/
-     *     blocked all refuse), and the no-PR, run-status, and run-IDENTITY
-     *     conditions are re-asserted synchronously inside the terminal write's
-     *     precondition against the reread state — the write is bound to the
-     *     run whose guards were checked, so a mid-flight re-attachment to a
-     *     different run refuses rather than bypassing that run's guards.
+     *   - The no-PR, run-status, and run-IDENTITY conditions are re-asserted
+     *     synchronously inside the terminal write's precondition against the
+     *     reread state — the write is bound to the run whose guards were
+     *     checked, so a mid-flight re-attachment to a different run refuses
+     *     rather than bypassing that run's guards.
      *
      * The validation outcome is captured as `task.result`; `approvalSource` is
      * stamped `'agent'` atomically with the done commit on every path
@@ -3675,6 +3678,18 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             error: `Task ${args.task_id} has a PR (${prUrl}); validation-only completion is for no-PR tasks. Use approve_task (if in review) or the normal PR merge path instead.`,
           });
         }
+        const run = workflowRunRepo.getRun(task.workflowRunId);
+        // Run-space ownership (before any lifecycle consultation): imported/
+        // malformed rows carry no constraint tying a task's workflowRunId to
+        // a run in the SAME space. A foreign run's task must not be completed
+        // (or its executions swept) from this space — that lifecycle belongs
+        // to the run's own space.
+        if (run && run.spaceId !== spaceId) {
+          return jsonResult({
+            success: false,
+            error: `Task ${args.task_id} references a workflow run belonging to a different space; validation-only completion is not applicable here. Reconcile the task's run association.`,
+          });
+        }
         // Run-lifecycle guard: the tick loop's completion detection only runs
         // when the run has node executions (`space-runtime.ts` early-returns on
         // an empty list), so completing a run's task while zero executions
@@ -3689,13 +3704,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             error: `Task ${args.task_id} belongs to a workflow run with no node executions (${task.workflowRunId}); completing it would strand the run. Cancel the run instead so its lifecycle is torn down.`,
           });
         }
-        // Post-approval route guard: if the workflow declares a dispatchable
-        // postApproval route (a publish/deploy step), completing the task
-        // directly to `done` would silently skip it — the tick loop treats an
-        // already-done task as resolved and never calls dispatchPostApproval.
-        // Route-declaring workflows must close through the approval path
-        // (submit_for_approval → approve), which fires the router.
-        const run = workflowRunRepo.getRun(task.workflowRunId);
         // Run-status guard: a task can linger in review/in_progress while its
         // run is already terminal or waiting — cancelled (cancellation/
         // recovery edge — e.g. shutdown leaves the task unreconciled), done,
@@ -3733,6 +3741,19 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           });
         }
         const routeWorkflow = run?.workflowId ? workflowManager.getWorkflowForRun(run) : null;
+        // Workflow-definition guard: an imported/legacy run whose referenced
+        // definition is missing resolves no workflow — treating that as "no
+        // hooks, no routes" would let the task complete while the run
+        // strands `in_progress` forever (rehydration cannot register
+        // executorMeta for it, and processRunTick returns before completion
+        // handling when that metadata is absent). Refuse so the run's
+        // lifecycle is reconciled instead.
+        if (run && run.workflowId && !routeWorkflow) {
+          return jsonResult({
+            success: false,
+            error: `Task ${args.task_id} belongs to a workflow run whose workflow definition cannot be resolved (${run.workflowId}); completing it would strand the run. Reconcile or cancel the run instead.`,
+          });
+        }
         // Terminal-hook guard: the workflow hook engine wraps the node-agent
         // completion tools (`approve_task`, `submit_for_approval`,
         // `mark_complete`) so workflow-declared validators can veto a
@@ -3913,8 +3934,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         //     entire end node; quiesce every active run worker (the caller's
         //     session is not among them).
         // Best-effort: a failure never rolls back the committed done
-        // transition.
-        if (updated.workflowRunId) {
+        // transition. Revalidate first: setTaskStatus commits `done` BEFORE
+        // awaiting its post-commit cascade (unblockDependentTasks), so a
+        // concurrent reopen (recoverWorkflowBackedTask or a message-driven
+        // revival) can restore the task and restart executions while the
+        // returned `updated` snapshot still says done — sweeping then would
+        // idle/interrupt the newly recovered workers. Require the CURRENT
+        // task row to still be `done` and run-attached before sweeping.
+        const currentTaskRow = taskRepo.getTask(updated.id);
+        if (currentTaskRow?.status === 'done' && currentTaskRow.workflowRunId) {
           try {
             const quiesce = (execution: { id: string; agentSessionId: string | null }) => {
               nodeExecutionRepo.updateStatus(execution.id, 'idle');
@@ -3929,7 +3957,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
               }
             };
             const activeExecutions = nodeExecutionRepo
-              .listByWorkflowRun(updated.workflowRunId)
+              .listByWorkflowRun(currentTaskRow.workflowRunId)
               .filter((execution) => execution.status === 'in_progress');
             if (completionSourceNodeId) {
               for (const peer of activeExecutions.filter(

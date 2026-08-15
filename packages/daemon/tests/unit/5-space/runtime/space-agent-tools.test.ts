@@ -6294,6 +6294,149 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     expect(interrupted.sort()).toEqual(['end-node-session', 'mid-node-session']);
   });
 
+  test('skips the worker sweep when the task is reopened during post-commit work', async () => {
+    // setTaskStatus commits `done` BEFORE awaiting its post-commit cascade,
+    // so a concurrent reopen (recoverWorkflowBackedTask / message-driven
+    // revival) can restore the task and restart executions while the
+    // returned snapshot still says done. The sweep rereads the CURRENT task
+    // row and refuses to idle/interrupt the newly recovered workers.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-review',
+      agentName: 'Review',
+      agentId: ctx.agentId,
+      status: 'in_progress',
+      agentSessionId: 'recovered-worker',
+    });
+    const interrupted: string[] = [];
+    const originalSetStatus = ctx.taskManager.setTaskStatus.bind(ctx.taskManager);
+    const setStatusSpy = spyOn(ctx.taskManager, 'setTaskStatus').mockImplementation(
+      async (...callArgs: Parameters<typeof originalSetStatus>) => {
+        const result = await originalSetStatus(...callArgs);
+        // Reopen lands inside setTaskStatus's post-commit tail — after the
+        // done commit, before the handler regains control.
+        ctx.taskRepo.updateTask(task.id, { status: 'in_progress', result: null });
+        return result;
+      }
+    );
+    const handlers = makeHandlers(ctx, {
+      taskAgentManager: {
+        interruptBySessionId: async (sessionId: string) => {
+          interrupted.push(sessionId);
+        },
+      } as unknown as TaskAgentManager,
+    });
+
+    try {
+      const result = await handlers.complete_validation_task({
+        task_id: task.id,
+        validation_outcome: 'completed, then reopened concurrently',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.success).toBe(true);
+
+      // The recovered worker survives: never idled, never interrupted.
+      expect(interrupted).toEqual([]);
+      const execution = ctx.nodeExecutionRepo
+        .listByWorkflowRun(task.workflowRunId!)
+        .find((e) => e.agentSessionId === 'recovered-worker');
+      expect(execution?.status).toBe('in_progress');
+    } finally {
+      setStatusSpy.mockRestore();
+    }
+  });
+
+  test('rejects a task whose run references a workflow definition that cannot be resolved', async () => {
+    // Imported/legacy shape: the run's workflow row is gone. Completing the
+    // task would strand the run in_progress forever — rehydration cannot
+    // register executorMeta for it and processRunTick returns before
+    // completion handling. Treat "no resolvable definition" as refuse,
+    // not as "no hooks / no routes".
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-review',
+      agentName: 'Review',
+      agentId: ctx.agentId,
+      status: 'idle',
+    });
+    // The schema's FKs make a genuinely definition-less run hard to produce
+    // via normal writes (deleting a workflow cascades its runs); the guard's
+    // branch is what matters, so drive getWorkflowForRun to the null the
+    // imported/corrupt-payload shape produces.
+    const workflowSpy = spyOn(ctx.workflowManager, 'getWorkflowForRun').mockReturnValue(null);
+    let parsed: { success: boolean; error?: string };
+    try {
+      parsed = JSON.parse(
+        (
+          await makeHandlers(ctx).complete_validation_task({
+            task_id: task.id,
+            validation_outcome: 'validated',
+          })
+        ).content[0].text
+      );
+    } finally {
+      workflowSpy.mockRestore();
+    }
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('workflow definition cannot be resolved');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
+  });
+
+  test('rejects a task whose workflow run belongs to a different space', async () => {
+    // Imported/malformed shape: the task's space check passes, but its
+    // workflowRunId points at a run owned by another space. Completing it
+    // (and sweeping that run's executions) from this space would mutate a
+    // foreign lifecycle. The foreign run lives in the SAME database (the
+    // tasks→runs FK requires it) but under a different space row.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const foreignSpaceId = `space-foreign-${Math.random().toString(36).slice(2, 8)}`;
+    ctx.db
+      .prepare(
+        `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
+         allowed_models, session_ids, slug, status, created_at, updated_at)
+         VALUES (?, '/tmp/foreign-ws', ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+      )
+      .run(foreignSpaceId, `Space ${foreignSpaceId}`, foreignSpaceId, Date.now(), Date.now());
+    const nodeId = `node-${Math.random().toString(36).slice(2)}`;
+    const foreignWorkflow = ctx.workflowManager.createWorkflow({
+      spaceId: foreignSpaceId,
+      name: `Foreign workflow ${nodeId.slice(-6)}`,
+      description: '',
+      nodes: [{ id: nodeId, name: 'Review', agentId: ctx.agentId }],
+      transitions: [],
+      startNodeId: nodeId,
+      endNodeId: nodeId,
+      rules: [],
+      completionAutonomyLevel: 5,
+    });
+    const foreignRun = ctx.workflowRunRepo.createRun({
+      spaceId: foreignSpaceId,
+      workflowId: foreignWorkflow.id,
+      title: 'Foreign run',
+      description: '',
+    });
+    ctx.workflowRunRepo.updateRun(foreignRun.id, { status: 'in_progress' });
+
+    // Local task (this space) malformed to point at the foreign run.
+    const task = await createTask('in_progress');
+    ctx.taskRepo.updateTask(task, { workflowRunId: foreignRun.id });
+
+    const result = await makeHandlers(ctx).complete_validation_task({
+      task_id: task,
+      validation_outcome: 'should be refused',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('different space');
+    expect(ctx.taskRepo.getTask(task)?.status).toBe('in_progress');
+  });
+
   test('rejects a workflow-backed task whose workflow declares a post-approval route', async () => {
     // A direct done would silently skip the route: the tick loop treats an
     // already-done task as resolved and never calls dispatchPostApproval.
