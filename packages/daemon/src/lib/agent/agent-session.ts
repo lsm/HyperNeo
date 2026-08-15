@@ -2994,6 +2994,11 @@ export class AgentSession
       exitPromises.length > 0 ? Promise.all(exitPromises).then(() => {}) : null;
   }
 
+  /** Re-derive the aggregated exit-wait promise from the current tracked handles. */
+  refreshProcessExitedPromise(): void {
+    this.updateProcessExitedPromise();
+  }
+
   /**
    * Clear the aggregated exit-wait promise (retry paths abandoning the
    * current wait). The durable per-process exit promises are NOT dropped:

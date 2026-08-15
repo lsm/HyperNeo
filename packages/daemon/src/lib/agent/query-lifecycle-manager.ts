@@ -76,6 +76,13 @@ export interface QueryLifecycleManagerContext {
   snapshotTrackedAgentProcesses(): Array<[number, import('./query-runner').TrackedAgentProcess]>;
   /** Snapshot the durable no-PID tracked handles (VM/container/remote spawns). */
   snapshotNoPidTrackedProcesses?(): unknown[];
+  /**
+   * Re-derive the aggregated exit-wait promise from the current tracked
+   * handles. A prior resetProcessExitedPromise() may have nulled the
+   * aggregate while a retained (still-live) orphan handle exists; without a
+   * refresh, a reader would see null and skip waiting on that orphan.
+   */
+  refreshProcessExitedPromise?(): void;
 
   // Mutable session state
   pendingRestartReason: 'settings.local.json' | null;
@@ -686,6 +693,12 @@ export class QueryLifecycleManager {
           processes: orphanedProcesses,
           noPidProcesses: orphanedNoPidProcesses,
         });
+        // Refresh the aggregate before reading it: a prior
+        // resetProcessExitedPromise() may have nulled it while a retained
+        // no-PID orphan (signaled above) is still alive — without the refresh
+        // the bounded wait below reads null and skips waiting on that orphan.
+        // (Codex P2, PR #2491.)
+        this.ctx.refreshProcessExitedPromise?.();
         const orphanExit = this.ctx.processExitedPromise;
         if (orphanExit) {
           await Promise.race([

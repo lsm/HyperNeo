@@ -1006,6 +1006,15 @@ export class QueryRunner {
         logger.warn('Auto-retrying query after startup timeout (1 retry).');
         await stateManager.setIdle({ suppressDeliveryWaiters: true });
 
+        // Ownership check BEFORE terminating: setIdle above awaited, so a
+        // replacement query may already have started and registered its
+        // subprocess. Terminating now would SIGTERM/SIGKILL the replacement.
+        // The check→terminate sequence below is synchronous, so no replacement
+        // can slip in between. (Codex P1, PR #2491.)
+        if (this.retrySupersededByReplacement(queryGeneration)) {
+          return;
+        }
+
         // Clean-slate guard: a timed-out spawn may be orphaned (spawned but
         // never fed, or hung past cooperative close()) and would collide with
         // the retry's fresh spawn — producing repeated 0-message timeouts.
@@ -1070,6 +1079,11 @@ export class QueryRunner {
         this.ctx.consumePendingResumeSessionAt?.();
         logger.warn('Auto-retrying query without one-shot resumeSessionAt.');
         await stateManager.setIdle({ suppressDeliveryWaiters: true });
+
+        // Ownership check BEFORE terminating (see the startup-timeout retry).
+        if (this.retrySupersededByReplacement(queryGeneration)) {
+          return;
+        }
 
         // Clean-slate guard (same rationale as the startup-timeout retry):
         // force-terminate any orphaned tracked subprocess so the retry spawns
