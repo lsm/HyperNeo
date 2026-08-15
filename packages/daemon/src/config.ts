@@ -1,4 +1,4 @@
-import { join } from 'path';
+import { join } from 'node:path';
 import { DEFAULT_MAX_SUBSCRIPTIONS_PER_CLIENT } from '@hyperneo/shared';
 import { getDataDir } from './lib/data-dir';
 
@@ -39,6 +39,10 @@ export interface Config {
   // GitHub integration
   githubWebhookSecret?: string; // Secret for verifying webhook signatures
   githubDefaultFilter?: string; // Default filter config as JSON string
+  structuredLogFilePath?: string;
+  structuredLogMaxBytes: number;
+  structuredLogRetainedFiles: number;
+  structuredLogMaxPendingBytes: number;
 }
 
 export interface ConfigOverrides {
@@ -46,6 +50,10 @@ export interface ConfigOverrides {
   host?: string;
   dbPath?: string;
   workspaceRoot?: string;
+  structuredLogFilePath?: string | null;
+  structuredLogMaxBytes?: number;
+  structuredLogRetainedFiles?: number;
+  structuredLogMaxPendingBytes?: number;
 }
 
 /**
@@ -71,6 +79,10 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
   return parsed > 0 ? parsed : fallback;
 }
 
+function positiveOverride(value: number | undefined, fallback: number): number {
+  return value !== undefined && Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
 export function getConfig(overrides?: ConfigOverrides): Config {
   const nodeEnv = process.env.NODE_ENV || 'development';
 
@@ -78,9 +90,23 @@ export function getConfig(overrides?: ConfigOverrides): Config {
   // Use --db-path / DB_PATH env var to point to a different database
   // (e.g. per-project isolation or Docker volume mounts).
   const defaultDbPath = join(getDataDir(), 'data', 'daemon.db');
+  const configuredLogPath = hyperneoEnv('LOG_FILE');
+  const normalizedLogPath = configuredLogPath?.trim();
+  const defaultLogPath =
+    nodeEnv === 'test' ? undefined : join(getDataDir(), 'logs', 'daemon.jsonl');
+  const structuredLogFilePath =
+    overrides?.structuredLogFilePath === null
+      ? undefined
+      : (overrides?.structuredLogFilePath ??
+        (normalizedLogPath === '0' || normalizedLogPath?.toLowerCase() === 'off'
+          ? undefined
+          : normalizedLogPath || defaultLogPath));
+  const defaultLogMaxBytes = 10 * 1024 * 1024;
+  const defaultLogRetainedFiles = 5;
+  const defaultLogMaxPendingBytes = 2 * 1024 * 1024;
 
   return {
-    port: overrides?.port ?? parseInt(hyperneoEnv('PORT') || '9283'),
+    port: overrides?.port ?? parseInt(hyperneoEnv('PORT') || '9283', 10),
     host: overrides?.host ?? (process.env.HOST || '0.0.0.0'),
     dbPath: overrides?.dbPath ?? (process.env.DB_PATH || defaultDbPath),
     anthropicApiKey: process.env.ANTHROPIC_API_KEY,
@@ -89,9 +115,9 @@ export function getConfig(overrides?: ConfigOverrides): Config {
     // Use 'default' which maps to Sonnet 4.5 in the SDK
     // This matches the SDK's supportedModels() response
     defaultModel: process.env.DEFAULT_MODEL || 'default',
-    maxTokens: parseInt(process.env.MAX_TOKENS || '8192'),
+    maxTokens: parseInt(process.env.MAX_TOKENS || '8192', 10),
     temperature: parseFloat(process.env.TEMPERATURE || '1.0'),
-    maxSessions: parseInt(process.env.MAX_SESSIONS || '10'),
+    maxSessions: parseInt(process.env.MAX_SESSIONS || '10', 10),
     maxSubscriptionsPerClient: parsePositiveInt(
       hyperneoEnv('MAX_SUBSCRIPTIONS_PER_CLIENT'),
       DEFAULT_MAX_SUBSCRIPTIONS_PER_CLIENT
@@ -103,5 +129,18 @@ export function getConfig(overrides?: ConfigOverrides): Config {
     // GitHub integration
     githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET,
     githubDefaultFilter: process.env.GITHUB_DEFAULT_FILTER,
+    structuredLogFilePath,
+    structuredLogMaxBytes: positiveOverride(
+      overrides?.structuredLogMaxBytes,
+      parsePositiveInt(hyperneoEnv('LOG_MAX_BYTES'), defaultLogMaxBytes)
+    ),
+    structuredLogRetainedFiles: positiveOverride(
+      overrides?.structuredLogRetainedFiles,
+      parsePositiveInt(hyperneoEnv('LOG_RETAINED_FILES'), defaultLogRetainedFiles)
+    ),
+    structuredLogMaxPendingBytes: positiveOverride(
+      overrides?.structuredLogMaxPendingBytes,
+      parsePositiveInt(hyperneoEnv('LOG_MAX_PENDING_BYTES'), defaultLogMaxPendingBytes)
+    ),
   };
 }

@@ -102,6 +102,7 @@ import { SpaceGoalRepository } from './storage/repositories/space-goal-repositor
 import { AppMcpLifecycleManager, McpImportService, seedDefaultMcpEntries } from './lib/mcp';
 import { FileIndex } from './lib/file-index';
 import { installConsoleLogCapture, subscribeToStructuredLogs } from './lib/logger';
+import { StructuredLogFileSink } from './lib/structured-log-file-sink';
 import { EvolutionLogEvidenceService } from './lib/space/evolution-log-evidence-service';
 import { SkillsManager } from './lib/skills-manager';
 import {
@@ -235,6 +236,8 @@ export interface DaemonAppContext {
   skillsManager: SkillsManager;
   /** Workspace file index for fast fuzzy file/folder search */
   fileIndex: FileIndex;
+  /** Best-effort drain of pending structured file-log writes. */
+  flushStructuredLogs: () => Promise<void>;
   /**
    * Cleanup function for graceful shutdown.
    * Closes all connections, stops sessions, and closes database.
@@ -259,6 +262,26 @@ export interface DaemonAppContext {
 export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<DaemonAppContext> {
   const { config, verbose = true, standalone = false } = options;
   let startupLogCaptureCleanup: (() => void) | null = null;
+  const structuredLogSink = config.structuredLogFilePath
+    ? new StructuredLogFileSink({
+        path: config.structuredLogFilePath,
+        maxBytes: config.structuredLogMaxBytes,
+        retainedFiles: config.structuredLogRetainedFiles,
+        maxPendingBytes: config.structuredLogMaxPendingBytes,
+      })
+    : null;
+  const unsubscribeFileLogs = structuredLogSink
+    ? subscribeToStructuredLogs((event) => structuredLogSink.capture(event))
+    : () => {};
+  const restoreConsoleCapture = installConsoleLogCapture();
+  let fileLogCaptureClosed = false;
+  const closeFileLogCapture = async (): Promise<void> => {
+    if (fileLogCaptureClosed) return;
+    fileLogCaptureClosed = true;
+    unsubscribeFileLogs();
+    restoreConsoleCapture();
+    await structuredLogSink?.close();
+  };
   // Startup phase fences. Each heavy init step logs `[startup N] <name>` with
   // elapsed-since-previous (+ms = duration of the prior phase) and cumulative
   // total, so a slow/hanging phase is obvious. verbose-gated to mirror logInfo.
@@ -311,7 +334,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       evolutionRepo: db.evolution,
       spaceRepo: earlySpaceRepo,
     });
-    const restoreEarlyConsoleCapture = installConsoleLogCapture();
     const unsubscribeEarlyStructuredLogs = subscribeToStructuredLogs((event) => {
       earlyLogEvidenceService.capture(event);
       if (event.level === 'warn' || event.level === 'error' || event.level === 'fatal') {
@@ -321,7 +343,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     startupLogCaptureCleanup = () => {
       earlyLogEvidenceService.flush();
       unsubscribeEarlyStructuredLogs();
-      restoreEarlyConsoleCapture();
     };
 
     // Bind shared loggers after console capture is installed so all subsequent
@@ -551,7 +572,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const internalEventBus = createDaemonInternalEventBus();
     const logEvidenceService = earlyLogEvidenceService;
     const unsubscribeStructuredLogs = unsubscribeEarlyStructuredLogs;
-    const restoreConsoleCapture = restoreEarlyConsoleCapture;
 
     // Initialize InternalCommandBus for daemon action dispatch.
     const commandBus = createInternalCommandBus<DaemonCommandMap>();
@@ -1428,7 +1448,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
         logEvidenceService.flush();
         unsubscribeStructuredLogs();
-        restoreConsoleCapture();
 
         // Close database
         db.close();
@@ -1438,8 +1457,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         logError('Error during cleanup:', error);
         logEvidenceService.flush();
         unsubscribeStructuredLogs();
-        restoreConsoleCapture();
         throw error;
+      } finally {
+        await closeFileLogCapture();
       }
     };
 
@@ -1473,6 +1493,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       appMcpManager,
       skillsManager,
       fileIndex,
+      flushStructuredLogs: () => structuredLogSink?.flush() ?? Promise.resolve(),
       cleanup,
     };
   } catch (error) {
@@ -1480,6 +1501,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // A startup failure returns no cleanup function, so stop any in-flight
     // embedding-model prefetch here so it cannot outlive the failed process.
     abortAgentMemoryEmbeddingModelPrefetch();
+    await closeFileLogCapture();
     throw error;
   }
 }

@@ -1,10 +1,23 @@
 // IMPORTANT: Import config first to ensure credential discovery runs
 // before any other modules (like provider-service) that depend on it.
-import { getConfig } from './src/config';
+
 import { createDaemonApp } from './src/app';
+import { getConfig } from './src/config';
 import { emitStructuredLogEvent, withConsoleLogCaptureSuppressed } from './src/lib/logger';
 
-process.on('uncaughtException', (error) => {
+let flushStructuredLogs: () => Promise<void> = () => Promise.resolve();
+let fatalExitStarted = false;
+
+async function flushFatalLogs(): Promise<void> {
+  await Promise.race([
+    flushStructuredLogs(),
+    new Promise<void>((resolve) => setTimeout(resolve, 1000)),
+  ]).catch(() => {});
+}
+
+process.on('uncaughtException', async (error) => {
+  if (fatalExitStarted) return;
+  fatalExitStarted = true;
   emitStructuredLogEvent({
     level: 'fatal',
     args: ['[Daemon] Uncaught exception:', error],
@@ -13,10 +26,13 @@ process.on('uncaughtException', (error) => {
     metadata: { processEvent: 'uncaughtException' },
   });
   withConsoleLogCaptureSuppressed(() => console.error('[Daemon] Uncaught exception:', error));
+  await flushFatalLogs();
   process.exit(1);
 });
 
-process.on('unhandledRejection', (reason) => {
+process.on('unhandledRejection', async (reason) => {
+  if (fatalExitStarted) return;
+  fatalExitStarted = true;
   emitStructuredLogEvent({
     level: 'fatal',
     args: ['[Daemon] Unhandled promise rejection:', reason],
@@ -27,17 +43,20 @@ process.on('unhandledRejection', (reason) => {
   withConsoleLogCaptureSuppressed(() =>
     console.error('[Daemon] Unhandled promise rejection:', reason)
   );
+  await flushFatalLogs();
   process.exit(1);
 });
 
 const config = getConfig();
 
 // Create daemon app in standalone mode
-const { server, cleanup } = await createDaemonApp({
+const app = await createDaemonApp({
   config,
   verbose: true,
   standalone: true, // Show root info route in standalone mode
 });
+const { server, cleanup } = app;
+flushStructuredLogs = app.flushStructuredLogs;
 
 // Server is already listening
 console.log(`\n🚀 HyperNeo Daemon started!`);

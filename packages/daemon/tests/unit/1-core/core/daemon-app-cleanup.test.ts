@@ -8,17 +8,17 @@
  * OFFLINE TESTS - No API calls required
  */
 
-import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
-import { existsSync, unlinkSync, mkdirSync, rmSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createDaemonApp } from '../../../../src/app';
+import type { Config } from '../../../../src/config';
 import {
   clearStructuredLogSubscribers,
   installConsoleLogCapture,
   subscribeToStructuredLogs,
 } from '../../../../src/lib/logger';
-import { createDaemonApp } from '../../../../src/app';
-import type { Config } from '../../../../src/config';
 
 // The daemon's createDaemonApp calls `Bun.serve(...)` at startup. Under
 // Node/Vitest there is no Bun global, so install a minimal stub — the
@@ -76,7 +76,6 @@ describe('Daemon App Cleanup', () => {
     );
 
     // Use in-memory database for tests
-    const tmpDir = process.env.TMPDIR || '/tmp';
     config = {
       host: 'localhost',
       port: 0, // Random port
@@ -85,8 +84,12 @@ describe('Daemon App Cleanup', () => {
       temperature: 1.0,
       dbPath: ':memory:',
       maxSessions: 10,
+      maxSubscriptionsPerClient: 128,
       nodeEnv: 'test',
       disableWorktrees: true,
+      structuredLogMaxBytes: 10 * 1024 * 1024,
+      structuredLogRetainedFiles: 5,
+      structuredLogMaxPendingBytes: 2 * 1024 * 1024,
     };
   });
 
@@ -196,7 +199,7 @@ describe('Daemon App Cleanup', () => {
       // Manually inject a mock pending call count
       // We'll monkey-patch getPendingCallCount to simulate hanging calls
       const originalGetPendingCallCount = messageHub.getPendingCallCount.bind(messageHub);
-      let callCount = 5; // Simulate 5 hanging calls
+      const callCount = 5; // Simulate 5 hanging calls
       let callCountReturns = 0;
 
       messageHub.getPendingCallCount = () => {
@@ -359,6 +362,31 @@ describe('Daemon App Cleanup', () => {
 
       expect(console.error).toBe(originalError);
       expect(logs.some((log) => log.includes('OAuth refresh scheduler stopped'))).toBe(false);
+    });
+
+    test('persists startup and final shutdown logs to the configured file', async () => {
+      const directory = join(tmpdir(), `hyperneo-file-log-${Date.now()}`);
+      const path = join(directory, 'daemon.jsonl');
+      try {
+        const daemonContext = await createDaemonApp({
+          config: { ...config, structuredLogFilePath: path },
+          verbose: true,
+          standalone: false,
+        });
+
+        await daemonContext.cleanup();
+        const records = readFileSync(path, 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line) as { message: string });
+
+        expect(records.some((record) => record.message.includes('[startup 1]'))).toBe(true);
+        expect(
+          records.some((record) => record.message.includes('[Daemon] Graceful shutdown complete'))
+        ).toBe(true);
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
     });
 
     test('should capture logError aliases created during startup', async () => {

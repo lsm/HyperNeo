@@ -4,10 +4,10 @@
  * Tests for the configuration module.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { getConfig } from '../../../../src/config';
-import { homedir } from 'os';
-import { join } from 'path';
 
 describe('getConfig', () => {
   let originalEnv: NodeJS.ProcessEnv;
@@ -31,6 +31,10 @@ describe('getConfig', () => {
     delete process.env.TEMPERATURE;
     delete process.env.MAX_SESSIONS;
     delete process.env.HYPERNEO_MAX_SUBSCRIPTIONS_PER_CLIENT;
+    delete process.env.HYPERNEO_LOG_FILE;
+    delete process.env.HYPERNEO_LOG_MAX_BYTES;
+    delete process.env.HYPERNEO_LOG_RETAINED_FILES;
+    delete process.env.HYPERNEO_LOG_MAX_PENDING_BYTES;
     process.env.NODE_ENV = 'production';
 
     const config = getConfig();
@@ -46,6 +50,10 @@ describe('getConfig', () => {
     // Ingress fan-out guardrail default (task #899)
     expect(config.maxSubscriptionsPerClient).toBe(128);
     expect(config.nodeEnv).toBe('production');
+    expect(config.structuredLogFilePath).toBe(join(homedir(), '.hyperneo', 'logs', 'daemon.jsonl'));
+    expect(config.structuredLogMaxBytes).toBe(10 * 1024 * 1024);
+    expect(config.structuredLogRetainedFiles).toBe(5);
+    expect(config.structuredLogMaxPendingBytes).toBe(2 * 1024 * 1024);
   });
 
   test('uses environment variables when set', () => {
@@ -93,6 +101,61 @@ describe('getConfig', () => {
 
     process.env.HYPERNEO_MAX_SUBSCRIPTIONS_PER_CLIENT = '12.5';
     expect(getConfig().maxSubscriptionsPerClient).toBe(128);
+  });
+
+  test('configures and disables structured file logging', () => {
+    process.env.NODE_ENV = 'test';
+    delete process.env.HYPERNEO_LOG_FILE;
+    expect(getConfig().structuredLogFilePath).toBeUndefined();
+
+    process.env.HYPERNEO_LOG_FILE = '/tmp/hyperneo-daemon.jsonl';
+    process.env.HYPERNEO_LOG_MAX_BYTES = '1234';
+    process.env.HYPERNEO_LOG_RETAINED_FILES = '3';
+    process.env.HYPERNEO_LOG_MAX_PENDING_BYTES = '5678';
+    expect(getConfig()).toMatchObject({
+      structuredLogFilePath: '/tmp/hyperneo-daemon.jsonl',
+      structuredLogMaxBytes: 1234,
+      structuredLogRetainedFiles: 3,
+      structuredLogMaxPendingBytes: 5678,
+    });
+
+    process.env.HYPERNEO_LOG_FILE = 'OFF';
+    expect(getConfig().structuredLogFilePath).toBeUndefined();
+  });
+
+  test('structured log overrides take precedence and invalid bounds fail closed', () => {
+    process.env.HYPERNEO_LOG_FILE = '/env/log.jsonl';
+    process.env.HYPERNEO_LOG_MAX_BYTES = 'invalid';
+    process.env.HYPERNEO_LOG_RETAINED_FILES = '0';
+    process.env.HYPERNEO_LOG_MAX_PENDING_BYTES = '-1';
+
+    expect(
+      getConfig({
+        structuredLogFilePath: '/override/log.jsonl',
+        structuredLogMaxBytes: 2048,
+        structuredLogRetainedFiles: 2,
+        structuredLogMaxPendingBytes: 4096,
+      })
+    ).toMatchObject({
+      structuredLogFilePath: '/override/log.jsonl',
+      structuredLogMaxBytes: 2048,
+      structuredLogRetainedFiles: 2,
+      structuredLogMaxPendingBytes: 4096,
+    });
+
+    expect(
+      getConfig({
+        structuredLogFilePath: null,
+        structuredLogMaxBytes: 0,
+        structuredLogRetainedFiles: -1,
+        structuredLogMaxPendingBytes: Number.NaN,
+      })
+    ).toMatchObject({
+      structuredLogFilePath: undefined,
+      structuredLogMaxBytes: 10 * 1024 * 1024,
+      structuredLogRetainedFiles: 5,
+      structuredLogMaxPendingBytes: 2 * 1024 * 1024,
+    });
   });
 
   test('HYPERNEO_PORT sets the port', () => {
