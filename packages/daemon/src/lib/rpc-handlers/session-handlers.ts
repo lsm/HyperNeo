@@ -387,7 +387,11 @@ export function setupSessionHandlers(
       // appears and the merge retries.
       if (fullyMerged) {
         await sessionManager.updateSession(targetSessionId, {
-          metadata: { inputDraft: merged, inputDraftVoicePending: null },
+          metadata: {
+            inputDraft: merged,
+            inputDraftVoicePending: null,
+            inputDraftVersion: (beforeMerge.metadata?.inputDraftVersion ?? 0) + 1,
+          },
         } as Partial<Session>);
       }
     }
@@ -438,8 +442,13 @@ export function setupSessionHandlers(
   });
 
   messageHub.onRequest('session.update', async (data, _ctx) => {
-    const { sessionId: targetSessionId, ...updates } = data as UpdateSessionRequest & {
+    const {
+      sessionId: targetSessionId,
+      expectedDraftVersion,
+      ...updates
+    } = data as UpdateSessionRequest & {
       sessionId: string;
+      expectedDraftVersion?: number;
     };
 
     // A draft write while a voice pending sequence is STAGED must refresh the
@@ -455,21 +464,30 @@ export function setupSessionHandlers(
       const meta = existing?.metadata;
       if ((meta?.inputDraftVoicePending ?? '').trim() !== '') {
         (updates.metadata as Partial<SessionMetadata>).inputDraftVoiceBaseline = draftWrite ?? '';
+        (updates.metadata as Partial<SessionMetadata>).inputDraftVersion =
+          (meta?.inputDraftVersion ?? 0) + 1;
       } else if (typeof meta?.inputDraftVoiceBaseline === 'string') {
         // MERGED but still unreconciled (the baseline snapshot lingers after
         // the pending cleared): the draft holds baseline + transcripts, and a
         // STALE save — started before the merge landed — would overwrite the
         // transcripts outright (the dedup id only stops a replay, not this).
-        // Fold the transcripts into the write; a save that already carries
-        // them (its client read the merged draft) is applied as-is. Either
-        // way the snapshot clears: this write is now the reconciliation point.
+        // Whether the write already carries the transcripts is decided by the
+        // DRAFT VERSION it echoes: the daemon bumps inputDraftVersion on every
+        // draft mutation, so a writer that read the merged draft holds the
+        // current version and is applied as-is, while a stale writer (absent
+        // or older version — or one that coincidentally ends with the same
+        // phrase, which a suffix comparison cannot tell apart) gets the
+        // transcripts folded in. Either way the snapshot clears: this write is
+        // now the reconciliation point.
         const baseline = meta.inputDraftVoiceBaseline;
         const draft = meta.inputDraft ?? '';
         let transcripts = '';
         if (draft.startsWith(`${baseline} `)) transcripts = draft.slice(baseline.length + 1);
         else if (draft.startsWith(baseline)) transcripts = draft.slice(baseline.length);
+        const currentVersion = meta.inputDraftVersion ?? 0;
+        const alreadyIncluded =
+          expectedDraftVersion !== undefined && expectedDraftVersion === currentVersion;
         const written = draftWrite ?? '';
-        const alreadyIncluded = transcripts !== '' && written.endsWith(transcripts);
         const folded = alreadyIncluded
           ? written
           : transcripts
@@ -477,6 +495,12 @@ export function setupSessionHandlers(
             : written;
         (updates.metadata as Partial<SessionMetadata>).inputDraft = folded || null;
         (updates.metadata as Partial<SessionMetadata>).inputDraftVoiceBaseline = null;
+        (updates.metadata as Partial<SessionMetadata>).inputDraftVersion = currentVersion + 1;
+      } else {
+        // A plain draft write (no sequence involved) still bumps the version
+        // so OTHER tabs' in-flight saves become recognizably stale.
+        const currentVersion = meta?.inputDraftVersion ?? 0;
+        (updates.metadata as Partial<SessionMetadata>).inputDraftVersion = currentVersion + 1;
       }
     }
 
@@ -603,7 +627,12 @@ export function setupSessionHandlers(
     if ((session.metadata?.inputDraft ?? '').trim() !== expected.trim()) {
       return { cleared: false };
     }
-    const updates: UpdateSessionRequest = { metadata: { inputDraft: null } };
+    const updates: UpdateSessionRequest = {
+      metadata: {
+        inputDraft: null,
+        inputDraftVersion: (session.metadata?.inputDraftVersion ?? 0) + 1,
+      },
+    };
     await sessionManager.updateSession(sessionId, updates as Partial<Session>);
     messageHub.event(
       'session.updated',
@@ -663,6 +692,7 @@ export function setupSessionHandlers(
         inputDraft: value || null,
         inputDraftVoiceBaseline: null,
         inputDraftVoiceLastStrippedSeq: expectedSeq,
+        inputDraftVersion: (metadata.inputDraftVersion ?? 0) + 1,
       },
     };
     await sessionManager.updateSession(sessionId, updates as Partial<Session>);
@@ -735,6 +765,9 @@ export function setupSessionHandlers(
       metadataUpdate.inputDraft = value || null;
       metadataUpdate.inputDraftVoiceBaseline = null;
     }
+    // Every branch mutates inputDraft — bump the draft version so OTHER
+    // tabs' in-flight saves become recognizably stale against this write.
+    metadataUpdate.inputDraftVersion = (metadata.inputDraftVersion ?? 0) + 1;
     if (claimId) {
       // Record the committed claim AFTER the branches above, so a retry of
       // THIS merge is recognized before any branch can rewrite the draft.

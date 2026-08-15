@@ -820,6 +820,25 @@ describe('voice transcript outbox', () => {
     ).toEqual({ generation: 2, beforeTs: newerClaim.ts });
   });
 
+  it('clears the supersede record when a landing epoch restarts', () => {
+    // The previous sequence's marker EXPIRED (pruned) before its supersede
+    // record did. The next landing restarts the generation counter at 1 — the
+    // stale generation-5 record would then suppress EVERY backup of the new
+    // epoch (their generations compare lower), making them unrestorable while
+    // the landing suppresses the owner's server saves.
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.superseded.s1',
+      JSON.stringify({ generation: 5, beforeTs: Date.now() })
+    );
+    // No retained marker — the counter restarts.
+    markVoiceTranscriptLanded('s1', 'new voice', 'e1');
+    expect(voiceTranscriptLandedSignal.value.get('s1')).toBe(1);
+    expect(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.superseded.s1')).toBeNull();
+    // A backup of the new epoch's generation-1 landing is restorable.
+    saveDraftBackup('s1', 'fresh edits', 1);
+    expect(peekExpiredDraftBackup('s1')?.content).toBe('fresh edits');
+  });
+
   it('delivers the OLDEST batch when concurrent enqueues exceed the cap', () => {
     // Two tabs' pre-write prunes cannot see each other's writes, so more
     // than 20 live keys can exist. The flush batch must start at the OLDEST

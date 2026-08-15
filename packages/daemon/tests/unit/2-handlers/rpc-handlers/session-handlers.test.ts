@@ -720,6 +720,7 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
   let existingPending: string | null;
   let existingDraft: string | null;
   let existingBaseline: string | null | undefined;
+  let existingDraftVersion: number | null | undefined;
   let sessionExists: boolean;
 
   beforeEach(async () => {
@@ -728,6 +729,7 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
     existingPending = null;
     existingDraft = null;
     existingBaseline = undefined;
+    existingDraftVersion = undefined;
     sessionExists = true;
     sessionManager = {
       getSession: mock(() => null),
@@ -739,6 +741,7 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
                 inputDraft: existingDraft,
                 inputDraftVoicePending: existingPending,
                 inputDraftVoiceBaseline: existingBaseline,
+                inputDraftVersion: existingDraftVersion,
               },
             }
           : null
@@ -761,7 +764,7 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
     const handler = messageHubData.handlers.get('session.update');
     await handler!({ sessionId: 's1', metadata: { inputDraft: 'a b' } }, {});
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: { inputDraft: 'a b', inputDraftVoiceBaseline: 'a b' },
+      metadata: { inputDraft: 'a b', inputDraftVoiceBaseline: 'a b', inputDraftVersion: 1 },
     });
   });
 
@@ -779,7 +782,7 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
     const handler = messageHubData.handlers.get('session.update');
     await handler!({ sessionId: 's1', metadata: { inputDraft: null } }, {});
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: { inputDraft: null, inputDraftVoiceBaseline: '' },
+      metadata: { inputDraft: null, inputDraftVoiceBaseline: '', inputDraftVersion: 1 },
     });
   });
 
@@ -796,7 +799,11 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
     const handler = messageHubData.handlers.get('session.update');
     await handler!({ sessionId: 's1', metadata: { inputDraft: 'stale edits' } }, {});
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: { inputDraft: 'stale edits voice words', inputDraftVoiceBaseline: null },
+      metadata: {
+        inputDraft: 'stale edits voice words',
+        inputDraftVoiceBaseline: null,
+        inputDraftVersion: 1,
+      },
     });
   });
 
@@ -806,10 +813,43 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
     existingPending = null;
     existingDraft = 'old draft voice words';
     existingBaseline = 'old draft';
+    existingDraftVersion = 3;
     const handler = messageHubData.handlers.get('session.update');
-    await handler!({ sessionId: 's1', metadata: { inputDraft: 'new edits voice words' } }, {});
+    await handler!(
+      {
+        sessionId: 's1',
+        expectedDraftVersion: 3,
+        metadata: { inputDraft: 'new edits voice words' },
+      },
+      {}
+    );
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: { inputDraft: 'new edits voice words', inputDraftVoiceBaseline: null },
+      metadata: {
+        inputDraft: 'new edits voice words',
+        inputDraftVoiceBaseline: null,
+        inputDraftVersion: 4,
+      },
+    });
+  });
+
+  it('folds a stale save that coincidentally ends with the transcript phrase', async () => {
+    // The stale writer's content happens to END with the same text as the
+    // transcript — a suffix comparison cannot tell this apart from a genuine
+    // post-merge save. The DRAFT VERSION can: the stale writer echoes an
+    // older (or no) version, so the dictated occurrence is folded in rather
+    // than silently dropped.
+    existingPending = null;
+    existingDraft = 'please say hello';
+    existingBaseline = 'please say';
+    existingDraftVersion = 2;
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!({ sessionId: 's1', metadata: { inputDraft: 'please say hello' } }, {});
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: {
+        inputDraft: 'please say hello hello',
+        inputDraftVoiceBaseline: null,
+        inputDraftVersion: 3,
+      },
     });
   });
 });
@@ -827,6 +867,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
   let existingBaseline: string | null | undefined;
   let existingBaselineSeq: number | null | undefined;
   let existingMergeClaimLog: Array<{ id: string; ts: number }> | null;
+  let existingDraftVersion: number | null | undefined;
   let sessionExists: boolean;
 
   beforeEach(async () => {
@@ -838,6 +879,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     existingBaseline = undefined;
     existingBaselineSeq = undefined;
     existingMergeClaimLog = null;
+    existingDraftVersion = undefined;
     sessionExists = true;
     sessionManager = {
       getSessionFromDB: mock(() =>
@@ -851,6 +893,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
                 inputDraftVoiceBaselineSeq: existingBaselineSeq,
                 inputDraftVoiceAppendLog: existingAppendLog,
                 inputDraftVoiceMergeClaimLog: existingMergeClaimLog,
+                inputDraftVersion: existingDraftVersion,
               },
             }
           : null
@@ -1078,6 +1121,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
         // Records WHICH sequence was stripped, so a client retrying the strip
         // after a lost ack can recognize it as committed.
         inputDraftVoiceLastStrippedSeq: 3,
+        inputDraftVersion: 1,
       },
     });
   });
@@ -1114,6 +1158,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
         inputDraft: null,
         inputDraftVoiceBaseline: null,
         inputDraftVoiceLastStrippedSeq: 1,
+        inputDraftVersion: 1,
       },
     });
   });
@@ -1153,7 +1198,11 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     };
     expect(result).toEqual({ merged: true, value: 'user edits first second' });
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: { inputDraft: 'user edits first second', inputDraftVoiceBaseline: null },
+      metadata: {
+        inputDraft: 'user edits first second',
+        inputDraftVoiceBaseline: null,
+        inputDraftVersion: 1,
+      },
     });
   });
 
@@ -1171,7 +1220,11 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     // so the push becomes the new draft and the baseline follows it.
     expect(result).toEqual({ merged: true, value: 'user edits' });
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: { inputDraft: 'user edits', inputDraftVoiceBaseline: 'user edits' },
+      metadata: {
+        inputDraft: 'user edits',
+        inputDraftVoiceBaseline: 'user edits',
+        inputDraftVersion: 1,
+      },
     });
   });
 
@@ -1185,7 +1238,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     };
     expect(result).toEqual({ merged: true, value: 'user edits' });
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: { inputDraft: 'user edits' },
+      metadata: { inputDraft: 'user edits', inputDraftVersion: 1 },
     });
   });
 
@@ -1214,7 +1267,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     };
     expect(result).toEqual({ merged: true, value: '' });
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: { inputDraft: null },
+      metadata: { inputDraft: null, inputDraftVersion: 1 },
     });
   });
 
@@ -1340,7 +1393,11 @@ describe('Session RPC Handlers — session.get voice draft merge', () => {
     expect(handler).toBeDefined();
     await handler!({ sessionId: 's1' }, {});
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: { inputDraft: 'existing hello world', inputDraftVoicePending: null },
+      metadata: {
+        inputDraft: 'existing hello world',
+        inputDraftVoicePending: null,
+        inputDraftVersion: 1,
+      },
     });
   });
 
@@ -1397,7 +1454,7 @@ describe('Session RPC Handlers — session.clearInputDraftIf', () => {
     };
     expect(result.cleared).toBe(true);
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: { inputDraft: null },
+      metadata: { inputDraft: null, inputDraftVersion: 1 },
     });
   });
 

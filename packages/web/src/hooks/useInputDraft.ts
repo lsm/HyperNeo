@@ -108,6 +108,11 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // draft would resurrect text the user already sent or cleared. The clear is
   // retried on the next effect run (reconnect / content change).
   const pendingClearRef = useRef<string | null>(null);
+  // The daemon draft VERSION each session's composer last read (from
+  // session.get). Saves echo it as expectedDraftVersion so the daemon can
+  // tell a write derived from the CURRENT draft (applied as-is) from a stale
+  // in-flight save (transcripts folded in) — a suffix comparison cannot.
+  const draftVersionsRef = useRef<Map<string, number>>(new Map());
 
   // Consume a landing generation and record it as reconciled — every path
   // that settles a landing goes through here, so the fold guard above and the
@@ -171,6 +176,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
               inputDraftVoicePending?: string | null;
               inputDraftVoiceBaseline?: string | null;
               inputDraftVoiceBaselineSeq?: number | null;
+              inputDraftVersion?: number | null;
             };
           };
         }>('session.get', {
@@ -182,6 +188,12 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           const baseline = response.session?.metadata?.inputDraftVoiceBaseline;
           const baselineSeq = response.session?.metadata?.inputDraftVoiceBaselineSeq;
           const pendingRetained = !!response.session?.metadata?.inputDraftVoicePending;
+          if (typeof response.session?.metadata?.inputDraftVersion === 'number') {
+            draftVersionsRef.current.set(
+              targetSessionId,
+              response.session.metadata.inputDraftVersion
+            );
+          }
           if (!cancelled && draft) {
             contentSignal.value = draft;
           } else if (
@@ -743,6 +755,27 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       if (!hub) return; // not actually reachable yet — retry on the next change
       const queued = [...pendingBackupFlushRef.current.entries()];
       pendingBackupFlushRef.current.clear();
+      // Requeue a failed/declined claim WITHOUT clobbering a NEWER claim that
+      // was queued while its merge was in flight (another landing + switch):
+      // the newer entry supersedes this retry — merging the older content
+      // would push obsolete edits while the newer backup went unscheduled.
+      // The older claim's durable key is skipped later via the supersede
+      // marker the newer claim's acknowledged retire writes.
+      const requeueClaim = (
+        flushSessionId: string,
+        entry: { content: string; generation: number; key: string; claimId: string; ts: number }
+      ) => {
+        const newer = pendingBackupFlushRef.current.get(flushSessionId);
+        if (
+          newer &&
+          (newer.generation > entry.generation ||
+            (newer.generation === entry.generation && newer.ts > entry.ts))
+        ) {
+          return; // a newer claim superseded this retry
+        }
+        pendingBackupFlushRef.current.set(flushSessionId, entry);
+        scheduleFlushRetry();
+      };
       for (const [flushSessionId, { content, generation, key, claimId, ts }] of queued) {
         if (flushSessionId === currentSessionIdRef.current) {
           if (contentSignal.peek().trim() === '') {
@@ -765,14 +798,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
               })
               .then((result) => {
                 if (!result.merged) {
-                  pendingBackupFlushRef.current.set(flushSessionId, {
-                    content,
-                    generation,
-                    key,
-                    claimId,
-                    ts,
-                  });
-                  scheduleFlushRetry();
+                  requeueClaim(flushSessionId, { content, generation, key, claimId, ts });
                   return;
                 }
                 if (currentSessionIdRef.current === flushSessionId) {
@@ -785,14 +811,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                 retireDraftBackupClaim({ key, generation, ts });
               })
               .catch(() => {
-                pendingBackupFlushRef.current.set(flushSessionId, {
-                  content,
-                  generation,
-                  key,
-                  claimId,
-                  ts,
-                });
-                scheduleFlushRetry();
+                requeueClaim(flushSessionId, { content, generation, key, claimId, ts });
               });
           } else {
             // Active content supersedes the backup: the user returned to a
@@ -818,24 +837,10 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             // Declined (a newer sequence is unresolved — the draft diverged
             // from its baseline): requeue with backoff, or the backup would
             // never retry and could expire without reaching the daemon.
-            pendingBackupFlushRef.current.set(flushSessionId, {
-              content,
-              generation,
-              key,
-              claimId,
-              ts,
-            });
-            scheduleFlushRetry();
+            requeueClaim(flushSessionId, { content, generation, key, claimId, ts });
           })
           .catch(() => {
-            pendingBackupFlushRef.current.set(flushSessionId, {
-              content,
-              generation,
-              key,
-              claimId,
-              ts,
-            });
-            scheduleFlushRetry();
+            requeueClaim(flushSessionId, { content, generation, key, claimId, ts });
           });
       }
     };
@@ -922,6 +927,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           hub
             .request('session.update', {
               sessionId: prevSessionId,
+              expectedDraftVersion: draftVersionsRef.current.get(prevSessionId),
               metadata: {
                 inputDraft: flushContent || null,
               },
@@ -992,6 +998,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         hub
           .request('session.update', {
             sessionId,
+            expectedDraftVersion: draftVersionsRef.current.get(sessionId),
             metadata: {
               inputDraft: null,
             },
@@ -1020,6 +1027,10 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       try {
         await hub.request('session.update', {
           sessionId,
+          // Echo the draft version this composer last READ: the daemon applies
+          // the write as-is only when it matches (a mismatch marks a stale
+          // in-flight save, whose transcripts it folds back in).
+          expectedDraftVersion: draftVersionsRef.current.get(sessionId),
           metadata: {
             inputDraft: trimmedContent,
           },

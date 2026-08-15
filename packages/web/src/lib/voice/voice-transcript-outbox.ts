@@ -71,6 +71,20 @@ export function markVoiceTranscriptLanded(
   } catch {
     /* storage unavailable — start a fresh sequence */
   }
+  if (seq === 1) {
+    // A fresh GENERATION EPOCH: the previous sequence's marker expired, so
+    // its counters restart at 1. The epoch's SUPERSEDE record is keyed by
+    // generation number and must not outlive the epoch — a stale
+    // generation-5 record would suppress every backup of the new epoch's
+    // generation-1..4 landings (their generations compare lower regardless
+    // of their newer timestamps), making them unrestorable while their
+    // landing suppresses the owner's server saves.
+    try {
+      localStorage.removeItem(`${SUPERSEDED_PREFIX}${sessionId}`);
+    } catch {
+      /* storage unavailable */
+    }
+  }
   markVoiceTranscriptLandedLocal(sessionId, text, false, seq, entryId);
   try {
     // Timestamp + monotonic counter so two landings within the same Date.now()
