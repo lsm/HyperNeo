@@ -5600,19 +5600,21 @@ export class TaskAgentManager {
         // subSessions map is keyed by SESSION id — bridge node → sessions
         // through the run's executions (workflowNodeId → agentSessionId
         // must be live).
-        roleHolderActiveLookup: (nodeId) => {
+        roleHolderActiveLookup: (nodeId, agentName) => {
           const live = this.subSessions.get(taskId);
           if (!live) return false;
           try {
-            // ACTOR-REGISTRY PARITY: a workflow worker is active only when
-            // its execution is in_progress or waiting_rebind — a retained
-            // session on a completed execution must NOT count (the resolver
-            // would deliver the role only to the truly active holder).
+            // ACTOR-REGISTRY PARITY, scoped to the ROLE'S SLOT: a workflow
+            // worker is active only when its (node, slot) execution is
+            // in_progress or waiting_rebind with a live session — a live
+            // OTHER slot on the same node must not count (the resolver
+            // delivers per-actor, not per-node).
             return this.config.nodeExecutionRepo
               .listByWorkflowRun(workflowRunId)
               .some(
                 (e) =>
                   e.workflowNodeId === nodeId &&
+                  e.agentName === agentName &&
                   (e.status === 'in_progress' || e.status === 'waiting_rebind') &&
                   !!e.agentSessionId &&
                   live.has(e.agentSessionId)

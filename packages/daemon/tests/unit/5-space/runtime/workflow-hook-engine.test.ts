@@ -1721,7 +1721,8 @@ describe('WorkflowHookEngine.executeAction', () => {
       artifactRepo,
       hookStateRepo,
       workspacePath: process.cwd(),
-      roleHolderActiveLookup: (nodeId) => nodeId === 'n-review',
+      roleHolderActiveLookup: (nodeId, agentName) =>
+        nodeId === 'n-review' && agentName === 'reviewer',
     });
     // Scalar form.
     const scalar = await engine.executeAction(

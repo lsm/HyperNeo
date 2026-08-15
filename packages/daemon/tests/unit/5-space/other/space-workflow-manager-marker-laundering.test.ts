@@ -92,7 +92,7 @@ describe('SpaceWorkflowManager — corrupt-marker laundering', () => {
     expect(persisted?.hookBindings?.[0]?.hookId).toBe('pr_ready');
   });
 
-  test('a marker-only save clears the bindings (repair path)', () => {
+  test('a marker-ONLY save is refused (round 82: no silent gate drop)', () => {
     const wf = manager.createWorkflow({
       spaceId,
       name: 'WF',
@@ -109,9 +109,15 @@ describe('SpaceWorkflowManager — corrupt-marker laundering', () => {
         },
       ],
     });
-    manager.updateWorkflow(wf.id, { hookBindings: [markerBinding()] });
+    // The visual editor round-trips the loaded marker bindings verbatim —
+    // a marker-only payload must REFUSE (stripping to empty would convert
+    // the fail-closed corrupt workflow into a valid hook-less one).
+    expect(() => manager.updateWorkflow(wf.id, { hookBindings: [markerBinding()] })).toThrow(
+      /corrupt and currently fails closed/
+    );
+    // The prior valid bindings are untouched.
     const persisted = repo.getWorkflow(wf.id);
-    expect(persisted?.hookBindings ?? []).toHaveLength(0);
+    expect(persisted?.hookBindings?.[0]?.hookId).toBe('pr_ready');
   });
 
   test('a hook-unrelated edit on a marker-loaded workflow leaves the corrupt column untouched', () => {

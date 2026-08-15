@@ -498,12 +498,20 @@ export class SpaceWorkflowManager {
       callerBindings.some((b) => b.hookId === CORRUPT_HOOK_BINDINGS_HOOK_ID)
     ) {
       const cleaned = callerBindings.filter((b) => b.hookId !== CORRUPT_HOOK_BINDINGS_HOOK_ID);
-      params = { ...params, hookBindings: cleaned };
-      if (cleaned.length === 0) {
-        logger.warn(
-          `Workflow ${id}: caller-supplied hookBindings contained only the corrupt-column marker; clearing bindings (repair the corrupt column or re-author hooks).`
+      if (cleaned.length === 0 && callerBindings.length > 0) {
+        // Marker-ONLY payload (the visual editor round-trips the loaded
+        // marker bindings verbatim on ANY edit): stripping to empty would
+        // silently convert the fail-closed corrupt workflow into a valid
+        // hook-less one. REFUSE — the repair must supply real replacement
+        // bindings or explicitly clear the hooks.
+        throw new WorkflowValidationError(
+          "hookBindings: this workflow's persisted hook configuration is corrupt and currently " +
+            'fails closed. Saving would silently drop its gates. Re-author the hook bindings ' +
+            '(or clear them deliberately with an empty list plus an explicit hooks repair), ' +
+            'then save again.'
         );
       }
+      params = { ...params, hookBindings: cleaned };
     }
     const effectiveCustomHooks =
       params.customHooks === undefined ? (existing.customHooks ?? []) : (params.customHooks ?? []);

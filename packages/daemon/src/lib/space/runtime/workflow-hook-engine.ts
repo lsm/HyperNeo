@@ -137,7 +137,7 @@ export interface WorkflowHookEngineConfig {
    * any holder of a role is active, only active holders receive it). When
    * provided, '@role:' targets suppress inactive holders' gates; absent
    * (tests, other constructors) the topology-only behavior applies. */
-  roleHolderActiveLookup?: (nodeId: string) => boolean;
+  roleHolderActiveLookup?: (nodeId: string, agentName: string) => boolean;
   notifySourceSession?: (sessionId: string, message: string) => Promise<void>;
   onHookStateUpdated?: (
     hookId: string,
@@ -1454,11 +1454,17 @@ export class WorkflowHookEngine {
           // side-effecting hook on an undelivered role send). Applied per
           // resolved-node against the same authorized-holder set.
           const roleActiveLookup = this.config.roleHolderActiveLookup;
+          // The role's SLOT name scopes activity to the targeted agent: a
+          // multi-agent node whose OTHER slot is live must not count as an
+          // active holder of this role (the resolver delivers per-actor).
+          const roleSlotName = target.startsWith('@role:')
+            ? decodeURIComponent(target.slice(6))
+            : target;
           const roleNodeRoutable = (r: string): boolean => {
             if (!roleActiveLookup) return roleNodeRoutableBase(r);
             const holders = resolvedTargets.filter((h) => roleNodeRoutableBase(h));
             const activeHolders = holders.filter(
-              (h) => roleActiveLookup(nodeNameToId.get(h) ?? h) === true
+              (h) => roleActiveLookup(nodeNameToId.get(h) ?? h, roleSlotName) === true
             );
             if (activeHolders.length > 0 && !activeHolders.includes(r)) return false;
             return roleNodeRoutableBase(r);
@@ -1678,8 +1684,11 @@ export class WorkflowHookEngine {
             // RESOLVER PARITY (active-preferred role delivery): when any
             // authorized holder has a live sub-session, only active holders
             // receive the message — suppress the inactive ones' gates.
+            const roleSlotName = decodeURIComponent(t.slice(6));
             const activeHolders = roleActiveLookup
-              ? authorizedHolders.filter((r) => roleActiveLookup(nodeNameToId.get(r) ?? r) === true)
+              ? authorizedHolders.filter(
+                  (r) => roleActiveLookup(nodeNameToId.get(r) ?? r, roleSlotName) === true
+                )
               : authorizedHolders;
             const roleDeliverable =
               activeHolders.length > 0 ? new Set(activeHolders) : new Set(authorizedHolders);
@@ -2990,7 +2999,10 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
                 queuedAt: now,
               },
             };
-          } else {
+          } else if (!engine.hasOtherQueuedActions(hookId, actionKey)) {
+            // Reset only when no sibling action is still queued on this
+            // hook — an earlier hook's queued action (this retry came from a
+            // LATER binding) keeps depending on the shared count/cooldown.
             patch.retryCount = 0;
             patch.nextRetryAt = null;
             patch.localState.__firstRetryAt = undefined;

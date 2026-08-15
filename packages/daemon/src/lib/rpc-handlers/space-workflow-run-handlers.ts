@@ -1026,6 +1026,19 @@ export function setupSpaceWorkflowRunHandlers(
         },
       });
       if (!rescheduled) {
+        // The FIRST update (lastFlow 'continue', cleared cooldown/reset
+        // count) already committed — a plain error would leave the client
+        // staring at a stale retry banner that a refresh HIDES (and a second
+        // retryHook is rejected: lastFlow is no longer 'retry'). Restore the
+        // retry-flow state from the pre-check snapshot so the banner stays
+        // actionable; if the restore also fails the store is down and the
+        // error surfaces either way.
+        hookStateRepo.updateWithRetry(params.runId, params.hookId, {
+          lastFlow: 'retry',
+          lastReason: preCheck.lastReason,
+          retryCount: preCheck.retryCount,
+          nextRetryAt: preCheck.nextRetryAt ?? null,
+        });
         throw new Error(
           "Retry requested, but the queued action's durable deadline could not be updated " +
             '(state conflict) — retry again.'

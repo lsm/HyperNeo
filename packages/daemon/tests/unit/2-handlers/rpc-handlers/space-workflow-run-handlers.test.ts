@@ -1498,6 +1498,59 @@ describe('space-workflow-run-handlers', () => {
     });
   });
 
+  describe('spaceWorkflowRun.retryHook — reschedule-failure restore (round 82)', () => {
+    it('restores the retry-flow state when the durable reschedule write fails', async () => {
+      let failNext = false;
+      setup({
+        hookState: {
+          runId: 'run-1',
+          hookId: 'pr_ready',
+          version: 4,
+          localState: {
+            __queuedRetryableActions: {
+              'space.send_action-1': {
+                actionKey: 'space.send_action-1',
+                hookId: 'pr_ready',
+                methodName: 'send_message',
+                args: { target: 'Review', message: 'x' },
+                meta: { sessionId: 's1', agentName: 'coder', nodeId: 'n1', taskId: 't1' },
+                isFollowUp: false,
+                nextRetryAt: 9_999,
+                retryAfterMs: 30_000,
+                queuedAt: 1,
+              },
+            },
+          },
+          lastFlow: 'retry',
+          lastReason: 'Waiting.',
+          retryCount: 5,
+          nextRetryAt: 888,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      });
+      // The flow flip uses the single version-guarded update (not
+      // intercepted); the FIRST updateWithRetry is the RESCHEDULE — fail it,
+      // so the subsequent RESTORE write is the one that runs clean.
+      const origUpdateWithRetry = hookStateRepo.repo.updateWithRetry.bind(hookStateRepo.repo);
+      let calls = 0;
+      hookStateRepo.repo.updateWithRetry = ((_runId: string, _hookId: string, patch: unknown) => {
+        calls += 1;
+        if (calls === 1) return null; // reschedule fails
+        return origUpdateWithRetry(_runId, _hookId, patch as never); // restore
+      }) as unknown as typeof hookStateRepo.repo.updateWithRetry;
+      void failNext;
+      await expect(
+        call('spaceWorkflowRun.retryHook', { runId: 'run-1', hookId: 'pr_ready' })
+      ).rejects.toThrow(/durable deadline could not be updated/);
+      // The retry-flow state was RESTORED: the snapshot still reads retry
+      // (the banner stays; a subsequent retryHook passes the pre-check).
+      const restored = hookStateRepo.repo.get('run-1', 'pr_ready');
+      expect(restored?.lastFlow).toBe('retry');
+      expect(restored?.retryCount).toBe(5);
+    });
+  });
+
   describe('spaceWorkflowRun.retryHook — ceiling recovery clears', () => {
     it('clears the ceiling stamp, terminal marker, and queued-action map', async () => {
       setup({
