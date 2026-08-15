@@ -645,6 +645,59 @@ export function setupSessionHandlers(
     return { updated: true, value };
   });
 
+  // Atomically push a draft BACKUP onto the server draft WITHOUT discarding
+  // voice transcripts the sequence merged. A backup holds save-suppressed
+  // edits whose landing EXPIRED — the client's localStorage marker is gone, so
+  // it can no longer reconcile locally — and pushing the transcript-free
+  // backup with a bare session.update would clobber transcripts sitting in the
+  // draft. The baseline snapshot separates them exactly: transcripts are
+  // draft-minus-baseline (appendDraftText joining), so the write becomes
+  // backup + transcripts. While the pending is still STAGED nothing has
+  // merged, so the backup lands as the new draft and the baseline re-anchors
+  // to it (mirroring session.update); a draft that diverged from the snapshot
+  // means a newer writer intervened — decline rather than guess, the client
+  // retries. Read+write is one synchronous step, like stripVoiceBaseline.
+  messageHub.onRequest('session.mergeVoiceDraftBackup', async (data, _ctx) => {
+    const { sessionId, content } = data as { sessionId: string; content: string };
+    if (typeof content !== 'string') throw new Error('Backup content is required');
+    const session = sessionManager.getSessionFromDB(sessionId);
+    if (!session) throw new Error('Session not found');
+    const metadata = session.metadata ?? {};
+    const baseline = metadata.inputDraftVoiceBaseline;
+    const draft = metadata.inputDraft ?? '';
+    const trimmed = content.trim();
+    const metadataUpdate: Partial<SessionMetadata> = {};
+    if (typeof baseline !== 'string') {
+      // No sequence staged or lingering — a plain draft write.
+      metadataUpdate.inputDraft = trimmed || null;
+    } else if ((metadata.inputDraftVoicePending ?? '').trim() !== '') {
+      // Still staged: the pending merges onto whatever draft is current at
+      // merge time, so re-anchor the baseline to the pushed backup.
+      metadataUpdate.inputDraft = trimmed || null;
+      metadataUpdate.inputDraftVoiceBaseline = trimmed;
+    } else {
+      // Merged: keep the transcripts, drop the stale pre-sequence baseline.
+      let transcripts: string;
+      if (draft === baseline) transcripts = '';
+      else if (draft.startsWith(`${baseline} `)) transcripts = draft.slice(baseline.length + 1);
+      else if (draft.startsWith(baseline)) transcripts = draft.slice(baseline.length);
+      else return { merged: false };
+      const value = appendDraftText(trimmed, transcripts);
+      metadataUpdate.inputDraft = value || null;
+      metadataUpdate.inputDraftVoiceBaseline = null;
+    }
+    const updates: UpdateSessionRequest = { metadata: metadataUpdate };
+    await sessionManager.updateSession(sessionId, updates as Partial<Session>);
+    messageHub.event(
+      'session.updated',
+      { ...updates, sessionId },
+      {
+        channel: `session:${sessionId}`,
+      }
+    );
+    return { merged: true, value: metadataUpdate.inputDraft ?? '' };
+  });
+
   messageHub.onRequest('session.delete', async (data, _ctx) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
 

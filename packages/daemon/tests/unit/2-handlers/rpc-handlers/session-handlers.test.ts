@@ -1078,6 +1078,87 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     ).toEqual({ updated: false });
     expect(sessionManager.updateSession).not.toHaveBeenCalled();
   });
+
+  it('pushes a backup ONTO the merged transcripts, keeping both (mergeVoiceDraftBackup)', async () => {
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    expect(handler).toBeDefined();
+    // The expired-landing reload path: the draft holds baseline + merged
+    // transcripts; the client backup holds the user's newer transcript-free
+    // edits. The push must keep BOTH — never the backup alone.
+    existingPending = null;
+    existingBaseline = 'stale baseline';
+    existingBaselineSeq = 2;
+    existingDraft = 'stale baseline first second';
+    const result = (await handler!({ sessionId: 's1', content: 'user edits' }, {})) as {
+      merged: boolean;
+      value: string;
+    };
+    expect(result).toEqual({ merged: true, value: 'user edits first second' });
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: 'user edits first second', inputDraftVoiceBaseline: null },
+    });
+  });
+
+  it('re-anchors the baseline when the pending is still staged (nothing merged yet)', async () => {
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    existingPending = 'voice';
+    existingBaseline = 'old draft';
+    existingBaselineSeq = 1;
+    existingDraft = 'old draft';
+    const result = (await handler!({ sessionId: 's1', content: 'user edits' }, {})) as {
+      merged: boolean;
+      value: string;
+    };
+    // The staged pending merges onto whatever draft is current at merge time,
+    // so the push becomes the new draft and the baseline follows it.
+    expect(result).toEqual({ merged: true, value: 'user edits' });
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: 'user edits', inputDraftVoiceBaseline: 'user edits' },
+    });
+  });
+
+  it('writes the backup as a plain draft when no sequence lingers', async () => {
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    existingBaseline = undefined;
+    existingDraft = 'anything';
+    const result = (await handler!({ sessionId: 's1', content: 'user edits' }, {})) as {
+      merged: boolean;
+      value: string;
+    };
+    expect(result).toEqual({ merged: true, value: 'user edits' });
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: 'user edits' },
+    });
+  });
+
+  it('declines the merge when the draft diverged from the baseline snapshot', async () => {
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    // A newer writer changed the draft after the sequence merged — folding
+    // against the stale snapshot would guess; decline and let the client retry.
+    existingPending = null;
+    existingBaseline = 'old';
+    existingBaselineSeq = 1;
+    existingDraft = 'an unrelated newer draft';
+    const result = (await handler!({ sessionId: 's1', content: 'user edits' }, {})) as {
+      merged: boolean;
+    };
+    expect(result).toEqual({ merged: false });
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('clears the draft when an empty backup is pushed (owed clear retry)', async () => {
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    existingBaseline = undefined;
+    existingDraft = 'stale';
+    const result = (await handler!({ sessionId: 's1', content: '' }, {})) as {
+      merged: boolean;
+      value: string;
+    };
+    expect(result).toEqual({ merged: true, value: '' });
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: null },
+    });
+  });
 });
 
 describe('Session RPC Handlers — session.get voice draft merge', () => {

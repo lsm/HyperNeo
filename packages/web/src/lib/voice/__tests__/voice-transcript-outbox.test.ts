@@ -20,6 +20,7 @@ import {
   consumeVoiceTranscriptLanded,
   enqueueTranscript,
   flushPendingTranscripts,
+  getAnnouncedEntryIds,
   getDraftBackup,
   getLandingTranscript,
   getPendingTranscripts,
@@ -533,18 +534,34 @@ describe('voice transcript outbox', () => {
 
   it('does not announce a SECOND landing for an already-announced deduped entry', async () => {
     // Another tab's append committed this transcript and its landing was
-    // refreshed and CONSUMED there; the retained marker still names the text.
-    // This tab's concurrent flush gets a deduped ack — announcing another
+    // refreshed and CONSUMED there; the retained marker still names the entry
+    // id. This tab's concurrent flush gets a deduped ack — announcing another
     // landing would be false (no pending is staged) and could let a later
     // clear-reconcile resurrect the already-merged transcript.
-    enqueueTranscript('s1', 'shared');
-    markVoiceTranscriptLanded('s1', 'shared');
+    enqueueTranscript('s1', 'shared', 'entry-shared');
+    markVoiceTranscriptLanded('s1', 'shared', 'entry-shared');
     consumeVoiceTranscriptLanded('s1', voiceTranscriptLandedSignal.value.get('s1') ?? 1);
-    expect(getLandingTranscript('s1')).toBe('shared'); // retained marker names it
+    expect(getAnnouncedEntryIds('s1')).toContain('entry-shared'); // retained marker names it
     hubRequest.mockResolvedValueOnce({ success: true, deduped: true });
     await flushPendingTranscripts();
     expect(getPendingTranscripts()).toHaveLength(0);
     expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(false);
+  });
+
+  it('announces a deduped entry whose id was never announced, even on a phrase collision', async () => {
+    // An older consumed landing's marker contains the same PHRASE as a NEWER
+    // transcript. The newer entry's append committed but lost its ack, so its
+    // replay returns deduped — but its id was never announced. Matching by
+    // TEXT here would mistake the old marker for an announcement and skip the
+    // landing, leaving the newly staged transcript invisible to a mounted
+    // composer until the next navigation. Identity is matched by ENTRY ID.
+    markVoiceTranscriptLanded('s1', 'note the weather', 'entry-old');
+    consumeVoiceTranscriptLanded('s1', voiceTranscriptLandedSignal.value.get('s1') ?? 1);
+    enqueueTranscript('s1', 'note the weather', 'entry-new');
+    hubRequest.mockResolvedValueOnce({ success: true, deduped: true });
+    await flushPendingTranscripts();
+    expect(getPendingTranscripts()).toHaveLength(0);
+    expect(voiceTranscriptLandedSignal.value.has('s1')).toBe(true);
   });
 
   it('cleans an entry whose TTL expires in a long-lived tab on the next flush', async () => {
