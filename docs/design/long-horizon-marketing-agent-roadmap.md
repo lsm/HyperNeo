@@ -136,8 +136,9 @@ The target is one behavioral contract per PR, normally no more than 200 changed 
 - Correlate external-event delivery key with V2 message/job identity.
 - Keep subscription, TTL, activation, and source-delivery state upstream.
 - Remove duplicate last-mile retry ownership only after V2 acceptance.
+- Consume terminal V2 `failed`/`rejected` status before marking the source delivery terminal. A terminal V2 failure must create a new delivery-attempt generation or an explicit retryable/degraded source state; it must not leave the upstream event treated as handed off when the agent never received it.
 
-**Estimate:** 120–200 lines.
+**Estimate:** 140–220 lines.
 
 #### V6. Migrate inactive LH inbox delivery
 
@@ -195,9 +196,11 @@ Maintain a mutation-path coverage matrix and close remaining production gaps. Mo
 
 ### Stage S — Subscription precision and controls
 
-#### S1. Typed filter contract
+#### S1. Typed lifecycle filter contract
 
-Start with a narrow, versionable contract:
+This contract applies only to `source: 'space'` lifecycle subscriptions. Preserve existing source-specific filter schemas for GitHub, CRM, calendar, and other connectors rather than imposing lifecycle-only fields on every source.
+
+Start with a narrow, versionable lifecycle contract:
 
 ```ts
 interface SpaceLifecycleSubscriptionFilter {
@@ -206,15 +209,15 @@ interface SpaceLifecycleSubscriptionFilter {
 }
 ```
 
-- Define normalization and any-match behavior for each supported field; multiple fields combine with AND.
-- Reject unsupported fields.
-- Migrate **all** built-in template filters before enabling strict rejection:
+- Define normalization and any-match behavior for each supported lifecycle field; multiple fields combine with AND.
+- Reject unsupported fields only for lifecycle subscriptions; validate non-lifecycle filters against their own source-specific contracts.
+- Migrate **all** built-in Space lifecycle template filters before enabling strict rejection:
   - `labels` filters to `labelsAny` for marketing, product-quality-manager, and research;
   - coordinator `statuses` filters to typed `statusesAny` or equivalent exact status topics.
-- Backfill or repair already persisted legacy `labels` and `statuses` subscription rows in the same release so existing agents do not silently lose matching.
-- Handle the singular `{ label: ... }` metadata written by the existing `subscribe_agent_event` MCP contract. It is not payload filtering: either move it to a separate typed display-label field with a migration or intentionally map it to payload semantics before rejecting it. Update the MCP contract so it cannot continue creating unsupported filters.
+- Backfill or repair already persisted legacy lifecycle `labels` and `statuses` subscription rows in the same release so existing agents do not silently lose matching.
+- Handle the singular `{ label: ... }` metadata written by the existing `subscribe_agent_event` MCP contract. It is not payload filtering: either move it to a separate typed display-label field with a migration or intentionally map it to payload semantics before rejecting it. Update the MCP contract so it cannot continue creating unsupported lifecycle filters.
 
-**Estimate:** 140–210 lines.
+**Estimate:** 150–220 lines.
 
 #### S2. Runtime filter enforcement
 
@@ -224,13 +227,14 @@ interface SpaceLifecycleSubscriptionFilter {
 
 **Estimate:** 70–140 lines.
 
-#### S3. LH subscription UI
+#### S3. LH subscription authorization and UI
 
+- Enforce authorization inside MCP tool handlers, not merely the UI/RPC: only the target LH agent, coordinator, or explicit human authority may create/edit/status/delete that agent's subscriptions. Ordinary member sessions must not add broad wakeups to or remove wakeups from another LH agent.
 - Per-agent list/create/edit/status/delete controls.
 - Separate topic glob editing from structured payload filters.
 - Reuse existing RPC and web-store CRUD.
 
-**Estimate:** 140–240 lines.
+**Estimate:** 170–250 lines.
 
 ### Stage G — Goal ownership and outcome integration
 
@@ -304,7 +308,7 @@ This is the required behavior currently absent from `mark_complete.goal_update`;
 - Activate/rehydrate the owner session.
 - Deliver through the LH V2 adapter.
 - Use explicit coordinator fallback when the owner is absent or unavailable.
-- Tie route generation to an ownership version. `replacePrimaryGoalOwner` must invalidate or supersede routes for unresolved reports and enqueue a fresh deterministic route to the new owner; a routed former owner must not leave the report stranded even though it cannot decide it.
+- Tie route generation to an ownership and availability version. `replacePrimaryGoalOwner` must invalidate or supersede routes for unresolved reports and enqueue a fresh deterministic route to the new owner; owner pause/disable/archive transitions must do the same, routing visibly to the coordinator fallback. A routed former or unavailable owner must not leave the report stranded even though it cannot decide it.
 - Atomically persist durable routing work with report creation or require the dispatcher to scan every unrouted/superseded report. Delivery identity must be deterministic from report ID plus route generation so restart recovery is idempotent.
 - Persist routing outcome without blocking task completion; a committed report must not be lost because the daemon exits before the asynchronous route call starts.
 
@@ -344,7 +348,7 @@ Forge goal-automation self-nag remains a separate evidence-processing mechanism.
 - Pause, resume, and semantic cancel.
 - Recompute cron `nextRunAt` and explicitly handle past one-shot resumes.
 - Add MCP parity, including cron reminders and paused/fired status filters.
-- Enforce mutation authorization inside every MCP handler, not only RPC/UI: the reminder's owning LH agent, explicit coordinator authority, or human authority may edit/pause/resume/cancel; ordinary ad-hoc member sessions must not mutate another agent's wakeups.
+- Enforce authorization inside every MCP handler, not only RPC/UI, for create as well as edit/pause/resume/cancel: the reminder's owning LH agent, explicit coordinator authority, or human authority may schedule or mutate a wake-up for that agent; ordinary ad-hoc member sessions must not inject or mutate another agent's wakeups.
 
 **Estimate:** 170–250 lines.
 
@@ -397,7 +401,7 @@ L1 -> S1 -> S2 -> S3
 
 G1 -> G2 -> G3 -> G4
 G1 -> G5 -> G6
-V3 + G2 + G6 -> G7 -> G8 -> G9
+V3 + G1 + G2 + G3 + G4 + G5 + G6 -> G7 -> G8 -> G9
 
 R1 -> R2 -> R3 -> R4
 V3 -> V4 before reminder V2 migration is considered complete
