@@ -291,7 +291,7 @@ Do not provide payload update/delete methods.
 #### G6. Terminal transition captures outcome report
 
 - Define one shared reportable-terminal predicate before implementation. Goal-linked tasks entering `done` or `blocked` require reports; `cancelled` and `archived` require reports only when they terminate previously active goal work rather than an administrative cleanup. The predicate must be versioned and covered by tests so every writer applies the same rule.
-- Add a durable task-scoped pending-outcome record for supervised/pre-terminal submissions. A worker can submit structured observations, recommendations, proposed updates, and evidence references while a task is in `review`; that payload must survive until approval and post-approval work complete. The terminal transition atomically consumes the pending outcome into the immutable report and terminal generation.
+- Add a durable task-scoped pending-outcome record for supervised/pre-terminal submissions. A worker can submit structured observations, recommendations, proposed updates, and evidence references while a task is in `review`; that payload must survive until approval and post-approval work complete. Bind the pending outcome to an execution/review generation, and clear or supersede it whenever that attempt is rejected, reopened, or retried so stale work cannot be consumed later. The terminal transition atomically consumes the current pending outcome into the immutable report and terminal generation.
 - Create the report as part of the central reportable terminal transition, not as an optional model-invoked tool. A worker may submit the structured outcome payload before or during completion, but the terminal command/transition must guarantee one report exists even when the worker omits the tool call.
 - Audit every reportable terminal writer and route it through the atomic transition. This must include direct repository writers such as `PostApprovalRouter.route`, whose no-route branch currently completes with `taskRepo.updateTask` and intentionally bypasses `setTaskStatus`.
 - Keep notification/routing asynchronous and non-blocking.
@@ -308,9 +308,10 @@ This is the required behavior currently absent from `mark_complete.goal_update`;
 - Activate/rehydrate the owner session.
 - Deliver through the LH V2 adapter.
 - Use explicit coordinator fallback when the owner is absent or unavailable.
-- Tie route generation to an ownership and availability version. `replacePrimaryGoalOwner` must invalidate or supersede routes for unresolved reports and enqueue a fresh deterministic route to the new owner; owner pause/disable/archive transitions must do the same, routing visibly to the coordinator fallback. A routed former or unavailable owner must not leave the report stranded even though it cannot decide it.
+- Tie route generation to an ownership and availability version. `replacePrimaryGoalOwner` must invalidate or supersede routes for unresolved reports and enqueue a fresh deterministic route to the new owner; owner pause/disable/archive transitions must do the same, routing visibly to the coordinator fallback. Those availability mutations themselves require target-agent, coordinator, or human authority inside the MCP handlers so an ordinary member cannot disable an owner to divert pending reports. A routed former or unavailable owner must not leave the report stranded even though it cannot decide it.
 - Atomically persist durable routing work with report creation or require the dispatcher to scan every unrouted/superseded report. Delivery identity must be deterministic from report ID plus route generation so restart recovery is idempotent.
 - Persist routing outcome without blocking task completion; a committed report must not be lost because the daemon exits before the asynchronous route call starts.
+- Consume terminal V2 `failed`/`rejected` status for report notifications. Such a failure creates a new route-attempt generation or visible retryable/degraded routing state; the existing deterministic identity must not collide with the failed V2 job, and recovery must cover routed-but-terminal-failed reports as well as unrouted/superseded reports.
 
 **Dependencies:** G1–G6 and V1–V3.
 
@@ -323,6 +324,7 @@ This is the required behavior currently absent from `mark_complete.goal_update`;
 - Accept as proposed, apply edited, acknowledge without mutation, or reject.
 - Atomically transition disposition and update the goal.
 - Validate current ownership inside the same transaction that claims the report and updates the goal: a checked-but-since-reassigned owner must lose the claim. Coordinator and human override remain explicit exceptions.
+- Capture a base goal revision with each report and validate it inside the decision transaction. If the goal has changed since the report, reject the stale proposal and require explicit merge or edited apply; a full replacement apply must never overwrite newer goal state.
 - Reference the report in the goal event.
 - Apply recurring-goal progress rules.
 
