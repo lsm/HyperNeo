@@ -178,6 +178,12 @@ export interface CreateDaemonAppOptions {
    * Default: false
    */
   standalone?: boolean;
+  /**
+   * Invoked as soon as the structured-log file sink exists and is subscribed —
+   * before the factory's long-running initialization — so embedders (main.ts)
+   * can flush fatal records even when a startup-phase crash fires first.
+   */
+  onStructuredLogSinkReady?: (flush: () => Promise<void>) => void;
 }
 
 export interface DaemonAppContext {
@@ -273,6 +279,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
   const unsubscribeFileLogs = structuredLogSink
     ? subscribeToStructuredLogs((event) => structuredLogSink.capture(event))
     : () => {};
+  options.onStructuredLogSinkReady?.(() => structuredLogSink?.flush() ?? Promise.resolve());
   const restoreConsoleCapture = installConsoleLogCapture();
   let fileLogCaptureClosed = false;
   const closeFileLogCapture = async (): Promise<void> => {

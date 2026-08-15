@@ -1,8 +1,8 @@
 // IMPORTANT: Import config first to ensure credential discovery runs
 // before any other modules (like provider-service) that depend on it.
 
-import { createDaemonApp } from './src/app';
 import { getConfig } from './src/config';
+import { createDaemonApp } from './src/app';
 import { emitStructuredLogEvent, withConsoleLogCaptureSuppressed } from './src/lib/logger';
 
 let flushStructuredLogs: () => Promise<void> = () => Promise.resolve();
@@ -49,14 +49,18 @@ process.on('unhandledRejection', async (reason) => {
 
 const config = getConfig();
 
-// Create daemon app in standalone mode
+// Create daemon app in standalone mode. The sink-ready callback wires the real
+// flush as soon as the log sink exists — before the factory's long-running init
+// completes — so a fatal during startup still persists to the file.
 const app = await createDaemonApp({
   config,
   verbose: true,
   standalone: true, // Show root info route in standalone mode
+  onStructuredLogSinkReady: (flush) => {
+    flushStructuredLogs = flush;
+  },
 });
 const { server, cleanup } = app;
-flushStructuredLogs = app.flushStructuredLogs;
 
 // Server is already listening
 console.log(`\n🚀 HyperNeo Daemon started!`);

@@ -816,19 +816,30 @@ export class JobQueueRepository {
     return row ? this.rowToJob(row) : null;
   }
 
-  reclaimStale(staleBefore: number): ReclaimedJobClaim[] {
+  /**
+   * Reclaim stale `processing` rows back to `pending`. When `queues` is given,
+   * only rows in those lanes are reclaimed — a `JobQueueProcessor` passes the
+   * queues it registered so it only reclaims claims whose in-flight handler it
+   * can actually cancel; the delivery and general processors share one
+   * repository but must not sweep each other's lanes (the non-owner cannot
+   * abort the old handler, so its still-live turn would overlap the replacement
+   * claim). `undefined` reclaims every queue; an empty array reclaims nothing.
+   */
+  reclaimStale(staleBefore: number, queues?: string[]): ReclaimedJobClaim[] {
     return this.db.transaction(() => {
-      const candidates = this.db
-        .prepare(
-          `SELECT id, queue,
+      let candidateSql = `SELECT id, queue,
                   json_extract(payload, '$.__claimToken') AS claim_token,
                   json_extract(payload, '$.sessionId') AS session_id,
                   json_extract(payload, '$.messageUuid') AS message_uuid,
                   json_extract(payload, '$.role') AS role
              FROM job_queue
-            WHERE status = 'processing' AND COALESCE(heartbeat_at, started_at) < ?`
-        )
-        .all(staleBefore) as Array<{
+            WHERE status = 'processing' AND COALESCE(heartbeat_at, started_at) < ?`;
+      const candidateParams: (string | number | null)[] = [staleBefore];
+      if (queues) {
+        candidateSql += ` AND queue IN (${queues.map(() => '?').join(',')})`;
+        candidateParams.push(...queues);
+      }
+      const candidates = this.db.prepare(candidateSql).all(...candidateParams) as Array<{
         id: string;
         queue: string;
         claim_token: string | null;

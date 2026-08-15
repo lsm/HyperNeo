@@ -414,7 +414,12 @@ export class JobQueueProcessor {
   }
 
   private reclaimStaleClaims(staleBefore: number): void {
-    for (const claim of this.repo.reclaimStale(staleBefore)) {
+    // Scoped to this processor's registered lanes: only the owner of a queue's
+    // in-flight claims can abort their handlers, so a processor must not sweep
+    // another processor's shared-repository lanes (its reclaim would flip the
+    // row to pending while the owner's handler keeps running until its next
+    // heartbeat, overlapping a replacement claim).
+    for (const claim of this.repo.reclaimStale(staleBefore, [...this.handlers.keys()])) {
       const record = claim.claimToken
         ? this.inFlightClaims.get(claim.jobId)?.get(claim.claimToken)
         : undefined;

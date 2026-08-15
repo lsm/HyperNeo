@@ -152,17 +152,25 @@ function redactLogValue(value: unknown): unknown {
 }
 
 function redactString(value: string): string {
-  return value
-    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
-    .replace(/(authorization\s*:\s*)(?!["'])([^,}\r\n]+)/gi, '$1[REDACTED]')
-    .replace(
-      /(["']?(?:api[-_]?key|token|secret|password|authorization|cookie|set-cookie)["']?\s*[:=]\s*)(["'])(.*?)\2/gi,
-      '$1$2[REDACTED]$2'
-    )
-    .replace(
-      /((?:api[-_]?key|token|secret|password|authorization|cookie|set-cookie)\s*=\s*)([^\s&;,}]+)/gi,
-      '$1[REDACTED]'
-    );
+  return (
+    value
+      .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
+      .replace(/(authorization\s*:\s*)(?!["'])([^,}\r\n]+)/gi, '$1[REDACTED]')
+      // Header-form cookie values carry session credentials and legitimately
+      // contain `;` and `,` (e.g. Expires dates), so redact to end of line rather
+      // than the `,`/`}` boundaries the authorization rule uses. The lookahead
+      // also rejects a bare space so `\s*` cannot backtrack to zero-width and
+      // swallow quoted values (those keep the quoted rule's quoted output).
+      .replace(/((?:cookie|set-cookie)\s*:\s*)(?![\s"'])[^\r\n]+/gi, '$1[REDACTED]')
+      .replace(
+        /(["']?(?:api[-_]?key|token|secret|password|authorization|cookie|set-cookie)["']?\s*[:=]\s*)(["'])(.*?)\2/gi,
+        '$1$2[REDACTED]$2'
+      )
+      .replace(
+        /((?:api[-_]?key|token|secret|password|authorization|cookie|set-cookie)\s*=\s*)([^\s&;,}]+)/gi,
+        '$1[REDACTED]'
+      )
+  );
 }
 
 async function unlinkIfPresent(path: string): Promise<void> {

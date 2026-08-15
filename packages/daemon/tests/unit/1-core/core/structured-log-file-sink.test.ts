@@ -81,6 +81,25 @@ describe('StructuredLogFileSink', () => {
     });
   });
 
+  it('redacts unquoted header-form cookie values including semicolon tails', () => {
+    // Colon-form cookie values (quoted-value pattern needs a quote after the
+    // colon; the `=`-form needs `cookie=`) previously leaked verbatim.
+    const redacted = redactStructuredLogEvent(
+      event('Cookie: session=abc123; tracking=t2', {
+        header: 'Set-Cookie: sid=secret123; Path=/; Expires=Wed, 21 Oct 2025 07:28:00 GMT',
+        quoted: 'Cookie: "quoted=ok"',
+      })
+    );
+
+    expect(redacted.message).toBe('Cookie: [REDACTED]');
+    expect(redacted.metadata).toEqual({
+      header: 'Set-Cookie: [REDACTED]',
+      quoted: 'Cookie: "[REDACTED]"',
+    });
+    expect(JSON.stringify(redacted)).not.toContain('abc123');
+    expect(JSON.stringify(redacted)).not.toContain('secret123');
+  });
+
   it('rotates before crossing maxBytes and enforces retention', async () => {
     const path = await tempPath('daemon.jsonl');
     const probe = `${JSON.stringify(event('x'.repeat(40)))}\n`;

@@ -242,6 +242,103 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
 
   // ─── Stale reclamation — intermediate pending state ────────────────────────
 
+  describe("stale reclamation is scoped to the processor's registered queues", () => {
+    it("a non-owner processor does not reclaim another processor's lane; the owner reclaims AND aborts", async () => {
+      // Two processors share one repository (app.ts wires a general + delivery
+      // processor over the same DB). A stale sweep by the NON-owner would flip
+      // the row to pending while the owner's handler keeps running (the
+      // non-owner holds no cancellation record), overlapping a replacement
+      // claim. The sweep must stay within lanes the processor registered.
+      const abortedClaims: string[] = [];
+      let releaseSecond!: () => void;
+      const manualRelease = new Promise<void>((resolve) => {
+        releaseSecond = resolve;
+      });
+
+      const delivery = new JobQueueProcessor(repo, {
+        pollIntervalMs: 5000,
+        // Large threshold keeps the heartbeat lease (threshold/3) far outside
+        // the test's wall-clock so only the forced stale check runs.
+        staleThresholdMs: 60_000,
+      });
+      delivery.register('message_delivery', (job, context) => {
+        return new Promise((resolve) => {
+          let done = false;
+          const finish = () => {
+            if (!done) {
+              done = true;
+              resolve({ outcome: 'settled' });
+            }
+          };
+          if (context?.signal.aborted) {
+            abortedClaims.push(job.id);
+            return finish();
+          }
+          context?.signal.addEventListener(
+            'abort',
+            () => {
+              abortedClaims.push(job.id);
+              finish();
+            },
+            { once: true }
+          );
+          void manualRelease.then(finish);
+        });
+      });
+      const general = new JobQueueProcessor(repo, {
+        pollIntervalMs: 5000,
+        staleThresholdMs: 60_000,
+      });
+      general.register('unrelated-q', async () => {});
+
+      const job = repo.enqueue({
+        queue: 'message_delivery',
+        payload: { sessionId: 'session-1', messageUuid: 'message-1', role: 'turn' },
+      });
+      await delivery.tick();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const firstClaim = repo.getJob(job.id)?.claimToken;
+      expect(repo.getJob(job.id)?.status).toBe('processing');
+      expect(firstClaim).toBeTruthy();
+
+      // Age the lease past the stale threshold.
+      const staleLease = Date.now() - 120_000;
+      db.prepare(`UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?`).run(
+        staleLease,
+        staleLease,
+        job.id
+      );
+
+      // The NON-owner ticks: its stale check runs (fresh lastStaleCheck) but is
+      // scoped to its own lanes — the delivery row must stay claimed.
+      await general.tick();
+      expect(repo.getJob(job.id)?.status).toBe('processing');
+      expect(repo.getJob(job.id)?.claimToken).toBe(firstClaim);
+      expect(abortedClaims).toEqual([]);
+
+      // The owner ticks: reclaims its lane and aborts the exact old handler.
+      // Its first tick set lastStaleCheck, so force the check window open.
+      (delivery as unknown as { lastStaleCheck: number }).lastStaleCheck = 0;
+      await delivery.tick();
+      expect(abortedClaims).toEqual([job.id]);
+      // The reclaimed row goes pending; the old handler still holds the capped
+      // slot until its settle path runs, so the re-claim lands on a LATER tick
+      // (production: the poll timer / post-release requestTick). This test
+      // never start()s the processor, so drive that tick explicitly.
+      await flush();
+      await delivery.tick();
+      const after = repo.getJob(job.id);
+      expect(after?.status).toBe('processing');
+      expect(after?.claimToken).toBeTruthy();
+      expect(after?.claimToken).not.toBe(firstClaim);
+
+      releaseSecond();
+      await flush();
+      await delivery.stop();
+      await general.stop();
+    });
+  });
+
   describe('stale job reclamation — ordering contract', () => {
     it('reclaimStale() resets the job to pending before the handler picks it up', async () => {
       // The contract: reclaimStale transitions the job pending, THEN the next dequeue
