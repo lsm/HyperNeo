@@ -367,6 +367,11 @@ export interface QueryRunnerContext {
   resetProcessExitedPromise(): void;
   trackAgentProcess(proc: TrackedAgentProcess): void;
   snapshotTrackedAgentProcesses(): Array<[number, TrackedAgentProcess]>;
+  /** Force-terminate tracked SDK subprocesses (SIGTERM + scheduled SIGKILL). */
+  terminateTrackedAgentProcesses(options?: {
+    forceDelayMs?: number;
+    processes?: Array<[number, TrackedAgentProcess]>;
+  }): void;
   // Methods for state coordination
   incrementQueryGeneration(): number;
   getQueryGeneration(): number;
@@ -1001,6 +1006,24 @@ export class QueryRunner {
         logger.warn('Auto-retrying query after startup timeout (1 retry).');
         await stateManager.setIdle({ suppressDeliveryWaiters: true });
 
+        // Ownership check BEFORE terminating: setIdle above awaited, so a
+        // replacement query may already have started and registered its
+        // subprocess. Terminating now would SIGTERM/SIGKILL the replacement.
+        // The check→terminate sequence below is synchronous, so no replacement
+        // can slip in between. (Codex P1, PR #2491.)
+        if (this.retrySupersededByReplacement(queryGeneration)) {
+          return;
+        }
+
+        // Clean-slate guard: a timed-out spawn may be orphaned (spawned but
+        // never fed, or hung past cooperative close()) and would collide with
+        // the retry's fresh spawn — producing repeated 0-message timeouts.
+        // Force-terminate the whole tracked set for this session first, then
+        // close the query object (cooperative teardown of MCP transports), so
+        // the retry starts from a genuinely clean slate. Order mirrors
+        // QueryLifecycleManager.stop() (terminate → close).
+        this.ctx.terminateTrackedAgentProcesses?.();
+
         // Close the current queryObject BEFORE retrying to prevent the
         // "Already connected to a transport" crash. The finally{} block has not
         // yet run (we are still in the catch block), so MCP transports are still
@@ -1023,7 +1046,24 @@ export class QueryRunner {
             exitPromise,
             new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
           ]);
-          this.ctx.resetProcessExitedPromise();
+          // Clear only if the tracking still belongs to the old subprocess —
+          // a concurrent start during the await may have installed the
+          // replacement's exit promise (same race as the lifecycle manager's
+          // stale-running recovery).
+          if (this.ctx.processExitedPromise === exitPromise) {
+            this.ctx.resetProcessExitedPromise();
+          }
+        }
+
+        // Ownership check: a replacement query may have started during the
+        // waits above (restart / delivery reclaim drove a new start). This
+        // recursive call bypasses start()'s queue-running guard, so recursing
+        // with a stale generation would spawn a competing query that
+        // overwrites the replacement's queryObject while its stale finally{}
+        // skips cleanup. Abandon the retry — the replacement owns the session.
+        // (Codex P1, PR #2491.)
+        if (this.retrySupersededByReplacement(queryGeneration)) {
+          return;
         }
 
         // Use `return await` so this call's finally{} runs only after the retry
@@ -1040,6 +1080,16 @@ export class QueryRunner {
         logger.warn('Auto-retrying query without one-shot resumeSessionAt.');
         await stateManager.setIdle({ suppressDeliveryWaiters: true });
 
+        // Ownership check BEFORE terminating (see the startup-timeout retry).
+        if (this.retrySupersededByReplacement(queryGeneration)) {
+          return;
+        }
+
+        // Clean-slate guard (same rationale as the startup-timeout retry):
+        // force-terminate any orphaned tracked subprocess so the retry spawns
+        // against a clean process set.
+        this.ctx.terminateTrackedAgentProcesses?.();
+
         if (this.ctx.queryObject) {
           try {
             this.ctx.queryObject.close();
@@ -1055,9 +1105,17 @@ export class QueryRunner {
             exitPromise,
             new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
           ]);
-          this.ctx.resetProcessExitedPromise();
+          // Clear only if the tracking still belongs to the old subprocess
+          // (see the startup-timeout retry above for the race rationale).
+          if (this.ctx.processExitedPromise === exitPromise) {
+            this.ctx.resetProcessExitedPromise();
+          }
         }
 
+        // Ownership check (see the startup-timeout retry above).
+        if (this.retrySupersededByReplacement(queryGeneration)) {
+          return;
+        }
         return await this.runQuery(queryGeneration, 1, recoveryState);
       }
 
@@ -1113,9 +1171,17 @@ export class QueryRunner {
             exitPromise,
             new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
           ]);
-          this.ctx.resetProcessExitedPromise();
+          // Clear only if the tracking still belongs to the old subprocess
+          // (see the startup-timeout retry above for the race rationale).
+          if (this.ctx.processExitedPromise === exitPromise) {
+            this.ctx.resetProcessExitedPromise();
+          }
         }
 
+        // Ownership check (see the startup-timeout retry above).
+        if (this.retrySupersededByReplacement(queryGeneration)) {
+          return;
+        }
         return await this.runQuery(queryGeneration, 1, recoveryState);
       }
 
@@ -1216,7 +1282,11 @@ export class QueryRunner {
             exitPromise,
             new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
           ]);
-          this.ctx.resetProcessExitedPromise();
+          // Clear only if the tracking still belongs to the old subprocess
+          // (see the startup-timeout retry above for the race rationale).
+          if (this.ctx.processExitedPromise === exitPromise) {
+            this.ctx.resetProcessExitedPromise();
+          }
         }
 
         // Restore provider env vars BEFORE the backoff sleep so process.env is
@@ -1645,6 +1715,21 @@ export class QueryRunner {
       `[MCP invariant] Space member session ${session.id} missing required MCP servers: ` +
         `[${missingServers.join(', ')}]. Refusing to start a degraded Space member turn.`
     );
+  }
+
+  /**
+   * True when a replacement query took ownership while an auto-retry path was
+   * awaiting (restart / delivery reclaim drove a new start, bumping the query
+   * generation). The retry's recursive runQuery() call bypasses start()'s
+   * queue-running guard, so recursing with a stale generation would spawn a
+   * competing query that overwrites the replacement's queryObject while its
+   * stale finally{} skips cleanup — the caller must abandon the retry.
+   * (Codex P1, PR #2491.)
+   */
+  private retrySupersededByReplacement(queryGeneration: number): boolean {
+    if (this.ctx.getQueryGeneration() === queryGeneration) return false;
+    this.ctx.logger.warn('Auto-retry abandoned: a replacement query owns the session.');
+    return true;
   }
 
   /**

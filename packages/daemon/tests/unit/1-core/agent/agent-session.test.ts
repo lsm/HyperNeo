@@ -302,6 +302,106 @@ describe('AgentSession', () => {
       expect([...agentSession.getTrackedAgentRootPids()]).toEqual([12345]);
     });
 
+    it('terminates no-PID tracked handles via their kill() (Codex P2, PR #2491)', async () => {
+      const agentSession = createAgentSession();
+      let fireExit: (() => void) | null = null;
+      const noPidProc = {
+        // No pid — the VM/container/remote spawn path.
+        once: mock((_event: string, handler: () => void) => {
+          if (_event === 'exit') fireExit = handler;
+          return noPidProc;
+        }),
+        kill: mock(() => true),
+      };
+
+      agentSession.trackAgentProcess(noPidProc as never);
+      agentSession.terminateTrackedAgentProcesses({ forceDelayMs: 10 });
+
+      // SIGTERM is signaled immediately via the handle's kill().
+      expect(noPidProc.kill).toHaveBeenCalledWith('SIGTERM');
+
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      // The deferred SIGKILL fired for the no-PID handle too.
+      expect(noPidProc.kill).toHaveBeenCalledWith('SIGKILL');
+
+      // Natural exit self-cleans the durable handle collection.
+      fireExit?.();
+      agentSession.terminateTrackedAgentProcesses({ forceDelayMs: 5 });
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      const sigtermCalls = (noPidProc.kill as ReturnType<typeof mock>).mock.calls.filter(
+        (args) => args[0] === 'SIGTERM'
+      ).length;
+      expect(sigtermCalls).toBe(1); // not re-signaled after exit
+    });
+
+    it('scopes no-PID termination to the supplied snapshot, sparing a replacement handle', async () => {
+      // Codex P2 follow-up: stop() captures a snapshot before awaiting so a
+      // concurrently started replacement is not killed. The no-PID path must
+      // honor the snapshot exactly like the PID path.
+      const agentSession = createAgentSession();
+      const mkProc = () => {
+        const p = {
+          once: mock((_event: string, _handler: () => void) => p),
+          kill: mock(() => true),
+        };
+        return p;
+      };
+      const oldProc = mkProc();
+      const replacementProc = mkProc();
+
+      agentSession.trackAgentProcess(oldProc as never);
+      const snapshot = agentSession.snapshotNoPidTrackedProcesses();
+      // The replacement starts AFTER the snapshot was captured.
+      agentSession.trackAgentProcess(replacementProc as never);
+
+      agentSession.terminateTrackedAgentProcesses({ forceDelayMs: 10, noPidProcesses: snapshot });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
+      expect(oldProc.kill).toHaveBeenCalledWith('SIGTERM');
+      expect(oldProc.kill).toHaveBeenCalledWith('SIGKILL');
+      expect(replacementProc.kill).not.toHaveBeenCalled();
+    });
+
+    it('keeps a retained no-PID orphan in the exit aggregate after reset (Codex P2, PR #2491)', async () => {
+      // resetProcessExitedPromise() abandons the wait but must not drop a
+      // still-live orphan's exit promise: the next updateProcessExitedPromise()
+      // rebuild derives from the retained handles, so a later stop() still
+      // waits for the orphan to exit before restarting.
+      const agentSession = createAgentSession();
+      let fireExitA: (() => void) | null = null;
+      const procA = {
+        once: mock((_event: string, handler: () => void) => {
+          if (_event === 'exit') fireExitA = handler;
+          return procA;
+        }),
+        kill: mock(() => true),
+      };
+      const procB = {
+        pid: 999,
+        once: mock((_event: string, handler: () => void) => {
+          if (_event === 'exit') setTimeout(handler, 10);
+          return procB;
+        }),
+        kill: mock(() => true),
+      };
+
+      agentSession.trackAgentProcess(procA as never); // no-PID orphan
+      agentSession.resetProcessExitedPromise(); // retry path abandons the wait
+      agentSession.trackAgentProcess(procB as never); // replacement tracked
+      const aggregate = agentSession.processExitedPromise;
+      expect(aggregate).not.toBeNull();
+
+      let resolved = false;
+      void aggregate!.then(() => {
+        resolved = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50)); // B exited, A alive
+      expect(resolved).toBe(false); // aggregate still waits on the orphan
+      fireExitA?.();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(resolved).toBe(true);
+    });
+
     it('binds deferred SIGKILL to the process snapshot being terminated', async () => {
       const agentSession = createAgentSession();
       processKillSpy = spyOn(process, 'kill').mockImplementation(() => true);

@@ -71,8 +71,18 @@ export interface QueryLifecycleManagerContext {
   terminateTrackedAgentProcesses(options?: {
     forceDelayMs?: number;
     processes?: Array<[number, import('./query-runner').TrackedAgentProcess]>;
+    noPidProcesses?: unknown[];
   }): void;
   snapshotTrackedAgentProcesses(): Array<[number, import('./query-runner').TrackedAgentProcess]>;
+  /** Snapshot the durable no-PID tracked handles (VM/container/remote spawns). */
+  snapshotNoPidTrackedProcesses?(): unknown[];
+  /**
+   * Re-derive the aggregated exit-wait promise from the current tracked
+   * handles. A prior resetProcessExitedPromise() may have nulled the
+   * aggregate while a retained (still-live) orphan handle exists; without a
+   * refresh, a reader would see null and skip waiting on that orphan.
+   */
+  refreshProcessExitedPromise?(): void;
 
   // Mutable session state
   pendingRestartReason: 'settings.local.json' | null;
@@ -267,7 +277,9 @@ export class QueryLifecycleManager {
     const processExitedPromise = this.ctx.processExitedPromise;
     // Snapshot tracked processes before awaiting so that terminateTrackedAgentProcesses
     // only signals processes belonging to THIS query, not a concurrently started new one.
+    // Includes the durable no-PID handles (VM/container/remote spawns).
     const trackedProcessSnapshot = this.ctx.snapshotTrackedAgentProcesses();
+    const noPidProcessSnapshot = this.ctx.snapshotNoPidTrackedProcesses?.() ?? [];
 
     // 1. Stop the message queue (no new messages processed)
     messageQueue.stop();
@@ -312,6 +324,7 @@ export class QueryLifecycleManager {
     this.ctx.terminateTrackedAgentProcesses({
       forceDelayMs: FORCE_PROCESS_KILL_DELAY_MS,
       processes: trackedProcessSnapshot,
+      noPidProcesses: noPidProcessSnapshot,
     });
 
     // 5. Close query only if runQuery()'s finally block has not already done so.
@@ -666,6 +679,42 @@ export class QueryLifecycleManager {
         // Clear stale query reference to prevent concurrent callers from
         // seeing a dead query object during the restart window.
         this.ctx.queryObject = null;
+
+        // Clean-slate guard: the stale-running state usually means the SDK
+        // subprocess died without the queue being stopped — but the process may
+        // also be an orphan (spawned, never fed) still holding the workspace
+        // lock. Force-terminate the tracked set so the fresh query spawned below
+        // does not collide with a surviving subprocess, and wait (bounded) for it
+        // to exit before starting the replacement. Mirrors stop()'s ordering.
+        const orphanedProcesses = this.ctx.snapshotTrackedAgentProcesses();
+        const orphanedNoPidProcesses = this.ctx.snapshotNoPidTrackedProcesses?.() ?? [];
+        this.ctx.terminateTrackedAgentProcesses({
+          forceDelayMs: FORCE_PROCESS_KILL_DELAY_MS,
+          processes: orphanedProcesses,
+          noPidProcesses: orphanedNoPidProcesses,
+        });
+        // Refresh the aggregate before reading it: a prior
+        // resetProcessExitedPromise() may have nulled it while a retained
+        // no-PID orphan (signaled above) is still alive — without the refresh
+        // the bounded wait below reads null and skips waiting on that orphan.
+        // (Codex P2, PR #2491.)
+        this.ctx.refreshProcessExitedPromise?.();
+        const orphanExit = this.ctx.processExitedPromise;
+        if (orphanExit) {
+          await Promise.race([
+            orphanExit,
+            new Promise((resolve) => setTimeout(resolve, DEFAULT_TERMINATION_TIMEOUT_MS)),
+          ]);
+          // Clear the exit tracking ONLY if it still belongs to the orphan. A
+          // concurrent ensureQueryStarted() that saw the queue stopped during
+          // our await may have already started the replacement query, whose
+          // trackAgentProcess() installed a NEW processExitedPromise — clearing
+          // that would drop the replacement's exit tracking and re-open the
+          // workspace-lock collision this guard exists to close. (Codex P1.)
+          if (this.ctx.processExitedPromise === orphanExit) {
+            this.ctx.resetProcessExitedPromise();
+          }
+        }
         // Fall through to start a fresh query below
       } else {
         this.logger.debug(
