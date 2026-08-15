@@ -19,8 +19,8 @@
 
 import type { MessageContent } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import { DeadLetterImmediatelyError } from '../../storage/job-queue-processor';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository';
 import { MESSAGE_DELIVERY } from '../job-queue-constants';
 
 /**
@@ -409,6 +409,23 @@ export function classifyReclaimTermination(args: {
   if (args.markerExists) return 'redrive';
   // The turn has not ended; reclaim drives it normally.
   return 'live';
+}
+
+/**
+ * Whether a COMPLETED message_delivery job's persisted `result` represents a
+ * turn the delivery layer actually drove to completion. The handler also
+ * completes jobs with non-success outcomes (`skipped` — e.g. an ACP reclaim of
+ * a still-`submitted` prompt, `aborted`, `no_content`, `archived`,
+ * `stale_attempt`); those must NOT emit the terminal success signal
+ * (`session.delivery_settled`), or a consumer like TaskAgentManager would
+ * complete a workflow node whose prompt was never processed. Parks never reach
+ * this check (a requeued row makes the processor's auto-complete a no-op, so
+ * `onComplete` does not fire). `{ outcome: 'completed', skipped:
+ * 'turn_terminated' }` qualifies: the turn genuinely ended on a prior attempt
+ * (durable marker), this claim just observed it. (Task #944 review.)
+ */
+export function isCompletedTurnResult(result: Record<string, unknown> | null): boolean {
+  return result?.outcome === 'completed';
 }
 
 /**

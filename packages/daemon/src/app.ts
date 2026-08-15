@@ -6,7 +6,7 @@ import {
 import type { Provider } from '@hyperneo/shared/provider';
 import { homedir } from 'os';
 import type { Config } from './config';
-import { asMessageDeliveryPayload } from './lib/agent/message-delivery';
+import { asMessageDeliveryPayload, isCompletedTurnResult } from './lib/agent/message-delivery';
 import { deliveryMetrics } from './lib/agent/message-delivery-metrics';
 import { AuthManager } from './lib/auth-manager';
 import { createClientEventBridge } from './lib/client-event-bridge';
@@ -1094,6 +1094,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         onComplete: (job) => {
           const payload = asMessageDeliveryPayload(job.payload);
           if (!payload) return;
+          // Only a genuinely completed turn emits the success signal: the
+          // handler also completes jobs with non-success outcomes (skipped —
+          // e.g. an ACP reclaim of a still-`submitted` prompt, aborted,
+          // no_content, archived, stale_attempt), and settling those would let
+          // a consumer complete a node whose prompt was never processed.
+          // (Task #944 review.)
+          if (!isCompletedTurnResult(job.result)) return;
           void internalEventBus
             .publish('session.delivery_settled', {
               sessionId: payload.sessionId,

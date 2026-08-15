@@ -22,6 +22,7 @@
  * exercised through the real internalEventBus.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { isCompletedTurnResult } from '../../../../src/lib/agent/message-delivery';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
 import { settleMessageDeliveryDeadLetter } from '../../../../src/lib/job-handlers/message-delivery-dead-letter';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager';
@@ -372,6 +373,24 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     await flush();
     expect(completed).toBe(false);
     expect(nodeStatus()).toBe('blocked');
+  });
+
+  it('isCompletedTurnResult: only genuinely completed turns pass (Codex P2)', () => {
+    // The onComplete hook filters on this predicate before publishing
+    // session.delivery_settled: non-success outcomes that still complete the
+    // job (skipped — e.g. an ACP reclaim of a still-`submitted` prompt,
+    // aborted, no_content, archived, stale_attempt) must NOT emit the terminal
+    // success signal, or the node would complete without the prompt processed.
+    expect(isCompletedTurnResult({ outcome: 'completed' })).toBe(true);
+    // A prior-attempt termination observed by this claim is still a genuinely
+    // completed turn (durable marker).
+    expect(isCompletedTurnResult({ outcome: 'completed', skipped: 'turn_terminated' })).toBe(true);
+    expect(isCompletedTurnResult({ outcome: 'skipped', sendStatus: 'submitted' })).toBe(false);
+    expect(isCompletedTurnResult({ outcome: 'aborted' })).toBe(false);
+    expect(isCompletedTurnResult({ outcome: 'no_content' })).toBe(false);
+    expect(isCompletedTurnResult({ outcome: 'archived' })).toBe(false);
+    expect(isCompletedTurnResult({ outcome: 'stale_attempt' })).toBe(false);
+    expect(isCompletedTurnResult(null)).toBe(false);
   });
 
   it('a dead-lettered STEER does not block the node (mid-turn handoff failure)', async () => {
