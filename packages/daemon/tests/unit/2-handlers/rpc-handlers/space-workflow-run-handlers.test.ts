@@ -1310,8 +1310,8 @@ describe('space-workflow-run-handlers', () => {
   describe('spaceWorkflowRun.approveHook — decision CAS + ceiling recovery', () => {
     it('permits approval on a DONE run with live approved post-approval work (round 89)', async () => {
       setup({ run: { ...mockRun, status: 'done' } });
-      // An approved (non-archived) task on the run's workflow → live work.
-      spaceTaskRepo.hasApprovedTaskForWorkflow = mock(() => true);
+      // An approved (non-archived) task on THIS run → live work.
+      spaceTaskRepo.listByWorkflowRun = mock(() => [{ ...mockTask, status: 'approved' }]);
       hookStateRepo.repo.ensure('run-1', 'pr_ready');
       hookStateRepo.repo.update('run-1', 'pr_ready', {
         expectedVersion: 0,

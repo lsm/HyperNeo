@@ -835,8 +835,12 @@ export function setupSpaceWorkflowRunHandlers(
     // live approved task executing hook-protected actions. Rejecting the
     // banner's Approve/Reject on run status alone leaves a displayed hook
     // decision impossible to act on while the worker is still running.
+    // Scoped to THIS run: hasApprovedTaskForWorkflow matches any run of the
+    // workflow, so a sibling run's post-approval task would wrongly exempt
+    // this completed one.
     const doneRunHasLiveApprovedWork =
-      run.status === 'done' && spaceTaskRepo.hasApprovedTaskForWorkflow(run.workflowId);
+      run.status === 'done' &&
+      spaceTaskRepo.listByWorkflowRun(params.runId).some((t) => t.status === 'approved');
     if (
       !doneRunHasLiveApprovedWork &&
       (run.status === 'done' || run.status === 'cancelled' || run.status === 'pending')
@@ -953,7 +957,8 @@ export function setupSpaceWorkflowRunHandlers(
     // approved work still executes hook-protected actions — its retrying
     // hooks must remain operable.
     const doneRunHasLiveApprovedWork2 =
-      run.status === 'done' && spaceTaskRepo.hasApprovedTaskForWorkflow(run.workflowId);
+      run.status === 'done' &&
+      spaceTaskRepo.listByWorkflowRun(params.runId).some((t) => t.status === 'approved');
     if (
       !doneRunHasLiveApprovedWork2 &&
       (run.status === 'done' || run.status === 'cancelled' || run.status === 'pending')

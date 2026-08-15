@@ -328,6 +328,18 @@ export class WorkflowHookEngine {
       const rawHandler = handlersByMethod[action.methodName];
       if (!rawHandler) continue;
       const handler = async (args: Record<string, unknown>) => await rawHandler(args);
+      // REBIND to the replacement session: the record's stale sessionId
+      // matches no live execution, so the cancellation lookup
+      // (getSourceNodeExecutionStatus matches on agentSessionId) would never
+      // observe the OLD execution being cancelled — the re-armed action
+      // would keep firing for a retired worker. The in-memory timer uses
+      // the CURRENT owner's meta; the durable record's key is unchanged
+      // (re-keying is the documented future closure of the duplication
+      // trade, not taken here).
+      const reboundMeta =
+        action.meta.sessionId === ownerMeta.sessionId
+          ? action.meta
+          : { ...action.meta, sessionId: ownerMeta.sessionId };
       scheduleRetryableAction({
         actionKey: action.actionKey,
         delayMs: Math.max(0, action.nextRetryAt - Date.now()),
@@ -336,7 +348,7 @@ export class WorkflowHookEngine {
         handler,
         engine: this,
         handlers: handlersByMethod,
-        meta: action.meta,
+        meta: reboundMeta,
         isFollowUp: action.isFollowUp,
       });
     }

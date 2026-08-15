@@ -245,6 +245,44 @@ describe('Migration 194 deferred hooks drop', () => {
     }
   });
 
+  test('duplicate binding hookIds defer the drop (round 91)', () => {
+    const db = makeLegacyDb();
+    try {
+      const binding = {
+        hookId: 'pr_ready',
+        sourceNode: 'W',
+        targetNode: 'W',
+        method: 'send_message',
+        enabled: true,
+        authorizedCallers: [{ sourceNode: 'W' }],
+      };
+      db.prepare(`UPDATE space_workflows SET hook_bindings = ? WHERE id = 'wf-1'`).run(
+        JSON.stringify([binding, { ...binding, targetNode: 'W2' }])
+      );
+      db.prepare(`UPDATE space_workflow_runs SET status = 'done' WHERE id = 'run-1'`).run();
+      const result = runMigration197(db);
+      expect(result).toBe(false);
+      expect(hasHooksColumn(db)).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('a non-array persisted agents value does not abort startup (round 91)', () => {
+    const db = makeLegacyDb();
+    try {
+      db.prepare(`UPDATE space_workflow_nodes SET config = ? WHERE id = 'n-w'`).run(
+        JSON.stringify({ agents: {} })
+      );
+      db.prepare(`UPDATE space_workflow_runs SET status = 'done' WHERE id = 'run-1'`).run();
+      // No throw — the malformed node defers (or the migration completes);
+      // either way daemon startup survives.
+      expect(() => runMigration197(db)).not.toThrow();
+    } finally {
+      db.close();
+    }
+  });
+
   test('repository-equivalent validation: a bad METHOD defers the drop (round 87)', () => {
     const db = makeLegacyDb();
     try {

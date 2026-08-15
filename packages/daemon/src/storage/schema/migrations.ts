@@ -12665,18 +12665,35 @@ export function migration197Defers(db: BunDatabase): boolean {
         rowNodes.map((n) => {
           let agents: Array<{ name?: unknown }> = [];
           try {
-            agents = n.config ? (JSON.parse(n.config).agents ?? []) : [];
+            const parsedAgents = n.config ? JSON.parse(n.config).agents : [];
+            // A non-array `agents` value (e.g. {}) is corruption — mapping it
+            // would throw OUTSIDE the catch and abort daemon startup (this
+            // code runs in the migration runner's no-write precheck).
+            agents = Array.isArray(parsedAgents) ? parsedAgents : [];
           } catch {
             agents = [];
           }
           return [n.name, new Set(agents.map((a) => String(a.name)))];
         })
       );
+      // Collection-level parity: duplicate hookIds decode as corruption in
+      // the repository — they must defer the drop too, not count as coverage.
+      const bindingIds = new Set<string>();
+      let hasDuplicateBindingId = false;
       const bindingsAreWellFormed =
         Array.isArray(bindingsParsed) &&
         bindingsParsed.length > 0 &&
-        bindingsParsed.every((b) => isHookBindingElement(b, rowNodeNames, rowNodeSlots));
-      if (!bindingsAreWellFormed) return true;
+        bindingsParsed.every((b) => {
+          if (!isHookBindingElement(b, rowNodeNames, rowNodeSlots)) return false;
+          const id = (b as Record<string, unknown>).hookId as string;
+          if (bindingIds.has(id)) {
+            hasDuplicateBindingId = true;
+            return false;
+          }
+          bindingIds.add(id);
+          return true;
+        });
+      if (!bindingsAreWellFormed || hasDuplicateBindingId) return true;
       const coverage = legacyHookCoverage(legacyParsed, bindingsParsed as HookBinding[]);
       if (!coverage.complete) return true;
     }
