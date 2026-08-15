@@ -3897,14 +3897,26 @@ export class TaskAgentManager {
       (event) => {
         if (fired) return;
         if (event.role !== 'turn') {
-          // A dead STEER never fails the node (a failed mid-turn handoff must
-          // not fail a node whose kickoff turn succeeded) — but it may have
-          // been the LAST active job holding down a suppressed terminal idle
-          // (the turn's settle was ignored while the steer was in flight, and
-          // no success settlement or later idle is coming). Repay the
-          // suppressed completion when the turn is actually over (live idle
-          // state) and nothing else is in flight; if work is still ongoing,
-          // the checks make this a no-op. (Task #944 review.)
+          // The KICKOFF itself can be persisted as a steer (it lost the turn
+          // arbiter to a pending-message flush); ITS dead-letter is the node's
+          // failed kickoff and must BLOCK — not take the ordinary-steer
+          // repayment path below. (Task #944 review.)
+          const execution = this.config.nodeExecutionRepo.getByAgentSessionId(subSessionId);
+          const stampedKickoff = (
+            execution?.data as { kickoffMessageUuid?: unknown } | null | undefined
+          )?.kickoffMessageUuid;
+          if (execution && stampedKickoff === event.messageUuid) {
+            fireTerminalError(DEAD_LETTER_SESSION_ERROR);
+            return;
+          }
+          // An ordinary dead STEER never fails the node (a failed mid-turn
+          // handoff must not fail a node whose kickoff turn succeeded) — but
+          // it may have been the LAST active job holding down a suppressed
+          // terminal idle (the turn's settle was ignored while the steer was
+          // in flight, and no success settlement or later idle is coming).
+          // Repay the suppressed completion when the turn is actually over
+          // (live idle state) and nothing else is in flight; if work is still
+          // ongoing, the checks make this a no-op. (Task #944 review.)
           {
             const session = this.getSubSession(subSessionId);
             if (session && session.getProcessingState().status === 'idle') {

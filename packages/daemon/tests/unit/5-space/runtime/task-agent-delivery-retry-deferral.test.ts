@@ -624,6 +624,21 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     }
   });
 
+  it('a dead-lettered KICKOFF-AS-STEER blocks the node (Codex P1)', async () => {
+    // The kickoff lost the turn arbiter to a flush and was persisted as a
+    // steer; its dead-letter (e.g. ACP acceptance timeout) is the node's
+    // FAILED KICKOFF — it must block, not repay like an ordinary steer.
+    await bus.publish('session.delivery_failed', {
+      sessionId: SUB_SESSION_ID,
+      messageUuid: 'kickoff-uuid', // === the execution's stamp
+      origin: 'space_inject',
+      role: 'steer',
+    });
+    await flush();
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('blocked');
+  });
+
   it('a dead-lettered STEER does not block the node (mid-turn handoff failure)', async () => {
     await bus.publish('session.delivery_failed', {
       sessionId: SUB_SESSION_ID,
