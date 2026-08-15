@@ -442,7 +442,7 @@ export function setupSessionHandlers(
       sessionId: string;
     };
 
-    // A draft write while a voice pending sequence is staged must refresh the
+    // A draft write while a voice pending sequence is STAGED must refresh the
     // sequence's BASELINE snapshot: the pending eventually merges onto
     // whatever draft is current at merge time, and a stale baseline would make
     // reconciliation treat concurrently-typed text as transcript (restoring it
@@ -452,8 +452,31 @@ export function setupSessionHandlers(
     const draftWrite = (updates.metadata as Partial<SessionMetadata> | undefined)?.inputDraft;
     if (draftWrite !== undefined) {
       const existing = sessionManager.getSessionFromDB(targetSessionId);
-      if ((existing?.metadata?.inputDraftVoicePending ?? '').trim() !== '') {
+      const meta = existing?.metadata;
+      if ((meta?.inputDraftVoicePending ?? '').trim() !== '') {
         (updates.metadata as Partial<SessionMetadata>).inputDraftVoiceBaseline = draftWrite ?? '';
+      } else if (typeof meta?.inputDraftVoiceBaseline === 'string') {
+        // MERGED but still unreconciled (the baseline snapshot lingers after
+        // the pending cleared): the draft holds baseline + transcripts, and a
+        // STALE save — started before the merge landed — would overwrite the
+        // transcripts outright (the dedup id only stops a replay, not this).
+        // Fold the transcripts into the write; a save that already carries
+        // them (its client read the merged draft) is applied as-is. Either
+        // way the snapshot clears: this write is now the reconciliation point.
+        const baseline = meta.inputDraftVoiceBaseline;
+        const draft = meta.inputDraft ?? '';
+        let transcripts = '';
+        if (draft.startsWith(`${baseline} `)) transcripts = draft.slice(baseline.length + 1);
+        else if (draft.startsWith(baseline)) transcripts = draft.slice(baseline.length);
+        const written = draftWrite ?? '';
+        const alreadyIncluded = transcripts !== '' && written.endsWith(transcripts);
+        const folded = alreadyIncluded
+          ? written
+          : transcripts
+            ? appendDraftText(written, transcripts)
+            : written;
+        (updates.metadata as Partial<SessionMetadata>).inputDraft = folded || null;
+        (updates.metadata as Partial<SessionMetadata>).inputDraftVoiceBaseline = null;
       }
     }
 
