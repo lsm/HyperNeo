@@ -232,6 +232,31 @@ export class WorkflowHookEngine {
     return status !== undefined && RETRYABLE_ACTION_CANCEL_STATUSES.has(status);
   }
 
+  /**
+   * Whether the workflow declares at least one ENABLED hook for a method.
+   * Terminal-method tools use this together with hooksAuthorizeCaller to
+   * fail closed: when a workflow scopes its completion validator to a
+   * designated caller, an agent the hooks do not authorize must not reach
+   * the tool's guard chain (executeAction treats an empty matching set as
+   * `allow`, which is right for routing-scoped hooks but a bypass for a
+   * terminal gate).
+   */
+  hasEnabledHooksFor(methodName: string): boolean {
+    return (this.config.workflow.hooks ?? []).some(
+      (hook) => hook.enabled && hook.method === methodName
+    );
+  }
+
+  /**
+   * Whether ANY enabled hook for a method actually matches this caller
+   * under the engine's own matching rules (sourceNode / authorizedCallers /
+   * target scoping). Uses resolveMatchingHooks so the answer can never
+   * drift from what executeAction would run.
+   */
+  hooksAuthorizeCaller(methodName: string, meta: HookActionMeta): boolean {
+    return this.resolveMatchingHooks(methodName, {}, meta).length > 0;
+  }
+
   async notifySourceSession(sessionId: string, message: string): Promise<void> {
     await this.config.notifySourceSession?.(sessionId, message);
   }

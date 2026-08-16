@@ -1387,9 +1387,28 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
     // close (task #918) — the tool is node-agent-exclusive, so this is the
     // ONLY surface the engine needs to cover.
     if (wrappedCompleteValidation) {
+      const inner = wrappedCompleteValidation;
+      const unauthorized = async (_args: CompleteValidationTaskInput): Promise<ToolResult> => {
+        // Fail closed BEFORE the engine wrapper: executeAction treats an
+        // empty matching hook set as `allow` (correct for routing-scoped
+        // hooks), so a workflow that scopes its completion validator to a
+        // designated caller would let every OTHER node bypass it. When
+        // enabled hooks exist for this method but none authorize THIS
+        // caller under the engine's own matching rules, refuse outright.
+        return jsonResult({
+          success: false,
+          error:
+            'This workflow declares complete_validation_task validators, but none of them authorize this agent to close the task. Completion belongs to the designated validator node/slot — escalate to the coordinator if the task still needs closing.',
+        });
+      };
+      const authorized = config.hookEngine.hasEnabledHooksFor('complete_validation_task')
+        ? config.hookEngine.hooksAuthorizeCaller('complete_validation_task', meta)
+          ? inner
+          : unauthorized
+        : inner;
       wrappedCompleteValidation = wrapHandlerWithHooks(
         'complete_validation_task',
-        wrappedCompleteValidation,
+        authorized,
         config.hookEngine,
         handlers as unknown as Record<string, (...args: unknown[]) => Promise<ToolResult>>,
         meta

@@ -3993,4 +3993,74 @@ describe('node-agent-tools: complete_validation_task', () => {
     expect(parsed.task.status).toBe('done');
     expect(ctx.taskRepo.getTask(fixture.task.id)?.status).toBe('done');
   });
+  test('fails closed when a declared completion hook does not authorize this caller', async () => {
+    // A workflow can scope its complete_validation_task validator to a
+    // designated reviewer slot. executeAction treats an empty matching hook
+    // set as `allow` (correct for routing-scoped hooks), so without this
+    // guard every OTHER node agent would bypass the workflow's completion
+    // gate entirely. The registration refuses callers the engine's own
+    // matching rules do not authorize, before the wrapper runs.
+    const fixture = await seedValidationRun();
+    // Two slots: the authorized reviewer and an unrelated coder.
+    const workflow = {
+      ...fixture.workflow,
+      nodes: [
+        ...fixture.workflow.nodes,
+        {
+          id: 'node-other-worker',
+          name: 'OtherWork',
+          agents: [{ agentId: ctx.agentId, name: 'other-worker' }],
+        },
+      ],
+      hooks: [
+        {
+          id: 'hook-validation',
+          enabled: true,
+          sourceNode: 'Validation',
+          method: 'complete_validation_task',
+          classification: 'validation',
+          order: 0,
+          validator: {
+            kind: 'script',
+            interpreter: 'bash',
+            source: 'echo \'{"type":"allow"}\'',
+          },
+          authorizedCallers: [{ sourceNode: 'Validation', agentSlots: ['validator'] }],
+        } as WorkflowHook,
+      ],
+    } as SpaceWorkflow;
+    const hookEngine = new WorkflowHookEngine({
+      workflow,
+      workflowRunId: fixture.runId,
+      nodeExecutionRepo: ctx.nodeExecutionRepo,
+      artifactRepo: ctx.artifactRepo,
+      hookStateRepo: new WorkflowHookStateRepository(ctx.db),
+      hookExecutor: new StubHookExecutor(),
+      workspacePath: '/tmp',
+    });
+    // Caller from the UNAUTHORIZED node.
+    const server = createNodeAgentMcpServer(
+      makeConfig(ctx, {
+        mySessionId: fixture.workerSessionId,
+        myAgentName: 'other-worker',
+        taskId: fixture.task.id,
+        workflowRunId: fixture.runId,
+        workflowNodeId: 'node-other-worker',
+        workflow,
+        onCompleteValidationTask: createCompleteValidationTaskHandler(makeValidationDeps()),
+        hookEngine,
+      })
+    );
+    const tool = getTool(server)!;
+
+    const result = await tool({
+      task_id: fixture.task.id,
+      validation_outcome: 'should be refused',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('none of them authorize this agent');
+    expect(ctx.taskRepo.getTask(fixture.task.id)?.status).toBe('in_progress');
+  });
 });
