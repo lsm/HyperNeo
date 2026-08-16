@@ -744,6 +744,7 @@ export function setupSessionHandlers(
     );
     return { updated: true, value };
   });
+
   // Atomically push a draft BACKUP onto the server draft WITHOUT discarding
   // voice transcripts the sequence merged. A backup holds save-suppressed
   // edits whose landing EXPIRED — the client's localStorage marker is gone, so

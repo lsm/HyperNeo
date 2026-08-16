@@ -639,15 +639,6 @@ export interface SessionMetadata {
    */
   inputDraftVoiceAppendLog?: Array<{ id: string; ts: number }> | null;
   /**
-   * Monotonic version of `inputDraft`, bumped by the daemon on EVERY draft
-   * mutation (merge, strip, backup merge, draft write, clear). Clients echo
-   * the version they last READ as `expectedDraftVersion` on session.update:
-   * a match proves the write is derived from the current draft (applied
-   * as-is), while a mismatch marks a stale in-flight save — whose content
-   * coincidentally ending with the transcript phrase cannot prove inclusion.
-   */
-  inputDraftVersion?: number | null;
-  /**
    * The sequence id whose baseline the LAST session.stripVoiceBaseline
    * removed. Lets a strip whose ACKNOWLEDGEMENT was lost be recognized as
    * committed on retry (the client's owed-clear reconcile would otherwise
@@ -664,6 +655,15 @@ export interface SessionMetadata {
    * draft with older transcript-free content. Bounded to the backup TTL.
    */
   inputDraftVoiceMergeClaimLog?: Array<{ id: string; ts: number }> | null;
+  /**
+   * Monotonic version of `inputDraft`, bumped by the daemon on EVERY draft
+   * mutation (merge, strip, backup merge, draft write, clear). Clients echo
+   * the version they last READ as `expectedDraftVersion` on session.update:
+   * a match proves the write is derived from the current draft (applied
+   * as-is), while a mismatch marks a stale in-flight save — whose content
+   * coincidentally ending with the transcript phrase cannot prove inclusion.
+   */
+  inputDraftVersion?: number | null;
   removedOutputs?: string[]; // UUIDs of messages whose tool_result outputs were removed from SDK session file
   resolvedQuestions?: Record<string, ResolvedQuestion>; // Resolved AskUserQuestion responses, keyed by toolUseId
   // Cost tracking: SDK reports cumulative cost per run, but resets on agent restart
