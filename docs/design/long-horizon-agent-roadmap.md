@@ -17,6 +17,7 @@ The full roadmap below is the robust target. It should not block first dogfoodin
 - Use the existing LH-agent/goal assignment relationship.
 - Enforce or safely resolve one primary owner per goal.
 - Add `getPrimaryGoalOwner(goalId)` and coordinator fallback.
+- Gate the ownership mutation handlers now, not in G3: `assign_agent_to_goal`/`unassign_agent_from_goal` currently perform only same-Space checks and default assignments to `owner`, so an ordinary member could replace a legitimate owner with a controlled LH agent and inherit MC3 apply authority. Require coordinator or explicit human authorization in these MCP handlers from MC1 onward.
 - Reconcile duplicate owners deterministically before enforcing the invariant.
 - Reassignment must supersede every unprocessed MC2 notification for the goal and deterministically reroute it to the new owner, so a pending wake can never remain stranded with the former owner while MC3 correctly rejects that former owner. Owner pause/disable/archive and hard-delete transitions must supersede and reroute the same way — to a usable replacement owner or visibly to the coordinator fallback — because the ownership row can remain unchanged while the recipient session becomes unusable.
 - Keep managers/watchers non-authoritative for now.
@@ -35,6 +36,7 @@ The full roadmap below is the robust target. It should not block first dogfoodin
 - Do not block task completion on notification delivery, but do not rely on best-effort post-commit notification that can be lost or duplicated.
 - Consume terminal V2 `failed`/`rejected` delivery status for the wake: create a deterministic new delivery-attempt generation or a visible degraded/escalated state. An accepted-but-terminally-failed delivery must not leave the notification unprocessed with the owner never awakened; the G7 recovery machinery does not exist yet during the MC-only phase.
 - Reconcile completed-but-undisposed wakes. V2 `completed` only proves the turn ended, not that the owner called `review_goal_outcome` (tool error, context interruption, or ignored instruction). Unprocessed notifications whose latest delivery completed must receive bounded re-notification with backoff and eventual visible coordinator/human escalation.
+- Supersede unprocessed notifications when their terminal transition is exited. Reopening a `done`/`blocked`/`cancelled` task currently clears the task result without advancing the goal revision or invalidating the notification; without supersession the reconciler keeps waking the owner and MC3's base-revision check can still pass, applying an obsolete terminal outcome over active rework.
 
 This intentionally reuses task results and current delivery/inbox primitives instead of building the full immutable report model first.
 
@@ -203,6 +205,8 @@ A safe V2 contract must distinguish:
 
 The source system decides which receipt advances its own record. Reminder occurrences, external-event deliveries, inbox rows, and outcome reports do not necessarily share the same threshold.
 
+The `job_queue` row must not be the only copy of terminal delivery status: `cleanup.handler.ts` deletes completed and dead rows after the retention window, so a status lookup after a long daemon shutdown can no longer distinguish completed from failed from never-accepted, stranding durable domain work. Every consumer (MC2, V4–V6, G7) must persist the terminal receipt in its own domain attempt record — or delivery status must be retained for the lifetime of its upstream record — and missing/expired lookups must have defined semantics rather than being treated as never-accepted.
+
 ## Implementation plan
 
 The target is one behavioral contract per PR, normally no more than 200 changed production lines (tests excluded). A cohesive PR may reach 250 lines; split any larger change that contains multiple contracts.
@@ -272,6 +276,7 @@ Task-agent and Space-chat injection require separate later migration because the
 
 - Canonical `space/task.*` and `space/goal.*` grammar.
 - Typed actions and payloads containing stable IDs, statuses, labels, and linkage.
+- Migrate legacy topic strings in the same release. Built-in templates in `long-horizon-agent-templates.ts` and persisted subscription rows still use `task.*`, `goal.*`, `task.done`, `goal.done`, and `task.created`; S1 repairs only filter fields, so without a topic migration these subscriptions silently stop matching native lifecycle events. Map each legacy topic to its canonical equivalent — including `goal.done` to the canonical completed-goal action — for both built-in definitions and persisted rows.
 
 **Estimate:** 100–170 lines.
 
