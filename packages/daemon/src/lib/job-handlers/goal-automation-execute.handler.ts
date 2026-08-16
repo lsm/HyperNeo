@@ -830,14 +830,18 @@ function hasArtifactOutcome(text: string): boolean {
 /**
  * Status/pending language: the recognizable signature of the process-level
  * notes the no-op gate targets ("waiting for X", "not done yet", "will do
- * Y", "no update"). Evaluated per clause: a note is thin only when every
- * clause carries this signature — a clause without it is substantive
- * qualitative content (a diagnosis, lesson, decision, or observation) that
- * keeps its retrospective, since substantive content is not always an
- * achieved outcome.
+ * Y", "no update"). Includes the bare completion words ("done", "completed",
+ * "approved") that AFFIRMATIVE_OUTCOME_RE deliberately excludes — they are
+ * process status, not work artifacts, so a note that says only "Done" is
+ * thin ("complete" alone is left out: as an adjective it appears in
+ * substantive notes like "complete rewrite of the parser"). Evaluated per
+ * clause: a note is thin only when every clause carries this signature — a
+ * clause without it is substantive qualitative content (a diagnosis,
+ * lesson, decision, or observation) that keeps its retrospective, since
+ * substantive content is not always an achieved outcome.
  */
 const STATUS_LANGUAGE_RE =
-  /\b(?:waiting|wait|pending|queued|incomplete|unfinished|planned|scheduled|upcoming|todo|blocked|stalled|goal|target|aim|need(?:s|ed)? to|must|has to|have to|required to|not\s+(?:yet|done|started|run|runned)|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|no\s|never|not\s|will|would|should|could|might|maybe|later|soon|tomorrow|tbd|n\/a)\b/i;
+  /\b(?:waiting|wait|pending|queued|incomplete|unfinished|planned|scheduled|upcoming|todo|done|completed|approved|blocked|stalled|goal|target|aim|need(?:s|ed)? to|must|has to|have to|required to|not\s+(?:yet|done|started|run|runned)|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|no\s|never|not\s|will|would|should|could|might|maybe|later|soon|tomorrow|tbd|n\/a)\b/i;
 
 /**
  * A self_nag tick is a no-op worth skipping when the selection itself carries
