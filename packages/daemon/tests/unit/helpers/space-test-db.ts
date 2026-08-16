@@ -11,10 +11,10 @@
  * that do not yet exist in a production migration — that masks schema divergence.
  */
 
-import type { Database as BunDatabase } from '../../../src/storage/sqlite-compat';
 import { createEvolutionTables } from '../../../src/storage/schema/evolution';
 import { createLongHorizonAgentTables } from '../../../src/storage/schema/long-horizon-agents';
 import { createWorkflowEventSubscriptionTables } from '../../../src/storage/schema/workflow-event-subscriptions';
+import type { Database as BunDatabase } from '../../../src/storage/sqlite-compat';
 
 export function createSpaceTables(db: BunDatabase): void {
   db.exec('PRAGMA foreign_keys = ON');
@@ -225,8 +225,23 @@ export function createSpaceTables(db: BunDatabase): void {
 		)
 	`);
 
+  // Per-handoff-transition cycle counters (migration 194, task #923). Backs
+  // HandoffTransition.maxCycles enforcement for cyclic handoffs.
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS handoff_cycles (
+			run_id TEXT NOT NULL,
+			transition_key TEXT NOT NULL,
+			count INTEGER NOT NULL DEFAULT 0,
+			max_cycles INTEGER NOT NULL DEFAULT 5,
+			epoch INTEGER NOT NULL DEFAULT 0,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY (run_id, transition_key),
+			FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+		)
+	`);
+
   // One timestamped row per cyclic-channel traversal, used for rate-based
-  // dead-loop detection (rolling window count). See migration 192.
+  // dead-loop detection (rolling window count). See migration 193.
   db.exec(`
 		CREATE TABLE IF NOT EXISTS channel_cycle_events (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,

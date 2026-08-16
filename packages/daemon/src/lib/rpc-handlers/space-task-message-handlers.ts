@@ -220,7 +220,8 @@ export function setupSpaceTaskMessageHandlers(
   nodeExecutionRepo?: NodeExecutionLookup,
   channelCycleResetter?: ChannelCycleResetter,
   activateNode?: (runId: string, nodeId: string) => Promise<void>,
-  pendingMessageQueue?: PendingAgentMessageQueue
+  pendingMessageQueue?: PendingAgentMessageQueue,
+  handoffCycleResetter?: ChannelCycleResetter
 ): void {
   const taskRepo = new SpaceTaskRepository(db.getDatabase());
 
@@ -234,11 +235,17 @@ export function setupSpaceTaskMessageHandlers(
     workflowRunId: string | null | undefined,
     taskId: string
   ): Promise<void> {
-    if (!channelCycleResetter || !workflowRunId) return;
+    if (!workflowRunId) return;
+    if (!channelCycleResetter && !handoffCycleResetter) return;
     try {
-      const rowsReset = channelCycleResetter.resetAllForRun(workflowRunId);
+      // Reset both cycle stores so the "consecutive autonomous cycles without
+      // human oversight" cap (channel AND handoff transitions) clears together
+      // whenever the run regains human attention.
+      const channelRows = channelCycleResetter?.resetAllForRun(workflowRunId) ?? 0;
+      const handoffRows = handoffCycleResetter?.resetAllForRun(workflowRunId) ?? 0;
+      const rowsReset = channelRows + handoffRows;
       log.info(
-        `workflow.cycles.reset: runId=${workflowRunId} reason=human_touch taskId=${taskId} rowsReset=${rowsReset}`
+        `workflow.cycles.reset: runId=${workflowRunId} reason=human_touch taskId=${taskId} rowsReset=${rowsReset} (channels=${channelRows} handoffs=${handoffRows})`
       );
       if (rowsReset > 0) {
         await internalEventBus.publish('space.workflowRun.cyclesReset', {

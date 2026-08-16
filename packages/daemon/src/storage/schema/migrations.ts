@@ -9,7 +9,19 @@
  * order of migrations.
  */
 
+import {
+  type ArtifactShape,
+  deriveArtifactKey,
+  isArtifactShape,
+  normalizeLinkData,
+  resolveLegacyShape,
+} from '@hyperneo/shared';
+import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
+import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration';
+import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import type { Database as BunDatabase } from '../sqlite-compat';
+import { createEvolutionTables } from './evolution';
+import { createLongHorizonAgentTables } from './long-horizon-agents';
 import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates';
 import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates';
 import { runMigration170 as runMigration170External } from './m170-backfill-missing-preset-agents';
@@ -17,18 +29,6 @@ import { runMigration171 } from './m171-backfill-post-approval-review-channels';
 import { runMigration172 as runMigration172External } from './m172-backfill-orphaned-preset-agents';
 import { runMigration184 as runMigration184External } from './m184-backfill-reviewer-bash-tools';
 import { runMigration185 as runMigration185External } from './m185-workflow-event-subscriptions';
-import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
-import {
-  deriveArtifactKey,
-  isArtifactShape,
-  normalizeLinkData,
-  resolveLegacyShape,
-  type ArtifactShape,
-} from '@hyperneo/shared';
-import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
-import { createEvolutionTables } from './evolution';
-import { createLongHorizonAgentTables } from './long-horizon-agents';
-import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration';
 
 /**
  * Run all database migrations
@@ -997,6 +997,12 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
   // Migration 193: channel_cycle_events — rate-based dead-loop detection.
   run(migrationMarkerKey(193), () => runMigration193(db));
+
+  // Migration 194: Per-handoff-transition cycle counters (task #923 runtime
+  //   handoff). Backs HandoffTransition.maxCycles enforcement; mirrors channel
+  //   cycle tracking (migration 69) keyed by (run_id, transition_key).
+  //   Renumbered 192→194: dev shipped M192 (#949) + M193 (#947).
+  run(migrationMarkerKey(194), () => runMigration194(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -8288,9 +8294,7 @@ export function runMigration108(db: BunDatabase): void {
           }
         }
         if (mutated) update.run(JSON.stringify(config), row.id);
-      } catch {
-        continue;
-      }
+      } catch {}
     }
   }
 }
@@ -10878,7 +10882,7 @@ function migrateNeoMessageOrigins(db: BunDatabase): void {
  */
 function generateValidHandle(name: string, existingHandles: string[]): string {
   const maxLen = 60;
-  let base = slugify(name, existingHandles);
+  const base = slugify(name, existingHandles);
   // If the initial slugify result is already valid, we're done.
   if (validateSlug(base) === null) return base;
 
@@ -12473,5 +12477,36 @@ export function runMigration193(db: BunDatabase): void {
   db.exec(`
 		CREATE INDEX IF NOT EXISTS idx_channel_cycle_events_window
 		ON channel_cycle_events(run_id, channel_index, sent_at)
+	`);
+}
+
+/**
+ * Migration 194: Per-handoff-transition cycle tracking.
+ *
+ * Creates a `handoff_cycles` table that tracks how many times each cyclic
+ * handoff transition (see `HandoffTransition.maxCycles`) has been taken in a
+ * workflow run. Mirrors `channel_cycles` (migration 69), but keyed by
+ * `(run_id, transition_key)` since transition ids are unique within a node, not
+ * globally — the runtime composes a stable composite key per transition
+ * occurrence. The `epoch` column tags reservations so a refund can't cross a
+ * human-touch reset boundary. Idempotent (`tableExists` guard). Renumbered
+ * 192→194: dev shipped M192 (delivery_mode, #949) + M193 (channel_cycle_events,
+ * #947).
+ */
+export function runMigration194(db: BunDatabase): void {
+  if (!tableExists(db, 'space_workflow_runs')) return;
+  if (tableExists(db, 'handoff_cycles')) return;
+
+  db.exec(`
+		CREATE TABLE handoff_cycles (
+			run_id TEXT NOT NULL,
+			transition_key TEXT NOT NULL,
+			count INTEGER NOT NULL DEFAULT 0,
+			max_cycles INTEGER NOT NULL DEFAULT 5,
+			epoch INTEGER NOT NULL DEFAULT 0,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY (run_id, transition_key),
+			FOREIGN KEY (run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
+		)
 	`);
 }

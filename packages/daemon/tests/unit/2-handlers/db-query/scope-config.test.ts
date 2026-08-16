@@ -1,6 +1,4 @@
 import { describe, expect, it } from 'bun:test';
-import { Database } from '../../../../src/storage/sqlite-compat';
-import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import {
   buildScopeFilter,
   getAccessibleTableNames,
@@ -10,6 +8,8 @@ import {
   getScopeForSession,
   type ScopeTableConfig,
 } from '@/lib/db-query/scope-config';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
+import { Database } from '../../../../src/storage/sqlite-compat';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -69,6 +69,7 @@ describe('scope-config', () => {
         'workflow_hook_state',
         'workflow_hook_result_artifacts',
         'channel_cycles',
+        'handoff_cycles',
         'channel_cycle_events',
         'workflow_run_artifacts',
         'workflow_run_artifact_cache',
@@ -89,7 +90,7 @@ describe('scope-config', () => {
         'session_groups',
         'session_group_members',
       ]);
-      expect(names).toHaveLength(29);
+      expect(names).toHaveLength(30);
     });
 
     it('all table configs have a description', () => {

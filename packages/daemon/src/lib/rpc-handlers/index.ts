@@ -80,6 +80,7 @@ import {
   type MessageDeliveryDiagnostics,
 } from '../agent/message-delivery-metrics';
 import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository';
+import { HandoffCycleRepository } from '../../storage/repositories/handoff-cycle-repository';
 import { PendingAgentMessageRepository } from '../../storage/repositories/pending-agent-message-repository';
 import { SpaceAgentInboxRepository } from '../../storage/repositories/space-agent-inbox-repository';
 import { SessionRepository } from '../../storage/repositories/session-repository';
@@ -454,6 +455,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   const artifactRepo = new WorkflowRunArtifactRepository(deps.db.getDatabase(), deps.reactiveDb);
   const artifactCacheRepo = new WorkflowRunArtifactCacheRepository(deps.db.getDatabase());
   const channelCycleRepo = new ChannelCycleRepository(deps.db.getDatabase());
+  const handoffCycleRepo = new HandoffCycleRepository(deps.db.getDatabase());
   const pendingMessageRepo = new PendingAgentMessageRepository(
     deps.db.getDatabase(),
     deps.reactiveDb
@@ -1048,7 +1050,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   // Human ↔ Task Agent message routing handlers (require taskAgentManager).
   // `channelCycleRepo` is passed so `space.task.sendMessage` can reset the
-  // per-channel cycle counters on human touch.
+  // per-channel cycle counters on human touch; `handoffCycleRepo` resets the
+  // per-handoff-transition cycle counters at the same boundary (task #923).
   setupSpaceTaskMessageHandlers(
     deps.messageHub,
     taskAgentManager,
@@ -1059,7 +1062,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     async (runId, nodeId) => {
       await spaceRuntimeService.activateWorkflowNode(runId, nodeId);
     },
-    pendingMessageRepo
+    pendingMessageRepo,
+    handoffCycleRepo
   );
 
   // Space export/import handlers
