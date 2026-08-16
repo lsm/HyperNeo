@@ -25,6 +25,7 @@ import type {
   HookCallback,
   Options,
   PreToolUseHookInput,
+  Settings,
 } from '@anthropic-ai/claude-agent-sdk';
 import type {
   AgentDefinition,
@@ -322,11 +323,27 @@ export function shouldUseHyperNeoCompactFallback(providerId: string): boolean {
   return PROVIDER_NO_SDK_AUTO_COMPACT.has(providerId);
 }
 
+/**
+ * SDK transcript retention (days) for every session the daemon spawns.
+ *
+ * The SDK/Claude CLI deletes chat transcripts idle longer than
+ * `cleanupPeriodDays` (default 30) on startup, scanning ALL of
+ * `~/.claude/projects` — including transcripts of long-idle HyperNeo sessions
+ * the daemon DB still considers active and resumable. A purged transcript
+ * wedges the session's delivery queue on `sdk_resume_choice` forever (the
+ * resume can never succeed and nothing dead-letters it). Retention is
+ * therefore owned solely by HyperNeo: session archive moves transcripts to
+ * `~/.hyperneo/claude-session-archives/`; live sessions' transcripts must never
+ * be swept by the subprocess. The SDK documents a large value as the way to
+ * opt out of cleanup (min 1; `persistSession: false` would break resume).
+ */
+export const SDK_TRANSCRIPT_RETENTION_DAYS = 3650;
+
 export function buildProviderSettings(
   providerId: string,
   contextWindow?: number | null,
   modelId?: string | null
-): Options['settings'] {
+): Settings | undefined {
   if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) {
     return undefined;
   }
@@ -623,11 +640,19 @@ export class QueryOptionsBuilder {
       // output style, CLAUDE.md content, etc.).
       settingSources:
         config.settingSources ?? this.ctx.settingsManager.getGlobalSettings().settingSources,
-      settings: buildProviderSettings(
-        providerId,
-        modelInfo?.contextWindow,
-        this.ctx.session.config.model
-      ),
+      // Inline `settings` is the SDK's flag-settings layer — it takes precedence
+      // over the on-disk user/project settings, so the daemon's transcript
+      // retention cannot be narrowed by ~/.claude/settings.json. Retention is
+      // set for every provider (spread first so provider overrides still apply
+      // to their own keys, but nothing overrides retention).
+      settings: {
+        ...buildProviderSettings(
+          providerId,
+          modelInfo?.contextWindow,
+          this.ctx.session.config.model
+        ),
+        cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS,
+      },
 
       // ============ Streaming ============
       // Partial/streaming messages (`stream_event`) double as a LIVENESS
