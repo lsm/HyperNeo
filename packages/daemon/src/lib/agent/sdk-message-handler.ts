@@ -143,6 +143,10 @@ export class SDKMessageHandler {
   // persist on each new thinking block.
   private lastStampedThinkingTokensEstimate: number = 0;
 
+  /** Terminal-bound slash commands (exit, statusline, …) reported by init, applied
+   * to both init and mid-session commands_changed refreshes. */
+  private terminalCommands: Set<string> = new Set();
+
   /** Guardrail that breaks repeated identical tool-use errors in Forge task sessions. */
   private repeatedToolErrorGuardrail: RepeatedToolErrorGuardrail;
 
@@ -807,10 +811,20 @@ export class SDKMessageHandler {
       return;
     }
 
-    // Conversation reset (session boundary) and active-goal (goal state) are
-    // fire-and-forget lifecycle/state signals from the native CLI, not chat
-    // content. Skip persistence/broadcast for the same reason as above.
-    if (isSDKConversationResetMessage(message) || isSDKActiveGoalMessage(message)) {
+    // Conversation reset is a fresh-session boundary (/clear, plan-mode exit):
+    // reset the auto-generated title so the browser doesn't keep the old title
+    // attached to the new conversation, then drop the boundary event itself.
+    if (isSDKConversationResetMessage(message)) {
+      if (session.metadata.titleSetBy !== 'user' && session.metadata.titleGenerated) {
+        const metadata = { ...session.metadata, titleGenerated: false };
+        session.metadata = metadata;
+        db.updateSession(session.id, { metadata });
+      }
+      return;
+    }
+
+    // Active-goal is a fire-and-forget goal-state push, not chat content.
+    if (isSDKActiveGoalMessage(message)) {
       return;
     }
 
@@ -1105,15 +1119,20 @@ export class SDKMessageHandler {
     // any custom skills, and fires immediately when a query starts.
     // Use isSDKSystemInit which narrows specifically to SDKSystemMessage (subtype: 'init').
     // Terminal-bound commands (exit, statusline, …) have no browser UX and can
-    // dead-interact or kill the CLI — strip them before caching/broadcasting.
+    // dead-interact or kill the CLI — strip them before caching/broadcasting,
+    // and retain the set so the commands_changed refresh below applies it too.
     if (isSDKSystemInit(message) && message.slash_commands?.length > 0) {
-      const terminalCommands = new Set(message.terminal_slash_commands ?? []);
-      const browserCommands = message.slash_commands.filter((cmd) => !terminalCommands.has(cmd));
+      this.terminalCommands = new Set(message.terminal_slash_commands ?? []);
+      const browserCommands = message.slash_commands.filter(
+        (cmd) => !this.terminalCommands.has(cmd)
+      );
       await this.ctx.onInitSlashCommands(browserCommands);
     }
 
     if (isSDKCommandsChangedMessage(message)) {
-      await this.ctx.onCommandsChanged(flattenSDKSlashCommands(message.commands));
+      const allCommands = flattenSDKSlashCommands(message.commands);
+      const browserCommands = allCommands.filter((cmd) => !this.terminalCommands.has(cmd));
+      await this.ctx.onCommandsChanged(browserCommands);
     }
   }
 
@@ -1271,6 +1290,11 @@ export class SDKMessageHandler {
   private async handleModelRefusalFallbackMessage(message: SDKMessage): Promise<void> {
     const { session, db, internalEventBus } = this.ctx;
     if (!isSDKModelRefusalFallbackMessage(message) || message.direction !== 'retry') return;
+    // A `local` fallback (subagent, /btw side question, or background fork) only
+    // swaps that one response's model — the main session model is unchanged. Do
+    // not persist the fallback into session.config for local scopes; an absent
+    // scope is the legacy session-wide behavior.
+    if (message.scope === 'local') return;
     const fallbackModel = this.resolveConfiguredFallbackModel(message.fallback_model);
     if (!fallbackModel || session.config.model === fallbackModel) return;
 

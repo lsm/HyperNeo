@@ -385,6 +385,11 @@ export class MessageQueue {
               : queuedMessage.content,
         },
         internal: queuedMessage.internal,
+        // The upgraded SDK treats an absent origin as unattributed (not human),
+        // which fails strict human-trust gates for composer prompts. Non-internal
+        // queue admissions are browser-authored; internal ones (/compact, resume
+        // continuations) stay unattributed.
+        ...(queuedMessage.internal ? {} : { origin: { kind: 'human' as const } }),
       };
 
       // Fire callback immediately before the actual yield. A failure means the
