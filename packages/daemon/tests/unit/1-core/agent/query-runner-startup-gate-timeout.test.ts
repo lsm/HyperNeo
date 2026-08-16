@@ -62,10 +62,16 @@ const { getSdkStartupGate, resetSdkStartupGateForTests } = await import(
 
 import { tmpdir } from 'node:os';
 import type { MessageHub, Session } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-question-handler';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { QueryLike } from '../../../../src/lib/agent/query-like';
+
+function sdkMessage(): SDKMessage {
+  return { type: 'system', subtype: 'init', session_id: 'sdk-session' } as unknown as SDKMessage;
+}
+
 import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder';
 import type { QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
 import type { SDKMessageHandler } from '../../../../src/lib/agent/sdk-message-handler';
@@ -76,13 +82,16 @@ import type { Database } from '../../../../src/storage/database';
 interface Deferred<T> {
   promise: Promise<T>;
   resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
   settled: boolean;
 }
 
 function defer<T>(): Deferred<T> {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
     resolve = res;
+    reject = rej;
   });
   const guarded: Deferred<T> = {
     promise,
@@ -91,6 +100,11 @@ function defer<T>(): Deferred<T> {
       if (guarded.settled) return;
       guarded.settled = true;
       resolve(value);
+    },
+    reject: (reason?: unknown) => {
+      if (guarded.settled) return;
+      guarded.settled = true;
+      reject(reason);
     },
   };
   return guarded;
@@ -245,11 +259,14 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
   }
 
   let spawnCounter: number;
+  /** Pending iterator.next() deferreds per spawn, in pull order. */
+  let spawnNexts: Array<Array<Deferred<IteratorResult<SDKMessage>>>>;
 
   beforeEach(() => {
     process.env.ANTHROPIC_API_KEY = 'sk-test-key';
     events = [];
     spawnCounter = 0;
+    spawnNexts = [];
     handleErrorSpy = mock(async () => {});
     resetSdkStartupGateForTests();
     // Wrap the fresh singleton so every admission/release is observable with
@@ -271,6 +288,7 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
     queryFactory = () => {
       const index = spawnCounter++;
       events.push(`spawn${index}`);
+      spawnNexts.push([]);
       const silent: SilentQuery = { queryObject: null as unknown as QueryLike, closeCount: 0 };
       silent.queryObject = {
         interrupt: mock(async () => undefined),
@@ -279,8 +297,12 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
           events.push(`close${index}`);
         },
         [Symbol.asyncIterator]: () => ({
-          // Never resolves — the subprocess stays silent past the timeout.
-          next: () => defer().promise,
+          // Never resolves unless a test settles it — a silent subprocess.
+          next: () => {
+            const d = defer<IteratorResult<SDKMessage>>();
+            spawnNexts[index].push(d);
+            return d.promise;
+          },
           return: async () => ({ value: undefined, done: true }),
         }),
       } as unknown as QueryLike;
@@ -389,6 +411,39 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
     }
     expect(maxHeld).toBe(1);
     expect(held).toBe(0);
+    expect(getSdkStartupGate().getStats()).toEqual({
+      active: 0,
+      queued: 0,
+      maxConcurrent: 1,
+    });
+  });
+
+  it('does not leak the permit when a transient-connection retry replaces a mid-stream query (retry startup timer stays effective)', async () => {
+    // Regression (review P1): the transient-connection retry fires mid-stream,
+    // after firstMessageReceived was set true. The recursive runQuery bypasses
+    // start(), so without an explicit reset the retry's startup timer is
+    // disabled — a silent replacement spawn never exits the for-await, no
+    // release site runs, and the permit is held forever (three such leaks
+    // would stall every daemon cold-start).
+    const { runner, ctx } = createRunner('s1');
+    runner.start();
+
+    // Attempt 1: first message arrives (permit #1 released at first_message),
+    // then the stream dies with a transient connection error mid-turn.
+    await waitFor(() => (spawnNexts[0]?.length ?? 0) >= 1);
+    spawnNexts[0][0].resolve({ value: sdkMessage(), done: false });
+    await waitFor(() => (spawnNexts[0]?.length ?? 0) >= 2);
+    spawnNexts[0][1].reject(new Error('TypeError: fetch failed'));
+
+    // The retry spawns a replacement that stays silent. Its startup timer
+    // must abort it (stale firstMessageReceived would disable the timer),
+    // the terminal error surfaces, and the retry's permit is released.
+    await waitFor(() => spawnNexts.length >= 2);
+    await assertShortTimeoutActive();
+    await ctx.queryPromise;
+    await waitFor(() => handleErrorSpy.mock.calls.length > 0);
+
+    expect(spawnNexts.length).toBe(2); // initial + transient retry
     expect(getSdkStartupGate().getStats()).toEqual({
       active: 0,
       queued: 0,
