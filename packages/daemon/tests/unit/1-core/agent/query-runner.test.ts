@@ -1871,8 +1871,13 @@ describe('QueryRunner', () => {
       await ctx.queryPromise?.catch(() => {});
 
       expect(buildSpy).toHaveBeenCalledTimes(3); // 1 initial + 2 retries
-      expect(buildTimes[1] - buildTimes[0]).toBeGreaterThanOrEqual(25);
-      expect(buildTimes[2] - buildTimes[1]).toBeGreaterThanOrEqual(50);
+      // Bounds carry ~20% tolerance: Date.now() is a wall clock while the
+      // sleep uses the event loop's monotonic timer, so the measured gap can
+      // read ~1ms short on CI runners (observed 49 for a 50ms sleep). The
+      // exact doubling schedule is asserted deterministically by the pure
+      // schedule test above; here we only prove the sleeps are applied.
+      expect(buildTimes[1] - buildTimes[0]).toBeGreaterThanOrEqual(20);
+      expect(buildTimes[2] - buildTimes[1]).toBeGreaterThanOrEqual(40);
     });
 
     it('settles the delivery failed after the cap instead of looping forever', async () => {
