@@ -4715,6 +4715,268 @@ describe('handleGoalAutomationExecute', () => {
     expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(1);
   });
 
+  it('still produces an episode for a diagnosis joined by a conjunction', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Conjunction mix', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Conjunction mix',
+      objective: 'A status clause and a diagnosis joined only by a conjunction still split',
+      policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'manual_note',
+      sourceId: null,
+      summary: 'Rollout is blocked but root cause was lock contention',
+      createdAt: 30,
+    });
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'self_nag',
+        triggerKey: 'schedule-conjunction-mix',
+        reason: 'self_nag',
+        scheduleId: 'schedule-conjunction-mix',
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        episodeService: {
+          createFromEvidence: async ({ evidenceIds }) => ({
+            episode: evolutionRepo.createEpisode({
+              scopeId: scope.id,
+              title: 'Conjunction mix retrospective',
+              evidenceIds,
+              outcomeSummary: 'Conjunction mix outcome',
+              findings: [],
+            }),
+            proposals: [],
+            lessons: [],
+          }),
+          preflightEvidence: () =>
+            makePreflight({
+              level: 'low',
+              score: 0,
+              requiresConfirmation: true,
+              counts: {
+                total: 1,
+                manualNotes: 1,
+                taskResults: 0,
+                workflowArtifacts: 0,
+                metricSnapshots: 0,
+                outcomes: 0,
+              },
+            }),
+        },
+      }
+    );
+
+    expect(result.skipped).toBe(false);
+    expect(result.episodeId).toBeString();
+    expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(1);
+  });
+
+  it('skips a note targeting a future artifact release', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Target artifact', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Target artifact',
+      objective: 'Goal words as prefixes make artifact references prospective',
+      policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'manual_note',
+      sourceId: null,
+      // "release" supplies artifact context, but "Target" as a prefix marks
+      // the reference prospective, not achieved.
+      summary: 'Target release v2.4.1',
+      createdAt: 30,
+    });
+    let episodeCreated = false;
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'self_nag',
+        triggerKey: 'schedule-target-artifact',
+        reason: 'self_nag',
+        scheduleId: 'schedule-target-artifact',
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        goalEventRepo: new SpaceGoalEventRepository(db as never),
+        episodeService: {
+          createFromEvidence: async () => {
+            episodeCreated = true;
+            throw new Error('should not create episode for a target, not an achieved release');
+          },
+          preflightEvidence: () =>
+            makePreflight({
+              level: 'low',
+              score: 0,
+              requiresConfirmation: true,
+              counts: {
+                total: 1,
+                manualNotes: 1,
+                taskResults: 0,
+                workflowArtifacts: 0,
+                metricSnapshots: 0,
+                outcomes: 0,
+              },
+            }),
+        },
+      }
+    );
+
+    expect(result).toMatchObject({ skipped: true, skipReason: 'low_evidence_noop' });
+    expect(episodeCreated).toBe(false);
+    expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(0);
+  });
+
+  it('skips a pending PR whose coordinated predicate has no subject', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Elliptical clause', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Elliptical clause',
+      objective: 'An omitted-subject coordinated predicate is not an independent clause',
+      policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'manual_note',
+      sourceId: null,
+      // "and is still pending" shares the PR subject — the PR reference
+      // must stay non-affirmative pending work.
+      summary: 'PR #123 opened and is still pending',
+      createdAt: 30,
+    });
+    let episodeCreated = false;
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'self_nag',
+        triggerKey: 'schedule-elliptical-clause',
+        reason: 'self_nag',
+        scheduleId: 'schedule-elliptical-clause',
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        goalEventRepo: new SpaceGoalEventRepository(db as never),
+        episodeService: {
+          createFromEvidence: async () => {
+            episodeCreated = true;
+            throw new Error('should not create episode for a pending PR');
+          },
+          preflightEvidence: () =>
+            makePreflight({
+              level: 'low',
+              score: 0,
+              requiresConfirmation: true,
+              counts: {
+                total: 1,
+                manualNotes: 1,
+                taskResults: 0,
+                workflowArtifacts: 0,
+                metricSnapshots: 0,
+                outcomes: 0,
+              },
+            }),
+        },
+      }
+    );
+
+    expect(result).toMatchObject({ skipped: true, skipReason: 'low_evidence_noop' });
+    expect(episodeCreated).toBe(false);
+    expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(0);
+  });
+
+  it('still produces an episode for a negative diagnostic statement', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Negative finding', type: 'recurring' });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Negative finding',
+      objective: 'A negated technical finding is a diagnosis, not process status',
+      policy: { automation: { selfNagCronExpression: '0 * * * *' } },
+    });
+    evolutionRepo.createEvidence({
+      scopeId: scope.id,
+      kind: 'manual_note',
+      sourceId: null,
+      summary: 'No index covers the query',
+      createdAt: 30,
+    });
+
+    const result = await handleGoalAutomationExecute(
+      createAutomationJob({
+        goalId: goal.id,
+        scopeId: scope.id,
+        triggerKind: 'self_nag',
+        triggerKey: 'schedule-negative-finding',
+        reason: 'self_nag',
+        scheduleId: 'schedule-negative-finding',
+      }),
+      {
+        goalRepo,
+        taskRepo,
+        evolutionRepo,
+        cursorRepo,
+        episodeService: {
+          createFromEvidence: async ({ evidenceIds }) => ({
+            episode: evolutionRepo.createEpisode({
+              scopeId: scope.id,
+              title: 'Negative finding retrospective',
+              evidenceIds,
+              outcomeSummary: 'Negative finding outcome',
+              findings: [],
+            }),
+            proposals: [],
+            lessons: [],
+          }),
+          preflightEvidence: () =>
+            makePreflight({
+              level: 'low',
+              score: 0,
+              requiresConfirmation: true,
+              counts: {
+                total: 1,
+                manualNotes: 1,
+                taskResults: 0,
+                workflowArtifacts: 0,
+                metricSnapshots: 0,
+                outcomes: 0,
+              },
+            }),
+        },
+      }
+    );
+
+    expect(result.skipped).toBe(false);
+    expect(result.episodeId).toBeString();
+    expect(evolutionRepo.listEpisodes(scope.id)).toHaveLength(1);
+  });
+
   it('does not compute the preflight for substantive self_nag selections', async () => {
     const goal = goalRepo.create({ spaceId, title: 'Lazy preflight', type: 'recurring' });
     const scope = evolutionRepo.createScope({

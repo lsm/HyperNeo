@@ -535,6 +535,37 @@ function splitStatusPrefixClause(clause: string): string[] {
 }
 
 /**
+ * A conjunction introducing a new subject with a linking verb, modal, or
+ * status adjective — the same independent-clause shape the outcome
+ * qualifier logic recognizes, used here to split manual-note clauses joined
+ * only by a conjunction ("Rollout is blocked but root cause was lock
+ * contention"). The subject words exclude auxiliaries so an elliptical
+ * predicate ("will run and pass") is not mistaken for a new clause.
+ */
+const NEW_CLAUSE_SPLIT_RE =
+  /\b(?:and|but|while|whereas|although|though)\s+(?:the\s+|a\s+|an\s+)?(?:(?!is\s|are\s|was\s|were\s|will\s|would\s|should\s|could\s|might\s|must\s|can\s|may\s|has\s|have\s|had\s)\w+\s+){1,3}(?:still\s+|yet\s+)?(?:is|are|was|were|has|have|had|remains?|stays?|seems?|will|would|should|could|might|must|can|may|pending|blocked|queued|incomplete|unfinished|planned|scheduled|waiting|stalled)\b/gi;
+
+/**
+ * Splits a clause at each conjunction that introduces an independent clause
+ * with its own subject, mirroring the suffix qualifier boundaries.
+ */
+function splitAtClauseConjunctions(clause: string): string[] {
+  const cuts: number[] = [];
+  for (const match of clause.matchAll(NEW_CLAUSE_SPLIT_RE)) {
+    cuts.push(match.index);
+  }
+  if (cuts.length === 0) return [clause];
+  const parts: string[] = [];
+  let start = 0;
+  for (const cut of cuts) {
+    parts.push(clause.slice(start, cut));
+    start = cut;
+  }
+  parts.push(clause.slice(start));
+  return parts;
+}
+
+/**
  * Whether a manual note is purely process status. Every clause of the
  * summary must be status for the note to be thin — one status token does not
  * discard a substantive clause in the same note ("Root cause was lock
@@ -545,6 +576,7 @@ function isThinManualNote(summary: string): boolean {
   const clauses = summary
     .split(MANUAL_NOTE_CLAUSE_RE)
     .flatMap(splitStatusPrefixClause)
+    .flatMap(splitAtClauseConjunctions)
     .map((clause) => clause.trim())
     .filter(Boolean);
   if (clauses.length === 0) return true;
@@ -610,13 +642,14 @@ function hasQuantitativeOutcome(text: string): boolean {
  * Prefixes that make an outcome keyword a negated, still-pending, or merely
  * prospective mention rather than an affirmative one — "CI has not run yet",
  * "waiting for tests to pass", "build still pending", "no meaningful
- * failures", "tests will pass after the patch". The prefix must sit within
+ * failures", "tests will pass after the patch", "Target release v2.4.1".
+ * The prefix must sit within
  * the same clause: commas, semicolons, colons, line breaks, and coordinating
  * conjunctions that introduce a new clause all end it, so "No errors; tests
  * passed" and "No errors and tests passed" both count "passed" as affirmative.
  */
 const NON_AFFIRMATIVE_PREFIX_RE =
-  /\b(?:not|never|no|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|without|yet|still|pending|wait(?:ing)?|queued|incomplete|unfinished|planned|scheduled|upcoming|will|would|should|could|might|need(?:s|ed)? to|must|has to|have to|required to|expect(?:ed|s)? to|hop(?:e|es|ing) to|plan(?:s|ned)? to)\b[^.!?;:,\n]{0,32}$/i;
+  /\b(?:not|never|no|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|without|yet|still|pending|wait(?:ing)?|queued|incomplete|unfinished|planned|scheduled|upcoming|goal|target(?:ed)?|aim|will|would|should|could|might|need(?:s|ed)? to|must|has to|have to|required to|expect(?:ed|s)? to|hop(?:e|es|ing) to|plan(?:s|ned)? to)\b[^.!?;:,\n]{0,32}$/i;
 
 /**
  * Coordinating conjunctions that can introduce a new clause. A qualifier on
@@ -770,20 +803,23 @@ const SUFFIX_QUALIFIER_RE =
  * + linking verb or modal auxiliary ("and deployment is", "and the build
  * pipeline is", "but the build was", "and deployment will start") — the
  * start of a new independent clause whose qualifiers must not attach to a
- * preceding outcome match.
+ * preceding outcome match. Requires at least one subject word: an
+ * omitted-subject coordinated predicate ("opened and is still pending") is
+ * not a new clause.
  */
 const NEW_CLAUSE_CONJUNCTION_RE =
-  /\b(?:and|but|while|whereas|although|though)\s+(?:the\s+|a\s+|an\s+)?(?:\w+\s+){0,3}(?:is|are|was|were|has|have|had|remains?|stays?|seems?|will|would|should|could|might|must|can|may)\b/i;
+  /\b(?:and|but|while|whereas|although|though)\s+(?:the\s+|a\s+|an\s+)?(?:\w+\s+){1,3}(?:is|are|was|were|has|have|had|remains?|stays?|seems?|will|would|should|could|might|must|can|may)\b/i;
 
 /**
  * The same new-clause pattern in status shorthand, where the linking verb is
  * omitted ("Tests passed but deployment pending" = "but deployment [is]
- * pending"). Requires at least one subject word so an elliptical qualifier
- * that directly follows the conjunction ("passing but blocked") still
- * attaches to the outcome's clause.
+ * pending"). Requires at least one non-auxiliary subject word so an
+ * elliptical qualifier that directly follows the conjunction ("passing but
+ * blocked", "opened and is still pending") still attaches to the outcome's
+ * clause.
  */
 const NEW_CLAUSE_STATUS_RE =
-  /\b(?:and|but|while|whereas|although|though)\s+(?:the\s+|a\s+|an\s+)?(?:\w+\s+){1,3}(?:pending|blocked|queued|incomplete|unfinished|planned|scheduled|waiting|stalled)\b/i;
+  /\b(?:and|but|while|whereas|although|though)\s+(?:the\s+|a\s+|an\s+)?(?:(?!is\s|are\s|was\s|were\s|will\s|would\s|should\s|could\s|might\s|must\s|can\s|may\s|has\s|have\s|had\s)\w+\s+){1,3}(?:still\s+|yet\s+)?(?:pending|blocked|queued|incomplete|unfinished|planned|scheduled|waiting|stalled)\b/i;
 
 /**
  * Whether a suffix (the text after an outcome match) carries a qualifier that
@@ -853,11 +889,16 @@ function hasArtifactOutcome(text: string): boolean {
  * completion words ("done", "completed", "approved") that
  * AFFIRMATIVE_OUTCOME_RE deliberately excludes — they are process status,
  * not work artifacts ("complete" alone is left out: as an adjective it
- * appears in substantive notes like "complete rewrite of the parser"). A
- * clause with any of these is process status regardless of anything else.
+ * appears in substantive notes like "complete rewrite of the parser").
+ * Bare negators are restricted to status phrases: "no update", "no new
+ * signal", "never got to it", "not working", and negated outcome verbs
+ * ("tests have not passed") — a negative finding ("No index covers the
+ * query", "The cache is not the bottleneck") is a substantive diagnosis,
+ * not process status. A clause with any of these
+ * markers is process status regardless of anything else.
  */
 const PENDING_MARKER_RE =
-  /\b(?:waiting|wait|pending|queued|incomplete|unfinished|planned|scheduled|upcoming|todo|done|completed|approved|blocked|stalled|goal|target|aim|need(?:s|ed)? to|must|has to|have to|required to|not\s+(?:yet|done|started|run|runned)|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|no\s|never|not\s|later|soon|tomorrow|tbd|n\/a)\b/i;
+  /\b(?:waiting|wait|pending|queued|incomplete|unfinished|planned|scheduled|upcoming|todo|done|completed|approved|blocked|stalled|goal|target|aim|need(?:s|ed)? to|must|has to|have to|required to|not\s+(?:yet|done|started|run|runned|finished|working|expected|passed|passing|merged|merging|landed|landing|shipped|shipping|failed|failing|green|succeed(?:ed|ing)?|deployed|released|built|closed|fixed)|no\s+(?:update|updates|movement|progress|news|change|changes|blockers?|findings?|errors?|failures?|issues?|new\s+signal|signal|new\s+work)|never\s+(?:got|started|finished|ran|completed|happened|landed|shipped|merged)|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|later|soon|tomorrow|tbd|n\/a)\b/i;
 
 /**
  * Bare modals, ambiguous between prospective work status ("tests should
