@@ -1440,4 +1440,40 @@ describe('voice transcript outbox — review-hardening round', () => {
     // The fresh epoch's record survived the delayed tab's cleanup.
     expect(localStorage.getItem(recordKey)).not.toBeNull();
   });
+
+  it('stops epoch deletions the moment a new marker appears mid-removal', () => {
+    vi.useRealTimers();
+    // The pre-scan recheck passed, but a second tab establishes the new epoch
+    // DURING the removal loop: its marker lands (markers are always written
+    // before their epoch's records), so the very next per-record recheck must
+    // abort the remaining deletions.
+    const markerKey = 'hyperneo_voice_transcript_outbox_v1.entry.landed.s1';
+    const recordA = 'hyperneo_voice_transcript_outbox_v1.superseded.s1.1.1';
+    const recordB = 'hyperneo_voice_transcript_outbox_v1.superseded.s1.2.2';
+    localStorage.setItem(recordA, JSON.stringify({ generation: 1, beforeTs: Date.now() }));
+    localStorage.setItem(recordB, JSON.stringify({ generation: 2, beforeTs: Date.now() }));
+    const realRemove = localStorage.removeItem.bind(localStorage);
+    let removals = 0;
+    const spy = vi.spyOn(localStorage, 'removeItem').mockImplementation((key: string) => {
+      if (key === recordA || key === recordB) {
+        removals += 1;
+        if (removals === 1) {
+          // The concurrent tab establishes the epoch mid-loop.
+          localStorage.setItem(
+            markerKey,
+            JSON.stringify({ v: 1, ts: Date.now(), n: 5, text: 'new epoch', ids: [] })
+          );
+        }
+        realRemove(key);
+        return;
+      }
+      realRemove(key);
+    });
+    markVoiceTranscriptLanded('s1', 'delayed tab', 'e-late');
+    spy.mockRestore();
+    // The first record was already gone, but the loop aborted before the new
+    // epoch's second record.
+    expect(localStorage.getItem(recordA)).toBeNull();
+    expect(localStorage.getItem(recordB)).not.toBeNull();
+  });
 });

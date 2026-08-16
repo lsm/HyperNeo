@@ -2920,6 +2920,65 @@ describe('useInputDraft', () => {
       expect(merges.some(([, data]) => data?.content === 'long refused text')).toBe(true);
     });
 
+    it('folds a guarded refresh into post-clear typing instead of dropping the transcript', async () => {
+      // The live owed-clear chain sees a RETAINED pending (draft too full):
+      // it clears the stale baseline conditionally, then refreshes so the
+      // pending merges onto the clean draft. The refresh's apply guard
+      // refuses application over the restored post-clear typing — consuming
+      // the landing without folding would let the next ordinary save
+      // overwrite the transcript-only daemon draft.
+      markVoiceTranscriptLanded('session-1', 'voice');
+      const gen = voiceTranscriptLandedSignal.value.get('session-1') ?? 1;
+      saveClearTombstone('session-1');
+      const tombstoneKeys: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i) ?? '';
+        if (key.startsWith('hyperneo_voice_transcript_outbox_v1.clear.session-1.')) {
+          tombstoneKeys.push(key);
+        }
+      }
+      for (const key of tombstoneKeys) {
+        const parsed = JSON.parse(localStorage.getItem(key) ?? '{}');
+        localStorage.setItem(key, JSON.stringify({ ...parsed, ts: parsed.ts - 1000 }));
+      }
+      saveDraftBackup('session-1', 'post-clear typing', gen);
+      let gets = 0;
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          gets += 1;
+          if (gets === 1) return { session: { metadata: { inputDraft: 'sent text' } } };
+          if (gets === 2) {
+            // The chain's first get: the pending is RETAINED (draft too full).
+            return {
+              session: {
+                metadata: { inputDraft: 'sent text', inputDraftVoicePending: 'voice' },
+              },
+            };
+          }
+          // The post-clear refresh: the pending merged onto the cleared draft.
+          return {
+            session: { metadata: { inputDraft: 'voice', inputDraftVoiceBaseline: '' } },
+          };
+        }
+        if (method === 'session.clearInputDraftIf') return { cleared: true };
+        return {};
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // The typing carries the merged transcript, and the clear settled.
+      expect(result.current.content).toBe('post-clear typing voice');
+      expect(hasClearTombstone('session-1')).toBe(false);
+      expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(false);
+    });
+
     it('keeps local content and a stale version cache when the daemon refuses a truncating fold', async () => {
       // localStorage failed (no backup), so the save fell through to the
       // daemon with text too long to fold the transcripts into. The refused

@@ -876,12 +876,42 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       loadDraft(
         sessionId,
         () => cancelled,
-        (ok, pendingRetained, _wasCancelled) => {
+        (ok, pendingRetained, _wasCancelled, draft, baseline) => {
+          if (!ok || pendingRetained) return;
+          // The apply guard may have REFUSED the merged draft's application
+          // (the composer holds post-clear typing or another restored backup —
+          // newer user state the chain's get must not overwrite). Consuming
+          // the landing without folding would let the next ordinary save
+          // overwrite the transcript-only daemon draft: fold the merged
+          // transcripts into the newer content (fits-checked), or keep the
+          // clear owed when the combination cannot fit whole.
+          const current = contentSignal.peek();
+          // Once per generation: a CANCELLED run's reconcile-on-cancel fold
+          // already merged this generation's transcripts into the typing.
+          const alreadyFolded = foldedLandingRef.current.get(sessionId) === generation;
+          // "Guard refused" = the composer shows something OTHER than what
+          // this chain applied (chainDraft) or this refresh just applied
+          // (the draft itself): newer user state the application skipped.
+          const guardRefused = current.trim() !== '' && current !== chainDraft && current !== draft;
+          if (guardRefused && !alreadyFolded) {
+            const transcripts = transcriptsFromMerge(draft, baseline) ?? draft ?? '';
+            if (transcripts.trim() !== '') {
+              const combined = appendDraftText(current, transcripts);
+              const fits =
+                combined === `${current}${transcripts}` || combined === `${current} ${transcripts}`;
+              if (!fits) {
+                oweClear();
+                flushKickRef.current();
+                return;
+              }
+              contentSignal.value = combined;
+            }
+          }
           // Consume even when this run was cancelled mid-get: a RESOLVED get
           // already merged (and cleared) the pending server-side, so the
           // landing is handled — leaving it pending would let a later clear
           // delete the merged transcript.
-          if (ok && !pendingRetained) consumeLanding(sessionId, generation);
+          consumeLanding(sessionId, generation);
         },
         // A replay get cancelled by typing must reconcile the merged transcript
         // into the local draft (see loadDraft) so the re-enabled save does not

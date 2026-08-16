@@ -393,6 +393,12 @@ export function setupSessionHandlers(
             inputDraft: merged,
             inputDraftVoicePending: null,
             inputDraftVersion: (beforeMerge.metadata?.inputDraftVersion ?? 0) + 1,
+            // Stamp the version the LANDING'S OWN MERGE produced: a later
+            // version movement past this mark is a subsequent folded write
+            // (a stale save the folding branch re-anchored), not the merge —
+            // mergeVoiceDraftBackup's stale-claim guard allows a mismatch
+            // only while the current version still IS the merge's.
+            inputDraftVoiceMergedVersion: (beforeMerge.metadata?.inputDraftVersion ?? 0) + 1,
           },
         } as Partial<Session>);
       }
@@ -847,18 +853,27 @@ export function setupSessionHandlers(
     // OWN merge (a session.get merged the pending transcript), which is
     // exactly the write this RPC exists to fold the backup with — declining
     // there would make the client retire its only durable copy of the
-    // deferred edits. A mismatch while the pending is still STAGED is always
-    // another tab's draft write (session.update bumps the version and
-    // re-anchors the baseline to the newer text while the pending waits): the
-    // staged branch would replace that newer draft with the older backup.
-    // `stale` declines only the genuinely superseded claims.
+    // deferred edits. The merge STAMP distinguishes that merge from a
+    // SUBSEQUENT folded save (a stale session.update the folding branch
+    // re-anchored): the mismatch is the landing's own merge only while the
+    // current version still IS the stamped merge version — anything later is
+    // a newer writer's draft. A mismatch while the pending is still STAGED is
+    // likewise always another tab's draft write (session.update bumps the
+    // version and re-anchors the baseline to the newer text while the pending
+    // waits): the staged branch would replace that newer draft with the older
+    // backup. `stale` declines only the genuinely superseded claims.
     const baseline = metadata.inputDraftVoiceBaseline;
     const pendingStaged = (metadata.inputDraftVoicePending ?? '').trim() !== '';
+    const mergeStamp = metadata.inputDraftVoiceMergedVersion;
+    const postMergeWrite =
+      typeof mergeStamp === 'number' &&
+      typeof metadata.inputDraftVersion === 'number' &&
+      metadata.inputDraftVersion !== mergeStamp;
     if (
       expectedDraftVersion !== undefined &&
       typeof metadata.inputDraftVersion === 'number' &&
       expectedDraftVersion !== metadata.inputDraftVersion &&
-      (typeof baseline !== 'string' || pendingStaged)
+      (typeof baseline !== 'string' || pendingStaged || postMergeWrite)
     ) {
       return { merged: false, stale: true };
     }

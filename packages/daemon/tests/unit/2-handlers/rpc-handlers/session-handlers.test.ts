@@ -941,6 +941,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
   let existingBaseline: string | null | undefined;
   let existingBaselineSeq: number | null | undefined;
   let existingMergeClaimLog: Array<{ id: string; ts: number }> | null;
+  let existingMergedVersion: number | null | undefined;
   let existingDraftVersion: number | null | undefined;
   let existingAppendCounter: number | null | undefined;
   let sessionExists: boolean;
@@ -954,6 +955,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     existingBaseline = undefined;
     existingBaselineSeq = undefined;
     existingMergeClaimLog = null;
+    existingMergedVersion = undefined;
     existingDraftVersion = undefined;
     existingAppendCounter = undefined;
     sessionExists = true;
@@ -969,6 +971,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
                 inputDraftVoiceBaselineSeq: existingBaselineSeq,
                 inputDraftVoiceAppendLog: existingAppendLog,
                 inputDraftVoiceMergeClaimLog: existingMergeClaimLog,
+                inputDraftVoiceMergedVersion: existingMergedVersion,
                 inputDraftVersion: existingDraftVersion,
                 inputDraftVoiceAppendCounter: existingAppendCounter,
               },
@@ -1580,6 +1583,45 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     expect(sessionManager.updateSession).not.toHaveBeenCalled();
   });
 
+  it('declines a stale claim after a post-merge folded save moved the version', async () => {
+    // The landing's own merge stamped version 6; a stale session.update from
+    // another tab then FOLDED (re-anchoring the baseline, bumping to 7). An
+    // older backup claim echoing 5 must now be stale — the current draft is
+    // a newer writer's text plus transcripts, not the merge the claim exists
+    // to fold with.
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    existingPending = null;
+    existingBaseline = 'newer writer text';
+    existingBaselineSeq = 1;
+    existingDraft = 'newer writer text voice';
+    existingDraftVersion = 7;
+    existingMergedVersion = 6;
+    const result = (await handler!(
+      { sessionId: 's1', content: 'older edits', claimId: 'claim-old', expectedDraftVersion: 5 },
+      {}
+    )) as { merged: boolean; stale?: boolean };
+    expect(result).toEqual({ merged: false, stale: true });
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('merges across the landing merge stamp when no later write intervened', async () => {
+    // The current version still IS the merge's stamped version: the only
+    // movement since the claim's read was the landing's own merge — proceed.
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    existingPending = null;
+    existingBaseline = 'old';
+    existingBaselineSeq = 1;
+    existingDraft = 'old voice';
+    existingDraftVersion = 6;
+    existingMergedVersion = 6;
+    const result = (await handler!(
+      { sessionId: 's1', content: 'typed edits', claimId: 'claim-1', expectedDraftVersion: 5 },
+      {}
+    )) as { merged: boolean; value: string };
+    expect(result.merged).toBe(true);
+    expect(result.value).toBe('typed edits voice');
+  });
+
   it('declines a version-mismatched merge while a pending is still staged', async () => {
     // A staged pending makes every version bump another tab's DRAFT WRITE
     // (session.update re-anchors the baseline to the newer text and bumps the
@@ -1638,6 +1680,7 @@ describe('Session RPC Handlers — session.get voice draft merge', () => {
         inputDraft: 'existing hello world',
         inputDraftVoicePending: null,
         inputDraftVersion: 1,
+        inputDraftVoiceMergedVersion: 1,
       },
     });
   });

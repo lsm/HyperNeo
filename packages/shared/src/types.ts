@@ -648,6 +648,15 @@ export interface SessionMetadata {
    */
   inputDraftVoiceAppendCounter?: number | null;
   /**
+   * The draft version the landing's OWN merge produced (the session.get that
+   * merged `inputDraftVoicePending` into `inputDraft`). Any version movement
+   * beyond this mark is a subsequent folded write (a stale client save the
+   * folding branch re-anchored), letting `session.mergeVoiceDraftBackup`
+   * distinguish the merge an arriving claim may fold with from a newer
+   * writer's draft it must not clobber.
+   */
+  inputDraftVoiceMergedVersion?: number | null;
+  /**
    * The sequence id whose baseline the LAST session.stripVoiceBaseline
    * removed. Lets a strip whose ACKNOWLEDGEMENT was lost be recognized as
    * committed on retry (the client's owed-clear reconcile would otherwise

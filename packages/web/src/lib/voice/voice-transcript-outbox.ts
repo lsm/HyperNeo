@@ -198,7 +198,22 @@ export function markVoiceTranscriptLanded(
           if (key.length > epochPrefix.length && key[epochPrefix.length] !== '.') continue;
           epochRecordKeys.push(key);
         }
-        for (const key of epochRecordKeys) localStorage.removeItem(key);
+        for (const key of epochRecordKeys) {
+          // RECHECK before EVERY removal: a second tab can establish the new
+          // epoch (its marker first, then its reconciliation's records) after
+          // the pre-scan check — a record collected by the scan may already
+          // belong to that new epoch. Landing markers are always written
+          // BEFORE any record of their epoch, so observing a marker here
+          // means the remaining records are not ours to delete.
+          let epochOwnerNow: string | null = null;
+          try {
+            epochOwnerNow = localStorage.getItem(`${LANDED_PREFIX}${sessionId}`);
+          } catch {
+            epochOwnerNow = null;
+          }
+          if (epochOwnerNow !== null) break;
+          localStorage.removeItem(key);
+        }
       }
     } catch {
       /* storage unavailable */
