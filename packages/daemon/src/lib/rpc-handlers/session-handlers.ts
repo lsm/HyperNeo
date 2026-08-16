@@ -683,6 +683,68 @@ export function setupSessionHandlers(
     return { cleared: true };
   });
 
+  // Atomically strip the pre-sequence baseline from the input draft, keeping
+  // only the merged voice transcripts — the EXACT server-side counterpart of
+  // the client's clear-before-merge reconciliation. The baseline snapshot (see
+  // session.appendVoiceDraft) makes this precise: the merged draft is always
+  // baseline + pending (joined by appendDraftText), so removing the baseline
+  // prefix keeps EVERY transcript of the sequence regardless of which client
+  // knows which entry landed. Conditional on BOTH the draft text the client
+  // just read (`expected` — a NEWER draft saved by another client is never
+  // stomped) and the SEQUENCE id it observed (`expectedSeq` — a newer sequence
+  // can replace the baseline while leaving the draft text unchanged, and
+  // stripping then would clear the merged transcript the caller meant to
+  // keep). Read+write is one synchronous step, like clearInputDraftIf.
+  messageHub.onRequest('session.stripVoiceBaseline', async (data, _ctx) => {
+    const { sessionId, expected, expectedSeq } = data as {
+      sessionId: string;
+      expected: string;
+      expectedSeq?: number;
+    };
+    if (typeof expected !== 'string') throw new Error('Expected draft value is required');
+    const session = sessionManager.getSessionFromDB(sessionId);
+    if (!session) throw new Error('Session not found');
+    const metadata = session.metadata ?? {};
+    const baseline = metadata.inputDraftVoiceBaseline;
+    const draft = metadata.inputDraft ?? '';
+    if (
+      typeof baseline !== 'string' ||
+      typeof expectedSeq !== 'number' ||
+      metadata.inputDraftVoiceBaselineSeq !== expectedSeq ||
+      draft.trim() !== expected.trim()
+    ) {
+      return { updated: false };
+    }
+    // Mirror appendDraftText's joining so the remainder is exactly the
+    // transcripts (no leading separator).
+    let value: string;
+    if (draft === baseline) value = '';
+    else if (draft.startsWith(`${baseline} `)) value = draft.slice(baseline.length + 1);
+    else if (draft.startsWith(baseline)) value = draft.slice(baseline.length);
+    else return { updated: false }; // draft diverged from the snapshot
+    // Record WHICH sequence was stripped: a strip whose acknowledgement was
+    // lost leaves the client still owing its clear, and its retry must
+    // recognize the transcript-only draft as already-stripped rather than
+    // clearing it as a sequence that never merged.
+    const updates: UpdateSessionRequest = {
+      metadata: {
+        inputDraft: value || null,
+        inputDraftVoiceBaseline: null,
+        inputDraftVoiceLastStrippedSeq: expectedSeq,
+        inputDraftVersion: (metadata.inputDraftVersion ?? 0) + 1,
+      },
+    };
+    await sessionManager.updateSession(sessionId, updates as Partial<Session>);
+    messageHub.event(
+      'session.updated',
+      { ...updates, sessionId },
+      {
+        channel: `session:${sessionId}`,
+      }
+    );
+    return { updated: true, value };
+  });
+
   messageHub.onRequest('session.delete', async (data, _ctx) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
 
