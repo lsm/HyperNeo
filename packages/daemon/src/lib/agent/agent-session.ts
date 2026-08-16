@@ -2393,6 +2393,10 @@ export class AgentSession
     this.outstandingToolUseIds.clear();
     // Stall watchdog placeholder; armed once we begin awaiting the turn (below).
     let stallPromise: Promise<void> = new Promise<void>(() => {});
+    // The watchdog instance THIS attempt armed, for identity-fenced cleanup: a
+    // slot-evicted predecessor that settles later must not cancel a replacement's
+    // watchdog via the shared `deliveryTurnStall` field. (Codex P1, PR #2499.)
+    let stallWatchdog: DeliveryTurnStallWatchdog | null = null;
     // The turn-end waiter the turn await races (possibly re-armed by the
     // spurious-fire grace below); cancelled in the finally.
     let activeTurnEnd = started.turnEnd;
@@ -2471,6 +2475,7 @@ export class AgentSession
       // turn-end await; cleared in `finally`.
       throwIfDeliveryAborted(signal);
       stallPromise = this.armDeliveryTurnStall(signal, claimGuard);
+      stallWatchdog = this.deliveryTurnStall;
       // Spurious-fire grace: a turn-end transition landing within milliseconds
       // of a FRESH kickoff admission cannot be THIS turn's end — a provider
       // roundtrip takes longer than that — it is the PREVIOUS turn's teardown
@@ -2543,7 +2548,11 @@ export class AgentSession
       // Cancel the waiter if it didn't win the race (e.g. queryPromise resolved
       // on query-close, or acknowledgment rejected) so it isn't left in the map.
       activeTurnEnd.cancel();
-      this.clearDeliveryTurnStall();
+      // Identity-fenced: a slot-evicted predecessor that settles later must not
+      // cancel a replacement's watchdog (the field is session-shared).
+      if (this.deliveryTurnStall === stallWatchdog) {
+        this.clearDeliveryTurnStall();
+      }
       if (responseObserver && this.deliveryResponseObserver === responseObserver) {
         this.deliveryResponseObserver = null;
       }

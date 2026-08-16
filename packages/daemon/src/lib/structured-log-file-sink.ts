@@ -175,6 +175,14 @@ function redactString(value: string): string {
       // without any `authorization`/`token`/`password` label; redact the
       // userinfo component. (Codex P1, PR #2499.)
       .replace(/(\/\/)[^/\s@]+@/gi, '$1[REDACTED]@')
+      // Header tuple form (Array.from(headers.entries())) serializes a header as
+      // `["Name","value"]` — the value carries no adjacent `Name:` label, so no
+      // other rule catches it. Redact the second element when the first is a
+      // sensitive header name. (Codex P1, PR #2499.)
+      .replace(
+        /(["'](?:authorization|cookie|set-cookie|api[-_]?key|token|secret|password)["']\s*,\s*["'])([^"']+)(["'])/gi,
+        '$1[REDACTED]$3'
+      )
       // Authorization values legitimately contain structural commas (Digest
       // `username="u", nonce="…", response="…"`, AWS `…, Signature=…`), so —
       // like cookies — redact through end of line; a `,`/`}` boundary would
@@ -189,15 +197,15 @@ function redactString(value: string): string {
       // Plain colon-form values for the other sensitive keys (`token: abc`,
       // `api-key: sk-…`, `AWS_SECRET_ACCESS_KEY: …`) — same boundaries as the
       // authorization rule. The key matches a sensitive COMPONENT inside a
-      // compound name (`[\w.-]*` around the alternation), so serialized
+      // compound name (`[\w.-]{0,64}` around the alternation), so serialized
       // env/config objects like `{"AWS_SECRET_ACCESS_KEY":"…"}` are caught.
       // Quoted values keep the quoted rule's output via the lookahead. (Codex P1.)
       .replace(
-        /((?:[\w.-]*(?:api[-_]?key|token|secret|password)[\w.-]*)\s*:\s*)(?![\s"'])([^,}\r\n]+)/gi,
+        /((?:[\w.-]{0,64}(?:api[-_]?key|token|secret|password)[\w.-]{0,64})\s*:\s*)(?![\s"'])([^,}\r\n]+)/gi,
         '$1[REDACTED]'
       )
       .replace(
-        /(["']?(?:[\w.-]*(?:api[-_]?key|token|secret|password|authorization|cookie|set-cookie)[\w.-]*)["']?\s*[:=]\s*)(["'])((?:\\.|(?!\2).)*)\2/gi,
+        /(["']?(?:[\w.-]{0,64}(?:api[-_]?key|token|secret|password|authorization|cookie|set-cookie)[\w.-]{0,64})["']?\s*[:=]\s*)(["'])((?:\\.|(?!\2).)*)\2/gi,
         '$1$2[REDACTED]$2'
       )
       // Equals-form Authorization/Cookie values legitimately contain spaces
@@ -208,7 +216,7 @@ function redactString(value: string): string {
       .replace(/(authorization\s*=\s*)(?![\s"'])[^\r\n]+/gi, '$1[REDACTED]')
       .replace(/((?:cookie|set-cookie)\s*=\s*)(?![\s"'])[^\r\n]+/gi, '$1[REDACTED]')
       .replace(
-        /((?:[\w.-]*(?:api[-_]?key|token|secret|password)[\w.-]*)\s*=\s*)([^\s&;,}]+)/gi,
+        /((?:[\w.-]{0,64}(?:api[-_]?key|token|secret|password)[\w.-]{0,64})\s*=\s*)([^\s&;,}]+)/gi,
         '$1[REDACTED]'
       )
   );

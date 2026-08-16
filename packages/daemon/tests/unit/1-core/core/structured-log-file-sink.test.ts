@@ -136,6 +136,16 @@ describe('StructuredLogFileSink', () => {
     );
   });
 
+  it('redacts sensitive header tuple values', () => {
+    // `Array.from(headers.entries())` serializes a header as a two-element
+    // tuple; the value has no adjacent `Authorization:`/`Cookie:` label.
+    // (Codex P1, PR #2499.)
+    const redacted = redactStructuredLogEvent(
+      event(`[['Authorization','Basic dXNlcjpwYXNz'],['Cookie','session=secret']]`)
+    );
+    expect(redacted.message).toBe(`[['Authorization','[REDACTED]'],['Cookie','[REDACTED]']]`);
+  });
+
   it('redacts unquoted colon-form values for every sensitive key', () => {
     // `token: abc` (no quotes, no `=`) previously passed through every rule —
     // only authorization and cookies had colon-form handling. Like the
