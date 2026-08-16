@@ -2123,6 +2123,34 @@ export class AgentSession
     // against a concurrent steer's state-check. Released BEFORE the long turn
     // await below — holding it across the turn would serialize mid-turn steering
     // (the feature's whole point). See message-delivery-v2.md §8 + Codex review.
+    // Waiter-owned turn-end marker: fire on ANY release path (terminal idle
+    // drain, direct releaseIdleWaiters from restart/reset/answer-reinjection
+    // failures, or the waiter's cancel) — the kickoff UUID is the durable
+    // turn owner, so it isn't corrupted by a steer overwriting the processing
+    // messageId or waiting_for_input dropping it. Gated on the message having
+    // been CONSUMED and the job still being `processing` (a graceful-shutdown
+    // requeue, or a pre-consumption transient idle, records nothing). See
+    // Codex (PR #2463, P2). Hoisted so the grace re-arm below (outside the
+    // lock) can re-arm the waiter with the identical callback.
+    const recordTurnEndMarker = (): void => {
+      try {
+        // Scope completion to the durable delivery UUID, not this transient
+        // claim. A lease handoff can invalidate the predecessor claim before a
+        // result-less terminal idle fires; that genuine completion still belongs
+        // to the same consumed message and must survive until the replacement
+        // handler observes it. The processing+UUID+consumed checks below prevent
+        // an old waiter from marking a different or already-settled turn.
+        const repo = this.db.getSDKMessageRepo();
+        const jobQueue = this.db.getJobQueueRepo?.();
+        if (!repo || !jobQueue) return;
+        if (!jobQueue.isProcessingDelivery(this.session.id, messageUuid)) return;
+        const loaded = repo.getDeliveryContent(this.session.id, messageUuid);
+        if (!loaded || loaded.sendStatus !== 'consumed') return;
+        this.recordDeliveryTurnEnd(messageUuid);
+      } catch (error) {
+        this.logger.warn('Failed to record delivery turn-end marker at turn end:', error);
+      }
+    };
     const started = await withSessionLock(
       this.session.id,
       async () => {
@@ -2207,33 +2235,7 @@ export class AgentSession
         // generation stable at this value through the 429'd turn's life).
         const turnEnd = this.stateManager.waitForIdleTransition(
           this.rateLimitWatchdog.getGeneration(),
-          // Waiter-owned turn-end marker: fire on ANY release path (terminal idle
-          // drain, direct releaseIdleWaiters from restart/reset/answer-reinjection
-          // failures, or this waiter's cancel) — the kickoff UUID is the durable
-          // turn owner, so it isn't corrupted by a steer overwriting the
-          // processing messageId or waiting_for_input dropping it. Gated on the
-          // message having been CONSUMED and the job still being `processing`
-          // (a graceful-shutdown requeue, or a pre-consumption transient idle,
-          // records nothing). See Codex (PR #2463, P2).
-          () => {
-            try {
-              // Scope completion to the durable delivery UUID, not this transient
-              // claim. A lease handoff can invalidate the predecessor claim before a
-              // result-less terminal idle fires; that genuine completion still belongs
-              // to the same consumed message and must survive until the replacement
-              // handler observes it. The processing+UUID+consumed checks below prevent
-              // an old waiter from marking a different or already-settled turn.
-              const repo = this.db.getSDKMessageRepo();
-              const jobQueue = this.db.getJobQueueRepo?.();
-              if (!repo || !jobQueue) return;
-              if (!jobQueue.isProcessingDelivery(this.session.id, messageUuid)) return;
-              const loaded = repo.getDeliveryContent(this.session.id, messageUuid);
-              if (!loaded || loaded.sendStatus !== 'consumed') return;
-              this.recordDeliveryTurnEnd(messageUuid);
-            } catch (error) {
-              this.logger.warn('Failed to record delivery turn-end marker at turn end:', error);
-            }
-          }
+          recordTurnEndMarker
         );
         // Feed the kickoff (resolves on onSent = the SDK consumed it) UNLESS a
         // prior attempt already did (alreadyConsumed = reclaim after a crash): the
@@ -2355,6 +2357,9 @@ export class AgentSession
     this.outstandingToolUseIds.clear();
     // Stall watchdog placeholder; armed once we begin awaiting the turn (below).
     let stallPromise: Promise<void> = new Promise<void>(() => {});
+    // The turn-end waiter the turn await races (possibly re-armed by the
+    // spurious-fire grace below); cancelled in the finally.
+    let activeTurnEnd = started.turnEnd;
     // Response observability applies to EVERY driving attempt — including an
     // alreadyConsumed reclaim, whose `acknowledgment` is null (no fresh feed
     // below) but which still starts a query whose first SDK response the
@@ -2430,21 +2435,70 @@ export class AgentSession
       // turn-end await; cleared in `finally`.
       throwIfDeliveryAborted(signal);
       stallPromise = this.armDeliveryTurnStall(signal, claimGuard);
-      const aborted = waitForDeliveryAbort(signal);
-      try {
-        await Promise.race([
-          started.turnEnd.promise,
-          started.queryPromise.catch(() => {}),
-          stallPromise,
-          aborted.promise,
-        ]);
-      } finally {
-        aborted.cancel();
+      // Spurious-fire grace: a turn-end transition landing within milliseconds
+      // of a FRESH kickoff admission cannot be THIS turn's end — a provider
+      // roundtrip takes longer than that — it is the PREVIOUS turn's teardown
+      // (its terminal idle release / deferred waiter drain) arriving just after
+      // this attempt armed its waiter. Failing there reopens the row and
+      // re-feeds a prompt the still-live query is already answering; the
+      // duplicate feed then sits dead until the stall watchdog (observed as the
+      // deterministic steer-after-turn-end hang in the features-b online suite).
+      // Discriminators: this attempt fed the kickoff (alreadyConsumed reclaims
+      // resolve their ended turns via the pre-arm turn_terminated check), no
+      // terminal result for THIS message yet, and the query promise still
+      // pending (a genuinely-ended turn's query has closed, or a legitimately
+      // fast turn already has its result row). Re-arm and keep waiting;
+      // bounded to two re-arms. (PR #2499 CI trace.)
+      const SPURIOUS_TURN_END_GRACE_MS = 250;
+      const freshFeed = !!started.acknowledgment;
+      let raceArmedAt = Date.now();
+      let graceRearms = 0;
+      let turnEndFired = false;
+      let queryEnded = false;
+      void activeTurnEnd.promise.then(() => {
+        turnEndFired = true;
+      });
+      void started.queryPromise
+        .catch(() => {})
+        .then(() => {
+          queryEnded = true;
+        });
+      while (true) {
+        const aborted = waitForDeliveryAbort(signal);
+        try {
+          await Promise.race([
+            activeTurnEnd.promise,
+            started.queryPromise.catch(() => {}),
+            stallPromise,
+            aborted.promise,
+          ]);
+        } finally {
+          aborted.cancel();
+        }
+        const spuriousFire =
+          freshFeed &&
+          turnEndFired &&
+          !queryEnded &&
+          Date.now() - raceArmedAt <= SPURIOUS_TURN_END_GRACE_MS &&
+          graceRearms < 2 &&
+          !this.db.getSDKMessageRepo()?.hasTerminalResultAfter(this.session.id, messageUuid);
+        if (!spuriousFire) break;
+        graceRearms++;
+        activeTurnEnd.cancel();
+        activeTurnEnd = this.stateManager.waitForIdleTransition(
+          this.rateLimitWatchdog.getGeneration(),
+          recordTurnEndMarker
+        );
+        raceArmedAt = Date.now();
+        turnEndFired = false;
+        void activeTurnEnd.promise.then(() => {
+          turnEndFired = true;
+        });
       }
     } finally {
       // Cancel the waiter if it didn't win the race (e.g. queryPromise resolved
       // on query-close, or acknowledgment rejected) so it isn't left in the map.
-      started.turnEnd.cancel();
+      activeTurnEnd.cancel();
       this.clearDeliveryTurnStall();
       if (responseObserver && this.deliveryResponseObserver === responseObserver) {
         this.deliveryResponseObserver = null;
