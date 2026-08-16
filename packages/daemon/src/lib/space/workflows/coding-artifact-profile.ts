@@ -98,10 +98,10 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
       const hookStateRepo = new WorkflowHookStateRepository(this.db);
       const reserved = hookStateRepo.get(runId, TOOL_PR_IDENTITY_HOOK_ID);
       if (reserved && legacyPrUrl(reserved.localState)) return; // first wins
-      const snapshot = hookStateRepo.ensure(runId, PR_READY_VALIDATED_IDENTITY_HOOK_ID, {
+      const snapshot = hookStateRepo.ensure(runId, TOOL_PR_IDENTITY_HOOK_ID, {
         pr_url: trimmed,
       });
-      if (!legacyPrUrl(snapshot.localState ?? {})) {
+      if (!legacyPrUrl(snapshot.localState)) {
         hookStateRepo.update(runId, TOOL_PR_IDENTITY_HOOK_ID, {
           expectedVersion: snapshot.version,
           localState: { ...snapshot.localState, pr_url: trimmed },
@@ -190,7 +190,7 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
     // colliding-hook-id / record_state PR-identity spoof for current runs.
     try {
       const hookStateRepo = new WorkflowHookStateRepository(this.db);
-      const reserved = hookStateRepo.get(runId, TOOL_PR_IDENTITY_HOOK_ID);
+      const reserved = hookStateRepo.get(runId, PR_READY_VALIDATED_IDENTITY_HOOK_ID);
       const reservedUrl = legacyPrUrl(reserved?.localState);
       if (reservedUrl) return reservedUrl;
     } catch (err) {

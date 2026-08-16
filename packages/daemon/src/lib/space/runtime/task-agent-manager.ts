@@ -82,6 +82,7 @@ import type { ActorResolver } from '../../../../../messaging/src/contracts';
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository';
 import type { SpaceWorktreeManager } from '../managers/space-worktree-manager';
 import { SpaceTaskManager } from '../managers/space-task-manager';
+import { SpaceRepository } from '../../../storage/repositories/space-repository';
 /** Agent identity metadata for sub-session creation. */
 export interface SubSessionMemberInfo {
   /** ID of the SpaceWorkerAgent config this sub-session uses */
@@ -5382,6 +5383,7 @@ export class TaskAgentManager {
     const onCompleteValidationTask = createCompleteValidationTaskHandler({
       spaceId,
       callerSessionId: subSessionId,
+      spaceRepo: new SpaceRepository(this.config.db.getDatabase()),
       // Bind completion authority to THIS server's node: createSubSession
       // can rebind a reused session to another node mid-flight, and an
       // in-flight old-node call must not complete under stale authorization.

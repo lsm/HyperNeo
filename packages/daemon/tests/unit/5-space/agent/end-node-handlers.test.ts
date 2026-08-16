@@ -1160,6 +1160,7 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
         resolveInitialPrimaryLinkUrl: (runId) =>
           ctx.artifactProfile.resolveInitialPrimaryLinkUrl(runId),
         spaceManager: ctx.spaceManager,
+        spaceRepo: new SpaceRepository(ctx.db),
         goalService: ctx.goalService,
         ...overrides,
       }),

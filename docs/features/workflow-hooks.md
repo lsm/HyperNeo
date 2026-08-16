@@ -1,6 +1,10 @@
 # Workflow hooks
 
-Workflow hooks replace legacy workflow gate polling for MCP action checks. They run inside the daemon before a node-agent MCP action such as `send_message`, `save_artifact`, `approve_task`, or `complete_validation_task`. Hook results are persisted before the underlying action handler runs, so `side_effect` classification means "non-blocking pre-action side effect", not post-success handling.
+Workflow hooks replace legacy workflow gate polling for MCP action checks. They run inside the daemon before a node-agent MCP action such as `send_message`, `save_artifact`, `approve_task`, or `complete_validation_task`.
+
+## `complete_validation_task` is opt-in
+
+Unlike every other method above, a `complete_validation_task` hook is a **precondition for the tool to be usable at all**: the node-agent validation-completion tool rejects any workflow-backed task whose workflow does not declare an *enabled* `complete_validation_task` hook (with no `targetNode` — target scoping is send_message-only). Declaring the hook is the workflow author's explicit opt-in to the validation-only (no-PR) close path, and its `sourceNode`/`authorizedCallers` additionally name which nodes/slots may call the tool — callers the hook does not authorize are refused before the engine wrapper runs. Workflows without the hook (including PR-shaped ones gated by `pr_ready` or script validators) keep their normal completion paths. The tool is also run-backed only: standalone (run-less) tasks are rejected for every production caller. Hook results are persisted before the underlying action handler runs, so `side_effect` classification means "non-blocking pre-action side effect", not post-success handling.
 
 ## Configure hooks
 

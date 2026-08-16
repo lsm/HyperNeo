@@ -35,9 +35,10 @@ import type { NodeExecutionRepository } from '../../../storage/repositories/node
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
 import { Logger } from '../../logger';
-import { pickCanonicalRunTask } from '../runtime/space-runtime';
+import { pickCanonicalRunTask } from '../runtime/pick-canonical-run-task';
 import { collectDispatchablePostApprovalRoutes } from '../runtime/post-approval-router';
 import type { SpaceManager } from '../managers/space-manager';
+import type { SpaceRepository } from '../../../storage/repositories/space-repository';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
 import type { SpaceGoalService } from '../goals/goal-service';
 import type {
@@ -388,6 +389,13 @@ export interface CompleteValidationTaskHandlerDeps {
    * REJECTS, so a db-less handler admits no worker callers at all.
    */
   db?: BunDatabase;
+  /**
+   * Space repository for the synchronous terminal-write autonomy reread (the
+   * entry gate resolves the level through the async space manager, which
+   * cannot run inside setTaskStatus' synchronous precondition). Absent, the
+   * reread falls back to the entry-gate snapshot.
+   */
+  spaceRepo?: Pick<SpaceRepository, 'getSpace'>;
   /** Task repository — task reads, run-task listing for canonical selection. */
   taskRepo: Pick<SpaceTaskRepository, 'getTask' | 'listByWorkflowRun'>;
   /** Task manager bound to `spaceId` — runs the centralised transition validator. */
@@ -447,12 +455,13 @@ export interface CompleteValidationTaskHandlerDeps {
  * synchronous source is available or the column is unset — callers fall back
  * to the entry-gate snapshot in that case.
  */
-function readSpaceAutonomyLevelSync(db: BunDatabase | undefined, spaceId: string): number | null {
-  if (!db) return null;
-  const row = db.prepare('SELECT autonomy_level FROM spaces WHERE id = ? LIMIT 1').get(spaceId) as
-    | { autonomy_level: number | null }
-    | undefined;
-  const level = row?.autonomy_level;
+function readSpaceAutonomyLevelSync(
+  spaceRepo: Pick<SpaceRepository, 'getSpace'> | undefined,
+  spaceId: string
+): number | null {
+  if (!spaceRepo) return null;
+  const space = spaceRepo.getSpace(spaceId);
+  const level = space?.autonomyLevel;
   return typeof level === 'number' && level >= 1 && level <= 5 ? level : null;
 }
 
@@ -593,6 +602,7 @@ export function createCompleteValidationTaskHandler(
     callerSessionId,
     callerWorkflowNodeId,
     db,
+    spaceRepo,
     taskRepo,
     taskManager,
     workflowRunRepo,
@@ -616,6 +626,26 @@ export function createCompleteValidationTaskHandler(
           `Failed to emit space.task.updated for task ${task.id}: ${err instanceof Error ? err.message : String(err)}`
         );
       });
+  };
+
+  /** Retire an active execution row only when it is still in_progress and
+   *  still bound to the session that was interrupted (replacement-safe). */
+  const retireExecutionIfStillHers = (
+    runIdOfExecution: string | null | undefined,
+    execution: { id: string; agentSessionId: string | null }
+  ): void => {
+    if (!runIdOfExecution) return;
+    const rowNow = nodeExecutionRepo
+      .listByWorkflowRun(runIdOfExecution)
+      .find((e) => e.id === execution.id);
+    if (
+      rowNow &&
+      rowNow.status === 'in_progress' &&
+      execution.agentSessionId != null &&
+      rowNow.agentSessionId === execution.agentSessionId
+    ) {
+      nodeExecutionRepo.updateStatus(execution.id, 'idle');
+    }
   };
 
   return async (args: CompleteValidationTaskInput): Promise<ToolResult> => {
@@ -1021,7 +1051,7 @@ export function createCompleteValidationTaskHandler(
           // space level is reread synchronously from the spaces row,
           // falling back to the entry-gate snapshot when no synchronous
           // source exists (handlers built without a db handle).
-          const spaceLevelNow = readSpaceAutonomyLevelSync(db, spaceId) ?? entrySpaceLevel;
+          const spaceLevelNow = readSpaceAutonomyLevelSync(spaceRepo, spaceId) ?? entrySpaceLevel;
           if (spaceLevelNow < requiredAutonomyLevel) {
             throw new Error(
               `Task ${args.task_id} cannot be completed: effective autonomy was lowered to ${spaceLevelNow} (required ${requiredAutonomyLevel}) before the write. The completion authority was revoked — use submit_for_approval to request human review.`
@@ -1034,12 +1064,13 @@ export function createCompleteValidationTaskHandler(
               `Task ${args.task_id}'s workflow run association changed during completion (expected ${expectedRunId ?? 'none'}, found ${actualRunId ?? 'none'}); refusing so the attached run's guards are evaluated. Re-check and retry if still appropriate.`
             );
           }
-          // Task-generation binding (LAST, after every specific check so
-          // their messages win): a review round trip returns the row to an
-          // allowed status with no checkpoint — only the generation stamp
-          // distinguishes it from the state validated at entry.
+          // Task-generation binding: a review round trip returns the row to
+          // an allowed status with no checkpoint — only the generation stamp
+          // distinguishes it from the state validated at entry. Runs BEFORE
+          // the run-scoped rechecks (PR/run/canonical/execution) below, so
+          // when the row was rewritten AND the run moved, this generic
+          // message wins — acceptable: both refusals prevent the same write.
           if (
-            checkedTaskUpdatedAt !== undefined &&
             current.updatedAt !== checkedTaskUpdatedAt &&
             (current.status === 'review' || current.status === 'in_progress')
           ) {
@@ -1202,23 +1233,7 @@ export function createCompleteValidationTaskHandler(
               );
             }
             if (interrupted) {
-              // Conditional retirement: the execution row may have been
-              // restarted/rebound to a REPLACEMENT session while the
-              // interrupt awaited — retiring it then would idle the
-              // replacement's row without interrupting its worker. Only
-              // retire the row if it is still in_progress and still bound
-              // to the session that was interrupted.
-              const rowAfterInterrupt = nodeExecutionRepo
-                .listByWorkflowRun(String(currentTaskRow?.workflowRunId))
-                .find((e) => e.id === execution.id);
-              if (
-                rowAfterInterrupt &&
-                rowAfterInterrupt.status === 'in_progress' &&
-                execution.agentSessionId != null &&
-                rowAfterInterrupt.agentSessionId === execution.agentSessionId
-              ) {
-                nodeExecutionRepo.updateStatus(execution.id, 'idle');
-              }
+              retireExecutionIfStillHers(currentTaskRow?.workflowRunId, execution);
             } else {
               log.warn(
                 `complete_validation_task: session ${execution.agentSessionId} could not be interrupted; leaving its execution in_progress rather than mislabeling it idle`
@@ -1374,6 +1389,19 @@ export function createCompleteValidationTaskHandler(
       // dependency is exactly the invariant the cascade exists to prevent.
       // Best-effort — a failure never disturbs the honest result below.
       try {
+        // Only when the prerequisite is ACTUALLY incomplete again: the
+        // unconfirmed tail is also reached when a done task was merely
+        // re-attached to a different run (association mismatch, dependency
+        // still satisfied) — re-blocking dependents then would strand them,
+        // since no later incomplete→done transition fires another cascade.
+        const prerequisiteRow = taskRepo.getTask(args.task_id);
+        const prerequisiteIncomplete =
+          prerequisiteRow != null &&
+          prerequisiteRow.status !== 'done' &&
+          prerequisiteRow.status !== 'cancelled';
+        if (!prerequisiteIncomplete) {
+          cascadedDependents.length = 0;
+        }
         for (const dependent of cascadedDependents) {
           const dependentRow = taskRepo.getTask(dependent.id);
           if (dependentRow?.status !== 'open' && dependentRow?.status !== 'in_progress') {
@@ -1387,14 +1415,17 @@ export function createCompleteValidationTaskHandler(
             blockReason: 'dependency_incomplete',
           });
           if (dependentRow?.status === 'in_progress' && interruptBySessionId) {
-            // Best-effort: stop any live worker session the dependent had.
+            // Best-effort: stop any live worker session the dependent had —
+            // with the same conditional retirement as the main sweep (a row
+            // restarted/rebound to a replacement session during the await
+            // keeps its truthful state).
             for (const execution of nodeExecutionRepo.listByWorkflowRun(
               dependentRow.workflowRunId ?? ''
             )) {
               if (execution.status === 'in_progress' && execution.agentSessionId) {
                 try {
                   if (await interruptBySessionId(execution.agentSessionId)) {
-                    nodeExecutionRepo.updateStatus(execution.id, 'idle');
+                    retireExecutionIfStillHers(dependentRow.workflowRunId, execution);
                   }
                 } catch {
                   // Best-effort stop.

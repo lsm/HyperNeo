@@ -993,6 +993,13 @@ export class SpaceTaskManager {
    * dependency set, and transitions eligible blocked tasks back to `open`
    * so the tick loop can pick them up.
    */
+  /**
+   * Reopens `blocked` dependents of the given task whose dependency
+   * constraints are now fully met. Eligible block reasons: `dependency_failed`,
+   * `dependency_added`, and `dependency_incomplete` (the revoked-completion
+   * re-block). `human_input_requested` and gate checkpoints are NOT
+   * auto-unblocked — a human resolves those.
+   */
   async unblockDependentTasks(taskId: string): Promise<SpaceTask[]> {
     const unblocked: SpaceTask[] = [];
     const allTasks = await this.listTasks(false /* includeArchived */);
