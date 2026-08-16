@@ -3150,6 +3150,106 @@ describe('useInputDraft', () => {
       expect(result.current.content).toBe('user edits voice');
     });
 
+    it('defers an expired-landing fold retirement until the save acknowledges', async () => {
+      // The expired-landing fold adopts backup + transcripts into the
+      // composer, but the combined text is durable only after the debounced
+      // save commits. Retiring the backup (and its siblings) AT the adoption
+      // would leave a reload-crash window where every local copy is gone
+      // while the daemon still holds the pre-fold draft — the retirement
+      // defers to the acknowledged save, exactly like the live-landing
+      // consumption path.
+      saveDraftBackup('session-1', 'user edits', 1);
+      // No live landing marker: the landing EXPIRED.
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return {
+            session: {
+              metadata: { inputDraft: 'old voice', inputDraftVoiceBaseline: 'old' },
+            },
+          };
+        }
+        if (method === 'session.update') throw new Error('socket dropped');
+        return { success: true };
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // The fold adopted the combined draft…
+      expect(result.current.content).toBe('user edits voice');
+      // …but the save never acknowledged, so the durable edits survive.
+      // (Asserted on the raw tab-owned key: the plain reader gates on a live
+      // landing, which an expired-landing fold by definition has not.)
+      let durableEditsSurvive = false;
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i) ?? '';
+        if (
+          k.startsWith('hyperneo_voice_transcript_outbox_v1.draft.session-1.') &&
+          (localStorage.getItem(k) ?? '').includes('"content":"user edits"')
+        ) {
+          durableEditsSurvive = true;
+        }
+      }
+      expect(durableEditsSurvive).toBe(true);
+    });
+
+    it('records the active merge boundary, not the queued claim timestamp', async () => {
+      // The active-content merge commits the CURRENT composer text, but the
+      // queued claim was captured earlier: retiring at the claim's older
+      // generation/timestamp leaves a same-generation sibling written after
+      // it restorable, and a later reload could merge the obsolete backup
+      // over the acknowledged draft. The supersede boundary must describe
+      // the active reconciliation.
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') return { session: { metadata: {} } };
+        if (method === 'session.mergeVoiceDraftBackup') {
+          return { merged: true, value: 'newer typing' };
+        }
+        return { success: true };
+      });
+      connectionState.value = 'connected';
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result, rerender } = renderHook(({ sessionId }) => useInputDraft(sessionId), {
+        initialProps: { sessionId: 'session-1' },
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      markVoiceTranscriptLanded('session-1', 'voice');
+      result.current.setContent('older edits');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      rerender({ sessionId: 'session-2' });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      // A same-generation sibling backup written AFTER the claim was queued.
+      saveDraftBackup(
+        'session-1',
+        'sibling edits',
+        voiceTranscriptLandedSignal.value.get('session-1') ?? 1
+      );
+      await act(async () => {
+        rerender({ sessionId: 'session-1' });
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      act(() => {
+        result.current.setContent('newer typing');
+      });
+      await act(async () => {
+        // The retry fires the active-content merge while the composer holds
+        // the newer text; it commits and retires the claim.
+        await vi.advanceTimersByTimeAsync(7_000);
+      });
+      // The sibling — written after the claim but before the acknowledged
+      // commit — must be unrestorable over the committed draft.
+      expect(peekExpiredDraftBackup('session-1')).toBeNull();
+    });
+
     it('keeps a newer active merge claim binding when an older merge acks late', async () => {
       // Two active-content merges overlap with DIFFERENT content: the first
       // hangs in flight, a newer claim (fresh content, fresh claim id)

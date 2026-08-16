@@ -816,9 +816,19 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           consumeLanding(sessionId, generation, claimed);
         }
         // The claimed backup's edits (plus transcripts) are now in a composer
-        // with saves enabled — retire it AND its same-generation siblings,
-        // whose older edits a later reload must not restore over this.
-        else if (claimed) retireDraftBackupClaim(claimed);
+        // with saves enabled. An EXPIRED landing has no consumption to defer
+        // through, so defer directly to the acknowledged save: retiring NOW
+        // would write the supersede boundary (and remove the claimed key)
+        // before anything durable holds the combined text — a reload or
+        // crash in that window would leave every older sibling unrestorable
+        // AND the claimed copy gone, discarding all locally recoverable
+        // edits while the daemon still holds the pre-fold draft.
+        else if (claimed) {
+          deferredBackupRetiresRef.current.set(sessionId, {
+            generation: claimed.generation,
+            claim: claimed,
+          });
+        }
       }
     );
     return () => {
@@ -1396,8 +1406,21 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                   }
                   // Retire through the claim path so the SUPERSEDE boundary
                   // is recorded: other tabs' older same-generation backups
-                  // must become unrestorable over this committed draft.
-                  if (key) retireDraftBackupClaim({ key, generation, ts });
+                  // must become unrestorable over this committed draft. The
+                  // boundary must describe the ACTIVE reconciliation that
+                  // just committed — not the queued claim's older
+                  // generation/timestamp: a same-generation sibling written
+                  // after the claim was queued, or a newer landing's backup
+                  // captured before this acknowledgement, must become
+                  // unrestorable over the acknowledged draft too, or a later
+                  // reload could merge the obsolete backup over it.
+                  if (key) {
+                    retireDraftBackupClaim({
+                      key,
+                      generation: getLandingGeneration(flushSessionId) ?? generation,
+                      ts: Date.now(),
+                    });
+                  }
                   // ADOPT the daemon's value while the composer still shows
                   // the content we sent: after a voice sequence merged, the
                   // value is active + transcripts and the baseline cleared —
