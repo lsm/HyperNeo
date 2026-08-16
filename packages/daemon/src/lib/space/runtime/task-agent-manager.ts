@@ -3832,7 +3832,10 @@ export class TaskAgentManager {
     // guaranteed rejections.
     const validationContractLine = (indent: string): string[] => {
       const declaresValidationHook = (workflow?.hooks ?? []).some(
-        (hook) => hook.enabled && hook.method === 'complete_validation_task'
+        (hook) =>
+          hook.enabled &&
+          hook.method === 'complete_validation_task' &&
+          hook.targetNode === undefined
       );
       if (!declaresValidationHook) return [];
       return [
@@ -5399,6 +5402,10 @@ export class TaskAgentManager {
         // A profile without the strict resolver owns its lenient result.
         return profile.resolvePrimaryLinkUrl(runId);
       },
+      // Historical PR identity for the no-PR gate's immutable-memory check
+      // (same resolver the mark_complete merge gate trusts).
+      resolveInitialPrimaryLinkUrl: (runId) =>
+        this.config.artifactProfile?.resolveInitialPrimaryLinkUrl?.(runId) ?? '',
       spaceManager: this.config.spaceManager,
       goalService: this.config.goalService,
       interruptBySessionId: (sessionId) => this.interruptBySessionId(sessionId),

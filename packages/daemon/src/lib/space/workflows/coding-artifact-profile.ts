@@ -16,7 +16,10 @@
 
 import { Logger } from '../../logger';
 import type { WorkflowArtifactProfile } from '../runtime/artifact-profile';
-import { PR_READY_VALIDATED_IDENTITY_HOOK_ID } from '../runtime/workflow-hook-engine';
+import {
+  PR_READY_VALIDATED_IDENTITY_HOOK_ID,
+  TOOL_PR_IDENTITY_HOOK_ID,
+} from '../runtime/workflow-hook-engine';
 import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository';
 
@@ -79,7 +82,9 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
 
   /**
    * Write-once memory of a run's primary-link (PR) URL, stored under the
-   * RESERVED hook id (no user-defined hook can write there). Called from the
+   * TOOL-reserved hook id (no user-defined hook can write there; distinct
+   * from the engine's pr_ready-validated identity key, which stays
+   * engine-only). Called from the
    * artifact write path at RECORD time so a later same-key artifact overwrite
    * (a kindless decision row rewritten without its pr_url) cannot erase the
    * run's PR-bound identity: resolveInitialPrimaryLinkUrl reads the reserved
@@ -91,13 +96,13 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
     if (!trimmed) return;
     try {
       const hookStateRepo = new WorkflowHookStateRepository(this.db);
-      const reserved = hookStateRepo.get(runId, PR_READY_VALIDATED_IDENTITY_HOOK_ID);
+      const reserved = hookStateRepo.get(runId, TOOL_PR_IDENTITY_HOOK_ID);
       if (reserved && legacyPrUrl(reserved.localState)) return; // first wins
       const snapshot = hookStateRepo.ensure(runId, PR_READY_VALIDATED_IDENTITY_HOOK_ID, {
         pr_url: trimmed,
       });
       if (!legacyPrUrl(snapshot.localState ?? {})) {
-        hookStateRepo.update(runId, PR_READY_VALIDATED_IDENTITY_HOOK_ID, {
+        hookStateRepo.update(runId, TOOL_PR_IDENTITY_HOOK_ID, {
           expectedVersion: snapshot.version,
           localState: { ...snapshot.localState, pr_url: trimmed },
         });
@@ -185,7 +190,7 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
     // colliding-hook-id / record_state PR-identity spoof for current runs.
     try {
       const hookStateRepo = new WorkflowHookStateRepository(this.db);
-      const reserved = hookStateRepo.get(runId, PR_READY_VALIDATED_IDENTITY_HOOK_ID);
+      const reserved = hookStateRepo.get(runId, TOOL_PR_IDENTITY_HOOK_ID);
       const reservedUrl = legacyPrUrl(reserved?.localState);
       if (reservedUrl) return reservedUrl;
     } catch (err) {
@@ -228,6 +233,22 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
     }
 
     if (approved) return approved.url;
+
+    // Tool-recorded PR memory (write-once, artifact-sourced): consulted
+    // AFTER the engine-validated identity (which stays authoritative for
+    // merge dispatch and the mark_complete gate) and BEFORE the artifact
+    // fallback — it exists so a later same-key artifact overwrite cannot
+    // erase a run's PR-bound identity from the no-PR completion gate.
+    try {
+      const toolStateRepo = new WorkflowHookStateRepository(this.db);
+      const toolMemory = toolStateRepo.get(runId, TOOL_PR_IDENTITY_HOOK_ID);
+      const toolUrl = legacyPrUrl(toolMemory?.localState);
+      if (toolUrl) return toolUrl;
+    } catch (err) {
+      log.warn(
+        `resolveInitialPrimaryLinkUrl: failed to read tool PR memory for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
 
     // Backward compatibility for runs created before PR-ready hook state was
     // persisted: bind to the oldest eligible artifact. With no validated

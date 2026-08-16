@@ -1458,7 +1458,24 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
         // hooks), so a workflow that scopes its completion validator to a
         // designated caller would let every OTHER node bypass it. When
         // enabled hooks exist for this method but none authorize THIS
-        // caller under the engine's own matching rules, refuse outright.
+        // caller under the engine's own matching rules, refuse outright —
+        // with an attributable audit entry like every other refusal class.
+        try {
+          config.auditLogRepo?.createEntry({
+            agentName: config.myAgentName,
+            sessionId: config.mySessionId,
+            toolName: 'complete_validation_task',
+            paramsSummary: JSON.stringify({
+              blocked: true,
+              reason: 'not_authorized_by_completion_hook',
+            }),
+            spaceId: config.spaceId,
+            taskId: config.taskId,
+            workflowRunId: config.workflowRunId,
+          });
+        } catch {
+          // Best-effort attribution.
+        }
         return jsonResult({
           success: false,
           error:

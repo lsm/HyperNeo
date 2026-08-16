@@ -12,6 +12,35 @@ import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-m
 import type { SpaceWorkflow, NodeExecution, Space } from '@hyperneo/shared';
 
 describe('TaskAgentManager Runtime Execution Contract', () => {
+  describe('interruptBySessionId boolean contract', () => {
+    test('returns true for an unknown session (nothing to interrupt — rows retire)', async () => {
+      const manager = makeManager();
+      const result = await manager.interruptBySessionId('no-such-session');
+      expect(result).toBe(true);
+    });
+
+    test('returns true on a successful interrupt and false when handleInterrupt throws', async () => {
+      const manager = makeManager();
+      const okSession = {
+        handleInterrupt: async () => {
+          /* succeeds */
+        },
+      };
+      const throwingSession = {
+        handleInterrupt: async () => {
+          throw new Error('interrupt failed');
+        },
+      };
+      const index = (manager as unknown as { agentSessionIndex: Map<string, unknown> })
+        .agentSessionIndex;
+      index.set('ok-session', okSession);
+      index.set('throwing-session', throwingSession);
+
+      expect(await manager.interruptBySessionId('ok-session')).toBe(true);
+      expect(await manager.interruptBySessionId('throwing-session')).toBe(false);
+    });
+  });
+
   function makeManager(): TaskAgentManager {
     const db = new BunDatabase(':memory:');
     // The contract builder only reads from the provided workflow/execution/space

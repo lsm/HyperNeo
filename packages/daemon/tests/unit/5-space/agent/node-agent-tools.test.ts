@@ -4060,6 +4060,57 @@ describe('node-agent-tools: complete_validation_task', () => {
     expect(ctx.taskRepo.getTask(fixture.task.id)?.status).toBe('in_progress');
   });
 
+  test('a PR-bearing payload records its URL at save time; the first URL wins', async () => {
+    const fixture = await seedValidationRun();
+    const handlers = createNodeAgentToolHandlers(
+      makeConfig(ctx, {
+        mySessionId: fixture.workerSessionId,
+        workflowRunId: fixture.runId,
+        workflowNodeId: 'Validation',
+        workflow: fixture.workflow,
+        artifactProfile: ctx.artifactProfile,
+      })
+    );
+
+    // link kind:'pr' data.url branch.
+    await handlers.save_artifact({
+      shape: 'link',
+      kind: 'pr',
+      data: { url: 'https://github.com/owner/repo/pull/first' },
+    });
+    expect(ctx.artifactProfile.resolveInitialPrimaryLinkUrl(fixture.runId)).toBe(
+      'https://github.com/owner/repo/pull/first'
+    );
+
+    // Legacy pr_url field branch — a DIFFERENT URL must NOT rewrite history.
+    await handlers.save_artifact({
+      shape: 'note',
+      data: { text: 'status', pr_url: 'https://github.com/owner/repo/pull/second' },
+    });
+    expect(ctx.artifactProfile.resolveInitialPrimaryLinkUrl(fixture.runId)).toBe(
+      'https://github.com/owner/repo/pull/first'
+    );
+
+    // Legacy prUrl camelCase branch records for a fresh run.
+    const other = await seedValidationRun();
+    const handlers2 = createNodeAgentToolHandlers(
+      makeConfig(ctx, {
+        mySessionId: other.workerSessionId,
+        workflowRunId: other.runId,
+        workflowNodeId: 'Validation',
+        workflow: other.workflow,
+        artifactProfile: ctx.artifactProfile,
+      })
+    );
+    await handlers2.save_artifact({
+      shape: 'note',
+      data: { text: 'status', prUrl: 'https://github.com/owner/repo/pull/camel' },
+    });
+    expect(ctx.artifactProfile.resolveInitialPrimaryLinkUrl(other.runId)).toBe(
+      'https://github.com/owner/repo/pull/camel'
+    );
+  });
+
   test('the backfill never promotes an unvalidated hook-state pr_url', async () => {
     // Any custom hook can record pr_url in its OWN local state; those
     // values are unvalidated and must never be copied into the reserved

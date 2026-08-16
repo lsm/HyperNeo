@@ -100,6 +100,18 @@ export interface HookExecutionRecord {
  */
 export const PR_READY_VALIDATED_IDENTITY_HOOK_ID = '__pr_ready_validated_identity__';
 
+/**
+ * Reserved hook id for the COMPLETE-VALIDATION TOOL's write-once PR memory
+ * (task #918). Distinct from {@link PR_READY_VALIDATED_IDENTITY_HOOK_ID}:
+ * that key is engine-only (written solely on a pr_ready built-in validator
+ * allow) and authoritative for merge dispatch and the mark_complete gate;
+ * this key is written by the artifact write path (record-time payload +
+ * overwrite backfill) and consulted ONLY by the no-PR completion gate's
+ * historical-identity check — after the engine-validated identity, before
+ * the artifact fallback. Neither key accepts user-defined hook writes.
+ */
+export const TOOL_PR_IDENTITY_HOOK_ID = '__tool_pr_identity__';
+
 /** Dependencies for the workflow hook engine. */
 export interface WorkflowHookEngineConfig {
   workflow: SpaceWorkflow;
@@ -243,7 +255,14 @@ export class WorkflowHookEngine {
    */
   hasEnabledHooksFor(methodName: string): boolean {
     return (this.config.workflow.hooks ?? []).some(
-      (hook) => hook.enabled && hook.method === methodName
+      (hook) =>
+        hook.enabled &&
+        hook.method === methodName &&
+        // Mirror resolveMatchingHooks: targetNode scoping applies only to
+        // send_message, so a misconfigured targetNode on a terminal-method
+        // hook does not count as "declared" here while being excluded from
+        // authorization there — the pair must not drift.
+        (methodName === 'send_message' || hook.targetNode === undefined)
     );
   }
 

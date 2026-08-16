@@ -44,6 +44,7 @@ const REASON_CONFIG: Partial<Record<SpaceBlockReason, ReasonConfig>> = {
   agent_crashed: { label: 'Agent Crashed', tone: 'red', icon: '⚠️' },
   dependency_failed: { label: 'Blocked by Dependency', tone: 'gray', icon: '⛓️' },
   dependency_added: { label: 'Blocked by Dependency', tone: 'gray', icon: '⛓️' },
+  dependency_incomplete: { label: 'Waiting on Dependency', tone: 'gray', icon: '⛓️' },
   workflow_invalid: { label: 'Invalid Workflow', tone: 'red', icon: '⚠️' },
 };
 

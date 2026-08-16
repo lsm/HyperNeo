@@ -3465,6 +3465,56 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     expect(interrupted).toEqual([]);
   });
 
+  test('a clean done flip during the cascade still quiesces same-node peers', async () => {
+    // The done-branch POSITIVE: the tick flips the run done (unchanged
+    // startedAt — done transitions never restamp it) during the cascade.
+    // That is the normal production finalize shape: the tick's own sweep
+    // spares the source node, so OURS must still cover same-node peers.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-sweep',
+      agentName: 'Peer',
+      agentId: ctx.agentId,
+      status: 'in_progress',
+      agentSessionId: 'clean-done-peer-session',
+    });
+    const interrupted: string[] = [];
+    const originalSetStatus = ctx.taskManager.setTaskStatus.bind(ctx.taskManager);
+    const setStatusSpy = spyOn(ctx.taskManager, 'setTaskStatus').mockImplementation(
+      async (...callArgs: Parameters<typeof originalSetStatus>) => {
+        const result = await originalSetStatus(...callArgs);
+        // Clean single flip: run → done. startedAt is untouched.
+        ctx.workflowRunRepo.transitionStatus(task.workflowRunId!, 'done');
+        return result;
+      }
+    );
+
+    try {
+      const result = await makeValidationTool({
+        interruptBySessionId: async (sessionId: string) => {
+          interrupted.push(sessionId);
+          return true;
+        },
+      }).complete_validation_task({
+        task_id: task.id,
+        validation_outcome: 'completed; clean flip must sweep',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.success).toBe(true);
+    } finally {
+      setStatusSpy.mockRestore();
+    }
+
+    expect(
+      ctx.nodeExecutionRepo
+        .listByWorkflowRun(task.workflowRunId!)
+        .find((e) => e.agentSessionId === 'clean-done-peer-session')?.status
+    ).toBe('idle');
+    expect(interrupted).toEqual(['clean-done-peer-session']);
+  });
+
   test('the sweep stands down when a re-closed run carries the reopen generation', async () => {
     // Flip→reopen→RE-CLOSE inside the cascade: a second tick re-closes the
     // reopened run (the activation left its task done), so the post-commit
@@ -3586,6 +3636,8 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     // The write-once memory survives the overwrite and feeds BOTH the
     // current-state and historical resolvers — either rejection names the PR.
     expect(parsed.error).toContain('https://github.com/owner/repo/pull/777');
+    // (Symmetric terminal-recheck coverage lives in the counting-mock test
+    // below: identity absent at entry, present at the terminal reread.)
     expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
   });
 
@@ -3597,6 +3649,12 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     // (updatedAt) binds the write to the state validated at entry.
     await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
     const taskId = await createTask('in_progress');
+    // Backdate the row: under shard load the round-trip writes can land in
+    // the same millisecond as creation, making updatedAt equal and the
+    // generation check miss. A backdated entry guarantees a distinct stamp.
+    ctx.db
+      .prepare('UPDATE space_tasks SET updated_at = ? WHERE id = ?')
+      .run(Date.now() - 60_000, taskId);
     const originalGetTask = ctx.taskManager.getTask.bind(ctx.taskManager);
     let roundTripped = false;
     const getTaskSpy = spyOn(ctx.taskManager, 'getTask').mockImplementation(async (id: string) => {
@@ -3733,6 +3791,37 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     } finally {
       setStatusSpy.mockRestore();
     }
+  });
+
+  test('terminal precondition refuses a historical PR identity acquired during completion', async () => {
+    // Symmetric to the current-PR mid-flight recheck: the identity memory
+    // is absent at the early gate and populated (record-time stamp) between
+    // entry and the terminal write — the recheck refuses.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-hist',
+      agentName: 'Review',
+      agentId: ctx.agentId,
+      status: 'idle',
+    });
+    let reads = 0;
+    const result = await makeValidationTool({
+      resolveInitialPrimaryLinkUrl: () => {
+        reads += 1;
+        return reads === 1 ? '' : 'https://github.com/owner/repo/pull/hist';
+      },
+    }).complete_validation_task({
+      task_id: task.id,
+      validation_outcome: 'should be refused at the write',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('historical PR identity');
+    expect(parsed.error).toContain('https://github.com/owner/repo/pull/hist');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
   });
 
   test('rejects a PR-shaped workflow even without a post-approval route', async () => {

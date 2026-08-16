@@ -3011,7 +3011,7 @@ describe('SpaceRuntime', () => {
         isTaskAgentAlive?: (taskId: string) => boolean;
         spawnWorkflowNodeAgent?: (task: unknown) => Promise<string>;
         cancelBySessionId?: (sessionId: string) => void;
-        interruptBySessionId?: (sessionId: string) => Promise<void>;
+        interruptBySessionId?: (sessionId: string) => Promise<boolean>;
         rehydrate?: () => Promise<void>;
       } = {}
     ) {

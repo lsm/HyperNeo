@@ -884,7 +884,12 @@ export function createCompleteValidationTaskHandler(
         // the authorized validator node/slot for the registration-level
         // authorization probe.
         const declaresValidationHook = (routeWorkflow?.hooks ?? []).some(
-          (hook) => hook.enabled && hook.method === 'complete_validation_task'
+          (hook) =>
+            hook.enabled &&
+            hook.method === 'complete_validation_task' &&
+            // targetNode scoping is send_message-only (resolveMatchingHooks);
+            // keep the opt-in predicate identical to the engine probes.
+            hook.targetNode === undefined
         );
         if (!declaresValidationHook) {
           return jsonResult({
@@ -1157,11 +1162,25 @@ export function createCompleteValidationTaskHandler(
       // `completionConfirmed` also gates the tail: goal terminal handling,
       // the task-updated event, and the returned snapshot must reflect the
       // CURRENT row, never a stale `done` the recovery already superseded.
-      const currentTaskRow = taskRepo.getTask(updated.id);
-      const completionConfirmed =
-        currentTaskRow?.status === 'done' &&
-        (currentTaskRow.workflowRunId ?? null) === (checkedWorkflowRunId ?? null);
-      if (completionConfirmed && currentTaskRow.workflowRunId) {
+      // Post-commit rereads are guarded: the done transition is already
+      // committed, and a transient db error here must not convert it into a
+      // {success:false} that invites a pointless retry (the audit block's
+      // principle, applied to the reads too).
+      let currentTaskRow: SpaceTask | null = null;
+      let completionConfirmed = false;
+      try {
+        currentTaskRow = taskRepo.getTask(updated.id);
+        completionConfirmed =
+          currentTaskRow?.status === 'done' &&
+          (currentTaskRow.workflowRunId ?? null) === (checkedWorkflowRunId ?? null);
+      } catch (err) {
+        log.warn(
+          `complete_validation_task: post-commit reread failed for task "${updated.id}": ${err instanceof Error ? err.message : String(err)}`
+        );
+        currentTaskRow = updated;
+        completionConfirmed = false;
+      }
+      if (completionConfirmed && currentTaskRow?.workflowRunId) {
         try {
           const quiesce = async (execution: { id: string; agentSessionId: string | null }) => {
             if (!execution.agentSessionId || !interruptBySessionId) {
@@ -1190,7 +1209,7 @@ export function createCompleteValidationTaskHandler(
               // retire the row if it is still in_progress and still bound
               // to the session that was interrupted.
               const rowAfterInterrupt = nodeExecutionRepo
-                .listByWorkflowRun(String(currentTaskRow.workflowRunId))
+                .listByWorkflowRun(String(currentTaskRow?.workflowRunId))
                 .find((e) => e.id === execution.id);
               if (
                 rowAfterInterrupt &&
@@ -1259,6 +1278,31 @@ export function createCompleteValidationTaskHandler(
             `complete_validation_task: run-worker quiesce failed for task "${updated.id}": ${err instanceof Error ? err.message : String(err)}`
           );
         }
+      }
+
+      // Re-reread AFTER the sweep: its loop awaits real interrupts
+      // (routinely hundreds of ms), and a recovery or message-driven reopen
+      // landing during it is invisible to the pre-sweep reread — emitting
+      // the stale done snapshot then would overwrite the recovery's own
+      // event and tell the recovered worker the task completed.
+      try {
+        const postSweepRow = taskRepo.getTask(updated.id);
+        if (postSweepRow) {
+          const stillConfirmed =
+            postSweepRow.status === 'done' &&
+            (postSweepRow.workflowRunId ?? null) === (checkedWorkflowRunId ?? null);
+          if (!stillConfirmed) {
+            currentTaskRow = postSweepRow;
+            completionConfirmed = false;
+          }
+        }
+      } catch (err) {
+        // Read failure after a committed done: fall through to the honest
+        // unconfirmed branch rather than republishing an unverified snapshot.
+        log.warn(
+          `complete_validation_task: post-sweep reread failed for task "${updated.id}": ${err instanceof Error ? err.message : String(err)}`
+        );
+        completionConfirmed = false;
       }
 
       // Best-effort goal terminal handling — must not block completion, and
