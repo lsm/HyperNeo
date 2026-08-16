@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { slugify, validateSlug } from '../../../../src/lib/space/slug';
+import { slugify, validateSlug } from '../../../src/lib/space/slug';
 
 describe('slugify', () => {
   test('converts simple name to lowercase slug', () => {

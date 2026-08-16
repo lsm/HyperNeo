@@ -24,7 +24,7 @@ import {
   MERGE_BASE_TTL_MS,
   normalizeGithubUrl,
   getGitRemoteUrl,
-} from '../../../../src/lib/space/artifact-git-ops';
+} from '../../../src/lib/space/artifact-git-ops';
 
 describe('parseNumstat', () => {
   it('returns zero totals for empty output', () => {

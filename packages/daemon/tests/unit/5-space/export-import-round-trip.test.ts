@@ -12,16 +12,16 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
-import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
-import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import { Database as BunDatabase } from '../../../src/storage/sqlite-compat';
+import { runMigrations } from '../../../src/storage/schema/index.ts';
+import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
+import { SpaceWorkflowManager } from '../../../src/lib/space/managers/space-workflow-manager.ts';
 import {
   exportWorkflow,
   exportBundle,
   validateExportBundle,
-} from '../../../../src/lib/space/export-format.ts';
-import { buildWorkflowCreateParams } from '../../../../src/lib/rpc-handlers/space-export-import-handlers.ts';
+} from '../../../src/lib/space/export-format.ts';
+import { buildWorkflowCreateParams } from '../../../src/lib/rpc-handlers/space-export-import-handlers.ts';
 import type { SpaceWorkerAgent, SpaceWorkflow, ExportedSpaceWorkflow } from '@hyperneo/shared';
 
 // ---------------------------------------------------------------------------

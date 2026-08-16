@@ -486,8 +486,8 @@ describe('validate-test-matrix.sh', () => {
         path.join(REPO_ROOT, '.github/workflows/main.yml'),
         (s) =>
           s.replace(
-            '5-space-runtime-a, 5-space-runtime-b]\n',
-            '5-space-runtime-a, 5-space-runtime-b]\n        exclude:\n          - shard: shared\n'
+            '5-space-runtime-b, 5-space-runtime-c]\n',
+            '5-space-runtime-b, 5-space-runtime-c]\n        exclude:\n          - shard: shared\n'
           ),
         'matrix.exclude'
       );

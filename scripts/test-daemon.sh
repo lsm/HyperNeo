@@ -20,14 +20,16 @@ export HYPERNEO_ALLOW_ROOT_TEST=1
 
 SHARDS=(
 	shared
-	0-shared-handlers-workflow
 	1-core
+	2-handlers
 	4-space-storage
 	4-space-migrations-a
 	4-space-migrations-b
-	5-space-agent-other
+	5-space-agent
+	5-space-workflow
 	5-space-runtime-a
 	5-space-runtime-b
+	5-space-runtime-c
 )
 RESULTS_DIR="$REPO_ROOT/test-results/daemon"
 FAILURES_FILE="$RESULTS_DIR/failures.txt"
@@ -60,7 +62,7 @@ source "$REPO_ROOT/scripts/lib/shard-split.sh"
 # list below and in the CI matrix at .github/workflows/main.yml — but a FILE LIST
 # is never edited by hand. Validate any change with: ./scripts/test-daemon.sh --verify
 HASH_SPLIT_SPECS=(
-	"5-space-runtime|2|5-space/runtime/*.test.ts;5-space/runtime/connectors/*.test.ts"
+	"5-space-runtime|3|5-space/runtime/*.test.ts;5-space/runtime/connectors/*.test.ts"
 )
 
 # Map a hash-split shard's suffix letter to a 0-based bucket index (a→0 … z→25).
@@ -80,7 +82,7 @@ shard_index_to_suffix() {
 	printf '%s' "${letters:i:1}"
 }
 
-# Resolve a hash-split shard name (e.g. 5-space-runtime-a) to its bucket's files.
+# Resolve a hash-split shard name (e.g. 5-space-runtime-a/b/c) to its bucket's files.
 # Prints absolute test paths and returns 0 on a match, 1 if $1 is not a hash split.
 hash_split_resolve() {
 	local shard="$1"
@@ -285,7 +287,7 @@ migration_shard_paths() {
 
 # Map shard name to one or more test paths. Shards are balanced by CI wall time.
 shard_paths() {
-	# Hash-split shards (e.g. 5-space-runtime-a/b) are resolved dynamically by
+	# Hash-split shards (e.g. 5-space-runtime-a/b/c) are resolved dynamically by
 	# stable hash — no hand-listed files. See HASH_SPLIT_SPECS above.
 	local resolved
 	if resolved=$(hash_split_resolve "$1"); then
@@ -294,19 +296,14 @@ shard_paths() {
 	fi
 
 	case "$1" in
-	0-shared-handlers-workflow)
-		# Under Vitest each test file is module-isolated, so the old "shared first"
-		# ordering (to avoid bun mock.module leakage) no longer applies. Shared runs
-		# as its own shard below with its own vitest config.
-		printf '%s\n' \
-			"$TEST_ROOT/2-handlers" \
-			"$TEST_ROOT/5-space/workflow"
-		;;
 	shared)
 		printf '%s\n' "$REPO_ROOT/packages/shared/tests"
 		;;
 	1-core)
 		printf '%s\n' "$TEST_ROOT/1-core" "$TEST_ROOT/helpers" "$TEST_ROOT/lib"
+		;;
+	2-handlers)
+		printf '%s\n' "$TEST_ROOT/2-handlers"
 		;;
 	4-space-storage)
 		printf '%s\n' "$TEST_ROOT/4-space-storage"/*.test.ts "$TEST_ROOT/4-space-storage/app"
@@ -323,10 +320,15 @@ shard_paths() {
 	4-space-migrations-b)
 		migration_shard_paths 1
 		;;
-	5-space-agent-other)
-		printf '%s\n' "$TEST_ROOT/5-space"/*.test.ts "$TEST_ROOT/5-space/agent" "$TEST_ROOT/5-space/other"
+	5-space-agent)
+		# 5-space/agent plus the top-level 5-space/*.test.ts files, which mirror
+		# top-level src/lib/space modules (slug, export-format, evolution-*, …).
+		printf '%s\n' "$TEST_ROOT/5-space"/*.test.ts "$TEST_ROOT/5-space/agent"
 		;;
-	# 5-space-runtime-a/b are resolved by hash_split_resolve above (stable hash
+	5-space-workflow)
+		printf '%s\n' "$TEST_ROOT/5-space/workflow"
+		;;
+	# 5-space-runtime-a/b/c are resolved by hash_split_resolve above (stable hash
 	# over the full 5-space/runtime tree, so no file is ever hand-listed or dropped).
 	*)
 		return 1

@@ -23,7 +23,7 @@ import {
   validateExportedWorkflow,
   validateExportBundle,
   normalizeOverride,
-} from '../../../../src/lib/space/export-format.ts';
+} from '../../../src/lib/space/export-format.ts';
 import type { SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
 import { MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
 

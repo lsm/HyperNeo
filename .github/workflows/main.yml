@@ -362,7 +362,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [shared, 0-shared-handlers-workflow, 1-core, 4-space-storage, 4-space-migrations-a, 4-space-migrations-b, 5-space-agent-other, 5-space-runtime-a, 5-space-runtime-b]
+        shard: [shared, 1-core, 2-handlers, 4-space-storage, 4-space-migrations-a, 4-space-migrations-b, 5-space-agent, 5-space-workflow, 5-space-runtime-a, 5-space-runtime-b, 5-space-runtime-c]
 
     steps:
       - uses: actions/checkout@v6

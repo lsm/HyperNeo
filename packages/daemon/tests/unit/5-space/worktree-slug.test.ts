@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { worktreeSlug } from '../../../../src/lib/space/worktree-slug';
+import { worktreeSlug } from '../../../src/lib/space/worktree-slug';
 
 describe('worktreeSlug', () => {
   describe('empty / whitespace-only titles — fallback to task-{taskNumber}', () => {
