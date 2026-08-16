@@ -465,7 +465,12 @@ export function setupSessionHandlers(
     // the applied value so the client can adopt it).
     let didFold = false;
     // A fold REFUSED because the transcripts cannot fit whole: the merged
-    // draft is retained untouched and returned for adoption instead.
+    // draft is retained untouched. The ack marks the refusal (`foldRefused`)
+    // so the client keeps its local content and its STALE version cache
+    // instead of adopting the retained draft — the sent text was never
+    // persisted, and advancing the cache would let the client's next save
+    // apply as-is and clear the baseline, deleting the transcripts.
+    let foldRefused = false;
     let retainedFoldValue: string | null = null;
     let retainedFoldVersion: number | undefined;
     if (draftWrite !== undefined) {
@@ -507,7 +512,8 @@ export function setupSessionHandlers(
         // merge, and persisting a truncated fold would irrecoverably drop the
         // transcript's tail while reporting success. A stale write too long
         // for the transcripts to fit is REFUSED instead — the merged draft
-        // stays authoritative and the ack carries it back for adoption.
+        // stays authoritative, the ack marks the refusal, and the client
+        // keeps its unsaved text and stale version cache.
         const foldFits =
           alreadyIncluded ||
           !transcripts ||
@@ -516,6 +522,7 @@ export function setupSessionHandlers(
         if (!foldFits) {
           delete (updates.metadata as Partial<SessionMetadata>).inputDraft;
           didFold = true; // the ack below carries the retained merged value
+          foldRefused = true;
           retainedFoldValue = draft;
           retainedFoldVersion = currentVersion;
         } else {
@@ -579,6 +586,7 @@ export function setupSessionHandlers(
     return {
       success: true,
       ...(appliedVersion !== undefined ? { draftVersion: appliedVersion } : {}),
+      ...(foldRefused ? { foldRefused: true } : {}),
       ...(didFold ? { draftValue: appliedMeta.inputDraft ?? retainedFoldValue ?? '' } : {}),
     };
   });
@@ -835,17 +843,22 @@ export function setupSessionHandlers(
     // draft with older transcript-free content. An echoed expectedDraftVersion
     // that no longer matches marks a newer committed WRITE — but only when the
     // sequence is resolved (no live baseline snapshot): a version bump with
-    // the snapshot still lingering is the landing's OWN merge (a session.get
-    // merged the pending transcript), which is exactly the write this RPC
-    // exists to fold the backup with — declining there would make the client
-    // retire its only durable copy of the deferred edits. `stale` declines
-    // only the genuinely superseded claims.
+    // the snapshot still lingering and the pending CLEARED is the landing's
+    // OWN merge (a session.get merged the pending transcript), which is
+    // exactly the write this RPC exists to fold the backup with — declining
+    // there would make the client retire its only durable copy of the
+    // deferred edits. A mismatch while the pending is still STAGED is always
+    // another tab's draft write (session.update bumps the version and
+    // re-anchors the baseline to the newer text while the pending waits): the
+    // staged branch would replace that newer draft with the older backup.
+    // `stale` declines only the genuinely superseded claims.
     const baseline = metadata.inputDraftVoiceBaseline;
+    const pendingStaged = (metadata.inputDraftVoicePending ?? '').trim() !== '';
     if (
       expectedDraftVersion !== undefined &&
       typeof metadata.inputDraftVersion === 'number' &&
       expectedDraftVersion !== metadata.inputDraftVersion &&
-      typeof baseline !== 'string'
+      (typeof baseline !== 'string' || pendingStaged)
     ) {
       return { merged: false, stale: true };
     }

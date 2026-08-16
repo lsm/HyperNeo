@@ -895,12 +895,14 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
     });
   });
 
-  it('refuses a truncating fold and returns the retained merged draft for adoption', async () => {
+  it('refuses a truncating fold and marks the ack so the client keeps its text', async () => {
     // appendDraftText silently slices at the character limit: persisting the
     // truncated fold would irrecoverably drop the transcript's tail while the
     // pending is already cleared. The stale write is REFUSED — the merged
-    // draft stays authoritative and the ack carries it (plus its version) so
-    // the client adopts it instead of retrying the same over-long write.
+    // draft stays authoritative and the ack marks the refusal (carrying the
+    // retained draft for CONTEXT only), so the client neither adopts the
+    // older draft over its never-persisted text nor advances its version
+    // cache into an as-is save that would clear the baseline.
     existingPending = null;
     existingDraft = `old ${'x'.repeat(99_000)}`;
     existingBaseline = 'old';
@@ -909,10 +911,18 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
     const result = (await handler!(
       { sessionId: 's1', metadata: { inputDraft: 'y'.repeat(5_000) } },
       {}
-    )) as { success: boolean; draftVersion?: number; draftValue?: string };
-    expect(result.success).toBe(true);
-    expect(result.draftVersion).toBe(2);
-    expect(result.draftValue).toBe(existingDraft);
+    )) as {
+      success: boolean;
+      draftVersion?: number;
+      draftValue?: string;
+      foldRefused?: boolean;
+    };
+    expect(result).toEqual({
+      success: true,
+      draftVersion: 2,
+      draftValue: existingDraft,
+      foldRefused: true,
+    });
     // Nothing about the draft or the sequence snapshot was rewritten.
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', { metadata: {} });
   });
@@ -1567,6 +1577,25 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
       {}
     )) as { merged: boolean; value: string };
     expect(result).toEqual({ merged: true, value: 'user edits voice' });
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('declines a version-mismatched merge while a pending is still staged', async () => {
+    // A staged pending makes every version bump another tab's DRAFT WRITE
+    // (session.update re-anchors the baseline to the newer text and bumps the
+    // version while the pending waits): the staged branch would replace that
+    // newer draft with the older transcript-free backup, so the mismatch is
+    // stale even though the baseline is a live string.
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    existingPending = 'voice';
+    existingBaseline = 'older typed text';
+    existingDraft = 'newer typed text';
+    existingDraftVersion = 7;
+    const result = (await handler!(
+      { sessionId: 's1', content: 'older edits', claimId: 'claim-old', expectedDraftVersion: 6 },
+      {}
+    )) as { merged: boolean; stale?: boolean };
+    expect(result).toEqual({ merged: false, stale: true });
     expect(sessionManager.updateSession).not.toHaveBeenCalled();
   });
 });

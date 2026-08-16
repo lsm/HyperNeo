@@ -2617,6 +2617,92 @@ describe('useInputDraft', () => {
       });
       expect(peekExpiredDraftBackup('session-1')).toBeNull();
     });
+
+    it('folds the lost-ack stripped transcripts into restored post-clear typing', async () => {
+      // The owed strip COMMITTED but its ack was lost (LastStrippedSeq matches
+      // the versioned tombstone), and the settle path restored the user's
+      // POST-CLEAR typing — newer state the daemon draft must not overwrite.
+      // Retiring the tombstone without folding the transcript-only daemon
+      // draft would let the next ordinary save discard the voice text.
+      saveClearTombstone('session-1', 1);
+      // Age the tombstone below the post-clear backup the user wrote after it.
+      const tombstoneKeys: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i) ?? '';
+        if (key.startsWith('hyperneo_voice_transcript_outbox_v1.clear.session-1.')) {
+          tombstoneKeys.push(key);
+        }
+      }
+      for (const key of tombstoneKeys) {
+        const parsed = JSON.parse(localStorage.getItem(key) ?? '{}');
+        localStorage.setItem(key, JSON.stringify({ ...parsed, ts: parsed.ts - 1000 }));
+      }
+      saveDraftBackup('session-1', 'post-clear typing', 1);
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return {
+            session: {
+              metadata: { inputDraft: 'voice', inputDraftVoiceLastStrippedSeq: 1 },
+            },
+          };
+        }
+        return {};
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // The restored typing carries the transcripts; the tombstone retired.
+      expect(result.current.content).toBe('post-clear typing voice');
+      expect(hasClearTombstone('session-1')).toBe(false);
+    });
+
+    it('keeps local content and a stale version cache when the daemon refuses a truncating fold', async () => {
+      // localStorage failed (no backup), so the save fell through to the
+      // daemon with text too long to fold the transcripts into. The refused
+      // ack must NOT adopt the retained older draft over the never-persisted
+      // typing, and must NOT advance the version cache (the next save would
+      // then apply as-is and clear the baseline).
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return { session: { metadata: { inputDraft: '' } } };
+        }
+        if (method === 'session.update') {
+          return {
+            success: true,
+            draftVersion: 4,
+            draftValue: 'old merged draft',
+            foldRefused: true,
+          };
+        }
+        return {};
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      result.current.setContent('y'.repeat(5_000));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // A further edit saves again — still refused, still unadopted.
+      result.current.setContent('y'.repeat(4_999));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // The unsaved text survived the refused ack…
+      expect(result.current.content).toBe('y'.repeat(4_999));
+      // …and the version cache stayed STALE: every save echoes no version.
+      const saves = mockHub.request.mock.calls.filter(([m]) => m === 'session.update');
+      expect(saves.length).toBeGreaterThan(1);
+      expect(saves.every(([, data]) => data?.expectedDraftVersion === undefined)).toBe(true);
+    });
   });
 
   describe('debounced saving', () => {

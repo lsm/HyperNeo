@@ -378,12 +378,11 @@ let syntheticEntryCounter = 0;
 // aggregate ordered by arrival no longer matches the merged draft's tail that
 // reconciliation must verify against — a fallback restore would then push a
 // reversed aggregate over the server draft. Entries without a `seq` (legacy
-// markers from before the counter shipped) keep their relative order at the
-// front, where the oldest entries sit.
+// markers from before the counter shipped) sit at the FRONT: the daemon
+// appended them first, and sequences start at 1, so 0 orders every legacy
+// entry ahead of all sequenced ones while keeping their relative order.
 function orderLandingEntries(entries: LandingEntry[]): LandingEntry[] {
-  return [...entries].sort(
-    (a, b) => (a.seq ?? Number.MAX_SAFE_INTEGER) - (b.seq ?? Number.MAX_SAFE_INTEGER)
-  );
+  return [...entries].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
 }
 
 function markVoiceTranscriptLandedLocal(
@@ -762,6 +761,11 @@ try {
     if ((event as PageTransitionEvent).persisted) startHeartbeat();
   };
   const onResume = () => beat();
+  // Stop the heartbeat STATE only (interval + storage key): pagehide fires
+  // this when the document enters the back-forward cache, and the pageshow
+  // listener must SURVIVE so the restored page re-arms — tearing it down here
+  // would let the 90s freshness window lapse and hand a duplicate of the
+  // still-live tab its session-storage tab id.
   const stopHeartbeat = () => {
     if (heartbeatTimer !== null) {
       clearInterval(heartbeatTimer);
@@ -772,10 +776,13 @@ try {
     } catch {
       /* best-effort */
     }
-    // Full teardown, including the LIFECYCLE LISTENERS: a bare interval stop
-    // leaves the callbacks registered, and a later BFCache pageshow would
-    // re-arm the OLD module's interval alongside its hot-replacement's —
-    // accumulating heartbeat timers and storage writes per reload.
+  };
+  // Full teardown for HMR disposal: also removes the lifecycle listeners — a
+  // bare state stop leaves the callbacks registered, and a later BFCache
+  // pageshow would re-arm the OLD module's interval alongside its
+  // hot-replacement's, accumulating heartbeat timers and storage writes.
+  const disposeHeartbeat = () => {
+    stopHeartbeat();
     window.removeEventListener('visibilitychange', onVisibilityChange);
     window.removeEventListener('pageshow', onPageShow);
     window.removeEventListener('resume', onResume);
@@ -787,7 +794,7 @@ try {
   window.addEventListener('pageshow', onPageShow);
   window.addEventListener('resume', onResume);
   startHeartbeat();
-  stopTabHeartbeat = stopHeartbeat;
+  stopTabHeartbeat = disposeHeartbeat;
 } catch {
   /* storage unavailable — clone detection degrades to the stored id */
 }

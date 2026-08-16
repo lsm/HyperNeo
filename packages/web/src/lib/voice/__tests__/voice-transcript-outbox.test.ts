@@ -1305,4 +1305,27 @@ describe('voice transcript outbox — review-hardening round', () => {
     await vi.advanceTimersByTimeAsync(3_000);
     expect(voiceTranscriptLandedSignal.value.get('s1') ?? 0).toBe(gen);
   });
+
+  it('keeps legacy unsequenced entries ahead of sequenced ones', () => {
+    vi.useRealTimers();
+    // A marker written by the previous version carries entries without `seq`;
+    // the daemon appended those transcripts BEFORE any sequenced entry, so
+    // they order at the FRONT — sorting them last would reverse the aggregate
+    // relative to the merged draft right after the upgrade.
+    markVoiceTranscriptLanded('s1', 'new entry', 'e-new', 5);
+    const gen = voiceTranscriptLandedSignal.value.get('s1') ?? 0;
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+      JSON.stringify({
+        v: 1,
+        ts: Date.now(),
+        n: gen + 500,
+        text: null,
+        ids: [],
+        entries: [{ id: 'e-legacy', text: 'legacy entry' }],
+      })
+    );
+    markVoiceTranscriptLanded('s1', 'trigger', 'e-trig', 6);
+    expect(getLandingTranscript('s1')).toBe('legacy entry new entry trigger');
+  });
 });

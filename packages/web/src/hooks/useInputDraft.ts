@@ -368,6 +368,16 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             // this transcript-only draft — adopt it and retire the tombstone.
             if (canAdopt()) {
               contentSignal.value = meta.inputDraft ?? '';
+            } else if ((meta.inputDraft ?? '').trim() !== '') {
+              // The composer holds NEWER user state (typing, or the post-clear
+              // backup the settle path restored): the daemon holds ONLY the
+              // transcripts (the strip cleared the baseline), so retiring the
+              // tombstone without folding them would let the next ordinary
+              // save overwrite the transcript-only draft with this content —
+              // permanently losing the voice text. Fold them in (the newer
+              // content provably never contained them), mirroring the
+              // live-landing strip path's fold discipline.
+              contentSignal.value = appendDraftText(contentSignal.peek(), meta.inputDraft ?? '');
             }
             removeClearTombstone(targetSessionId);
             if (pendingClearRef.current === targetSessionId) {
@@ -1464,20 +1474,21 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       // request is in flight must survive until its own later save acks.
       const deferredAtSend = deferredBackupRetiresRef.current.get(sessionId);
       try {
-        const ack = await hub.request<{ draftVersion?: number; draftValue?: string }>(
-          'session.update',
-          {
-            sessionId,
-            // Echo the draft version this composer last READ: the daemon applies
-            // the write as-is only when it matches (a mismatch marks a stale
-            // in-flight save, whose transcripts it folds back in).
-            expectedDraftVersion: draftVersionsRef.current.get(sessionId),
-            metadata: {
-              inputDraft: trimmedContent,
-            },
-          }
-        );
-        if (typeof ack?.draftValue === 'string') {
+        const ack = await hub.request<{
+          draftVersion?: number;
+          draftValue?: string;
+          foldRefused?: boolean;
+        }>('session.update', {
+          sessionId,
+          // Echo the draft version this composer last READ: the daemon applies
+          // the write as-is only when it matches (a mismatch marks a stale
+          // in-flight save, whose transcripts it folds back in).
+          expectedDraftVersion: draftVersionsRef.current.get(sessionId),
+          metadata: {
+            inputDraft: trimmedContent,
+          },
+        });
+        if (typeof ack?.draftValue === 'string' && !ack?.foldRefused) {
           // The daemon FOLDED transcripts into this write: its value is the
           // true draft. Adopt it when THIS session's composer still shows what
           // we sent (the shared contentSignal could otherwise belong to a
@@ -1494,6 +1505,16 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             advanceDraftVersion(sessionId, ack.draftVersion);
             if (deferredAtSend) flushDeferredBackupRetire(sessionId, deferredAtSend);
           }
+          return;
+        }
+        if (ack?.foldRefused) {
+          // The daemon REFUSED the fold (our too-long write could not retain
+          // the transcripts whole) and retained the merged draft: NOTHING of
+          // ours was persisted. Keep the local content (it was never saved —
+          // adopting the retained draft here would silently discard it) and
+          // keep the version cache STALE: advancing to the retained draft's
+          // version would make the NEXT save apply as-is, clearing the
+          // baseline and deleting the transcripts from the draft.
           return;
         }
         // Advance the cache to the APPLIED version: without it, a concurrent
