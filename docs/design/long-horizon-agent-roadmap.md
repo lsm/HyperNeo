@@ -18,6 +18,7 @@ The full roadmap below is the robust target. It should not block first dogfoodin
 - Enforce or safely resolve one primary owner per goal.
 - Add `getPrimaryGoalOwner(goalId)` and coordinator fallback.
 - Gate the ownership mutation handlers now, not in G3: `assign_agent_to_goal`/`unassign_agent_from_goal` currently perform only same-Space checks and default assignments to `owner`, so an ordinary member could replace a legitimate owner with a controlled LH agent and inherit MC3 apply authority. Require coordinator or explicit human authorization in these MCP handlers from MC1 onward.
+- Gate goal-mutating MCP tools the same way: `update_goal`, `pause_goal`, `resume_goal`, and `trigger_goal_task` also perform only same-Space checks while every Space member session receives `space-agent-tools`. Restrict them to the current primary owner, coordinator, or explicit human authority within MC1–MC3 so a member cannot bypass MC3's authorized, revision-checked review path by rewriting or pausing an owned goal directly.
 - Reconcile duplicate owners deterministically before enforcing the invariant.
 - Reassignment must supersede every unprocessed MC2 notification for the goal and deterministically reroute it to the new owner, so a pending wake can never remain stranded with the former owner while MC3 correctly rejects that former owner. Owner pause/disable/archive and hard-delete transitions must supersede and reroute the same way — to a usable replacement owner or visibly to the coordinator fallback — because the ownership row can remain unchanged while the recipient session becomes unusable.
 - Keep managers/watchers non-authoritative for now.
@@ -27,7 +28,7 @@ The full roadmap below is the robust target. It should not block first dogfoodin
 
 ### MC2. Minimal owner wake-up on goal-task terminal state
 
-- At the existing goal terminal seam, resolve the primary owner.
+- At the existing goal terminal seam, apply the shared reportable-terminal predicate, then resolve the primary owner. The predicate is active-work-aware: the current `isTerminalTaskStatus` treats every `cancelled`/`archived` transition as terminal regardless of prior state, but archiving a queued/draft task or cancelling work before execution has no worker outcome to integrate and must not notify the owner. Only transitions that terminate previously active goal work generate notifications. (G6 reuses this same predicate for report capture.)
 - Persist a minimal outcome-notification record atomically with the terminal transition, or give the transition a deterministic identity and enforce one notification per identity with reconciliation for committed tasks missing notifications.
 - The notification stores the goal revision sampled after required terminal goal bookkeeping so later review can detect independent goal changes. Even when notification creation is deferred to reconciliation, the terminal transaction must durably capture that post-bookkeeping revision (for example on the terminal bookkeeping record); the reconciler copies the captured revision into the notification instead of sampling the then-current revision, which intervening goal edits may have advanced.
 - Wake the owner through the LH durable-injection adapter from task #860 / V3.
@@ -53,7 +54,7 @@ Add one explicit tool such as `review_goal_outcome` that the awakened owner can 
 - optional structured observations and metric changes;
 - summary, next steps, and follow-up intent.
 
-The tool validates that the caller is the current primary owner or coordinator fallback, then atomically records the notification as processed and applies the update through `SpaceGoalService`. It must compare the notification's base goal revision inside the same transaction; if the goal changed independently after the notification, reject the stale proposal and require an explicit edited merge rather than overwriting newer summary, metrics, or next steps. Retrying a durable wake or retrying after a tool timeout must return the original processed result rather than appending duplicate goal events, reapplying metrics, or creating duplicate follow-up work. Workers do not get this tool.
+The tool validates that the caller is the current primary owner or coordinator fallback, then atomically records the notification as processed and applies the update through `SpaceGoalService`. It must compare the notification's base goal revision inside the same transaction; if the goal changed independently after the notification, reject the stale proposal and require an explicit edited merge rather than overwriting newer summary, metrics, or next steps. The goal revision must be a monotonically incremented counter updated by every goal mutation — not `updatedAt`, which every mutation assigns via `Date.now()` and which can therefore collide for two mutations in the same millisecond, letting a stale proposal pass the comparison. Retrying a durable wake or retrying after a tool timeout must return the original processed result rather than appending duplicate goal events, reapplying metrics, or creating duplicate follow-up work. Workers do not get this tool.
 
 **Why it matters:** the LH agent becomes responsible for integrating outcomes and deciding next actions without immediately reworking every existing worker prompt or terminal path.
 **Estimated size:** 170–250 production lines.
@@ -109,7 +110,7 @@ This core deliberately does **not** yet provide:
 - typed lifecycle subscription filters;
 - reminder editing and goal-linked context;
 - broad subscription or dashboard UI;
-- every authorization restriction in the final architecture.
+- the remaining authorization hardening from the final architecture (report-decision override matrix, Forge rollup authority, worker-mutation deprecation); owner/coordinator gating on goal and ownership mutations is part of the core itself.
 
 Those remain in the robust roadmap below. The minimal core is a dogfood bridge: it makes LH goal ownership usable while preserving the later migration path.
 
@@ -283,7 +284,7 @@ Task-agent and Space-chat injection require separate later migration because the
 #### L2. Lifecycle emitter leaf
 
 - Publish through the existing durable external-event service.
-- Build stable dedupe keys and event essence.
+- Build stable dedupe keys and event essence. The dedupe key must include the durable lifecycle-outbox record ID or a monotonic mutation generation, not just entity ID plus action/status: an entity can validly re-enter the same status (`blocked → in_progress → blocked`), and `ExternalEventStore` deduplicates permanently on `(spaceId, source, dedupeKey)`, so a status-only key would collapse the later transition into an already-terminal duplicate that never publishes.
 - Wire composition only; no mutation producers.
 
 **Estimate:** 120–200 lines.
@@ -411,7 +412,7 @@ Do not provide payload update/delete methods.
 
 #### G6. Terminal transition captures outcome report
 
-- Define one shared reportable-terminal predicate before implementation. Goal-linked tasks entering `done` or `blocked` require reports; `cancelled` and `archived` require reports only when they terminate previously active goal work rather than an administrative cleanup. The predicate must be versioned and covered by tests so every writer applies the same rule.
+- Define one shared reportable-terminal predicate before implementation — the same active-work-aware predicate MC2 uses for owner notification. Goal-linked tasks entering `done` or `blocked` require reports; `cancelled` and `archived` require reports only when they terminate previously active goal work rather than an administrative cleanup. The predicate must be versioned and covered by tests so every writer applies the same rule.
 - Add a durable task-scoped pending-outcome record for supervised/pre-terminal submissions. A worker can submit structured observations, recommendations, proposed updates, and evidence references while a task is in `review`; that payload must survive until approval and post-approval work complete. Bind the pending outcome to an execution/review generation, and clear or supersede it whenever that attempt is rejected, reopened, or retried so stale work cannot be consumed later. The terminal transition atomically consumes the current pending outcome into the immutable report and terminal generation.
 - Create the report as part of the central reportable terminal transition, not as an optional model-invoked tool. A worker may submit the structured outcome payload before or during completion, but the terminal command/transition must guarantee one report exists even when the worker omits the tool call.
 - Audit every reportable terminal writer and route it through the atomic transition. This must include direct repository writers such as `PostApprovalRouter.route`, whose no-route branch currently completes with `taskRepo.updateTask` and intentionally bypasses `setTaskStatus`.
@@ -448,7 +449,7 @@ This is the required behavior currently absent from `mark_complete.goal_update`;
 - Accept as proposed, apply edited, acknowledge without mutation, or reject.
 - Atomically transition disposition and update the goal.
 - Validate current ownership inside the same transaction that claims the report and updates the goal: a checked-but-since-reassigned owner must lose the claim. Coordinator and human override remain explicit exceptions.
-- Capture a base goal revision with each report and validate it inside the decision transaction. Terminal goal bookkeeping (active/last task pointer updates) and report creation must share one transaction, with the base revision sampled after that bookkeeping, or the revision semantics must explicitly exclude those automatic changes. If an independent goal change has occurred since the report, reject the stale proposal and require explicit merge or edited apply; a full replacement apply must never overwrite newer goal state.
+- Capture a base goal revision — the monotonic per-goal counter defined in MC3 — with each report and validate it inside the decision transaction. Terminal goal bookkeeping (active/last task pointer updates) and report creation must share one transaction, with the base revision sampled after that bookkeeping, or the revision semantics must explicitly exclude those automatic changes. If an independent goal change has occurred since the report, reject the stale proposal and require explicit merge or edited apply; a full replacement apply must never overwrite newer goal state.
 - Reference the report in the goal event.
 - Apply recurring-goal progress rules.
 
@@ -473,6 +474,7 @@ Forge goal-automation self-nag remains a separate evidence-processing mechanism.
 - Update title/body/schedule.
 - Pause, resume, and semantic cancel.
 - Recompute cron `nextRunAt` and explicitly handle past one-shot resumes.
+- Supersede in-flight occurrences on mutation. The fire worker reads the reminder before delivering; an edit, pause, or cancel landing in between can otherwise still inject the old prompt and only discover the change afterward through its advance CAS. Bind each occurrence to a reminder configuration generation and check generation/status before V2 admission, or explicitly define and expose the point after which cancellation can no longer prevent delivery.
 - Add MCP parity, including cron reminders and paused/fired status filters.
 - Enforce authorization inside every MCP handler, not only RPC/UI, for create as well as edit/pause/resume/cancel: the reminder's owning LH agent, explicit coordinator authority, or human authority may schedule or mutate a wake-up for that agent; ordinary ad-hoc member sessions must not inject or mutate another agent's wakeups.
 
@@ -524,6 +526,7 @@ L1 -> L2 -> L3
 L3 + L4 -> L5 -> L6
 
 L1 -> S1 -> S2 -> S3
+S2 -> L3/L4 producer enablement
 
 G1 -> G2 -> G3 -> G4
 G1 -> G5 -> G6
@@ -534,6 +537,8 @@ V3 -> V4 before reminder V2 migration is considered complete
 ```
 
 Parallel starting points: V1, L1, G1, and R1. G5 is **not** an independent starting point; it follows G1 so report routing records can reference the authoritative primary-owner model.
+
+S2 is a hard prerequisite for enabling the L3/L4 lifecycle producers — or publication must stay gated until filter enforcement is deployed. The LH runtime currently registers subscriptions by `source` and `topic` only and never evaluates the persisted `filter`, so once producers ship without S2, broad migrated subscriptions such as the coordinator's `task.*` would wake on every matching event regardless of intended status or label filters.
 
 ## Scope intentionally deferred
 
