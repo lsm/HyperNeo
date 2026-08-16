@@ -480,6 +480,17 @@ function freshestDraftBackup(sessionId: string): DraftBackupClaim | null {
         continue;
       }
       const generation = typeof parsed.generation === 'number' ? parsed.generation : 0;
+      // Skip backups whose OWNER durably recorded a clear: that tab sent or
+      // deleted this text before it closed, and restoring it would resurrect
+      // what the user already cleared. The tombstone is keyed by the same
+      // owner suffix as the backup key, so a foreign owner's intent is
+      // honored even though only THIS tab's tombstone is ever written here.
+      // The owner's clear suppresses only backups written BEFORE it: the
+      // user can have kept typing after clearing, and those newer writes are
+      // live edits that must stay restorable for the tombstone's whole TTL.
+      const owner = key.slice(key.lastIndexOf('.') + 1);
+      const clearedAt = ownerClearTombstoneTs(sessionId, owner);
+      if (clearedAt !== null && ts <= clearedAt) continue;
       if (!freshest || ts >= freshest.ts) {
         freshest = { key, content: parsed.content, generation, ts };
       }
@@ -555,9 +566,74 @@ export function peekExpiredDraftBackup(sessionId: string): DraftBackupClaim | nu
   return freshestDraftBackup(sessionId);
 }
 
+/** The given OWNER's fresh clear-tombstone timestamp, or null when none. */
+function ownerClearTombstoneTs(sessionId: string, owner: string): number | null {
+  try {
+    const raw = localStorage.getItem(`${CLEAR_TOMBSTONE_PREFIX}${sessionId}.${owner}`);
+    if (raw === null) return null;
+    const parsed = JSON.parse(raw) as { ts?: number } | null;
+    if (!parsed || typeof parsed.ts !== 'number') return null;
+    if (Date.now() - parsed.ts >= DRAFT_BACKUP_TTL_MS) return null;
+    return parsed.ts;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Persist that the user cleared/sent the composer while a landing was
+ * deferred but the clear-reconcile could not COMMIT (socket down, or the
+ * conditional RPC failed). `pendingClearRef` lives only in memory — without
+ * this tombstone, a reload before reconnection restores the pre-clear draft
+ * backup and resurrects text the user already deleted or sent. Written under
+ * THIS TAB's key: another tab's owed clear must survive this tab's landing
+ * consumption (which retires only its own tombstone).
+ */
+export function saveClearTombstone(sessionId: string): boolean {
+  try {
+    localStorage.setItem(
+      `${CLEAR_TOMBSTONE_PREFIX}${sessionId}.${TAB_ID}`,
+      JSON.stringify({ ts: Date.now() })
+    );
+    return true;
+  } catch {
+    /* tombstone best-effort — the caller must fall back to a safe state */
+    return false;
+  }
+}
+
+/** The owed clear's record for THIS tab, if one is still within its TTL. */
+export function getClearTombstone(sessionId: string): { ts: number } | null {
+  try {
+    const raw = localStorage.getItem(`${CLEAR_TOMBSTONE_PREFIX}${sessionId}.${TAB_ID}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { ts?: number };
+    if (typeof parsed.ts !== 'number') return null;
+    if (Date.now() - parsed.ts >= DRAFT_BACKUP_TTL_MS) return null;
+    return { ts: parsed.ts };
+  } catch {
+    return null;
+  }
+}
+
+/** Whether an uncommitted clear is still owed for `sessionId` (TTL-gated). */
+export function hasClearTombstone(sessionId: string): boolean {
+  return getClearTombstone(sessionId) !== null;
+}
+
+/** Drop THIS TAB's tombstone once its clear-reconcile committed server-side. */
+export function removeClearTombstone(sessionId: string): void {
+  try {
+    localStorage.removeItem(`${CLEAR_TOMBSTONE_PREFIX}${sessionId}.${TAB_ID}`);
+  } catch {
+    /* tombstone best-effort */
+  }
+}
+
 const STORAGE_PREFIX = 'hyperneo_voice_transcript_outbox_v1.entry.';
 const LANDED_PREFIX = `${STORAGE_PREFIX}landed.`;
 const DRAFT_BACKUP_PREFIX = 'hyperneo_voice_transcript_outbox_v1.draft.';
+const CLEAR_TOMBSTONE_PREFIX = 'hyperneo_voice_transcript_outbox_v1.clear.';
 const MAX_ENTRIES = 20;
 const MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24h — a transcript older than this is stale
 const FLUSH_DELAY_MS = 500; // let subscriptions settle, like outbound-queue
@@ -685,13 +761,17 @@ function pruneExpired(): void {
   } catch {
     /* storage unavailable */
   }
-  // Drop expired draft backups proactively — a backup whose session is never
-  // reopened would otherwise linger past its TTL with nothing to prune it.
+  // Drop expired draft backups and clear tombstones proactively — a record
+  // whose session is never reopened would otherwise linger past its TTL with
+  // nothing to prune it. Same collect-then-remove discipline. Clear tombstones
+  // follow the backup TTL (their timestamps are wall clocks too).
   try {
     const staleBackupKeys: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (!key || !key.startsWith(DRAFT_BACKUP_PREFIX)) continue;
+      const isBackup = key?.startsWith(DRAFT_BACKUP_PREFIX);
+      const isTombstone = key?.startsWith(CLEAR_TOMBSTONE_PREFIX);
+      if (!key || (!isBackup && !isTombstone)) continue;
       const parsed = JSON.parse(localStorage.getItem(key) ?? 'null') as {
         ts?: number;
       } | null;
