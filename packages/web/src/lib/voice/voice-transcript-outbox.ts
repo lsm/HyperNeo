@@ -434,6 +434,30 @@ export interface DraftBackupClaim {
   ts: number;
 }
 
+// A committed backup reconciliation: the freshest claim of `generation` was
+// durably persisted (server merge or composer fold), so same-generation
+// backups written BEFORE this timestamp are SUPERSEDED — their edits lost the
+// last-writer-wins race and must not be restored later. Same-generation
+// backups written AFTER it are a still-active tab's newer edits and survive.
+// Superseded keys are SKIPPED on read (not deleted — deleting would cross the
+// tab-ownership boundary and could destroy a live tab's only durable copy);
+// the TTL prunes them.
+const SUPERSEDED_PREFIX = 'hyperneo_voice_transcript_outbox_v1.superseded.';
+
+function readSuperseded(sessionId: string): { generation: number; beforeTs: number } | null {
+  try {
+    const parsed = JSON.parse(
+      localStorage.getItem(`${SUPERSEDED_PREFIX}${sessionId}`) ?? 'null'
+    ) as { generation?: unknown; beforeTs?: unknown } | null;
+    if (parsed && typeof parsed.generation === 'number' && typeof parsed.beforeTs === 'number') {
+      return { generation: parsed.generation, beforeTs: parsed.beforeTs };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Persist the evolving local draft for a session whose landing is deferred
  * (the composer has text, so its server saves are suppressed to protect the
@@ -462,6 +486,7 @@ export function saveDraftBackup(sessionId: string, content: string, generation: 
  */
 function freshestDraftBackup(sessionId: string): DraftBackupClaim | null {
   let freshest: DraftBackupClaim | null = null;
+  const superseded = readSuperseded(sessionId);
   try {
     const staleKeys: string[] = [];
     const prefix = `${DRAFT_BACKUP_PREFIX}${sessionId}.`;
@@ -480,6 +505,13 @@ function freshestDraftBackup(sessionId: string): DraftBackupClaim | null {
         continue;
       }
       const generation = typeof parsed.generation === 'number' ? parsed.generation : 0;
+      if (
+        superseded &&
+        (generation < superseded.generation ||
+          (generation === superseded.generation && ts <= superseded.beforeTs))
+      ) {
+        continue; // superseded by a committed reconciliation — never restorable
+      }
       // Skip backups whose OWNER durably recorded a clear: that tab sent or
       // deleted this text before it closed, and restoring it would resurrect
       // what the user already cleared. The tombstone is keyed by the same
@@ -562,6 +594,27 @@ export function retireDraftBackupClaim(claim: {
   ts: number;
 }): void {
   removeDraftBackupKey(claim.key, claim.generation, claim.ts);
+  try {
+    const sessionId = claim.key.slice(DRAFT_BACKUP_PREFIX.length, claim.key.lastIndexOf('.'));
+    // The marker only ever moves FORWARD: an older claim's merge can
+    // acknowledge AFTER a newer generation's (responses race), and letting
+    // the late acknowledgement overwrite the marker would un-supersede a
+    // sibling the newer marker had already ruled out. Retain whichever
+    // marker is strongest.
+    const existing = readSuperseded(sessionId);
+    const stronger =
+      !!existing &&
+      (existing.generation > claim.generation ||
+        (existing.generation === claim.generation && existing.beforeTs >= claim.ts));
+    if (!stronger) {
+      localStorage.setItem(
+        `${SUPERSEDED_PREFIX}${sessionId}`,
+        JSON.stringify({ generation: claim.generation, beforeTs: claim.ts })
+      );
+    }
+  } catch {
+    /* marker best-effort — the claimed key itself is already retired */
+  }
 }
 
 export function clearDraftBackup(sessionId: string, generation?: number): void {
@@ -809,11 +862,14 @@ function pruneExpired(): void {
       const key = localStorage.key(i);
       const isBackup = key?.startsWith(DRAFT_BACKUP_PREFIX);
       const isTombstone = key?.startsWith(CLEAR_TOMBSTONE_PREFIX);
-      if (!key || (!isBackup && !isTombstone)) continue;
+      const isSuperseded = key?.startsWith(SUPERSEDED_PREFIX);
+      if (!key || (!isBackup && !isTombstone && !isSuperseded)) continue;
       const parsed = JSON.parse(localStorage.getItem(key) ?? 'null') as {
         ts?: number;
+        beforeTs?: number;
       } | null;
-      if (parsed && now - (parsed.ts ?? 0) >= DRAFT_BACKUP_TTL_MS) staleBackupKeys.push(key);
+      const stamp = parsed?.ts ?? parsed?.beforeTs ?? 0;
+      if (parsed && now - stamp >= DRAFT_BACKUP_TTL_MS) staleBackupKeys.push(key);
     }
     for (const key of staleBackupKeys) localStorage.removeItem(key);
   } catch {

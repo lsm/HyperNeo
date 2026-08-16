@@ -34,6 +34,7 @@ import {
   removeClearTombstone,
   saveClearTombstone,
   removeDraftBackupKey,
+  retireDraftBackupClaim,
   resetVoiceTranscriptOutbox,
   startVoiceTranscriptOutboxFlush,
   stopVoiceTranscriptOutboxFlush,
@@ -750,5 +751,76 @@ describe('voice transcript outbox', () => {
     expect(
       localStorage.getItem('hyperneo_voice_transcript_outbox_v1.clear.s1.foreign-tab')
     ).not.toBeNull();
+  });
+  it('marks same-generation siblings superseded without deleting them', () => {
+    markVoiceTranscriptLanded('s1', 'voice', 'e1'); // generation 1
+    // Two tabs deferred edits for the same landing; ours (the freshest at
+    // claim time) is committed durably. The OLDER sibling's edits are
+    // superseded — a later reload must not restore them — but its KEY is
+    // another still-active tab's only durable copy: deleting it would lose
+    // that tab's draft on a crash. It is skipped on read, not removed.
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.draft.s1.older-tab',
+      JSON.stringify({ content: 'older edits', ts: Date.now() - 1000, generation: 1 })
+    );
+    saveDraftBackup('s1', 'newer edits', 1);
+    const claim = peekExpiredDraftBackup('s1');
+    expect(claim?.content).toBe('newer edits');
+    // A NEWER landing's backup and a same-generation write made AFTER the
+    // committed claim are both live state, never superseded.
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.draft.s1.future-tab',
+      JSON.stringify({ content: 'gen 2 edits', ts: Date.now(), generation: 2 })
+    );
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.draft.s1.active-tab',
+      JSON.stringify({ content: 'live edits', ts: Date.now() + 5000, generation: 1 })
+    );
+    retireDraftBackupClaim(claim ?? { key: '', generation: 1, ts: 0 });
+    // The older sibling still EXISTS (its tab may still need it) but is no
+    // longer restorable; the live and newer-generation ones remain claims.
+    expect(
+      localStorage.getItem('hyperneo_voice_transcript_outbox_v1.draft.s1.older-tab')
+    ).not.toBeNull();
+    const next = peekExpiredDraftBackup('s1');
+    expect(next?.content).toBe('live edits');
+  });
+
+  it('keeps the supersede marker monotonic across racing acknowledgements', () => {
+    // A newer generation's merge acknowledges FIRST; an older claim's late
+    // acknowledgement must not move the marker backward and un-supersede a
+    // sibling the newer marker already ruled out.
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.superseded.s1',
+      JSON.stringify({ generation: 2, beforeTs: Date.now() + 5000 })
+    );
+    const lateOlderClaim = {
+      key: 'hyperneo_voice_transcript_outbox_v1.draft.s1.late-tab',
+      generation: 1,
+      ts: Date.now(),
+    };
+    localStorage.setItem(
+      lateOlderClaim.key,
+      JSON.stringify({ content: 'older edits', ts: lateOlderClaim.ts, generation: 1 })
+    );
+    retireDraftBackupClaim(lateOlderClaim);
+    // The stronger (generation-2) marker survives the late write.
+    expect(
+      JSON.parse(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.superseded.s1') ?? '{}')
+    ).toEqual({ generation: 2, beforeTs: expect.any(Number) });
+    // A same-generation LATER claim still advances the marker.
+    const newerClaim = {
+      key: 'hyperneo_voice_transcript_outbox_v1.draft.s1.newest-tab',
+      generation: 2,
+      ts: Date.now() + 6000,
+    };
+    localStorage.setItem(
+      newerClaim.key,
+      JSON.stringify({ content: 'newest edits', ts: newerClaim.ts, generation: 2 })
+    );
+    retireDraftBackupClaim(newerClaim);
+    expect(
+      JSON.parse(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.superseded.s1') ?? '{}')
+    ).toEqual({ generation: 2, beforeTs: newerClaim.ts });
   });
 });
