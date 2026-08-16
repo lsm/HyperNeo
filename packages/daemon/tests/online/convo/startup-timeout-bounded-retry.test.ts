@@ -3,7 +3,7 @@
  *
  * Verifies that when the SDK startup times out:
  *   1. The system retries automatically up to the per-delivery cap (pinned to
- *      1 here via HYPERNEO_SDK_STARTUP_MAX_RETRIES).
+ *      1 here via HYPERNEO_SDK_STARTUP_RETRY_MAX).
  *   2. The session eventually reaches idle (no infinite loop).
  *   3. If the retry also fails, the error has actionable recovery hints.
  *   4. If the retry succeeds, no error is surfaced (the retry fixed it).
@@ -15,7 +15,7 @@
  *   module with the env var already set to a very short value (10 ms). The SDK
  *   subprocess cannot respond within 10 ms, so the startup timer fires on the
  *   first attempt; the retry spawns a fresh subprocess that also cannot respond
- *   in time. assertRetryOnceSequenceRan() verifies the timeout fired on BOTH
+ *   in time. assertBoundedRetrySequenceRan() verifies the timeout fired on BOTH
  *   attempts and the retry branch ran exactly once — otherwise the suite
  *   could pass vacuously if the SDK ever responded within the window. Under the
  *   forced 10 ms both attempts time out, so the retry always fails; Test 1
@@ -30,7 +30,7 @@
  *   - Real API: requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
  *
  * Run:
- *   cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/convo/startup-timeout-no-retry.test.ts
+ *   cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/convo/startup-timeout-bounded-retry.test.ts
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -60,7 +60,7 @@ const MODELS_READY_TIMEOUT_MS = IS_MOCK ? 25000 : 30000;
 // within tens of ms, so 100 ms does NOT fire (verified — the test passed
 // vacuously). 10 ms reliably fires on every machine we run on. The resulting
 // subprocess abort/respawn churn is absorbed by the generous wait budgets and
-// modelsReadyTimeoutMs above, and assertRetryOnceSequenceRan() fails the test
+// modelsReadyTimeoutMs above, and assertBoundedRetrySequenceRan() fails the test
 // outright if the timeout ever stops firing (no silent vacuous pass).
 const FORCED_STARTUP_TIMEOUT_MS = '10';
 
@@ -111,18 +111,18 @@ async function waitForStartupTimeoutTimer(
   }
   throw new Error(
     `expected >= ${expected} "SDK startup timeout:" timer log(s); saw ${countTimers()} ` +
-      '(the retry-once sequence did not complete — the second attempt never timed out)'
+      '(the bounded-retry sequence did not complete — the retry attempt never timed out)'
   );
 }
 
 /**
  * Assert the startup-timeout timer fired on BOTH attempts (2 timer logs) and the
- * retry-once branch ran exactly once (1 retry log). Call AFTER
+ * capped retry branch ran exactly once (1 retry log). Call AFTER
  * waitForStartupTimeoutTimer(daemon, 2, …) so the second attempt has actually
  * been observed. Uses the timer-callback-specific "SDK startup timeout:" text so
  * the catch block's "SDK startup timeout - query aborted" line is not counted.
  */
-function assertRetryOnceSequenceRan(daemon: DaemonServerContext): void {
+function assertBoundedRetrySequenceRan(daemon: DaemonServerContext): void {
   const output = daemon.getCapturedOutput?.() ?? '';
   const timers = output.split('SDK startup timeout:').length - 1;
   const retries = output.split('Auto-retrying query after startup timeout').length - 1;
@@ -132,7 +132,7 @@ function assertRetryOnceSequenceRan(daemon: DaemonServerContext): void {
   ).toBe(2);
   expect(
     retries,
-    `expected the retry-once branch to run exactly once; got ${retries} retry log(s)`
+    `expected the bounded retry branch to run exactly once; got ${retries} retry log(s)`
   ).toBe(1);
 }
 
@@ -183,7 +183,7 @@ async function waitForSessionError(
 }
 
 /**
- * Wait for the retry-once sequence to fully complete: both attempts' startup
+ * Wait for the bounded-retry sequence to fully complete: both attempts' startup
  * timers fired (the retry ran AND attempt 2 timed out) AND attempt 2's terminal
  * handleError has set the session error. See waitForStartupTimeoutTimer for
  * stage 1 (proves the retry happened) and waitForSessionError for stage 2 (the
@@ -194,7 +194,7 @@ async function waitForSessionError(
  * in stage 2, exceeding the enclosing TEST_TIMEOUT. Each stage resolves in a
  * few seconds in practice; the shared deadline only bounds the worst case.
  */
-async function waitForRetryOnceCompleted(
+async function waitForBoundedRetryCompleted(
   daemon: DaemonServerContext,
   sessionId: string
 ): Promise<void> {
@@ -215,15 +215,15 @@ describe('Startup Timeout Error Surfacing', () => {
     const origSpawn = process.env.DAEMON_TEST_SPAWN;
     const origTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
     const origRetryBase = process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS;
-    const origMaxRetries = process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES;
+    const origMaxRetries = process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX;
 
     process.env.DAEMON_TEST_SPAWN = 'true';
     process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = FORCED_STARTUP_TIMEOUT_MS;
     // Zero the backoff so the retry fires immediately (the default 15 s base
-    // would stall the test), and pin the cap to 1 to keep the retry-once
+    // would stall the test), and pin the cap to 1 to keep the two-attempt
     // shape of the assertions below.
     process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '0';
-    process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES = '1';
+    process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '1';
 
     try {
       daemon = await createDaemonServer({
@@ -254,9 +254,9 @@ describe('Startup Timeout Error Surfacing', () => {
         process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = origRetryBase;
       }
       if (origMaxRetries === undefined) {
-        delete process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES;
+        delete process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX;
       } else {
-        process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES = origMaxRetries;
+        process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = origMaxRetries;
       }
     }
   }, SETUP_TIMEOUT);
@@ -307,20 +307,20 @@ describe('Startup Timeout Error Surfacing', () => {
           content: 'Hello, please respond.',
         });
 
-        // ── Wait for the retry-once sequence to fully complete: both attempts'
+        // ── Wait for the bounded-retry sequence to fully complete: both attempts'
         //    timers fired AND attempt 2's terminal handleError has set the error.
         //    Neither waitForIdle nor the 2nd timer log alone suffices — the session
         //    is already idle (retry-branch setIdle at :991; the retry recursion
         //    never re-asserts processing), and the timer log (:808) fires before
         //    handleError (:1399). Without waiting for the error, afterEach's
         //    SIGTERM can tear the daemon down before handleError runs. See
-        //    waitForRetryOnceCompleted / waitForSessionError.
-        await waitForRetryOnceCompleted(daemon, sessionId);
+        //    waitForBoundedRetryCompleted / waitForSessionError.
+        await waitForBoundedRetryCompleted(daemon, sessionId);
 
         // ── Assertion 1: the startup timeout fired on BOTH attempts and the
-        //    retry-once branch ran exactly once (no vacuous pass, no skipped
+        //    capped retry branch ran exactly once (no vacuous pass, no skipped
         //    retry). ───────────────────────────────────────────────────────────────
-        assertRetryOnceSequenceRan(daemon);
+        assertBoundedRetrySequenceRan(daemon);
 
         // ── Assertion 2: session reaches terminal idle (no infinite loop) ───────
         const finalState = await getProcessingState(daemon, sessionId);
@@ -329,7 +329,7 @@ describe('Startup Timeout Error Surfacing', () => {
         // ── Assertion 3: both attempts timed out (2 timer logs above), so the
         //    retry FAILED — the session MUST carry a startup-timeout error with
         //    actionable hints. Accepting null would mask a transient pre-
-        //    handleError read; waitForRetryOnceCompleted guarantees handleError ran.
+        //    handleError read; waitForBoundedRetryCompleted guarantees handleError ran.
         const sessionError = await getSessionError(daemon, sessionId);
         expect(
           sessionError,
@@ -355,7 +355,7 @@ describe('Startup Timeout Error Surfacing', () => {
     async () => {
       const createResult = (await daemon.messageHub.request('session.create', {
         workspacePath: process.cwd(),
-        title: 'Retry Once Test',
+        title: 'Bounded Retry Test',
         config: {
           model: 'haiku',
           permissionMode: 'acceptEdits',
@@ -386,16 +386,16 @@ describe('Startup Timeout Error Surfacing', () => {
           content: 'Say hi.',
         });
 
-        // ── Wait for the retry-once sequence to fully complete before asserting
+        // ── Wait for the bounded-retry sequence to fully complete before asserting
         //    (both timers fired + attempt 2's terminal handleError). See
-        //    waitForRetryOnceCompleted — neither waitForIdle nor the 2nd timer
+        //    waitForBoundedRetryCompleted — neither waitForIdle nor the 2nd timer
         //    log alone reaches attempt 2's terminal state.
-        await waitForRetryOnceCompleted(daemon, sessionId);
+        await waitForBoundedRetryCompleted(daemon, sessionId);
 
         // ── Assertion 1: the startup timeout fired on BOTH attempts and retried
         //    EXACTLY once — directly proves "not more than once" and that the
         //    retry's second attempt actually ran. ────────────────────────────────
-        assertRetryOnceSequenceRan(daemon);
+        assertBoundedRetrySequenceRan(daemon);
 
         // ── Assertion 2: session is terminal idle ─────────────────────────────────
         const finalState = await getProcessingState(daemon, sessionId);

@@ -17,6 +17,10 @@ import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agen
 import type { Session, MessageHub } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
+// The unit vitest config aliases the SDK to tests/sdk-mock.ts, whose `query`
+// is a vi.fn — importing it here lets tests drive runQuery's for-await loop
+// (the success path) with a controllable mock query object.
+import { query as mockedSdkQuery } from '@anthropic-ai/claude-agent-sdk';
 import type { Database } from '../../../../src/storage/database';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
@@ -194,6 +198,10 @@ describe('QueryRunner', () => {
       build: buildSpy,
       addSessionStateOptions: addSessionStateOptionsSpy,
       setCanUseTool: setCanUseToolSpy,
+      // Post-start MCP reconcile (query-runner.ts) — only reachable when
+      // build() resolves; previously undefined, which the `?? {}` fallback
+      // covered. Returns no servers, preserving that behavior.
+      getEffectiveMcpServers: mock(() => ({})),
     } as unknown as QueryOptionsBuilder;
 
     // AskUserQuestionHandler spies
@@ -1341,12 +1349,15 @@ describe('QueryRunner', () => {
     beforeEach(() => {
       savedApiKey = process.env.ANTHROPIC_API_KEY;
       savedRetryBaseMs = process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS;
-      savedMaxStartupRetries = process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES;
+      savedMaxStartupRetries = process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX;
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
       // Zero the startup-timeout backoff so retries fire immediately — the
       // default schedule (15s → 30s → …) would make every test below sleep
-      // for minutes.
+      // for minutes. Pin the cap to 1 as well: these tests were written for
+      // the single-retry-entry shape (1 attempt + 1 retry per turn), and the
+      // default cap of 5 would silently widen them to 6 attempts.
       process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '0';
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '1';
       // Use a real directory so fs.mkdir() succeeds (reached after auth passes)
       mockSession.workspacePath = tmpdir();
       buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
@@ -1364,9 +1375,9 @@ describe('QueryRunner', () => {
         process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = savedRetryBaseMs;
       }
       if (savedMaxStartupRetries === undefined) {
-        delete process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES;
+        delete process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX;
       } else {
-        process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES = savedMaxStartupRetries;
+        process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = savedMaxStartupRetries;
       }
     });
 
@@ -1670,9 +1681,11 @@ describe('QueryRunner', () => {
       // so the post-loop code stops the queue BEFORE the timeout throw reaches
       // the catch. The recursive retry must restart it — messageGenerator exits
       // immediately while the queue is stopped, so the preserved prompt would
-      // never feed the retry and it would time out again. Simulate the
-      // timeout-path stop at the top of the retry block (setIdle hook).
-      setIdleSpy.mockImplementation(async () => {
+      // never feed the retry and it would time out again. The post-loop stop is
+      // not reachable when build() rejects (no query ever iterates), so
+      // simulate it at the pre-backoff teardown hook — by that point in the
+      // real flow the queue is already stopped.
+      terminateTrackedAgentProcessesSpy.mockImplementation(() => {
         stopSpy();
       });
       const ctx = createContext();
@@ -1687,8 +1700,10 @@ describe('QueryRunner', () => {
 
     it('does not restart the message queue for a startup-timeout retry when interrupted', async () => {
       // A stop by interrupt is not the timeout path's own stop — restarting
-      // would re-arm a queue the user cancelled.
-      setIdleSpy.mockImplementation(async () => {
+      // would re-arm a queue the user cancelled. (Also covers the post-backoff
+      // cancellation check: the interrupted status must cancel the retry
+      // outright, not just skip the queue restart.)
+      terminateTrackedAgentProcessesSpy.mockImplementation(() => {
         stopSpy();
         getStateSpy.mockReturnValue({ status: 'interrupted' } as never);
       });
@@ -1796,7 +1811,7 @@ describe('QueryRunner', () => {
     beforeEach(() => {
       savedApiKey = process.env.ANTHROPIC_API_KEY;
       savedRetryBaseMs = process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS;
-      savedMaxStartupRetries = process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES;
+      savedMaxStartupRetries = process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX;
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
       // Zero the backoff by default so cap tests run at full speed; individual
       // tests override the base to observe real delays.
@@ -1817,9 +1832,9 @@ describe('QueryRunner', () => {
         process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = savedRetryBaseMs;
       }
       if (savedMaxStartupRetries === undefined) {
-        delete process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES;
+        delete process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX;
       } else {
-        process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES = savedMaxStartupRetries;
+        process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = savedMaxStartupRetries;
       }
     });
 
@@ -1842,7 +1857,7 @@ describe('QueryRunner', () => {
       // 25ms and 50ms sleeps. setTimeout never fires early, so the lower
       // bounds are deterministic even on a loaded runner.
       process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '25';
-      process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES = '2';
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '2';
 
       const buildTimes: number[] = [];
       buildSpy.mockImplementation(async () => {
@@ -1861,7 +1876,7 @@ describe('QueryRunner', () => {
     });
 
     it('settles the delivery failed after the cap instead of looping forever', async () => {
-      process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES = '2';
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '2';
 
       const ctx = createContext();
       runner = new QueryRunner(ctx);
@@ -1886,8 +1901,8 @@ describe('QueryRunner', () => {
       expect(warns.some((w) => w.includes('retry budget exhausted'))).toBe(true);
     });
 
-    it('honors HYPERNEO_SDK_STARTUP_MAX_RETRIES=0 (first timeout settles immediately)', async () => {
-      process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES = '0';
+    it('honors HYPERNEO_SDK_STARTUP_RETRY_MAX=0 (first timeout settles immediately)', async () => {
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '0';
 
       const ctx = createContext();
       runner = new QueryRunner(ctx);
@@ -1903,7 +1918,7 @@ describe('QueryRunner', () => {
       // delivery-layer redrives (queue-timeout reset+replay, restart-recovery
       // reclaim) re-enqueue the SAME uuid and keep consuming the same budget —
       // the reset-on-redrive is what made the incident loop self-sustaining.
-      process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES = '3';
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '3';
       runner = createRunner();
       const claim = (key: string | null) =>
         (
@@ -1929,7 +1944,7 @@ describe('QueryRunner', () => {
       // delivery key. It must charge the current budget rather than reset it —
       // otherwise consume/no-consume flapping would reset the budget every
       // other round and the loop would be unbounded again.
-      process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES = '3';
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '3';
       runner = createRunner();
       const claim = (key: string | null) =>
         (
@@ -1950,7 +1965,7 @@ describe('QueryRunner', () => {
     it('clears the budget once a delivery starts successfully', () => {
       // A successful first SDK frame resets the backoff state, so the next
       // turn (or a redrive) starts at retry 1 with the base delay.
-      process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES = '1';
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '1';
       runner = createRunner();
       const internals = runner as unknown as {
         claimStartupTimeoutRetry(k: string | null): number | null;
@@ -1961,6 +1976,169 @@ describe('QueryRunner', () => {
       expect(internals.claimStartupTimeoutRetry('msg-a')).toBeNull();
       internals.clearStartupTimeoutRetryBudget();
       expect(internals.claimStartupTimeoutRetry('msg-a')).toBe(1);
+    });
+
+    it('resets the budget on a successful first SDK frame through runQuery (regression guard)', async () => {
+      // Regression guard for the messageCount === 1 reset in runQuery: a
+      // delivery that exhausts its budget, then completes a SUCCESSFUL turn,
+      // then times out again must get a fresh retry. Deleting the
+      // clearStartupTimeoutRetryBudget() call in the for-await makes this
+      // test fail (the later timeout would settle immediately).
+      // The success turn is driven through the vitest SDK mock's query() —
+      // the pre-populated ctx.queryObject pattern cannot reach the for-await
+      // (runQuery overwrites queryObject from query()).
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '1';
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      const internals = runner as unknown as {
+        _consumedUserMessages: Map<number, unknown[]>;
+      };
+
+      // Round 1 — exhaust the budget: attempt + 1 retry, then the capped
+      // attempt settles. (Null delivery key: build rejects before any
+      // message is consumed.)
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+      expect(buildSpy).toHaveBeenCalledTimes(2);
+
+      // Round 2 — a turn that yields ONE SDK frame and completes normally.
+      buildSpy.mockReset();
+      buildSpy.mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
+      try {
+        // NOTE: the real SDK's query() returns the query object SYNCHRONOUSLY
+        // (runQuery does not await it) — the mock implementation must not be
+        // async, or queryObject becomes a Promise without Symbol.asyncIterator.
+        (mockedSdkQuery as unknown as ReturnType<typeof mock>).mockImplementation(
+          () =>
+            ({
+              close: () => {},
+              [Symbol.asyncIterator]: async function* () {
+                yield { type: 'assistant', uuid: 'frame-1' };
+              },
+            }) as unknown as Query
+        );
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+        // The first frame really flowed through the for-await (not vacuous).
+        expect(onSDKMessageSpy).toHaveBeenCalledWith(
+          expect.objectContaining({ type: 'assistant', uuid: 'frame-1' })
+        );
+      } finally {
+        (mockedSdkQuery as unknown as ReturnType<typeof mock>).mockReset();
+      }
+
+      // Round 3 — the budget must be fresh: the timeout retries once more
+      // (2 builds) instead of settling on the inherited exhausted budget (1).
+      buildSpy.mockReset();
+      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+      expect(buildSpy).toHaveBeenCalledTimes(2);
+      expect(internals._consumedUserMessages.size).toBe(0);
+    });
+
+    it('keys the budget by the consumed kickoff uuid and survives redrives (runQuery wiring)', async () => {
+      // Drives the delivery-key derivation (consumedForKey[0]?.uuid) with a
+      // REAL consumed uuid and proves redrive survival end-to-end: the
+      // delivery layer redrives the same durable message (same uuid) via a
+      // fresh start(), and the exhausted budget must hold — no second retry.
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '1';
+
+      const kickoff = {
+        uuid: 'durable-kickoff-uuid',
+        content: [{ type: 'text' as const, text: 'K' }],
+      };
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      const internals = runner as unknown as {
+        _consumedUserMessages: Map<number, unknown[]>;
+      };
+
+      // Turn 1 — kickoff consumed, timeout, keyed retry re-enqueues it.
+      internals._consumedUserMessages = new Map([[1, [kickoff]]]);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+      expect(buildSpy).toHaveBeenCalledTimes(2); // attempt + the keyed retry
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith(kickoff.uuid, kickoff.content, false, {
+        prepend: true,
+      });
+
+      // Turn 2 — same durable message redriven under a new generation: the
+      // first timeout settles immediately (no retry, no re-enqueue).
+      const secondTurn = runner.start();
+      internals._consumedUserMessages.set(2, [kickoff]);
+      await secondTurn.catch(() => {});
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(3);
+      expect(enqueueWithIdSpy).toHaveBeenCalledTimes(1);
+      const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+        String(args[0])
+      );
+      expect(warns.some((w) => w.includes('retry budget exhausted'))).toBe(true);
+    });
+
+    it('cancels the retry when a lifecycle reset nulls queryPromise during the backoff', async () => {
+      // P1 regression guard: the delivery-turn stall watchdog's
+      // resetQuery({restartQuery:false}) nulls ctx.queryPromise WITHOUT
+      // bumping the generation or marking interrupted. The post-backoff
+      // guard must treat that as cancellation, or the sleeping chain wakes
+      // and respawns a query the reset already gave up on.
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '25';
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      // Wire the reset into the pre-backoff teardown hook — by the time the
+      // real flow runs it, the stall watchdog has already fired.
+      terminateTrackedAgentProcessesSpy.mockImplementation(() => {
+        ctx.queryPromise = null;
+      });
+
+      runner.start();
+      const chain = ctx.queryPromise;
+      await chain?.catch(() => {});
+
+      // First attempt only — the retry was cancelled, not recursed.
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+        String(args[0])
+      );
+      expect(warns.some((w) => w.includes('Startup-timeout retry cancelled'))).toBe(true);
+    });
+
+    it('abandons the retry when the delivery row was terminalized failed during the backoff', async () => {
+      // The 30s delivery-consumption timeout (awaitDeliveryConsumption) and
+      // the dead-letter paths mark the kickoff's durable row failed while the
+      // backoff chain sleeps. Retrying would respawn subprocesses for a
+      // delivery the layer already settled — abandon instead.
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '25';
+
+      const kickoff = {
+        uuid: 'settled-kickoff-uuid',
+        content: [{ type: 'text' as const, text: 'K' }],
+      };
+      getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) =>
+        status === 'failed' ? ([{ uuid: kickoff.uuid }] as never) : []
+      );
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages = new Map([[1, [kickoff]]]);
+
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      // No retry and no re-enqueue for the already-settled delivery.
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+        String(args[0])
+      );
+      expect(warns.some((w) => w.includes('delivery already settled failed'))).toBe(true);
     });
   });
 

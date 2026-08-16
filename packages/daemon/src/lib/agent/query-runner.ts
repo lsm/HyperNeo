@@ -151,7 +151,13 @@ function sleep(ms: number): Promise<void> {
  *
  * Read lazily (at call time, not module load) so tests can set
  * HYPERNEO_SDK_STARTUP_RETRY_BASE_MS=0 in beforeEach to avoid real sleeps
- * and HYPERNEO_SDK_STARTUP_MAX_RETRIES to adjust the cap.
+ * and HYPERNEO_SDK_STARTUP_RETRY_MAX to adjust the cap.
+ *
+ * Naming note: this is deliberately NOT `HYPERNEO_SDK_STARTUP_MAX_RETRIES` —
+ * that older name belonged to the removed silent auto-recovery system
+ * (docs/plans/fix-model-switching-bugs-remove-silent-auto-recovery-fix-rpc.md,
+ * "will no longer have any effect after Milestone 2") and reusing it would
+ * let a stale operator setting silently change the new cap.
  */
 const DEFAULT_STARTUP_RETRY_BASE_MS = 15000;
 const DEFAULT_MAX_STARTUP_TIMEOUT_RETRIES = 5;
@@ -164,7 +170,7 @@ function getStartupRetryBaseMs(): number {
 }
 
 function getMaxStartupTimeoutRetries(): number {
-  const raw = process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES;
+  const raw = process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX;
   if (!raw) return DEFAULT_MAX_STARTUP_TIMEOUT_RETRIES;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_MAX_STARTUP_TIMEOUT_RETRIES;
@@ -502,10 +508,14 @@ export class QueryRunner {
    * SDK frame clears it (see the messageCount === 1 branch in runQuery).
    *
    * The state intentionally lives on this long-lived instance — NOT in
-   * runQuery's retryAttempt parameter — so delivery-layer redrives of the SAME
-   * message (queue-timeout reset+replay, restart-recovery reclaim) keep
-   * counting toward the cap instead of resetting it to zero on every redrive.
-   * That reset-on-redrive is what made the 2026-08-16 herd loop self-sustaining.
+   * runQuery's retryAttempt parameter — so IN-PROCESS redrives of the SAME
+   * message (queue-timeout reset+replay, stale-claim reclaim) keep counting
+   * toward the cap instead of resetting it to zero on every redrive. That
+   * reset-on-redrive is what made the 2026-08-16 herd loop self-sustaining.
+   * Scope: per process only — a daemon restart, an ACP↔non-ACP runner swap
+   * (AgentSession.startStreamingQuery recreates the runner), or session
+   * rehydration each start from a fresh budget; the incident-class herd
+   * begins at restart and still converges within the first daemon lifetime.
    * `key: null` means nothing was consumed yet (feed starvation) — starved
    * attempts charge the in-flight budget so consume/no-consume flapping and
    * persistent starvation stay bounded too (see claimStartupTimeoutRetry).
@@ -561,12 +571,15 @@ export class QueryRunner {
    *
    * @param queryGeneration - Generation counter to detect stale queries
    * @param retryAttempt - Retry attempt counter (0 = first attempt, 1+ = retry).
-   *   Used to gate bounded retries: message-not-found / transient-connection
+   *   Shared across retry categories: message-not-found / transient-connection
    *   retries fire only on attempt 0 (1-shot), and the 5xx/overloaded
-   *   provider-retry path fires up to the configured cap. Startup-timeout
-   *   retries are NOT gated by this counter — they use the per-delivery
-   *   `_startupTimeoutRetryState` budget (which survives delivery-layer
-   *   redrives) with exponential backoff, up to their own configured cap.
+   *   provider-retry path fires up to its configured cap. Startup-timeout
+   *   retries are gated by the per-delivery `_startupTimeoutRetryState` budget
+   *   (which survives in-process delivery-layer redrives) with exponential
+   *   backoff, up to their own configured cap — but they still increment this
+   *   counter, so startup retries consume the provider-retry budget and
+   *   disable the 1-shot retries on subsequent attempts (bounded TOTAL
+   *   attempts per turn, not per category).
    */
   private async runQuery(
     queryGeneration: number,
@@ -1144,13 +1157,24 @@ export class QueryRunner {
             `Auto-retrying query after startup timeout ` +
               `(retry ${retryNumber}/${maxStartupRetries} in ${delayMs}ms).`
           );
-          await stateManager.setIdle({ suppressDeliveryWaiters: true });
+          // Deliberately do NOT call stateManager.setIdle() here (the 1-shot
+          // message-not-found / transient-connection retries below still do —
+          // they recurse near-instantly). The startup retry sleeps 15–240 s
+          // before respawning; publishing idle for that window would (a) make
+          // handleInterrupt early-return on idle, silently dropping a Stop
+          // pressed during the backoff, (b) show the session as idle for up to
+          // ~4 min per round, and (c) let waitForIdle observers false-pass on
+          // the blip. Mirrors the provider-retry rule: stay 'processing' during
+          // backoff — queryPromise is still set, the retry's generator
+          // re-asserts 'processing' on its first yield, and the finally sets
+          // 'idle' when the turn actually completes.
 
-          // Ownership check BEFORE terminating: setIdle above awaited, so a
-          // replacement query may already have started and registered its
-          // subprocess. Terminating now would SIGTERM/SIGKILL the replacement.
-          // The check→terminate sequence below is synchronous, so no replacement
-          // can slip in between. (Codex P1, PR #2491.)
+          // Ownership check BEFORE terminating: an await point passed above
+          // (the state read), so a replacement query may already have started
+          // and registered its subprocess. Terminating now would SIGTERM/
+          // SIGKILL the replacement. The check→terminate sequence below is
+          // synchronous, so no replacement can slip in between. (Codex P1,
+          // PR #2491.)
           if (this.retrySupersededByReplacement(queryGeneration)) {
             return;
           }
@@ -1217,15 +1241,36 @@ export class QueryRunner {
           // retry's post-sleep guard do NOT apply here: this attempt's
           // controller was legitimately aborted by the startup timer, and the
           // timeout escape intentionally left the queue stopped (restarted
-          // below). Generation, cleanup, and interrupt status are the reliable
-          // cancellation signals on this path.
+          // below). Beyond generation/cleanup/interrupt, two more cancellation
+          // signals are checked:
+          // - ctx.queryPromise === null: the delivery-turn stall watchdog
+          //   (3 min no-activity) or a lifecycle reset nulls queryPromise
+          //   WITHOUT bumping the generation or marking interrupted — without
+          //   this check the sleeping chain would wake, pass the other checks,
+          //   and respawn a live query the reset already gave up on.
+          // - delivery row settled failed: the 30s delivery-consumption
+          //   timeout (awaitDeliveryConsumption) and the dead-letter paths
+          //   terminalize the kickoff's durable row while this chain sleeps.
+          //   Retrying would respawn subprocesses for a delivery the layer
+          //   already settled failed — abandon and let the settled state stand.
+          //   (Bounds the zombie window to one round past settlement instead
+          //   of the full cap, ~9.5 min with defaults.)
+          const deliverySettledFailed =
+            deliveryKey !== null &&
+            this.ctx.db
+              .getMessagesByStatus(session.id, 'failed')
+              .some((message) => message.uuid === deliveryKey);
           if (
             this.ctx.isCleaningUp() ||
+            this.ctx.queryPromise === null ||
+            deliverySettledFailed ||
             this.retrySupersededByReplacement(queryGeneration) ||
             stateManager.getState().status === 'interrupted'
           ) {
             logger.warn(
-              'Startup-timeout retry cancelled: session interrupted/restarted/cleaning up during backoff.'
+              'Startup-timeout retry cancelled: session interrupted/restarted/reset/cleaning up during backoff' +
+                (deliverySettledFailed ? ' (delivery already settled failed)' : '') +
+                '.'
             );
             return;
           }
@@ -1279,6 +1324,14 @@ export class QueryRunner {
           // Use `return await` so this call's finally{} runs only after the retry
           // completes. Otherwise finally{} would race the retry and can tear down
           // shared state (queue/controller/queryObject) while it is still running.
+          //
+          // Coupling note: startup retries increment retryAttempt, which is
+          // shared with the OTHER retry gates — the 1-shot message-not-found /
+          // transient-connection retries are disabled on attempts > 0, and the
+          // provider-retry budget (retryAttempt < maxProviderRetries) shrinks by
+          // the number of startup retries already spent (after 3 startup
+          // retries a later 5xx gets zero provider retries). Intentional: the
+          // counter bounds TOTAL retries per turn, not retries per category.
           return await this.runQuery(queryGeneration, retryAttempt + 1, recoveryState);
         }
       }
@@ -1418,13 +1471,15 @@ export class QueryRunner {
           `Provider error (5xx/overloaded/unavailable) detected; retrying in ${delayMs}ms ` +
             `(attempt ${retryAttempt + 1}/${maxProviderRetries}).`
         );
-        // Deliberately do NOT call stateManager.setIdle() here. The existing
-        // transient-connection retry (~1006) and startup-timeout retry (~931)
-        // call setIdle before recursing, but those retry near-instantly. The
-        // provider retry has a multi-second backoff window — calling setIdle
-        // would leave the session appearing idle (turn finished) while a retry
-        // is still pending. Keeping the current 'processing' state during
-        // backoff is more accurate: queryPromise is still set so
+        // Deliberately do NOT call stateManager.setIdle() here. The 1-shot
+        // message-not-found and transient-connection retries call setIdle
+        // before recursing, but those retry near-instantly. Any retry with a
+        // backoff window — this provider retry (multi-second) and the
+        // startup-timeout retry (15–240 s) — must stay 'processing': calling
+        // setIdle would leave the session appearing idle (turn finished) while
+        // a retry is still pending, drop interrupts pressed during the window
+        // (handleInterrupt early-returns on idle), and let waitForIdle
+        // observers false-pass on the blip. queryPromise is still set so
         // ensureQueryStarted() won't launch a duplicate query, and state
         // observers see the turn as in-progress. The recursive runQuery's
         // message generator re-asserts 'processing' on the next yield; the

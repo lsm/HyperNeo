@@ -278,7 +278,7 @@ The three bugs share common dependencies. The plan addresses them in dependency 
 **Description**: Add an online test verifying that a startup timeout error is surfaced to the user (via `errorManager.handleError`) without any silent retry.
 
 **Files to create/modify**:
-- `packages/daemon/tests/online/convo/startup-timeout-no-retry.test.ts` (new) — Test:
+- `packages/daemon/tests/online/convo/startup-timeout-no-retry.test.ts` (new; since renamed to `startup-timeout-bounded-retry.test.ts` when the retry became a capped/backoff retry) — Test:
   1. Start a session and send a message.
   2. Simulate a startup timeout condition.
   3. Verify the error is surfaced immediately (no retry).
@@ -334,7 +334,7 @@ The implementer should choose the approach that works reliably with the existing
 
 3. **`messageHub` still in config**: Keeping `messageHub` in `RoomRuntimeConfig` means the unused reference at the assignment remains. This is acceptable — the risk of removing it (touching 19 test files) outweighs the benefit of removing a single unused field.
 
-4. **Backward compatibility for `HYPERNEO_SDK_STARTUP_RECOVERY_DELAY_MS` and `HYPERNEO_SDK_STARTUP_MAX_RETRIES`**: These env vars will no longer have any effect after Milestone 2. This is acceptable because they were undocumented debugging knobs. The `HYPERNEO_SDK_STARTUP_TIMEOUT_MS` env var is kept.
+4. **Backward compatibility for `HYPERNEO_SDK_STARTUP_RECOVERY_DELAY_MS` and `HYPERNEO_SDK_STARTUP_MAX_RETRIES`**: These env vars will no longer have any effect after Milestone 2. This is acceptable because they were undocumented debugging knobs. The `HYPERNEO_SDK_STARTUP_TIMEOUT_MS` env var is kept. (Update, 2026-08-16: the retirement still holds — `HYPERNEO_SDK_STARTUP_MAX_RETRIES` remains dead. The later startup-timeout backoff/cap work deliberately chose the distinct name `HYPERNEO_SDK_STARTUP_RETRY_MAX` so a stale setting from this system cannot silently change the new cap.)
 
 5. **Online test reliability**: The startup timeout test (Task 2.4) depends on being able to trigger a timeout condition reliably. The module-level env var loading makes this tricky. The implementation note provides three approaches; the implementer should choose the one that works best.
 
