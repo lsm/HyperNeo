@@ -519,19 +519,23 @@ function isThinEvidence(item: EvidenceRef): boolean {
 const MANUAL_NOTE_CLAUSE_RE = /(?:[;!?\n]|\.(?=\s|$))+/;
 
 /**
- * Splits a status-prefix form at its colon. A colon usually introduces an
- * elaboration of the same utterance ("Progress: waiting on CI" is one status
- * clause), but when the label before it is itself status language
- * ("Blocked: root cause was lock contention"), the colon delimits a status
- * preamble from the content that follows — and that content keeps the note
- * substantive.
+ * Splits a status-prefix form at its colon — but only when the suffix
+ * carries diagnostic or retrospective content (a linking verb or at least
+ * four words, e.g. "root cause was lock contention"). A bare identifier or
+ * task shorthand ("Pending: CI", "TODO: update docs") is the label's status
+ * detail, not a second substantive clause.
  */
 function splitStatusPrefixClause(clause: string): string[] {
   const colonIndex = clause.indexOf(':');
   if (colonIndex < 0) return [clause];
   const label = clause.slice(0, colonIndex);
   if (!STATUS_LANGUAGE_RE.test(label)) return [clause];
-  return [label, clause.slice(colonIndex + 1)];
+  const suffix = clause.slice(colonIndex + 1);
+  const suffixWords = suffix.trim().split(/\s+/).filter(Boolean).length;
+  if (!/\b(?:is|are|was|were|seems?|remains?)\b/i.test(suffix) && suffixWords < 4) {
+    return [clause];
+  }
+  return [label, suffix];
 }
 
 /**
@@ -569,9 +573,12 @@ function splitAtClauseConjunctions(clause: string): string[] {
  * Causal conjunctions. Content after them explains WHY — a diagnosis or
  * rationale ("Rollout is blocked because the cache key ignores tenant IDs")
  * — so it forms its own clause for the thinness test even when the marker
- * before it is a hard status word.
+ * before it is a hard status word. "since" only counts when causal: a
+ * temporal "since" starting a duration phrase ("Pending since Friday")
+ * is part of the status, not a rationale.
  */
-const CAUSAL_CONJUNCTION_RE = /\b(?:because|since|so that)\b/gi;
+const CAUSAL_CONJUNCTION_RE =
+  /\b(?:because|so that|since\s+(?!(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|yesterday|today|tomorrow|january|february|march|april|june|july|august|september|october|november|december|morning|noon|night|evening|last|this|next|ago)\b))\b/gi;
 
 /**
  * Splits a clause before each causal conjunction, keeping the conjunction
@@ -866,18 +873,24 @@ function suffixHasQualifier(suffix: string): boolean {
 
 /**
  * Whether the selection carries an affirmative outcome signal (see
- * {@link AFFIRMATIVE_OUTCOME_RE}). Only a row's summary and its string-valued
- * metadata fields are scanned — serializing whole metadata objects would leak
- * key names and structure (`{"passed": false}` must not count as "passed").
- * The gate uses this instead of the preflight's `counts.outcomes`, which
- * over-counts bare outcome keywords in negated or pending phrases.
+ * {@link AFFIRMATIVE_OUTCOME_RE}). A row's summary and its string-valued
+ * metadata fields are scanned — serializing whole metadata objects would
+ * leak key names and structure (`{"passed": false}` must not count as
+ * "passed") — except for manual notes, whose metadata is provenance and
+ * identifiers: an `externalUrl` can point at a still-pending PR, so only the
+ * summary carries outcome content there. The gate uses this instead of the
+ * preflight's `counts.outcomes`, which over-counts bare outcome keywords in
+ * negated or pending phrases.
  */
 function hasAffirmativeOutcome(evidence: EvidenceRef[]): boolean {
   return evidence.some((item) => {
-    const texts = [item.summary ?? ''];
-    for (const value of Object.values(item.metadata ?? {})) {
-      if (typeof value === 'string' && value.trim()) texts.push(value);
+    const texts: string[] = [];
+    if (item.kind !== 'manual_note') {
+      for (const value of Object.values(item.metadata ?? {})) {
+        if (typeof value === 'string' && value.trim()) texts.push(value);
+      }
     }
+    texts.push(item.summary ?? '');
     return texts.some(hasAffirmativeOutcomeText);
   });
 }
@@ -914,20 +927,19 @@ function hasArtifactOutcome(text: string): boolean {
 
 /**
  * Hard status/pending markers: the recognizable signature of process-level
- * clauses ("waiting for X", "not done yet", "no update"). Includes the bare
- * completion words ("done", "completed", "approved") that
- * AFFIRMATIVE_OUTCOME_RE deliberately excludes — they are process status,
- * not work artifacts ("complete" alone is left out: as an adjective it
- * appears in substantive notes like "complete rewrite of the parser").
- * Bare negators are restricted to status phrases: "no update", "no new
- * signal", "never got to it", "not working", and negated outcome verbs
- * ("tests have not passed") — a negative finding ("No index covers the
- * query", "The cache is not the bottleneck") is a substantive diagnosis,
- * not process status. A clause with any of these
- * markers is process status regardless of anything else.
+ * clauses ("waiting for X", "not done yet", "no update"). The bare
+ * completion words ("done", "completed", "approved") count only at the end
+ * of a clause ("Done", "Migration completed") — the same word opening a
+ * description of what was completed ("Completed migration to tenant-scoped
+ * cache") is substantive work, not status. Bare negators are restricted to
+ * status phrases: "no update", "no new signal", "never got to it", "not
+ * working", and negated outcome verbs ("tests have not passed") — a
+ * negative finding ("No index covers the query", "The cache is not the
+ * bottleneck") is a substantive diagnosis, not process status. A clause
+ * with any of these markers is process status regardless of anything else.
  */
 const PENDING_MARKER_RE =
-  /\b(?:waiting|wait|pending|queued|incomplete|unfinished|planned|scheduled|upcoming|todo|done|completed|approved|blocked|stalled|goal|target|aim|need(?:s|ed)? to|must|has to|have to|required to|not\s+(?:yet|done|started|run|runned|finished|working|expected|passed|passing|merged|merging|landed|landing|shipped|shipping|failed|failing|green|succeed(?:ed|ing)?|deployed|released|built|closed|fixed)|no\s+(?:update|updates|movement|progress|news|change|changes|blockers?|findings?|errors?|failures?|issues?|new\s+signal|signal|new\s+work)|never\s+(?:got|started|finished|ran|completed|happened|landed|shipped|merged)|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|later|soon|tomorrow|tbd|n\/a)\b/i;
+  /\b(?:waiting|wait|pending|queued|incomplete|unfinished|planned|scheduled|upcoming|todo|blocked|stalled|goal|target|aim|need(?:s|ed)? to|must|has to|have to|required to|not\s+(?:yet|done|started|run|runned|finished|working|expected|passed|passing|merged|merging|landed|landing|shipped|shipping|failed|failing|green|succeed(?:ed|ing)?|deployed|released|built|closed|fixed)|no\s+(?:update|updates|movement|progress|news|change|changes|blockers?|findings?|errors?|failures?|issues?|new\s+signal|signal|new\s+work)|never\s+(?:got|started|finished|ran|completed|happened|landed|shipped|merged)|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|later|soon|tomorrow|tbd|n\/a|(?:done|completed|approved)(?:\s+(?:this\s+tick|for\s+now|today|this\s+week|so\s+far))?\s*[.!]?$)\b/i;
 
 /**
  * Bare modals, ambiguous between prospective work status ("tests should
