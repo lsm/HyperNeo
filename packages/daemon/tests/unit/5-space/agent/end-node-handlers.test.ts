@@ -2159,6 +2159,30 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     expect(after?.pendingCheckpointType).toBe('gate');
   });
 
+  test('rejects an in_progress task carrying a stray pending checkpoint', async () => {
+    // spaceTask.update can set pendingCheckpointType on an in_progress task
+    // (no status/checkpoint cross-constraint). Completing it would produce a
+    // done task still carrying a pending human checkpoint, so the guard is
+    // status-unqualified.
+    const taskId = await createTask('in_progress');
+    ctx.taskRepo.updateTask(taskId, {
+      pendingCheckpointType: 'task_completion',
+      pendingCompletionReason: 'stray checkpoint',
+    });
+
+    const result = await makeValidationTool().complete_validation_task({
+      task_id: taskId,
+      validation_outcome: 'should be refused',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('awaiting human approval');
+    const after = ctx.taskRepo.getTask(taskId);
+    expect(after?.status).toBe('in_progress');
+    expect(after?.pendingCheckpointType).toBe('task_completion');
+  });
+
   test('rejects an empty validation outcome', async () => {
     const taskId = await createTask('in_progress');
 
