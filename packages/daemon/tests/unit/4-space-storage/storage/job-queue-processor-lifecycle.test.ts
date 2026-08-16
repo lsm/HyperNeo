@@ -381,14 +381,109 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
       expect(repo.getJob(job.id)?.status).toBe('pending');
 
       // Simulate the grace elapsing without waiting 10s of wall-clock.
-      const map = (delivery as unknown as { settlingReclaimedJobIds: Map<string, number> })
-        .settlingReclaimedJobIds;
-      map.set(job.id, Date.now() - 1);
+      const map = (
+        delivery as unknown as {
+          settlingReclaimedJobIds: Map<string, { claimToken: string | null; expireAt: number }>;
+        }
+      ).settlingReclaimedJobIds;
+      map.set(job.id, { claimToken: firstClaim, expireAt: Date.now() - 1 });
       await delivery.tick();
       const after = repo.getJob(job.id);
       expect(after?.status).toBe('processing');
       expect(after?.claimToken).toBeTruthy();
       expect(after?.claimToken).not.toBe(firstClaim);
+    });
+
+    it('a late-settling earlier attempt does not lift the replacement deferral', async () => {
+      // Attempt A goes stale and its grace expires → attempt B claims the row.
+      // B then ALSO goes stale and is aborted, installing B's own deferral. If
+      // A finally settles now, its processJob finally must NOT clear B's
+      // deferral (the old unconditional delete did) — otherwise the next tick
+      // claims attempt C while B's handler is still settling, recreating the
+      // overlap the deferral exists to prevent.
+      const settledCount = { value: 0 };
+      // Each invocation gets its OWN held promise: release[i]() settles only
+      // attempt i, and handlers never observe the abort signal — exactly the
+      // wedged-handler shape the claim-token match must defend against.
+      const releases: Array<() => void> = [];
+      const delivery = new JobQueueProcessor(repo, {
+        pollIntervalMs: 5000,
+        maxConcurrent: 2,
+        staleThresholdMs: 60_000,
+      });
+      delivery.register('message_delivery', () => {
+        return new Promise((resolve) => {
+          releases.push(() => {
+            settledCount.value++;
+            resolve({ outcome: 'settled' });
+          });
+        });
+      });
+
+      const job = repo.enqueue({
+        queue: 'message_delivery',
+        payload: { sessionId: 'session-1', messageUuid: 'message-1', role: 'turn' },
+      });
+
+      const ageStale = () => {
+        const staleLease = Date.now() - 120_000;
+        db.prepare(`UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?`).run(
+          staleLease,
+          staleLease,
+          job.id
+        );
+        (delivery as unknown as { lastStaleCheck: number }).lastStaleCheck = 0;
+      };
+
+      // Attempt A claims and runs (held).
+      await delivery.tick();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const claimA = repo.getJob(job.id)?.claimToken;
+      expect(claimA).toBeTruthy();
+
+      // A goes stale → reclaimed + aborted, deferral(A) installed. A ignores
+      // the abort (only the manual release settles it).
+      ageStale();
+      await delivery.tick();
+      expect(repo.getJob(job.id)?.status).toBe('pending');
+
+      // Grace(A) expires → attempt B claims under a new token.
+      const map = (
+        delivery as unknown as {
+          settlingReclaimedJobIds: Map<string, { claimToken: string | null; expireAt: number }>;
+        }
+      ).settlingReclaimedJobIds;
+      map.set(job.id, { claimToken: claimA, expireAt: Date.now() - 1 });
+      await delivery.tick();
+      const claimB = repo.getJob(job.id)?.claimToken;
+      expect(claimB).toBeTruthy();
+      expect(claimB).not.toBe(claimA);
+
+      // B ALSO goes stale → reclaimed + aborted → deferral(B) installed.
+      ageStale();
+      await delivery.tick();
+      expect(repo.getJob(job.id)?.status).toBe('pending');
+      expect(map.get(job.id)?.claimToken).toBe(claimB);
+
+      // A finally settles — its finally runs with A's claim token. The
+      // deferral keyed to B must survive so no claim C overlaps B.
+      releases[0]();
+      await flush();
+      expect(settledCount.value).toBe(1); // only attempt A settled
+      expect(map.has(job.id)).toBe(true);
+      expect(map.get(job.id)?.claimToken).toBe(claimB);
+
+      // And the next tick still defers the row (B has not settled).
+      await delivery.tick();
+      expect(repo.getJob(job.id)?.status).toBe('pending');
+
+      // B settles under its own token → its finally lifts the deferral and the
+      // next claim (C) proceeds.
+      releases[1]();
+      await flush();
+      expect(map.has(job.id)).toBe(false);
+      await delivery.tick();
+      expect(repo.getJob(job.id)?.status).toBe('processing');
     });
   });
 

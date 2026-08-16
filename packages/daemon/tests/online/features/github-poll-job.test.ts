@@ -266,7 +266,7 @@ describe('GitHub polling via job queue (online)', () => {
     // Trigger stale reclamation with a 5-minute cutoff — exactly what
     // JobQueueProcessor.start() does eagerly on daemon restart.
     const reclaimed = daemonCtx.jobQueue.reclaimStale(Date.now() - 5 * 60 * 1000);
-    expect(reclaimed).toBeGreaterThanOrEqual(1);
+    expect(reclaimed.some((claim) => claim.jobId === staleJobId)).toBe(true);
 
     // The reclaimed job is now 'pending' and ready to be picked up.
     const afterReclaim = daemonCtx.jobQueue.listJobs({

@@ -164,6 +164,24 @@ export async function syncGitHubPollingCapability(
   });
 }
 
+/**
+ * File-log capture stranded by a failed createDaemonApp, if any. A failed
+ * startup deliberately keeps the sink subscribed so the caller's fatal handler
+ * can persist the startup error to disk — this stash makes that capture
+ * reclaimable: the next createDaemonApp attempt reclaims it automatically, and
+ * nonfatal embedders can release it via {@link releaseStartupFileLogCapture}.
+ * Without the handoff, every in-process startup retry would strand another
+ * global structured-log subscriber and an open sink forever. (Codex P2, PR #2499.)
+ */
+let strandedStartupFileLogCapture: (() => Promise<void>) | null = null;
+
+/** Reclaim the file-log capture a failed createDaemonApp left behind. */
+export async function releaseStartupFileLogCapture(): Promise<void> {
+  const release = strandedStartupFileLogCapture;
+  strandedStartupFileLogCapture = null;
+  await release?.();
+}
+
 export interface CreateDaemonAppOptions {
   config: Config;
   /**
@@ -289,6 +307,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     restoreConsoleCapture();
     await structuredLogSink?.close();
   };
+  // Reclaim any capture stranded by a previous FAILED attempt before
+  // subscribing the new one — otherwise in-process startup retries accumulate
+  // global structured-log subscribers and open sinks. Best-effort: closing
+  // only flushes and releases the old sink's file handle.
+  void releaseStartupFileLogCapture().catch(() => {});
   // Startup phase fences. Each heavy init step logs `[startup N] <name>` with
   // elapsed-since-previous (+ms = duration of the prior phase) and cumulative
   // total, so a slow/hanging phase is obvious. verbose-gated to mirror logInfo.
@@ -1512,11 +1535,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // Restore the console capture, but KEEP the file sink subscribed: the
     // caller's fatal handler (main.ts unhandledRejection) emits its record
     // only after this rethrow, and unsubscribing/closing here would drop the
-    // startup failure from the persistent log. The daemon exits right after
-    // the fatal flush, so the sink needs no explicit close on this path.
-    // (Codex P2, PR #2499.)
+    // startup failure from the persistent log. Stash the capture for the
+    // ownership handoff instead of marking it closed: the next createDaemonApp
+    // attempt reclaims it (and nonfatal embedders can call
+    // releaseStartupFileLogCapture), so the subscription and sink are never
+    // leaked. The daemon exits right after the fatal flush, so nothing needs
+    // to close the sink on this path. (Codex P2, PR #2499.)
     restoreConsoleCapture();
-    fileLogCaptureClosed = true;
+    strandedStartupFileLogCapture = closeFileLogCapture;
     throw error;
   }
 }

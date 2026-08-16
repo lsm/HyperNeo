@@ -150,14 +150,20 @@ export class JobQueueProcessor {
   private running = false;
   private inFlightClaims = new Map<string, Map<string, InFlightClaimRecord>>();
   // Job IDs whose stale-reclaimed predecessor handler was aborted but has not
-  // settled yet, mapped to the moment the deferral expires. Their rows are
-  // already back to `pending`, but claiming them now (spare slots exist under
-  // a large budget) would overlap the aborting attempt — the predecessor may
-  // have fed the SDK before observing the abort. Cleared from processJob's
-  // finally, so the replacement claim lands once cancellation has settled.
-  // The expiry bounds the wait: a handler that never observes its abort signal
-  // would otherwise suppress its replacement forever.
-  private settlingReclaimedJobIds = new Map<string, number>();
+  // settled yet, mapped to the reclaimed attempt's claim token and the moment
+  // the deferral expires. Their rows are already back to `pending`, but
+  // claiming them now (spare slots exist under a large budget) would overlap
+  // the aborting attempt — the predecessor may have fed the SDK before
+  // observing the abort. Cleared from processJob's finally when the settling
+  // attempt's claim token matches, so the replacement claim lands once
+  // cancellation has settled without a still-wedged earlier attempt (whose own
+  // deferral already expired) lifting a newer attempt's deferral. The expiry
+  // bounds the wait: a handler that never observes its abort signal would
+  // otherwise suppress its replacement forever.
+  private settlingReclaimedJobIds = new Map<
+    string,
+    { claimToken: string | null; expireAt: number }
+  >();
   private tickRequested = false;
   private changeNotifier: ((table: string, scope?: TableChangeScope) => void) | null = null;
   private readonly pollIntervalMs: number;
@@ -232,8 +238,8 @@ export class JobQueueProcessor {
     let excludeIds: string[] | undefined;
     if (this.settlingReclaimedJobIds.size > 0) {
       const now = Date.now();
-      for (const [jobId, expireAt] of this.settlingReclaimedJobIds) {
-        if (expireAt <= now) this.settlingReclaimedJobIds.delete(jobId);
+      for (const [jobId, entry] of this.settlingReclaimedJobIds) {
+        if (entry.expireAt <= now) this.settlingReclaimedJobIds.delete(jobId);
       }
       if (this.settlingReclaimedJobIds.size > 0) {
         excludeIds = [...this.settlingReclaimedJobIds.keys()];
@@ -391,8 +397,15 @@ export class JobQueueProcessor {
       clearInterval(heartbeat);
       this.untrackInFlightClaim(job, record);
       // The handler settled — any replacement claim for this job (deferred by
-      // the settling exclusion after a stale reclaim) may proceed.
-      this.settlingReclaimedJobIds.delete(job.id);
+      // the settling exclusion after a stale reclaim) may proceed. Match on
+      // claim token: this finally may belong to an earlier attempt whose own
+      // deferral already expired and was superseded — deleting unconditionally
+      // would drop the CURRENT attempt's deferral and let a third claim
+      // overlap the still-settling replacement.
+      const settlingEntry = this.settlingReclaimedJobIds.get(job.id);
+      if (settlingEntry?.claimToken === job.claimToken) {
+        this.settlingReclaimedJobIds.delete(job.id);
+      }
       if (exempt) this.inFlightExempt--;
       else this.inFlightCapped--;
       this.emitLifecycle('slot_released', job, record.slotClass, {
@@ -466,8 +479,13 @@ export class JobQueueProcessor {
       // Aborting is asynchronous — the handler settles on a later microtask.
       // Defer this job's replacement claim until then (see tick()'s dequeue
       // exclusion) so the two attempts never overlap, bounded by a grace
-      // window for handlers that never observe the abort signal.
-      this.settlingReclaimedJobIds.set(claim.jobId, Date.now() + SETTLEMENT_GRACE_MS);
+      // window for handlers that never observe the abort signal. Keyed to the
+      // aborted attempt's claim token so only THAT attempt's settlement lifts
+      // the deferral (processJob's finally matches on it).
+      this.settlingReclaimedJobIds.set(claim.jobId, {
+        claimToken: claim.claimToken,
+        expireAt: Date.now() + SETTLEMENT_GRACE_MS,
+      });
     }
   }
 
