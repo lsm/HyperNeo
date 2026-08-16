@@ -311,6 +311,9 @@ jobs:
           # This avoids proxy env var issues and TLS interception problems
           HYPERNEO_USE_DEV_PROXY: ${{ matrix.mock_sdk == true && '1' || '' }}
           HYPERNEO_TEST_DISABLE_SANDBOX: '1'
+          # Persist daemon structured/lifecycle logs into the results dir so a
+          # failing shard's artifact carries the delivery lifecycle trace.
+          HYPERNEO_LOG_FILE: ${{ github.workspace }}/test-results/daemon-online-${{ matrix.module }}/daemon.jsonl
           ANTHROPIC_BASE_URL: ${{ matrix.mock_sdk == true && 'http://127.0.0.1:8000' || '' }}
           # For Dev Proxy tests, never pass real Anthropic credentials.
           ANTHROPIC_API_KEY: ${{ matrix.mock_sdk == true && 'sk-devproxy-test-key' || '' }}
