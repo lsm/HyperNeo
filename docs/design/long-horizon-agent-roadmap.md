@@ -18,6 +18,7 @@ The full roadmap below is the robust target. It should not block first dogfoodin
 - Enforce or safely resolve one primary owner per goal.
 - Add `getPrimaryGoalOwner(goalId)` and coordinator fallback.
 - Reconcile duplicate owners deterministically before enforcing the invariant.
+- Reassignment must supersede every unprocessed MC2 notification for the goal and deterministically reroute it to the new owner, so a pending wake can never remain stranded with the former owner while MC3 correctly rejects that former owner.
 - Keep managers/watchers non-authoritative for now.
 
 **Why it matters:** routing and goal authority need a stable destination.  
@@ -27,7 +28,7 @@ The full roadmap below is the robust target. It should not block first dogfoodin
 
 - At the existing goal terminal seam, resolve the primary owner.
 - Persist a minimal outcome-notification record atomically with the terminal transition, or give the transition a deterministic identity and enforce one notification per identity with reconciliation for committed tasks missing notifications.
-- The notification stores the goal revision sampled after required terminal goal bookkeeping so later review can detect independent goal changes.
+- The notification stores the goal revision sampled after required terminal goal bookkeeping so later review can detect independent goal changes. Even when notification creation is deferred to reconciliation, the terminal transaction must durably capture that post-bookkeeping revision (for example on the terminal bookkeeping record); the reconciler copies the captured revision into the notification instead of sampling the then-current revision, which intervening goal edits may have advanced.
 - Wake the owner through the LH durable-injection adapter from task #860 / V3.
 - Include the completed task result, linked goal, and current rolling goal state.
 - Fall back visibly to the coordinator when no usable owner exists.
@@ -108,13 +109,13 @@ Those remain in the robust roadmap below. The minimal core is a dogfood bridge: 
 
 ### Minimal-core cutover
 
-When robust outcome reports become authoritative, G6 must atomically cut over from the minimal notification/review path:
+Do not cut over at G6: report capture alone provides no owner integration path until G7 routing and G8 decision tools exist. Keep the migration flag disabled and the minimal notification/review path fully active until G8 ships. Once G8 is available, atomically cut over from the minimal path:
 
-- Stop creating new MC2 notifications at the same terminal seam when report capture is enabled.
+- Stop creating new MC2 notifications at the same terminal seam when the cutover flag is enabled.
 - Backfill or link pending MC2 notifications to their corresponding outcome reports so no pending wake is silently dropped.
 - Disable `review_goal_outcome` for goals covered by authoritative reports and redirect owners to the G8 decision tools.
 - Update MC5 prompts in the same cutover so agents do not receive both the old and new instructions.
-- Make the cutover idempotent and reversible behind an explicit migration flag until report capture/routing has been verified in production.
+- Make the cutover idempotent and reversible behind the explicit migration flag until report capture/routing has been verified in production.
 
 This prevents duplicate owner wake-ups, duplicate goal updates, and conflicting follow-up work during the transition.
 
