@@ -19,7 +19,6 @@
 import type { UUID } from 'crypto';
 import type { QueryLike } from './query-like';
 import { signalDeliveryConsumed } from './message-delivery';
-import { emitStructuredLogEvent } from '../logger';
 import type { ContextInfo, MessageHub, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
@@ -776,19 +775,6 @@ export class SDKMessageHandler {
    */
   async handleMessage(message: SDKMessage): Promise<void> {
     const { session, db, messageHub, stateManager } = this.ctx;
-
-    // TEMP DIAGNOSTIC (PR #2499 CI investigation): record every SDK message the
-    // daemon handles so the structured log narrates each query's event flow.
-    // Revert once the features-b steer hang is diagnosed.
-    emitStructuredLogEvent({
-      level: 'info',
-      args: [
-        `sdk.message ${message.type}${'subtype' in message && message.subtype ? `/${message.subtype}` : ''}`,
-      ],
-      source: 'process',
-      module: 'daemon:sdk-message-handler',
-      metadata: { sessionId: session.id },
-    });
 
     // Any incoming SDK message is "activity" — reset the delivery turn's no-
     // progress stall watchdog so an actively-streaming turn (even a multi-hour
