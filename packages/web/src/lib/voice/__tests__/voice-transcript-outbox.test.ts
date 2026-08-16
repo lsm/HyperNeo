@@ -1154,4 +1154,86 @@ describe('voice transcript outbox — review-hardening round', () => {
       localStorage.getItem('hyperneo_voice_transcript_outbox_v1.superseded.s1.5.1')
     ).toBeNull();
   });
+
+  it('re-unions the marker after a concurrent tab clobbers a surviving write', async () => {
+    // A readback of our own write is not a compare-and-swap across tabs: a
+    // writer that read the OLD marker can replace the union right after we
+    // exit. The deferred verification passes must repair the aggregate.
+    markVoiceTranscriptLanded('s1', 'mine', 'e-mine');
+    expect(getAnnouncedEntryIds('s1')).toContain('e-mine');
+    // The stale-state writer's marker drops our entry entirely.
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+      JSON.stringify({
+        v: 1,
+        ts: Date.now(),
+        n: 999_999,
+        text: 'theirs',
+        ids: ['e-theirs'],
+        entries: [{ id: 'e-theirs', text: 'theirs' }],
+      })
+    );
+    await vi.advanceTimersByTimeAsync(3_000);
+    const repaired = JSON.parse(
+      localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1') ?? '{}'
+    );
+    // Both transcripts survive the repair — each writer unions from the other.
+    expect(repaired.ids).toContain('e-mine');
+    expect(repaired.ids).toContain('e-theirs');
+    expect(getLandingTranscript('s1')).toContain('mine');
+    expect(getLandingTranscript('s1')).toContain('theirs');
+  });
+
+  it('advances the local signal to the newer persisted generation it reports', () => {
+    // The save path tags backups with getLandingGeneration's answer; a later
+    // consumption matches against the SIGNAL. Leaving the signal on the older
+    // local generation would clear only an older backup while acking the
+    // newer marker as consumed — the mismatched backup then restores
+    // already-sent text through the peek paths.
+    markVoiceTranscriptLanded('s1', 'local voice', 'e-local');
+    const local = voiceTranscriptLandedSignal.value.get('s1') ?? 0;
+    const newer = local + 500;
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+      JSON.stringify({ v: 1, ts: Date.now(), n: newer, text: 'agg', ids: [] })
+    );
+    expect(getLandingGeneration('s1')).toBe(newer);
+    expect(voiceTranscriptLandedSignal.value.get('s1')).toBe(newer);
+    // A backup tagged with the EFFECTIVE generation is retired by a
+    // consumption carrying that same generation.
+    saveDraftBackup('s1', 'edits', newer);
+    consumeVoiceTranscriptLanded('s1', newer);
+    expect(peekExpiredDraftBackup('s1')).toBeNull();
+  });
+
+  it('keeps every retained marker entry announced in ids when the union exceeds the cap', () => {
+    vi.useRealTimers();
+    // 19 local entries, then a persisted marker with two unseen entries: the
+    // union exceeds the cap, so both bounded fields evict — but they must
+    // evict the SAME entries. A retained entry missing from `ids` made a
+    // delayed ack for it look unannounced, minting a false landing whose
+    // fallback reconciliation appended its transcript again.
+    for (let i = 0; i < 19; i++) markVoiceTranscriptLanded('s1', `local ${i}`, `L${i}`);
+    const gen = voiceTranscriptLandedSignal.value.get('s1') ?? 0;
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+      JSON.stringify({
+        v: 1,
+        ts: Date.now(),
+        n: gen + 500,
+        text: null,
+        ids: [],
+        entries: [
+          { id: 'P0', text: 'persisted 0' },
+          { id: 'P1', text: 'persisted 1' },
+        ],
+      })
+    );
+    markVoiceTranscriptLanded('s1', 'latest', 'L19'); // triggers the union rewrite
+    const marker = JSON.parse(
+      localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1') ?? '{}'
+    );
+    expect(marker.ids).toContain('L0'); // oldest retained local entry stays announced
+    expect(marker.entries.every((e: { id: string }) => marker.ids.includes(e.id))).toBe(true);
+  });
 });

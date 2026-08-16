@@ -2526,6 +2526,97 @@ describe('useInputDraft', () => {
       expect(hasClearTombstone('session-1')).toBe(false);
       expect(result.current.content).toBe('voice');
     });
+
+    it('binds the deferred retirement to the save that captured the claim, not an earlier in-flight one', async () => {
+      // A pre-landing save is still awaiting its ack when the reload
+      // reconciliation folds a backup and defers a NEWER claim's retirement.
+      // The old acknowledgement persisted pre-landing content — flushing the
+      // current entry would delete the newer fold's only durable copy before
+      // anything persisted it.
+      const saveAcks: Array<{ content: string; resolve: (v: unknown) => void }> = [];
+      let getCount = 0;
+      mockHub.request.mockImplementation(
+        (method: string, data?: { metadata?: { inputDraft?: string | null } }) => {
+          if (method === 'session.get') {
+            getCount += 1;
+            if (getCount === 2) {
+              // The switch-back load merges the pending server-side.
+              return Promise.resolve({
+                session: {
+                  metadata: { inputDraft: 'typed voice', inputDraftVoiceBaseline: 'typed' },
+                },
+              });
+            }
+            return Promise.resolve({ session: { metadata: { inputDraft: '' } } });
+          }
+          if (method === 'session.update') {
+            const content = data?.metadata?.inputDraft ?? '<null>';
+            return new Promise((resolve) => {
+              saveAcks.push({ content, resolve });
+            });
+          }
+          if (method === 'session.mergeVoiceDraftBackup') return Promise.resolve({ merged: false });
+          return {};
+        }
+      );
+      const resolveSave = (content: string) => {
+        for (const entry of saveAcks.filter((s) => s.content === content)) {
+          entry.resolve({ success: true });
+        }
+      };
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const first = renderHook(({ sessionId }) => useInputDraft(sessionId), {
+        initialProps: { sessionId: 'session-1' },
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(400);
+      });
+      // Type → save #1 fires and stays in flight.
+      first.result.current.setContent('typed');
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300);
+      });
+      expect(saveAcks.some((s) => s.content === 'typed')).toBe(true);
+
+      // A landing defers the edits into a backup; the page then RELOADS — the
+      // fresh initial load merges server-side and the settle path folds
+      // backup + transcript, deferring the NEWER claim's retirement to its
+      // own save.
+      markVoiceTranscriptLanded('session-1', 'voice');
+      saveDraftBackup(
+        'session-1',
+        'typed edits',
+        voiceTranscriptLandedSignal.value.get('session-1') ?? 1
+      );
+      await act(async () => {
+        first.unmount();
+      });
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50);
+      });
+      expect(result.current.content).toBe('typed edits voice');
+      expect(peekExpiredDraftBackup('session-1')).not.toBeNull();
+
+      // The PRE-LANDING save's acknowledgement must NOT retire the new claim.
+      await act(async () => {
+        resolveSave('typed');
+        await vi.advanceTimersByTimeAsync(10);
+      });
+      expect(peekExpiredDraftBackup('session-1')).not.toBeNull();
+
+      // The post-fold save acknowledged the combined draft — it retires.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300);
+      });
+      expect(saveAcks.some((s) => s.content === 'typed edits voice')).toBe(true);
+      await act(async () => {
+        resolveSave('typed edits voice');
+        await vi.advanceTimersByTimeAsync(10);
+      });
+      expect(peekExpiredDraftBackup('session-1')).toBeNull();
+    });
   });
 
   describe('debounced saving', () => {

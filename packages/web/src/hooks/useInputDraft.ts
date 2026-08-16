@@ -173,14 +173,21 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   );
   // Retire deferred backups once the session's combined draft is ACKNOWLEDGED
   // server-side — the durable copy is superseded only now that the combined
-  // text is itself durable.
-  const flushDeferredBackupRetire = useCallback((sessionId: string): void => {
-    const deferred = deferredBackupRetiresRef.current.get(sessionId);
-    if (!deferred) return;
-    deferredBackupRetiresRef.current.delete(sessionId);
-    if (deferred.claim) retireDraftBackupClaim(deferred.claim);
-    clearDraftBackup(sessionId, deferred.generation);
-  }, []);
+  // text is itself durable. `expected` binds the retirement to the deferred
+  // entry the acknowledged request CAPTURED at send time: an earlier save
+  // still in flight when the fold happened persisted PRE-landing content, and
+  // flushing whatever entry is current would delete a newer fold's only
+  // durable copy before anything persisted it.
+  const flushDeferredBackupRetire = useCallback(
+    (sessionId: string, expected: { generation: number; claim?: DraftBackupClaim }): void => {
+      const deferred = deferredBackupRetiresRef.current.get(sessionId);
+      if (!deferred || deferred !== expected) return;
+      deferredBackupRetiresRef.current.delete(sessionId);
+      if (deferred.claim) retireDraftBackupClaim(deferred.claim);
+      clearDraftBackup(sessionId, deferred.generation);
+    },
+    []
+  );
 
   // Fetch the server draft into the signal, guarded against staleness (the
   // session may have changed or the hook unmounted while the get was in
@@ -1409,6 +1416,9 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       lastSeenContentRef.current = { sessionId, content: '', cleared: true };
       const hub = connectionManager.getHubIfConnected();
       if (hub) {
+        // Bind any deferred retirement to the entry present when THIS request
+        // is sent (see flushDeferredBackupRetire).
+        const deferredAtSend = deferredBackupRetiresRef.current.get(sessionId);
         hub
           .request<{ draftVersion?: number; draftValue?: string }>('session.update', {
             sessionId,
@@ -1431,9 +1441,10 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             if (lastSeenContentRef.current.sessionId === sessionId) {
               lastSeenContentRef.current = { sessionId, content: '' };
             }
-            // Any backup whose retirement was deferred until this combined
-            // draft became durable is now safely superseded.
-            flushDeferredBackupRetire(sessionId);
+            // Any backup whose retirement THIS request's content deferred is
+            // now safely superseded (a fold that landed after the send keeps
+            // waiting for its own save).
+            if (deferredAtSend) flushDeferredBackupRetire(sessionId, deferredAtSend);
           })
           .catch(() => {
             /* ignore clear errors */
@@ -1448,6 +1459,10 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       const hub = connectionManager.getHubIfConnected();
       if (!hub) return;
 
+      // Bind any deferred retirement to the entry present when THIS request
+      // is sent (see flushDeferredBackupRetire): a fold that lands while the
+      // request is in flight must survive until its own later save acks.
+      const deferredAtSend = deferredBackupRetiresRef.current.get(sessionId);
       try {
         const ack = await hub.request<{ draftVersion?: number; draftValue?: string }>(
           'session.update',
@@ -1477,7 +1492,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           ) {
             contentSignal.value = ack.draftValue;
             advanceDraftVersion(sessionId, ack.draftVersion);
-            flushDeferredBackupRetire(sessionId);
+            if (deferredAtSend) flushDeferredBackupRetire(sessionId, deferredAtSend);
           }
           return;
         }
@@ -1487,9 +1502,9 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         // would be misclassified as stale and folded (duplicating the
         // transcript it already contains).
         advanceDraftVersion(sessionId, ack?.draftVersion);
-        // The combined draft (backup edits + transcripts) is now durable —
-        // retire any backup whose deletion was deferred to this ack.
-        flushDeferredBackupRetire(sessionId);
+        // The combined draft this request persisted is now durable — retire
+        // the backup whose deletion was deferred to THIS acknowledgement.
+        if (deferredAtSend) flushDeferredBackupRetire(sessionId, deferredAtSend);
       } catch {
         // Ignore draft save errors
       }

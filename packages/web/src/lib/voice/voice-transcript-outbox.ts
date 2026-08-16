@@ -53,6 +53,64 @@ export const voiceTranscriptLandedSignal = signal<ReadonlyMap<string, number>>(n
  * or strip a stale baseline without guessing which part of the merged server
  * draft is the transcript.
  */
+// Deferred re-verification of a surviving landed-marker write (see the CAS
+// loop in markVoiceTranscriptLanded): localStorage has no cross-tab
+// atomicity, so a writer that read the OLD marker can replace the union just
+// after this tab observed its own write and exited. The spaced checks re-union
+// when this sequence's entries vanish; each writer's repair unions from the
+// other's marker, so the aggregates converge for interleaves inside the
+// window (the daemon's baseline snapshot stays the authoritative transcript
+// source, so this bounds — not eliminates — the exposure).
+const markerVerifyTimers = new Map<string, ReturnType<typeof setTimeout>[]>();
+// PER-SESSION repair budget shared by every verification chain (a repair's
+// own mark schedules a fresh chain): without a shared budget a storage layer
+// whose reads never observe the writes would repair forever.
+const markerRepairBudget = new Map<string, number>();
+const MARKER_VERIFY_DELAYS_MS = [25, 250, 2000];
+function scheduleMarkerVerification(sessionId: string, announcedIds: string[]): void {
+  if (announcedIds.length === 0) return;
+  const timers: ReturnType<typeof setTimeout>[] = [];
+  markerVerifyTimers.set(sessionId, timers);
+  markerRepairBudget.set(sessionId, 3);
+  const check = (pass: number) => {
+    try {
+      // No repair once this tab CONSUMED a marker or its landing expired: the
+      // live marker then belongs to a newer sequence (whose writer unions with
+      // ours), and re-marking would re-announce already-merged transcripts.
+      if (!consumedMarkers.has(sessionId) && isLandingLive(sessionId)) {
+        const raw = localStorage.getItem(`${LANDED_PREFIX}${sessionId}`);
+        const marker = parseLandedMarker(raw);
+        const budget = markerRepairBudget.get(sessionId) ?? 0;
+        if ((!marker || announcedIds.some((id) => !marker.ids.includes(id))) && budget > 0) {
+          // This sequence's entries vanished from the marker (or it is gone) —
+          // re-union from whatever is live now through the SAME mark path: it
+          // merges the current marker's entries with this tab's aggregate and
+          // schedules its own verification, so both writers converge.
+          markerRepairBudget.set(sessionId, budget - 1);
+          markVoiceTranscriptLanded(sessionId);
+          return;
+        }
+      }
+    } catch {
+      /* storage unavailable — nothing to verify */
+    }
+    if (pass + 1 >= MARKER_VERIFY_DELAYS_MS.length) return;
+    timers.push(
+      setTimeout(
+        () => check(pass + 1),
+        MARKER_VERIFY_DELAYS_MS[pass + 1] - MARKER_VERIFY_DELAYS_MS[pass]
+      )
+    );
+  };
+  timers.push(setTimeout(() => check(0), MARKER_VERIFY_DELAYS_MS[0]));
+}
+
+function clearMarkerVerifications(): void {
+  for (const timers of markerVerifyTimers.values()) {
+    for (const timer of timers) clearTimeout(timer);
+  }
+  markerVerifyTimers.clear();
+}
 
 export function markVoiceTranscriptLanded(
   sessionId: string,
@@ -148,14 +206,23 @@ export function markVoiceTranscriptLanded(
       if (unseen.length > 0) {
         const unseenText = unseen.reduce((acc, entry) => appendDraftText(acc, entry.text), '');
         landingTexts.set(sessionId, appendDraftText(unseenText, landingTexts.get(sessionId) ?? ''));
-        for (const entry of unseen) ours.add(entry.id);
-        landingIds.set(sessionId, [...ours].slice(-MAX_ENTRIES));
         const known = new Set((landingEntries.get(sessionId) ?? []).map((e) => e.id));
         const mergedEntries = [
           ...marker.entries.filter((e) => !known.has(e.id)),
           ...(landingEntries.get(sessionId) ?? []),
-        ];
-        landingEntries.set(sessionId, mergedEntries.slice(-MAX_ENTRIES));
+        ].slice(-MAX_ENTRIES);
+        landingEntries.set(sessionId, mergedEntries);
+        // DERIVE the announced-id set from the RETAINED entries, then fill any
+        // remaining slots with older ids: the previous local-first ordering
+        // let the two bounded slices retain DIFFERENT sets at the cap,
+        // leaving a retained entry whose id was dropped — a delayed ack for
+        // that entry then looked unannounced and minted a FALSE landing whose
+        // fallback reconciliation appended its transcript again.
+        const retainedIds = mergedEntries.map((entry) => entry.id);
+        for (const id of retainedIds) ours.add(id);
+        const extras = [...ours].filter((id) => !retainedIds.includes(id));
+        const room = Math.max(0, MAX_ENTRIES - retainedIds.length);
+        landingIds.set(sessionId, [...retainedIds, ...extras.slice(-room)]);
       }
       return;
     }
@@ -215,7 +282,22 @@ export function markVoiceTranscriptLanded(
       // tab's write is the live marker and further attempts would only churn
       // `ts`/`n` and broadcast redundant storage events that re-arm the same
       // generation in every other tab.
-      if (markerRaw === null || markerRaw === written) break;
+      if (markerRaw === null || markerRaw === written) {
+        // …but a successful readback is NOT a compare-and-swap across tabs:
+        // another tab that read the OLD marker before this write can still
+        // overwrite the union right after this tab exits (localStorage offers
+        // no atomicity primitive). A short series of spaced re-checks re-unions
+        // if this sequence's entries vanished — each writer's repair unions
+        // from the other's marker, so the aggregates converge for any
+        // interleaving inside the window. Only a VISIBLE surviving write can
+        // be verified: `markerRaw === null` means reads never observed the
+        // write (storage failing), and verifying against a permanently
+        // unreadable marker would repair forever.
+        if (markerRaw === written) {
+          scheduleMarkerVerification(sessionId, landingIds.get(sessionId) ?? []);
+        }
+        break;
+      }
     }
   } catch {
     /* mirror-only — this tab still refreshes via the signal */
@@ -347,8 +429,26 @@ export function getLandingGeneration(sessionId: string): number | undefined {
   try {
     const raw = localStorage.getItem(`${LANDED_PREFIX}${sessionId}`);
     if (raw !== null && consumedMarkers.get(sessionId) !== raw) {
-      const persisted = parseLandedMarker(raw)?.n;
+      const marker = parseLandedMarker(raw);
+      const persisted = marker?.n;
       if (typeof persisted === 'number' && (local === undefined || persisted > local)) {
+        // ADVANCE the local signal to the persisted generation (no aggregate
+        // changes — no text): a backup saved against this EFFECTIVE generation
+        // must be retired by a consumption carrying the SAME generation. With
+        // the signal left behind, a later consume would match the OLD local
+        // generation — clearing only an older-generation backup while acking
+        // the newer marker as consumed — and the mismatched backup would
+        // restore already-sent text through the peek paths after a reload.
+        markVoiceTranscriptLandedLocal(
+          sessionId,
+          undefined,
+          false,
+          persisted,
+          undefined,
+          undefined,
+          undefined,
+          marker?.ts
+        );
         return persisted;
       }
     }
@@ -1472,6 +1572,7 @@ if (import.meta.hot) {
       stopTabHeartbeat = null;
     }
     clearRetryTimer();
+    clearMarkerVerifications();
   });
 }
 
@@ -1479,6 +1580,7 @@ if (import.meta.hot) {
 export function resetVoiceTranscriptOutbox(): void {
   flushInProgress = false;
   clearRetryTimer();
+  clearMarkerVerifications();
   clearPendingTranscripts();
   voiceTranscriptLandedSignal.value = new Map();
   landingMarkedAt.clear();
