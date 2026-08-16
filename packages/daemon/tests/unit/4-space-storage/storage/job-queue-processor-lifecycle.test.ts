@@ -346,6 +346,42 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
   });
 
   describe('settling deferral is bounded for non-cancellable handlers', () => {
+    it('honors a per-processor settlementGraceMs longer than the default', async () => {
+      // message_delivery's abort path can await a 30s provider-owned
+      // acknowledgment before settling, so its replacement deferral must be
+      // configured beyond that bound (default is 10s).
+      const delivery = new JobQueueProcessor(repo, {
+        pollIntervalMs: 5000,
+        maxConcurrent: 2,
+        staleThresholdMs: 60_000,
+        settlementGraceMs: 35_000,
+      });
+      delivery.register('message_delivery', () => new Promise(() => {}));
+
+      const job = repo.enqueue({
+        queue: 'message_delivery',
+        payload: { sessionId: 'session-1', messageUuid: 'message-1', role: 'turn' },
+      });
+      await delivery.tick();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const staleLease = Date.now() - 120_000;
+      db.prepare(`UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?`).run(
+        staleLease,
+        staleLease,
+        job.id
+      );
+      (delivery as unknown as { lastStaleCheck: number }).lastStaleCheck = 0;
+      await delivery.tick();
+
+      const map = (
+        delivery as unknown as {
+          settlingReclaimedJobIds: Map<string, { claimToken: string | null; expireAt: number }>;
+        }
+      ).settlingReclaimedJobIds;
+      expect(map.get(job.id)?.expireAt).toBeGreaterThan(Date.now() + 34_000);
+    });
+
     it('lifts the replacement exclusion once the settlement grace expires', async () => {
       // A handler that never observes its abort signal (e.g. a lane handler
       // registered without consuming JobHandlerContext.signal) never settles,

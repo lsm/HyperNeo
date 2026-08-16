@@ -286,6 +286,13 @@ export interface DaemonAppContext {
 export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<DaemonAppContext> {
   const { config, verbose = true, standalone = false } = options;
   let startupLogCaptureCleanup: (() => void) | null = null;
+  // Reclaim any capture stranded by a previous FAILED attempt BEFORE
+  // constructing the new sink — the replacement's constructor stats the shared
+  // path immediately, so an old sink still appending/rotating would leave its
+  // currentBytes inconsistent with the file it writes (misaligned rotations).
+  // Awaited so the old sink fully drains and releases its file handle first.
+  // (Codex P2, PR #2499.)
+  await releaseStartupFileLogCapture().catch(() => {});
   const structuredLogSink = config.structuredLogFilePath
     ? new StructuredLogFileSink({
         path: config.structuredLogFilePath,
@@ -306,12 +313,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     restoreConsoleCapture();
     await structuredLogSink?.close();
   };
-  // Reclaim any capture stranded by a previous FAILED attempt before
-  // subscribing the new one — otherwise in-process startup retries accumulate
-  // global structured-log subscribers and open sinks. AWAITED so the old sink
-  // fully drains (and releases its file handle) before the new sink can write
-  // to the same path. (Codex P2, PR #2499.)
-  await releaseStartupFileLogCapture().catch(() => {});
   // Startup phase fences. Each heavy init step logs `[startup N] <name>` with
   // elapsed-since-previous (+ms = duration of the prior phase) and cumulative
   // total, so a slow/hanging phase is obvious. verbose-gated to mirror logInfo.
@@ -411,6 +412,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       pollIntervalMs: 1000,
       maxConcurrent: messageDeliveryMaxConcurrent,
       staleThresholdMs: 5 * 60 * 1000,
+      // A delivery abort whose admission is already provider-owned awaits the
+      // queue's 30s acknowledgment timeout before settling; the replacement
+      // deferral must outlive that bound (default 10s) so an expired deferral
+      // can never overlap the still-settling handoff — while staying bounded
+      // for a genuinely wedged handler. (Codex P1, PR #2499.)
+      settlementGraceMs: 35_000,
     });
     // --- setInterval inventory (out-of-scope for job-queue migration) ---
     // The following subsystems intentionally retain their own setInterval timers.

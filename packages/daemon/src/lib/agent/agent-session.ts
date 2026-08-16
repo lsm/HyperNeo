@@ -2475,13 +2475,21 @@ export class AgentSession
         } finally {
           aborted.cancel();
         }
+        // A success OR error terminal result for this message means the turn
+        // genuinely ended (fast) — hasTerminalResultAfter only matches success,
+        // and an error-result turn must fall through to the post-race terminal
+        // classification, not wait out the stall watchdog. (Codex P2.)
+        const turnResultRepo = this.db.getSDKMessageRepo();
+        const hasAnyTerminalResult =
+          !!turnResultRepo?.hasTerminalResultAfter(this.session.id, messageUuid) ||
+          !!turnResultRepo?.getErrorTerminalResultSubtypeAfter(this.session.id, messageUuid);
         const spuriousFire =
           freshFeed &&
           turnEndFired &&
           !queryEnded &&
           Date.now() - raceArmedAt <= SPURIOUS_TURN_END_GRACE_MS &&
           graceRearms < 2 &&
-          !this.db.getSDKMessageRepo()?.hasTerminalResultAfter(this.session.id, messageUuid);
+          !hasAnyTerminalResult;
         if (!spuriousFire) break;
         graceRearms++;
         activeTurnEnd.cancel();

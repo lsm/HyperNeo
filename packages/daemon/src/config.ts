@@ -136,7 +136,11 @@ export function getConfig(overrides?: ConfigOverrides): Config {
     ),
     structuredLogRetainedFiles: positiveOverride(
       overrides?.structuredLogRetainedFiles,
-      parsePositiveInt(hyperneoEnv('LOG_RETAINED_FILES'), defaultLogRetainedFiles)
+      // Capped: a digit-only value beyond 2^53 parses to a float where
+      // rotate()'s `generation--` no longer changes the value, wedging the
+      // rotation loop forever. Anything above a practical retention depth is
+      // nonsense anyway — fall back rather than loop. (Codex P2, PR #2499.)
+      Math.min(parsePositiveInt(hyperneoEnv('LOG_RETAINED_FILES'), defaultLogRetainedFiles), 1_000)
     ),
     structuredLogMaxPendingBytes: positiveOverride(
       overrides?.structuredLogMaxPendingBytes,

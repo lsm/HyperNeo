@@ -925,7 +925,15 @@ export class QueryRunner {
       // execution reaches here — but the RewindHandler may have already set a
       // new pendingResumeSessionAt for the restarted query. Without this guard
       // the stale old query consumes the value the new query needs.
-      if (this.ctx.getQueryGeneration() === queryGeneration) {
+      // The startup-timeout escape below ALSO reaches this block "normally"
+      // (the abort-driven iterator shutdown breaks the for-await, not throws)
+      // — a timeout is not a success, so its retry must keep the requested
+      // resume-at cutoff instead of silently running against latest history.
+      // (Codex P2, PR #2499.)
+      if (
+        this.ctx.getQueryGeneration() === queryGeneration &&
+        !(startupTimeoutReached && messageCount === 0)
+      ) {
         this.ctx.consumePendingResumeSessionAt?.();
       }
 

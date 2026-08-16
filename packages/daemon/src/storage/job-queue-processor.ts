@@ -97,6 +97,17 @@ export interface JobQueueProcessorOptions {
   pollIntervalMs?: number;
   maxConcurrent?: number;
   staleThresholdMs?: number;
+  /**
+   * Grace for a stale-reclaimed handler to settle after its abort before its
+   * replacement claim may proceed. Default {@link SETTLEMENT_GRACE_MS}. Lanes
+   * whose abort path awaits a bounded-but-slow settlement — message_delivery
+   * waits out the queue's 30s provider-owned acknowledgment when the admission
+   * can no longer be revoked — must set this BEYOND that bound so an expired
+   * deferral can never let a replacement claim overlap the still-settling
+   * attempt's handoff. Still bounded, so a wedged non-cancellable handler
+   * cannot suppress its replacement until restart. (Codex P1, PR #2499.)
+   */
+  settlementGraceMs?: number;
 }
 
 /**
@@ -134,9 +145,11 @@ interface Registration {
   onDead?: (job: Job) => void;
 }
 
-/** Grace for a stale-reclaimed handler to settle after its abort before its
- * replacement claim may proceed. Aborting handlers settle within microtasks;
- * the bound exists for wedged handlers that never observe the signal. */
+/** Default grace for a stale-reclaimed handler to settle after its abort
+ * before its replacement claim may proceed. Aborting handlers settle within
+ * microtasks; the bound exists for wedged handlers that never observe the
+ * signal. See {@link JobQueueProcessorOptions.settlementGraceMs} for lanes
+ * needing a longer, still-bounded window. */
 const SETTLEMENT_GRACE_MS = 10_000;
 
 export class JobQueueProcessor {
@@ -169,6 +182,7 @@ export class JobQueueProcessor {
   private readonly pollIntervalMs: number;
   private readonly maxConcurrent: number;
   private readonly staleThresholdMs: number;
+  private readonly settlementGraceMs: number;
   private readonly heartbeatIntervalMs: number;
   private lastStaleCheck = 0;
   private static readonly STALE_CHECK_INTERVAL = 60_000;
@@ -180,6 +194,7 @@ export class JobQueueProcessor {
     this.pollIntervalMs = options?.pollIntervalMs ?? 1000;
     this.maxConcurrent = options?.maxConcurrent ?? 1;
     this.staleThresholdMs = options?.staleThresholdMs ?? 5 * 60 * 1000;
+    this.settlementGraceMs = options?.settlementGraceMs ?? SETTLEMENT_GRACE_MS;
     this.heartbeatIntervalMs = Math.max(10, Math.floor(this.staleThresholdMs / 3));
   }
 
@@ -484,7 +499,7 @@ export class JobQueueProcessor {
       // the deferral (processJob's finally matches on it).
       this.settlingReclaimedJobIds.set(claim.jobId, {
         claimToken: claim.claimToken,
-        expireAt: Date.now() + SETTLEMENT_GRACE_MS,
+        expireAt: Date.now() + this.settlementGraceMs,
       });
     }
   }
