@@ -6792,7 +6792,7 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     expect(parsed.error).toContain('Task not found');
   });
 
-  test('worker sessions may only complete their own task; unbound callers are broad', async () => {
+  test('worker sessions may only complete their own task; unresolvable bindings fail closed', async () => {
     // Two no-PR in_progress tasks; the caller is a worker session spawned for
     // task A (session_context.taskId bound). It must not complete task B.
     const seedBoundSession = (id: string, context: Record<string, unknown>) => {
@@ -6842,21 +6842,105 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     expect(allowed.success).toBe(true);
     expect(allowed.task.status).toBe('done');
 
-    // A caller session with NO taskId binding (coordinator / ad-hoc member)
-    // keeps broad access.
-    seedBoundSession('coordinator-session', {});
-    const broad = JSON.parse(
+    // The surface is node-agent-exclusive: every legitimate caller is a
+    // task-bound worker, so a session whose binding CANNOT be resolved
+    // (here: no session_context.taskId) fails closed rather than being
+    // treated as a privileged unbound caller.
+    seedBoundSession('unbound-session', {});
+    const unbound = JSON.parse(
       (
-        await makeValidationTool({
-          callerSessionId: 'coordinator-session',
-        }).complete_validation_task({
+        await makeValidationTool({ callerSessionId: 'unbound-session' }).complete_validation_task({
           task_id: taskB,
-          validation_outcome: 'coordinator override validated',
+          validation_outcome: 'should be refused',
         })
       ).content[0].text
     );
-    expect(broad.success).toBe(true);
-    expect(ctx.taskRepo.getTask(taskB)?.status).toBe('done');
+    expect(unbound.success).toBe(false);
+    expect(unbound.error).toContain('task binding cannot be resolved');
+    expect(ctx.taskRepo.getTask(taskB)?.status).toBe('in_progress');
+  });
+
+  test('fails closed when the caller session row is missing, foreign, or malformed', async () => {
+    // The binding lookup returns "unresolvable" for every degenerate shape —
+    // no session row at all, a row scoped to another space, or context JSON
+    // that does not parse. On this node-agent-exclusive surface each must
+    // reject; none may degrade into the external-caller quiesce-ALL shape.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = await createTask('in_progress');
+
+    // No session row at all.
+    const missing = JSON.parse(
+      (
+        await makeValidationTool({ callerSessionId: 'ghost-session' }).complete_validation_task({
+          task_id: task,
+          validation_outcome: 'should be refused',
+        })
+      ).content[0].text
+    );
+    expect(missing.success).toBe(false);
+    expect(missing.error).toContain('task binding cannot be resolved');
+
+    // A session row scoped to ANOTHER space (space-scoped lookup misses it).
+    ctx.db
+      .prepare(
+        `INSERT INTO sessions (
+            id, title, workspace_path, created_at, last_active_at, status, config, metadata,
+            is_worktree, git_branch, processing_state, type, session_context
+          ) VALUES (?, ?, ?, ?, ?, 'active', '{}', '{}', 0, NULL, ?, 'worker', ?)`
+      )
+      .run(
+        'foreign-space-session',
+        'Foreign worker',
+        '/tmp/ws',
+        new Date(0).toISOString(),
+        new Date().toISOString(),
+        JSON.stringify({ status: 'idle' }),
+        JSON.stringify({ spaceId: 'some-other-space', taskId: task })
+      );
+    const foreign = JSON.parse(
+      (
+        await makeValidationTool({
+          callerSessionId: 'foreign-space-session',
+        }).complete_validation_task({
+          task_id: task,
+          validation_outcome: 'should be refused',
+        })
+      ).content[0].text
+    );
+    expect(foreign.success).toBe(false);
+    expect(foreign.error).toContain('task binding cannot be resolved');
+
+    // Malformed context JSON.
+    ctx.db
+      .prepare(
+        `INSERT INTO sessions (
+            id, title, workspace_path, created_at, last_active_at, status, config, metadata,
+            is_worktree, git_branch, processing_state, type, session_context
+          ) VALUES (?, ?, ?, ?, ?, 'active', '{}', '{}', 0, NULL, ?, 'worker', ?)`
+      )
+      .run(
+        'malformed-session',
+        'Malformed worker',
+        '/tmp/ws',
+        new Date(0).toISOString(),
+        new Date().toISOString(),
+        JSON.stringify({ status: 'idle' }),
+        '{not json'
+      );
+    const malformed = JSON.parse(
+      (
+        await makeValidationTool({
+          callerSessionId: 'malformed-session',
+        }).complete_validation_task({
+          task_id: task,
+          validation_outcome: 'should be refused',
+        })
+      ).content[0].text
+    );
+    expect(malformed.success).toBe(false);
+    expect(malformed.error).toContain('task binding cannot be resolved');
+    // The task was never touched by any of the three attempts.
+    expect(ctx.taskRepo.getTask(task)?.status).toBe('in_progress');
   });
 
   test('rejects a task-bound worker whose executions live on a previous run attachment', async () => {
@@ -7032,6 +7116,22 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
       status: 'in_progress',
       agentSessionId: 'worker-session-review',
     });
+    // The caller-binding guard fail-closes without a resolvable session row.
+    ctx.db
+      .prepare(
+        `INSERT INTO sessions (
+            id, title, workspace_path, created_at, last_active_at, status, config, metadata,
+            is_worktree, git_branch, processing_state, type, session_context
+          ) VALUES (?, ?, '/tmp/session-workspace', ?, ?, 'active', '{}', '{}', 0, NULL, ?, 'worker', ?)`
+      )
+      .run(
+        'worker-session-review',
+        'Review-status worker',
+        new Date(0).toISOString(),
+        new Date().toISOString(),
+        JSON.stringify({ status: 'idle' }),
+        JSON.stringify({ spaceId: ctx.spaceId, taskId: reviewTask.id })
+      );
     const reviewed = JSON.parse(
       (
         await makeValidationTool({

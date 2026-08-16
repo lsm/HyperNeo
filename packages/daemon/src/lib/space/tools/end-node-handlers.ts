@@ -436,15 +436,22 @@ function readCallerSessionTaskId(
   sessionId: string
 ): unknown {
   if (!db) return undefined;
-  const row = db
-    .prepare(
-      `SELECT session_context
-         FROM sessions
-        WHERE id = ?
-          AND json_extract(session_context, '$.spaceId') = ?
-        LIMIT 1`
-    )
-    .get(sessionId, spaceId) as { session_context: string | null } | undefined;
+  let row: { session_context: string | null } | undefined;
+  try {
+    row = db
+      .prepare(
+        `SELECT session_context
+           FROM sessions
+          WHERE id = ?
+            AND json_extract(session_context, '$.spaceId') = ?
+          LIMIT 1`
+      )
+      .get(sessionId, spaceId) as { session_context: string | null } | undefined;
+  } catch {
+    // Malformed context JSON makes json_extract itself throw — unresolvable,
+    // which the caller-binding guard treats as fail-closed, never privileged.
+    return undefined;
+  }
   if (!row?.session_context) return undefined;
   try {
     const parsed = JSON.parse(row.session_context) as { taskId?: unknown } | null;
@@ -483,8 +490,11 @@ function readCallerSessionTaskId(
  * Guards (order is load-bearing — autonomy runs before any task-state
  * reveal, mirroring `approve_task`):
  *   - Task must belong to this space.
- *   - Caller binding: a WORKER session (`session_context.taskId` bound) may
- *     only complete its own task; unbound callers retain broad access.
+ *   - Caller binding, fail closed: every caller on this node-agent-exclusive
+ *     surface is a WORKER session, so its `session_context.taskId` binding
+ *     MUST resolve (a missing/foreign/malformed/unset binding is rejected,
+ *     not treated as an unbound privileged caller) and must equal the target
+ *     task.
  *   - Autonomy-gated to the workflow's `completionAutonomyLevel` (default 5)
  *     — the same capability-vs-autonomy framing as `approve_task`. The gate
  *     runs BEFORE the status/no-PR checks so a task's status or PR URL is
@@ -584,22 +594,31 @@ export function createCompleteValidationTaskHandler(
       });
     }
 
-    // Caller-binding guard: a WORKER session (spawned for one task — its
-    // session_context carries that taskId) may only complete ITS OWN task.
-    // Without this, a worker for task A in a high-autonomy space could close
-    // an unrelated in_progress task B, and the next tick would finalize B's
-    // run and quiesce its workers. Unbound sessions (none exist on the
-    // node-agent surface, but the guard is shared) retain broad access.
-    let callerBoundToThisTask = false;
+    // Caller-binding guard, fail closed. This surface is node-agent-exclusive:
+    // every legitimate caller is a WORKER sub-session spawned for one task
+    // (its session_context carries that taskId). Two refusals:
+    //   - The binding must RESOLVE. A missing/foreign-space session row,
+    //     malformed context JSON, or an absent taskId is anomalous on this
+    //     surface, not privileged — treating it as an unbound "external"
+    //     caller would grant broad same-space completion plus the
+    //     quiesce-ALL sweep over any run's workers.
+    //   - The resolved binding must equal the target: a worker for task A
+    //     must not close an unrelated in_progress task B (the next tick
+    //     would finalize B's run and quiesce its workers).
     if (callerSessionId) {
       const callerTaskId = readCallerSessionTaskId(db, spaceId, callerSessionId);
-      if (callerTaskId !== undefined && callerTaskId !== null && callerTaskId !== args.task_id) {
+      if (callerTaskId === undefined || callerTaskId === null) {
+        return jsonResult({
+          success: false,
+          error: `This worker session's task binding cannot be resolved (no session_context.taskId for this space); complete_validation_task requires a task-bound worker session. Retry after the session context is restored (restore_node_agent) or escalate to the coordinator.`,
+        });
+      }
+      if (callerTaskId !== args.task_id) {
         return jsonResult({
           success: false,
           error: `Worker sessions may only complete their own task; task ${args.task_id} belongs to another task's workers. Escalate to the coordinator if it needs closing.`,
         });
       }
-      callerBoundToThisTask = callerTaskId === args.task_id;
     }
 
     // Autonomy gate FIRST — mirrors `approve_task`'s ordering. Resolve the
@@ -789,8 +808,9 @@ export function createCompleteValidationTaskHandler(
           .find((e) => e.workflowRunId === task.workflowRunId);
         completionSourceNodeId = callerExecution?.workflowNodeId;
         completionSourceExecutionId = callerExecution?.id;
-        // Stale-worker guard: a task-BOUND caller with NO execution in the
-        // task's CURRENT run is a worker from a previous run attachment —
+        // Stale-worker guard: the caller is task-BOUND (the binding guard
+        // above fail-closed on unresolvable bindings) but has NO execution in
+        // the task's CURRENT run — a worker from a previous run attachment:
         // `startWorkflowRun({parentTaskId})` re-attaches the task to a new
         // run while the old worker keeps its session_context.taskId binding
         // and its executions stay on the old run. Its completion authority
@@ -798,7 +818,7 @@ export function createCompleteValidationTaskHandler(
         // run's hook engine, and resolving to "no source" would grant it the
         // external-caller quiesce-ALL sweep over the new run's workers.
         // Reject so the current run's own workers drive the completion.
-        if (!callerExecution && callerBoundToThisTask) {
+        if (!callerExecution) {
           return jsonResult({
             success: false,
             error: `Task ${args.task_id} was re-attached to a different workflow run after this worker spawned; this session has no node execution in the current run. Validation completion belongs to the current run's workers — escalate to the coordinator if it still needs closing.`,
