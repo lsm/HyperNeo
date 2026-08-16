@@ -18,7 +18,7 @@ The full roadmap below is the robust target. It should not block first dogfoodin
 - Enforce or safely resolve one primary owner per goal.
 - Add `getPrimaryGoalOwner(goalId)` and coordinator fallback.
 - Reconcile duplicate owners deterministically before enforcing the invariant.
-- Reassignment must supersede every unprocessed MC2 notification for the goal and deterministically reroute it to the new owner, so a pending wake can never remain stranded with the former owner while MC3 correctly rejects that former owner.
+- Reassignment must supersede every unprocessed MC2 notification for the goal and deterministically reroute it to the new owner, so a pending wake can never remain stranded with the former owner while MC3 correctly rejects that former owner. Owner pause/disable/archive and hard-delete transitions must supersede and reroute the same way — to a usable replacement owner or visibly to the coordinator fallback — because the ownership row can remain unchanged while the recipient session becomes unusable.
 - Keep managers/watchers non-authoritative for now.
 
 **Why it matters:** routing and goal authority need a stable destination.  
@@ -33,6 +33,8 @@ The full roadmap below is the robust target. It should not block first dogfoodin
 - Include the completed task result, linked goal, and current rolling goal state.
 - Fall back visibly to the coordinator when no usable owner exists.
 - Do not block task completion on notification delivery, but do not rely on best-effort post-commit notification that can be lost or duplicated.
+- Consume terminal V2 `failed`/`rejected` delivery status for the wake: create a deterministic new delivery-attempt generation or a visible degraded/escalated state. An accepted-but-terminally-failed delivery must not leave the notification unprocessed with the owner never awakened; the G7 recovery machinery does not exist yet during the MC-only phase.
+- Reconcile completed-but-undisposed wakes. V2 `completed` only proves the turn ended, not that the owner called `review_goal_outcome` (tool error, context interruption, or ignored instruction). Unprocessed notifications whose latest delivery completed must receive bounded re-notification with backoff and eventual visible coordinator/human escalation.
 
 This intentionally reuses task results and current delivery/inbox primitives instead of building the full immutable report model first.
 
@@ -68,6 +70,7 @@ Use existing goal history, task links, and goal editing surfaces. Do not build a
 ### MC5. Prompt and template migration for the core loop
 
 - Teach LH templates to create/own goals, inspect linked task outcomes, call the review tool, and create follow-up work.
+- Migrate already-persisted agents, not just template definitions. `create_agent_from_template` copies `template.instructions` into the agent row and runtime prompt construction reads that stored value, so existing template-created agents (including the coordinator and the first dogfood agents) never see updated stock instructions. Ship a versioned, backward-compatible migration for agents still on prior stock instructions — or dynamically inject the core owner-review contract — while preserving user-customized prompts.
 - Teach goal workers to report bounded results without claiming ownership of overall strategy.
 - Update the marketing template only as the first dogfood profile; keep the mechanism generic.
 
@@ -80,6 +83,7 @@ Add a configurable inactivity watchdog for each LH agent. Keep the first version
 
 - Read the latest **successful/consumed** message timestamp for the LH agent's persistent session. For a session with no messages, use the session creation time, falling back to agent creation time, so new agents have a deterministic first inactivity window.
 - If `now - lastActivityAt` exceeds the configured threshold, inject a wake-up message into that session.
+- Atomically claim a deterministic inactivity window before injecting. While a nag delivery attempt for that window is accepted/in flight, subsequent and concurrent scans must not enqueue another nag — `lastActivityAt` stays stale until consumption, so an unclaimed scan would duplicate autonomous turns on every pass. Advance the attempt generation only after a terminal delivery failure.
 - A successfully consumed injected message becomes the latest session activity, so the inactivity window naturally resets. A persisted but failed/rejected nag must not reset the window; track the delivery attempt and rearm a new attempt or enter a visible degraded state on terminal delivery failure.
 - This covers external events, reminders, task/goal wake-ups, direct human messages, agent-to-agent messages, and ongoing session work without a separate activity taxonomy.
 - Make the threshold and prompt configurable per agent.
@@ -109,7 +113,7 @@ Those remain in the robust roadmap below. The minimal core is a dogfood bridge: 
 
 ### Minimal-core cutover
 
-Do not cut over at G6: report capture alone provides no owner integration path until G7 routing and G8 decision tools exist. Keep the migration flag disabled and the minimal notification/review path fully active until G8 ships. Once G8 is available, atomically cut over from the minimal path:
+Do not cut over at G6: report capture alone provides no owner integration path until G7 routing and G8 decision tools exist. The cutover must also not precede G9: while direct `mark_complete.goal_update` and other worker goal mutations remain live, a worker can mutate the goal directly after terminalizing and the owner can later apply a conflicting report proposal. Keep the migration flag disabled and the minimal notification/review path fully active until G8 decision tools ship, and enable the cutover only atomically with the G9 worker-schema/prompt/mutation restrictions (or fold those restrictions into the same atomic release):
 
 - Stop creating new MC2 notifications at the same terminal seam when the cutover flag is enabled.
 - Backfill or link pending MC2 notifications to their corresponding outcome reports so no pending wake is silently dropped.
@@ -409,6 +413,7 @@ Do not provide payload update/delete methods.
 - Keep notification/routing asynchronous and non-blocking.
 - Validate the caller/session associated with the linked task/goal when a structured payload is supplied.
 - If a linked Forge scope exists, create a durable pending/failed Forge-projection record with the report and let a reconciler retry that projection; keep the outcome report authoritative.
+- Supersede unresolved reports when their terminal generation is exited. The transition table permits a `blocked`, `done`, or `cancelled` task to reopen into active work; when that happens, reports still pending from the previous terminal generation must be superseded so G7 stops routing/escalating them and they can never be applied over the reworked outcome. Superseded reports remain immutable audit history.
 
 This is the required behavior currently absent from `mark_complete.goal_update`; without terminal-capture, a normal completion can produce no report.
 
