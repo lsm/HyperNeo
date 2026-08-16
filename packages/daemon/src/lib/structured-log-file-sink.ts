@@ -10,7 +10,8 @@ export interface StructuredLogFileSinkOptions {
   maxPendingBytes: number;
 }
 
-const SENSITIVE_KEY = /token|secret|password|api[-_]?key|private[-_]?key|authorization|cookie/i;
+const SENSITIVE_KEY =
+  /token|secret|password|api[-_]?key|private[-_]?key|authorization|cookie|credential|signature/i;
 
 export class StructuredLogFileSink {
   private tail: Promise<void>;
@@ -192,7 +193,7 @@ function redactString(value: string): string {
       // sensitive header name. The value matcher is escape-aware so a quoted
       // Digest/AWS value is consumed through its real closing quote. (Codex P1.)
       .replace(
-        /([[,]\s*["'][\w.-]{0,64}(?:authorization|cookie|set-cookie|api[-_]?key|private[-_]?key|token|secret|password)[\w.-]{0,64}["']\s*,\s*)(["'])((?:\\[\s\S]|(?!\2)[^\\])*)\2/gi,
+        /([[,]\s*["'][\w.-]{0,64}(?:authorization|cookie|set-cookie|api[-_]?key|private[-_]?key|token|secret|password|credential|signature)[\w.-]{0,64}["']\s*,\s*)(["'])((?:\\[\s\S]|(?!\2)[^\\])*)\2/gi,
         '$1$2[REDACTED]$2'
       )
       // Authorization values legitimately contain structural commas (Digest
@@ -213,12 +214,19 @@ function redactString(value: string): string {
       // env/config objects like `{"AWS_SECRET_ACCESS_KEY":"…"}` are caught.
       // Quoted values keep the quoted rule's output via the lookahead. (Codex P1.)
       .replace(
-        /((?:[\w.-]{0,64}(?:api[-_]?key|private[-_]?key|token|secret|password)[\w.-]{0,64})\s*:\s*)(?![\s"'])([^,}\r\n]+)/gi,
+        /((?:[\w.-]{0,64}(?:api[-_]?key|private[-_]?key|token|secret|password|credential|signature)[\w.-]{0,64})\s*:\s*)(?![\s"'])([^,}\r\n]+)/gi,
         '$1[REDACTED]'
       )
       .replace(
-        /(["']?(?:[\w.-]{0,64}(?:api[-_]?key|private[-_]?key|token|secret|password|authorization|cookie|set-cookie)[\w.-]{0,64})["']?\s*[:=]\s*)(["'])((?:\\[\s\S]|(?!\2)[^\\])*)\2/gi,
+        /(["']?(?:[\w.-]{0,64}(?:api[-_]?key|private[-_]?key|token|secret|password|credential|signature|authorization|cookie|set-cookie)[\w.-]{0,64})["']?\s*[:=]\s*)(["'])((?:\\[\s\S]|(?!\2)[^\\])*)\2/gi,
         '$1$2[REDACTED]$2'
+      )
+      // A truncated message can end inside a quoted credential (the logger caps
+      // messages at a fixed length), so there is no closing quote for the rule
+      // above; redact the unterminated value through end of string. (Codex P1.)
+      .replace(
+        /(["']?(?:[\w.-]{0,64}(?:api[-_]?key|private[-_]?key|token|secret|password|credential|signature|authorization|cookie|set-cookie)[\w.-]{0,64})["']?\s*[:=]\s*)(["'])((?:\\[\s\S]|(?!\2)[^\\])*)$/gi,
+        '$1$2[REDACTED]'
       )
       // Equals-form Authorization/Cookie values legitimately contain spaces
       // (Digest `username=…, nonce=…`, AWS `Credential=…, Signature=…`,
@@ -228,7 +236,7 @@ function redactString(value: string): string {
       .replace(/(authorization\s*=\s*)(?![\s"'])[^\r\n]+/gi, '$1[REDACTED]')
       .replace(/((?:cookie|set-cookie)\s*=\s*)(?![\s"'])[^\r\n]+/gi, '$1[REDACTED]')
       .replace(
-        /((?:[\w.-]{0,64}(?:api[-_]?key|private[-_]?key|token|secret|password)[\w.-]{0,64})\s*=\s*)([^\s&;,}]+)/gi,
+        /((?:[\w.-]{0,64}(?:api[-_]?key|private[-_]?key|token|secret|password|credential|signature)[\w.-]{0,64})\s*=\s*)([^\s&;,}]+)/gi,
         '$1[REDACTED]'
       )
   );

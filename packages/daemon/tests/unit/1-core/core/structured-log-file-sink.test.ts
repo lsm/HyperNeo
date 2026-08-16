@@ -207,6 +207,24 @@ describe('StructuredLogFileSink', () => {
     expect(redacted.message).toBe(`["X-Api-Key","[REDACTED]"]`);
   });
 
+  it('redacts presigned URL query credentials', () => {
+    // AWS-style presigned URLs carry `X-Amz-Credential`/`X-Amz-Signature`
+    // parameters; neither is a bare `secret`/`token`/`password` key. (Codex P1.)
+    const redacted = redactStructuredLogEvent(
+      event('https://s3.amazonaws.com/bucket/key?X-Amz-Credential=AKIA123&X-Amz-Signature=deadbeef')
+    );
+    expect(redacted.message).toBe(
+      'https://s3.amazonaws.com/bucket/key?X-Amz-Credential=[REDACTED]&X-Amz-Signature=[REDACTED]'
+    );
+  });
+
+  it('redacts truncated unterminated quoted values', () => {
+    // The logger truncates messages at a fixed length, which can end inside a
+    // quoted credential; the value has no closing quote. (Codex P1, PR #2499.)
+    const redacted = redactStructuredLogEvent(event('token: "abcdefghij'));
+    expect(redacted.message).toBe('token: "[REDACTED]');
+  });
+
   it('redacts unquoted colon-form values for every sensitive key', () => {
     // `token: abc` (no quotes, no `=`) previously passed through every rule —
     // only authorization and cookies had colon-form handling. Like the
