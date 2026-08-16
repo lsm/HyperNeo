@@ -587,14 +587,25 @@ function ownerClearTombstoneTs(sessionId: string, owner: string): number | null 
  * this tombstone, a reload before reconnection restores the pre-clear draft
  * backup and resurrects text the user already deleted or sent. Written under
  * THIS TAB's key: another tab's owed clear must survive this tab's landing
- * consumption (which retires only its own tombstone).
+ * consumption (which retires only its own tombstone). `baselineSeq`, when
+ * known, names the voice sequence the reconcile was about to strip, so a
+ * retry can recognize a strip that COMMITTED but whose ack was lost.
  */
-export function saveClearTombstone(sessionId: string): boolean {
+export function saveClearTombstone(sessionId: string, baselineSeq?: number): boolean {
   try {
-    localStorage.setItem(
-      `${CLEAR_TOMBSTONE_PREFIX}${sessionId}.${TAB_ID}`,
-      JSON.stringify({ ts: Date.now() })
-    );
+    const key = `${CLEAR_TOMBSTONE_PREFIX}${sessionId}.${TAB_ID}`;
+    // Re-arming WITHOUT a new sequence must not drop a recorded one: a
+    // versioned tombstone (from a lost-ack strip) is strictly stronger, and
+    // overwriting it with an unversioned write would leave the committed
+    // strip unrecognizable after a reload.
+    let seqToWrite = baselineSeq;
+    if (seqToWrite === undefined) {
+      const existing = JSON.parse(localStorage.getItem(key) ?? 'null') as {
+        baselineSeq?: number;
+      } | null;
+      if (typeof existing?.baselineSeq === 'number') seqToWrite = existing.baselineSeq;
+    }
+    localStorage.setItem(key, JSON.stringify({ ts: Date.now(), baselineSeq: seqToWrite }));
     return true;
   } catch {
     /* tombstone best-effort — the caller must fall back to a safe state */
@@ -603,14 +614,16 @@ export function saveClearTombstone(sessionId: string): boolean {
 }
 
 /** The owed clear's record for THIS tab, if one is still within its TTL. */
-export function getClearTombstone(sessionId: string): { ts: number } | null {
+export function getClearTombstone(sessionId: string): { ts: number; baselineSeq?: number } | null {
   try {
     const raw = localStorage.getItem(`${CLEAR_TOMBSTONE_PREFIX}${sessionId}.${TAB_ID}`);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as { ts?: number };
+    const parsed = JSON.parse(raw) as { ts?: number; baselineSeq?: number };
     if (typeof parsed.ts !== 'number') return null;
     if (Date.now() - parsed.ts >= DRAFT_BACKUP_TTL_MS) return null;
-    return { ts: parsed.ts };
+    return typeof parsed.baselineSeq === 'number'
+      ? { ts: parsed.ts, baselineSeq: parsed.baselineSeq }
+      : { ts: parsed.ts };
   } catch {
     return null;
   }

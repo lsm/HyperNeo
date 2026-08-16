@@ -879,6 +879,21 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
       },
     });
   });
+  it('reduces a stale-folded draft to the transcripts on the retrying strip', async () => {
+    // End-to-end shape of the re-anchor: the stale fold re-anchored the
+    // baseline to the stale text; a retrying strip (fresh get, fresh expected)
+    // now strips to transcripts-only, keeping the user's clear effective.
+    existingPending = null;
+    existingDraft = 'stale edits voice words';
+    existingBaseline = 'stale edits';
+    existingBaselineSeq = 1;
+    const handler = messageHubData.handlers.get('session.stripVoiceBaseline');
+    const result = (await handler!(
+      { sessionId: 's1', expected: 'stale edits voice words', expectedSeq: 1 },
+      {}
+    )) as { updated: boolean; value: string };
+    expect(result).toEqual({ updated: true, value: 'voice words' });
+  });
 });
 describe('Session RPC Handlers — session.appendVoiceDraft', () => {
   let messageHubData: ReturnType<typeof createMockMessageHub>;
@@ -1137,6 +1152,87 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
       metadata: Record<string, unknown>;
     };
     expect(write.metadata.inputDraftVoiceBaseline).toBe('');
+  });
+
+  it('strips the pre-sequence baseline, keeping every merged transcript (stripVoiceBaseline)', async () => {
+    const handler = messageHubData.handlers.get('session.stripVoiceBaseline');
+    expect(handler).toBeDefined();
+    // Two tabs' entries accumulated into the pending and merged onto the
+    // baseline snapshot — the strip keeps BOTH.
+    existingBaseline = 'stale baseline';
+    existingBaselineSeq = 3;
+    existingDraft = 'stale baseline first second';
+    const result = (await handler!(
+      { sessionId: 's1', expected: 'stale baseline first second', expectedSeq: 3 },
+      {}
+    )) as { updated: boolean; value: string };
+    expect(result).toEqual({ updated: true, value: 'first second' });
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: {
+        inputDraft: 'first second',
+        inputDraftVoiceBaseline: null,
+        // Records WHICH sequence was stripped, so a client retrying the strip
+        // after a lost ack can recognize it as committed.
+        inputDraftVoiceLastStrippedSeq: 3,
+        inputDraftVersion: 1,
+      },
+    });
+  });
+
+  it('declines the strip when a NEWER sequence replaced the baseline (draft text unchanged)', async () => {
+    // The clear flow's get merged sequence A; a later append started sequence
+    // B, replacing the baseline with the (unchanged) draft. Stripping on the
+    // draft text alone would clear sequence A's transcript — the SEQUENCE id
+    // catches what the text cannot.
+    const handler = messageHubData.handlers.get('session.stripVoiceBaseline');
+    existingBaseline = 'stale baseline transcript';
+    existingBaselineSeq = 2;
+    existingDraft = 'stale baseline transcript';
+    const result = (await handler!(
+      { sessionId: 's1', expected: 'stale baseline transcript', expectedSeq: 1 },
+      {}
+    )) as { updated: boolean };
+    expect(result).toEqual({ updated: false });
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('strips to an empty draft when the baseline alone remains (stripVoiceBaseline)', async () => {
+    existingBaseline = 'stale baseline';
+    existingBaselineSeq = 1;
+    existingDraft = 'stale baseline';
+    const handler = messageHubData.handlers.get('session.stripVoiceBaseline');
+    const result = (await handler!(
+      { sessionId: 's1', expected: 'stale baseline', expectedSeq: 1 },
+      {}
+    )) as { updated: boolean; value: string };
+    expect(result).toEqual({ updated: true, value: '' });
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: {
+        inputDraft: null,
+        inputDraftVoiceBaseline: null,
+        inputDraftVoiceLastStrippedSeq: 1,
+        inputDraftVersion: 1,
+      },
+    });
+  });
+
+  it('declines the strip without a baseline snapshot or on a draft mismatch', async () => {
+    const handler = messageHubData.handlers.get('session.stripVoiceBaseline');
+    // No snapshot (no unstripped sequence) — declined, nothing written.
+    existingBaseline = undefined;
+    existingDraft = 'any';
+    expect(await handler!({ sessionId: 's1', expected: 'any', expectedSeq: 1 }, {})).toEqual({
+      updated: false,
+    });
+
+    // A NEWER draft was saved after this client's read — declined.
+    existingBaseline = 'old';
+    existingBaselineSeq = 1;
+    existingDraft = 'newer edit from elsewhere';
+    expect(
+      await handler!({ sessionId: 's1', expected: 'old transcripts', expectedSeq: 1 }, {})
+    ).toEqual({ updated: false });
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
   });
 });
 
