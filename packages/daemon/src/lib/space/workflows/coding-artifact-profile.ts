@@ -91,13 +91,13 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
    * state first. Idempotent — the first recorded URL wins; later calls with
    * a different URL do not rewrite history.
    */
-  rememberPrimaryLinkUrl(runId: string, url: string): void {
+  rememberPrimaryLinkUrl(runId: string, url: string): boolean {
     const trimmed = url.trim();
-    if (!trimmed) return;
+    if (!trimmed) return true; // nothing to preserve — trivially durable
     try {
       const hookStateRepo = new WorkflowHookStateRepository(this.db);
       const reserved = hookStateRepo.get(runId, TOOL_PR_IDENTITY_HOOK_ID);
-      if (reserved && legacyPrUrl(reserved.localState)) return; // first wins
+      if (reserved && legacyPrUrl(reserved.localState)) return true; // first wins
       const snapshot = hookStateRepo.ensure(runId, TOOL_PR_IDENTITY_HOOK_ID, {
         pr_url: trimmed,
       });
@@ -107,10 +107,12 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
           localState: { ...snapshot.localState, pr_url: trimmed },
         });
       }
+      return true;
     } catch (err) {
       log.warn(
         `rememberPrimaryLinkUrl: failed to record PR identity for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
       );
+      return false;
     }
   }
 

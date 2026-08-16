@@ -40,7 +40,12 @@ export interface WorkflowArtifactProfile {
    * the run's PR-bound identity. Optional — absent, no memory is kept and
    * the no-PR gate relies on current rows alone.
    */
-  rememberPrimaryLinkUrl?(runId: string, url: string): void;
+  /**
+   * Resolves false when the memory could NOT be durably written (hook-state
+   * failure) — callers about to overwrite a PR-bearing artifact treat that
+   * as a hard stop: proceeding would destroy the only PR identity.
+   */
+  rememberPrimaryLinkUrl?(runId: string, url: string): boolean;
 
   /**
    * Resolve the first primary link identity established for a run. Completion

@@ -401,7 +401,7 @@ export interface CompleteValidationTaskHandlerDeps {
   /** Task manager bound to `spaceId` — runs the centralised transition validator. */
   taskManager: Pick<SpaceTaskManager, 'setTaskStatus' | 'getTask' | 'areDependenciesMet'>;
   /** Workflow run repository — run ownership + status guards. */
-  workflowRunRepo: Pick<SpaceWorkflowRunRepository, 'getRun'>;
+  workflowRunRepo: Pick<SpaceWorkflowRunRepository, 'getRun' | 'transitionStatus'>;
   /** Resolves a run's workflow definition; null when unresolvable (imported/legacy). */
   getWorkflowForRun: (run: SpaceWorkflowRun) => SpaceWorkflow | null;
   /** Node execution repository — run-liveliness, caller source resolution, sweep. */
@@ -1400,10 +1400,11 @@ export function createCompleteValidationTaskHandler(
         // still satisfied) — re-blocking dependents then would strand them,
         // since no later incomplete→done transition fires another cascade.
         const prerequisiteRow = taskRepo.getTask(args.task_id);
-        const prerequisiteIncomplete =
-          prerequisiteRow != null &&
-          prerequisiteRow.status !== 'done' &&
-          prerequisiteRow.status !== 'cancelled';
+        // Cancelled counts as INCOMPLETE (areDependenciesMet accepts only
+        // done): the loop's cancelled branch re-cancels the collected
+        // dependents — their one cancellation cascade inspected them while
+        // still blocked and skipped.
+        const prerequisiteIncomplete = prerequisiteRow != null && prerequisiteRow.status !== 'done';
         if (!prerequisiteIncomplete) {
           cascadedDependents.length = 0;
         }
@@ -1419,6 +1420,24 @@ export function createCompleteValidationTaskHandler(
           const reblocked = await taskManager.setTaskStatus(dependent.id, 'blocked', {
             blockReason: 'dependency_incomplete',
           });
+          // Coordinate with the dependent's workflow run when it has one:
+          // blocking only the task row leaves the run in_progress, and
+          // processRunTick's non-terminal-idle recovery can nudge the
+          // interrupted session or strand the task after the dependency
+          // reopens (terminal idle execution, nothing reset to pending).
+          // Pausing the run keeps the lifecycle consistent with the block.
+          if (reblocked.workflowRunId) {
+            const depRun = workflowRunRepo.getRun(reblocked.workflowRunId);
+            if (depRun && depRun.status === 'in_progress') {
+              try {
+                workflowRunRepo.transitionStatus(reblocked.workflowRunId, 'blocked');
+              } catch (err) {
+                log.warn(
+                  `complete_validation_task: failed to pause dependent run ${reblocked.workflowRunId}: ${err instanceof Error ? err.message : String(err)}`
+                );
+              }
+            }
+          }
           if (dependentRow?.status === 'in_progress' && interruptBySessionId) {
             // Best-effort: stop any live worker session the dependent had —
             // with the same conditional retirement as the main sweep (a row
@@ -1445,6 +1464,22 @@ export function createCompleteValidationTaskHandler(
           // reopen immediately.
           const prerequisiteAfterBlock = await taskManager.getTask(args.task_id);
           const prerequisiteGeneration = prerequisiteAfterBlock?.updatedAt;
+          if (prerequisiteAfterBlock?.status === 'cancelled') {
+            // A cancelled prerequisite is never satisfied — propagate the
+            // cancellation to the collected dependent (its one cancellation
+            // cascade may have inspected it while still blocked and skipped;
+            // this stale completion reopened or re-blocked it, so we
+            // re-cancel from whichever state this path left it in).
+            try {
+              const recancelled = await taskManager.setTaskStatus(dependent.id, 'cancelled', {
+                allowedSourceStatuses: ['open', 'in_progress', 'blocked'],
+              });
+              emitTaskUpdated(recancelled);
+            } catch {
+              // Best-effort; the tick's cancel cascade is the backstop.
+            }
+            continue;
+          }
           if (prerequisiteAfterBlock?.status === 'done') {
             const met = await taskManager.areDependenciesMet(reblocked);
             if (met) {
@@ -1460,7 +1495,13 @@ export function createCompleteValidationTaskHandler(
               ) {
                 continue;
               }
-              const reopenedDependent = await taskManager.setTaskStatus(dependent.id, 'open');
+              const reopenedDependent = await taskManager.setTaskStatus(dependent.id, 'open', {
+                // Bind to the blocked source: a user cancelling the
+                // recovery-blocked dependent during the awaited reads must
+                // not be overridden by this reopen (cancelled → open is a
+                // valid matrix edge, so only the source predicate holds it).
+                allowedSourceStatuses: ['blocked'],
+              });
               emitTaskUpdated(reopenedDependent);
               log.warn(
                 `complete_validation_task: reopened dependent ${dependent.id} — its prerequisite completed again during the re-block`

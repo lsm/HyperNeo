@@ -8397,6 +8397,15 @@ export class SpaceRuntime {
           finalTaskStatus === 'cancelled' ||
           finalTaskStatus === 'blocked' ||
           finalTaskStatus === 'approved';
+        // Generation recheck at the FINAL gate too: outcome updates, dispatch,
+        // and evidence recapture were all awaited above — the run can have
+        // been reopened and re-closed in that window (done again, NEW
+        // startedAt, replacement executions). Sweeping those new-generation
+        // workers on a decision made against the old generation is the same
+        // stomp every earlier guard prevents.
+        if (taskTerminal && runAfterTransition?.startedAt !== runStartedAtAtDecision) {
+          return;
+        }
         if (taskTerminal) {
           // Recovery recheck: the decision above was computed from the
           // `canonicalTask` snapshot taken before the awaited publishes

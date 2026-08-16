@@ -871,10 +871,26 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         try {
           const existingUrl = firstArtifactPrUrl(artifactRepo.listByRun(workflowRunId));
           if (existingUrl) {
-            config.artifactProfile?.rememberPrimaryLinkUrl?.(workflowRunId, existingUrl);
+            // Durability gate: if an existing PR cannot be preserved (the
+            // write-once memory write failed), the overwrite is refused —
+            // proceeding could destroy the run's only PR identity and let
+            // the no-PR completion gate bypass review/merge.
+            const preserved = config.artifactProfile?.rememberPrimaryLinkUrl?.(
+              workflowRunId,
+              existingUrl
+            );
+            if (preserved === false) {
+              return jsonResult({
+                success: false,
+                error: `This save would replace the run's PR record (${existingUrl}) and its identity could not be preserved; the write was refused to keep the run PR-bound. Retry, or remove the PR link deliberately via the PR workflow.`,
+              });
+            }
           }
-        } catch {
-          // Best-effort backfill; the record-time memory is additive.
+        } catch (err) {
+          return jsonResult({
+            success: false,
+            error: `Could not verify the run's existing PR identity before this save (${err instanceof Error ? err.message : String(err)}); the write was refused to keep the run PR-bound. Retry.`,
+          });
         }
 
         const record = artifactRepo.upsert({

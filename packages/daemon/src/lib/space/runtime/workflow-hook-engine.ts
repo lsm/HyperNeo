@@ -699,11 +699,16 @@ export class WorkflowHookEngine {
           }
           if (isRecord(result.stateForHook)) {
             for (const [hookId, state] of Object.entries(result.stateForHook)) {
-              // Hooks cannot write the reserved pr_ready-identity key — it is
-              // engine-only (stamped on pr_ready allow), so the resolver can
-              // trust it as the authoritative run PR identity. record_state and
-              // stateForHook are user/hook-addressable; reject the reserved id.
-              if (hookId === PR_READY_VALIDATED_IDENTITY_HOOK_ID) continue;
+              // Hooks cannot write the reserved identity keys — the
+              // pr_ready key is engine-only (stamped on pr_ready allow) and
+              // the tool key is the validation tool's write-once PR memory;
+              // both must stay spoof-proof. record_state and stateForHook are
+              // user/hook-addressable; reject both reserved ids.
+              if (
+                hookId === PR_READY_VALIDATED_IDENTITY_HOOK_ID ||
+                hookId === TOOL_PR_IDENTITY_HOOK_ID
+              )
+                continue;
               if (isRecord(state)) stateUpdates.push({ hookId, state });
             }
           }

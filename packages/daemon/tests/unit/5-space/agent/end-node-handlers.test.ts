@@ -3271,6 +3271,51 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     }
   });
 
+  test('a cancelled prerequisite propagates to the reopened dependent', async () => {
+    // The prerequisite is recovered and then CANCELLED during the cascade —
+    // cancelled dependencies are never satisfied, and the dependent's one
+    // cancellation cascade inspected it while still blocked (skipped). The
+    // stale completion reopened it; the revoked path must re-cancel.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const taskId = await createTask('in_progress');
+    const dependent = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'Dependent',
+      description: '',
+      status: 'in_progress',
+      dependsOn: [taskId],
+    });
+    await ctx.taskManager.setTaskStatus(dependent.id, 'blocked', {
+      blockReason: 'dependency_failed',
+    });
+    const originalSetStatus = ctx.taskManager.setTaskStatus.bind(ctx.taskManager);
+    const setStatusSpy = spyOn(ctx.taskManager, 'setTaskStatus').mockImplementation(
+      async (...callArgs: Parameters<typeof originalSetStatus>) => {
+        const result = await originalSetStatus(...callArgs);
+        if (callArgs[0] === dependent.id && callArgs[1] === 'open') {
+          // The cascade's reopen lands, then the prerequisite is cancelled
+          // while the handler's post-block revalidation is in flight.
+          await originalSetStatus(taskId, 'in_progress', { result: null });
+          await originalSetStatus(taskId, 'cancelled');
+        }
+        return result;
+      }
+    );
+
+    try {
+      const result = await makeValidationTool().complete_validation_task({
+        task_id: taskId,
+        validation_outcome: 'committed, then cancelled',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.success).toBe(true);
+      // The dependent ends cancelled, not runnable against a dead dep.
+      expect(ctx.taskRepo.getTask(dependent.id)?.status).toBe('cancelled');
+    } finally {
+      setStatusSpy.mockRestore();
+    }
+  });
+
   test('a dependency_incomplete block is unblockable once the prerequisite completes', async () => {
     // The recovery re-block uses a NEW reason; the cascade's unblocking
     // predicate must include it, or the dependent is stranded forever
