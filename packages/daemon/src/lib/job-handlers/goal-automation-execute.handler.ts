@@ -566,6 +566,34 @@ function splitAtClauseConjunctions(clause: string): string[] {
 }
 
 /**
+ * Causal conjunctions. Content after them explains WHY — a diagnosis or
+ * rationale ("Rollout is blocked because the cache key ignores tenant IDs")
+ * — so it forms its own clause for the thinness test even when the marker
+ * before it is a hard status word.
+ */
+const CAUSAL_CONJUNCTION_RE = /\b(?:because|since|so that)\b/gi;
+
+/**
+ * Splits a clause before each causal conjunction, keeping the conjunction
+ * with the rationale clause that follows it.
+ */
+function splitAtCausalConjunctions(clause: string): string[] {
+  const cuts: number[] = [];
+  for (const match of clause.matchAll(CAUSAL_CONJUNCTION_RE)) {
+    cuts.push(match.index);
+  }
+  if (cuts.length === 0) return [clause];
+  const parts: string[] = [];
+  let start = 0;
+  for (const cut of cuts) {
+    parts.push(clause.slice(start, cut));
+    start = cut;
+  }
+  parts.push(clause.slice(start));
+  return parts;
+}
+
+/**
  * Whether a manual note is purely process status. Every clause of the
  * summary must be status for the note to be thin — one status token does not
  * discard a substantive clause in the same note ("Root cause was lock
@@ -577,6 +605,7 @@ function isThinManualNote(summary: string): boolean {
     .split(MANUAL_NOTE_CLAUSE_RE)
     .flatMap(splitStatusPrefixClause)
     .flatMap(splitAtClauseConjunctions)
+    .flatMap(splitAtCausalConjunctions)
     .map((clause) => clause.trim())
     .filter(Boolean);
   if (clauses.length === 0) return true;
