@@ -3824,6 +3824,22 @@ export class TaskAgentManager {
       return lines;
     };
 
+    // Validation-completion contract: advertised to EVERY node agent when
+    // the workflow opts in (declares an enabled complete_validation_task
+    // hook) — the authorization probe decides at call time which callers
+    // the hook's sourceNode/authorizedCallers admit. Without the opt-in
+    // the tool exists but is refused, so advertising it would only invite
+    // guaranteed rejections.
+    const validationContractLine = (indent: string): string[] => {
+      const declaresValidationHook = (workflow?.hooks ?? []).some(
+        (hook) => hook.enabled && hook.method === 'complete_validation_task'
+      );
+      if (!declaresValidationHook) return [];
+      return [
+        `${indent}- complete_validation_task({ task_id, validation_outcome, reason? }) — validation-only (no-PR) close: when the deliverable is the validation itself, capture the outcome and close the task. Only callers this workflow's complete_validation_task hook authorizes may use it. TERMINAL final action: do NOT send messages or call tools after a successful call.`,
+      ];
+    };
+
     const fallback = [
       '## Runtime Execution Contract',
       `Role: "${execution.agentName}"`,
@@ -3857,6 +3873,7 @@ export class TaskAgentManager {
       '  - list_artifacts ({ nodeId?, type? }) — list artifacts for the current workflow run',
       '  - list_peers / list_reachable_agents — discovery',
       '  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call ever returned "No such tool available", call this once and then retry the original tool',
+      ...validationContractLine('  '),
     ];
 
     lines.push(

@@ -127,6 +127,33 @@ function decodeToolResultPayload(result: ToolResult): Record<string, unknown> | 
 // Re-export for consumers that want the shared type
 export type { ToolResult };
 
+/**
+ * First PR URL found in ARTIFACT rows only (a `link kind:'pr'` data.url, or
+ * a legacy pr_url/prUrl field on any shape). Hook-state rows are
+ * deliberately excluded — their pr_url values are unvalidated (any custom
+ * hook can record one) and must not be promoted into the reserved
+ * authoritative PR identity.
+ */
+function firstArtifactPrUrl(
+  artifacts: Array<{
+    artifactType: string;
+    data: Record<string, unknown>;
+  }>
+): string {
+  for (const artifact of artifacts) {
+    if (artifact.artifactType === 'link' && artifact.data.kind === 'pr') {
+      const url = artifact.data.url;
+      if (typeof url === 'string' && url) return url;
+      continue;
+    }
+    for (const key of ['pr_url', 'prUrl']) {
+      const value = artifact.data[key];
+      if (typeof value === 'string' && value) return value;
+    }
+  }
+  return '';
+}
+
 const log = new Logger('node-agent-tools');
 
 // ---------------------------------------------------------------------------
@@ -834,23 +861,20 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 
         // BACKFILL before any overwriting write: a run whose PR-bearing
         // artifact predates the record-time memory has no reserved identity,
-        // and this upsert may replace the only row carrying the PR. Resolve
-        // the CURRENT PR first and remember it, so the overwrite cannot make
-        // a previously PR-bound run read as no-PR (task #918).
-        if (config.artifactProfile) {
-          try {
-            const existing = config.artifactProfile.resolvePrimaryLinkUrlStrict?.(workflowRunId);
-            if (existing?.url) {
-              config.artifactProfile.rememberPrimaryLinkUrl?.(workflowRunId, existing.url);
-            } else {
-              const lenient = config.artifactProfile.resolvePrimaryLinkUrl(workflowRunId);
-              if (lenient) {
-                config.artifactProfile.rememberPrimaryLinkUrl?.(workflowRunId, lenient);
-              }
-            }
-          } catch {
-            // Best-effort backfill; the record-time memory is additive.
+        // and this upsert may replace the only row carrying the PR. Snapshot
+        // the ARTIFACT rows now and remember any PR they carry, so the
+        // overwrite cannot make a previously PR-bound run read as no-PR
+        // (task #918). Artifacts only — NOT the broad hook-state-scanning
+        // resolvers, whose pr_url entries are unvalidated (any custom hook
+        // can record one) and must never be promoted into the authoritative
+        // reserved identity ahead of pr_ready-validated state.
+        try {
+          const existingUrl = firstArtifactPrUrl(artifactRepo.listByRun(workflowRunId));
+          if (existingUrl) {
+            config.artifactProfile?.rememberPrimaryLinkUrl?.(workflowRunId, existingUrl);
           }
+        } catch {
+          // Best-effort backfill; the record-time memory is additive.
         }
 
         const record = artifactRepo.upsert({

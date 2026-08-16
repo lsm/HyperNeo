@@ -4060,6 +4060,38 @@ describe('node-agent-tools: complete_validation_task', () => {
     expect(ctx.taskRepo.getTask(fixture.task.id)?.status).toBe('in_progress');
   });
 
+  test('the backfill never promotes an unvalidated hook-state pr_url', async () => {
+    // Any custom hook can record pr_url in its OWN local state; those
+    // values are unvalidated and must never be copied into the reserved
+    // authoritative identity. The backfill reads ARTIFACT rows only, so a
+    // run whose PR signal lives solely in hook state stays unbackfilled.
+    const fixture = await seedValidationRun();
+    const hookStateRepo = new WorkflowHookStateRepository(ctx.db);
+    const seeded = hookStateRepo.ensure(fixture.runId, 'custom-hook-1', {});
+    hookStateRepo.update(fixture.runId, 'custom-hook-1', {
+      expectedVersion: seeded.version,
+      localState: { pr_url: 'https://github.com/owner/repo/pull/unvalidated' },
+    });
+
+    const handlers = createNodeAgentToolHandlers(
+      makeConfig(ctx, {
+        mySessionId: fixture.workerSessionId,
+        workflowRunId: fixture.runId,
+        workflowNodeId: 'Validation',
+        workflow: fixture.workflow,
+        artifactProfile: ctx.artifactProfile,
+      })
+    );
+    const result = await handlers.save_artifact({
+      shape: 'note',
+      data: { text: 'plain status note' },
+    });
+    expect(JSON.parse(result.content[0].text).success).toBe(true);
+
+    // The reserved identity was NOT populated from the hook-state URL.
+    expect(ctx.artifactProfile.resolveInitialPrimaryLinkUrl(fixture.runId)).toBe('');
+  });
+
   test('fails closed when a declared completion hook does not authorize this caller', async () => {
     // A workflow can scope its complete_validation_task validator to a
     // designated reviewer slot. executeAction treats an empty matching hook

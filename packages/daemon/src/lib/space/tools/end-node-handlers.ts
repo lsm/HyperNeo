@@ -1183,7 +1183,23 @@ export function createCompleteValidationTaskHandler(
               );
             }
             if (interrupted) {
-              nodeExecutionRepo.updateStatus(execution.id, 'idle');
+              // Conditional retirement: the execution row may have been
+              // restarted/rebound to a REPLACEMENT session while the
+              // interrupt awaited — retiring it then would idle the
+              // replacement's row without interrupting its worker. Only
+              // retire the row if it is still in_progress and still bound
+              // to the session that was interrupted.
+              const rowAfterInterrupt = nodeExecutionRepo
+                .listByWorkflowRun(String(currentTaskRow.workflowRunId))
+                .find((e) => e.id === execution.id);
+              if (
+                rowAfterInterrupt &&
+                rowAfterInterrupt.status === 'in_progress' &&
+                execution.agentSessionId != null &&
+                rowAfterInterrupt.agentSessionId === execution.agentSessionId
+              ) {
+                nodeExecutionRepo.updateStatus(execution.id, 'idle');
+              }
             } else {
               log.warn(
                 `complete_validation_task: session ${execution.agentSessionId} could not be interrupted; leaving its execution in_progress rather than mislabeling it idle`
