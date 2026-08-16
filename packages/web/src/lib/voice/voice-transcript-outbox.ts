@@ -53,6 +53,7 @@ export const voiceTranscriptLandedSignal = signal<ReadonlyMap<string, number>>(n
  * or strip a stale baseline without guessing which part of the merged server
  * draft is the transcript.
  */
+
 export function markVoiceTranscriptLanded(
   sessionId: string,
   text?: string,
@@ -62,36 +63,137 @@ export function markVoiceTranscriptLanded(
   // count): a reload rehydrates the same generation from the marker, so a
   // draft backup saved as generation N is still retired by exactly the
   // consumption of generation N instead of being orphaned by a restarted
-  // counter. The wall clock breaks the tie when two landings share a
-  // Date.now() tick — a later landing always observes the winner's n, so the
-  // counter stays strictly monotonic from there.
-  let seq = Math.max(1, Date.now());
+  // counter.
+  // Collision-resistant allocation: two tabs can read the SAME marker and
+  // both pick existing.n + 1 before either writes, and equal generations let a
+  // refresh consume a NEWER landing as though it never arrived. The wall
+  // clock (plus a per-tab offset hashed from the tab id) breaks the tie — a
+  // later landing always observes the winner's n, so the counter stays
+  // strictly monotonic from there.
+  let seq = Math.max(1, Date.now() + TAB_SEQ_OFFSET);
+  let markerExisted = false;
   let existing: ReturnType<typeof parseLandedMarker> = null;
   let rawMarker: string | null = null;
   try {
     rawMarker = localStorage.getItem(`${LANDED_PREFIX}${sessionId}`);
     existing = parseLandedMarker(rawMarker);
-    if (existing) seq = Math.max(existing.n + 1, Date.now());
+    if (existing) {
+      markerExisted = true;
+      // The COUNTER path carries the per-tab offset too: when a large prior
+      // generation dominates the clock, two tabs reading the same marker
+      // would otherwise pick the identical existing.n + 1 — equal
+      // generations let a refresh consume a NEWER landing as though none
+      // arrived. Offsets differ per tab, so the picks collide only on a
+      // 1-in-997 hash collision.
+      seq = Math.max(existing.n + 1 + TAB_SEQ_OFFSET, Date.now() + TAB_SEQ_OFFSET);
+    }
   } catch {
     /* storage unavailable — start a fresh sequence */
   }
+  if (!markerExisted) {
+    // A fresh GENERATION EPOCH: the previous sequence's marker expired, so
+    // its counters restart. The epoch's SUPERSEDE record is keyed by
+    // generation number and must not outlive the epoch — a stale
+    // higher-generation record would suppress every backup of the new
+    // epoch's lower-numbered landings (their generations compare lower
+    // regardless of their newer timestamps), making them unrestorable while
+    // their landing suppresses the owner's server saves.
+    try {
+      localStorage.removeItem(`${SUPERSEDED_PREFIX}${sessionId}`);
+    } catch {
+      /* storage unavailable */
+    }
+  }
   markVoiceTranscriptLandedLocal(sessionId, text, false, seq, entryId);
+  // Another tab may have landed entries whose `storage` event this context
+  // has not yet processed — the rewrite must UNION with the persisted
+  // aggregate, not replace it (a replacement drops the earlier transcripts
+  // from every future reconciliation that falls back to the marker). Runs
+  // AFTER the local accumulation above, which restarts the aggregate when no
+  // local landing was live.
+  // ...but skip a marker THIS TAB already consumed (the per-tab ack still
+  // names it): consumption means the sequence's pending fully merged
+  // server-side, so the next sequence legitimately starts a fresh aggregate —
+  // unioning here would re-announce already-merged transcripts.
+  //
+  // Identity is decided by ENTRY ID, never by substring: a separate
+  // occurrence can legitimately CONTAIN another entry's phrase ('hello' vs
+  // 'hello world'), and a substring check would silently drop the earlier
+  // dictated occurrence while the marker still advertises both ids. The
+  // persisted aggregate appends when ANY persisted id is not yet ours, and
+  // no-id markers (test-only writes) never trigger the union.
+  const consumeMarker = (marker: ReturnType<typeof parseLandedMarker>): void => {
+    if (!marker) return;
+    const ours = new Set(landingIds.get(sessionId) ?? []);
+    // ENTRY granularity: append ONLY the entries whose ids we lack — merging
+    // the whole aggregate would duplicate entries the local sequence already
+    // holds (local [e1,e3] vs marker [e1,e2] appends only e2). Pre-entries
+    // markers fall back to the aggregate append keyed by the id set.
+    if (marker.entries.length > 0) {
+      let appended = false;
+      for (const entry of marker.entries) {
+        if (ours.has(entry.id)) continue;
+        landingTexts.set(sessionId, appendDraftText(landingTexts.get(sessionId) ?? '', entry.text));
+        ours.add(entry.id);
+        appended = true;
+      }
+      if (appended) {
+        landingIds.set(sessionId, [...ours].slice(-MAX_ENTRIES));
+        const known = new Set((landingEntries.get(sessionId) ?? []).map((e) => e.id));
+        const mergedEntries = [
+          ...(landingEntries.get(sessionId) ?? []),
+          ...marker.entries.filter((e) => !known.has(e.id)),
+        ];
+        landingEntries.set(sessionId, mergedEntries.slice(-MAX_ENTRIES));
+      }
+      return;
+    }
+    if (marker.text && marker.ids.some((id) => !ours.has(id))) {
+      landingTexts.set(sessionId, appendDraftText(landingTexts.get(sessionId) ?? '', marker.text));
+    }
+    if (marker.ids.length) {
+      const mergedIds = new Set(landingIds.get(sessionId) ?? []);
+      for (const id of marker.ids) mergedIds.add(id);
+      landingIds.set(sessionId, [...mergedIds].slice(-MAX_ENTRIES));
+    }
+  };
+  const consumedRaw = (raw: string | null): boolean =>
+    raw !== null && consumedMarkers.get(sessionId) === raw;
+  if (!consumedRaw(rawMarker)) consumeMarker(existing);
   try {
     // Timestamp + monotonic counter so two landings within the same Date.now()
     // tick still change the value — a same-value write would not emit a
     // storage event in other tabs, which would then never learn of the second.
     // The marker carries the AGGREGATE text and announced ENTRY IDS of the
     // live landing sequence (see markVoiceTranscriptLandedLocal).
-    localStorage.setItem(
-      `${LANDED_PREFIX}${sessionId}`,
-      JSON.stringify({
-        v: 1,
-        ts: Date.now(),
-        n: seq,
-        text: landingTexts.get(sessionId) ?? null,
-        ids: landingIds.get(sessionId) ?? [],
-      })
-    );
+    //
+    // COMPARE-AND-REVALIDATE: two tabs can read the SAME old marker, build
+    // independent aggregates, and the last write would silently drop the
+    // other's entries. localStorage writes are atomic per call, so re-reading
+    // immediately before writing catches a concurrent tab's marker that
+    // landed in between — re-union from it and retry (bounded) until the
+    // write lands against the state just read.
+    const key = `${LANDED_PREFIX}${sessionId}`;
+    let markerRaw = rawMarker;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const currentRaw = localStorage.getItem(key);
+      if (currentRaw !== markerRaw && !consumedRaw(currentRaw)) {
+        consumeMarker(parseLandedMarker(currentRaw));
+      }
+      localStorage.setItem(
+        key,
+        JSON.stringify({
+          v: 1,
+          ts: Date.now(),
+          n: seq,
+          text: landingTexts.get(sessionId) ?? null,
+          ids: landingIds.get(sessionId) ?? [],
+          entries: landingEntries.get(sessionId) ?? [],
+        })
+      );
+      markerRaw = localStorage.getItem(key);
+      if (markerRaw === null) break;
+    }
   } catch {
     /* mirror-only — this tab still refreshes via the signal */
   }
@@ -125,6 +227,18 @@ const landingTexts = new Map<string, string>();
 // transcript, and a text match would then silently skip announcing the new
 // entry's genuine landing.
 const landingIds = new Map<string, string[]>();
+// PER-ENTRY landing records (id + text), the authoritative granularity for
+// marker merges: a persisted aggregate is only appendable as a WHOLE, so
+// merging by ID set alone duplicates entries the local aggregate already
+// holds (local [e1,e3] vs marker [e1,e2] must append ONLY e2's text). The
+// marker carries these records; the derived text/ids fields stay for
+// compatibility with every reader of the aggregate.
+export interface LandingEntry {
+  id: string;
+  text: string;
+}
+const landingEntries = new Map<string, LandingEntry[]>();
+let syntheticEntryCounter = 0;
 
 function markVoiceTranscriptLandedLocal(
   sessionId: string,
@@ -132,7 +246,8 @@ function markVoiceTranscriptLandedLocal(
   replaceAggregate = false,
   explicitGeneration?: number,
   entryId?: string,
-  markerIds?: string[]
+  markerIds?: string[],
+  markerEntries?: LandingEntry[]
 ): void {
   const current = voiceTranscriptLandedSignal.value;
   const hadLiveLanding = current.has(sessionId);
@@ -153,6 +268,22 @@ function markVoiceTranscriptLandedLocal(
     const prev = hadLiveLanding && !replaceAggregate ? (landingTexts.get(sessionId) ?? '') : '';
     landingTexts.set(sessionId, prev ? appendDraftText(prev, text) : text);
   }
+  if (typeof text === 'string') {
+    // Record the per-entry (id, text) pair at the same granularity the marker
+    // merges at — a fresh landing appends; a hydration replaces wholesale.
+    // The record's id (explicit or synthetic) also joins the announced-id set:
+    // consumeMarker matches identity by id, and a synthetic id missing from
+    // the set would let a tab re-append its OWN earlier entry.
+    const record: LandingEntry = {
+      id: entryId ?? `synthetic-${++syntheticEntryCounter}`,
+      text,
+    };
+    const fresh = hadLiveLanding && !replaceAggregate;
+    const prevEntries = fresh ? (landingEntries.get(sessionId) ?? []) : [];
+    landingEntries.set(sessionId, [...prevEntries, record].slice(-MAX_ENTRIES));
+    const prevIds = fresh ? (landingIds.get(sessionId) ?? []) : [];
+    landingIds.set(sessionId, [...new Set([...prevIds, record.id])].slice(-MAX_ENTRIES));
+  }
   if (entryId !== undefined) {
     // Accumulate the announced id alongside the aggregate text (bounded to the
     // outbox cap — the sequence can announce at most that many entries).
@@ -162,6 +293,26 @@ function markVoiceTranscriptLandedLocal(
     // A hydrated marker replaces the local id set wholesale — it is the
     // authoritative sequence from the writing tab.
     landingIds.set(sessionId, (markerIds ?? []).slice(-MAX_ENTRIES));
+    if (markerEntries) landingEntries.set(sessionId, markerEntries.slice(-MAX_ENTRIES));
+  }
+}
+
+/**
+ * The EFFECTIVE landing generation for `sessionId`: the process-local signal
+ * when this tab knows the landing, otherwise the persisted marker's counter
+ * (this tab may not have processed the marker's `storage` event yet — writing
+ * a backup as generation 0 in that window would orphan it: a later
+ * generation-matched consumption could never retire it, leaving it restorable
+ * over text the user already sent or cleared).
+ */
+export function getLandingGeneration(sessionId: string): number | undefined {
+  const local = voiceTranscriptLandedSignal.value.get(sessionId);
+  if (local !== undefined) return local;
+  try {
+    const marker = parseLandedMarker(localStorage.getItem(`${LANDED_PREFIX}${sessionId}`));
+    return marker?.n;
+  } catch {
+    return undefined;
   }
 }
 
@@ -184,20 +335,18 @@ export function getLandingTranscript(sessionId: string): string | null {
 }
 
 /**
- * The EFFECTIVE landing generation for `sessionId`: the process-local signal
- * when this tab knows the landing, otherwise the persisted marker's counter
- * (this tab may not have processed the marker's `storage` event yet — writing
- * a backup as generation 0 in that window would orphan it: a later
- * generation-matched consumption could never retire it, leaving it restorable
- * over text the user already sent or cleared).
+ * The OUTBOX ENTRY IDS whose landing the live (or retained-but-consumed)
+ * sequence announced for `sessionId`, if any are known — from this tab's local
+ * marks, or from the shared marker. Used by the flush to decide whether a
+ * DEDUPED ack's landing was already announced elsewhere.
  */
-export function getLandingGeneration(sessionId: string): number | undefined {
-  const local = voiceTranscriptLandedSignal.value.get(sessionId);
+export function getAnnouncedEntryIds(sessionId: string): string[] {
+  const local = landingIds.get(sessionId);
   if (local !== undefined) return local;
   try {
-    return parseLandedMarker(localStorage.getItem(`${LANDED_PREFIX}${sessionId}`))?.n;
+    return parseLandedMarker(localStorage.getItem(`${LANDED_PREFIX}${sessionId}`))?.ids ?? [];
   } catch {
-    return undefined;
+    return [];
   }
 }
 
@@ -212,18 +361,41 @@ function parseLandedMarker(raw: string | null): {
   n: number;
   text: string | null;
   ids: string[];
+  entries: LandingEntry[];
 } | null {
   if (!raw) return null;
   try {
-    const parsed = JSON.parse(raw) as { ts?: unknown; n?: unknown; text?: unknown; ids?: unknown };
+    const parsed = JSON.parse(raw) as {
+      ts?: unknown;
+      n?: unknown;
+      text?: unknown;
+      ids?: unknown;
+      entries?: unknown;
+    };
     if (typeof parsed.ts !== 'number') return null;
+    const entries: LandingEntry[] = Array.isArray(parsed.entries)
+      ? parsed.entries.filter(
+          (e): e is LandingEntry =>
+            !!e &&
+            typeof (e as LandingEntry).id === 'string' &&
+            typeof (e as LandingEntry).text === 'string'
+        )
+      : [];
+    // Derived for compatibility with readers of the aggregate form.
+    let text: string | null = typeof parsed.text === 'string' ? parsed.text : null;
+    if (text === null && entries.length > 0) {
+      text = entries.reduce((acc, e) => appendDraftText(acc, e.text), '');
+    }
+    let ids: string[] = Array.isArray(parsed.ids)
+      ? parsed.ids.filter((id): id is string => typeof id === 'string')
+      : [];
+    if (ids.length === 0 && entries.length > 0) ids = entries.map((e) => e.id);
     return {
       ts: parsed.ts,
       n: typeof parsed.n === 'number' ? parsed.n : 0,
-      text: typeof parsed.text === 'string' ? parsed.text : null,
-      ids: Array.isArray(parsed.ids)
-        ? parsed.ids.filter((id): id is string => typeof id === 'string')
-        : [],
+      text,
+      ids,
+      entries,
     };
   } catch {
     return null;
@@ -244,15 +416,17 @@ function dropLocalLanding(sessionId: string): void {
   voiceTranscriptLandedSignal.value = next;
   landingTexts.delete(sessionId);
   landingIds.delete(sessionId);
+  landingEntries.delete(sessionId);
 }
 
 /**
  * Forget the landing of generation `generation` once its session's composer
  * has refreshed for it — but only if no NEWER landing arrived meanwhile (the
  * count is unchanged), so a landing that landed mid-refresh keeps its own
- * pending refresh. The cross-tab landed MARKER is deliberately KEPT (TTL
- * prunes it): consumption is local to this tab, so a later tab must still be
- * able to hydrate the marker.
+ * pending refresh. The cross-tab landed MARKER and the draft BACKUP are
+ * deliberately KEPT (TTL prunes them): consumption is local to this tab, so a
+ * later tab must still be able to hydrate the marker, and another tab's own
+ * draft backup must not be erased by this tab's consumption.
  */
 export function consumeVoiceTranscriptLanded(sessionId: string, generation: number): void {
   const current = voiceTranscriptLandedSignal.value;
@@ -260,9 +434,6 @@ export function consumeVoiceTranscriptLanded(sessionId: string, generation: numb
   const next = new Map(current);
   next.delete(sessionId);
   voiceTranscriptLandedSignal.value = next;
-  // Retire the backup created for THIS landing: a reload must show the
-  // freshly-merged transcript, not the text the user already sent/cleared.
-  clearDraftBackup(sessionId, generation);
   // Per-tab acknowledgement of the shared marker we consumed (see
   // isLandingLive): the marker is deliberately KEPT for other tabs, but THIS
   // tab must not treat the very marker it consumed as a live landing again.
@@ -272,6 +443,9 @@ export function consumeVoiceTranscriptLanded(sessionId: string, generation: numb
   } catch {
     /* storage unavailable — no marker, nothing to acknowledge */
   }
+  // Retire the backup created for THIS landing: a reload must show the
+  // freshly-merged transcript, not the text the user already sent/cleared.
+  clearDraftBackup(sessionId, generation);
 }
 
 /**
@@ -282,43 +456,16 @@ export function consumeVoiceTranscriptLanded(sessionId: string, generation: numb
  */
 const consumedMarkers = new Map<string, string>();
 
-/**
- * Whether a landing is currently LIVE for `sessionId` — either marked in this
- * tab's process-local signal, or a fresh cross-tab marker in storage.
- */
-export function isLandingLive(sessionId: string): boolean {
-  if (voiceTranscriptLandedSignal.value.has(sessionId)) {
-    const markedAt = landingMarkedAt.get(sessionId);
-    // No timestamp = a manually-set/test landing (always live); production
-    // marks always set one, so a landing aged past the marker TTL here is dead
-    // and dropped, lifting the save-suppression (a fresh marker re-marks).
-    if (markedAt === undefined || Date.now() - markedAt < MAX_AGE_MS) return true;
-    dropLocalLanding(sessionId);
-  }
-  try {
-    const raw = localStorage.getItem(`${LANDED_PREFIX}${sessionId}`);
-    if (!raw) return false;
-    const marker = parseLandedMarker(raw);
-    if (!marker || Date.now() - marker.ts >= MAX_AGE_MS) return false;
-    // This tab already consumed THIS exact marker — it is done here. A
-    // different value is a NEWER landing (the counter increments per write),
-    // which is live; drop the stale acknowledgement while at it.
-    if (consumedMarkers.get(sessionId) === raw) return false;
-    if (consumedMarkers.has(sessionId)) consumedMarkers.delete(sessionId);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 const DRAFT_BACKUP_TTL_MS = 24 * 60 * 60 * 1000;
 
-// Draft backups are TAB-OWNED: each tab defers its own evolving edits under
-// `${prefix}${sessionId}.${tabId}`. A single shared key let one tab's landing
-// consumption retire ANOTHER tab's deferred backup (consumption is local, but
-// the key was not) — the editing tab kept suppressing server saves while its
-// only durable copy was deleted. The tab id lives in sessionStorage: isolated
-// per browser tab, yet STABLE ACROSS RELOADS of the same tab — exactly the
+// Draft backups and clear tombstones are TAB-OWNED: each tab defers its own
+// evolving edits / owed clears under `${prefix}${sessionId}.${tabId}`. A
+// single shared key let one tab's landing consumption retire ANOTHER tab's
+// deferred backup or owed clear (consumption is local, but the keys were not)
+// — the editing tab kept suppressing server saves while its only durable copy
+// was deleted, or its clear intent vanished so a retained backup resurrected
+// text the user had sent. The tab id lives in sessionStorage: isolated per
+// browser tab, yet STABLE ACROSS RELOADS of the same tab — exactly the
 // ownership the reload-survival of these records requires.
 /** Resolve this context's tab id (exported for the clone-detection tests). */
 export function readTabId(): string {
@@ -422,6 +569,15 @@ try {
   /* storage unavailable — clone detection degrades to the stored id */
 }
 
+// Deterministic per-tab offset that breaks same-millisecond generation ties
+// between concurrently-landing tabs (hash of the tab id; 0 collides only with
+// itself, and a tab cannot race itself on the single-threaded event loop).
+const TAB_SEQ_OFFSET = (() => {
+  let hash = 0;
+  for (let i = 0; i < TAB_ID.length; i++) hash = (hash * 31 + TAB_ID.charCodeAt(i)) % 997;
+  return hash;
+})();
+
 function draftBackupKey(sessionId: string): string {
   return `${DRAFT_BACKUP_PREFIX}${sessionId}.${TAB_ID}`;
 }
@@ -459,31 +615,26 @@ function readSuperseded(sessionId: string): { generation: number; beforeTs: numb
 }
 
 /**
- * Persist the evolving local draft for a session whose landing is deferred
- * (the composer has text, so its server saves are suppressed to protect the
- * landed transcript). A reload or session switch then restores the user's
- * edits instead of losing them, while the server draft keeps the transcript.
- * The landing GENERATION is stored so a reconciliation retires exactly the
- * backup for the landing it merged — not a newer one.
+ * Scan every TAB-OWNED backup key for `sessionId` and return the FRESHEST
+ * in-TTL, not-yet-superseded claim (the delimiter terminates the session id,
+ * so `s1` never matches `s10`'s keys). null when none exists. Does NOT remove
+ * anything — the caller retires the exact `key` once the content is durably
+ * persisted or folded.
  */
-export function saveDraftBackup(sessionId: string, content: string, generation: number): boolean {
+/** The given OWNER's fresh clear-tombstone timestamp, or null when none. */
+function ownerClearTombstoneTs(sessionId: string, owner: string): number | null {
   try {
-    localStorage.setItem(
-      draftBackupKey(sessionId),
-      JSON.stringify({ content, ts: Date.now(), generation })
-    );
-    return true;
+    const raw = localStorage.getItem(`${CLEAR_TOMBSTONE_PREFIX}${sessionId}.${owner}`);
+    if (raw === null) return null;
+    const parsed = JSON.parse(raw) as { ts?: number } | null;
+    if (!parsed || typeof parsed.ts !== 'number') return null;
+    if (Date.now() - parsed.ts >= DRAFT_BACKUP_TTL_MS) return null;
+    return parsed.ts;
   } catch {
-    /* backup best-effort — the caller falls back to the normal save */
-    return false;
+    return null;
   }
 }
 
-/**
- * Scan for `sessionId`'s in-TTL backup claim, or null when none exists. Does
- * NOT remove anything — the caller retires the exact `key` once the content
- * is durably persisted or folded.
- */
 function freshestDraftBackup(sessionId: string): DraftBackupClaim | null {
   let freshest: DraftBackupClaim | null = null;
   const superseded = readSuperseded(sessionId);
@@ -516,7 +667,7 @@ function freshestDraftBackup(sessionId: string): DraftBackupClaim | null {
       // deleted this text before it closed, and restoring it would resurrect
       // what the user already cleared. The tombstone is keyed by the same
       // owner suffix as the backup key, so a foreign owner's intent is
-      // honored even though only THIS tab's tombstone is ever written here.
+      // honored even though only THIS tab's tombstone is ever re-armed here.
       // The owner's clear suppresses only backups written BEFORE it: the
       // user can have kept typing after clearing, and those newer writes are
       // live edits that must stay restorable for the tombstone's whole TTL.
@@ -532,6 +683,57 @@ function freshestDraftBackup(sessionId: string): DraftBackupClaim | null {
     /* storage unavailable */
   }
   return freshest;
+}
+
+/**
+ * Persist the evolving local draft for a session whose landing is deferred
+ * (the composer has text, so its server saves are suppressed to protect the
+ * landed transcript). A reload or session switch then restores the user's
+ * edits instead of losing them, while the server draft keeps the transcript.
+ * The landing GENERATION is stored so a reconciliation retires exactly the
+ * backup for the landing it merged — not a newer one. Written under THIS
+ * tab's key, so another tab's consumption or retirement cannot drop it.
+ */
+export function saveDraftBackup(sessionId: string, content: string, generation: number): boolean {
+  try {
+    localStorage.setItem(
+      draftBackupKey(sessionId),
+      JSON.stringify({ content, ts: Date.now(), generation })
+    );
+    return true;
+  } catch {
+    /* backup best-effort — the caller falls back to the normal save */
+    return false;
+  }
+}
+
+/**
+ * Whether a landing is currently LIVE for `sessionId` — either marked in this
+ * tab's process-local signal, or a fresh cross-tab marker in storage.
+ */
+export function isLandingLive(sessionId: string): boolean {
+  if (voiceTranscriptLandedSignal.value.has(sessionId)) {
+    const markedAt = landingMarkedAt.get(sessionId);
+    // No timestamp = a manually-set/test landing (always live); production
+    // marks always set one, so a landing aged past the marker TTL here is dead
+    // and dropped, lifting the save-suppression (a fresh marker re-marks).
+    if (markedAt === undefined || Date.now() - markedAt < MAX_AGE_MS) return true;
+    dropLocalLanding(sessionId);
+  }
+  try {
+    const raw = localStorage.getItem(`${LANDED_PREFIX}${sessionId}`);
+    if (!raw) return false;
+    const marker = parseLandedMarker(raw);
+    if (!marker || Date.now() - marker.ts >= MAX_AGE_MS) return false;
+    // This tab already consumed THIS exact marker — it is done here. A
+    // different value is a NEWER landing (the counter increments per write),
+    // which is live; drop the stale acknowledgement while at it.
+    if (consumedMarkers.get(sessionId) === raw) return false;
+    if (consumedMarkers.has(sessionId)) consumedMarkers.delete(sessionId);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function getDraftBackup(sessionId: string): string | null {
@@ -551,6 +753,10 @@ export function getDraftBackup(sessionId: string): string | null {
  * another tab's deferred edits under its own key must survive them — their
  * tab retires its backup when IT consumes or pushes the content.
  */
+export function clearDraftBackup(sessionId: string, generation?: number): void {
+  removeDraftBackupKey(draftBackupKey(sessionId), generation);
+}
+
 /**
  * Retire the exact backup key a caller claimed (any tab's — the caller
  * persisted or folded that content, so the durable copy is superseded). When
@@ -617,20 +823,6 @@ export function retireDraftBackupClaim(claim: {
   }
 }
 
-export function clearDraftBackup(sessionId: string, generation?: number): void {
-  try {
-    if (generation !== undefined) {
-      const parsed = JSON.parse(localStorage.getItem(draftBackupKey(sessionId)) ?? 'null') as {
-        generation?: number;
-      } | null;
-      if (parsed?.generation !== generation) return;
-    }
-    localStorage.removeItem(draftBackupKey(sessionId));
-  } catch {
-    /* backup best-effort */
-  }
-}
-
 /**
  * Read (WITHOUT removing) the draft backup for `sessionId`, bypassing the
  * landing-liveness gate the restore path applies. Used when a landing EXPIRED
@@ -640,31 +832,13 @@ export function clearDraftBackup(sessionId: string, generation?: number): void {
  * up front would leave nothing behind when the flush fails on a dropped
  * socket. null when no in-TTL backup exists.
  */
-export function peekExpiredDraftBackup(sessionId: string): DraftBackupClaim | null {
-  return freshestDraftBackup(sessionId);
-}
-
-/** The given OWNER's fresh clear-tombstone timestamp, or null when none. */
-function ownerClearTombstoneTs(sessionId: string, owner: string): number | null {
-  try {
-    const raw = localStorage.getItem(`${CLEAR_TOMBSTONE_PREFIX}${sessionId}.${owner}`);
-    if (raw === null) return null;
-    const parsed = JSON.parse(raw) as { ts?: number } | null;
-    if (!parsed || typeof parsed.ts !== 'number') return null;
-    if (Date.now() - parsed.ts >= DRAFT_BACKUP_TTL_MS) return null;
-    return parsed.ts;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Persist that the user cleared/sent the composer while a landing was
  * deferred but the clear-reconcile could not COMMIT (socket down, or the
  * conditional RPC failed). `pendingClearRef` lives only in memory — without
  * this tombstone, a reload before reconnection restores the pre-clear draft
  * backup and resurrects text the user already deleted or sent. Written under
- * THIS TAB's key: another tab's owed clear must survive this tab's landing
+ * THIS tab's key: another tab's owed clear must survive this tab's landing
  * consumption (which retires only its own tombstone). `baselineSeq`, when
  * known, names the voice sequence the reconcile was about to strip, so a
  * retry can recognize a strip that COMMITTED but whose ack was lost.
@@ -719,6 +893,10 @@ export function removeClearTombstone(sessionId: string): void {
   } catch {
     /* tombstone best-effort */
   }
+}
+
+export function peekExpiredDraftBackup(sessionId: string): DraftBackupClaim | null {
+  return freshestDraftBackup(sessionId);
 }
 
 const STORAGE_PREFIX = 'hyperneo_voice_transcript_outbox_v1.entry.';
@@ -827,14 +1005,26 @@ function pruneExpired(): void {
   // Collect-then-remove: removing while iterating by index shifts later keys
   // into the current index and silently skips them.
   try {
-    const staleMarkerKeys: string[] = [];
+    const staleMarkers: Array<{ key: string; raw: string | null }> = [];
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       if (!key || !key.startsWith(LANDED_PREFIX)) continue;
-      const marker = parseLandedMarker(localStorage.getItem(key));
-      if (!marker || now - marker.ts >= MAX_AGE_MS) staleMarkerKeys.push(key);
+      const raw = localStorage.getItem(key);
+      const marker = parseLandedMarker(raw);
+      if (!marker || now - marker.ts >= MAX_AGE_MS) staleMarkers.push({ key, raw });
     }
-    for (const key of staleMarkerKeys) {
+    for (const { key, raw } of staleMarkers) {
+      // COMPARE-AND-DELETE: another tab can write a FRESH landing to the same
+      // key between this scan and the removal — deleting it would broadcast a
+      // removal event that makes every tab drop its fresh local landing,
+      // lifting draft-save suppression over the newly merged transcript.
+      let current: string | null = null;
+      try {
+        current = localStorage.getItem(key);
+      } catch {
+        current = null;
+      }
+      if (current !== raw) continue;
       localStorage.removeItem(key);
       // localStorage removals do not emit a `storage` event in the WRITING
       // tab, so this tab's own expired landing state would linger: a later
@@ -852,10 +1042,11 @@ function pruneExpired(): void {
   } catch {
     /* storage unavailable */
   }
-  // Drop expired draft backups and clear tombstones proactively — a record
-  // whose session is never reopened would otherwise linger past its TTL with
-  // nothing to prune it. Same collect-then-remove discipline. Clear tombstones
-  // follow the backup TTL (their timestamps are wall clocks too).
+  // Drop expired draft backups proactively — a backup whose session is never
+  // reopened would otherwise linger past its TTL with nothing to prune it.
+  // Same collect-then-remove discipline as the marker scan. Clear tombstones
+  // and supersede markers follow the same TTL (their timestamps are wall
+  // clocks too).
   try {
     const staleBackupKeys: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
@@ -1013,12 +1204,22 @@ export async function flushPendingTranscripts(): Promise<void> {
         });
         removePendingTranscript(entry.id);
         delivered += 1;
-        // Announce the landing: the transcript is now merged (or staged for
-        // the next session.get merge) server-side, and the session's mounted
-        // composer — whose only get ran before this flush — must refresh to
-        // show it. The marker carries the text so any tab (or a reload) can
-        // reconcile without guessing which part of the draft is transcript.
-        markVoiceTranscriptLanded(entry.sessionId, entry.text, entry.id);
+        // Announcing a landing for an entry that was ALREADY announced (by
+        // this tab or another) is wrong: the first announcement may already
+        // have been consumed (or its marker aged out past the TTL), and a
+        // fresh generation with no staged pending would let a later
+        // clear-reconcile resurrect the already-merged transcript. Identity
+        // is matched by ENTRY ID against the announced set, REGARDLESS of
+        // whether THIS response was the deduplicated one — two tabs flushing
+        // the same shared entry race, and the tab whose ack lands LAST (even
+        // the original, non-deduped ack) must not re-announce what the other
+        // already announced. When the id is not on record (or the marker is
+        // gone), this ack is the only signal the transcript merged and the
+        // landing must be announced.
+        const alreadyAnnounced = getAnnouncedEntryIds(entry.sessionId).includes(entry.id);
+        if (!alreadyAnnounced) {
+          markVoiceTranscriptLanded(entry.sessionId, entry.text, entry.id);
+        }
       } catch (error) {
         // Socket dropped mid-flush: keep for the next reconnect. Otherwise the
         // daemon answered while connected: a timeout is ambiguous (the append
@@ -1054,9 +1255,11 @@ let cleanupStorageListener: (() => void) | null = null;
 
 /**
  * Cross-tab coordination via the `storage` event (fires in OTHER tabs when
- * this tab writes localStorage, and vice versa): an entry key written/removed
- * by another tab means that tab's disconnected enqueue is now visible here —
- * schedule a flush while this tab is connected.
+ * this tab writes localStorage, and vice versa):
+ * - an entry key was written/removed by another tab → that tab's disconnected
+ *   enqueue is now visible here — schedule a flush while this tab is connected
+ * - a landed marker appeared (another tab's flush succeeded) → add the session
+ *   to the landed set so THIS tab's mounted composer refreshes its draft
  */
 function handleStorageEvent(event: StorageEvent): void {
   const key = event.key;
@@ -1065,8 +1268,8 @@ function handleStorageEvent(event: StorageEvent): void {
     if (event.newValue === null) {
       // Another tab flushed this shared entry and removed its key — drop the
       // local mirror too, or allEntries() (where the mirror wins on conflict)
-      // would resurrect the entry here and replay an already-delivered
-      // transcript to the daemon.
+      // would resurrect the entry here and replay an already-delivered id as
+      // a false landing.
       mirror.delete(key.slice(STORAGE_PREFIX.length));
     }
     if (connectionState.value === 'connected') {
@@ -1078,7 +1281,15 @@ function handleStorageEvent(event: StorageEvent): void {
     if (marker) {
       // The marker is the AUTHORITATIVE aggregate from the writing tab —
       // replace, don't append onto this tab's stale local aggregate.
-      markVoiceTranscriptLandedLocal(sessionId, marker.text, true, marker.n, undefined, marker.ids);
+      markVoiceTranscriptLandedLocal(
+        sessionId,
+        marker.text,
+        true,
+        marker.n,
+        undefined,
+        marker.ids,
+        marker.entries
+      );
     } else if (event.newValue === null && localStorage.getItem(key) === null) {
       // Another tab pruned the marker (TTL expired) and no fresh marker was
       // written since — clear this tab's local landing so an expired landing
@@ -1109,7 +1320,8 @@ function hydrateLandedMarkers(): void {
           true,
           marker.n,
           undefined,
-          marker.ids
+          marker.ids,
+          marker.entries
         );
       }
     }
@@ -1121,12 +1333,12 @@ function hydrateLandedMarkers(): void {
 /** Flush when the connection (re)establishes. Mirrors outbound-queue. */
 export function startVoiceTranscriptOutboxFlush(): void {
   if (cleanupAutoFlush) return;
-  // TTL-clean at startup: expired entries are filtered from READS anyway, but
-  // if the app reopens after >24h and no new transcript is ever enqueued,
-  // nothing else would delete their keys. pruneExpired only — the capacity
-  // RESERVATION in prune() assumes an enqueue follows and would otherwise
-  // drop a still-deliverable transcript merely for reopening the app at the
-  // cap.
+  // TTL-clean at startup: expired entries, landed markers, and draft backups
+  // are filtered from READS anyway, but if the app reopens after >24h and no
+  // new transcript is ever enqueued, nothing else would delete their keys.
+  // pruneExpired only — the capacity RESERVATION in prune() assumes an
+  // enqueue follows and would otherwise drop a still-deliverable transcript
+  // merely for reopening the app at the cap.
   pruneExpired();
   hydrateLandedMarkers();
   window.addEventListener('storage', handleStorageEvent);
@@ -1174,5 +1386,6 @@ export function resetVoiceTranscriptOutbox(): void {
   landingMarkedAt.clear();
   landingTexts.clear();
   landingIds.clear();
+  landingEntries.clear();
   consumedMarkers.clear();
 }

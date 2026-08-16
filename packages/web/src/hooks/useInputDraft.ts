@@ -34,9 +34,9 @@ import { connectionState } from '../lib/state';
 import {
   clearDraftBackup,
   consumeVoiceTranscriptLanded,
+  getClearTombstone,
   getDraftBackup,
   getLandingGeneration,
-  getClearTombstone,
   getLandingTranscript,
   hasClearTombstone,
   isLandingLive,
@@ -89,29 +89,42 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   const contentSignal = useSignal('');
   const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevSessionIdRef = useRef<string | null>(null);
+  // The live session id, so a cancelled get can tell "the user typed" (same
+  // session — reconcile the merged transcript into the local draft) from "the
+  // hook moved to another session" (never touch the new session's content).
+  const currentSessionIdRef = useRef(sessionId);
   // The sessionId whose initial draft load has settled. While a session's
   // initial load is still in flight, the signal is transiently '' — letting the
   // save effect issue its immediate "empty → clear" write in that window can
   // wipe the server-side draft (including a voice transcript the daemon merged
   // while serving the load) before the loaded value is re-persisted.
   const initialLoadSettledRef = useRef<string | null>(null);
-  // The live session id, so a cancelled get can tell "the user typed" (same
-  // session — reconcile the merged transcript into the local draft) from "the
-  // hook moved to another session" (never touch the new session's content).
-  const currentSessionIdRef = useRef(sessionId);
+  // The landing generation whose reconciliation was already folded into local
+  // content (or consumed). Overlapping refresh gets can both observe the same
+  // merged draft; without this, each cancelled response blindly appends the
+  // full transcript and one voice occurrence becomes two.
+  const foldedLandingRef = useRef<Map<string, number>>(new Map());
   // A session awaiting a COMMITTED clear before its landing can be merged.
   // While set, the refresh must not run: merging the pending onto the old
   // draft would resurrect text the user already sent or cleared. The clear is
   // retried on the next effect run (reconnect / content change).
   const pendingClearRef = useRef<string | null>(null);
-  // Arm the owed-clear reconcile retry backoff from outside the retry effect
-  // (the connection subscription alone only fires on connection CHANGES).
-  const flushKickRef = useRef<() => void>(() => {});
   // The daemon draft VERSION each session's composer last read (from
   // session.get). Saves echo it as expectedDraftVersion so the daemon can
   // tell a write derived from the CURRENT draft (applied as-is) from a stale
   // in-flight save (transcripts folded in) — a suffix comparison cannot.
   const draftVersionsRef = useRef<Map<string, number>>(new Map());
+  // Arm the backup-flush retry backoff from outside the retry effect (the
+  // connection subscription alone only fires on connection CHANGES).
+  const flushKickRef = useRef<() => void>(() => {});
+  // Claim ids of ACTIVE-CONTENT merges keyed per session, BOUND to the exact
+  // content they make idempotent: the id must survive retries of the SAME
+  // content (a merge that committed with a lost ack is recognized, not
+  // rewritten), but NEWER content must mint its own id — reusing the old one
+  // would let the daemon dedup the request as the earlier merge and return
+  // its value, replacing newer edits with older committed content.
+  const activeMergeClaimsRef = useRef<Map<string, { claimId: string; content: string }>>(new Map());
+
   // Advance the cached draft version MONOTONICALLY: overlapping saves and
   // gets can acknowledge out of order, and an older response must never move
   // the cache backward (the next save would then be misclassified as stale
@@ -121,15 +134,9 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     const cached = draftVersionsRef.current.get(sid);
     if (cached === undefined || version > cached) draftVersionsRef.current.set(sid, version);
   };
-  // The landing generation whose reconciliation was already folded into local
-  // content (or consumed). Overlapping refresh gets can both observe the same
-  // merged draft; without this, each cancelled response blindly appends the
-  // full transcript and one voice occurrence becomes two.
-  const foldedLandingRef = useRef<Map<string, number>>(new Map());
-
   // Consume a landing generation and record it as reconciled — every path
-  // that settles a landing goes through here, so the fold guard above stays
-  // consistent with what was actually handled.
+  // that settles a landing goes through here, so the fold guard above and the
+  // clear tombstone below stay consistent with what was actually handled.
   const consumeLanding = useCallback((sessionId: string, generation: number): void => {
     foldedLandingRef.current.set(sessionId, generation);
     removeClearTombstone(sessionId);
@@ -147,7 +154,17 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // the daemon KEPT `inputDraftVoicePending` (draft too full to merge — the
   // transcript is still staged, so a landing must not be consumed as
   // delivered), `wasCancelled` reports whether the effect was torn down while
-  // the get was in flight.
+  // the get was in flight, `draft` is the merged server draft the daemon
+  // returned, `baseline`/`baselineSeq` identify the pending sequence the
+  // baseline snapshot belongs to (the clear-before-merge reconciliation
+  // validates both — draft text alone cannot distinguish a baseline a NEWER
+  // sequence replaced). A RESOLVED get is a side-effecting server-side merge
+  // even if the client no longer applies the response (the draft write is
+  // guarded below), so `onResult` still fires so the landing can be consumed —
+  // otherwise a later clear could delete the merged transcript. The initial
+  // load marks itself settled only when not cancelled; the replay refresh
+  // consumes its landing on a successful FULL merge regardless of
+  // cancellation.
   const loadDraft = useCallback(
     (
       targetSessionId: string,
@@ -432,9 +449,9 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       sessionId,
       () => cancelled,
       (ok, pendingRetained, wasCancelled, draft, baseline) => {
+        if (wasCancelled) return; // session changed / unmounted — not our load
         // Only a load that was NOT cancelled (session still current) marks the
         // initial load settled; a stale rejection must not settle a newer load.
-        if (wasCancelled) return;
         initialLoadSettledRef.current = sessionId;
         // A clear the previous page life owed but could not COMMIT (socket
         // down) persists as a tombstone: do NOT restore the pre-clear backup
@@ -568,16 +585,8 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     return () => {
       cancelled = true;
     };
-  }, [sessionId, contentSignal, loadDraft, reconcileOwedClear]);
+  }, [sessionId, contentSignal, loadDraft, consumeLanding, reconcileOwedClear]);
 
-  // Per-session previous content: the clear-detection below must be scoped to
-  // the CURRENT session — a deferred landing in another session must not make
-  // this session's freshly-loading empty composer look like an explicit clear
-  // (which would delete its persisted draft before the merge).
-  const prevReplayContentRef = useRef<{ sessionId: string | null; content: string }>({
-    sessionId: null,
-    content: '',
-  });
   // Refresh the mounted draft when the outbox lands a transcript for this
   // session (e.g. after a page reload or reconnect replay). The pending field
   // is otherwise merged only during session.get, which runs on session change —
@@ -594,12 +603,23 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // `generation` is consumed only after a refresh that observed exactly that
   // generation AND saw the pending fully merged — a newer landing or a
   // retained pending (draft too full) keeps a refresh pending.
+  // Per-session previous content: the clear-detection below must be scoped to
+  // the CURRENT session — a deferred landing in another session must not make
+  // this session's freshly-loading empty composer look like an explicit clear
+  // (which would delete its persisted draft before the merge).
+  const prevReplayContentRef = useRef<{ sessionId: string | null; content: string }>({
+    sessionId: null,
+    content: '',
+  });
   useSignalEffect(() => {
     const generation = voiceTranscriptLandedSignal.value.get(sessionId);
     if (generation === undefined || !isLandingLive(sessionId)) return;
-    // Wait for the initial load: its settle handler owns applying the loaded
-    // draft, and a refresh racing it could write a stale merged draft over
-    // the fresher load.
+    // Wait for the initial load: its settle handler owns the reload
+    // reconciliation (backup restore + transcript fold), and a refresh racing
+    // that restore could write the merged draft over the restored backup or
+    // consume the landing first. The settle path leaves the landing live only
+    // when the pending was retained, and the content change settling the load
+    // applies re-runs this effect once the guard passes.
     if (initialLoadSettledRef.current !== sessionId) return;
     void connectionState.value;
     const content = contentSignal.value;
@@ -624,6 +644,8 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     // A clear is owed but cannot commit yet: keep it in memory for the next
     // effect run AND persist a tombstone so a RELOAD before the reconnect
     // does not restore the pre-clear backup and resurrect the sent text.
+    // `baselineSeq`, when the owed step was a strip, names the sequence so a
+    // retry can recognize a strip that committed with a lost acknowledgement.
     const oweClear = (baselineSeq?: number) => {
       pendingClearRef.current = sessionId;
       const persisted = saveClearTombstone(sessionId, baselineSeq);
@@ -638,7 +660,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     // The chained reconciles below guard on the SESSION, not the effect's
     // `cancelled`: applying the merged draft to the composer is itself a
     // content change that re-runs this effect and flips `cancelled`, which
-    // would otherwise abort the refresh mid-chain. Only a real session
+    // would otherwise abort the strip/refresh mid-chain. Only a real session
     // switch (or unmount) must stop the reconcile.
     const stillCurrent = () => currentSessionIdRef.current === sessionId;
     const refresh = () => {
@@ -663,7 +685,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       // A clear is owed (just detected, or still owed from a failed attempt).
       const hub = connectionManager.getHubIfConnected();
       if (!hub) {
-        oweClear(); // no socket — retry on reconnect
+        oweClear(); // no socket — retry on reconnect, survive a reload
         return () => {
           cancelled = true;
         };
@@ -677,9 +699,9 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       // A failed persist falls back to dropping the backup (oweClear's rule).
       if (!saveClearTombstone(sessionId)) clearDraftBackup(sessionId);
       // Get FIRST: session.get performs (or reveals) the pending merge, so the
-      // transcript is IN the draft before anything is cleared. An unconditional
-      // inputDraft:null here could delete a transcript ANOTHER tab already
-      // merged while this tab's landing was deferred.
+      // transcript is IN the draft before anything is cleared. The previous
+      // unconditional inputDraft:null here could delete a transcript ANOTHER
+      // tab already merged while this tab's landing was deferred.
       loadDraft(
         sessionId,
         () => cancelled,
@@ -783,13 +805,18 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     };
   });
 
-  // Claim ids of ACTIVE-CONTENT merges keyed per session, BOUND to the exact
-  // content they make idempotent: the id must survive retries of the SAME
-  // content (a merge that committed with a lost ack is recognized, not
-  // rewritten), but NEWER content must mint its own id — reusing the old one
-  // would let the daemon dedup the request as the earlier merge and return
-  // its value, replacing newer edits with older committed content.
-  const activeMergeClaimsRef = useRef<Map<string, { claimId: string; content: string }>>(new Map());
+  // Save draft with debouncing - uses useSignalEffect to react to signal changes
+  // Last state observed for each session while it was active. The flush below
+  // must NOT read the live signal: by the time it runs, the session-change
+  // effect has already cleared the signal to '', and flushing that transient
+  // value would wipe the previous session's draft on every switch. `cleared`
+  // marks an EXPLICIT post-load deletion, which the switch flush retries (the
+  // immediate clear may have failed before reaching SQLite).
+  const lastSeenContentRef = useRef<{
+    sessionId: string | null;
+    content: string;
+    cleared?: boolean;
+  }>({ sessionId: null, content: '' });
   // Departed sessions' backup flushes that could not run or commit during
   // their switch (socket down / update failed), keyed per session: switching
   // offline through several sessions must queue one flush EACH, not overwrite
@@ -808,7 +835,6 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       }
     >
   >(new Map());
-
   // Retry retained backup flushes once the connection is restored. A flush
   // whose session is active again is ADOPTED into an idle composer (its edits
   // are newer than the stale server draft; normal saves then persist them) —
@@ -816,9 +842,9 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // a later switch. Subscribed explicitly (not via a signal effect) so
   // connection changes do not re-run the component's other signal effects.
   useEffect(() => {
-    // A failed flush/reconcile while still CONNECTED (RPC timeout / daemon
-    // transient) would never be retried by the connection subscription alone —
-    // back off and retry until it commits.
+    // A failed flush while still CONNECTED (RPC timeout / daemon transient)
+    // would never be retried by the connection subscription alone — back off
+    // and retry until it commits.
     const flushRetryTimerRef: { current: ReturnType<typeof setTimeout> | null } = {
       current: null,
     };
@@ -1004,19 +1030,6 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       if (flushRetryTimerRef.current) clearTimeout(flushRetryTimerRef.current);
     };
   }, [contentSignal, reconcileOwedClear]);
-
-  // Save draft with debouncing - uses useSignalEffect to react to signal changes
-  // Last state observed for each session while it was active. The flush below
-  // must NOT read the live signal: by the time it runs, the session-change
-  // effect has already cleared the signal to '', and flushing that transient
-  // value would wipe the previous session's draft on every switch. `cleared`
-  // marks an EXPLICIT post-load deletion, which the switch flush retries (the
-  // immediate clear may have failed before reaching SQLite).
-  const lastSeenContentRef = useRef<{
-    sessionId: string | null;
-    content: string;
-    cleared?: boolean;
-  }>({ sessionId: null, content: '' });
   useSignalEffect(() => {
     const content = contentSignal.value;
 
@@ -1028,16 +1041,18 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       clearTimeout(draftSaveTimeoutRef.current);
       draftSaveTimeoutRef.current = null;
     }
-
     // If sessionId changed, flush the previous session's draft immediately —
     // its LAST KNOWN state. Skip only when nothing is known to flush: content,
     // or an explicit deletion whose clear should be retried. The transient
-    // pre-load '' is never recorded, so it cannot wipe the previous draft.
+    // pre-load '' is never recorded, so it cannot wipe the previous draft. A
+    // departed session with a PENDING landing is also skipped — its merged
+    // transcript must not be overwritten by stale local text — but the session
+    // ref still advances below so the active session is not stuck matching an
+    // old landing.
     if (prevSessionIdRef.current && prevSessionIdRef.current !== sessionId) {
       const prevSessionId = prevSessionIdRef.current;
       const last = lastSeenContentRef.current;
       const trimmedContent = last.sessionId === prevSessionId ? last.content.trim() : '';
-
       // Liveness (not raw signal membership): an EXPIRED landing no longer
       // suppresses anything, and checking it here also drops the stale local
       // entry — otherwise a >24h-old landing would block the departed
@@ -1094,12 +1109,13 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             claimId: flushClaimId ?? generateUUID(),
             ts: claimed.ts,
           });
-          // Arm the retry pass NOW: this first attempt failed while CONNECTED
-          // (the merge was declined or the RPC errored), so neither the
-          // connection subscription (fires only on CHANGES) nor a later
-          // switch will revisit the claim — without this it idles in
-          // localStorage until the TTL prunes it. The kick is a no-op while
-          // disconnected (the reconnect subscription owns that case).
+          // Arm the retry pass NOW: this first attempt failed while
+          // CONNECTED (the merge was declined or the RPC errored), so
+          // neither the connection subscription (fires only on CHANGES)
+          // nor a later switch will revisit the claim — without this it
+          // idles in localStorage until the TTL prunes it. The kick is a
+          // no-op while disconnected (the reconnect subscription owns that
+          // case).
           flushKickRef.current();
         }
       };
@@ -1167,7 +1183,8 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     // been updated (this tab's or another tab's refresh merged the landed
     // transcript), so this tab's local copy is stale and a debounced save would
     // overwrite the transcript. Suppress until the landing is consumed by the
-    // idle refresh — but PERSIST the evolving local draft to the draft backup
+    // idle refresh, which itself owns the clear-before-merge for an explicit
+    // send/clear — but PERSIST the evolving local draft to the draft backup
     // (restored on reload / when the landing resolves), so protecting the
     // landed transcript does not disable draft durability. The generation is
     // stored so the reconciliation retires exactly this landing's backup.
@@ -1178,7 +1195,8 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         // localStorage refused the backup (disabled / quota): suppressing the
         // save would leave the typed text only in the composer signal — lost
         // to a switch, reload, or close. Fall through to the NORMAL save: the
-        // typed text is newer than the server draft and must not vanish.
+        // daemon's expectedDraftVersion check folds any merged transcripts
+        // into the write, so the fallback is transcript-safe.
       } else {
         return;
       }
