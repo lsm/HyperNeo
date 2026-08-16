@@ -70,6 +70,15 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // wipe the server-side draft (including a voice transcript the daemon merged
   // while serving the load) before the loaded value is re-persisted.
   const initialLoadSettledRef = useRef<string | null>(null);
+  // The live session id, so a cancelled get can tell "the user typed" (same
+  // session — reconcile the merged transcript into the local draft) from "the
+  // hook moved to another session" (never touch the new session's content).
+  const currentSessionIdRef = useRef(sessionId);
+  // A session awaiting a COMMITTED clear before its landing can be merged.
+  // While set, the refresh must not run: merging the pending onto the old
+  // draft would resurrect text the user already sent or cleared. The clear is
+  // retried on the next effect run (reconnect / content change).
+  const pendingClearRef = useRef<string | null>(null);
   // The landing generation whose reconciliation was already folded into local
   // content (or consumed). Overlapping refresh gets can both observe the same
   // merged draft; without this, each cancelled response blindly appends the
@@ -105,13 +114,18 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         pendingRetained?: boolean,
         wasCancelled?: boolean,
         draft?: string
-      ) => void
+      ) => void,
+      reconcileOnCancel?: boolean
     ): void => {
       const hub = connectionManager.getHubIfConnected();
       if (!hub) {
         onResult?.(false);
         return;
       }
+      // The landing generation at REQUEST time — the fold below must happen
+      // at most once per generation, however many overlapping gets observe
+      // the same merged draft.
+      const requestedGeneration = voiceTranscriptLandedSignal.peek().get(targetSessionId);
       hub
         .request<{
           session: { metadata?: { inputDraft?: string; inputDraftVoicePending?: string | null } };
@@ -124,6 +138,36 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           const pendingRetained = !!response.session?.metadata?.inputDraftVoicePending;
           if (!cancelled && draft) {
             contentSignal.value = draft;
+          } else if (
+            cancelled &&
+            reconcileOnCancel &&
+            // Only a get that MERGED (pendingRetained false) put the transcript
+            // on the server; folding after a retained pending would bake the
+            // text into the local draft AND leave it staged server-side, and a
+            // later reload restore would then duplicate it.
+            !pendingRetained &&
+            currentSessionIdRef.current === targetSessionId &&
+            // Fold each landing generation at most once: overlapping refresh
+            // gets can both observe the same already-merged draft, and a
+            // second blind append would duplicate the transcript.
+            foldedLandingRef.current.get(targetSessionId) !== requestedGeneration
+          ) {
+            // A cancelled REPLAY get still merged the transcript server-side.
+            // Fold ONLY the transcripts — from the landing aggregate, when the
+            // merged draft actually ends with it — into the local typed text so
+            // a subsequent save does not overwrite it (consuming the landing
+            // below re-enables saves). Appended blindly, NOT via a substring
+            // check: the user may legitimately have typed the same phrase, and
+            // skipping then would drop the voice occurrence. Scoped to the
+            // SAME session — a stale get from a moved-on session must never
+            // touch the new session's content.
+            const transcript = getLandingTranscript(targetSessionId);
+            if (transcript && (draft ?? '').endsWith(transcript)) {
+              contentSignal.value = appendDraftText(contentSignal.peek(), transcript);
+            }
+            if (requestedGeneration !== undefined) {
+              foldedLandingRef.current.set(targetSessionId, requestedGeneration);
+            }
           }
           onResult?.(true, pendingRetained, cancelled, draft);
         })
@@ -151,6 +195,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     // this, loading A -> B -> back to A would see the stale marker for A and
     // clear A's durable draft while A's fresh get is still in flight.
     initialLoadSettledRef.current = null;
+    currentSessionIdRef.current = sessionId;
 
     // Clear content immediately to prevent showing stale draft
     contentSignal.value = '';
@@ -227,6 +272,14 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     };
   }, [sessionId, contentSignal, loadDraft]);
 
+  // Per-session previous content: the clear-detection below must be scoped to
+  // the CURRENT session — a deferred landing in another session must not make
+  // this session's freshly-loading empty composer look like an explicit clear
+  // (which would delete its persisted draft before the merge).
+  const prevReplayContentRef = useRef<{ sessionId: string | null; content: string }>({
+    sessionId: null,
+    content: '',
+  });
   // Refresh the mounted draft when the outbox lands a transcript for this
   // session (e.g. after a page reload or reconnect replay). The pending field
   // is otherwise merged only during session.get, which runs on session change —
@@ -252,19 +305,119 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     if (initialLoadSettledRef.current !== sessionId) return;
     void connectionState.value;
     const content = contentSignal.value;
-    if (content.trim() !== '') return; // defer behind the user's typing
+    // The composer just emptied (a send/clear) when ITS OWN previous content
+    // was non-empty: the possibly-stale server draft must be reconciled
+    // BEFORE the merge is treated as delivered — or the merge could
+    // resurrect already-sent text. A fresh-mount empty composer keeps the
+    // get only.
+    const justCleared =
+      prevReplayContentRef.current.sessionId === sessionId &&
+      prevReplayContentRef.current.content.trim() !== '';
+    // An owed clear overrides the non-empty deferral: the content is the
+    // SERVER's merged draft (applied by the failed attempt's own get), not
+    // user typing — deferring here would leave text the user already sent
+    // resurrected for the rest of this page life. Genuine typing still wins:
+    // it re-runs this effect, whose cleanup cancels the chain's stale gets,
+    // and the reconcile-on-cancel fold merges the transcripts into the typed
+    // text instead of overwriting it.
+    prevReplayContentRef.current = { sessionId, content };
+    if (content.trim() !== '' && pendingClearRef.current !== sessionId) return;
     let cancelled = false;
-    loadDraft(
-      sessionId,
-      () => cancelled,
-      (ok, pendingRetained, _wasCancelled) => {
-        // Consume even when this run was cancelled mid-get: a RESOLVED get
-        // already merged (and cleared) the pending server-side, so the
-        // landing is handled — leaving it pending would let a later clear
-        // delete the merged transcript.
-        if (ok && !pendingRetained) consumeLanding(sessionId, generation);
+    // A clear is owed but cannot commit yet: keep it in memory for the next
+    // effect run (reconnect / content change retries it).
+    const oweClear = () => {
+      pendingClearRef.current = sessionId;
+    };
+    // The chained reconciles below guard on the SESSION, not the effect's
+    // `cancelled`: applying the merged draft to the composer is itself a
+    // content change that re-runs this effect and flips `cancelled`, which
+    // would otherwise abort the refresh mid-chain. Only a real session
+    // switch (or unmount) must stop the reconcile.
+    const stillCurrent = () => currentSessionIdRef.current === sessionId;
+    const refresh = () => {
+      if (!stillCurrent()) return;
+      loadDraft(
+        sessionId,
+        () => cancelled,
+        (ok, pendingRetained, _wasCancelled) => {
+          // Consume even when this run was cancelled mid-get: a RESOLVED get
+          // already merged (and cleared) the pending server-side, so the
+          // landing is handled — leaving it pending would let a later clear
+          // delete the merged transcript.
+          if (ok && !pendingRetained) consumeLanding(sessionId, generation);
+        },
+        // A replay get cancelled by typing must reconcile the merged transcript
+        // into the local draft (see loadDraft) so the re-enabled save does not
+        // overwrite it.
+        true
+      );
+    };
+    if (justCleared || pendingClearRef.current === sessionId) {
+      // A clear is owed (just detected, or still owed from a failed attempt).
+      const hub = connectionManager.getHubIfConnected();
+      if (!hub) {
+        oweClear(); // no socket — retry on reconnect
+        return () => {
+          cancelled = true;
+        };
       }
-    );
+      pendingClearRef.current = null;
+      // Get FIRST: session.get performs (or reveals) the pending merge, so the
+      // transcript is IN the draft before anything is cleared. An unconditional
+      // inputDraft:null here could delete a transcript ANOTHER tab already
+      // merged while this tab's landing was deferred.
+      loadDraft(
+        sessionId,
+        () => cancelled,
+        (ok, pendingRetained, _wasCancelled, draft) => {
+          if (!ok) {
+            oweClear(); // get failed — retry on reconnect
+            return;
+          }
+          if (pendingRetained) {
+            // Still staged: clear the stale baseline the merge would land on —
+            // CONDITIONALLY, so a newer draft saved meanwhile survives — then
+            // the refresh get merges the pending onto a clean draft.
+            hub
+              .request<{ cleared?: boolean }>('session.clearInputDraftIf', {
+                sessionId,
+                expected: draft ?? '',
+              })
+              .then((result) => {
+                if (!result.cleared) {
+                  // A concurrent draft write raced the clear — refreshing now
+                  // would merge the pending onto the stale pre-clear text and
+                  // consume the landing, abandoning the user's clear intent
+                  // and resurrecting the old text. Keep the clear owed.
+                  oweClear();
+                  return;
+                }
+                if (stillCurrent()) refresh();
+              })
+              .catch(() => {
+                // The clear did not commit — the merge must wait, or the
+                // pending would land on the stale draft and resurrect
+                // already-sent text.
+                oweClear();
+              });
+            return;
+          }
+          // Merged — by this get or another tab's. The merge landed on
+          // whatever draft was current; adopt the server's draft through the
+          // refresh, which consumes the landing once it sees the pending
+          // fully merged.
+          refresh();
+        },
+        true
+      );
+      // Register the cleanup so switching sessions mid-chain cancels the
+      // refresh (the stale session's draft must not load into the signal now
+      // backing another session).
+      return () => {
+        cancelled = true;
+      };
+    }
+    refresh();
     return () => {
       cancelled = true;
     };

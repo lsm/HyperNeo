@@ -500,6 +500,164 @@ describe('useInputDraft', () => {
       expect(saves).toHaveLength(0);
     });
 
+    it('clears conditionally then merges when the transcript is still staged (pendingRetained)', async () => {
+      const state = { merged: false };
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return state.merged
+            ? { session: { metadata: { inputDraft: 'transcript' } } }
+            : {
+                // Draft too full at merge time — the pending is still staged on
+                // top of the stale baseline.
+                session: {
+                  metadata: { inputDraft: 'stale baseline', inputDraftVoicePending: 'transcript' },
+                },
+              };
+        }
+        if (method === 'session.clearInputDraftIf') {
+          state.merged = true;
+          return { cleared: true };
+        }
+        return {};
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      result.current.setContent('text to send');
+      markVoiceTranscriptLanded('session-1', 'transcript');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      result.current.clear();
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // The stale baseline is cleared CONDITIONALLY (a newer draft saved
+      // meanwhile must survive), then the refresh merges the staged pending
+      // onto the clean draft.
+      const clearCall = mockHub.request.mock.calls.find(([m]) => m === 'session.clearInputDraftIf');
+      expect(clearCall).toBeTruthy();
+      expect(clearCall![1]).toEqual({ sessionId: 'session-1', expected: 'stale baseline' });
+      expect(result.current.content).toBe('transcript');
+      expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(false);
+    });
+
+    it('does not clear a freshly-loaded session because ANOTHER session deferred a landing', async () => {
+      mockHub.request.mockResolvedValue({ session: { metadata: { inputDraft: 'B draft' } } });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result, rerender } = renderHook(({ s }) => useInputDraft(s), {
+        initialProps: { s: 'session-A' },
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // A has a deferred landing + non-empty text; B also has a landing.
+      result.current.setContent('A text');
+      voiceTranscriptLandedSignal.value = new Map([
+        ['session-A', 1],
+        ['session-B', 1],
+      ]);
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // Switching to B must NOT treat B's freshly-loading empty composer as an
+      // explicit clear — that would delete B's persisted draft before its
+      // pending transcript is merged.
+      rerender({ s: 'session-B' });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      const clears = mockHub.request.mock.calls.filter(
+        ([m, d]) =>
+          m === 'session.update' && d?.sessionId === 'session-B' && d?.metadata?.inputDraft === null
+      );
+      expect(clears).toHaveLength(0);
+      expect(result.current.content).toBe('B draft');
+    });
+
+    it('advances the session ref past a deferred landing so edits in a new session save', async () => {
+      mockHub.request.mockResolvedValue({ session: { metadata: { inputDraft: '' } } });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result, rerender } = renderHook(({ s }) => useInputDraft(s), {
+        initialProps: { s: 'session-A' },
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      result.current.setContent('A text');
+      voiceTranscriptLandedSignal.value = new Map([['session-A', 1]]);
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // Switch to B — the suppressed switch flush must still advance the ref.
+      rerender({ s: 'session-B' });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // Editing B must save — it must not stay suppressed by A's stale landing.
+      const before = mockHub.request.mock.calls.filter(([m]) => m === 'session.update').length;
+      result.current.setContent('B draft');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      const after = mockHub.request.mock.calls.filter(([m]) => m === 'session.update').length;
+      expect(after).toBeGreaterThan(before);
+    });
+
+    it('consumes the landing when a cancelled refresh still resolved (server merged it)', async () => {
+      let resolveGet!: (value: { session: { metadata: { inputDraft?: string } } }) => void;
+      mockHub.request
+        .mockResolvedValueOnce({ session: { metadata: { inputDraft: '' } } }) // initial
+        .mockImplementationOnce(
+          () =>
+            new Promise((r) => {
+              resolveGet = r;
+            })
+        ); // refresh get
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      await act(async () => {
+        markVoiceTranscriptLanded('session-1', 'transcript');
+      });
+      // The refresh get is now in-flight.
+      expect(resolveGet).toBeTypeOf('function');
+      // The user types — cancelling that effect run, but the server-side merge
+      // of the in-flight get still happens.
+      await act(async () => {
+        result.current.setContent('typing');
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      await act(async () => {
+        resolveGet({ session: { metadata: { inputDraft: 'baseline transcript' } } });
+        await vi.runAllTimersAsync();
+      });
+      // The landing is consumed — a later clear must not delete the merged
+      // transcript — and ONLY the transcript (not the whole merged draft with
+      // its stale baseline) was folded into the local typed text so a
+      // subsequent save does not overwrite it.
+      expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(false);
+      expect(result.current.content).toBe('typing transcript');
+    });
+
     it('refreshes the mounted draft when the outbox lands a transcript for its session', async () => {
       // The initial get sees no draft; the replay's get returns the landed one.
       mockHub.request.mockResolvedValueOnce({ session: { metadata: { inputDraft: '' } } });
