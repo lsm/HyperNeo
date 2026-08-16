@@ -536,10 +536,10 @@ function splitStatusPrefixClause(clause: string): string[] {
 
 /**
  * Whether a manual note is purely process status. Every clause of the
- * summary must carry status/pending language for the note to be thin — one
- * status token does not discard a substantive clause in the same note
- * ("Root cause was lock contention; rollout is blocked pending a cache fix"
- * keeps its retrospective for the diagnosis).
+ * summary must be status for the note to be thin — one status token does not
+ * discard a substantive clause in the same note ("Root cause was lock
+ * contention; rollout is blocked pending a cache fix" keeps its
+ * retrospective for the diagnosis).
  */
 function isThinManualNote(summary: string): boolean {
   const clauses = summary
@@ -548,7 +548,7 @@ function isThinManualNote(summary: string): boolean {
     .map((clause) => clause.trim())
     .filter(Boolean);
   if (clauses.length === 0) return true;
-  return clauses.every((clause) => STATUS_LANGUAGE_RE.test(clause));
+  return clauses.every(isStatusClause);
 }
 
 /**
@@ -696,12 +696,22 @@ const INTERVENING_ADVERBS = new Set([
 ]);
 
 /**
+ * Adversative conjunctions. Unlike plain "and", they introduce a contrasting
+ * assertion ("Tests might pass but failed"), so an outcome directly after
+ * one — even behind adverbs — starts its own clause and must not inherit the
+ * earlier qualifier.
+ */
+const ADVERSATIVE_CONJUNCTIONS = new Set(['but', 'while', 'whereas', 'although', 'though']);
+
+/**
  * Whether a prefix (the text before an outcome match) carries a qualifier
  * that belongs to THIS outcome's clause. A conjunction is a clause boundary
  * when it introduces a new subject ("No errors and tests passed" — "no"
- * scopes only the errors clause), but NOT when it coordinates predicates
- * under a shared modal ("Tests will run and pass", "CI will run and report
- * failures", "Tests will run and eventually pass" — "will" still applies).
+ * scopes only the errors clause) or is adversative with the outcome as its
+ * predicate ("Tests might pass but failed"), but NOT when it coordinates
+ * predicates under a shared modal ("Tests will run and pass", "CI will run
+ * and report failures", "Tests will run and eventually pass" — "will" still
+ * applies).
  */
 function prefixHasQualifier(prefix: string): boolean {
   let cut = -1;
@@ -710,25 +720,34 @@ function prefixHasQualifier(prefix: string): boolean {
     cut = match.index;
     conjunctionLength = match[0].length;
   }
-  if (cut >= 0) {
-    const afterConjunction = prefix.slice(cut + conjunctionLength).trimStart();
-    if (afterConjunction) {
-      const words = afterConjunction.trim().split(/\s+/);
-      let index = 0;
-      while (index < words.length && INTERVENING_ADVERBS.has(words[index].toLowerCase())) {
-        index++;
-      }
-      // Only adverbs sit between the conjunction and the outcome — the
-      // outcome itself continues the coordinated predicate, as it does when
-      // an explicit coordinated verb leads ("will run and report failures").
-      // Anything else is a new clause's subject, so the conjunction ends the
-      // qualified clause.
-      const continuesPredicate =
-        index === words.length || COORDINATED_VERBS.has(words[index].toLowerCase());
-      if (!continuesPredicate) {
-        return NON_AFFIRMATIVE_PREFIX_RE.test(prefix.slice(cut));
-      }
+  if (cut < 0) {
+    return NON_AFFIRMATIVE_PREFIX_RE.test(prefix);
+  }
+  const conjunction = prefix.slice(cut, cut + conjunctionLength).toLowerCase();
+  const words = prefix
+    .slice(cut + conjunctionLength)
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  let index = 0;
+  while (index < words.length && INTERVENING_ADVERBS.has(words[index].toLowerCase())) {
+    index++;
+  }
+  if (index < words.length) {
+    // A word that is neither an adverb nor a coordinated verb is a new
+    // clause's subject; a coordinated verb ("will run and report failures")
+    // shares the earlier modal.
+    if (!COORDINATED_VERBS.has(words[index].toLowerCase())) {
+      return NON_AFFIRMATIVE_PREFIX_RE.test(prefix.slice(cut));
     }
+    return NON_AFFIRMATIVE_PREFIX_RE.test(prefix);
+  }
+  // Only adverbs (or nothing) sit between the conjunction and the outcome,
+  // so the outcome verb itself continues the coordinated predicate ("will
+  // run and eventually pass") — except after an adversative conjunction,
+  // whose contrasting outcome must not inherit the earlier qualifier.
+  if (ADVERSATIVE_CONJUNCTIONS.has(conjunction)) {
+    return NON_AFFIRMATIVE_PREFIX_RE.test(prefix.slice(cut));
   }
   return NON_AFFIRMATIVE_PREFIX_RE.test(prefix);
 }
@@ -828,17 +847,51 @@ function hasArtifactOutcome(text: string): boolean {
 }
 
 /**
- * Status/pending language: the recognizable signature of the process-level
- * notes the no-op gate targets ("waiting for X", "not done yet", "will do
- * Y", "no update"). Includes the bare completion words ("done", "completed",
- * "approved") that AFFIRMATIVE_OUTCOME_RE deliberately excludes — they are
- * process status, not work artifacts, so a note that says only "Done" is
- * thin ("complete" alone is left out: as an adjective it appears in
- * substantive notes like "complete rewrite of the parser"). Evaluated per
- * clause: a note is thin only when every clause carries this signature — a
- * clause without it is substantive qualitative content (a diagnosis,
- * lesson, decision, or observation) that keeps its retrospective, since
- * substantive content is not always an achieved outcome.
+ * Hard status/pending markers: the recognizable signature of process-level
+ * clauses ("waiting for X", "not done yet", "no update"). Includes the bare
+ * completion words ("done", "completed", "approved") that
+ * AFFIRMATIVE_OUTCOME_RE deliberately excludes — they are process status,
+ * not work artifacts ("complete" alone is left out: as an adjective it
+ * appears in substantive notes like "complete rewrite of the parser"). A
+ * clause with any of these is process status regardless of anything else.
+ */
+const PENDING_MARKER_RE =
+  /\b(?:waiting|wait|pending|queued|incomplete|unfinished|planned|scheduled|upcoming|todo|done|completed|approved|blocked|stalled|goal|target|aim|need(?:s|ed)? to|must|has to|have to|required to|not\s+(?:yet|done|started|run|runned)|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|no\s|never|not\s|later|soon|tomorrow|tbd|n\/a)\b/i;
+
+/**
+ * Bare modals, ambiguous between prospective work status ("tests should
+ * pass", "will do Y") and a substantive recommendation or decision. When a
+ * clause's only status signal is a modal, the recommendation test decides.
+ */
+const MODAL_MARKER_RE = /\b(?:will|would|should|could|might|maybe)\b/i;
+
+/**
+ * Recommendation/decision shapes: a first-person subject with a modal
+ * ("we should …"), a modal followed by an advisory verb about the code
+ * ("should avoid global mutable caches"), or a rationale clause ("because
+ * teardown races"). These are substantive lessons, not prospective status,
+ * so the modal alone must not make the clause thin. "must" and the
+ * ship/deploy verbs are deliberately absent — "must publish release v3.0.0"
+ * is required work, and hard pending markers already outrank this test.
+ */
+const RECOMMENDATION_RE =
+  /\b(?:we|i|one)\s+(?:should|could|would|might)\b|\b(?:should|could|would|might)\s+(?:avoid|use|prefer|adopt|remove|replace|refactor|extract|split|gate|wrap|isolate|pin|disable|enable|standardize|document|migrate|upgrade|introduce|drop|add|move|cache)\b|\b(?:because|so that|to avoid|to prevent|since|otherwise)\b/i;
+
+/**
+ * Whether a manual-note clause is process status. Hard pending markers
+ * decide immediately; a bare modal leaves the clause thin only when it does
+ * not read as a recommendation.
+ */
+function isStatusClause(clause: string): boolean {
+  if (PENDING_MARKER_RE.test(clause)) return true;
+  if (!MODAL_MARKER_RE.test(clause)) return false;
+  return !RECOMMENDATION_RE.test(clause);
+}
+
+/**
+ * Status/pending language for status-prefix labels: the full vocabulary
+ * (hard markers plus the bare modals) — a "Will:" label splits its colon
+ * even though a modal mid-clause needs the recommendation test.
  */
 const STATUS_LANGUAGE_RE =
   /\b(?:waiting|wait|pending|queued|incomplete|unfinished|planned|scheduled|upcoming|todo|done|completed|approved|blocked|stalled|goal|target|aim|need(?:s|ed)? to|must|has to|have to|required to|not\s+(?:yet|done|started|run|runned)|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|no\s|never|not\s|will|would|should|could|might|maybe|later|soon|tomorrow|tbd|n\/a)\b/i;
