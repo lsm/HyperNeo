@@ -10,7 +10,7 @@ export interface StructuredLogFileSinkOptions {
   maxPendingBytes: number;
 }
 
-const SENSITIVE_KEY = /token|secret|password|api[-_]?key|authorization|cookie/i;
+const SENSITIVE_KEY = /token|secret|password|api[-_]?key|private[-_]?key|authorization|cookie/i;
 
 export class StructuredLogFileSink {
   private tail: Promise<void>;
@@ -185,14 +185,14 @@ function redactString(value: string): string {
       // without any `authorization`/`token`/`password` label; redact the
       // userinfo component. Match through the FINAL `@` (the host delimiter) so
       // a password containing an unescaped `@` is fully consumed. (Codex P1.)
-      .replace(/(\/\/)[^/\s]+@/gi, '$1[REDACTED]@')
+      .replace(/(\/\/)[^/\s?#]+@/gi, '$1[REDACTED]@')
       // Header tuple form (Array.from(headers.entries())) serializes a header as
       // `["Name","value"]` — the value carries no adjacent `Name:` label, so no
       // other rule catches it. Redact the second element when the first is a
       // sensitive header name. The value matcher is escape-aware so a quoted
       // Digest/AWS value is consumed through its real closing quote. (Codex P1.)
       .replace(
-        /(["'](?:authorization|cookie|set-cookie|api[-_]?key|token|secret|password)["']\s*,\s*)(["'])((?:\\[\s\S]|(?!\2)[\s\S])*)\2/gi,
+        /([[,]\s*["'][\w.-]{0,64}(?:authorization|cookie|set-cookie|api[-_]?key|private[-_]?key|token|secret|password)[\w.-]{0,64}["']\s*,\s*)(["'])((?:\\[\s\S]|(?!\2)[^\\])*)\2/gi,
         '$1$2[REDACTED]$2'
       )
       // Authorization values legitimately contain structural commas (Digest
@@ -213,11 +213,11 @@ function redactString(value: string): string {
       // env/config objects like `{"AWS_SECRET_ACCESS_KEY":"…"}` are caught.
       // Quoted values keep the quoted rule's output via the lookahead. (Codex P1.)
       .replace(
-        /((?:[\w.-]{0,64}(?:api[-_]?key|token|secret|password)[\w.-]{0,64})\s*:\s*)(?![\s"'])([^,}\r\n]+)/gi,
+        /((?:[\w.-]{0,64}(?:api[-_]?key|private[-_]?key|token|secret|password)[\w.-]{0,64})\s*:\s*)(?![\s"'])([^,}\r\n]+)/gi,
         '$1[REDACTED]'
       )
       .replace(
-        /(["']?(?:[\w.-]{0,64}(?:api[-_]?key|token|secret|password|authorization|cookie|set-cookie)[\w.-]{0,64})["']?\s*[:=]\s*)(["'])((?:\\[\s\S]|(?!\2)[\s\S])*)\2/gi,
+        /(["']?(?:[\w.-]{0,64}(?:api[-_]?key|private[-_]?key|token|secret|password|authorization|cookie|set-cookie)[\w.-]{0,64})["']?\s*[:=]\s*)(["'])((?:\\[\s\S]|(?!\2)[^\\])*)\2/gi,
         '$1$2[REDACTED]$2'
       )
       // Equals-form Authorization/Cookie values legitimately contain spaces
@@ -228,7 +228,7 @@ function redactString(value: string): string {
       .replace(/(authorization\s*=\s*)(?![\s"'])[^\r\n]+/gi, '$1[REDACTED]')
       .replace(/((?:cookie|set-cookie)\s*=\s*)(?![\s"'])[^\r\n]+/gi, '$1[REDACTED]')
       .replace(
-        /((?:[\w.-]{0,64}(?:api[-_]?key|token|secret|password)[\w.-]{0,64})\s*=\s*)([^\s&;,}]+)/gi,
+        /((?:[\w.-]{0,64}(?:api[-_]?key|private[-_]?key|token|secret|password)[\w.-]{0,64})\s*=\s*)([^\s&;,}]+)/gi,
         '$1[REDACTED]'
       )
   );

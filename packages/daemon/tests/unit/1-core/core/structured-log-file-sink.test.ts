@@ -179,6 +179,34 @@ describe('StructuredLogFileSink', () => {
     expect(redacted.metadata).toEqual({ headers: [['Authorization', '[REDACTED]']] });
   });
 
+  it('redacts private-key fields', () => {
+    // `privateKey`/`private_key`/`SSH_PRIVATE_KEY` hold PEM/key material but are
+    // not recognized by the bare `secret`/`token`/`password` alternation.
+    // (Codex P1, PR #2499.)
+    const redacted = redactStructuredLogEvent(
+      event('{"privateKey":"-----BEGIN PRIVATE KEY-----","SSH_PRIVATE_KEY":"…"}', {
+        private_key: 'pem',
+      })
+    );
+    expect(redacted.message).toBe('{"privateKey":"[REDACTED]","SSH_PRIVATE_KEY":"[REDACTED]"}');
+    expect(redacted.metadata).toEqual({ private_key: '[REDACTED]' });
+  });
+
+  it('does not redact an @ in the URL query or fragment', () => {
+    // The userinfo is confined to the authority (before `/`, `?`, or `#`); an
+    // `@` in a query/fragment must not be treated as a userinfo delimiter.
+    // (Codex P2, PR #2499.)
+    const redacted = redactStructuredLogEvent(event('https://example.com?email=user@example.org'));
+    expect(redacted.message).toBe('https://example.com?email=user@example.org');
+  });
+
+  it('redacts prefixed sensitive header tuples', () => {
+    // `X-Api-Key`/`Proxy-Authorization` carry the sensitive component inside a
+    // prefixed name; the tuple-name matcher must recognize it. (Codex P1.)
+    const redacted = redactStructuredLogEvent(event(`["X-Api-Key","secret"]`));
+    expect(redacted.message).toBe(`["X-Api-Key","[REDACTED]"]`);
+  });
+
   it('redacts unquoted colon-form values for every sensitive key', () => {
     // `token: abc` (no quotes, no `=`) previously passed through every rule —
     // only authorization and cookies had colon-form handling. Like the
