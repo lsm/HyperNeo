@@ -226,16 +226,18 @@ describe('Message delivery mode queue flow', () => {
           // recent SDK messages) so the junit failure message pinpoints the
           // stuck stage. Revert once diagnosed.
           const withDeadline = <T>(p: Promise<T>, ms = 2000): Promise<string> =>
-            Promise.race([p.then((v) => JSON.stringify(v)), new Promise<string>((r) => setTimeout(() => r('timeout'), ms))]).catch(
-              (e) => `error: ${e instanceof Error ? e.message : String(e)}`
-            );
+            Promise.race([
+              p.then((v) => JSON.stringify(v)),
+              new Promise<string>((r) => setTimeout(() => r('timeout'), ms)),
+            ]).catch((e) => `error: ${e instanceof Error ? e.message : String(e)}`);
           const state = await withDeadline(getProcessingState(daemon, sessionId));
           const diag = await withDeadline(
             daemon.messageHub.request('messageDelivery.diagnostics', {}) as Promise<unknown>
           );
           const msgs = await withDeadline(
             daemon.messageHub.request('message.sdkMessages', { sessionId }).then((r) => {
-              const rows = (r as { sdkMessages?: Array<Record<string, unknown>> }).sdkMessages ?? [];
+              const rows =
+                (r as { sdkMessages?: Array<Record<string, unknown>> }).sdkMessages ?? [];
               return rows.slice(-14).map((m) => ({
                 t: m.type,
                 subtype: (m as { subtype?: string }).subtype,

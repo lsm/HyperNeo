@@ -297,7 +297,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
   const unsubscribeFileLogs = structuredLogSink
     ? subscribeToStructuredLogs((event) => structuredLogSink.capture(event))
     : () => {};
-  options.onStructuredLogSinkReady?.(() => structuredLogSink?.flush() ?? Promise.resolve());
   const restoreConsoleCapture = installConsoleLogCapture();
   let fileLogCaptureClosed = false;
   const closeFileLogCapture = async (): Promise<void> => {
@@ -309,9 +308,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
   };
   // Reclaim any capture stranded by a previous FAILED attempt before
   // subscribing the new one — otherwise in-process startup retries accumulate
-  // global structured-log subscribers and open sinks. Best-effort: closing
-  // only flushes and releases the old sink's file handle.
-  void releaseStartupFileLogCapture().catch(() => {});
+  // global structured-log subscribers and open sinks. AWAITED so the old sink
+  // fully drains (and releases its file handle) before the new sink can write
+  // to the same path. (Codex P2, PR #2499.)
+  await releaseStartupFileLogCapture().catch(() => {});
   // Startup phase fences. Each heavy init step logs `[startup N] <name>` with
   // elapsed-since-previous (+ms = duration of the prior phase) and cumulative
   // total, so a slow/hanging phase is obvious. verbose-gated to mirror logInfo.
@@ -334,6 +334,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
   };
 
   try {
+    // Invoked inside the try so a THROWING embedder callback still lands in
+    // the catch below — the sink is already subscribed at this point, so the
+    // failure must route through the stranded-capture handoff (next attempt /
+    // releaseStartupFileLogCapture) rather than leaking the subscription.
+    // Still fires before any long-running init. (Codex P2, PR #2499.)
+    options.onStructuredLogSinkReady?.(() => structuredLogSink?.flush() ?? Promise.resolve());
+
     // Clear CLAUDECODE env var so SDK subprocesses don't refuse to start.
     // The daemon may run inside a Claude Code session (e.g., during development),
     // but its spawned agent sessions are independent and must not be blocked.

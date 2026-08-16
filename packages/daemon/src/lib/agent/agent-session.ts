@@ -2165,6 +2165,20 @@ export class AgentSession
         }
         const generation = this.getQueryGeneration();
         observer?.reportStage('query_ready', { generation });
+        // Arm first-response observability as soon as this attempt's
+        // (post-start) generation is known — BEFORE any further await (admission,
+        // batch rebuild) can let the SDK emit. SDKMessageHandler reads the field
+        // on every message; arming only after the session lock settles would miss
+        // the first response of a fast fresh start or a resumed (alreadyConsumed)
+        // turn. Disarmed on the in-lock abort exits below; the driving path owns
+        // it until the outer finally clears it by identity. (Codex P2, PR #2499.)
+        const armedObserver = observer ? { generation, observer } : null;
+        if (armedObserver) this.deliveryResponseObserver = armedObserver;
+        const disarmObserver = (): void => {
+          if (armedObserver && this.deliveryResponseObserver === armedObserver) {
+            this.deliveryResponseObserver = null;
+          }
+        };
         // Re-check termination AFTER startup, immediately before arming the
         // turn-end waiter — the two statements are adjacent (no await between), so
         // a turn that terminates in the check→arm window cannot be missed: if it
@@ -2238,6 +2252,7 @@ export class AgentSession
           // Codex (#3744971818).
           if (claimGuard && !claimGuard()) {
             turnEnd.cancel();
+            disarmObserver();
             return { kind: 'aborted' as const };
           }
           // Batched queue flush: revalidate every member + rebuild the prompt
@@ -2272,12 +2287,14 @@ export class AgentSession
                     ) ?? false;
               } catch (error) {
                 turnEnd.cancel();
+                disarmObserver();
                 throw new MessageDeliveryRecoverableTurnError(
                   `batch narrowing failed: ${error instanceof Error ? error.message : String(error)}`
                 );
               }
               if (!narrowed) {
                 turnEnd.cancel();
+                disarmObserver();
                 return { kind: 'aborted' as const };
               }
             }
@@ -2304,6 +2321,7 @@ export class AgentSession
           acknowledgment,
           admittedBatchUuids,
           generation,
+          responseObserver: armedObserver,
         };
       },
       signal
@@ -2340,12 +2358,9 @@ export class AgentSession
     // Response observability applies to EVERY driving attempt — including an
     // alreadyConsumed reclaim, whose `acknowledgment` is null (no fresh feed
     // below) but which still starts a query whose first SDK response the
-    // lifecycle log must see. Cleared by identity in the finally.
-    const responseObserver: {
-      generation: number;
-      observer: MessageDeliveryAttemptObserver;
-    } | null = observer ? { generation: started.generation, observer } : null;
-    if (responseObserver) this.deliveryResponseObserver = responseObserver;
+    // lifecycle log must see. Armed inside the session lock (see above); this
+    // local reference backs the identity-checked clear in the finally.
+    const responseObserver = started.responseObserver;
     try {
       // An alreadyConsumed reclaim skips the feed (admitWithId not called), so
       // `started.acknowledgment` is null — `await null` resolves immediately.

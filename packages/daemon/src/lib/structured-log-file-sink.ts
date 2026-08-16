@@ -1,4 +1,4 @@
-import { appendFile, mkdir, rename, stat, unlink } from 'node:fs/promises';
+import { appendFile, chmod, mkdir, rename, stat, unlink } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
 import type { StructuredLogEvent } from '@hyperneo/shared';
 import { withConsoleLogCaptureSuppressed } from './logger';
@@ -79,7 +79,11 @@ export class StructuredLogFileSink {
   private async initialize(): Promise<void> {
     try {
       await mkdir(dirname(this.options.path), { recursive: true });
-      this.currentBytes = (await stat(this.options.path)).size;
+      const info = await stat(this.options.path);
+      this.currentBytes = info.size;
+      // Tighten a log file created by an older version at the umask default
+      // (e.g. 0644) — see writeLine for the privacy rationale. Best-effort.
+      await chmod(this.options.path, 0o600).catch(() => {});
     } catch (error) {
       if (isMissingFile(error)) {
         this.currentBytes = 0;
@@ -94,7 +98,12 @@ export class StructuredLogFileSink {
     if (this.currentBytes > 0 && this.currentBytes + bytes > this.options.maxBytes) {
       await this.rotate();
     }
-    await appendFile(this.options.path, line, 'utf8');
+    // 0o600 on CREATE (mode is ignored once the file exists): the JSONL holds
+    // redacted-but-sensitive daemon diagnostics, so under a common 022 umask it
+    // must not come up world/group-readable. Rotation recreates the live file
+    // through this same call, so rotated-in files inherit the mode too.
+    // (Codex P2, PR #2499.)
+    await appendFile(this.options.path, line, { encoding: 'utf8', mode: 0o600 });
     this.currentBytes += bytes;
   }
 
