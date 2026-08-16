@@ -8,6 +8,7 @@ import { describe, expect, it, beforeEach, afterEach, mock, jest } from 'bun:tes
 import { tmpdir } from 'node:os';
 import {
   QueryRunner,
+  getStartupRetryDelayMs,
   looksLikeRateLimit429,
   refreshQueryEnvFromProcess,
   type QueryRunnerContext,
@@ -1334,10 +1335,18 @@ describe('QueryRunner', () => {
     // ANTHROPIC_API_KEY is set to a dummy value so the pre-query auth check passes.
 
     let savedApiKey: string | undefined;
+    let savedRetryBaseMs: string | undefined;
+    let savedMaxStartupRetries: string | undefined;
 
     beforeEach(() => {
       savedApiKey = process.env.ANTHROPIC_API_KEY;
+      savedRetryBaseMs = process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS;
+      savedMaxStartupRetries = process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES;
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      // Zero the startup-timeout backoff so retries fire immediately — the
+      // default schedule (15s → 30s → …) would make every test below sleep
+      // for minutes.
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '0';
       // Use a real directory so fs.mkdir() succeeds (reached after auth passes)
       mockSession.workspacePath = tmpdir();
       buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
@@ -1348,6 +1357,16 @@ describe('QueryRunner', () => {
         delete process.env.ANTHROPIC_API_KEY;
       } else {
         process.env.ANTHROPIC_API_KEY = savedApiKey;
+      }
+      if (savedRetryBaseMs === undefined) {
+        delete process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS;
+      } else {
+        process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = savedRetryBaseMs;
+      }
+      if (savedMaxStartupRetries === undefined) {
+        delete process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES;
+      } else {
+        process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES = savedMaxStartupRetries;
       }
     });
 
@@ -1399,6 +1418,30 @@ describe('QueryRunner', () => {
       // Should NOT contain retry count language
       const userMessage = handleErrorSpy.mock.calls[0][3] as string;
       expect(userMessage).not.toContain('attempt(s)');
+    });
+
+    it('should blame the silent subprocess and concurrent-start load, not workspace locks (startup timeout)', async () => {
+      // 2026-08-16 incident follow-up: the old hint blamed "another Claude Code
+      // session using the same workspace / a stale lock file in .claude/", which
+      // misled the initial investigation — the real driver was concurrent-start
+      // load keeping SDK subprocesses silent past the startup window.
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(handleErrorSpy).toHaveBeenCalled();
+      const userMessage = handleErrorSpy.mock.calls[0][3] as string;
+      // Names the actual failure mode…
+      expect(userMessage).toContain('failed to start');
+      expect(userMessage).toContain('did not produce its first message');
+      // …points at the two real levers: the startup window and start-time load.
+      expect(userMessage).toContain('HYPERNEO_SDK_STARTUP_TIMEOUT_MS');
+      expect(userMessage).toContain('too many sessions starting at the same time');
+      // …and no longer misleads with workspace/lock-file framing.
+      expect(userMessage).not.toContain('stale lock file');
+      expect(userMessage).not.toContain('another Claude Code session');
+      expect(userMessage).not.toContain('closing other Claude sessions');
     });
 
     it('should preserve sdkSessionId and surface error for conversation-not-found', async () => {
@@ -1736,6 +1779,188 @@ describe('QueryRunner', () => {
           runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
         )._consumedUserMessages.get(1)
       ).toBeUndefined();
+    });
+  });
+
+  describe('startup-timeout retry backoff and attempt cap', () => {
+    // 2026-08-16 incident fix: immediate startup-timeout retries regenerate the
+    // concurrent-start load that causes the timeouts, making the retry loop
+    // self-sustaining (6–9 attempts/session, zero recoveries, ~30 min stall).
+    // Consecutive timeouts for one delivery must back off exponentially and
+    // stop at the cap, settling the delivery as failed with the corrected hint.
+
+    let savedApiKey: string | undefined;
+    let savedRetryBaseMs: string | undefined;
+    let savedMaxStartupRetries: string | undefined;
+
+    beforeEach(() => {
+      savedApiKey = process.env.ANTHROPIC_API_KEY;
+      savedRetryBaseMs = process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS;
+      savedMaxStartupRetries = process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES;
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      // Zero the backoff by default so cap tests run at full speed; individual
+      // tests override the base to observe real delays.
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '0';
+      mockSession.workspacePath = tmpdir();
+      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+    });
+
+    afterEach(() => {
+      if (savedApiKey === undefined) {
+        delete process.env.ANTHROPIC_API_KEY;
+      } else {
+        process.env.ANTHROPIC_API_KEY = savedApiKey;
+      }
+      if (savedRetryBaseMs === undefined) {
+        delete process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS;
+      } else {
+        process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = savedRetryBaseMs;
+      }
+      if (savedMaxStartupRetries === undefined) {
+        delete process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES;
+      } else {
+        process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES = savedMaxStartupRetries;
+      }
+    });
+
+    it('schedules delays that at least double each retry round', () => {
+      // Pure schedule check: 15s → 30s → 60s → 120s → 240s at the default base.
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '15000';
+      expect(getStartupRetryDelayMs(1)).toBe(15000);
+      expect(getStartupRetryDelayMs(2)).toBe(30000);
+      expect(getStartupRetryDelayMs(3)).toBe(60000);
+      expect(getStartupRetryDelayMs(4)).toBe(120000);
+      for (let retryNumber = 2; retryNumber <= 6; retryNumber++) {
+        expect(getStartupRetryDelayMs(retryNumber)).toBeGreaterThanOrEqual(
+          getStartupRetryDelayMs(retryNumber - 1) * 2
+        );
+      }
+    });
+
+    it('applies the growing backoff between retries', async () => {
+      // With base 25ms and cap 2, the gaps between attempts must cover the
+      // 25ms and 50ms sleeps. setTimeout never fires early, so the lower
+      // bounds are deterministic even on a loaded runner.
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '25';
+      process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES = '2';
+
+      const buildTimes: number[] = [];
+      buildSpy.mockImplementation(async () => {
+        buildTimes.push(Date.now());
+        throw new Error('SDK startup timeout - query aborted');
+      });
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(3); // 1 initial + 2 retries
+      expect(buildTimes[1] - buildTimes[0]).toBeGreaterThanOrEqual(25);
+      expect(buildTimes[2] - buildTimes[1]).toBeGreaterThanOrEqual(50);
+    });
+
+    it('settles the delivery failed after the cap instead of looping forever', async () => {
+      process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES = '2';
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      // 1 initial + 2 capped retries — then terminal, not an infinite cycle.
+      expect(buildSpy).toHaveBeenCalledTimes(3);
+      // Terminal settlement: queue cleared, error surfaced with the corrected
+      // startup-timeout hint, session back to idle.
+      expect(clearSpy).toHaveBeenCalled();
+      expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+      const userMessage = handleErrorSpy.mock.calls[0][3] as string;
+      expect(userMessage).toContain('did not produce its first message');
+      expect(userMessage).toContain('HYPERNEO_SDK_STARTUP_TIMEOUT_MS');
+      expect(userMessage).not.toContain('stale lock file');
+      expect(setIdleSpy).toHaveBeenCalled();
+      // The budget-exhausted settlement is visible in daemon logs.
+      const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+        String(args[0])
+      );
+      expect(warns.some((w) => w.includes('retry budget exhausted'))).toBe(true);
+    });
+
+    it('honors HYPERNEO_SDK_STARTUP_MAX_RETRIES=0 (first timeout settles immediately)', async () => {
+      process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES = '0';
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('charges one budget per delivery, surviving redrives of the same message', () => {
+      // State-machine level: the delivery key is the kickoff message uuid, so
+      // delivery-layer redrives (queue-timeout reset+replay, restart-recovery
+      // reclaim) re-enqueue the SAME uuid and keep consuming the same budget —
+      // the reset-on-redrive is what made the incident loop self-sustaining.
+      process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES = '3';
+      runner = createRunner();
+      const claim = (key: string | null) =>
+        (
+          runner as unknown as {
+            claimStartupTimeoutRetry(k: string | null): number | null;
+          }
+        ).claimStartupTimeoutRetry(key);
+
+      expect(claim('msg-a')).toBe(1);
+      expect(claim('msg-a')).toBe(2);
+      expect(claim('msg-a')).toBe(3);
+      // Cap reached → settle failed. A later redrive of the same durable
+      // message must NOT get a fresh budget.
+      expect(claim('msg-a')).toBeNull();
+      expect(claim('msg-a')).toBeNull();
+      // A different delivery starts from a fresh budget.
+      expect(claim('msg-b')).toBe(1);
+      expect(claim('msg-b')).toBe(2);
+    });
+
+    it('charges starved (unidentified) attempts to the in-flight budget', () => {
+      // A timeout where nothing was consumed yet (feed starvation) has no
+      // delivery key. It must charge the current budget rather than reset it —
+      // otherwise consume/no-consume flapping would reset the budget every
+      // other round and the loop would be unbounded again.
+      process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES = '3';
+      runner = createRunner();
+      const claim = (key: string | null) =>
+        (
+          runner as unknown as {
+            claimStartupTimeoutRetry(k: string | null): number | null;
+          }
+        ).claimStartupTimeoutRetry(key);
+
+      expect(claim('msg-a')).toBe(1);
+      expect(claim(null)).toBe(2); // starved attempt charges msg-a's budget
+      expect(claim('msg-a')).toBe(3);
+      expect(claim('msg-a')).toBeNull();
+      // Once identified as a different delivery, the budget starts fresh even
+      // right after an exhausted one.
+      expect(claim('msg-b')).toBe(1);
+    });
+
+    it('clears the budget once a delivery starts successfully', () => {
+      // A successful first SDK frame resets the backoff state, so the next
+      // turn (or a redrive) starts at retry 1 with the base delay.
+      process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES = '1';
+      runner = createRunner();
+      const internals = runner as unknown as {
+        claimStartupTimeoutRetry(k: string | null): number | null;
+        clearStartupTimeoutRetryBudget(): void;
+      };
+
+      expect(internals.claimStartupTimeoutRetry('msg-a')).toBe(1);
+      expect(internals.claimStartupTimeoutRetry('msg-a')).toBeNull();
+      internals.clearStartupTimeoutRetryBudget();
+      expect(internals.claimStartupTimeoutRetry('msg-a')).toBe(1);
     });
   });
 

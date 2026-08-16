@@ -140,6 +140,45 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Startup-timeout retry budget for one delivery.
+ *
+ * The 2026-08-16 restart-recovery incident showed that retrying a startup
+ * timeout immediately (~every 15 s, redriven by the delivery layer's own
+ * retries) regenerates exactly the concurrent-start load that causes the
+ * timeout — a self-sustaining loop with zero recoveries. Retries therefore
+ * back off exponentially (base → 2×base → 4×base → …) and are capped per
+ * delivery; past the cap the delivery settles failed instead of looping.
+ *
+ * Read lazily (at call time, not module load) so tests can set
+ * HYPERNEO_SDK_STARTUP_RETRY_BASE_MS=0 in beforeEach to avoid real sleeps
+ * and HYPERNEO_SDK_STARTUP_MAX_RETRIES to adjust the cap.
+ */
+const DEFAULT_STARTUP_RETRY_BASE_MS = 15000;
+const DEFAULT_MAX_STARTUP_TIMEOUT_RETRIES = 5;
+
+function getStartupRetryBaseMs(): number {
+  const raw = process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS;
+  if (!raw) return DEFAULT_STARTUP_RETRY_BASE_MS;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_STARTUP_RETRY_BASE_MS;
+}
+
+function getMaxStartupTimeoutRetries(): number {
+  const raw = process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES;
+  if (!raw) return DEFAULT_MAX_STARTUP_TIMEOUT_RETRIES;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_MAX_STARTUP_TIMEOUT_RETRIES;
+}
+
+/**
+ * Exponential backoff delay for startup-timeout retries (exported for tests).
+ * retryNumber is 1-indexed: 1 → base, 2 → 2×base, 3 → 4×base, …
+ */
+export function getStartupRetryDelayMs(retryNumber: number): number {
+  return getStartupRetryBaseMs() * 2 ** (retryNumber - 1);
+}
+
+/**
  * Detect a 429 rate-limit error in any of the shapes the SDK surfaces: a
  * leading `429`/`API Error: 429` (optionally prefixed by `Error: ` and followed by
  * a JSON body or text),
@@ -457,6 +496,26 @@ export class QueryRunner {
   >();
 
   /**
+   * Consecutive startup-timeout retry budget for the delivery currently being
+   * (re)driven, keyed by the delivery's kickoff message uuid. The budget is
+   * per-delivery: a different message starts fresh, and any successful first
+   * SDK frame clears it (see the messageCount === 1 branch in runQuery).
+   *
+   * The state intentionally lives on this long-lived instance — NOT in
+   * runQuery's retryAttempt parameter — so delivery-layer redrives of the SAME
+   * message (queue-timeout reset+replay, restart-recovery reclaim) keep
+   * counting toward the cap instead of resetting it to zero on every redrive.
+   * That reset-on-redrive is what made the 2026-08-16 herd loop self-sustaining.
+   * `key: null` means nothing was consumed yet (feed starvation) — starved
+   * attempts charge the in-flight budget so consume/no-consume flapping and
+   * persistent starvation stay bounded too (see claimStartupTimeoutRetry).
+   */
+  private _startupTimeoutRetryState: { key: string | null; retries: number } = {
+    key: null,
+    retries: 0,
+  };
+
+  /**
    * Public accessor for the last consumed user message.
    * Used by RateLimitWatchdog to re-enqueue on auto-retry.
    */
@@ -502,9 +561,12 @@ export class QueryRunner {
    *
    * @param queryGeneration - Generation counter to detect stale queries
    * @param retryAttempt - Retry attempt counter (0 = first attempt, 1+ = retry).
-   *   Used to gate bounded retries: startup-timeout / message-not-found /
-   *   transient-connection retries fire only on attempt 0 (1-shot), while
-   *   the 5xx/overloaded provider-retry path fires up to the configured cap.
+   *   Used to gate bounded retries: message-not-found / transient-connection
+   *   retries fire only on attempt 0 (1-shot), and the 5xx/overloaded
+   *   provider-retry path fires up to the configured cap. Startup-timeout
+   *   retries are NOT gated by this counter — they use the per-delivery
+   *   `_startupTimeoutRetryState` budget (which survives delivery-layer
+   *   redrives) with exponential backoff, up to their own configured cap.
    */
   private async runQuery(
     queryGeneration: number,
@@ -910,6 +972,10 @@ export class QueryRunner {
           // message's full content for the session's lifetime. `_lastConsumedUserMessage`
           // stays for the transient/rate-limit retries. (Codex P2, PR #2499.)
           this._consumedUserMessages.delete(queryGeneration);
+          // The delivery started successfully — its startup-timeout backoff
+          // budget is spent. A later turn (or a redrive of this message) must
+          // start from a fresh budget, not inherit stale backoff/cap state.
+          this.clearStartupTimeoutRetryBudget();
         }
 
         try {
@@ -1046,122 +1112,175 @@ export class QueryRunner {
         );
       }
 
-      // Auto-retry once on startup timeout — the user shouldn't have to resend.
-      // This handles transient SDK startup failures (e.g., after a model switch)
-      // where the second attempt succeeds reliably.
-      // Skip messageQueue.clear() so the user's pending message is preserved for the retry.
-      if (isStartupTimeout && retryAttempt === 0 && !this.ctx.isCleaningUp()) {
-        logger.warn('Auto-retrying query after startup timeout (1 retry).');
-        await stateManager.setIdle({ suppressDeliveryWaiters: true });
+      // Auto-retry startup timeouts with per-delivery exponential backoff and a
+      // hard attempt cap — the user shouldn't have to resend after a transient
+      // startup failure (e.g., after a model switch), but immediate retries also
+      // regenerate the concurrent-start load that causes startup timeouts under a
+      // restart-recovery herd, so they must back off (base → 2×base → 4×base → …)
+      // and stop after the cap, settling the delivery as failed. The budget is
+      // keyed by the delivery's kickoff message uuid and survives delivery-layer
+      // redrives of the same message. Skip messageQueue.clear() so the user's
+      // pending message is preserved for the retry.
+      if (isStartupTimeout && !this.ctx.isCleaningUp()) {
+        // Charge this timeout to the delivery's budget BEFORE anything async:
+        // every catch entry below must count exactly once even if the retry is
+        // later cancelled mid-teardown. The kickoff of this generation's
+        // consumed set identifies the delivery across redrives (redrives
+        // re-enqueue the durable message under the same uuid).
+        const consumedForKey = this._consumedUserMessages.get(queryGeneration) ?? [];
+        const deliveryKey = consumedForKey[0]?.uuid ?? null;
+        const retryNumber = this.claimStartupTimeoutRetry(deliveryKey);
 
-        // Ownership check BEFORE terminating: setIdle above awaited, so a
-        // replacement query may already have started and registered its
-        // subprocess. Terminating now would SIGTERM/SIGKILL the replacement.
-        // The check→terminate sequence below is synchronous, so no replacement
-        // can slip in between. (Codex P1, PR #2491.)
-        if (this.retrySupersededByReplacement(queryGeneration)) {
-          return;
-        }
-
-        // Clean-slate guard: a timed-out spawn may be orphaned (spawned but
-        // never fed, or hung past cooperative close()) and would collide with
-        // the retry's fresh spawn — producing repeated 0-message timeouts.
-        // Force-terminate the whole tracked set for this session first, then
-        // close the query object (cooperative teardown of MCP transports), so
-        // the retry starts from a genuinely clean slate. Order mirrors
-        // QueryLifecycleManager.stop() (terminate → close).
-        this.ctx.terminateTrackedAgentProcesses?.();
-
-        // Close the current queryObject BEFORE retrying to prevent the
-        // "Already connected to a transport" crash. The finally{} block has not
-        // yet run (we are still in the catch block), so MCP transports are still
-        // open. Explicitly closing here ensures a clean slate for the retry.
-        if (this.ctx.queryObject) {
-          try {
-            this.ctx.queryObject.close();
-          } catch {
-            // Ignore close errors — transport may already be in a broken state
-          }
-          this.ctx.queryObject = null;
-        }
-
-        // Wait for the old subprocess to fully exit before retrying.
-        // close() above terminates the process, but we must wait for it to
-        // release workspace locks before spawning a replacement.
-        const exitPromise = this.ctx.processExitedPromise;
-        if (exitPromise) {
-          await Promise.race([
-            exitPromise,
-            new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
-          ]);
-          // Clear only if the tracking still belongs to the old subprocess —
-          // a concurrent start during the await may have installed the
-          // replacement's exit promise (same race as the lifecycle manager's
-          // stale-running recovery).
-          if (this.ctx.processExitedPromise === exitPromise) {
-            this.ctx.resetProcessExitedPromise();
-          }
-        }
-
-        // Ownership check: a replacement query may have started during the
-        // waits above (restart / delivery reclaim drove a new start). This
-        // recursive call bypasses start()'s queue-running guard, so recursing
-        // with a stale generation would spawn a competing query that
-        // overwrites the replacement's queryObject while its stale finally{}
-        // skips cleanup. Abandon the retry — the replacement owns the session.
-        // (Codex P1, PR #2491.)
-        if (this.retrySupersededByReplacement(queryGeneration)) {
-          return;
-        }
-
-        // The timeout escape returns the iterator NORMALLY (non-blocking
-        // cleanup), so the post-loop code already ran messageQueue.stop()
-        // before this throw reached the catch. Restart it — the retry's
-        // messageGenerator exits immediately while the queue is stopped, so
-        // the preserved prompt would never feed the retry and it would time
-        // out again. A stop by interrupt/shutdown is excluded by the checks
-        // above (generation, isCleaningUp) and the status guard below.
-        // (Codex P1, PR #2499.)
-        if (
-          !messageQueue.isRunning() &&
-          !this.ctx.isCleaningUp() &&
-          stateManager.getState().status !== 'interrupted'
-        ) {
-          messageQueue.start();
-        }
-
-        // The old SDK may have pulled prompts out of the queue via
-        // messageGenerator() before going silent; restarting the queue above
-        // alone leaves the retry with no input, so it times out again at zero
-        // messages. Re-enqueue every recorded consumed message IN ORDER (a silent
-        // iterator can pull the kickoff AND trailing steers — replaying only the
-        // last would silently drop the earlier prompts whose durable rows are
-        // already consumed). Mirror the transient-connection retry's feed.
-        // (Codex P1, PR #2499.)
-        const consumed = this._consumedUserMessages.get(queryGeneration) ?? [];
-        if (consumed.length > 0) {
+        if (retryNumber === null) {
           logger.warn(
-            `Re-enqueueing ${consumed.length} consumed user message(s) for startup-timeout retry.`
+            `Startup-timeout retry budget exhausted for this delivery ` +
+              `(${this._startupTimeoutRetryState.retries} consecutive timeout(s), ` +
+              `cap ${getMaxStartupTimeoutRetries()}); settling the message as failed.`
           );
-          // Prepend in reverse order so the consumed prefix lands AHEAD of any
-          // still-queued tail: the SDK may have pulled only a prefix (kickoff +
-          // a steer) before going silent, leaving later messages untouched. A
-          // plain enqueue would append the replay behind that tail and change
-          // prompt order. (Codex P1, PR #2499.)
-          for (let i = consumed.length - 1; i >= 0; i--) {
-            const message = consumed[i];
-            messageQueue
-              .enqueueWithId(message.uuid, message.content, false, { prepend: true })
-              .catch(() => {});
-          }
-          this._consumedUserMessages.delete(queryGeneration);
-          this._lastConsumedUserMessage = null;
-        }
+        } else {
+          const maxStartupRetries = getMaxStartupTimeoutRetries();
+          const delayMs = getStartupRetryDelayMs(retryNumber);
+          logger.warn(
+            `Auto-retrying query after startup timeout ` +
+              `(retry ${retryNumber}/${maxStartupRetries} in ${delayMs}ms).`
+          );
+          await stateManager.setIdle({ suppressDeliveryWaiters: true });
 
-        // Use `return await` so this call's finally{} runs only after the retry
-        // completes. Otherwise finally{} would race the retry and can tear down
-        // shared state (queue/controller/queryObject) while it is still running.
-        return await this.runQuery(queryGeneration, 1, recoveryState);
+          // Ownership check BEFORE terminating: setIdle above awaited, so a
+          // replacement query may already have started and registered its
+          // subprocess. Terminating now would SIGTERM/SIGKILL the replacement.
+          // The check→terminate sequence below is synchronous, so no replacement
+          // can slip in between. (Codex P1, PR #2491.)
+          if (this.retrySupersededByReplacement(queryGeneration)) {
+            return;
+          }
+
+          // Clean-slate guard: a timed-out spawn may be orphaned (spawned but
+          // never fed, or hung past cooperative close()) and would collide with
+          // the retry's fresh spawn — producing repeated 0-message timeouts.
+          // Force-terminate the whole tracked set for this session first, then
+          // close the query object (cooperative teardown of MCP transports), so
+          // the retry starts from a genuinely clean slate. Order mirrors
+          // QueryLifecycleManager.stop() (terminate → close). Teardown runs
+          // BEFORE the backoff below so the dead subprocess stops competing
+          // for CPU while we wait out the concurrent-start load.
+          this.ctx.terminateTrackedAgentProcesses?.();
+
+          // Close the current queryObject BEFORE retrying to prevent the
+          // "Already connected to a transport" crash. The finally{} block has not
+          // yet run (we are still in the catch block), so MCP transports are still
+          // open. Explicitly closing here ensures a clean slate for the retry.
+          if (this.ctx.queryObject) {
+            try {
+              this.ctx.queryObject.close();
+            } catch {
+              // Ignore close errors — transport may already be in a broken state
+            }
+            this.ctx.queryObject = null;
+          }
+
+          // Wait for the old subprocess to fully exit before retrying.
+          // close() above terminates the process, but we must wait for it to
+          // release workspace locks before spawning a replacement.
+          const exitPromise = this.ctx.processExitedPromise;
+          if (exitPromise) {
+            await Promise.race([
+              exitPromise,
+              new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
+            ]);
+            // Clear only if the tracking still belongs to the old subprocess —
+            // a concurrent start during the await may have installed the
+            // replacement's exit promise (same race as the lifecycle manager's
+            // stale-running recovery).
+            if (this.ctx.processExitedPromise === exitPromise) {
+              this.ctx.resetProcessExitedPromise();
+            }
+          }
+
+          // Exponential backoff before the retry attempt — immediate retries
+          // are what make a concurrent-start herd self-sustaining (each retry
+          // respawns an SDK subprocess into the very load that timed it out).
+          // Sleeps AFTER teardown so the wait is not spent holding a dead
+          // subprocess. (Mirrors the provider-retry backoff ordering.)
+          await sleep(delayMs);
+
+          // Ownership check: a replacement query may have started during the
+          // waits above (restart / delivery reclaim drove a new start). This
+          // recursive call bypasses start()'s queue-running guard, so recursing
+          // with a stale generation would spawn a competing query that
+          // overwrites the replacement's queryObject while its stale finally{}
+          // skips cleanup. Abandon the retry — the replacement owns the session.
+          // (Codex P1, PR #2491; the backoff window widened this race, so the
+          // check now also runs post-sleep.)
+          //
+          // The abort controller and queue-running checks used by the provider
+          // retry's post-sleep guard do NOT apply here: this attempt's
+          // controller was legitimately aborted by the startup timer, and the
+          // timeout escape intentionally left the queue stopped (restarted
+          // below). Generation, cleanup, and interrupt status are the reliable
+          // cancellation signals on this path.
+          if (
+            this.ctx.isCleaningUp() ||
+            this.retrySupersededByReplacement(queryGeneration) ||
+            stateManager.getState().status === 'interrupted'
+          ) {
+            logger.warn(
+              'Startup-timeout retry cancelled: session interrupted/restarted/cleaning up during backoff.'
+            );
+            return;
+          }
+
+          // The timeout escape returns the iterator NORMALLY (non-blocking
+          // cleanup), so the post-loop code already ran messageQueue.stop()
+          // before this throw reached the catch. Restart it — the retry's
+          // messageGenerator exits immediately while the queue is stopped, so
+          // the preserved prompt would never feed the retry and it would time
+          // out again. A stop by interrupt/shutdown is excluded by the checks
+          // above (generation, isCleaningUp) and the status guard below.
+          // (Codex P1, PR #2499.)
+          if (
+            !messageQueue.isRunning() &&
+            !this.ctx.isCleaningUp() &&
+            stateManager.getState().status !== 'interrupted'
+          ) {
+            messageQueue.start();
+          }
+
+          // The old SDK may have pulled prompts out of the queue via
+          // messageGenerator() before going silent; restarting the queue above
+          // alone leaves the retry with no input, so it times out again at zero
+          // messages. Re-enqueue every recorded consumed message IN ORDER (a silent
+          // iterator can pull the kickoff AND trailing steers — replaying only the
+          // last would silently drop the earlier prompts whose durable rows are
+          // already consumed). Mirror the transient-connection retry's feed.
+          // (Codex P1, PR #2499.) Enqueue AFTER the backoff (not before
+          // teardown) so the replay does not expire in the queue
+          // (enqueueWithId has a ~30s TTL) during a long backoff window.
+          const consumed = this._consumedUserMessages.get(queryGeneration) ?? [];
+          if (consumed.length > 0) {
+            logger.warn(
+              `Re-enqueueing ${consumed.length} consumed user message(s) for startup-timeout retry.`
+            );
+            // Prepend in reverse order so the consumed prefix lands AHEAD of any
+            // still-queued tail: the SDK may have pulled only a prefix (kickoff +
+            // a steer) before going silent, leaving later messages untouched. A
+            // plain enqueue would append the replay behind that tail and change
+            // prompt order. (Codex P1, PR #2499.)
+            for (let i = consumed.length - 1; i >= 0; i--) {
+              const message = consumed[i];
+              messageQueue
+                .enqueueWithId(message.uuid, message.content, false, { prepend: true })
+                .catch(() => {});
+            }
+            this._consumedUserMessages.delete(queryGeneration);
+            this._lastConsumedUserMessage = null;
+          }
+
+          // Use `return await` so this call's finally{} runs only after the retry
+          // completes. Otherwise finally{} would race the retry and can tear down
+          // shared state (queue/controller/queryObject) while it is still running.
+          return await this.runQuery(queryGeneration, retryAttempt + 1, recoveryState);
+        }
       }
       if (isMessageNotFound && retryAttempt === 0 && !this.ctx.isCleaningUp()) {
         // Consume the stale resumeSessionAt before retrying. The for-await loop
@@ -1553,13 +1672,22 @@ export class QueryRunner {
           // Keep the hints distinct: HYPERNEO_SDK_STARTUP_TIMEOUT_MS is irrelevant to a
           // missing/corrupt session file — sdkSessionId is intentionally preserved so
           // the user can choose via sdkResumeChoice prompt.
+          //
+          // Startup-timeout text names the actual failure mode: the SDK subprocess
+          // stayed silent past the startup window. Do NOT blame workspace/lock-file
+          // contention — that framing misled the initial investigation of the
+          // 2026-08-16 restart-recovery incident, where the real driver was
+          // concurrent-start load (see the backoff rationale above).
           const startupTimeoutUserMessage = isStartupTimeout
-            ? `The AI session failed to start (workspace: ${session.workspacePath ?? 'unbound'}). ` +
-              `Common causes: another Claude Code session is using the same workspace, ` +
-              `a stale lock file in .claude/, or the workspace is under heavy load. ` +
-              `Try: closing other Claude sessions on this workspace, ` +
-              `then resend your message. ` +
-              `You can also increase the timeout with HYPERNEO_SDK_STARTUP_TIMEOUT_MS (current: ${STARTUP_TIMEOUT_MS}ms).`
+            ? `The AI session failed to start (workspace: ${session.workspacePath ?? 'unbound'}): ` +
+              `the model subprocess did not produce its first message within the startup ` +
+              `window, and automatic retries did not recover it. ` +
+              `Likely causes: too many sessions starting at the same time ` +
+              `(for example right after a daemon restart) overloading the machine, ` +
+              `or a startup window that is too short for the current load. ` +
+              `Try resending your message once startup activity has settled, ` +
+              `or increase the window with HYPERNEO_SDK_STARTUP_TIMEOUT_MS ` +
+              `(current: ${STARTUP_TIMEOUT_MS}ms).`
             : isConversationNotFound
               ? `The AI session could not be resumed (workspace: ${session.workspacePath ?? 'unbound'}). ` +
                 `The previous session transcript was not found — this can happen after a provider switch, ` +
@@ -1831,6 +1959,34 @@ export class QueryRunner {
     // (Codex P2, PR #2499.)
     this._consumedUserMessages.delete(queryGeneration);
     return true;
+  }
+
+  /**
+   * Record one startup timeout against the delivery identified by `deliveryKey`
+   * (its kickoff message uuid, or null when nothing was consumed yet) and
+   * return the 1-indexed retry number to run — or null when the per-delivery
+   * budget is exhausted and the delivery must settle failed instead of looping.
+   */
+  private claimStartupTimeoutRetry(deliveryKey: string | null): number | null {
+    const state = this._startupTimeoutRetryState;
+    if (deliveryKey !== null && state.key !== deliveryKey) {
+      // An identified, DIFFERENT delivery — the previous delivery's backoff
+      // state must not leak into it.
+      this._startupTimeoutRetryState = { key: deliveryKey, retries: 1 };
+    } else {
+      // Same delivery, or an unidentified (starved) attempt: charge the
+      // in-flight budget. Charging starved attempts instead of resetting keeps
+      // a consume/no-consume flap from resetting the budget every other round
+      // (which would unbound the loop this cap exists to close).
+      state.retries += 1;
+    }
+    const { retries } = this._startupTimeoutRetryState;
+    return retries <= getMaxStartupTimeoutRetries() ? retries : null;
+  }
+
+  /** Startup succeeded for the in-flight delivery — clear its backoff budget. */
+  private clearStartupTimeoutRetryBudget(): void {
+    this._startupTimeoutRetryState = { key: null, retries: 0 };
   }
 
   /**

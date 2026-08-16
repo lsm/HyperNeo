@@ -1,8 +1,9 @@
 /**
- * Startup Timeout — Retry-Once Behavior Test
+ * Startup Timeout — Bounded Retry Behavior Test
  *
  * Verifies that when the SDK startup times out:
- *   1. The system retries exactly once automatically.
+ *   1. The system retries automatically up to the per-delivery cap (pinned to
+ *      1 here via HYPERNEO_SDK_STARTUP_MAX_RETRIES).
  *   2. The session eventually reaches idle (no infinite loop).
  *   3. If the retry also fails, the error has actionable recovery hints.
  *   4. If the retry succeeds, no error is surfaced (the retry fixed it).
@@ -15,10 +16,14 @@
  *   subprocess cannot respond within 10 ms, so the startup timer fires on the
  *   first attempt; the retry spawns a fresh subprocess that also cannot respond
  *   in time. assertRetryOnceSequenceRan() verifies the timeout fired on BOTH
- *   attempts and the retry-once branch ran exactly once — otherwise the suite
+ *   attempts and the retry branch ran exactly once — otherwise the suite
  *   could pass vacuously if the SDK ever responded within the window. Under the
  *   forced 10 ms both attempts time out, so the retry always fails; Test 1
  *   asserts the terminal startup-timeout error is present (not absent).
+ *
+ *   The retry backoff base (HYPERNEO_SDK_STARTUP_RETRY_BASE_MS) is zeroed for
+ *   the child so the retry fires immediately instead of sleeping 15 s; the
+ *   backoff schedule itself is covered by unit tests.
  *
  * MODES:
  *   - Dev Proxy (preferred, offline): HYPERNEO_USE_DEV_PROXY=1
@@ -205,12 +210,20 @@ describe('Startup Timeout Error Surfacing', () => {
   beforeEach(async () => {
     // STARTUP_TIMEOUT_MS is a module-level constant in query-runner.ts — it is
     // captured once when the process starts.  We must spawn a fresh child
-    // process so the env var is read at its module-load time.
+    // process so the env var is read at its module-load time. The retry knobs
+    // are read lazily but still need to reach the child via its spawn env.
     const origSpawn = process.env.DAEMON_TEST_SPAWN;
     const origTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+    const origRetryBase = process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS;
+    const origMaxRetries = process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES;
 
     process.env.DAEMON_TEST_SPAWN = 'true';
     process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = FORCED_STARTUP_TIMEOUT_MS;
+    // Zero the backoff so the retry fires immediately (the default 15 s base
+    // would stall the test), and pin the cap to 1 to keep the retry-once
+    // shape of the assertions below.
+    process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '0';
+    process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES = '1';
 
     try {
       daemon = await createDaemonServer({
@@ -234,6 +247,16 @@ describe('Startup Timeout Error Surfacing', () => {
         delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
       } else {
         process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = origTimeout;
+      }
+      if (origRetryBase === undefined) {
+        delete process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS;
+      } else {
+        process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = origRetryBase;
+      }
+      if (origMaxRetries === undefined) {
+        delete process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES;
+      } else {
+        process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES = origMaxRetries;
       }
     }
   }, SETUP_TIMEOUT);
@@ -314,7 +337,11 @@ describe('Startup Timeout Error Surfacing', () => {
         ).not.toBeNull();
         const errorMsg = sessionError!.message;
         expect(errorMsg).toContain('failed to start');
-        expect(errorMsg).toContain('Common causes');
+        // Corrected hint (2026-08-16 incident): names the silent subprocess and
+        // concurrent-start load — not workspace/lock-file contention.
+        expect(errorMsg).toContain('did not produce its first message');
+        expect(errorMsg).toContain('too many sessions starting at the same time');
+        expect(errorMsg).not.toContain('stale lock file');
         expect(errorMsg).toContain('HYPERNEO_SDK_STARTUP_TIMEOUT_MS');
       } finally {
         unsubscribe();
