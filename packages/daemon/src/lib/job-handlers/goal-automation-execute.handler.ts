@@ -520,10 +520,11 @@ const MANUAL_NOTE_CLAUSE_RE = /(?:[;!?\n]|\.(?=\s|$))+/;
 
 /**
  * Splits a status-prefix form at its colon — but only when the suffix
- * carries diagnostic or retrospective content (a linking verb or at least
- * four words, e.g. "root cause was lock contention"). A bare identifier or
- * task shorthand ("Pending: CI", "TODO: update docs") is the label's status
- * detail, not a second substantive clause.
+ * carries diagnostic or retrospective content: a linking verb AND at least
+ * four words ("root cause was lock contention"). A bare identifier, task
+ * shorthand ("Pending: CI", "TODO: update docs"), or an ordinary status
+ * description ("Pending: CI is running") is the label's status detail, not
+ * a second substantive clause.
  */
 function splitStatusPrefixClause(clause: string): string[] {
   const colonIndex = clause.indexOf(':');
@@ -532,7 +533,8 @@ function splitStatusPrefixClause(clause: string): string[] {
   if (!STATUS_LANGUAGE_RE.test(label)) return [clause];
   const suffix = clause.slice(colonIndex + 1);
   const suffixWords = suffix.trim().split(/\s+/).filter(Boolean).length;
-  if (!/\b(?:is|are|was|were|seems?|remains?)\b/i.test(suffix) && suffixWords < 4) {
+  const hasLinkingVerb = /\b(?:is|are|was|were|seems?|remains?)\b/i.test(suffix);
+  if (!hasLinkingVerb || suffixWords < 4) {
     return [clause];
   }
   return [label, suffix];
@@ -578,7 +580,7 @@ function splitAtClauseConjunctions(clause: string): string[] {
  * is part of the status, not a rationale.
  */
 const CAUSAL_CONJUNCTION_RE =
-  /\b(?:because|so that|since\s+(?!(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|yesterday|today|tomorrow|january|february|march|april|june|july|august|september|october|november|december|morning|noon|night|evening|last|this|next|ago)\b))\b/gi;
+  /\b(?:because|due\s+to|so that|since\s+(?!(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|yesterday|today|tomorrow|january|february|march|april|june|july|august|september|october|november|december|morning|noon|night|evening|last|this|next|ago)\b))\b/gi;
 
 /**
  * Splits a clause before each causal conjunction, keeping the conjunction
@@ -678,14 +680,15 @@ function hasQuantitativeOutcome(text: string): boolean {
  * Prefixes that make an outcome keyword a negated, still-pending, or merely
  * prospective mention rather than an affirmative one — "CI has not run yet",
  * "waiting for tests to pass", "build still pending", "no meaningful
- * failures", "tests will pass after the patch", "Target release v2.4.1".
- * The prefix must sit within
+ * failures", "tests will pass after the patch", "Target release v2.4.1",
+ * "If tests pass, rollout is scheduled tomorrow" (a conditional is not an
+ * outcome). The prefix must sit within
  * the same clause: commas, semicolons, colons, line breaks, and coordinating
  * conjunctions that introduce a new clause all end it, so "No errors; tests
  * passed" and "No errors and tests passed" both count "passed" as affirmative.
  */
 const NON_AFFIRMATIVE_PREFIX_RE =
-  /\b(?:not|never|no|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|without|yet|still|pending|wait(?:ing)?|queued|incomplete|unfinished|planned|scheduled|upcoming|goal|target(?:ed)?|aim|will|would|should|could|might|need(?:s|ed)? to|must|has to|have to|required to|expect(?:ed|s)? to|hop(?:e|es|ing) to|plan(?:s|ned)? to)\b[^.!?;:,\n]{0,32}$/i;
+  /\b(?:not|never|no|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|without|yet|still|pending|wait(?:ing)?|queued|incomplete|unfinished|planned|scheduled|upcoming|goal|target(?:ed)?|aim|will|would|should|could|might|need(?:s|ed)? to|must|has to|have to|required to|expect(?:ed|s)? to|hop(?:e|es|ing) to|plan(?:s|ned)? to|if|when|once|unless|until)\b[^.!?;:,\n]{0,32}$/i;
 
 /**
  * Coordinating conjunctions that can introduce a new clause. A qualifier on
@@ -939,7 +942,7 @@ function hasArtifactOutcome(text: string): boolean {
  * with any of these markers is process status regardless of anything else.
  */
 const PENDING_MARKER_RE =
-  /\b(?:waiting|wait|pending|queued|incomplete|unfinished|planned|scheduled|upcoming|todo|blocked|stalled|goal|target|aim|need(?:s|ed)? to|must|has to|have to|required to|not\s+(?:yet|done|started|run|runned|finished|working|expected|passed|passing|merged|merging|landed|landing|shipped|shipping|failed|failing|green|succeed(?:ed|ing)?|deployed|released|built|closed|fixed)|no\s+(?:update|updates|movement|progress|news|change|changes|blockers?|findings?|errors?|failures?|issues?|new\s+signal|signal|new\s+work)|never\s+(?:got|started|finished|ran|completed|happened|landed|shipped|merged)|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|later|soon|tomorrow|tbd|n\/a|(?:done|completed|approved)(?:\s+(?:this\s+tick|for\s+now|today|this\s+week|so\s+far))?\s*[.!]?$)\b/i;
+  /\b(?:waiting|wait|await(?:ing|s)?|pending|queued|incomplete|unfinished|planned|scheduled|upcoming|todo|blocked|stalled|goal|target|aim|need(?:s|ed)? to|must|has to|have to|required to|not\s+(?:yet|done|started|run|runned|finished|working|expected|passed|passing|merged|merging|landed|landing|shipped|shipping|failed|failing|green|succeed(?:ed|ing)?|deployed|released|built|closed|fixed)|no\s+(?:update|updates|movement|progress|news|change|changes|blockers?|findings?|errors?|failures?|issues?|new\s+signal|signal|new\s+work)|never\s+(?:got|started|finished|ran|completed|happened|landed|shipped|merged)|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|later|soon|tomorrow|tbd|n\/a|(?:done|completed|approved)(?:\s+(?:this\s+tick|for\s+now|today|this\s+week|so\s+far))?\s*[.!]?$)\b/i;
 
 /**
  * Bare modals, ambiguous between prospective work status ("tests should
@@ -977,7 +980,7 @@ function isStatusClause(clause: string): boolean {
  * even though a modal mid-clause needs the recommendation test.
  */
 const STATUS_LANGUAGE_RE =
-  /\b(?:waiting|wait|pending|queued|incomplete|unfinished|planned|scheduled|upcoming|todo|done|completed|approved|blocked|stalled|goal|target|aim|need(?:s|ed)? to|must|has to|have to|required to|not\s+(?:yet|done|started|run|runned)|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|no\s|never|not\s|will|would|should|could|might|maybe|later|soon|tomorrow|tbd|n\/a)\b/i;
+  /\b(?:waiting|wait|await(?:ing|s)?|pending|queued|incomplete|unfinished|planned|scheduled|upcoming|todo|done|completed|approved|blocked|stalled|goal|target|aim|need(?:s|ed)? to|must|has to|have to|required to|not\s+(?:yet|done|started|run|runned)|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|no\s|never|not\s|will|would|should|could|might|maybe|later|soon|tomorrow|tbd|n\/a)\b/i;
 
 /**
  * A self_nag tick is a no-op worth skipping when the selection itself carries
