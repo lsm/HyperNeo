@@ -187,6 +187,13 @@ function redactString(value: string): string {
       // userinfo component. Match through the FINAL `@` (the host delimiter) so
       // a password containing an unescaped `@` is fully consumed. (Codex P1.)
       .replace(/(\/\/)[^/\s?#]+@/gi, '$1[REDACTED]@')
+      // A truncated message can cut a URL inside its userinfo (no host `@`);
+      // redact `scheme://user:password` through end of string. (Codex P1.)
+      .replace(/(\/\/)[^/\s?#]+:[^/\s?#]+$/gi, '$1[REDACTED]')
+      // Azure SAS `sig=<signature>` query parameter — a short key too generic to
+      // treat as sensitive everywhere, so match it only in query position.
+      // (Codex P1, PR #2499.)
+      .replace(/([?&]sig=)[^&\s]+/gi, '$1[REDACTED]')
       // Header tuple form (Array.from(headers.entries())) serializes a header as
       // `["Name","value"]` — the value carries no adjacent `Name:` label, so no
       // other rule catches it. Redact the second element when the first is a

@@ -225,6 +225,25 @@ describe('StructuredLogFileSink', () => {
     expect(redacted.message).toBe('token: "[REDACTED]');
   });
 
+  it('redacts truncated URL userinfo', () => {
+    // A truncated message can end inside `scheme://user:password` before the
+    // host `@`; redact through end of string. (Codex P1, PR #2499.)
+    const redacted = redactStructuredLogEvent(event('https://user:partial-secret'));
+    expect(redacted.message).toBe('https://[REDACTED]');
+  });
+
+  it('redacts Azure SAS signature parameters', () => {
+    // Azure SAS uses the short `sig` key, which must not be treated as sensitive
+    // everywhere but is a usable signed-request credential in query position.
+    // (Codex P1, PR #2499.)
+    const redacted = redactStructuredLogEvent(
+      event('https://acct.blob.core.windows.net/container?sv=2020&sig=abc123def')
+    );
+    expect(redacted.message).toBe(
+      'https://acct.blob.core.windows.net/container?sv=2020&sig=[REDACTED]'
+    );
+  });
+
   it('redacts unquoted colon-form values for every sensitive key', () => {
     // `token: abc` (no quotes, no `=`) previously passed through every rule —
     // only authorization and cookies had colon-form handling. Like the
