@@ -2113,6 +2113,70 @@ describe('SpaceRuntime — tick loop correctness', () => {
       // One spawn attempt per tick — the worker never started anywhere.
       expect(spawnAttempts).toBe(3);
     });
+
+    test('a successful spawn repays the crash budget consumed by earlier worktree failures', async () => {
+      // Review follow-up on #2520: taskCrashCounts must be cleared once a
+      // spawn succeeds. Otherwise two transient worktree failures followed by
+      // a successful spawn permanently consume the budget, and the NEXT
+      // failure (here a second transient worktree episode) escalates straight
+      // to blocked instead of getting its own MAX_TASK_AGENT_CRASH_RETRIES
+      // retries.
+      let spawnAttempts = 0;
+      let failNextSpawns = 2; // first two attempts fail, third succeeds
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionAlive: () => true,
+        spawnWorkflowNodeAgentForExecution: async (_task, _space, _workflow, _run, execution) => {
+          spawnAttempts++;
+          if (failNextSpawns > 0) {
+            failNextSpawns--;
+            throw new Error(
+              'Task worktree creation failed; refusing to spawn a node agent in the shared space workspace'
+            );
+          }
+          const exec = execution as { id: string };
+          nodeExecutionRepo.update(exec.id, {
+            status: 'in_progress',
+            agentSessionId: `session:${exec.id}`,
+            startedAt: Date.now(),
+            completedAt: null,
+          });
+          return `session:${exec.id}`;
+        },
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const runId = tasks[0].workflowRunId!;
+
+      // Ticks 1–2: transient worktree failures (crash budget 2/2 consumed).
+      await rt.executeTick();
+      await rt.executeTick();
+      // Tick 3: spawn succeeds — the worker runs and the budget is repaid.
+      await rt.executeTick();
+      let execution = nodeExecutionRepo.listByWorkflowRun(runId)[0];
+      expect(execution.status).toBe('in_progress');
+      expect(execution.agentSessionId).toBe('session:' + execution.id);
+      expect(taskRepo.getTask(tasks[0].id)!.status).toBe('in_progress');
+
+      // A new transient episode: requeue the execution and fail the spawn
+      // once more. This failure must count as 1 (not 3) — the execution
+      // resets to pending for retry instead of escalating to blocked.
+      nodeExecutionRepo.update(execution.id, {
+        status: 'pending',
+        agentSessionId: null,
+        startedAt: null,
+        completedAt: null,
+      });
+      failNextSpawns = 1;
+      await rt.executeTick();
+      execution = nodeExecutionRepo.listByWorkflowRun(runId)[0];
+      expect(execution.status).toBe('pending');
+      expect(taskRepo.getTask(tasks[0].id)!.status).toBe('in_progress');
+      expect(spawnAttempts).toBe(4);
+    });
   });
 
   // -------------------------------------------------------------------------

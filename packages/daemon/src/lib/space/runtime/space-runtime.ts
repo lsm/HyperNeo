@@ -7872,6 +7872,28 @@ export class SpaceRuntime {
     return false;
   }
 
+  /**
+   * Repay an execution's consecutive-failure budget after a successful spawn
+   * — but ONLY for session-less failures, i.e. spawns whose execution row
+   * carried no `agentSessionId` beforehand (transient spawn errors such as
+   * worktree-creation failures). Without this, recovered transient spawn
+   * failures would permanently consume the {@link MAX_TASK_AGENT_CRASH_RETRIES}
+   * budget, so one later, unrelated failure would immediately block the
+   * execution, run, and task.
+   *
+   * A successful re-spawn after a session CRASH must NOT repay the budget:
+   * the crash-retry escalation (crash → respawn → crash → … → blocked)
+   * depends on the count surviving successful respawns, so executions that
+   * still carry a (dead) session binding keep theirs. The blank-session
+   * distinction mirrors the "clean non-crash recovery" contract documented
+   * on the rate-limit recovery reset (agentSessionId blanked precisely so
+   * the pending execution bypasses crash accounting).
+   */
+  private repaySessionlessSpawnFailureBudget(runId: string, execution: NodeExecution): void {
+    if (execution.agentSessionId) return;
+    this.taskCrashCounts.delete(`${runId}:${execution.id}`);
+  }
+
   private async processRunTick(runId: string): Promise<void> {
     // Always re-read run from DB to pick up external status changes (e.g. human
     // approval reset, external cancellation).
@@ -8429,6 +8451,11 @@ export class SpaceRuntime {
                   kickoff: true,
                 }
               );
+              // A successful spawn repays the consecutive-failure budget for
+              // session-less failures that a retry recovered (e.g. a transient
+              // worktree-creation error): they must not permanently consume
+              // this execution's crash budget for later, unrelated failures.
+              this.repaySessionlessSpawnFailureBudget(runId, execution);
               this.flushPendingNodeQueue({
                 workflowRunId: runId,
                 taskId: canonicalTask.id,
@@ -8825,6 +8852,9 @@ export class SpaceRuntime {
             execution,
             { kickoff: true }
           );
+          // Same budget-repayment as the tick-loop spawn above: only
+          // session-less failures are repaid on a successful spawn.
+          this.repaySessionlessSpawnFailureBudget(runId, execution);
           this.flushPendingNodeQueue({
             workflowRunId: runId,
             taskId: canonicalTask.id,
