@@ -42,10 +42,6 @@ import { createDeferred } from './timeout';
 import { currentSessionIdSignal, slashCommandsSignal } from './signals';
 import { isAuthError } from './user-error';
 import { startAutoFlush, stopAutoFlush } from './outbound-queue';
-import {
-  startVoiceTranscriptOutboxFlush,
-  stopVoiceTranscriptOutboxFlush,
-} from './voice/voice-transcript-outbox';
 
 // Expose signals immediately when module loads (for E2E testing)
 if (typeof window !== 'undefined') {
@@ -339,7 +335,6 @@ export class ConnectionManager {
         // Stop transport and outbound queue before redirect to prevent
         // reconnect loop firing between href assignment and navigation
         stopAutoFlush();
-        stopVoiceTranscriptOutboxFlush();
         if (this.transport) {
           this.transport.close();
         }
@@ -390,13 +385,6 @@ export class ConnectionManager {
 
     // Register transport
     this.messageHub.registerTransport(this.transport);
-
-    // Install the outbox auto-flush BEFORE initialize(): if the daemon is
-    // unavailable at page load, initialize() rejects and connect() never
-    // resumes — but the transport keeps auto-reconnecting and the effect
-    // reacts to the connectionState signal, so transcripts persisted from a
-    // previous page still flush once a reconnect succeeds.
-    startVoiceTranscriptOutboxFlush();
 
     // Initialize transport (establishes WebSocket connection)
     await this.transport.initialize();
@@ -474,7 +462,6 @@ export class ConnectionManager {
 
     // Stop outbound queue auto-flush
     stopAutoFlush();
-    stopVoiceTranscriptOutboxFlush();
 
     // Update connection state
     connectionState.value = 'disconnected';

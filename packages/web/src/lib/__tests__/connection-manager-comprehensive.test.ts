@@ -57,9 +57,6 @@ const mockTransportObj: {
 
 // Mock @hyperneo/shared module
 vi.mock('@hyperneo/shared', () => ({
-  // Stubs for the voice-transcript outbox's module-scope imports.
-  generateUUID: () => `test-uuid-${Math.random()}`,
-  appendDraftText: (a: string, b: string) => (a ? `${a} ${b}` : b),
   MessageHub: class MockMessageHub {
     constructor() {
       return mockHubObj;
