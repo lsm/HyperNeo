@@ -43,6 +43,7 @@ import {
   ApproveTaskSchema,
   SubmitForApprovalSchema,
   MarkCompleteSchema,
+  CompleteValidationTaskSchema,
 } from '../tools/task-agent-tool-schemas';
 
 // ---------------------------------------------------------------------------
@@ -198,6 +199,7 @@ const METHOD_PARAM_SCHEMAS: Record<string, import('zod').ZodType<unknown>> = {
   approve_task: ApproveTaskSchema,
   submit_for_approval: SubmitForApprovalSchema,
   mark_complete: MarkCompleteSchema,
+  complete_validation_task: CompleteValidationTaskSchema,
 };
 
 // ---------------------------------------------------------------------------

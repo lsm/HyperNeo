@@ -1,0 +1,7 @@
+1195:      const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
+2719:    const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
+4253:    const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
+5038:    const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
+5072:   * Called from the `buildNodeAgentMcpServer` callback in buildNodeAgentMcpServerForSession().
+5093:  buildNodeAgentMcpServerForSession(
+5771:    const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(

@@ -24,6 +24,17 @@ import {
   createNodeAgentMcpServer,
   type NodeAgentToolsConfig,
 } from '../../../../src/lib/space/tools/node-agent-tools.ts';
+import {
+  createCompleteValidationTaskHandler,
+  type CompleteValidationTaskHandlerDeps,
+} from '../../../../src/lib/space/tools/end-node-handlers.ts';
+import { WorkflowHookEngine } from '../../../../src/lib/space/runtime/workflow-hook-engine.ts';
+import { HookExecutor } from '../../../../src/lib/space/runtime/hook-executor.ts';
+import { WorkflowHookStateRepository } from '../../../../src/storage/repositories/workflow-hook-state-repository.ts';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
+import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { AgentMessageRouter } from '../../../../src/lib/space/runtime/agent-message-router.ts';
 import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
 import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
@@ -39,7 +50,13 @@ import {
   clearBuiltInValidatorRegistry,
   registerBuiltInValidator,
 } from '../../../../src/lib/space/runtime/built-in-validator-registry.ts';
-import type { SpaceWorkflow, WorkflowChannel } from '@hyperneo/shared';
+import type {
+  SpaceWorkflow,
+  WorkflowChannel,
+  WorkflowHook,
+  WorkflowHookResult,
+  SpaceWorkflowRun,
+} from '@hyperneo/shared';
 import type {
   DaemonInternalEventMap,
   InternalEventBus,
@@ -3631,5 +3648,348 @@ describe('node-agent-tools: pr_url payloads do not auto-subscribe', () => {
     expect(data.success).toBe(true);
     expect(delivered).toHaveLength(1);
     expect(delivered[0]!.sessionId).toBe(ctx.reviewerSessionId);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// complete_validation_task — node-agent-exclusive validation-only completion
+// ---------------------------------------------------------------------------
+//
+// The tool ships ONLY on this server (task #918): workflow workers are its
+// callers, and they never receive space-agent-tools. The guard-chain suite
+// lives in space-agent-tools.test.ts (driving the factory directly); these
+// tests cover the node-agent surface — registration gating, the worker happy
+// path, worker caller binding, the WorkflowHookEngine-wrapped variant, and
+// the autonomy gate.
+
+class StubHookExecutor extends HookExecutor {
+  private results = new Map<string, WorkflowHookResult>();
+
+  constructor() {
+    super({ workspacePath: '/tmp' });
+  }
+
+  setResult(hookId: string, result: WorkflowHookResult): void {
+    this.results.set(hookId, result);
+  }
+
+  override async execute(hook: WorkflowHook): Promise<{ result: WorkflowHookResult }> {
+    const result = this.results.get(hook.id);
+    return { result: result ?? { type: 'allow' } };
+  }
+}
+
+describe('node-agent-tools: complete_validation_task', () => {
+  let ctx: TestCtx;
+  let workflowManager: SpaceWorkflowManager;
+  let workflowRunRepo: SpaceWorkflowRunRepository;
+  let spaceManager: SpaceManager;
+
+  beforeEach(() => {
+    ctx = makeCtx();
+    // This file's makeDb applies only runMigrations; the caller-binding guard
+    // reads worker session rows, so the sessions table must exist here too.
+    ctx.db.exec(`CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      workspace_path TEXT,
+      created_at TEXT NOT NULL,
+      last_active_at TEXT NOT NULL,
+      status TEXT NOT NULL,
+      config TEXT NOT NULL,
+      metadata TEXT NOT NULL,
+      is_worktree INTEGER DEFAULT 0,
+      worktree_path TEXT,
+      main_repo_path TEXT,
+      worktree_branch TEXT,
+      git_branch TEXT,
+      sdk_session_id TEXT,
+      acp_session_id TEXT,
+      available_commands TEXT,
+      processing_state TEXT,
+      archived_at TEXT,
+      parent_id TEXT,
+      type TEXT DEFAULT 'worker',
+      session_context TEXT
+    )`);
+    workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(ctx.db));
+    workflowRunRepo = new SpaceWorkflowRunRepository(ctx.db);
+    spaceManager = new SpaceManager(ctx.db);
+  });
+
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  interface ValidationFixture {
+    workflow: SpaceWorkflow;
+    runId: string;
+    task: ReturnType<SpaceTaskRepository['createTask']>;
+    workerSessionId: string;
+  }
+
+  async function seedValidationRun(options?: {
+    status?: 'review' | 'in_progress';
+    completionAutonomyLevel?: number;
+    workerSessionId?: string;
+  }): Promise<ValidationFixture> {
+    await spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const nodeId = `node-val-${Math.random().toString(36).slice(2, 8)}`;
+    const workflow = workflowManager.createWorkflow({
+      spaceId: ctx.spaceId,
+      name: `Validation workflow ${nodeId}`,
+      description: '',
+      nodes: [{ id: nodeId, name: 'Validation', agentId: 'agent-validator' }],
+      transitions: [],
+      startNodeId: nodeId,
+      endNodeId: nodeId,
+      rules: [],
+      completionAutonomyLevel: options?.completionAutonomyLevel ?? 5,
+    });
+    const run = workflowRunRepo.createRun({
+      spaceId: ctx.spaceId,
+      workflowId: workflow.id,
+      title: 'Validation run',
+      description: '',
+    });
+    // Validation completion requires a runnable (in_progress) run.
+    workflowRunRepo.updateRun(run.id, { status: 'in_progress' });
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'Validation task',
+      description: '',
+      status: options?.status ?? 'in_progress',
+      workflowRunId: run.id,
+    });
+    const workerSessionId =
+      options?.workerSessionId ?? `worker-session-${Math.random().toString(36).slice(2, 8)}`;
+    // The worker's node execution + persisted session row (session_context
+    // carries the taskId binding, exactly as spawned sub-sessions do).
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: run.id,
+      workflowNodeId: nodeId,
+      agentName: 'validator',
+      agentSessionId: workerSessionId,
+      status: 'in_progress',
+    });
+    ctx.db
+      .prepare(
+        `INSERT INTO sessions (
+            id, title, workspace_path, created_at, last_active_at, status, config, metadata,
+            is_worktree, git_branch, processing_state, type, session_context
+          ) VALUES (?, ?, '/tmp/ws', ?, ?, 'active', '{}', '{}', 0, NULL, ?, 'worker', ?)`
+      )
+      .run(
+        workerSessionId,
+        'Validation worker',
+        new Date(0).toISOString(),
+        new Date().toISOString(),
+        JSON.stringify({ status: 'idle' }),
+        JSON.stringify({ spaceId: ctx.spaceId, taskId: task.id })
+      );
+    return { workflow, runId: run.id, task, workerSessionId };
+  }
+
+  function makeValidationDeps(overrides: Partial<CompleteValidationTaskHandlerDeps> = {}) {
+    return {
+      spaceId: ctx.spaceId,
+      db: ctx.db,
+      taskRepo: ctx.taskRepo,
+      taskManager: ctx.taskManager,
+      workflowRunRepo,
+      getWorkflowForRun: (run: SpaceWorkflowRun) => workflowManager.getWorkflowForRun(run),
+      nodeExecutionRepo: ctx.nodeExecutionRepo,
+      resolvePrimaryLinkUrl: () => '',
+      spaceManager,
+      ...overrides,
+    } satisfies CompleteValidationTaskHandlerDeps;
+  }
+
+  function buildServer(
+    fixture: ValidationFixture,
+    configOverrides: Partial<NodeAgentToolsConfig> = {}
+  ) {
+    return createNodeAgentMcpServer(
+      makeConfig(ctx, {
+        mySessionId: fixture.workerSessionId,
+        myAgentName: 'validator',
+        taskId: fixture.task.id,
+        workflowRunId: fixture.runId,
+        workflowNodeId: fixture.workflow.nodes[0].id,
+        workflow: fixture.workflow,
+        onCompleteValidationTask: createCompleteValidationTaskHandler(
+          makeValidationDeps({ callerSessionId: fixture.workerSessionId })
+        ),
+        ...configOverrides,
+      })
+    );
+  }
+
+  function getTool(server: ReturnType<typeof createNodeAgentMcpServer>) {
+    const instance = server.instance as unknown as {
+      _registeredTools: Record<string, { handler: (args: unknown) => Promise<ToolResult> }>;
+    };
+    return instance._registeredTools['complete_validation_task']?.handler;
+  }
+
+  test('registers the tool when the callback is wired; absent otherwise', async () => {
+    const fixture = await seedValidationRun();
+    const withTool = buildServer(fixture);
+    expect(getTool(withTool)).toBeDefined();
+
+    const withoutTool = createNodeAgentMcpServer(makeConfig(ctx, {}));
+    const instance = withoutTool.instance as unknown as {
+      _registeredTools: Record<string, unknown>;
+    };
+    expect(Object.keys(instance._registeredTools)).not.toContain('complete_validation_task');
+  });
+
+  test('worker happy path: a workflow worker completes its own no-PR task through the tool', async () => {
+    const fixture = await seedValidationRun();
+    const server = buildServer(fixture);
+    const tool = getTool(server)!;
+
+    const result = await tool({
+      task_id: fixture.task.id,
+      validation_outcome: 'Validated: 3 episodes reviewed, all evidence scoped.',
+      reason: 'weekly sweep',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.task.status).toBe('done');
+    expect(parsed.task.result).toBe('Validated: 3 episodes reviewed, all evidence scoped.');
+    expect(parsed.task.approvalSource).toBe('agent');
+    // The completing worker's node is committed atomically with done so the
+    // tick loop's sibling-quiesce spares the caller instead of the end node.
+    expect(ctx.taskRepo.getTask(fixture.task.id)?.postApprovalSourceNodeId).toBe(
+      fixture.workflow.nodes[0].id
+    );
+  });
+
+  test('worker caller binding: a worker session cannot complete another task', async () => {
+    const fixture = await seedValidationRun();
+    const other = await seedValidationRun();
+    const server = buildServer(fixture);
+    const tool = getTool(server)!;
+
+    const result = await tool({
+      task_id: other.task.id,
+      validation_outcome: 'should be refused',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('own task');
+    expect(ctx.taskRepo.getTask(other.task.id)?.status).toBe('in_progress');
+  });
+
+  test('autonomy gate: below completionAutonomyLevel the worker is rejected', async () => {
+    const fixture = await seedValidationRun({ completionAutonomyLevel: 5 });
+    // Lower AFTER seeding (seedValidationRun promotes the space to 5).
+    await spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 3 });
+    const server = buildServer(fixture);
+    const tool = getTool(server)!;
+
+    const result = await tool({
+      task_id: fixture.task.id,
+      validation_outcome: 'validated',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('complete_validation_task not permitted');
+    expect(parsed.error).toContain('space autonomy level 3 < workflow completionAutonomyLevel 5');
+    expect(ctx.taskRepo.getTask(fixture.task.id)?.status).toBe('in_progress');
+  });
+
+  test('hook-declared workflow: a blocking complete_validation_task hook vetoes the wrapped completion', async () => {
+    const fixture = await seedValidationRun();
+    const hookExecutor = new StubHookExecutor();
+    hookExecutor.setResult('hook-validation', { type: 'block', reason: 'Evidence incomplete' });
+    const hookEngine = new WorkflowHookEngine({
+      workflow: {
+        ...fixture.workflow,
+        hooks: [
+          {
+            id: 'hook-validation',
+            enabled: true,
+            sourceNode: 'Validation',
+            method: 'complete_validation_task',
+            classification: 'validation',
+            order: 0,
+            validator: {
+              kind: 'script',
+              interpreter: 'bash',
+              source: 'echo \'{"type":"allow"}\'',
+            },
+            authorizedCallers: [{ sourceNode: 'Validation', agentSlots: ['validator'] }],
+          } as WorkflowHook,
+        ],
+      },
+      workflowRunId: fixture.runId,
+      nodeExecutionRepo: ctx.nodeExecutionRepo,
+      artifactRepo: ctx.artifactRepo,
+      hookStateRepo: new WorkflowHookStateRepository(ctx.db),
+      hookExecutor,
+      workspacePath: '/tmp',
+    });
+    const server = buildServer(fixture, { hookEngine });
+    const tool = getTool(server)!;
+
+    const result = await tool({
+      task_id: fixture.task.id,
+      validation_outcome: 'validated but hook-blocked',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    // The wrapped variant surfaces the hook's veto BEFORE the guard chain's
+    // terminal write — the task stays open with the hook's reason.
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('Evidence incomplete');
+    expect(ctx.taskRepo.getTask(fixture.task.id)?.status).toBe('in_progress');
+  });
+
+  test('hook-declared workflow: an allowing hook lets the wrapped completion through', async () => {
+    const fixture = await seedValidationRun();
+    const hookEngine = new WorkflowHookEngine({
+      workflow: {
+        ...fixture.workflow,
+        hooks: [
+          {
+            id: 'hook-validation',
+            enabled: true,
+            sourceNode: 'Validation',
+            method: 'complete_validation_task',
+            classification: 'validation',
+            order: 0,
+            validator: {
+              kind: 'script',
+              interpreter: 'bash',
+              source: 'echo \'{"type":"allow"}\'',
+            },
+            authorizedCallers: [{ sourceNode: 'Validation', agentSlots: ['validator'] }],
+          } as WorkflowHook,
+        ],
+      },
+      workflowRunId: fixture.runId,
+      nodeExecutionRepo: ctx.nodeExecutionRepo,
+      artifactRepo: ctx.artifactRepo,
+      hookStateRepo: new WorkflowHookStateRepository(ctx.db),
+      hookExecutor: new StubHookExecutor(),
+      workspacePath: '/tmp',
+    });
+    const server = buildServer(fixture, { hookEngine });
+    const tool = getTool(server)!;
+
+    const result = await tool({
+      task_id: fixture.task.id,
+      validation_outcome: 'validated with the hook present',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.task.status).toBe('done');
+    expect(ctx.taskRepo.getTask(fixture.task.id)?.status).toBe('done');
   });
 });

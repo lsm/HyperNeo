@@ -93,6 +93,7 @@ export interface SubSessionMemberInfo {
 }
 import { createNodeAgentMcpServer } from '../tools/node-agent-tools';
 import {
+  createCompleteValidationTaskHandler,
   createEndNodeHandlers,
   createMarkCompleteHandler,
   createPrMergedGate,
@@ -5340,6 +5341,44 @@ export class TaskAgentManager {
         : undefined,
     });
 
+    // `complete_validation_task` (task #918) — validation-only (no-PR)
+    // completion, node-agent-exclusive like `mark_complete`: workflow workers
+    // are the tool's callers, and they receive only this server (never
+    // space-agent-tools). The handler self-validates (worker caller binding,
+    // autonomy vs completionAutonomyLevel, no-PR + run guards); an agent with
+    // no validation verdict to record simply never calls it.
+    const onCompleteValidationTask = createCompleteValidationTaskHandler({
+      spaceId,
+      callerSessionId: subSessionId,
+      db: this.config.db.getDatabase(),
+      taskRepo: this.config.taskRepo,
+      taskManager: boundTaskManager,
+      workflowRunRepo: this.config.workflowRunRepo,
+      getWorkflowForRun: (run) => this.config.spaceWorkflowManager.getWorkflowForRun(run),
+      nodeExecutionRepo: this.config.nodeExecutionRepo,
+      resolvePrimaryLinkUrl: (runId) =>
+        this.config.artifactProfile?.resolvePrimaryLinkUrl(runId) ?? '',
+      spaceManager: this.config.spaceManager,
+      goalService: this.config.goalService,
+      interruptBySessionId: (sessionId) => this.interruptBySessionId(sessionId),
+      audit: (params, targetTaskId) => {
+        try {
+          this.auditLogRepo.createEntry({
+            agentName,
+            sessionId: subSessionId,
+            toolName: 'complete_validation_task',
+            paramsSummary: JSON.stringify(params),
+            spaceId,
+            taskId: targetTaskId ?? taskId,
+            workflowRunId,
+          });
+        } catch {
+          // Audit logging is best-effort; never block the tool operation.
+        }
+      },
+      internalEventBus: this.config.internalEventBus,
+    });
+
     // Self-heal callback for the agent-callable `restore_node_agent` tool.
     // Looks up the live AgentSession by the enclosing-scope subSessionId, then
     // calls reinjectNodeAgentMcpServer to (re)attach node-agent and restart the query
@@ -5585,6 +5624,7 @@ export class TaskAgentManager {
       onApproveTask,
       onSubmitForApproval,
       onMarkComplete,
+      onCompleteValidationTask,
       onCreateStandaloneTask,
       onPublishTask,
       onArchiveTask,

@@ -152,6 +152,40 @@ export const MarkCompleteSchema = z
 export type MarkCompleteInput = z.infer<typeof MarkCompleteSchema>;
 
 // ---------------------------------------------------------------------------
+// complete_validation_task
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for `complete_validation_task` input (task #918).
+ *
+ * Validation-only (no-PR) completion — node-agent-exclusive (like
+ * `mark_complete`), NOT shipped on `space-agent-tools`. Captures the
+ * validation outcome as `task.result` and transitions
+ * `review`/`in_progress → done` without a pr_url, for tasks that complete
+ * via validation rather than a reviewed PR (Forge review/automation,
+ * diagnostics, already-complete work). Autonomy-gated to the workflow's
+ * `completionAutonomyLevel`; rejects tasks whose run already has a PR.
+ *
+ * Intentionally NOT a member of TASK_AGENT_TOOL_SCHEMAS — that map drives the
+ * orchestration Task Agent's surface, and this tool belongs to workflow
+ * workers only.
+ */
+export const CompleteValidationTaskSchema = z
+  .object({
+    task_id: z.string().describe('ID of the no-PR task to complete'),
+    validation_outcome: z
+      .string()
+      .min(1)
+      .describe(
+        'The validation result/outcome — what was checked and the verdict. Captured as the task result.'
+      ),
+    reason: z.string().describe('Optional note recorded on the task (approvalReason)').optional(),
+  })
+  .strict();
+
+export type CompleteValidationTaskInput = z.infer<typeof CompleteValidationTaskSchema>;
+
+// ---------------------------------------------------------------------------
 // request_human_input
 // ---------------------------------------------------------------------------
 

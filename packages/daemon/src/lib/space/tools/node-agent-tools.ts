@@ -33,11 +33,13 @@ import {
   ApproveTaskSchema,
   SubmitForApprovalSchema,
   MarkCompleteSchema,
+  CompleteValidationTaskSchema,
 } from './task-agent-tool-schemas';
 import type {
   ApproveTaskInput,
   SubmitForApprovalInput,
   MarkCompleteInput,
+  CompleteValidationTaskInput,
 } from './task-agent-tool-schemas';
 import { Logger } from '../../logger';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository';
@@ -203,6 +205,15 @@ export interface NodeAgentToolsConfig {
    * autonomy / status validation is centralised on the task side.
    */
   onMarkComplete?: (args: MarkCompleteInput) => Promise<ToolResult>;
+  /**
+   * Optional callback for the `complete_validation_task` tool (task #918) —
+   * validation-only (no-PR) task completion. Mirrored onto every node-agent
+   * like `mark_complete` because workflow WORKERS are this tool's callers:
+   * they receive only this server, never space-agent-tools. The handler
+   * self-validates (caller binding, autonomy, no-PR + run checks) so a
+   * worker that has no validation verdict to record simply never calls it.
+   */
+  onCompleteValidationTask?: (args: CompleteValidationTaskInput) => Promise<ToolResult>;
   /**
    * Optional callback for `create_standalone_task`. When provided, node agents
    * can create follow-up tasks without receiving the broader space-agent-tools
@@ -1343,6 +1354,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
   // Wrap submit_for_approval and mark_complete with hooks when engine is provided.
   let wrappedSubmitForApproval = submitForApproval;
   let wrappedMarkComplete = config.onMarkComplete;
+  let wrappedCompleteValidation = config.onCompleteValidationTask;
   if (config.hookEngine) {
     const meta = {
       sessionId: config.mySessionId,
@@ -1363,6 +1375,20 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
       wrappedMarkComplete = wrapHandlerWithHooks(
         'mark_complete',
         wrappedMarkComplete,
+        config.hookEngine,
+        handlers as unknown as Record<string, (...args: unknown[]) => Promise<ToolResult>>,
+        meta
+      );
+    }
+
+    // `complete_validation_task` joins the wrapped completion family so
+    // workflow-declared validators on this method run around the validation
+    // close (task #918) — the tool is node-agent-exclusive, so this is the
+    // ONLY surface the engine needs to cover.
+    if (wrappedCompleteValidation) {
+      wrappedCompleteValidation = wrapHandlerWithHooks(
+        'complete_validation_task',
+        wrappedCompleteValidation,
         config.hookEngine,
         handlers as unknown as Record<string, (...args: unknown[]) => Promise<ToolResult>>,
         meta
@@ -1571,6 +1597,20 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
               '`approved → done`. Rejected if the task is not currently in `approved`.',
             MarkCompleteSchema.shape,
             (args) => wrappedMarkComplete!(args)
+          ),
+        ]
+      : []),
+    ...(wrappedCompleteValidation
+      ? [
+          tool(
+            'complete_validation_task',
+            'Validation-only (no-PR) task completion — for tasks that complete via validation rather than a reviewed PR ' +
+              '(Forge review/automation, diagnostics, already-complete work). Captures the validation outcome as the task ' +
+              'result and transitions review/in_progress → done WITHOUT requiring a pr_url. Autonomy-gated to the ' +
+              "workflow's completionAutonomyLevel; rejects tasks whose run already has a PR (use the normal approve/merge " +
+              'path for those). Worker sessions may only complete their own task.',
+            CompleteValidationTaskSchema.shape,
+            (args) => wrappedCompleteValidation!(args)
           ),
         ]
       : []),

@@ -1688,7 +1688,8 @@ export type WorkflowHookMcpMethod =
   | 'create_standalone_task'
   | 'mark_complete'
   | 'submit_for_approval'
-  | 'approve_task';
+  | 'approve_task'
+  | 'complete_validation_task';
 
 export type WorkflowHookValidatorId =
   | 'pr_open'

@@ -638,7 +638,7 @@ export function parsePositiveIntegerEnv(name: string, fallback: number): number 
  * 3. Earliest created_at
  *
  * Exported as a pure function so external completion paths
- * (`complete_validation_task` in space-agent-tools) apply the EXACT same
+ * (`complete_validation_task` on node-agent servers) apply the EXACT same
  * selection rule the tick loop uses when it later archives non-canonical
  * duplicates — a completion recorded on a duplicate would be discarded by
  * that archive while its side effects (evidence capture, dependent

@@ -41,6 +41,10 @@ import {
   createSpaceAgentToolHandlers,
   validateTemplateReminder,
 } from '../../../../src/lib/space/tools/space-agent-tools.ts';
+import {
+  createCompleteValidationTaskHandler,
+  type CompleteValidationTaskHandlerDeps,
+} from '../../../../src/lib/space/tools/end-node-handlers.ts';
 import { getLongHorizonAgentTemplate } from '../../../../src/lib/space/agents/long-horizon-agent-templates.ts';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store.ts';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
@@ -440,7 +444,9 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
     expect(names).toContain('create_standalone_task');
     expect(names).toContain('approve_task');
     expect(names).toContain('approve_pending_completion');
-    expect(names).toContain('complete_validation_task');
+    // complete_validation_task is node-agent-exclusive (task #918): workflow
+    // workers are its callers, and they receive only the node-agent server.
+    expect(names).not.toContain('complete_validation_task');
     expect(names).toContain('list_sessions');
     expect(names).toContain('get_session_detail');
     expect(names).toContain('get_session_messages');
@@ -5733,15 +5739,14 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
 // complete_validation_task — validation-only (no-PR) completion path
 // ---------------------------------------------------------------------------
 //
-// The agent-reachable equivalent of the UI's direct status→done transition for
-// a no-code task. Mirrors approve_task's autonomy framing but is the explicit
-// no-PR path: it captures the validation outcome as task.result and transitions
-// review/in_progress → done without requiring a pr_url. Complements
-// approve_task (PR-oriented, review-only) and approve_pending_completion
-// (human-approval path) — neither of which is reachable for a Forge review /
-// automation task that never produced a PR.
+// Node-agent-exclusive (task #918): the handler lives in
+// `createCompleteValidationTaskHandler` (end-node-handlers.ts) and is mirrored
+// onto node-agent servers like `mark_complete` — workflow workers are its
+// callers. These tests drive the factory's guard chain directly; the
+// registration surface (node-agent presence / space-agent-tools absence) is
+// covered in node-agent-tools.test.ts and the tool-registration suite above.
 
-describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
+describe('createCompleteValidationTaskHandler — complete_validation_task', () => {
   let ctx: TestCtx;
   beforeEach(() => {
     ctx = makeCtx();
@@ -5749,6 +5754,29 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
   afterEach(() => {
     ctx.db.close();
   });
+
+  // Build the handler with the same dependency shape TaskAgentManager wires
+  // into node-agent servers. Returns an object so call sites read
+  // `.complete_validation_task({...})`.
+  function makeValidationTool(overrides: Partial<CompleteValidationTaskHandlerDeps> = {}): {
+    complete_validation_task: ReturnType<typeof createCompleteValidationTaskHandler>;
+  } {
+    return {
+      complete_validation_task: createCompleteValidationTaskHandler({
+        spaceId: ctx.spaceId,
+        db: ctx.db,
+        taskRepo: ctx.taskRepo,
+        taskManager: ctx.taskManager,
+        workflowRunRepo: ctx.workflowRunRepo,
+        getWorkflowForRun: (run) => ctx.workflowManager.getWorkflowForRun(run),
+        nodeExecutionRepo: ctx.nodeExecutionRepo,
+        resolvePrimaryLinkUrl: (runId) => ctx.runtime.getApprovedPrUrlForRun(runId) ?? '',
+        spaceManager: ctx.spaceManager,
+        goalService: ctx.goalService,
+        ...overrides,
+      }),
+    };
+  }
 
   async function createTask(status: 'review' | 'in_progress'): Promise<string> {
     await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
@@ -5801,7 +5829,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
   test('completes a no-PR task in review → done and captures the validation outcome', async () => {
     const taskId = await createTask('review');
 
-    const result = await makeHandlers(ctx).complete_validation_task({
+    const result = await makeValidationTool().complete_validation_task({
       task_id: taskId,
       validation_outcome: 'Reviewed 3 episodes; all evidence scoped correctly.',
       reason: 'weekly self_nag',
@@ -5824,7 +5852,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
   test('completes a no-PR task in_progress → done', async () => {
     const taskId = await createTask('in_progress');
 
-    const result = await makeHandlers(ctx).complete_validation_task({
+    const result = await makeValidationTool().complete_validation_task({
       task_id: taskId,
       validation_outcome: 'Diagnostic: no regression found in CI shard 4.',
     });
@@ -5858,7 +5886,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
       status: 'idle',
     });
 
-    const result = await makeHandlers(ctx).complete_validation_task({
+    const result = await makeValidationTool().complete_validation_task({
       task_id: task.id,
       validation_outcome: 'Reviewed Forge scope; no PR involved.',
     });
@@ -5878,7 +5906,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
     const task = createWorkflowTask(5, { status: 'in_progress' });
 
-    const result = await makeHandlers(ctx).complete_validation_task({
+    const result = await makeValidationTool().complete_validation_task({
       task_id: task.id,
       validation_outcome: 'validated',
     });
@@ -5905,7 +5933,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     });
     ctx.workflowRunRepo.updateRun(task.workflowRunId!, { status: 'cancelled' });
 
-    const result = await makeHandlers(ctx).complete_validation_task({
+    const result = await makeValidationTool().complete_validation_task({
       task_id: task.id,
       validation_outcome: 'validated',
     });
@@ -5934,7 +5962,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     });
     ctx.workflowRunRepo.updateRun(task.workflowRunId!, { status: 'blocked' });
 
-    const result = await makeHandlers(ctx).complete_validation_task({
+    const result = await makeValidationTool().complete_validation_task({
       task_id: task.id,
       validation_outcome: 'validated',
     });
@@ -5961,7 +5989,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     });
     ctx.workflowRunRepo.updateRun(task.workflowRunId!, { status: 'pending' });
 
-    const result = await makeHandlers(ctx).complete_validation_task({
+    const result = await makeValidationTool().complete_validation_task({
       task_id: task.id,
       validation_outcome: 'validated',
     });
@@ -6007,7 +6035,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
       );
 
       try {
-        const result = await makeHandlers(ctx).complete_validation_task({
+        const result = await makeValidationTool().complete_validation_task({
           task_id: task.id,
           validation_outcome: 'validated',
         });
@@ -6072,7 +6100,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     );
 
     try {
-      const result = await makeHandlers(ctx).complete_validation_task({
+      const result = await makeValidationTool().complete_validation_task({
         task_id: task.id,
         validation_outcome: 'validated',
       });
@@ -6116,7 +6144,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     });
 
     try {
-      const result = await makeHandlers(ctx).complete_validation_task({
+      const result = await makeValidationTool().complete_validation_task({
         task_id: taskId,
         validation_outcome: 'should be refused',
       });
@@ -6152,7 +6180,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     });
 
     try {
-      const result = await makeHandlers(ctx).complete_validation_task({
+      const result = await makeValidationTool().complete_validation_task({
         task_id: taskId,
         validation_outcome: 'should be refused',
       });
@@ -6218,13 +6246,11 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
         JSON.stringify({ spaceId: ctx.spaceId, taskId: task.id })
       );
     const interrupted: string[] = [];
-    const handlers = makeHandlers(ctx, {
-      mySessionId: 'worker-session-mid',
-      taskAgentManager: {
-        interruptBySessionId: async (sessionId: string) => {
-          interrupted.push(sessionId);
-        },
-      } as unknown as TaskAgentManager,
+    const handlers = makeValidationTool({
+      callerSessionId: 'worker-session-mid',
+      interruptBySessionId: async (sessionId: string) => {
+        interrupted.push(sessionId);
+      },
     });
 
     const result = await handlers.complete_validation_task({
@@ -6273,12 +6299,10 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
       agentSessionId: 'mid-node-session',
     });
     const interrupted: string[] = [];
-    const handlers = makeHandlers(ctx, {
-      taskAgentManager: {
-        interruptBySessionId: async (sessionId: string) => {
-          interrupted.push(sessionId);
-        },
-      } as unknown as TaskAgentManager,
+    const handlers = makeValidationTool({
+      interruptBySessionId: async (sessionId: string) => {
+        interrupted.push(sessionId);
+      },
     });
 
     const result = await handlers.complete_validation_task({
@@ -6321,12 +6345,10 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
         return result;
       }
     );
-    const handlers = makeHandlers(ctx, {
-      taskAgentManager: {
-        interruptBySessionId: async (sessionId: string) => {
-          interrupted.push(sessionId);
-        },
-      } as unknown as TaskAgentManager,
+    const handlers = makeValidationTool({
+      interruptBySessionId: async (sessionId: string) => {
+        interrupted.push(sessionId);
+      },
     });
 
     try {
@@ -6372,7 +6394,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     try {
       parsed = JSON.parse(
         (
-          await makeHandlers(ctx).complete_validation_task({
+          await makeValidationTool().complete_validation_task({
             task_id: task.id,
             validation_outcome: 'validated',
           })
@@ -6426,7 +6448,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     const task = await createTask('in_progress');
     ctx.taskRepo.updateTask(task, { workflowRunId: foreignRun.id });
 
-    const result = await makeHandlers(ctx).complete_validation_task({
+    const result = await makeValidationTool().complete_validation_task({
       task_id: task,
       validation_outcome: 'should be refused',
     });
@@ -6478,7 +6500,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
       status: 'idle',
     });
 
-    const result = await makeHandlers(ctx).complete_validation_task({
+    const result = await makeValidationTool().complete_validation_task({
       task_id: task.id,
       validation_outcome: 'validated',
     });
@@ -6519,7 +6541,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     // Completing the NON-canonical task is rejected.
     const denied = JSON.parse(
       (
-        await makeHandlers(ctx).complete_validation_task({
+        await makeValidationTool().complete_validation_task({
           task_id: task.id,
           validation_outcome: 'should be refused',
         })
@@ -6532,7 +6554,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     // Completing the canonical task still works.
     const allowed = JSON.parse(
       (
-        await makeHandlers(ctx).complete_validation_task({
+        await makeValidationTool().complete_validation_task({
           task_id: legacyDup.id,
           validation_outcome: 'canonical task validated',
         })
@@ -6542,77 +6564,11 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     expect(ctx.taskRepo.getTask(legacyDup.id)?.status).toBe('done');
   });
 
-  test('rejects a workflow-backed task whose workflow declares terminal-action hooks', async () => {
-    // The hook engine wraps the node-agent completion tools but NOT this
-    // tool's server (space-agent-tools). Fail closed: when the workflow
-    // declares hooks on any completion-family method, the unwrapped path is
-    // refused so the configured validators cannot be bypassed.
-    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
-    const nodeId = `node-${Math.random().toString(36).slice(2)}`;
-    const workflow = ctx.workflowManager.createWorkflow({
-      spaceId: ctx.spaceId,
-      name: `Hook-gated workflow ${nodeId.slice(-6)}`,
-      description: '',
-      nodes: [{ id: nodeId, name: 'Review', agentId: ctx.agentId }],
-      transitions: [],
-      startNodeId: nodeId,
-      endNodeId: nodeId,
-      rules: [],
-      completionAutonomyLevel: 5,
-      hooks: [
-        {
-          id: 'gate-approve',
-          enabled: true,
-          sourceNode: 'Review',
-          method: 'approve_task',
-          validator: {
-            kind: 'script',
-            interpreter: 'bash',
-            source: 'echo \'{"type":"allow"}\'',
-          },
-          authorizedCallers: [{ sourceNode: 'Review' }],
-        },
-      ],
-    });
-    const run = ctx.workflowRunRepo.createRun({
-      spaceId: ctx.spaceId,
-      workflowId: workflow.id,
-      title: 'Hook-gated run',
-      description: '',
-    });
-    ctx.workflowRunRepo.updateRun(run.id, { status: 'in_progress' });
-    const task = ctx.taskRepo.createTask({
-      spaceId: ctx.spaceId,
-      title: 'Hook-gated task',
-      description: '',
-      status: 'in_progress',
-      workflowRunId: run.id,
-    });
-    ctx.nodeExecutionRepo.create({
-      workflowRunId: run.id,
-      workflowNodeId: nodeId,
-      agentName: 'Review',
-      agentId: ctx.agentId,
-      status: 'idle',
-    });
-
-    const result = await makeHandlers(ctx).complete_validation_task({
-      task_id: task.id,
-      validation_outcome: 'validated',
-    });
-    const parsed = JSON.parse(result.content[0].text);
-
-    expect(parsed.success).toBe(false);
-    expect(parsed.error).toContain('terminal-action hooks');
-    expect(parsed.error).toContain('bypasses the hook engine');
-    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
-  });
-
   test('rejects when space autonomy is below workflow completionAutonomyLevel', async () => {
     await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 3 });
     const task = createWorkflowTask(5);
 
-    const result = await makeHandlers(ctx).complete_validation_task({
+    const result = await makeValidationTool().complete_validation_task({
       task_id: task.id,
       validation_outcome: 'validated',
     });
@@ -6636,7 +6592,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
       status: 'idle',
     });
 
-    const result = await makeHandlers(ctx).complete_validation_task({
+    const result = await makeValidationTool().complete_validation_task({
       task_id: task.id,
       validation_outcome: 'Validation passed; no code change required.',
     });
@@ -6661,9 +6617,18 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     const task = createWorkflowTask(5);
     const auditRepo = new McpAuditLogRepository(ctx.db);
 
-    const result = await makeHandlers(ctx, {
-      myAgentId: caller.id,
-      auditLogRepo: auditRepo,
+    const result = await makeValidationTool({
+      getCallingAgentAutonomyLevel: () =>
+        ctx.longHorizonAgentRepo.getById(caller.id)?.autonomyLevel ?? null,
+      audit: (params, targetTaskId) =>
+        auditRepo.createEntry({
+          agentName: 'capped-forge-agent',
+          sessionId: 'session-forge',
+          toolName: 'complete_validation_task',
+          paramsSummary: JSON.stringify(params),
+          spaceId: ctx.spaceId,
+          taskId: targetTaskId ?? task.id,
+        }),
     }).complete_validation_task({
       task_id: task.id,
       validation_outcome: 'validated',
@@ -6693,7 +6658,15 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     const task = createWorkflowTask(5);
     const auditRepo = new McpAuditLogRepository(ctx.db);
 
-    const result = await makeHandlers(ctx, { auditLogRepo: auditRepo }).complete_validation_task({
+    const result = await makeValidationTool({
+      audit: (params, targetTaskId) =>
+        auditRepo.createEntry({
+          toolName: 'complete_validation_task',
+          paramsSummary: JSON.stringify(params),
+          spaceId: ctx.spaceId,
+          taskId: targetTaskId ?? task.id,
+        }),
+    }).complete_validation_task({
       task_id: task.id,
       validation_outcome: 'validated',
     });
@@ -6721,7 +6694,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
       'https://github.com/owner/repo/pull/123'
     );
 
-    const result = await makeHandlers(ctx).complete_validation_task({
+    const result = await makeValidationTool().complete_validation_task({
       task_id: task.id,
       validation_outcome: 'should not reach here',
     });
@@ -6744,7 +6717,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     // Newly created task is `open`.
     expect(ctx.taskRepo.getTask(taskId)?.status).toBe('open');
 
-    const result = await makeHandlers(ctx).complete_validation_task({
+    const result = await makeValidationTool().complete_validation_task({
       task_id: taskId,
       validation_outcome: 'validated',
     });
@@ -6766,7 +6739,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
       pendingCompletionReason: 'needs human approval',
     });
 
-    const result = await makeHandlers(ctx).complete_validation_task({
+    const result = await makeValidationTool().complete_validation_task({
       task_id: taskId,
       validation_outcome: 'should be refused',
     });
@@ -6784,7 +6757,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
   test('rejects an empty validation outcome', async () => {
     const taskId = await createTask('in_progress');
 
-    const result = await makeHandlers(ctx).complete_validation_task({
+    const result = await makeValidationTool().complete_validation_task({
       task_id: taskId,
       validation_outcome: '   ',
     });
@@ -6798,7 +6771,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
   test('rejects a task that does not belong to this space', async () => {
     const taskId = await createTask('in_progress');
 
-    const result = await makeHandlers(ctx, { spaceId: 'other-space' }).complete_validation_task({
+    const result = await makeValidationTool({ spaceId: 'other-space' }).complete_validation_task({
       task_id: taskId,
       validation_outcome: 'validated',
     });
@@ -6809,7 +6782,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
   });
 
   test('rejects an unknown task id', async () => {
-    const result = await makeHandlers(ctx).complete_validation_task({
+    const result = await makeValidationTool().complete_validation_task({
       task_id: 'nonexistent-task',
       validation_outcome: 'validated',
     });
@@ -6847,7 +6820,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
 
     const denied = JSON.parse(
       (
-        await makeHandlers(ctx, { mySessionId: 'worker-session-a' }).complete_validation_task({
+        await makeValidationTool({ callerSessionId: 'worker-session-a' }).complete_validation_task({
           task_id: taskB,
           validation_outcome: 'should be refused',
         })
@@ -6860,7 +6833,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     // Same worker completing ITS OWN task is fine.
     const allowed = JSON.parse(
       (
-        await makeHandlers(ctx, { mySessionId: 'worker-session-a' }).complete_validation_task({
+        await makeValidationTool({ callerSessionId: 'worker-session-a' }).complete_validation_task({
           task_id: taskA,
           validation_outcome: 'own task validated',
         })
@@ -6874,7 +6847,9 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     seedBoundSession('coordinator-session', {});
     const broad = JSON.parse(
       (
-        await makeHandlers(ctx, { mySessionId: 'coordinator-session' }).complete_validation_task({
+        await makeValidationTool({
+          callerSessionId: 'coordinator-session',
+        }).complete_validation_task({
           task_id: taskB,
           validation_outcome: 'coordinator override validated',
         })
@@ -6922,8 +6897,8 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
         JSON.stringify({ spaceId: ctx.spaceId, taskId: task.id })
       );
 
-    const result = await makeHandlers(ctx, {
-      mySessionId: 'worker-session-mid',
+    const result = await makeValidationTool({
+      callerSessionId: 'worker-session-mid',
     }).complete_validation_task({
       task_id: task.id,
       validation_outcome: 'validated from a non-end node',
@@ -6947,7 +6922,7 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     });
     const coordinator = JSON.parse(
       (
-        await makeHandlers(ctx).complete_validation_task({
+        await makeValidationTool().complete_validation_task({
           task_id: other.id,
           validation_outcome: 'coordinator completed; no node execution',
         })
@@ -6971,8 +6946,8 @@ describe('createSpaceAgentToolHandlers — complete_validation_task', () => {
     });
     const reviewed = JSON.parse(
       (
-        await makeHandlers(ctx, {
-          mySessionId: 'worker-session-review',
+        await makeValidationTool({
+          callerSessionId: 'worker-session-review',
         }).complete_validation_task({
           task_id: reviewTask.id,
           validation_outcome: 'validated from review by a mid-node worker',
