@@ -19,6 +19,7 @@ The full roadmap below is the robust target. It should not block first dogfoodin
 - Add `getPrimaryGoalOwner(goalId)` and coordinator fallback.
 - Gate the ownership mutation handlers now, not in G3: `assign_agent_to_goal`/`unassign_agent_from_goal` currently perform only same-Space checks and default assignments to `owner`, so an ordinary member could replace a legitimate owner with a controlled LH agent and inherit MC3 apply authority. Require coordinator or explicit human authorization in these MCP handlers from MC1 onward.
 - Gate goal-mutating MCP tools the same way: `update_goal`, `pause_goal`, `resume_goal`, and `trigger_goal_task` also perform only same-Space checks while every Space member session receives `space-agent-tools`. Restrict them to the current primary owner, coordinator, or explicit human authority within MC1–MC3 so a member cannot bypass MC3's authorized, revision-checked review path by rewriting or pausing an owned goal directly.
+- Gate owner lifecycle mutations alongside them: `update_agent`, `pause_agent`, and `archive_agent` likewise only validate that the target belongs to the Space. MC1 reroutes notifications on those transitions, so without authorization an ordinary member could archive or pause the primary owner and divert pending reviews to the coordinator or disrupt future goal processing. Require target-agent, coordinator, or explicit human authority for these handlers in MC1 rather than deferring to G7.
 - Reconcile duplicate owners deterministically before enforcing the invariant.
 - Reassignment must supersede every unprocessed MC2 notification for the goal and deterministically reroute it to the new owner, so a pending wake can never remain stranded with the former owner while MC3 correctly rejects that former owner. Owner pause/disable/archive and hard-delete transitions must supersede and reroute the same way — to a usable replacement owner or visibly to the coordinator fallback — because the ownership row can remain unchanged while the recipient session becomes unusable.
 - Keep managers/watchers non-authoritative for now.
@@ -208,6 +209,8 @@ The source system decides which receipt advances its own record. Reminder occurr
 
 The `job_queue` row must not be the only copy of terminal delivery status: `cleanup.handler.ts` deletes completed and dead rows after the retention window, so a status lookup after a long daemon shutdown can no longer distinguish completed from failed from never-accepted, stranding durable domain work. Every consumer (MC2, V4–V6, G7) must persist the terminal receipt in its own domain attempt record — or delivery status must be retained for the lifetime of its upstream record — and missing/expired lookups must have defined semantics rather than being treated as never-accepted.
 
+Consumption and terminal turn outcome are orthogonal state. A prompt that crossed the SDK admission boundary but whose owning turn later exhausted retries is still consumed; redelivering it under a new UUID replays the same domain payload and can repeat autonomous tool side effects. New delivery-attempt generations are only for failures **before** SDK admission. A post-consumption terminal failure must surface as a distinct consumed-but-turn-failed state, and any post-consumption replay requires domain-level idempotency rather than a fresh blind injection.
+
 ## Implementation plan
 
 The target is one behavioral contract per PR, normally no more than 200 changed production lines (tests excluded). A cohesive PR may reach 250 lines; split any larger change that contains multiple contracts.
@@ -245,7 +248,7 @@ The target is one behavioral contract per PR, normally no more than 200 changed 
 - Advance one-shot/cron state only at the selected receipt boundary.
 - Define terminal-delivery failure recovery before advancement:
   - do not mark a one-shot occurrence fired merely on durable acceptance;
-  - a terminal V2 failure creates a new attempt generation or explicit degraded/manual-retry state rather than silently skipping the occurrence;
+  - a terminal V2 failure **before SDK admission** creates a new attempt generation or explicit degraded/manual-retry state rather than silently skipping the occurrence; a post-consumption terminal turn failure follows the orthogonal-state contract in the delivery architecture and must not blindly re-inject the same occurrence under a new UUID;
   - deterministic occurrence identity plus attempt generation prevents repeated scans from colliding with the failed delivery.
 - Remove bespoke probes/timeouts only after V2 provides equivalent guarantees.
 
@@ -459,7 +462,7 @@ This is the required behavior currently absent from `mark_complete.goal_update`;
 
 - Restrict every goal-mutating MCP/RPC operation—not only worker paths or `mark_complete`—to the current primary owner, coordinator, or explicit human authority. This includes `update_goal`, pause/resume, archive/complete, schedule/cadence changes, and goal-task triggering. Managers, watchers, unrelated LH agents, and ordinary member sessions must not bypass owner disposition by rewriting goal strategy directly.
 - Deprecate direct `mark_complete.goal_update` application in favor of outcome-report submission and owner disposition.
-- Apply equivalent owner authority to Forge rollups.
+- Apply equivalent owner authority to Forge rollups, and make rollup application atomic and idempotent. `EvolutionEpisodeService.applyRollupGoalUpdate` is currently check-then-write: two racing `apply_forge_rollup` calls, or a crash between `SpaceGoalService.updateGoal` and storing `rollupAppliedAt`, can apply the same update twice and append duplicate goal events. Atomically claim the episode, mutate the goal, and mark the rollup applied in one transaction; retries must return the original result.
 - Preserve coordinator/human override policy.
 - Migrate centralized worker prompts and the `mark_complete` schema descriptions before enabling restrictions. Existing goal-linked workers are instructed to update goals through goal tools or `goal_update`; they must instead be instructed to submit reports and let the owner decide.
 
