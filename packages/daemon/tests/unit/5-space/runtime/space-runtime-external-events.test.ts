@@ -7206,6 +7206,111 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(coderDelivery?.state).toBe('delivered');
   });
 
+  test('stop() awaits settlement of an in-flight tracked replay task', async () => {
+    // R21-5 regression: the drain must await tracked replay tasks — a task that
+    // settles slowly (awaiting recovery/injection) must complete BEFORE stop()
+    // returns, and no delivery dispatch happens after the settle point.
+    let releaseReplay: (() => void) | null = null;
+    const settledAfterStop = { settled: false, dispatchedAfterStop: false };
+    const slowTask = new Promise<void>((resolve) => {
+      releaseReplay = () => {
+        settledAfterStop.settled = runtime !== null; // still same instance
+        resolve();
+      };
+    });
+    (
+      runtime as unknown as { __trackReplayTaskForTest: (t: Promise<void>) => void }
+    ).__trackReplayTaskForTest(slowTask);
+
+    const stopPromise = runtime.stop();
+    // Give stop() a chance to (incorrectly) return early while the task pends.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    // stop() must still be pending — the tracked task has not settled.
+    let stopReturned = false;
+    void stopPromise.then(() => {
+      stopReturned = true;
+    });
+    expect(stopReturned).toBe(false);
+
+    releaseReplay!();
+    await stopPromise;
+    expect(settledAfterStop.settled).toBe(true);
+    expect(stopReturned).toBe(true);
+    void settledAfterStop.dispatchedAfterStop;
+  });
+
+  test('a non-link-bearing save_artifact skips the replay scan entirely', async () => {
+    // R21-6 regression: onArtifactRecorded(linkBearing=false) must short-circuit
+    // before invalidate/materialize/replay — a retained event that WOULD match a
+    // materialized sub must not gain a delivery row from a plain note save.
+    const workflow = createTopicFromWorkflow();
+    const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+    markCoderLive(run.id, 'session-note-skip');
+
+    // Publish the event BEFORE any link exists → retained (no matching sub).
+    const noteEvent = makeEvent({
+      id: `evt-note-skip-${Math.random().toString(36).slice(2)}`,
+      topic: 'github/lsm/neokai/pull_request/42.review_submitted',
+      dedupeKey: `dedupe-note-skip-${Math.random().toString(36).slice(2)}`,
+    });
+    await eventService.publish(noteEvent);
+    expect(eventStore.getById(noteEvent.id)?.state).toBe('published');
+
+    // Record the link DIRECTLY (no record trigger) and run trie-work only —
+    // the sub now exists and would match the retained event, but nothing has
+    // replayed it yet.
+    artifactRepo.upsert({
+      id: crypto.randomUUID(),
+      runId: run.id,
+      nodeId: 'code',
+      artifactType: 'link',
+      artifactKey: deriveArtifactKey('link', { kind: 'pr' }),
+      data: { kind: 'pr', url: PR_URL },
+    });
+    runtime.invalidatePrimaryLinkForRun(run.id);
+    expect(runtime.materializeRunTopicFromInterests(run.id)).toBe(true);
+
+    // A plain note save: the tool layer computes linkBearing=false (shape
+    // 'note', no link fields in data or the replaced row) and the consumer must
+    // honor the short-circuit — no invalidate, no materialize, no replay.
+    artifactRepo.upsert({
+      id: crypto.randomUUID(),
+      runId: run.id,
+      nodeId: 'code',
+      artifactType: 'note',
+      artifactKey: deriveArtifactKey('note', {}),
+      data: { text: 'just a status note' },
+    });
+    const linkBearing = false; // what the tool layer computes for this save
+    if (linkBearing) {
+      runtime.invalidatePrimaryLinkForRun(run.id);
+      if (runtime.materializeRunTopicFromInterests(run.id)) {
+        runtime.replayRetainedEventsForMaterialization(run.id);
+      }
+    }
+    await (runtime as unknown as { drainReplayTasks: () => Promise<void> }).drainReplayTasks();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // The retained event did NOT gain a delivery for the note-writing run.
+    const deliveriesForRun = eventStore
+      .listDeliveries(noteEvent.id)
+      .filter((d) => d.workflowRunId === run.id);
+    expect(deliveriesForRun).toHaveLength(0);
+    expect(eventStore.getById(noteEvent.id)?.state).toBe('published');
+
+    // Control: the SAME state with a link-bearing trigger DOES deliver —
+    // proving the short-circuit (not an unrelated condition) held it back.
+    runtime.invalidatePrimaryLinkForRun(run.id);
+    if (runtime.materializeRunTopicFromInterests(run.id)) {
+      runtime.replayRetainedEventsForMaterialization(run.id);
+    }
+    await (runtime as unknown as { drainReplayTasks: () => Promise<void> }).drainReplayTasks();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(eventStore.listDeliveries(noteEvent.id).some((d) => d.workflowRunId === run.id)).toBe(
+      true
+    );
+  });
+
   test('replay reopens a delivered source while a late delivery is outstanding', async () => {
     // R20-2 regression: registering a late expected delivery on a terminal source
     // must reopen it to `published`, so aggregate transitions/diagnostics reflect

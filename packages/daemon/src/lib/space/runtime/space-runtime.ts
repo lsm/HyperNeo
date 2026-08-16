@@ -1590,6 +1590,11 @@ export class SpaceRuntime {
    * settlement; rejections are swallowed (the replay paths already log their
    * own failures) so one failing task can't reject the drain.
    */
+  /** Test-only access to the replay-task tracker (for drain determinism). */
+  __trackReplayTaskForTest(task: Promise<void>): void {
+    this.trackReplayTask(task);
+  }
+
   private trackReplayTask(task: Promise<void>): void {
     const tracked = task.then(
       () => this.replayTasksInFlight.delete(task),
@@ -5611,8 +5616,33 @@ export class SpaceRuntime {
     // spawned after stop) and the retained replay is re-entrancy-guarded, so the
     // drain converges once the in-flight continuations settle. The drain is
     // wave-based rather than Promise.all to also cover tasks tracked by a
-    // concurrently-settling task's continuation.
+    // concurrently-settling task's continuation. A generous hard ceiling backs
+    // the convergence argument: tracked tasks await recoveryInFlight /
+    // resolveExternalEventDelivery / injection locks BEFORE any isStopped
+    // check, so a genuinely stuck promise (deadlocked recovery, unresolved
+    // inject lock) would otherwise hang shutdown indefinitely while holding
+    // the DB open. 60s is far above any legitimate delivery/recovery path.
+    await this.drainReplayTasks();
+  }
+
+  /**
+   * Await settlement of tracked fire-and-forget replay tasks (retained-event
+   * redispatch + new-target delivery), in waves. Also used directly by tests to
+   * make replay assertions deterministic (no setTimeout polling). Bounded by a
+   * generous hard ceiling: tracked tasks await recoveryInFlight / delivery
+   * resolution / injection locks BEFORE any isStopped check, so a genuinely
+   * stuck promise would otherwise hang the caller indefinitely.
+   */
+  async drainReplayTasks(maxWaitMs = 60_000): Promise<void> {
+    const start = Date.now();
     while (this.replayTasksInFlight.size > 0) {
+      if (Date.now() - start > maxWaitMs) {
+        log.warn(
+          `SpaceRuntime: timed out draining ${this.replayTasksInFlight.size} replay task(s) ` +
+            `after ${maxWaitMs}ms — proceeding`
+        );
+        break;
+      }
       const pending = [...this.replayTasksInFlight];
       await Promise.allSettled(pending);
     }
@@ -6215,7 +6245,19 @@ export class SpaceRuntime {
     if (eventRecord.state !== 'delivered' && eventRecord.state !== 'failed') return false;
     // Terminalized with a still-pending delivery: eligible only within the TTL
     // window (mirrors the queued-item expiry the delivery will re-undergo).
-    if (Date.now() - eventRecord.createdAt > EXTERNAL_EVENT_QUEUE_TTL_MS) return false;
+    if (Date.now() - eventRecord.createdAt > EXTERNAL_EVENT_QUEUE_TTL_MS) {
+      // Past the window the pending row can never deliver; terminalize it so it
+      // does not linger forever (nothing else sweeps it — the TTL sweep only
+      // covers events WITHOUT delivery rows, and these callers `continue` on a
+      // false return), get re-scanned by every restart/resume pass, and inflate
+      // pending-delivery queue-health metrics.
+      this.config.externalEventStore?.markDeliveryFailed(eventId, deliveryKey, {
+        terminal: true,
+        reason: 'ttl_expired',
+      });
+      this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(eventId);
+      return false;
+    }
     // Belt-and-braces: the delivery row itself must actually still be pending
     // (callers iterate pending rows, but guard a concurrent transition between
     // the list and this read).

@@ -70,6 +70,22 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
     this.resolvePrReadyHookIds = config.resolvePrReadyHookIds;
   }
 
+  /**
+   * The coding domain's link-bearing keys: the legacy `prUrl`/`pr_url` fields
+   * (load-bearing on pre-link-artifact rows and post-approval decision
+   * artifacts). A write carrying them — or dropping one a previous row carried —
+   * can change the durable primary link.
+   */
+  isLinkBearing(
+    _shape: string,
+    data: Record<string, unknown>,
+    previousData: Record<string, unknown> | null
+  ): boolean {
+    const carries = (d: Record<string, unknown> | null): boolean =>
+      !!d && ('prUrl' in d || 'pr_url' in d);
+    return carries(data) || carries(previousData);
+  }
+
   resolvePrimaryLinkUrl(runId: string): string {
     // The primary link is the FRESHEST eligible PR URL across hook state and
     // artifacts, compared by updatedAt — so a newer `link kind:'pr'` artifact

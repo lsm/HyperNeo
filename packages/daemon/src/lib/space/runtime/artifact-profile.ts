@@ -31,6 +31,21 @@ export interface WorkflowArtifactProfile {
   resolveInitialPrimaryLinkUrl?(runId: string): string;
 
   /**
+   * Whether an artifact write could change the run's primary link — used by the
+   * generic save_artifact layer to decide whether to fire the record-triggered
+   * topicFrom materialization. Owns the domain's link-bearing data keys (the
+   * coding profile's legacy `prUrl`/`pr_url`); the closed `shape === 'link'`
+   * vocabulary check stays in the caller. `previousData` is the row this upsert
+   * replaces (null when none): a re-upsert that DROPS a previously carried link
+   * field is still link-bearing (it clears the durable link).
+   */
+  isLinkBearing?(
+    shape: string,
+    data: Record<string, unknown>,
+    previousData: Record<string, unknown> | null
+  ): boolean;
+
+  /**
    * Build a short terminal outcome summary from a run's artifacts, or null when
    * the run recorded no outcome. Used by task completion (mark_complete / run
    * completion / Forge gap detection). The coding profile reads the kindless

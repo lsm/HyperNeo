@@ -837,23 +837,21 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       try {
         const artifactKey = deriveArtifactKey(shape, normalized, keyArg);
 
-        // Capture whether the row about to be overwritten carried a legacy
-        // pr_url/prUrl BEFORE the upsert replaces it — a re-upsert that omits the
-        // field clears the durable link, and the record trigger must still
-        // invalidate the cached primary link. Scoped to this artifact's shape AND
-        // node: the upsert's uniqueness key includes node_id, so only the row this
-        // upsert can replace should control previousCarriedPrUrl — without the
-        // node filter, a sibling node's same-shape+key artifact could supply a
-        // legacy pr_url and falsely report this save as link-bearing. The shape
-        // filter keeps the hot path (frequent note/metric/decision saves) from
-        // loading the run's full artifact set.
-        const previousCarriedPrUrl = artifactRepo
-          .listByRun(workflowRunId, { artifactType: shape, nodeId: workflowNodeId })
-          .some(
-            (a) =>
-              a.artifactKey === artifactKey &&
-              ('prUrl' in (a.data ?? {}) || 'pr_url' in (a.data ?? {}))
-          );
+        // Capture the row this upsert replaces BEFORE it is overwritten — a
+        // re-upsert that drops a previously carried link field clears the durable
+        // link, and the record trigger must still fire. Scoped to this artifact's
+        // shape AND node: the upsert's uniqueness key includes node_id, so only
+        // the row this upsert can replace matters — without the node filter, a
+        // sibling node's same-shape+key artifact could falsely report this save
+        // as link-bearing. The shape filter keeps the hot path (frequent
+        // note/metric/decision saves) from loading the run's full artifact set.
+        const previousRow =
+          artifactRepo
+            .listByRun(workflowRunId, { artifactType: shape, nodeId: workflowNodeId })
+            .find((a) => a.artifactKey === artifactKey) ?? null;
+        const previousData: Record<string, unknown> | null = previousRow
+          ? (previousRow.data ?? null)
+          : null;
 
         const record = artifactRepo.upsert({
           id: crypto.randomUUID(),
@@ -880,17 +878,14 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         // (or a future callback that forgets to guard) must never flip the tool
         // result to failure and cause a caller to retry a write that succeeded.
         try {
-          // linkBearing: a `link` shape or any artifact carrying a legacy
-          // prUrl/pr_url field could change the run's primary link, so the
-          // consumer invalidates its cached resolution before re-materializing.
-          // Includes a removal: a non-link artifact that previously carried
-          // pr_url, re-upserted under the same key with data that omits it,
-          // clears the durable link (captured above as previousCarriedPrUrl).
+          // linkBearing: a `link` shape (closed vocabulary, safe to check here)
+          // or a write whose data / the row it replaces carries a domain
+          // link-bearing field — decided by the artifact profile, which owns
+          // those keys. Includes a removal: a re-upsert that drops a previously
+          // carried link field clears the durable link (previousData above).
           const linkBearing =
             shape === 'link' ||
-            'prUrl' in normalized ||
-            'pr_url' in normalized ||
-            previousCarriedPrUrl;
+            (config.artifactProfile?.isLinkBearing?.(shape, normalized, previousData) ?? false);
           config.onArtifactRecorded?.(workflowRunId, linkBearing);
         } catch (recordedErr) {
           log.warn(

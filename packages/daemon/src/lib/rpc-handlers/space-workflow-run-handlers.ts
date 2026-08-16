@@ -801,6 +801,37 @@ export function setupSpaceWorkflowRunHandlers(
     };
   });
 
+  // These RPC paths update hook state directly via hookStateRepo (bypassing
+  // workflow-hook-engine's persistStateUpdate), so the runtime's
+  // onHookStateUpdated trigger — which re-materializes topicFrom interests when
+  // a link-bearing write lands — never fires. A human approving/retrying a hook
+  // whose state still carries a stale pr_url must not leave the derived
+  // subscription pointing at the superseded PR: the write bumps updated_at
+  // (which resolvePrimaryLinkUrl ranks as freshness), so without invalidation
+  // the next cache miss would re-rank the stale hook above the newer artifact.
+  // Fire the same invalidate + materialize + conditional replay the engine path
+  // uses, only when the pre-write state carried a link field.
+  const refreshTopicFromAfterHookWrite = (
+    runId: string,
+    baseLocalState: Record<string, unknown>
+  ) => {
+    const linkBearing = 'prUrl' in baseLocalState || 'pr_url' in baseLocalState;
+    if (!linkBearing) return;
+    try {
+      spaceRuntimeService.invalidatePrimaryLinkForRun(runId);
+      if (spaceRuntimeService.materializeRunTopicFromInterests(runId)) {
+        spaceRuntimeService.replayRetainedEventsForMaterialization(runId);
+      }
+    } catch (err) {
+      // Best-effort: the hook write already committed; a refresh failure must
+      // not fail the RPC.
+      log.warn(
+        `approveHook/retryHook: topicFrom refresh failed for ${runId}: ` +
+          `${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  };
+
   // ─── spaceWorkflowRun.approveHook ───────────────────────────────────────
   //
   // Writes a human approval decision into a hook's local state.
@@ -860,6 +891,8 @@ export function setupSpaceWorkflowRunHandlers(
       throw new Error('Hook state update failed due to version conflict');
     }
 
+    refreshTopicFromAfterHookWrite(params.runId, baseLocalState);
+
     internalEventBus
       .publish('space.hookState.updated', {
         sessionId: 'global',
@@ -916,6 +949,8 @@ export function setupSpaceWorkflowRunHandlers(
     if (!updateResult) {
       throw new Error('Hook state update failed due to version conflict');
     }
+
+    refreshTopicFromAfterHookWrite(params.runId, existing?.localState ?? {});
 
     if (typeof queuedActionKey === 'string') {
       triggerRetryableHookAction(queuedActionKey);
