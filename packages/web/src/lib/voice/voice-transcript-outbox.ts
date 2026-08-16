@@ -67,8 +67,8 @@ const markerVerifyTimers = new Map<string, ReturnType<typeof setTimeout>[]>();
 // whose reads never observe the writes would repair forever.
 const markerRepairBudget = new Map<string, number>();
 const MARKER_VERIFY_DELAYS_MS = [25, 250, 2000];
-function scheduleMarkerVerification(sessionId: string, announcedIds: string[]): void {
-  if (announcedIds.length === 0) return;
+function scheduleMarkerVerification(sessionId: string, announced: LandingEntry[]): void {
+  if (announced.length === 0) return;
   // A newer landing's chain SUPERSEDES any pending one: its announced set is
   // current, and the older chain would otherwise interpret legitimate
   // eviction (below) as a clobber.
@@ -84,21 +84,25 @@ function scheduleMarkerVerification(sessionId: string, announcedIds: string[]): 
       if (!consumedMarkers.has(sessionId) && isLandingLive(sessionId)) {
         const raw = localStorage.getItem(`${LANDED_PREFIX}${sessionId}`);
         const marker = parseLandedMarker(raw);
-        // Only ids still RETAINED locally count as losable: a rapid drain
-        // past the entry cap legitimately evicts older ids from BOTH the
-        // marker and the local aggregate, and treating that eviction as a
-        // clobber would mint a false landing whose reconciliation appends the
-        // aggregate again — duplicating voice text.
-        const liveLocal = new Set(landingIds.get(sessionId) ?? []);
-        const stillLocal = announcedIds.filter((id) => liveLocal.has(id));
+        // The captured RECORDS repair from data the clobber's own storage
+        // event cannot destroy: the handler REPLACES the local aggregate with
+        // the incoming (possibly clobbering) marker, so the missing entries
+        // are gone from landingEntries by the time this runs — re-marking
+        // from the captured records restores them into the live aggregate and
+        // the rewritten marker. Ids OUR OWN cap eviction dropped are exempt:
+        // their absence from the marker is legitimate, and re-announcing them
+        // would mint a false landing whose reconciliation appends the
+        // aggregate again, duplicating voice text.
+        const evicted = evictedEntryIds.get(sessionId) ?? new Set<string>();
+        const missing = announced.filter(
+          (entry) => !evicted.has(entry.id) && (!marker || !marker.ids.includes(entry.id))
+        );
         const budget = markerRepairBudget.get(sessionId) ?? 0;
-        if ((!marker || stillLocal.some((id) => !marker.ids.includes(id))) && budget > 0) {
-          // This sequence's entries vanished from the marker (or it is gone) —
-          // re-union from whatever is live now through the SAME mark path: it
-          // merges the current marker's entries with this tab's aggregate and
-          // schedules its own verification, so both writers converge.
+        if (missing.length > 0 && budget > 0) {
           markerRepairBudget.set(sessionId, budget - 1);
-          markVoiceTranscriptLanded(sessionId);
+          for (const entry of missing) {
+            markVoiceTranscriptLanded(sessionId, entry.text, entry.id, entry.seq);
+          }
           return;
         }
       }
@@ -228,10 +232,12 @@ export function markVoiceTranscriptLanded(
       const unseen = marker.entries.filter((entry) => !ours.has(entry.id));
       if (unseen.length > 0) {
         const known = new Set((landingEntries.get(sessionId) ?? []).map((e) => e.id));
-        const mergedEntries = orderLandingEntries([
+        const merged = orderLandingEntries([
           ...marker.entries.filter((e) => !known.has(e.id)),
           ...(landingEntries.get(sessionId) ?? []),
-        ]).slice(-MAX_ENTRIES);
+        ]);
+        recordEntryEvictions(sessionId, merged);
+        const mergedEntries = merged.slice(-MAX_ENTRIES);
         landingEntries.set(sessionId, mergedEntries);
         landingTexts.set(
           sessionId,
@@ -319,7 +325,7 @@ export function markVoiceTranscriptLanded(
         // write (storage failing), and verifying against a permanently
         // unreadable marker would repair forever.
         if (markerRaw === written) {
-          scheduleMarkerVerification(sessionId, landingIds.get(sessionId) ?? []);
+          scheduleMarkerVerification(sessionId, landingEntries.get(sessionId) ?? []);
         }
         break;
       }
@@ -370,7 +376,22 @@ export interface LandingEntry {
   seq?: number;
 }
 const landingEntries = new Map<string, LandingEntry[]>();
+// Entry ids THIS TAB's own cap eviction dropped from its local aggregate.
+// The marker-verification repair must treat a missing id as a cross-tab
+// clobber only when the local aggregate did not evict it itself — but the
+// storage-event handler REPLACES the local ids from the incoming marker, so
+// a clobbered-away id is indistinguishable from a locally evicted one by
+// presence alone. Recording our own evictions separates the two: a missing
+// id is repairable exactly when it was never evicted locally.
+const evictedEntryIds = new Map<string, Set<string>>();
 let syntheticEntryCounter = 0;
+
+function recordEntryEvictions(sessionId: string, ordered: LandingEntry[]): void {
+  if (ordered.length <= MAX_ENTRIES) return;
+  const evicted = evictedEntryIds.get(sessionId) ?? new Set<string>();
+  for (const entry of ordered.slice(0, ordered.length - MAX_ENTRIES)) evicted.add(entry.id);
+  evictedEntryIds.set(sessionId, evicted);
+}
 
 // Order a landing sequence's entries by DAEMON COMMIT sequence: append
 // acknowledgements can publish out of order across entries (a slower first
@@ -425,7 +446,9 @@ function markVoiceTranscriptLandedLocal(
     };
     const fresh = hadLiveLanding && !replaceAggregate;
     const prevEntries = fresh ? (landingEntries.get(sessionId) ?? []) : [];
-    const bounded = orderLandingEntries([...prevEntries, record]).slice(-MAX_ENTRIES);
+    const ordered = orderLandingEntries([...prevEntries, record]);
+    recordEntryEvictions(sessionId, ordered);
+    const bounded = ordered.slice(-MAX_ENTRIES);
     landingEntries.set(sessionId, bounded);
     // The entries are the authoritative aggregate granularity — derive the
     // text and the announced-id set from the RETAINED entries (older ids fill
@@ -1672,5 +1695,6 @@ export function resetVoiceTranscriptOutbox(): void {
   landingTexts.clear();
   landingIds.clear();
   landingEntries.clear();
+  evictedEntryIds.clear();
   consumedMarkers.clear();
 }

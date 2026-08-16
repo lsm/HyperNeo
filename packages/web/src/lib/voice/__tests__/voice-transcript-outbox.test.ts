@@ -1158,21 +1158,32 @@ describe('voice transcript outbox — review-hardening round', () => {
   it('re-unions the marker after a concurrent tab clobbers a surviving write', async () => {
     // A readback of our own write is not a compare-and-swap across tabs: a
     // writer that read the OLD marker can replace the union right after we
-    // exit. The deferred verification passes must repair the aggregate.
+    // exit. The deferred verification passes must repair the aggregate — even
+    // though the clobber's storage event REPLACED our local announced ids
+    // with the incomplete marker's (only the ids OUR OWN cap evicted are
+    // exempt from repair).
     markVoiceTranscriptLanded('s1', 'mine', 'e-mine');
     expect(getAnnouncedEntryIds('s1')).toContain('e-mine');
-    // The stale-state writer's marker drops our entry entirely.
-    localStorage.setItem(
-      'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
-      JSON.stringify({
-        v: 1,
-        ts: Date.now(),
-        n: 999_999,
-        text: 'theirs',
-        ids: ['e-theirs'],
-        entries: [{ id: 'e-theirs', text: 'theirs' }],
+    // The stale-state writer's marker drops our entry entirely, and this tab
+    // receives its storage event.
+    const clobber = JSON.stringify({
+      v: 1,
+      ts: Date.now(),
+      n: 999_999,
+      text: 'theirs',
+      ids: ['e-theirs'],
+      entries: [{ id: 'e-theirs', text: 'theirs' }],
+    });
+    localStorage.setItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1', clobber);
+    startVoiceTranscriptOutboxFlush();
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key: 'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+        newValue: clobber,
       })
     );
+    // The authoritative replacement dropped our id from the local set…
+    expect(getAnnouncedEntryIds('s1')).not.toContain('e-mine');
     await vi.advanceTimersByTimeAsync(3_000);
     const repaired = JSON.parse(
       localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1') ?? '{}'
@@ -1182,6 +1193,7 @@ describe('voice transcript outbox — review-hardening round', () => {
     expect(repaired.ids).toContain('e-theirs');
     expect(getLandingTranscript('s1')).toContain('mine');
     expect(getLandingTranscript('s1')).toContain('theirs');
+    stopVoiceTranscriptOutboxFlush();
   });
 
   it('advances the local signal to the newer persisted generation it reports', () => {
