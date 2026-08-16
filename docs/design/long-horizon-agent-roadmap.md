@@ -36,19 +36,20 @@ This intentionally reuses task results and current delivery/inbox primitives ins
 **Why it matters:** the goal now reacts to work completing instead of waiting for a human or a weekly reminder.  
 **Estimated size:** 170–250 production lines.
 
-### MC3. Owner goal-review MCP tool
+### MC3. Idempotent owner goal-review MCP tool
 
 Add one explicit tool such as `review_goal_outcome` that the awakened owner can call. It receives:
 
 - goal ID;
 - completed task ID;
+- the persisted MC2 notification identity;
 - optional structured observations and metric changes;
 - summary, next steps, and follow-up intent.
 
-The tool validates that the caller is the current primary owner or coordinator fallback, then applies the update through `SpaceGoalService`. Workers do not get this tool.
+The tool validates that the caller is the current primary owner or coordinator fallback, then atomically records the notification as processed and applies the update through `SpaceGoalService`. Retrying a durable wake or retrying after a tool timeout must return the original processed result rather than appending duplicate goal events, reapplying metrics, or creating duplicate follow-up work. Workers do not get this tool.
 
-**Why it matters:** the LH agent becomes responsible for integrating outcomes and deciding next actions without immediately reworking every existing worker prompt or terminal path.  
-**Estimated size:** 150–230 production lines.
+**Why it matters:** the LH agent becomes responsible for integrating outcomes and deciding next actions without immediately reworking every existing worker prompt or terminal path.
+**Estimated size:** 170–250 production lines.
 
 ### MC4. Minimal goal detail and ownership UI
 
@@ -102,6 +103,18 @@ This core deliberately does **not** yet provide:
 - every authorization restriction in the final architecture.
 
 Those remain in the robust roadmap below. The minimal core is a dogfood bridge: it makes LH goal ownership usable while preserving the later migration path.
+
+### Minimal-core cutover
+
+When robust outcome reports become authoritative, G6 must atomically cut over from the minimal notification/review path:
+
+- Stop creating new MC2 notifications at the same terminal seam when report capture is enabled.
+- Backfill or link pending MC2 notifications to their corresponding outcome reports so no pending wake is silently dropped.
+- Disable `review_goal_outcome` for goals covered by authoritative reports and redirect owners to the G8 decision tools.
+- Update MC5 prompts in the same cutover so agents do not receive both the old and new instructions.
+- Make the cutover idempotent and reversible behind an explicit migration flag until report capture/routing has been verified in production.
+
+This prevents duplicate owner wake-ups, duplicate goal updates, and conflicting follow-up work during the transition.
 
 ## Prerequisite: Message Delivery V2
 
@@ -408,6 +421,7 @@ This is the required behavior currently absent from `mark_complete.goal_update`;
 - Atomically persist durable routing work with report creation or require the dispatcher to scan every unrouted/superseded report. Delivery identity must be deterministic from report ID plus route generation so restart recovery is idempotent.
 - Persist routing outcome without blocking task completion; a committed report must not be lost because the daemon exits before the asynchronous route call starts.
 - Consume terminal V2 `failed`/`rejected` status for report notifications. Such a failure creates a new route-attempt generation or visible retryable/degraded routing state; the existing deterministic identity must not collide with the failed V2 job, and recovery must cover routed-but-terminal-failed reports as well as unrouted/superseded reports.
+- Reconcile successfully delivered but undisposed reports. V2 `completed` only proves the turn ended, not that the owner called a decision tool. Pending reports whose latest delivery completed without disposition must receive bounded re-notification/backoff and eventual visible coordinator/human escalation.
 
 **Dependencies:** G1–G6 and V1–V3.
 
