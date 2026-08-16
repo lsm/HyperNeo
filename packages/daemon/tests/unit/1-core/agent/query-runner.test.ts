@@ -1615,26 +1615,30 @@ describe('QueryRunner', () => {
       expect(startSpy.mock.calls.length).toBe(1);
     });
 
-    it('re-enqueues the consumed prompt before the startup-timeout retry', async () => {
-      // Codex P1 (PR #2499): if the old SDK pulled the prompt out of the queue
-      // via messageGenerator() before going silent, restarting the queue leaves
-      // the retry with no input and it times out again at zero messages.
-      // Re-enqueue the recorded consumed message (mirrors the transient-connection
-      // retry) so the retry has something to feed.
-      const consumedUuid = 'consumed-msg-uuid';
-      const consumedContent = [{ type: 'text' as const, text: 'Hello, Claude!' }];
+    it('re-enqueues every consumed prompt before the startup-timeout retry', async () => {
+      // Codex P1 (PR #2499): if the old SDK pulled prompts out of the queue via
+      // messageGenerator() before going silent, restarting the queue leaves the
+      // retry with no input and it times out again at zero messages. A silent
+      // iterator can pull the kickoff AND trailing steers, so replay the full
+      // ordered set — not just the last message.
+      const kickoff = { uuid: 'kickoff-uuid', content: [{ type: 'text' as const, text: 'K' }] };
+      const steer = { uuid: 'steer-uuid', content: [{ type: 'text' as const, text: 'S' }] };
 
       const ctx = createContext();
       runner = new QueryRunner(ctx);
-      (runner as unknown as { _lastConsumedUserMessage: unknown })._lastConsumedUserMessage = {
-        uuid: consumedUuid,
-        content: consumedContent,
-      };
+      (runner as unknown as { _consumedUserMessages: unknown })._consumedUserMessages = [
+        kickoff,
+        steer,
+      ];
 
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      expect(enqueueWithIdSpy).toHaveBeenCalledWith(consumedUuid, consumedContent);
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith(kickoff.uuid, kickoff.content);
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith(steer.uuid, steer.content);
+      // Order matters: the kickoff must be re-fed before the steer.
+      const calls = enqueueWithIdSpy.mock.calls as unknown as Array<[string, unknown]>;
+      expect(calls.map(([uuid]) => uuid)).toEqual([kickoff.uuid, steer.uuid]);
     });
 
     it('should abandon the retry when a replacement query took ownership during the exit wait', async () => {

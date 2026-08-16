@@ -92,6 +92,17 @@ describe('StructuredLogFileSink', () => {
     expect(redacted.message).toBe('Authorization: [REDACTED]');
   });
 
+  it('redacts quoted values containing escaped quotes through the closing quote', () => {
+    // A JSON-serialized Digest value carries escaped quotes (`\"`); the naive
+    // `.*?` value treats the first escaped quote as the closing delimiter and
+    // persists the username/nonce/response. The escape-aware matcher consumes
+    // the whole value. (Codex P1, PR #2499.)
+    const redacted = redactStructuredLogEvent(
+      event('{"Authorization":"Digest username=\\"u\\", nonce=\\"secret\\""}')
+    );
+    expect(redacted.message).toBe('{"Authorization":"[REDACTED]"}');
+  });
+
   it('redacts unquoted colon-form values for every sensitive key', () => {
     // `token: abc` (no quotes, no `=`) previously passed through every rule —
     // only authorization and cookies had colon-form handling. Like the

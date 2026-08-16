@@ -228,9 +228,36 @@ describe('getConfig', () => {
     process.env.DB_PATH = '/tmp/hyperneo-worktree-b.db';
     const b = getConfig().structuredLogFilePath;
 
-    expect(a).toBe('/tmp/logs/hyperneo-worktree-a.jsonl');
-    expect(b).toBe('/tmp/logs/hyperneo-worktree-b.jsonl');
+    expect(a).toBe('/tmp/logs/hyperneo-worktree-a.db.jsonl');
+    expect(b).toBe('/tmp/logs/hyperneo-worktree-b.db.jsonl');
     expect(a).not.toBe(b);
+  });
+
+  test('same-stem DBs with different extensions derive distinct log paths', () => {
+    // Codex P2 (PR #2499): stripping the extension maps /tmp/hyperneo.db and
+    // /tmp/hyperneo.sqlite to the same log identity; keep the extension so the
+    // two independent sinks cannot rotate/drop each other's files.
+    process.env.NODE_ENV = 'production';
+
+    process.env.DB_PATH = '/tmp/hyperneo.db';
+    const a = getConfig().structuredLogFilePath;
+    process.env.DB_PATH = '/tmp/hyperneo.sqlite';
+    const b = getConfig().structuredLogFilePath;
+
+    expect(a).toBe('/tmp/logs/hyperneo.db.jsonl');
+    expect(b).toBe('/tmp/logs/hyperneo.sqlite.jsonl');
+    expect(a).not.toBe(b);
+  });
+
+  test('structured log retained-file overrides are capped like the env fallback', () => {
+    // Codex P2 (PR #2499): the 1,000-file cap previously applied only to the env
+    // fallback; an embedder override of Number.MAX_SAFE_INTEGER would wedge
+    // rotate()'s decrementing loop.
+    process.env.NODE_ENV = 'production';
+
+    const config = getConfig({ structuredLogRetainedFiles: Number.MAX_SAFE_INTEGER });
+
+    expect(config.structuredLogRetainedFiles).toBe(1_000);
   });
 
   test('default database path is ~/.hyperneo/data/daemon.db', () => {

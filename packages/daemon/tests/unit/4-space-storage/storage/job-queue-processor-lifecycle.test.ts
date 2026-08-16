@@ -494,6 +494,31 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
       expect(resolved).toBe(true);
     });
 
+    it('does not regress the delivery lifecycle stage on out-of-order reports', async () => {
+      // Codex P2 (PR #2499): a fast cold-start init/history frame records
+      // first_sdk_response before the driving attempt reports query_ready /
+      // sdk_admitted; the later reports must not move the tracked stage
+      // backward or emit the lifecycle events out of order.
+      const delivery = new JobQueueProcessor(repo, { pollIntervalMs: 5000, maxConcurrent: 1 });
+      delivery.register('message_delivery', (_job, context) => {
+        context?.reportStage?.('first_sdk_response', { responseType: 'assistant' });
+        context?.reportStage?.('query_ready', { generation: 1 });
+        context?.reportStage?.('sdk_admitted', { generation: 1 });
+        return new Promise(() => {});
+      });
+
+      const job = repo.enqueue({
+        queue: 'message_delivery',
+        payload: { sessionId: 'session-1', messageUuid: 'message-1', role: 'turn' },
+      });
+      await delivery.tick();
+      await flush();
+
+      const snapshot = delivery.snapshot('message_delivery');
+      expect(snapshot.handlers).toHaveLength(1);
+      expect(snapshot.handlers[0].stage).toBe('first_sdk_response');
+    });
+
     it('a late-settling earlier attempt does not lift the replacement deferral', async () => {
       // Attempt A goes stale and its grace expires → attempt B claims the row.
       // B then ALSO goes stale and is aborted, installing B's own deferral. If

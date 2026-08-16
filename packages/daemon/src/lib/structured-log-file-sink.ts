@@ -190,7 +190,7 @@ function redactString(value: string): string {
         '$1[REDACTED]'
       )
       .replace(
-        /(["']?(?:api[-_]?key|token|secret|password|authorization|cookie|set-cookie)["']?\s*[:=]\s*)(["'])(.*?)\2/gi,
+        /(["']?(?:api[-_]?key|token|secret|password|authorization|cookie|set-cookie)["']?\s*[:=]\s*)(["'])((?:\\.|(?!\2).)*)\2/gi,
         '$1$2[REDACTED]$2'
       )
       .replace(

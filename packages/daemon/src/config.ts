@@ -104,10 +104,11 @@ export function getConfig(overrides?: ConfigOverrides): Config {
   // Distinct isolated DB files in the SAME directory (e.g. the documented
   // worktree command's /tmp/hyperneo-worktree-a.db vs -b.db) must derive
   // distinct log files: dirname alone maps both to <dir>/logs/daemon.jsonl, so
-  // their independent sinks rotate/drop each other's files. Fold the DB basename
-  // (sans extension) into the filename. (Codex P2, PR #2499.)
-  const dbLogComponent =
-    (customDbIsolatable && basename(resolvedDbPath).replace(/\.[^.]+$/, '')) || 'daemon';
+  // their independent sinks rotate/drop each other's files. Fold the COMPLETE
+  // DB basename (extension included) into the filename — stripping the
+  // extension would still collide same-stem/different-extension DBs (foo.db vs
+  // foo.sqlite). (Codex P2, PR #2499.)
+  const dbLogComponent = (customDbIsolatable && basename(resolvedDbPath)) || 'daemon';
   const defaultLogPath =
     nodeEnv === 'test'
       ? undefined
@@ -154,13 +155,17 @@ export function getConfig(overrides?: ConfigOverrides): Config {
       overrides?.structuredLogMaxBytes,
       parsePositiveInt(hyperneoEnv('LOG_MAX_BYTES'), defaultLogMaxBytes)
     ),
-    structuredLogRetainedFiles: positiveOverride(
-      overrides?.structuredLogRetainedFiles,
-      // Capped: a digit-only value beyond 2^53 parses to a float where
-      // rotate()'s `generation--` no longer changes the value, wedging the
-      // rotation loop forever. Anything above a practical retention depth is
-      // nonsense anyway — fall back rather than loop. (Codex P2, PR #2499.)
-      Math.min(parsePositiveInt(hyperneoEnv('LOG_RETAINED_FILES'), defaultLogRetainedFiles), 1_000)
+    structuredLogRetainedFiles: Math.min(
+      positiveOverride(
+        overrides?.structuredLogRetainedFiles,
+        parsePositiveInt(hyperneoEnv('LOG_RETAINED_FILES'), defaultLogRetainedFiles)
+      ),
+      // Capped on BOTH paths (override and env fallback): a digit-only value
+      // beyond 2^53 parses to a float where rotate()'s `generation--` no longer
+      // changes the value, wedging the rotation loop forever. Anything above a
+      // practical retention depth is nonsense anyway — clamp rather than loop.
+      // (Codex P2, PR #2499.)
+      1_000
     ),
     structuredLogMaxPendingBytes: positiveOverride(
       overrides?.structuredLogMaxPendingBytes,

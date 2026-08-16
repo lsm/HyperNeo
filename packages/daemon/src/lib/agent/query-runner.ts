@@ -443,6 +443,19 @@ export class QueryRunner {
   } | null = null;
 
   /**
+   * Ordered list of every non-internal user message consumed by the generator
+   * in the current query run, for the startup-timeout retry to replay. The
+   * single `_lastConsumedUserMessage` slot is enough for the transient/rate-limit
+   * retries (only the in-flight message needs replay), but a silent SDK can pull
+   * the kickoff AND trailing steers before the startup timer fires — those all
+   * need re-feeding, in order. Cleared alongside `_lastConsumedUserMessage`.
+   */
+  private _consumedUserMessages: Array<{
+    uuid: string;
+    content: string | MessageContent[];
+  }> = [];
+
+  /**
    * Public accessor for the last consumed user message.
    * Used by RateLimitWatchdog to re-enqueue on auto-retry.
    */
@@ -1109,16 +1122,23 @@ export class QueryRunner {
           messageQueue.start();
         }
 
-        // The old SDK may have pulled the prompt out of the queue via
+        // The old SDK may have pulled prompts out of the queue via
         // messageGenerator() before going silent; restarting the queue above
         // alone leaves the retry with no input, so it times out again at zero
-        // messages. Re-enqueue the recorded consumed message (mirroring the
-        // transient-connection retry) so the retry has something to feed.
+        // messages. Re-enqueue every recorded consumed message IN ORDER (a silent
+        // iterator can pull the kickoff AND trailing steers — replaying only the
+        // last would silently drop the earlier prompts whose durable rows are
+        // already consumed). Mirror the transient-connection retry's feed.
         // (Codex P1, PR #2499.)
-        const lastMsg = this._lastConsumedUserMessage;
-        if (lastMsg) {
-          logger.warn(`Re-enqueueing user message ${lastMsg.uuid} for startup-timeout retry.`);
-          messageQueue.enqueueWithId(lastMsg.uuid, lastMsg.content).catch(() => {});
+        const consumed = this._consumedUserMessages;
+        if (consumed.length > 0) {
+          logger.warn(
+            `Re-enqueueing ${consumed.length} consumed user message(s) for startup-timeout retry.`
+          );
+          for (const message of consumed) {
+            messageQueue.enqueueWithId(message.uuid, message.content).catch(() => {});
+          }
+          this._consumedUserMessages = [];
           this._lastConsumedUserMessage = null;
         }
 
@@ -1200,6 +1220,7 @@ export class QueryRunner {
           // consumes the message, or rejects on timeout/interrupt (harmless).
           messageQueue.enqueueWithId(lastMsg.uuid, lastMsg.content).catch(() => {});
           this._lastConsumedUserMessage = null;
+          this._consumedUserMessages = [];
         }
 
         // Display a sanitized retry message so the user knows what's happening,
@@ -1305,6 +1326,7 @@ export class QueryRunner {
         // turn.
         const retryMsg = this._lastConsumedUserMessage;
         this._lastConsumedUserMessage = null;
+        this._consumedUserMessages = [];
 
         // Display a sanitized retry message so the user knows what's happening,
         // but never show the raw provider error string.
@@ -1396,6 +1418,7 @@ export class QueryRunner {
           );
           messageQueue.enqueueWithId(retryMsg.uuid, retryMsg.content).catch(() => {});
           this._lastConsumedUserMessage = null;
+          this._consumedUserMessages = [];
         }
 
         return await this.runQuery(queryGeneration, retryAttempt + 1, recoveryState);
@@ -1633,6 +1656,7 @@ export class QueryRunner {
         // that fires before the next turn's generator yields would re-enqueue
         // the previous turn's already-completed message.
         this._lastConsumedUserMessage = null;
+        this._consumedUserMessages = [];
 
         // Null queryPromise last so callers awaiting it see queryObject=null.
         this.ctx.queryPromise = null;
@@ -1810,6 +1834,12 @@ export class QueryRunner {
           uuid: message.uuid ?? '',
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
         };
+        // Accumulate the full ordered set of consumed messages for the
+        // startup-timeout retry's replay (see _consumedUserMessages).
+        this._consumedUserMessages.push({
+          uuid: message.uuid ?? '',
+          content: (message.message?.content ?? '') as unknown as string | MessageContent[],
+        });
       }
 
       // Delivery observability: this yield is the moment the kickoff actually

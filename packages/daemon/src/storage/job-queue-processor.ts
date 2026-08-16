@@ -360,6 +360,17 @@ export class JobQueueProcessor {
       }
       const reportStage = (stage: string, details?: JobHandlerStageDetails): void => {
         if (this.getInFlightClaim(job) !== record) return;
+        // Monotonic lifecycle guard: the observable stages form a strict
+        // progression (query_ready → sdk_admitted → first_sdk_response). A fast
+        // cold-start init/history frame can record first_sdk_response before the
+        // driving attempt reports query_ready; the later report must not regress
+        // the tracked stage or emit the lifecycle events out of order.
+        // (Codex P2, PR #2499.)
+        if (isLifecycleEventName(stage) && isLifecycleEventName(record.stage)) {
+          if (LIFECYCLE_STAGE_ORDER[record.stage] >= LIFECYCLE_STAGE_ORDER[stage]) {
+            return;
+          }
+        }
         record.stage = stage;
         record.stageChangedAt = Date.now();
         if (details?.generation !== undefined) record.generation = details.generation;
@@ -662,11 +673,18 @@ function stringPayload(job: Job, key: string): string | undefined {
   return typeof job.payload[key] === 'string' ? job.payload[key] : undefined;
 }
 
-function isLifecycleEventName(
-  stage: string
-): stage is Parameters<typeof emitMessageDeliveryLifecycleEvent>[0] {
+type ObservableLifecycleStage = 'query_ready' | 'sdk_admitted' | 'first_sdk_response';
+
+function isLifecycleEventName(stage: string): stage is ObservableLifecycleStage {
   return stage === 'query_ready' || stage === 'sdk_admitted' || stage === 'first_sdk_response';
 }
+
+/** Strict progression of the observable delivery lifecycle stages. */
+const LIFECYCLE_STAGE_ORDER: Record<ObservableLifecycleStage, number> = {
+  query_ready: 0,
+  sdk_admitted: 1,
+  first_sdk_response: 2,
+};
 
 function safeHandlerOutcome(result: Record<string, unknown> | void): string {
   if (!result) return 'completed';
