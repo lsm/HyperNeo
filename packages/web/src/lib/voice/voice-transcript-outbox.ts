@@ -69,6 +69,10 @@ const markerRepairBudget = new Map<string, number>();
 const MARKER_VERIFY_DELAYS_MS = [25, 250, 2000];
 function scheduleMarkerVerification(sessionId: string, announcedIds: string[]): void {
   if (announcedIds.length === 0) return;
+  // A newer landing's chain SUPERSEDES any pending one: its announced set is
+  // current, and the older chain would otherwise interpret legitimate
+  // eviction (below) as a clobber.
+  for (const timer of markerVerifyTimers.get(sessionId) ?? []) clearTimeout(timer);
   const timers: ReturnType<typeof setTimeout>[] = [];
   markerVerifyTimers.set(sessionId, timers);
   markerRepairBudget.set(sessionId, 3);
@@ -80,8 +84,15 @@ function scheduleMarkerVerification(sessionId: string, announcedIds: string[]): 
       if (!consumedMarkers.has(sessionId) && isLandingLive(sessionId)) {
         const raw = localStorage.getItem(`${LANDED_PREFIX}${sessionId}`);
         const marker = parseLandedMarker(raw);
+        // Only ids still RETAINED locally count as losable: a rapid drain
+        // past the entry cap legitimately evicts older ids from BOTH the
+        // marker and the local aggregate, and treating that eviction as a
+        // clobber would mint a false landing whose reconciliation appends the
+        // aggregate again — duplicating voice text.
+        const liveLocal = new Set(landingIds.get(sessionId) ?? []);
+        const stillLocal = announcedIds.filter((id) => liveLocal.has(id));
         const budget = markerRepairBudget.get(sessionId) ?? 0;
-        if ((!marker || announcedIds.some((id) => !marker.ids.includes(id))) && budget > 0) {
+        if ((!marker || stillLocal.some((id) => !marker.ids.includes(id))) && budget > 0) {
           // This sequence's entries vanished from the marker (or it is gone) —
           // re-union from whatever is live now through the SAME mark path: it
           // merges the current marker's entries with this tab's aggregate and
@@ -115,7 +126,8 @@ function clearMarkerVerifications(): void {
 export function markVoiceTranscriptLanded(
   sessionId: string,
   text?: string,
-  entryId?: string
+  entryId?: string,
+  entrySeq?: number
 ): void {
   // The GENERATION is the marker's persisted counter (not a process-local
   // count): a reload rehydrates the same generation from the marker, so a
@@ -171,7 +183,17 @@ export function markVoiceTranscriptLanded(
       /* storage unavailable */
     }
   }
-  markVoiceTranscriptLandedLocal(sessionId, text, false, seq, entryId);
+  markVoiceTranscriptLandedLocal(
+    sessionId,
+    text,
+    false,
+    seq,
+    entryId,
+    undefined,
+    undefined,
+    undefined,
+    entrySeq
+  );
   // Another tab may have landed entries whose `storage` event this context
   // has not yet processed — the rewrite must UNION with the persisted
   // aggregate, not replace it (a replacement drops the earlier transcripts
@@ -197,21 +219,24 @@ export function markVoiceTranscriptLanded(
     // holds (local [e1,e3] vs marker [e1,e2] appends only e2). Pre-entries
     // markers fall back to the aggregate append keyed by the id set.
     if (marker.entries.length > 0) {
-      // Daemon order: the persisted marker's entries were APPENDED (and
-      // announced) before this tab's live local entry, so the union places the
-      // unseen persisted entries FIRST — a local-first append would reverse
-      // the order the user dictated them in, and a fallback reconciliation
-      // using this aggregate would restore the transcripts backwards.
+      // DAEMON COMMIT order: the union is ordered by each entry's commit
+      // sequence (see orderLandingEntries) — a persisted marker is NOT proof
+      // its entries committed before the local one, because acknowledgements
+      // can publish out of order, and an arrival-ordered union would reverse
+      // dictated transcripts and break the aggregate's tail-match against the
+      // merged draft.
       const unseen = marker.entries.filter((entry) => !ours.has(entry.id));
       if (unseen.length > 0) {
-        const unseenText = unseen.reduce((acc, entry) => appendDraftText(acc, entry.text), '');
-        landingTexts.set(sessionId, appendDraftText(unseenText, landingTexts.get(sessionId) ?? ''));
         const known = new Set((landingEntries.get(sessionId) ?? []).map((e) => e.id));
-        const mergedEntries = [
+        const mergedEntries = orderLandingEntries([
           ...marker.entries.filter((e) => !known.has(e.id)),
           ...(landingEntries.get(sessionId) ?? []),
-        ].slice(-MAX_ENTRIES);
+        ]).slice(-MAX_ENTRIES);
         landingEntries.set(sessionId, mergedEntries);
+        landingTexts.set(
+          sessionId,
+          mergedEntries.reduce((acc, entry) => appendDraftText(acc, entry.text), '')
+        );
         // DERIVE the announced-id set from the RETAINED entries, then fill any
         // remaining slots with older ids: the previous local-first ordering
         // let the two bounded slices retain DIFFERENT sets at the cap,
@@ -341,9 +366,25 @@ const landingIds = new Map<string, string[]>();
 export interface LandingEntry {
   id: string;
   text: string;
+  /** DAEMON COMMIT position (the append ack's `seq`), when known. */
+  seq?: number;
 }
 const landingEntries = new Map<string, LandingEntry[]>();
 let syntheticEntryCounter = 0;
+
+// Order a landing sequence's entries by DAEMON COMMIT sequence: append
+// acknowledgements can publish out of order across entries (a slower first
+// append committing before a faster second one whose ack lands first), and an
+// aggregate ordered by arrival no longer matches the merged draft's tail that
+// reconciliation must verify against — a fallback restore would then push a
+// reversed aggregate over the server draft. Entries without a `seq` (legacy
+// markers from before the counter shipped) keep their relative order at the
+// front, where the oldest entries sit.
+function orderLandingEntries(entries: LandingEntry[]): LandingEntry[] {
+  return [...entries].sort(
+    (a, b) => (a.seq ?? Number.MAX_SAFE_INTEGER) - (b.seq ?? Number.MAX_SAFE_INTEGER)
+  );
+}
 
 function markVoiceTranscriptLandedLocal(
   sessionId: string,
@@ -353,7 +394,8 @@ function markVoiceTranscriptLandedLocal(
   entryId?: string,
   markerIds?: string[],
   markerEntries?: LandingEntry[],
-  markedAt?: number
+  markedAt?: number,
+  entrySeq?: number
 ): void {
   const current = voiceTranscriptLandedSignal.value;
   const hadLiveLanding = current.has(sessionId);
@@ -372,13 +414,6 @@ function markVoiceTranscriptLandedLocal(
   // aggregating a stale transcript into later landings of the same session.
   landingMarkedAt.set(sessionId, markedAt ?? Date.now());
   if (typeof text === 'string') {
-    // A fresh landing APPENDS onto the live sequence's aggregate; a hydrated
-    // cross-tab marker REPLACES it — the marker is the authoritative aggregate
-    // from the tab that performed the landings.
-    const prev = hadLiveLanding && !replaceAggregate ? (landingTexts.get(sessionId) ?? '') : '';
-    landingTexts.set(sessionId, prev ? appendDraftText(prev, text) : text);
-  }
-  if (typeof text === 'string') {
     // Record the per-entry (id, text) pair at the same granularity the marker
     // merges at — a fresh landing appends; a hydration replaces wholesale.
     // The record's id (explicit or synthetic) also joins the announced-id set:
@@ -387,12 +422,26 @@ function markVoiceTranscriptLandedLocal(
     const record: LandingEntry = {
       id: entryId ?? `synthetic-${++syntheticEntryCounter}`,
       text,
+      ...(entrySeq !== undefined ? { seq: entrySeq } : {}),
     };
     const fresh = hadLiveLanding && !replaceAggregate;
     const prevEntries = fresh ? (landingEntries.get(sessionId) ?? []) : [];
-    landingEntries.set(sessionId, [...prevEntries, record].slice(-MAX_ENTRIES));
-    const prevIds = fresh ? (landingIds.get(sessionId) ?? []) : [];
-    landingIds.set(sessionId, [...new Set([...prevIds, record.id])].slice(-MAX_ENTRIES));
+    const bounded = orderLandingEntries([...prevEntries, record]).slice(-MAX_ENTRIES);
+    landingEntries.set(sessionId, bounded);
+    // The entries are the authoritative aggregate granularity — derive the
+    // text and the announced-id set from the RETAINED entries (older ids fill
+    // the remaining slots), so the marker's bounded fields always describe
+    // the same set in the same order.
+    landingTexts.set(
+      sessionId,
+      bounded.reduce((acc, e) => appendDraftText(acc, e.text), '')
+    );
+    const retainedIds = bounded.map((e) => e.id);
+    const fillIds = [
+      ...new Set([...(fresh ? (landingIds.get(sessionId) ?? []) : []), record.id]),
+    ].filter((id) => !retainedIds.includes(id));
+    const room = Math.max(0, MAX_ENTRIES - retainedIds.length);
+    landingIds.set(sessionId, [...retainedIds, ...fillIds.slice(-room)]);
   }
   if (entryId !== undefined) {
     // Accumulate the announced id alongside the aggregate text (bounded to the
@@ -407,7 +456,9 @@ function markVoiceTranscriptLandedLocal(
     // A hydrated marker replaces the local id set wholesale — it is the
     // authoritative sequence from the writing tab.
     landingIds.set(sessionId, (markerIds ?? []).slice(-MAX_ENTRIES));
-    if (markerEntries) landingEntries.set(sessionId, markerEntries.slice(-MAX_ENTRIES));
+    if (markerEntries) {
+      landingEntries.set(sessionId, orderLandingEntries(markerEntries).slice(-MAX_ENTRIES));
+    }
   }
 }
 
@@ -516,12 +567,18 @@ function parseLandedMarker(raw: string | null): {
     };
     if (typeof parsed.ts !== 'number') return null;
     const entries: LandingEntry[] = Array.isArray(parsed.entries)
-      ? parsed.entries.filter(
-          (e): e is LandingEntry =>
-            !!e &&
-            typeof (e as LandingEntry).id === 'string' &&
-            typeof (e as LandingEntry).text === 'string'
-        )
+      ? parsed.entries
+          .filter(
+            (e): e is { id: string; text: string; seq?: unknown } =>
+              !!e &&
+              typeof (e as LandingEntry).id === 'string' &&
+              typeof (e as LandingEntry).text === 'string'
+          )
+          .map((e) => ({
+            id: e.id,
+            text: e.text,
+            ...(typeof e.seq === 'number' ? { seq: e.seq } : {}),
+          }))
       : [];
     // Derived for compatibility with readers of the aggregate form.
     let text: string | null = typeof parsed.text === 'string' ? parsed.text : null;
@@ -699,6 +756,12 @@ try {
     // made later would inherit its id.
     window.addEventListener('pagehide', stopHeartbeat, { once: true });
   };
+  const onVisibilityChange = () => beat();
+  const onPageShow = (event: Event) => {
+    beat();
+    if ((event as PageTransitionEvent).persisted) startHeartbeat();
+  };
+  const onResume = () => beat();
   const stopHeartbeat = () => {
     if (heartbeatTimer !== null) {
       clearInterval(heartbeatTimer);
@@ -709,16 +772,20 @@ try {
     } catch {
       /* best-effort */
     }
+    // Full teardown, including the LIFECYCLE LISTENERS: a bare interval stop
+    // leaves the callbacks registered, and a later BFCache pageshow would
+    // re-arm the OLD module's interval alongside its hot-replacement's —
+    // accumulating heartbeat timers and storage writes per reload.
+    window.removeEventListener('visibilitychange', onVisibilityChange);
+    window.removeEventListener('pageshow', onPageShow);
+    window.removeEventListener('resume', onResume);
   };
   // Timer throttling makes the interval unreliable in background tabs;
   // lifecycle transitions refresh the beat exactly when a clone is likely
   // being created (this tab hiding or resuming).
-  window.addEventListener('visibilitychange', beat);
-  window.addEventListener('pageshow', (event) => {
-    beat();
-    if ((event as PageTransitionEvent).persisted) startHeartbeat();
-  });
-  window.addEventListener('resume', beat);
+  window.addEventListener('visibilitychange', onVisibilityChange);
+  window.addEventListener('pageshow', onPageShow);
+  window.addEventListener('resume', onResume);
   startHeartbeat();
   stopTabHeartbeat = stopHeartbeat;
 } catch {
@@ -757,16 +824,19 @@ export interface DraftBackupClaim {
 const SUPERSEDED_PREFIX = 'hyperneo_voice_transcript_outbox_v1.superseded.';
 
 /**
- * The STRONGEST supersede record for `sessionId`. Records are written under
- * content-derived keys (`${prefix}${sessionId}.${generation}.${beforeTs}`) and
- * this read selects the maximum: two tabs acknowledging claims concurrently
- * can both read "no marker" and write their own record, and a single shared
- * key would let the WEAKER write land last and un-supersede siblings the
- * stronger record had ruled out. Independent keys cannot overwrite each
- * other; the max-selection converges on the strongest for every reader.
+ * EVERY supersede record for `sessionId` (the full boundary list, not one
+ * selected record). Records are written under content-derived keys
+ * (`${prefix}${sessionId}.${generation}.${beforeTs}`) so two tabs
+ * acknowledging claims concurrently can both read "no marker" and write their
+ * own without a weaker last write un-superseding a stronger one. Because
+ * suppression depends on BOTH fields, the boundaries are NON-DOMINATED IN
+ * COMBINATION: a lower-generation record can carry a LATER timestamp than a
+ * higher-generation one (an older-generation tab whose reconciliation
+ * committed last), and selecting a single lexicographic maximum would drop
+ * its region — readers must test every record.
  */
-function readSuperseded(sessionId: string): { generation: number; beforeTs: number } | null {
-  let strongest: { generation: number; beforeTs: number } | null = null;
+function readSuperseded(sessionId: string): Array<{ generation: number; beforeTs: number }> {
+  const records: Array<{ generation: number; beforeTs: number }> = [];
   try {
     const prefix = `${SUPERSEDED_PREFIX}${sessionId}`;
     for (let i = 0; i < localStorage.length; i++) {
@@ -782,18 +852,12 @@ function readSuperseded(sessionId: string): { generation: number; beforeTs: numb
       if (!parsed || typeof parsed.generation !== 'number' || typeof parsed.beforeTs !== 'number') {
         continue;
       }
-      if (
-        !strongest ||
-        parsed.generation > strongest.generation ||
-        (parsed.generation === strongest.generation && parsed.beforeTs > strongest.beforeTs)
-      ) {
-        strongest = { generation: parsed.generation, beforeTs: parsed.beforeTs };
-      }
+      records.push({ generation: parsed.generation, beforeTs: parsed.beforeTs });
     }
   } catch {
-    return null;
+    return records;
   }
-  return strongest;
+  return records;
 }
 
 /**
@@ -824,6 +888,9 @@ function freshestDraftBackup(sessionId: string): DraftBackupClaim | null {
   // an abandoned foreign record is recovered only when this tab has none.
   let ownClaim: DraftBackupClaim | null = null;
   let foreignFreshest: DraftBackupClaim | null = null;
+  // EVERY boundary participates: suppression is a per-record test (see
+  // readSuperseded) — a backup is superseded when ANY record's generation is
+  // at least its own AND the record's timestamp boundary covers its write.
   const superseded = readSuperseded(sessionId);
   try {
     const staleKeys: string[] = [];
@@ -845,14 +912,16 @@ function freshestDraftBackup(sessionId: string): DraftBackupClaim | null {
       }
       const generation = typeof parsed.generation === 'number' ? parsed.generation : 0;
       if (
-        superseded &&
-        generation <= superseded.generation &&
-        // The TIMESTAMP boundary applies to older generations too: a tab that
-        // has not yet processed the newer marker's storage event can still be
-        // editing and write a FRESH backup tagged with its older local
-        // generation — suppressing it by generation alone would strand and
-        // eventually prune those newer edits.
-        ts <= superseded.beforeTs
+        superseded.some(
+          (record) =>
+            generation <= record.generation &&
+            // The TIMESTAMP boundary applies to older generations too: a tab
+            // that has not yet processed the newer marker's storage event can
+            // still be editing and write a FRESH backup tagged with its older
+            // local generation — suppressing it by generation alone would
+            // strand and eventually prune those newer edits.
+            ts <= record.beforeTs
+        )
       ) {
         continue; // superseded by a committed reconciliation — never restorable
       }
@@ -1388,11 +1457,14 @@ export async function flushPendingTranscripts(): Promise<void> {
       if (!connectionManager.getHubIfConnected()) break; // dropped mid-flush
       if (deferredSessions.has(entry.sessionId)) continue;
       try {
-        await hub.request('session.appendVoiceDraft', {
-          sessionId: entry.sessionId,
-          text: entry.text,
-          dedupId: entry.id,
-        });
+        const ack = await hub.request<{ success: boolean; deduped?: boolean; seq?: number }>(
+          'session.appendVoiceDraft',
+          {
+            sessionId: entry.sessionId,
+            text: entry.text,
+            dedupId: entry.id,
+          }
+        );
         removePendingTranscript(entry.id);
         delivered += 1;
         // Announcing a landing for an entry that was ALREADY announced (by
@@ -1406,10 +1478,16 @@ export async function flushPendingTranscripts(): Promise<void> {
         // the original, non-deduped ack) must not re-announce what the other
         // already announced. When the id is not on record (or the marker is
         // gone), this ack is the only signal the transcript merged and the
-        // landing must be announced.
+        // landing must be announced. The ack's `seq` (the ORIGINAL commit's,
+        // on a deduped replay) carries the daemon's ordering.
         const alreadyAnnounced = getAnnouncedEntryIds(entry.sessionId).includes(entry.id);
         if (!alreadyAnnounced) {
-          markVoiceTranscriptLanded(entry.sessionId, entry.text, entry.id);
+          markVoiceTranscriptLanded(
+            entry.sessionId,
+            entry.text,
+            entry.id,
+            typeof ack?.seq === 'number' ? ack.seq : undefined
+          );
         }
       } catch (error) {
         // Socket dropped mid-flush: keep for the next reconnect. Otherwise the

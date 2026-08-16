@@ -611,18 +611,27 @@ export default function MessageInput({
       const stageToDraft = async () => {
         const hub = connectionManager.getHubIfConnected();
         if (!hub) throw new Error('Not connected');
-        await hub.request('session.appendVoiceDraft', {
-          sessionId: targetSessionId,
-          text: transcript,
-          dedupId: outboxId,
-        });
+        const ack = await hub.request<{ success: boolean; seq?: number }>(
+          'session.appendVoiceDraft',
+          {
+            sessionId: targetSessionId,
+            text: transcript,
+            dedupId: outboxId,
+          }
+        );
         // Announce the landing: the user may have REOPENED the session while
         // transcription finished, and that composer's only session.get already
         // ran — without a landing mark the staged transcript stays invisible
         // until the next navigation or reload. The pendingRetained and
         // character-limit paths announce nothing extra; the mark's refresh is
         // deferred behind a non-empty composer exactly like the replay path.
-        markVoiceTranscriptLanded(targetSessionId, transcript, outboxId);
+        // The ack's `seq` carries the daemon's commit order for the union.
+        markVoiceTranscriptLanded(
+          targetSessionId,
+          transcript,
+          outboxId,
+          typeof ack?.seq === 'number' ? ack.seq : undefined
+        );
       };
       // Last-resort preservation: stage the transcript into the pending draft
       // field. Used for 'stay', for a composer too full to splice into, and as

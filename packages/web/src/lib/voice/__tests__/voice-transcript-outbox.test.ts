@@ -1236,4 +1236,73 @@ describe('voice transcript outbox — review-hardening round', () => {
     expect(marker.ids).toContain('L0'); // oldest retained local entry stays announced
     expect(marker.entries.every((e: { id: string }) => marker.ids.includes(e.id))).toBe(true);
   });
+
+  it('orders landing entries by daemon commit sequence, not arrival', () => {
+    vi.useRealTimers();
+    // In one tab, the SECOND entry's acknowledgement landed first; the
+    // aggregate must still read in daemon commit order or it no longer
+    // tail-matches the merged draft during reconciliation.
+    markVoiceTranscriptLanded('s1', 'committed second', 'e2', 2);
+    markVoiceTranscriptLanded('s1', 'committed first', 'e1', 1);
+    expect(getLandingTranscript('s1')).toBe('committed first committed second');
+
+    // Cross-tab: the persisted marker's earliest entry unions in AFTER later
+    // local entries — commit order still wins over arrival order.
+    const gen = voiceTranscriptLandedSignal.value.get('s1') ?? 0;
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+      JSON.stringify({
+        v: 1,
+        ts: Date.now(),
+        n: gen + 500,
+        text: null,
+        ids: [],
+        entries: [{ id: 'e0', text: 'committed earliest', seq: 0 }],
+      })
+    );
+    markVoiceTranscriptLanded('s1', 'committed last', 'e3', 3);
+    expect(getLandingTranscript('s1')).toBe(
+      'committed earliest committed first committed second committed last'
+    );
+  });
+
+  it('suppresses a backup against EVERY nondominated supersede boundary', () => {
+    vi.useRealTimers();
+    // A lower-generation record can carry a LATER timestamp than a
+    // higher-generation one (an older-generation tab whose reconciliation
+    // committed last): selecting one lexicographic maximum would restore a
+    // backup the other record had ruled out.
+    const now = Date.now();
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.superseded.s1.10.1',
+      JSON.stringify({ generation: 10, beforeTs: now - 1000 })
+    );
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.superseded.s1.9.2',
+      JSON.stringify({ generation: 9, beforeTs: now - 500 })
+    );
+    // Covered by the (9, now-500) boundary even though the lexicographic
+    // maximum is (10, now-1000) — must stay unrestorable.
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.draft.s1.stale-tab',
+      JSON.stringify({ content: 'suppressed edits', ts: now - 750, generation: 9 })
+    );
+    // Newer than BOTH boundaries — still restorable.
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.draft.s1.live-tab',
+      JSON.stringify({ content: 'newer edits', ts: now - 250, generation: 9 })
+    );
+    expect(peekExpiredDraftBackup('s1')?.content).toBe('newer edits');
+  });
+
+  it('does not repair ids the entry cap legitimately evicted', async () => {
+    // A rapid drain past the entry cap evicts older ids from BOTH the marker
+    // and the local aggregate — the verification must not read that eviction
+    // as a cross-tab clobber and mint a false landing (which would append the
+    // aggregate again during reconciliation, duplicating voice text).
+    for (let i = 0; i < 25; i++) markVoiceTranscriptLanded('s1', `t${i}`, `e${i}`, i + 1);
+    const gen = voiceTranscriptLandedSignal.value.get('s1') ?? 0;
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(voiceTranscriptLandedSignal.value.get('s1') ?? 0).toBe(gen);
+  });
 });

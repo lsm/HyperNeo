@@ -932,6 +932,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
   let existingBaselineSeq: number | null | undefined;
   let existingMergeClaimLog: Array<{ id: string; ts: number }> | null;
   let existingDraftVersion: number | null | undefined;
+  let existingAppendCounter: number | null | undefined;
   let sessionExists: boolean;
 
   beforeEach(async () => {
@@ -944,6 +945,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     existingBaselineSeq = undefined;
     existingMergeClaimLog = null;
     existingDraftVersion = undefined;
+    existingAppendCounter = undefined;
     sessionExists = true;
     sessionManager = {
       getSessionFromDB: mock(() =>
@@ -958,6 +960,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
                 inputDraftVoiceAppendLog: existingAppendLog,
                 inputDraftVoiceMergeClaimLog: existingMergeClaimLog,
                 inputDraftVersion: existingDraftVersion,
+                inputDraftVoiceAppendCounter: existingAppendCounter,
               },
             }
           : null
@@ -982,7 +985,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     // Writes the dedicated pending field — never the live inputDraft, which the
     // client's debounced saves could otherwise clobber.
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: { inputDraftVoicePending: 'existing hello world' },
+      metadata: { inputDraftVoicePending: 'existing hello world', inputDraftVoiceAppendCounter: 1 },
     });
   });
 
@@ -991,7 +994,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     const handler = messageHubData.handlers.get('session.appendVoiceDraft');
     await handler!({ sessionId: 's1', text: '世界' }, {});
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: { inputDraftVoicePending: '你好世界' },
+      metadata: { inputDraftVoicePending: '你好世界', inputDraftVoiceAppendCounter: 1 },
     });
   });
 
@@ -1004,6 +1007,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
         inputDraftVoicePending: 'hello',
         inputDraftVoiceBaseline: '',
         inputDraftVoiceBaselineSeq: 1,
+        inputDraftVoiceAppendCounter: 1,
       },
     });
   });
@@ -1033,6 +1037,41 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     expect(sessionManager.updateSession).not.toHaveBeenCalled();
   });
 
+  it('returns the commit sequence of a fresh append and records it in the log', async () => {
+    // Acknowledgements can publish out of order across entries; the ack's
+    // `seq` (from the monotonic counter, not the TTL-pruned log length) is
+    // what lets clients order landed transcripts by daemon commit order.
+    existingAppendCounter = 4;
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    const result = (await handler!({ sessionId: 's1', text: 'hello', dedupId: 'e2' }, {})) as {
+      success: boolean;
+      seq?: number;
+    };
+    expect(result).toEqual({ success: true, seq: 5 });
+    const write = sessionManager.updateSession.mock.calls[0][1] as {
+      metadata: Record<string, unknown>;
+    };
+    expect(write.metadata.inputDraftVoiceAppendCounter).toBe(5);
+    expect(write.metadata.inputDraftVoiceAppendLog).toEqual([
+      { id: 'e2', ts: expect.any(Number), seq: 5 },
+    ]);
+  });
+
+  it('returns the ORIGINAL commit sequence on a deduped replay', async () => {
+    // The replay's ack must still teach the client the entry's true position:
+    // its first acknowledgement was lost, and the client's aggregate needs
+    // the daemon ordering to tail-match the merged draft.
+    existingAppendLog = [{ id: 'e1', ts: Date.now(), seq: 2 }];
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    const result = (await handler!({ sessionId: 's1', text: 'hello', dedupId: 'e1' }, {})) as {
+      success: boolean;
+      deduped?: boolean;
+      seq?: number;
+    };
+    expect(result).toEqual({ success: true, deduped: true, seq: 2 });
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
   it('records the outbox dedupId alongside the append', async () => {
     const handler = messageHubData.handlers.get('session.appendVoiceDraft');
     const result = (await handler!({ sessionId: 's1', text: 'hello', dedupId: 'entry-1' }, {})) as {
@@ -1043,7 +1082,8 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
       metadata: {
         inputDraftVoicePending: 'existing hello',
-        inputDraftVoiceAppendLog: [{ id: 'entry-1', ts: expect.any(Number) }],
+        inputDraftVoiceAppendLog: [{ id: 'entry-1', ts: expect.any(Number), seq: 1 }],
+        inputDraftVoiceAppendCounter: 1,
       },
     });
   });
@@ -1122,7 +1162,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
       success: boolean;
       deduped?: boolean;
     };
-    expect(result).toEqual({ success: true });
+    expect(result).toEqual({ success: true, seq: expect.any(Number) });
     expect(sessionManager.updateSession).toHaveBeenCalled();
   });
 
@@ -1130,9 +1170,10 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     existingAppendLog = [{ id: 'entry-1', ts: Date.now() }];
     const handler = messageHubData.handlers.get('session.appendVoiceDraft');
     await handler!({ sessionId: 's1', text: 'hello' }, {});
-    // No dedupId → normal append, no dedup marker written.
+    // No dedupId → normal append, no dedup marker written (the commit counter
+    // still advances — ordering metadata is independent of dedup).
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: { inputDraftVoicePending: 'existing hello' },
+      metadata: { inputDraftVoicePending: 'existing hello', inputDraftVoiceAppendCounter: 1 },
     });
   });
 
@@ -1149,6 +1190,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
         inputDraftVoicePending: 'hello',
         inputDraftVoiceBaseline: 'user draft',
         inputDraftVoiceBaselineSeq: 1,
+        inputDraftVoiceAppendCounter: 1,
       },
     });
   });

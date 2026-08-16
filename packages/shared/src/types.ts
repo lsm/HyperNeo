@@ -637,7 +637,16 @@ export interface SessionMetadata {
    * appends flow in, and evicting its id early would let the eventual replay
    * double-append. `ts` is ms since epoch.
    */
-  inputDraftVoiceAppendLog?: Array<{ id: string; ts: number }> | null;
+  inputDraftVoiceAppendLog?: Array<{ id: string; ts: number; seq?: number }> | null;
+  /**
+   * Monotonic per-session counter of voice-transcript appends committed (see
+   * `inputDraftVoiceAppendLog`). The append ack (and each log entry) carries
+   * the entry's `seq` so clients can order landed transcripts by DAEMON COMMIT
+   * order — acknowledgements can publish out of order across entries, and an
+   * aggregate ordered by arrival would diverge from the merged draft it must
+   * tail-match during reconciliation.
+   */
+  inputDraftVoiceAppendCounter?: number | null;
   /**
    * The sequence id whose baseline the LAST session.stripVoiceBaseline
    * removed. Lets a strip whose ACKNOWLEDGEMENT was lost be recognized as

@@ -627,7 +627,15 @@ export function setupSessionHandlers(
         entry.ts > appendLogTtlCutoff
     );
     if (dedupId && processedLog.some((entry) => entry.id === dedupId)) {
-      return { success: true, deduped: true };
+      // The replay's ack carries the ORIGINAL commit's sequence so the client
+      // still learns the daemon's ordering for an entry whose first
+      // acknowledgement was lost.
+      const committed = processedLog.find((entry) => entry.id === dedupId);
+      return {
+        success: true,
+        deduped: true,
+        ...(typeof committed?.seq === 'number' ? { seq: committed.seq } : {}),
+      };
     }
     const existingPending = metadata.inputDraftVoicePending ?? '';
     const pending = appendDraftText(existingPending, text);
@@ -638,6 +646,13 @@ export function setupSessionHandlers(
       pending === `${existingPending}${text}` || pending === `${existingPending} ${text}`;
     if (!fits) throw new Error('Pending voice draft is at the character limit');
     const metadataUpdate: Partial<SessionMetadata> = { inputDraftVoicePending: pending };
+    // DAEMON COMMIT ORDER for this entry: acknowledgements can publish out of
+    // order across entries (a slower first append committing before a faster
+    // second one whose ack lands first), and a client aggregate ordered by
+    // arrival would then diverge from the merged draft it must tail-match
+    // during reconciliation. The monotonic counter (not the log length, which
+    // the TTL prunes) stamps every entry's true commit position.
+    const commitSeq = (metadata.inputDraftVoiceAppendCounter ?? 0) + 1;
     if (!existingPending.trim()) {
       // A NEW pending sequence starts here: snapshot the draft it will merge
       // onto, tagged with a fresh sequence id. The daemon is the single writer
@@ -657,8 +672,12 @@ export function setupSessionHandlers(
       // most 20 entries), so growth within the TTL is inherently bounded —
       // and a count cap could evict an id whose outbox entry is still
       // retryable, letting its eventual replay double-append.
-      metadataUpdate.inputDraftVoiceAppendLog = [...processedLog, { id: dedupId, ts: Date.now() }];
+      metadataUpdate.inputDraftVoiceAppendLog = [
+        ...processedLog,
+        { id: dedupId, ts: Date.now(), seq: commitSeq },
+      ];
     }
+    metadataUpdate.inputDraftVoiceAppendCounter = commitSeq;
     const updates: UpdateSessionRequest = { metadata: metadataUpdate };
     await sessionManager.updateSession(sessionId, updates as Partial<Session>);
     messageHub.event(
@@ -668,7 +687,7 @@ export function setupSessionHandlers(
         channel: `session:${sessionId}`,
       }
     );
-    return { success: true };
+    return { success: true, seq: commitSeq };
   });
 
   // Atomically clear the input draft ONLY if it still equals `expected`. The
