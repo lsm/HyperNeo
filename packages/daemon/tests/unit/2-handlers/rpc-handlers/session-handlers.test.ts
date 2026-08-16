@@ -717,16 +717,35 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     updateSession: ReturnType<typeof mock>;
   };
   let existingPending: string | null;
+  let existingAppendLog: Array<{ id: string; ts: number }> | null;
+  let existingDraft: string | null;
+  let existingBaseline: string | null | undefined;
+  let existingBaselineSeq: number | null | undefined;
   let sessionExists: boolean;
 
   beforeEach(async () => {
     messageHubData = createMockMessageHub();
     eventBus = createMockInternalEventBus();
     existingPending = 'existing';
+    existingAppendLog = null;
+    existingDraft = null;
+    existingBaseline = undefined;
+    existingBaselineSeq = undefined;
     sessionExists = true;
     sessionManager = {
       getSessionFromDB: mock(() =>
-        sessionExists ? { id: 's1', metadata: { inputDraftVoicePending: existingPending } } : null
+        sessionExists
+          ? {
+              id: 's1',
+              metadata: {
+                inputDraft: existingDraft,
+                inputDraftVoicePending: existingPending,
+                inputDraftVoiceBaseline: existingBaseline,
+                inputDraftVoiceBaselineSeq: existingBaselineSeq,
+                inputDraftVoiceAppendLog: existingAppendLog,
+              },
+            }
+          : null
       ),
       updateSession: mock(async () => {}),
     } as unknown as SessionManager;
@@ -766,7 +785,11 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     const handler = messageHubData.handlers.get('session.appendVoiceDraft');
     await handler!({ sessionId: 's1', text: 'hello' }, {});
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: { inputDraftVoicePending: 'hello' },
+      metadata: {
+        inputDraftVoicePending: 'hello',
+        inputDraftVoiceBaseline: '',
+        inputDraftVoiceBaselineSeq: 1,
+      },
     });
   });
 
@@ -793,6 +816,138 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
       'Pending voice draft is at the character limit'
     );
     expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('records the outbox dedupId alongside the append', async () => {
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    const result = (await handler!({ sessionId: 's1', text: 'hello', dedupId: 'entry-1' }, {})) as {
+      success: boolean;
+    };
+    expect(result.success).toBe(true);
+    // The append and the dedup marker land in ONE atomic write.
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: {
+        inputDraftVoicePending: 'existing hello',
+        inputDraftVoiceAppendLog: [{ id: 'entry-1', ts: expect.any(Number) }],
+      },
+    });
+  });
+
+  it('skips a re-append whose dedupId already merged (idempotent replay)', async () => {
+    // The socket dropped after the daemon wrote but before the client ack — the
+    // outbox retries the same entry; it must NOT merge the transcript twice.
+    existingAppendLog = [{ id: 'entry-1', ts: Date.now() }];
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    const result = (await handler!({ sessionId: 's1', text: 'hello', dedupId: 'entry-1' }, {})) as {
+      success: boolean;
+      deduped: boolean;
+    };
+    expect(result).toEqual({ success: true, deduped: true });
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('dedups an out-of-order replay even after a later entry committed', async () => {
+    // Entry A committed but its ack was lost; the loop advanced to B (which
+    // overwrote a single last-id marker). A retry of A must still be skipped —
+    // the processed-id log retains A alongside B.
+    existingAppendLog = [
+      { id: 'entry-1', ts: Date.now() },
+      { id: 'entry-2', ts: Date.now() },
+    ];
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    const result = (await handler!({ sessionId: 's1', text: 'hello', dedupId: 'entry-1' }, {})) as {
+      success: boolean;
+      deduped: boolean;
+    };
+    expect(result).toEqual({ success: true, deduped: true });
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('accumulates processed ids with no count cap — only the TTL bounds the log', async () => {
+    // An outbox entry can stay retryable for its whole 24h TTL while unrelated
+    // appends keep recording ids — ANY count cap (50, 500) would evict the
+    // retryable id and let its eventual replay double-append. Logged ids come
+    // only from outbox flushes (each tab's outbox caps at 20 entries), so
+    // growth within the TTL is inherently bounded; 600 fresh ids all survive.
+    existingAppendLog = Array.from({ length: 600 }, (_, i) => ({
+      id: `entry-${i}`,
+      ts: Date.now(),
+    }));
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    await handler!({ sessionId: 's1', text: 'hello', dedupId: 'entry-600' }, {});
+    const write = sessionManager.updateSession.mock.calls[0][1] as {
+      metadata: { inputDraftVoiceAppendLog: Array<{ id: string }> };
+    };
+    expect(write.metadata.inputDraftVoiceAppendLog).toHaveLength(601);
+    expect(write.metadata.inputDraftVoiceAppendLog.map((e) => e.id)).toContain('entry-0');
+  });
+
+  it('prunes dedup ids past the retry lifetime instead of keeping them forever', async () => {
+    existingAppendLog = [
+      { id: 'stale', ts: Date.now() - 25 * 60 * 60 * 1000 },
+      { id: 'fresh', ts: Date.now() },
+    ];
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    await handler!({ sessionId: 's1', text: 'hello', dedupId: 'entry-new' }, {});
+    const write = sessionManager.updateSession.mock.calls[0][1] as {
+      metadata: { inputDraftVoiceAppendLog: Array<{ id: string }> };
+    };
+    expect(write.metadata.inputDraftVoiceAppendLog.map((e) => e.id)).toEqual([
+      'fresh',
+      'entry-new',
+    ]);
+  });
+
+  it('no longer dedups an id past the retry lifetime', async () => {
+    // Both writer and reader agree the id expired — a replay after 24h appends
+    // again (the client outbox has dropped the entry long before this point).
+    existingAppendLog = [{ id: 'entry-1', ts: Date.now() - 25 * 60 * 60 * 1000 }];
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    const result = (await handler!({ sessionId: 's1', text: 'hello', dedupId: 'entry-1' }, {})) as {
+      success: boolean;
+      deduped?: boolean;
+    };
+    expect(result).toEqual({ success: true });
+    expect(sessionManager.updateSession).toHaveBeenCalled();
+  });
+
+  it('ignores the dedup guard when no dedupId is supplied (live one-shot path)', async () => {
+    existingAppendLog = [{ id: 'entry-1', ts: Date.now() }];
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    await handler!({ sessionId: 's1', text: 'hello' }, {});
+    // No dedupId → normal append, no dedup marker written.
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraftVoicePending: 'existing hello' },
+    });
+  });
+
+  it('snapshots the pre-sequence draft as the merge baseline on a new pending sequence', async () => {
+    // Sequence start (pending empty): the baseline records the EXACT draft the
+    // pending will merge onto, so later reconciliation can separate the
+    // transcripts from the stale baseline regardless of which tabs appended.
+    existingPending = null;
+    existingDraft = 'user draft';
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    await handler!({ sessionId: 's1', text: 'hello' }, {});
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: {
+        inputDraftVoicePending: 'hello',
+        inputDraftVoiceBaseline: 'user draft',
+        inputDraftVoiceBaselineSeq: 1,
+      },
+    });
+  });
+
+  it('does not overwrite the baseline mid-sequence (pending already staged)', async () => {
+    existingPending = 'first';
+    existingDraft = 'draft at sequence start';
+    existingBaseline = 'draft at sequence start';
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    await handler!({ sessionId: 's1', text: 'second' }, {});
+    const write = sessionManager.updateSession.mock.calls[0][1] as {
+      metadata: Record<string, unknown>;
+    };
+    expect(write.metadata.inputDraftVoiceBaseline).toBeUndefined();
   });
 });
 
