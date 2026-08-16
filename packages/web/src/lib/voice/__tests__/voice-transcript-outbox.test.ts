@@ -28,6 +28,7 @@ import {
   getLandingTranscript,
   getPendingTranscripts,
   hasClearTombstone,
+  isLandingAggregateOrdered,
   isLandingLive,
   markVoiceTranscriptLanded,
   peekExpiredDraftBackup,
@@ -1323,7 +1324,9 @@ describe('voice transcript outbox — review-hardening round', () => {
     // A marker written by the previous version carries entries without `seq`;
     // the daemon appended those transcripts BEFORE any sequenced entry, so
     // they order at the FRONT — sorting them last would reverse the aggregate
-    // relative to the merged draft right after the upgrade.
+    // relative to the merged draft right after the upgrade. The mixed union's
+    // ORDER is untrustworthy either way, so the aggregate is marked unordered
+    // for reconciliation trust (below).
     markVoiceTranscriptLanded('s1', 'new entry', 'e-new', 5);
     const gen = voiceTranscriptLandedSignal.value.get('s1') ?? 0;
     localStorage.setItem(
@@ -1339,5 +1342,102 @@ describe('voice transcript outbox — review-hardening round', () => {
     );
     markVoiceTranscriptLanded('s1', 'trigger', 'e-trig', 6);
     expect(getLandingTranscript('s1')).toBe('legacy entry new entry trigger');
+  });
+
+  it('flags a mixed-sequenced union as order-untrusted, pure sequences as trusted', () => {
+    vi.useRealTimers();
+    // A stale pre-upgrade tab can still publish UNSEQUENCED entries after
+    // sequenced ones committed — no client-side comparator can order them
+    // against each other. The aggregate keeps every entry but reconciliation
+    // must not tail-match or restore from the unordered mix.
+    markVoiceTranscriptLanded('s1', 'first', 'e1', 1);
+    markVoiceTranscriptLanded('s1', 'second', 'e2', 2);
+    expect(isLandingAggregateOrdered('s1')).toBe(true);
+    const gen = voiceTranscriptLandedSignal.value.get('s1') ?? 0;
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+      JSON.stringify({
+        v: 1,
+        ts: Date.now(),
+        n: gen + 500,
+        text: null,
+        ids: [],
+        entries: [{ id: 'e-stale-client', text: 'stale client entry' }],
+      })
+    );
+    markVoiceTranscriptLanded('s1', 'third', 'e3', 3);
+    expect(isLandingAggregateOrdered('s1')).toBe(false);
+    // Every entry survives; only the ORDER trust changed.
+    expect(getLandingTranscript('s1')).toContain('stale client entry');
+    expect(getLandingTranscript('s1')).toContain('first');
+  });
+
+  it('keeps verifying later sequences after an earlier marker was consumed', async () => {
+    // A same-tab landing updates the signal BEFORE writing its new marker, so
+    // a liveness probe during the write still sees the CONSUMED raw value —
+    // gating on "ever consumed" would disable verification for every later
+    // sequence of the session. Only the CURRENT raw being the consumed one
+    // disarms the repair.
+    markVoiceTranscriptLanded('s1', 'first sequence', 'e1', 1);
+    consumeVoiceTranscriptLanded('s1', voiceTranscriptLandedSignal.value.get('s1') ?? 1);
+    markVoiceTranscriptLanded('s1', 'second sequence', 'e2', 2);
+    // A stale-state writer clobbers the second sequence's marker.
+    const clobber = JSON.stringify({
+      v: 1,
+      ts: Date.now(),
+      n: 999_999,
+      text: 'theirs',
+      ids: ['e-theirs'],
+      entries: [{ id: 'e-theirs', text: 'theirs' }],
+    });
+    localStorage.setItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1', clobber);
+    startVoiceTranscriptOutboxFlush();
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key: 'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+        newValue: clobber,
+      })
+    );
+    await vi.advanceTimersByTimeAsync(3_000);
+    const repaired = JSON.parse(
+      localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1') ?? '{}'
+    );
+    expect(repaired.ids).toContain('e2');
+    expect(repaired.ids).toContain('e-theirs');
+    stopVoiceTranscriptOutboxFlush();
+  });
+
+  it('revalidates epoch ownership before deleting supersede records', () => {
+    vi.useRealTimers();
+    // Two tabs read an absent marker; tab A establishes the epoch and
+    // reconciles (writing its supersede record) before tab B's delayed mark
+    // runs its cleanup — B must re-check that the marker is STILL absent, or
+    // it deletes A's fresh record and a ruled-out backup restores.
+    const markerKey = 'hyperneo_voice_transcript_outbox_v1.entry.landed.s1';
+    const recordKey = 'hyperneo_voice_transcript_outbox_v1.superseded.s1.3.1';
+    localStorage.setItem(recordKey, JSON.stringify({ generation: 3, beforeTs: Date.now() }));
+    const realGetItem = localStorage.getItem.bind(localStorage);
+    const concurrentMarker = JSON.stringify({
+      v: 1,
+      ts: Date.now(),
+      n: 5,
+      text: 'their epoch',
+      ids: ['e-a'],
+    });
+    let reads = 0;
+    const spy = vi.spyOn(localStorage, 'getItem').mockImplementation((key: string) => {
+      if (key === markerKey) {
+        reads += 1;
+        // read #1 (the initial, stale) sees no marker; a concurrent tab
+        // establishes the epoch immediately after — every later read sees it.
+        if (reads === 1) return null;
+        return concurrentMarker;
+      }
+      return realGetItem(key);
+    });
+    markVoiceTranscriptLanded('s1', 'delayed tab', 'e-late');
+    spy.mockRestore();
+    // The fresh epoch's record survived the delayed tab's cleanup.
+    expect(localStorage.getItem(recordKey)).not.toBeNull();
   });
 });

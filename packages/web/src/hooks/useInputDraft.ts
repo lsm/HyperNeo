@@ -39,6 +39,7 @@ import {
   getLandingGeneration,
   getLandingTranscript,
   hasClearTombstone,
+  isLandingAggregateOrdered,
   isLandingLive,
   peekExpiredDraftBackup,
   removeClearTombstone,
@@ -294,7 +295,10 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             // SAME session — a stale get from a moved-on session must never
             // touch the new session's content.
             const transcript =
-              transcriptsFromMerge(draft, baseline) ?? getLandingTranscript(targetSessionId);
+              transcriptsFromMerge(draft, baseline) ??
+              (isLandingAggregateOrdered(targetSessionId)
+                ? getLandingTranscript(targetSessionId)
+                : null);
             if (transcript) {
               contentSignal.value = appendDraftText(contentSignal.peek(), transcript);
             }
@@ -368,7 +372,10 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             // this transcript-only draft — adopt it and retire the tombstone.
             if (canAdopt()) {
               contentSignal.value = meta.inputDraft ?? '';
-            } else if ((meta.inputDraft ?? '').trim() !== '') {
+            } else if (
+              currentSessionIdRef.current === targetSessionId &&
+              (meta.inputDraft ?? '').trim() !== ''
+            ) {
               // The composer holds NEWER user state (typing, or the post-clear
               // backup the settle path restored): the daemon holds ONLY the
               // transcripts (the strip cleared the baseline), so retiring the
@@ -376,8 +383,28 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
               // save overwrite the transcript-only draft with this content —
               // permanently losing the voice text. Fold them in (the newer
               // content provably never contained them), mirroring the
-              // live-landing strip path's fold discipline.
-              contentSignal.value = appendDraftText(contentSignal.peek(), meta.inputDraft ?? '');
+              // live-landing strip path's fold discipline — but ONLY into the
+              // SAME session's composer (a mismatched session means the hook
+              // moved on and the shared signal now backs another session),
+              // and ONLY when the complete combination fits: appendDraftText
+              // silently truncates at the limit, and a truncated fold adopted
+              // with a retired tombstone would let the next save drop the
+              // transcript's tail. Keep the clear owed until it fits.
+              const localContent = contentSignal.peek();
+              const daemonTranscripts = meta.inputDraft ?? '';
+              const combined = appendDraftText(localContent, daemonTranscripts);
+              const fits =
+                combined === `${localContent}${daemonTranscripts}` ||
+                combined === `${localContent} ${daemonTranscripts}`;
+              if (!fits) {
+                flushKickRef.current(); // stays owed — retry when room appears
+                return;
+              }
+              contentSignal.value = combined;
+            } else if (currentSessionIdRef.current !== targetSessionId) {
+              // Session moved on: never mutate the shared signal, but the
+              // strip DID commit — retire the tombstone (its owed clear is
+              // satisfied server-side).
             }
             removeClearTombstone(targetSessionId);
             if (pendingClearRef.current === targetSessionId) {
@@ -460,15 +487,31 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                 }
                 if (canAdopt()) {
                   contentSignal.value = result.value ?? '';
-                } else if ((result.value ?? '').trim() !== '') {
+                } else if (
+                  currentSessionIdRef.current === targetSessionId &&
+                  (result.value ?? '').trim() !== ''
+                ) {
                   // Typing began mid-reconcile: the daemon now holds ONLY the
                   // transcripts (the strip cleared the baseline), and this
                   // composer's next ordinary save would overwrite them with
                   // transcript-free typing. Fold the stripped transcripts
                   // into the newer content — the live-landing strip path's
                   // once-per-generation discipline — so the re-enabled save
-                  // carries BOTH.
-                  contentSignal.value = appendDraftText(contentSignal.peek(), result.value ?? '');
+                  // carries BOTH. Same-session only (the signal may back a
+                  // different composer now), and only when the COMPLETE
+                  // combination fits — a truncating fold retired here would
+                  // let the next save drop the transcript's tail.
+                  const localContent = contentSignal.peek();
+                  const stripped = result.value ?? '';
+                  const combined = appendDraftText(localContent, stripped);
+                  const fits =
+                    combined === `${localContent}${stripped}` ||
+                    combined === `${localContent} ${stripped}`;
+                  if (!fits) {
+                    flushKickRef.current(); // stays owed — retry when room appears
+                    return;
+                  }
+                  contentSignal.value = combined;
                 }
                 removeClearTombstone(targetSessionId);
                 // Clear the IN-MEMORY owed-clear marker too: a stale ref would
@@ -553,6 +596,16 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           const postClearClaim = peekExpiredDraftBackup(sessionId);
           if (postClearClaim && postClearClaim.content.trim() !== '') {
             contentSignal.value = postClearClaim.content;
+            // The restored claim is superseded only by the first ACKNOWLEDGED
+            // save of this content (or its fold with the daemon transcripts):
+            // retire it through the deferred mechanism, not now — leaving the
+            // content-only record as the freshest durable claim would let a
+            // later session switch push this transcript-free copy over the
+            // combined draft the save persisted.
+            deferredBackupRetiresRef.current.set(sessionId, {
+              generation: postClearClaim.generation,
+              claim: postClearClaim,
+            });
           }
           pendingClearRef.current = sessionId;
           if (isLandingLive(sessionId)) {
@@ -641,7 +694,14 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         // have no aggregate — the marker is pruned — so they rely on the
         // structural answer alone.)
         let transcripts = transcriptsFromMerge(draft, baseline);
-        const aggregate = landingLive ? getLandingTranscript(sessionId) : null;
+        // An ORDER-TRUSTED aggregate only: a union mixing sequenced and
+        // unsequenced entries (a stale pre-upgrade tab still publishing
+        // unsequenced markers) has no reliable client-side order, and a
+        // reversed aggregate must neither tail-match nor restore.
+        const aggregate =
+          landingLive && isLandingAggregateOrdered(sessionId)
+            ? getLandingTranscript(sessionId)
+            : null;
         if (
           aggregate &&
           draft?.endsWith(aggregate) &&
@@ -1100,8 +1160,9 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                 if (!result.merged) {
                   if (result.stale) {
                     // Superseded by a newer committed write — retire the
-                    // claim instead of requeueing an eternally-stale push.
-                    retireDraftBackupClaim({ key, generation, ts });
+                    // durable claim instead of requeueing an eternally-stale
+                    // push (in-memory claims carry no key and simply drop).
+                    if (key) retireDraftBackupClaim({ key, generation, ts });
                     return;
                   }
                   requeueClaim(flushSessionId, { content, generation, key, claimId, ts });
@@ -1114,7 +1175,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                     contentSignal.value = result.value ?? content;
                   }
                 }
-                retireDraftBackupClaim({ key, generation, ts });
+                if (key) retireDraftBackupClaim({ key, generation, ts });
               })
               .catch(() => {
                 requeueClaim(flushSessionId, { content, generation, key, claimId, ts });
@@ -1152,11 +1213,20 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
               )
               .then((result) => {
                 if (result.stale && !result.merged) {
-                  // A newer committed write superseded this push — drop the
-                  // claim binding (a later push mints its own) and retire the
-                  // backup rather than requeueing an eternally-stale merge.
-                  activeMergeClaimsRef.current.delete(flushSessionId);
-                  retireDraftBackupClaim({ key, generation, ts });
+                  // STALE only means a newer committed write superseded this
+                  // PUSH — nothing of the active content was persisted, and
+                  // its normal debounced save may still be unacknowledged.
+                  // Retiring the durable backup now would delete the tab's
+                  // only copy of those edits before ANY acknowledged save;
+                  // keep it and requeue the active content under the SAME id
+                  // (the retry merge folds transcripts and retires then).
+                  requeueClaim(flushSessionId, {
+                    content: active,
+                    generation,
+                    key,
+                    claimId: activeClaimId,
+                    ts,
+                  });
                   return;
                 }
                 if (result.merged) {
@@ -1164,7 +1234,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                   // Retire through the claim path so the SUPERSEDE boundary
                   // is recorded: other tabs' older same-generation backups
                   // must become unrestorable over this committed draft.
-                  retireDraftBackupClaim({ key, generation, ts });
+                  if (key) retireDraftBackupClaim({ key, generation, ts });
                   // ADOPT the daemon's value while the composer still shows
                   // the content we sent: after a voice sequence merged, the
                   // value is active + transcripts and the baseline cleared —
@@ -1210,13 +1280,14 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           })
           .then((result) => {
             if (result.merged) {
-              retireDraftBackupClaim({ key, generation, ts });
+              if (key) retireDraftBackupClaim({ key, generation, ts });
               return;
             }
             if (result.stale) {
               // A newer committed write superseded this backup — retire
-              // instead of requeueing an eternally-stale push.
-              retireDraftBackupClaim({ key, generation, ts });
+              // instead of requeueing an eternally-stale push (in-memory
+              // claims carry no key and simply drop).
+              if (key) retireDraftBackupClaim({ key, generation, ts });
               return;
             }
             // Declined (a newer sequence is unresolved — the draft diverged
@@ -1285,6 +1356,21 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             key: liveClaim.key,
             claimId: generateUUID(),
             ts: liveClaim.ts,
+          });
+          flushKickRef.current();
+        } else if (trimmedContent) {
+          // No durable backup exists (localStorage refused it), so the
+          // composer's text was the only copy — e.g. a save the daemon REFUSED
+          // because the transcripts could not fold whole. Queue it as an
+          // IN-MEMORY claim (empty key: nothing durable to retire) so the
+          // merge retry keeps attempting after the switch instead of
+          // abandoning the text with the composer.
+          pendingBackupFlushRef.current.set(prevSessionId, {
+            content: trimmedContent,
+            generation: getLandingGeneration(prevSessionId) ?? 0,
+            key: '',
+            claimId: generateUUID(),
+            ts: Date.now(),
           });
           flushKickRef.current();
         }

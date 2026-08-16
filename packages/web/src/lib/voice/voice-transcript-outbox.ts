@@ -78,11 +78,15 @@ function scheduleMarkerVerification(sessionId: string, announced: LandingEntry[]
   markerRepairBudget.set(sessionId, 3);
   const check = (pass: number) => {
     try {
-      // No repair once this tab CONSUMED a marker or its landing expired: the
-      // live marker then belongs to a newer sequence (whose writer unions with
-      // ours), and re-marking would re-announce already-merged transcripts.
-      if (!consumedMarkers.has(sessionId) && isLandingLive(sessionId)) {
-        const raw = localStorage.getItem(`${LANDED_PREFIX}${sessionId}`);
+      // No repair once this tab consumed the CURRENT marker (a NEWER marker is
+      // a fresh sequence this tab may legitimately follow) or its landing
+      // expired: re-marking would re-announce already-merged transcripts.
+      // Comparing against the raw value — not a mere `has()` — keeps
+      // verification armed for every later sequence: the same tab's next
+      // landing updates the signal BEFORE writing its new marker, so a
+      // liveness probe here would still be reading the old consumed raw.
+      const raw = localStorage.getItem(`${LANDED_PREFIX}${sessionId}`);
+      if (consumedMarkers.get(sessionId) !== raw && isLandingLive(sessionId)) {
         const marker = parseLandedMarker(raw);
         // The captured RECORDS repair from data the clobber's own storage
         // event cannot destroy: the handler REPLACES the local aggregate with
@@ -174,15 +178,28 @@ export function markVoiceTranscriptLanded(
     // their landing suppresses the owner's server saves. Clear BOTH the
     // legacy single record and the per-content record keys.
     try {
-      const epochPrefix = `${SUPERSEDED_PREFIX}${sessionId}`;
-      const epochRecordKeys: string[] = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (!key || !key.startsWith(epochPrefix)) continue;
-        if (key.length > epochPrefix.length && key[epochPrefix.length] !== '.') continue;
-        epochRecordKeys.push(key);
+      // REVALIDATE first: another tab can have established the new epoch (and
+      // committed a reconciliation whose supersede records already exist)
+      // while this tab paused after its stale no-marker read — deleting now
+      // would strip the fresh epoch's records and let a ruled-out backup
+      // restore over the committed combined draft.
+      let epochOwnerRaw: string | null = null;
+      try {
+        epochOwnerRaw = localStorage.getItem(`${LANDED_PREFIX}${sessionId}`);
+      } catch {
+        epochOwnerRaw = null;
       }
-      for (const key of epochRecordKeys) localStorage.removeItem(key);
+      if (epochOwnerRaw === null) {
+        const epochPrefix = `${SUPERSEDED_PREFIX}${sessionId}`;
+        const epochRecordKeys: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (!key || !key.startsWith(epochPrefix)) continue;
+          if (key.length > epochPrefix.length && key[epochPrefix.length] !== '.') continue;
+          epochRecordKeys.push(key);
+        }
+        for (const key of epochRecordKeys) localStorage.removeItem(key);
+      }
     } catch {
       /* storage unavailable */
     }
@@ -239,6 +256,7 @@ export function markVoiceTranscriptLanded(
         recordEntryEvictions(sessionId, merged);
         const mergedEntries = merged.slice(-MAX_ENTRIES);
         landingEntries.set(sessionId, mergedEntries);
+        landingOrdered.set(sessionId, !hasMixedSequencing(mergedEntries));
         landingTexts.set(
           sessionId,
           mergedEntries.reduce((acc, entry) => appendDraftText(acc, entry.text), '')
@@ -384,7 +402,26 @@ const landingEntries = new Map<string, LandingEntry[]>();
 // presence alone. Recording our own evictions separates the two: a missing
 // id is repairable exactly when it was never evicted locally.
 const evictedEntryIds = new Map<string, Set<string>>();
+// Whether the session's landing AGGREGATE is order-trustworthy. A union that
+// mixes sequenced and unsequenced entries (a stale pre-upgrade web client
+// still publishing marker entries without `seq` while the daemon already
+// stamps sequences) has NO reliable client-side ordering — the legacy-first
+// heuristic would place a post-deployment unsequenced entry ahead of earlier
+// sequenced commits. The aggregate still carries every entry, but
+// reconciliation must not tail-match or restore from an unordered aggregate.
+const landingOrdered = new Map<string, boolean>();
 let syntheticEntryCounter = 0;
+
+function hasMixedSequencing(entries: LandingEntry[]): boolean {
+  const anySequenced = entries.some((e) => typeof e.seq === 'number');
+  const anyUnsequenced = entries.some((e) => typeof e.seq !== 'number');
+  return anySequenced && anyUnsequenced;
+}
+
+/** Whether `sessionId`'s landing aggregate may be trusted for order (tail-match/restore). */
+export function isLandingAggregateOrdered(sessionId: string): boolean {
+  return landingOrdered.get(sessionId) ?? true;
+}
 
 function recordEntryEvictions(sessionId: string, ordered: LandingEntry[]): void {
   if (ordered.length <= MAX_ENTRIES) return;
@@ -450,6 +487,7 @@ function markVoiceTranscriptLandedLocal(
     recordEntryEvictions(sessionId, ordered);
     const bounded = ordered.slice(-MAX_ENTRIES);
     landingEntries.set(sessionId, bounded);
+    landingOrdered.set(sessionId, !hasMixedSequencing(bounded));
     // The entries are the authoritative aggregate granularity — derive the
     // text and the announced-id set from the RETAINED entries (older ids fill
     // the remaining slots), so the marker's bounded fields always describe
@@ -479,7 +517,9 @@ function markVoiceTranscriptLandedLocal(
     // authoritative sequence from the writing tab.
     landingIds.set(sessionId, (markerIds ?? []).slice(-MAX_ENTRIES));
     if (markerEntries) {
-      landingEntries.set(sessionId, orderLandingEntries(markerEntries).slice(-MAX_ENTRIES));
+      const boundedHydration = orderLandingEntries(markerEntries).slice(-MAX_ENTRIES);
+      landingEntries.set(sessionId, boundedHydration);
+      landingOrdered.set(sessionId, !hasMixedSequencing(boundedHydration));
     }
   }
 }
@@ -638,6 +678,7 @@ function dropLocalLanding(sessionId: string): void {
   landingTexts.delete(sessionId);
   landingIds.delete(sessionId);
   landingEntries.delete(sessionId);
+  landingOrdered.delete(sessionId);
 }
 
 /**
@@ -1696,5 +1737,6 @@ export function resetVoiceTranscriptOutbox(): void {
   landingIds.clear();
   landingEntries.clear();
   evictedEntryIds.clear();
+  landingOrdered.clear();
   consumedMarkers.clear();
 }

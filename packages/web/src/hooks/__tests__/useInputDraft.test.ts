@@ -2660,6 +2660,266 @@ describe('useInputDraft', () => {
       expect(hasClearTombstone('session-1')).toBe(false);
     });
 
+    it('never folds an old session transcript into the composer of a new session', async () => {
+      // The owed-clear reconcile's session.get resolves AFTER the hook moved
+      // to another session: the shared signal now backs the NEW composer, and
+      // appending the old session's transcript would contaminate it (and its
+      // next save would persist the foreign text).
+      const gets: Array<{ resolve: (value: unknown) => void }> = [];
+      mockHub.request.mockImplementation((method: string) => {
+        if (method === 'session.get') {
+          let resolve!: (value: unknown) => void;
+          const promise = new Promise((r) => {
+            resolve = r;
+          });
+          gets.push({ resolve });
+          return promise;
+        }
+        return {};
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      // Tombstone versioned with the sequence the daemon already stripped.
+      saveClearTombstone('session-1', 1);
+      const { result, rerender } = renderHook(({ sessionId }) => useInputDraft(sessionId), {
+        initialProps: { sessionId: 'session-1' },
+      });
+      await act(async () => {
+        gets[0]?.resolve({
+          session: { metadata: { inputDraft: '', inputDraftVoiceLastStrippedSeq: 1 } },
+        });
+        await vi.runAllTimersAsync();
+      });
+      // The user switches BEFORE the reconcile's get resolves; the new
+      // composer holds its own typing.
+      rerender({ sessionId: 'session-2' });
+      result.current.setContent('new session typing');
+      await act(async () => {
+        gets[1]?.resolve({
+          // The OLD session's transcript-only draft (strip committed, ack lost).
+          session: { metadata: { inputDraft: 'old voice', inputDraftVoiceLastStrippedSeq: 1 } },
+        });
+        await vi.runAllTimersAsync();
+      });
+      // The new session's composer is untouched…
+      expect(result.current.content).toBe('new session typing');
+      // …and the old session's owed clear is satisfied server-side.
+      expect(hasClearTombstone('session-1')).toBe(false);
+    });
+
+    it('keeps the owed clear when the post-clear fold would truncate', async () => {
+      // The stripped transcripts plus the restored post-clear typing exceed
+      // the draft limit: appendDraftText would silently truncate, and folding
+      // anyway would let the next save drop the transcript's tail. The clear
+      // stays owed (its versioned tombstone recognizes the committed strip on
+      // retry) until the complete combination fits.
+      saveClearTombstone('session-1', 1);
+      const tombstoneKeys: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i) ?? '';
+        if (key.startsWith('hyperneo_voice_transcript_outbox_v1.clear.session-1.')) {
+          tombstoneKeys.push(key);
+        }
+      }
+      for (const key of tombstoneKeys) {
+        const parsed = JSON.parse(localStorage.getItem(key) ?? '{}');
+        localStorage.setItem(key, JSON.stringify({ ...parsed, ts: parsed.ts - 1000 }));
+      }
+      const longBackup = 'a'.repeat(99_995);
+      saveDraftBackup('session-1', longBackup, 1);
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return {
+            session: {
+              metadata: {
+                inputDraft: 'a long stripped transcript tail that cannot fit',
+                inputDraftVoiceLastStrippedSeq: 1,
+              },
+            },
+          };
+        }
+        return {};
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // The restored typing stands UNTRUNCATED (no silent tail drop)…
+      expect(result.current.content).toBe(longBackup);
+      // …and the tombstone stays owed for the bounded retry.
+      expect(hasClearTombstone('session-1')).toBe(true);
+    });
+
+    it('retires the restored post-clear backup only after its combined save is acknowledged', async () => {
+      // The restored claim is transcript-free user typing: leaving it as the
+      // freshest durable claim would let a later switch push it over the
+      // combined draft. The deferred retirement binds it to the first
+      // acknowledged save of the folded content.
+      saveClearTombstone('session-1', 1);
+      const tombstoneKeys: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i) ?? '';
+        if (key.startsWith('hyperneo_voice_transcript_outbox_v1.clear.session-1.')) {
+          tombstoneKeys.push(key);
+        }
+      }
+      for (const key of tombstoneKeys) {
+        const parsed = JSON.parse(localStorage.getItem(key) ?? '{}');
+        localStorage.setItem(key, JSON.stringify({ ...parsed, ts: parsed.ts - 1000 }));
+      }
+      saveDraftBackup('session-1', 'post-clear typing', 1);
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return {
+            session: {
+              metadata: { inputDraft: 'voice', inputDraftVoiceLastStrippedSeq: 1 },
+            },
+          };
+        }
+        return { success: true };
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // A second drain fires the post-fold debounced save (the fold applies
+      // during the settle callback, scheduling the save at act-exit).
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // The combined content saved and was acknowledged — the claim retired.
+      const saves = mockHub.request.mock.calls.filter(([m]) => m === 'session.update');
+      expect(saves.length).toBeGreaterThan(0);
+      expect(peekExpiredDraftBackup('session-1')).toBeNull();
+    });
+
+    it('keeps the durable backup when an active-content merge comes back stale', async () => {
+      // STALE only means another tab's newer write superseded the PUSH — this
+      // tab's active edits are still only scheduled through their normal
+      // debounced save. Retiring the backup would delete the only durable
+      // copy before ANY acknowledged save of that content.
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') return { session: { metadata: {} } };
+        if (method === 'session.mergeVoiceDraftBackup') return { merged: false, stale: true };
+        return { success: true };
+      });
+      connectionState.value = 'connected';
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result, rerender } = renderHook(({ sessionId }) => useInputDraft(sessionId), {
+        initialProps: { sessionId: 'session-1' },
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // A deferred landing suppresses saves into a backup, then the user
+      // switches away — the claim queues — and RETURNS before the retry
+      // fires, typing newer content over the restored backup.
+      markVoiceTranscriptLanded('session-1', 'voice');
+      result.current.setContent('older edits');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(getDraftBackup('session-1')).toBe('older edits');
+      rerender({ sessionId: 'session-2' });
+      await act(async () => {
+        // Bounded: the queued claim's 5s retry must fire AFTER the return,
+        // while session-1 is current — runAllTimers would flush it here as a
+        // DEPARTED push instead.
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      await act(async () => {
+        rerender({ sessionId: 'session-1' });
+      });
+      result.current.setContent('newer typing');
+      await act(async () => {
+        // The queued claim's retry fires while the session is CURRENT with
+        // non-empty content — the ACTIVE-content merge path.
+        await vi.advanceTimersByTimeAsync(7_000);
+      });
+      const mergesAfterFirst = mockHub.request.mock.calls.filter(
+        ([m]) => m === 'session.mergeVoiceDraftBackup'
+      ).length;
+      expect(mergesAfterFirst).toBeGreaterThan(0);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20_000);
+      });
+      const mergesAfterSecond = mockHub.request.mock.calls.filter(
+        ([m]) => m === 'session.mergeVoiceDraftBackup'
+      ).length;
+      // The requeued ACTIVE content retried after the backoff…
+      expect(mergesAfterSecond).toBeGreaterThan(mergesAfterFirst);
+      // …and the durable copy of the edits survived every stale decline.
+      expect(peekExpiredDraftBackup('session-1')).not.toBeNull();
+    });
+
+    it('queues refused-fold text as an in-memory claim when the user switches away', async () => {
+      // localStorage refused the backup and the daemon refused the fold (too
+      // long to carry the transcripts): the composer was the only copy. The
+      // switch must queue an in-memory merge retry instead of abandoning it.
+      const baseStorage = createMemoryStorage();
+      const quotaStorage = createMemoryStorage();
+      quotaStorage.setItem = (k: string, v: string) => {
+        if (k.startsWith('hyperneo_voice_transcript_outbox_v1.draft.')) {
+          throw new DOMException('quota', 'QuotaExceededError');
+        }
+        baseStorage.setItem(k, v);
+      };
+      quotaStorage.getItem = (k: string) => baseStorage.getItem(k);
+      quotaStorage.removeItem = (k: string) => void baseStorage.removeItem(k);
+      globalThis.localStorage = quotaStorage as Storage;
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') return { session: { metadata: { inputDraft: '' } } };
+        if (method === 'session.update') {
+          return { success: true, draftVersion: 9, draftValue: 'old merged', foldRefused: true };
+        }
+        if (method === 'session.mergeVoiceDraftBackup') {
+          // The in-memory claim's retry eventually commits.
+          return { merged: true, value: 'merged with transcripts' };
+        }
+        return { success: true };
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result, rerender } = renderHook(({ sessionId }) => useInputDraft(sessionId), {
+        initialProps: { sessionId: 'session-1' },
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      markVoiceTranscriptLanded('session-1', 'voice');
+      result.current.setContent('long refused text');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      rerender({ sessionId: 'session-2' });
+      await act(async () => {
+        // The switch queued the in-memory claim (its kick no-ops while the
+        // connection is down).
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      await act(async () => {
+        // Reconnecting fires the retry pass, whose merge commits and drains.
+        connectionState.value = 'connected';
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      // The switch queued an in-memory claim for the departed session's text,
+      // and its merge carried the content.
+      const merges = mockHub.request.mock.calls.filter(
+        ([m]) => m === 'session.mergeVoiceDraftBackup'
+      );
+      expect(merges.length).toBeGreaterThan(0);
+      expect(merges.some(([, data]) => data?.content === 'long refused text')).toBe(true);
+    });
+
     it('keeps local content and a stale version cache when the daemon refuses a truncating fold', async () => {
       // localStorage failed (no backup), so the save fell through to the
       // daemon with text too long to fold the transcripts into. The refused
