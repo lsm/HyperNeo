@@ -1726,6 +1726,60 @@ describe('useInputDraft', () => {
       expect(peekExpiredDraftBackup('session-1')).toBeNull();
     });
 
+    it('advances the version cache when the retained-pending reconcile adopts the merged draft', async () => {
+      // The expired-landing reconcile's SECOND get merges the retained
+      // pending onto the cleared draft (the clear re-anchored the baseline
+      // to ''). Adopting the merged value without its version leaves the
+      // next debounced edit echoing the PRE-clear version: the daemon
+      // classifies it stale and folds the entire transcript-only draft into
+      // content that already carries the transcript — duplicating the voice
+      // text (the transcript sits at the FRONT here, beyond the daemon's
+      // suffix guard).
+      saveClearTombstone('session-1');
+      let gets = 0;
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          gets += 1;
+          if (gets === 1) {
+            return {
+              session: {
+                metadata: { inputDraft: 'sent text', inputDraftVoicePending: 'voice' },
+              },
+            };
+          }
+          return {
+            session: { metadata: { inputDraft: 'voice', inputDraftVersion: 9 } },
+          };
+        }
+        if (method === 'session.clearInputDraftIf') return { cleared: true };
+        return { success: true, draftVersion: 10 };
+      });
+
+      // Mount offline: the owed clear persists as a tombstone and the
+      // reconcile runs once the connection is restored.
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+      await act(async () => {
+        connectionState.value = 'connected';
+        await vi.runAllTimersAsync();
+      });
+      // The reconcile adopted the merged transcript-only draft.
+      expect(result.current.content).toBe('voice');
+      // The next edit's save must echo the version THAT state carried.
+      act(() => {
+        result.current.setContent('voice and typing');
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      const save = mockHub.request.mock.calls.find(([m]) => m === 'session.update');
+      expect(save?.[1]?.expectedDraftVersion).toBe(9);
+    });
+
     it('keeps the durable backup when the pendingRetained merge cannot commit', async () => {
       // Same restore, but the merge is DECLINED (a newer sequence is
       // unresolved): the backup stays — a later departed-session flush

@@ -446,7 +446,9 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                   return;
                 }
                 return hub
-                  .request<{ session?: { metadata?: { inputDraft?: string } } }>('session.get', {
+                  .request<{
+                    session?: { metadata?: { inputDraft?: string; inputDraftVersion?: number } };
+                  }>('session.get', {
                     sessionId: targetSessionId,
                   })
                   .then((merged) => {
@@ -459,6 +461,21 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                         contentSignal.peek() === observedDraft
                       ) {
                         contentSignal.value = mergedDraft;
+                        // The clear re-anchored the baseline to '' and THIS
+                        // get merged the retained pending onto it, so the
+                        // daemon draft is baseline + transcripts with the
+                        // version this response carries. Adopting the value
+                        // without the version leaves the next debounced edit
+                        // echoing the PRE-clear version: the daemon would
+                        // classify it stale and fold the entire
+                        // transcript-only draft into content that already
+                        // carries the transcript — duplicating the voice text
+                        // (the transcript sits at the FRONT here, so the
+                        // daemon's suffix guard cannot catch it).
+                        advanceDraftVersion(
+                          targetSessionId,
+                          merged.session?.metadata?.inputDraftVersion
+                        );
                       }
                     }
                     removeClearTombstone(targetSessionId);
