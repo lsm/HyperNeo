@@ -1506,6 +1506,504 @@ describe('useInputDraft', () => {
       expect(getCalls).toBeGreaterThanOrEqual(2);
     });
 
+    it('retries a departed session backup flush after reconnecting', async () => {
+      // Session A: landing expires while its recently-edited backup survives.
+      mockHub.request.mockImplementation(async (method: string, payload?: { content?: string }) =>
+        method === 'session.mergeVoiceDraftBackup'
+          ? { merged: true, value: payload?.content ?? '' }
+          : { session: { metadata: { inputDraft: '' } } }
+      );
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+      const { result, rerender } = renderHook(({ s }) => useInputDraft(s), {
+        initialProps: { s: 'session-A' },
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      result.current.setContent('A edits');
+      markVoiceTranscriptLanded('session-A', 'voice');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(23 * 60 * 60 * 1000);
+      });
+      result.current.setContent('A edits v2');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000);
+      });
+
+      // Switch away while DISCONNECTED — the flush can't run, but must be
+      // retained for the reconnect instead of dying with the switch.
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
+      rerender({ s: 'session-B' });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      const before = mockHub.request.mock.calls.filter(
+        ([m, d]) =>
+          (m === 'session.update' || m === 'session.mergeVoiceDraftBackup') &&
+          d?.sessionId === 'session-A'
+      ).length;
+      expect(before).toBe(0);
+
+      // Reconnect (still viewing B): the retained flush pushes A's backup
+      // through the daemon-side merge (it folds any merged transcripts in
+      // instead of clobbering them with the transcript-free backup).
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+      connectionState.value = 'connected';
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      const flush = mockHub.request.mock.calls.find(
+        ([m, d]) =>
+          m === 'session.mergeVoiceDraftBackup' &&
+          d?.sessionId === 'session-A' &&
+          d?.content === 'A edits v2'
+      );
+      expect(flush).toBeTruthy();
+    });
+
+    it('requeues a DECLINED backup merge for a departed session and retries it', async () => {
+      // The daemon declines the merge while a newer voice sequence is
+      // unresolved (the draft diverged from its baseline). Dropping the
+      // claim there would strand the backup — the switch was its only other
+      // trigger — so it must requeue with backoff and merge once the
+      // sequence settles.
+      let mergeCalls = 0;
+      mockHub.request.mockImplementation(async (method: string, payload?: { content?: string }) => {
+        if (method === 'session.mergeVoiceDraftBackup') {
+          mergeCalls += 1;
+          return mergeCalls === 1
+            ? { merged: false }
+            : { merged: true, value: payload?.content ?? '' };
+        }
+        return { session: { metadata: { inputDraft: '' } } };
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+      const { result, rerender } = renderHook(({ s }) => useInputDraft(s), {
+        initialProps: { s: 'session-A' },
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      result.current.setContent('A edits');
+      markVoiceTranscriptLanded('session-A', 'voice');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(23 * 60 * 60 * 1000);
+      });
+      result.current.setContent('A edits v2');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000);
+      });
+
+      // Switch away offline, then reconnect: the first merge is DECLINED...
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
+      rerender({ s: 'session-B' });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+      connectionState.value = 'connected';
+      await act(async () => {
+        // Enough for the immediate merge attempt, not the 5s backoff retry.
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      expect(mergeCalls).toBe(1);
+
+      // ...the backoff retry merges, and only then retires the backup.
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(mergeCalls).toBeGreaterThanOrEqual(2);
+      expect(peekExpiredDraftBackup('session-A')).toBeNull();
+    });
+
+    it('adopts a retained backup flush when the user returns to its session', async () => {
+      mockHub.request.mockImplementation(async (method: string, payload?: { content?: string }) =>
+        method === 'session.mergeVoiceDraftBackup'
+          ? { merged: true, value: payload?.content ?? '' }
+          : { session: { metadata: { inputDraft: '' } } }
+      );
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+      const { result, rerender } = renderHook(({ s }) => useInputDraft(s), {
+        initialProps: { s: 'session-A' },
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      result.current.setContent('A edits');
+      markVoiceTranscriptLanded('session-A', 'voice');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(23 * 60 * 60 * 1000);
+      });
+      result.current.setContent('A edits v2');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000);
+      });
+
+      // Switch away offline (flush retained), come back to A, then reconnect
+      // with an idle composer: the backup's edits are adopted into the
+      // composer rather than dropped.
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
+      rerender({ s: 'session-B' });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      rerender({ s: 'session-A' });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('');
+
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+      connectionState.value = 'connected';
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('A edits v2');
+      expect(getDraftBackup('session-A')).toBeNull();
+    });
+
+    it('flushes a departed session whose landing has expired (>24h)', async () => {
+      mockHub.request.mockImplementation(async (method: string, payload?: { content?: string }) =>
+        method === 'session.mergeVoiceDraftBackup'
+          ? { merged: true, value: payload?.content ?? '' }
+          : { session: { metadata: { inputDraft: '' } } }
+      );
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result, rerender } = renderHook(({ s }) => useInputDraft(s), {
+        initialProps: { s: 'session-A' },
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      result.current.setContent('A text');
+      markVoiceTranscriptLanded('session-A', 'voice');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // The landing ages past 24h, but the user kept editing recently — the
+      // draft backup (the only record, saves being suppressed) stays fresh.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(23 * 60 * 60 * 1000);
+      });
+      result.current.setContent('A text v2');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000);
+      });
+
+      // The landing is now expired (25h) while the backup is 2h old — the
+      // switch flush must NOT be skipped, and must CLAIM the backup's edits:
+      // a reopen would reject the backup (landing dead), so this flush is
+      // their only path to the server.
+      rerender({ s: 'session-B' });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      const flush = mockHub.request.mock.calls.find(
+        ([m, d]) =>
+          m === 'session.mergeVoiceDraftBackup' &&
+          d?.sessionId === 'session-A' &&
+          d?.content === 'A text v2'
+      );
+      expect(flush).toBeTruthy();
+      expect(getDraftBackup('session-A')).toBeNull();
+    });
+
+    it('persists a pendingRetained expired-landing restore through an acknowledged merge', async () => {
+      // The landing marker is long pruned but the backup is fresh, and the
+      // daemon RETAINED the pending (draft too full to merge). The restore
+      // must not delete the durable copy on the spot — the debounced save
+      // alone could be lost to a reload or dropped socket — but persist it
+      // through the daemon-side merge and retire only on the acknowledgement.
+      saveDraftBackup('session-1', 'user edits', 1);
+      let mergeCommitted = false;
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return {
+            session: {
+              metadata: { inputDraft: 'full draft', inputDraftVoicePending: 'voice' },
+            },
+          };
+        }
+        if (method === 'session.mergeVoiceDraftBackup') {
+          mergeCommitted = true;
+          return { merged: true, value: 'user edits' };
+        }
+        return {};
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // The queued merge runs through the retry backoff — arm it.
+      connectionState.value = 'connected';
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      expect(result.current.content).toBe('user edits');
+      expect(mergeCommitted).toBe(true);
+      expect(peekExpiredDraftBackup('session-1')).toBeNull();
+    });
+
+    it('keeps the durable backup when the pendingRetained merge cannot commit', async () => {
+      // Same restore, but the merge is DECLINED (a newer sequence is
+      // unresolved): the backup stays — a later departed-session flush
+      // retries it, and deleting it here would leave only the un-committed
+      // debounced save.
+      saveDraftBackup('session-1', 'user edits', 1);
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return {
+            session: {
+              metadata: { inputDraft: 'full draft', inputDraftVoicePending: 'voice' },
+            },
+          };
+        }
+        if (method === 'session.mergeVoiceDraftBackup') return { merged: false };
+        return {};
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      expect(result.current.content).toBe('user edits');
+      expect(peekExpiredDraftBackup('session-1')?.content).toBe('user edits');
+    });
+
+    it('reschedules a departed-session backup merge declined on its first attempt', async () => {
+      // The first merge attempt runs while CONNECTED and is DECLINED (a
+      // newer sequence is unresolved): queueRetry must arm the backoff pass,
+      // or the claim idles in localStorage until the TTL prunes it — no
+      // connection transition or later switch ever revisits it.
+      let attempts = 0;
+      mockHub.request.mockImplementation(async (method: string, payload?: { content?: string }) => {
+        if (method === 'session.mergeVoiceDraftBackup') {
+          attempts += 1;
+          return attempts === 1
+            ? { merged: false }
+            : { merged: true, value: payload?.content ?? '' };
+        }
+        return { session: { metadata: { inputDraft: '' } } };
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+      connectionState.value = 'connected'; // the armed kick only fires while connected
+      const { result, rerender } = renderHook(({ s }) => useInputDraft(s), {
+        initialProps: { s: 'session-A' },
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // The switch-flush effect re-runs on the content CHANGE the session
+      // switch applies, so session-A must hold text before departing.
+      result.current.setContent('edits');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      saveDraftBackup('session-A', 'edits', 1);
+
+      rerender({ s: 'session-B' });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10);
+      });
+      expect(attempts).toBe(1); // the first, declined attempt — nothing else fires yet
+
+      // No connection change occurs: only the armed backoff pass can retry.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect(attempts).toBeGreaterThanOrEqual(2);
+      expect(peekExpiredDraftBackup('session-A')).toBeNull(); // retired on the ack'd merge
+    });
+
+    it('queues a live-landing backup for merge when the user switches away', async () => {
+      // Typing while a landing is deferred suppresses server saves into the
+      // backup; switching away must SCHEDULE that backup through the merge
+      // queue — nothing else rechecks the inactive session when the marker
+      // later expires, so an abandoned claim would be TTL-pruned and the
+      // suppressed edits lost.
+      mockHub.request.mockImplementation(async (method: string, payload?: { content?: string }) =>
+        method === 'session.mergeVoiceDraftBackup'
+          ? { merged: true, value: payload?.content ?? '' }
+          : { session: { metadata: { inputDraft: '' } } }
+      );
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+      const { result, rerender } = renderHook(({ s }) => useInputDraft(s), {
+        initialProps: { s: 'session-A' },
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      result.current.setContent('suppressed edits');
+      markVoiceTranscriptLanded('session-A', 'voice');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(peekExpiredDraftBackup('session-A')?.content).toBe('suppressed edits');
+
+      // Switch away while the landing is still LIVE — the queued claim reaches
+      // the daemon through the merge (transcripts folded or re-anchored), and
+      // the durable copy retires only on the acknowledged merge.
+      rerender({ s: 'session-B' });
+      // Kick the merge retry directly (the connection subscription only
+      // fires on connection CHANGES, and this test stays connected).
+      connectionState.value = 'disconnected';
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10);
+      });
+      connectionState.value = 'connected';
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      const merge = mockHub.request.mock.calls.find(
+        ([m, d]) => m === 'session.mergeVoiceDraftBackup' && d?.sessionId === 'session-A'
+      );
+      expect(merge?.[1]?.content).toBe('suppressed edits');
+      expect(peekExpiredDraftBackup('session-A')).toBeNull();
+    });
+
+    it('retires an active-superseded backup only after the active content commits', async () => {
+      // The user returned to a queued-claim session and TYPED before the
+      // reconnect: the active content supersedes the backup, but the durable
+      // copy must survive until that content is acknowledged server-side —
+      // the debounced save alone can be lost to a reload or disconnect.
+      mockHub.request.mockImplementation(async (method: string, payload?: { content?: string }) =>
+        method === 'session.mergeVoiceDraftBackup'
+          ? { merged: true, value: payload?.content ?? '' }
+          : { session: { metadata: { inputDraft: '' } } }
+      );
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+      const { result, rerender } = renderHook(({ s }) => useInputDraft(s), {
+        initialProps: { s: 'session-A' },
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      result.current.setContent('stale edits');
+      markVoiceTranscriptLanded('session-A', 'voice');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(23 * 60 * 60 * 1000);
+      });
+      // Refresh the backup just before the landing expires, so the durable
+      // copy outlives the marker.
+      result.current.setContent('stale edits v2');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000); // landing expires
+      });
+
+      // Switch away offline (claim queued), return, type, then reconnect.
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
+      rerender({ s: 'session-B' });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      rerender({ s: 'session-A' });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      result.current.setContent('newer typing');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+      connectionState.value = 'connected';
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      const merge = mockHub.request.mock.calls.find(
+        ([m, d]) => m === 'session.mergeVoiceDraftBackup' && d?.sessionId === 'session-A'
+      );
+      // The ACTIVE content was persisted through the merge (not the stale
+      // backup), and only then did the durable copy retire.
+      expect(merge?.[1]?.content).toBe('newer typing');
+      expect(peekExpiredDraftBackup('session-A')).toBeNull();
+    });
+
+    it('recovers a fresh backup whose landing marker expired, folding the merged transcripts', async () => {
+      // Reload with the landing marker long pruned (>24h) but the draft
+      // backup refreshed an hour ago: the user's edits must not die with the
+      // marker. The daemon's baseline snapshot separates the merged
+      // transcripts from the stale baseline, so the restore folds BOTH into
+      // the composer instead of clobbering the transcript with the
+      // transcript-free backup.
+      saveDraftBackup('session-1', 'user edits', 1);
+      const backupClaim = peekExpiredDraftBackup('session-1');
+      mockHub.request.mockResolvedValueOnce({
+        session: {
+          metadata: { inputDraft: 'old draft voice text', inputDraftVoiceBaseline: 'old draft' },
+        },
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      expect(result.current.content).toBe('user edits voice text');
+      // The durable backup retired once its edits (plus transcripts) reached
+      // the composer — the enabled saves now own them.
+      expect(peekExpiredDraftBackup('session-1')).toBeNull();
+      expect(backupClaim).not.toBeNull();
+    });
+
+    it('keeps the server draft when an expired backup cannot be reconciled (no baseline)', async () => {
+      // Same reload, but no baseline snapshot survives (never staged, or a
+      // strip already cleared it): the transcripts cannot be located, so
+      // restoring the transcript-free backup would clobber them. The server
+      // draft wins; the durable backup stays for the departed-session flush,
+      // whose daemon-side merge folds-or-declines atomically.
+      saveDraftBackup('session-1', 'user edits', 1);
+      const backupClaim = peekExpiredDraftBackup('session-1');
+      mockHub.request.mockResolvedValueOnce({
+        session: { metadata: { inputDraft: 'merged draft' } },
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      expect(result.current.content).toBe('merged draft');
+      expect(peekExpiredDraftBackup('session-1')?.content).toBe('user edits');
+    });
+
     it('refreshes the mounted draft when the outbox lands a transcript for its session', async () => {
       // The initial get sees no draft; the replay's get returns the landed one.
       mockHub.request.mockResolvedValueOnce({ session: { metadata: { inputDraft: '' } } });
