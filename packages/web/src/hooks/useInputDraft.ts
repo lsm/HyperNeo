@@ -36,6 +36,7 @@ import {
   consumeVoiceTranscriptLanded,
   getDraftBackup,
   getLandingGeneration,
+  getClearTombstone,
   getLandingTranscript,
   hasClearTombstone,
   isLandingLive,
@@ -44,6 +45,24 @@ import {
   saveDraftBackup,
   voiceTranscriptLandedSignal,
 } from '../lib/voice/voice-transcript-outbox';
+
+/**
+ * Structurally extract the merged voice transcripts from a server draft using
+ * the daemon's baseline snapshot: the merged draft is always baseline +
+ * pending (appendDraftText-joined), so the transcripts are exactly the draft
+ * minus the baseline prefix. null when the structure is unknown (no snapshot,
+ * or the draft diverged from it) — callers fall back to the landing aggregate.
+ */
+function transcriptsFromMerge(
+  draft: string | undefined,
+  baseline: string | null | undefined
+): string | null {
+  if (typeof baseline !== 'string' || draft === undefined) return null;
+  if (draft === baseline) return '';
+  if (draft.startsWith(`${baseline} `)) return draft.slice(baseline.length + 1);
+  if (draft.startsWith(baseline)) return draft.slice(baseline.length);
+  return null;
+}
 
 export interface UseInputDraftResult {
   /** Current content value */
@@ -83,6 +102,9 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // draft would resurrect text the user already sent or cleared. The clear is
   // retried on the next effect run (reconnect / content change).
   const pendingClearRef = useRef<string | null>(null);
+  // Arm the owed-clear reconcile retry backoff from outside the retry effect
+  // (the connection subscription alone only fires on connection CHANGES).
+  const flushKickRef = useRef<() => void>(() => {});
   // The daemon draft VERSION each session's composer last read (from
   // session.get). Saves echo it as expectedDraftVersion so the daemon can
   // tell a write derived from the CURRENT draft (applied as-is) from a stale
@@ -132,7 +154,9 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         ok: boolean,
         pendingRetained?: boolean,
         wasCancelled?: boolean,
-        draft?: string
+        draft?: string,
+        baseline?: string | null,
+        baselineSeq?: number | null
       ) => void,
       reconcileOnCancel?: boolean
     ): void => {
@@ -151,6 +175,8 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             metadata?: {
               inputDraft?: string;
               inputDraftVoicePending?: string | null;
+              inputDraftVoiceBaseline?: string | null;
+              inputDraftVoiceBaselineSeq?: number | null;
               inputDraftVersion?: number | null;
             };
           };
@@ -160,6 +186,8 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         .then((response) => {
           const cancelled = isCancelled();
           const draft = response.session?.metadata?.inputDraft;
+          const baseline = response.session?.metadata?.inputDraftVoiceBaseline;
+          const baselineSeq = response.session?.metadata?.inputDraftVoiceBaselineSeq;
           const pendingRetained = !!response.session?.metadata?.inputDraftVoicePending;
           if (typeof response.session?.metadata?.inputDraftVersion === 'number') {
             // Monotonic, like save acks: overlapping gets can complete out of
@@ -184,23 +212,26 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             foldedLandingRef.current.get(targetSessionId) !== requestedGeneration
           ) {
             // A cancelled REPLAY get still merged the transcript server-side.
-            // Fold ONLY the transcripts — from the landing aggregate, when the
-            // merged draft actually ends with it — into the local typed text so
+            // Fold ONLY the transcripts — extracted structurally from the
+            // daemon's baseline snapshot (the rest of the merged draft is the
+            // stale pre-landing baseline), falling back to the landing
+            // aggregate when no snapshot exists — into the local typed text so
             // a subsequent save does not overwrite it (consuming the landing
             // below re-enables saves). Appended blindly, NOT via a substring
             // check: the user may legitimately have typed the same phrase, and
             // skipping then would drop the voice occurrence. Scoped to the
             // SAME session — a stale get from a moved-on session must never
             // touch the new session's content.
-            const transcript = getLandingTranscript(targetSessionId);
-            if (transcript && (draft ?? '').endsWith(transcript)) {
+            const transcript =
+              transcriptsFromMerge(draft, baseline) ?? getLandingTranscript(targetSessionId);
+            if (transcript) {
               contentSignal.value = appendDraftText(contentSignal.peek(), transcript);
             }
             if (requestedGeneration !== undefined) {
               foldedLandingRef.current.set(targetSessionId, requestedGeneration);
             }
           }
-          onResult?.(true, pendingRetained, cancelled, draft);
+          onResult?.(true, pendingRetained, cancelled, draft, baseline, baselineSeq);
         })
         .catch(() => {
           // A stale request (session changed / hook unmounted while this get
@@ -208,6 +239,166 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           // load — mirror the success path's cancellation guard.
           if (isCancelled()) return;
           onResult?.(false);
+        });
+    },
+    [contentSignal]
+  );
+
+  // Reconcile an owed clear when NO live landing remains (its marker expired
+  // past the TTL while the tombstone is still fresh): the replay effect exits
+  // at its liveness guard, so reconcile directly against the daemon — a fresh
+  // get performs (or reveals) the merge, then the baseline strip keeps only
+  // the transcripts, or a conditional clear removes the stale pre-clear draft
+  // when nothing ever merged. The tombstone is retired only once a reconcile
+  // commits, so a dropped socket retries on the next reconnect.
+  const reconcileOwedClear = useCallback(
+    (targetSessionId: string): void => {
+      const hub = connectionManager.getHubIfConnected();
+      if (!hub) return;
+      const tombstone = getClearTombstone(targetSessionId);
+      hub
+        .request<{
+          session?: {
+            metadata?: {
+              inputDraft?: string;
+              inputDraftVoicePending?: string | null;
+              inputDraftVoiceBaseline?: string | null;
+              inputDraftVoiceBaselineSeq?: number | null;
+              inputDraftVoiceLastStrippedSeq?: number | null;
+            };
+          };
+        }>('session.get', { sessionId: targetSessionId })
+        .then((response) => {
+          const meta = response.session?.metadata ?? {};
+          // The composer content the reconcile observed (its get's draft) —
+          // adoptions below must not overwrite typing that began mid-flight.
+          const observedDraft = meta.inputDraft ?? '';
+          const canAdopt = (): boolean =>
+            currentSessionIdRef.current === targetSessionId &&
+            (contentSignal.peek().trim() === '' || contentSignal.peek() === observedDraft);
+          if (
+            tombstone?.baselineSeq !== undefined &&
+            meta.inputDraftVoiceLastStrippedSeq === tombstone.baselineSeq
+          ) {
+            // The owed strip COMMITTED but its acknowledgement was lost: the
+            // draft already holds only the transcripts and the baseline is
+            // gone. The no-baseline fallback below would conditionally CLEAR
+            // this transcript-only draft — adopt it and retire the tombstone.
+            if (canAdopt()) {
+              contentSignal.value = meta.inputDraft ?? '';
+            }
+            removeClearTombstone(targetSessionId);
+            if (pendingClearRef.current === targetSessionId) {
+              pendingClearRef.current = null;
+            }
+            return;
+          }
+          if ((meta.inputDraftVoicePending ?? '').trim() !== '') {
+            // The get RETAINED the pending (draft too full): stripping now
+            // would clear the draft while the transcript stays staged — and
+            // with the landing expired there is no replay effect to issue the
+            // merging session.get, leaving the transcript invisible until a
+            // later navigation. Clear the stale baseline CONDITIONALLY first,
+            // then a fresh get merges the pending onto the clean draft.
+            return hub
+              .request<{ cleared?: boolean }>('session.clearInputDraftIf', {
+                sessionId: targetSessionId,
+                expected: meta.inputDraft ?? '',
+              })
+              .then((result) => {
+                if (!result.cleared) {
+                  // Raced a newer draft — stays owed; no replay effect exists
+                  // (landing expired) and connectionState did not change, so
+                  // arm the bounded retry pass explicitly.
+                  flushKickRef.current();
+                  return;
+                }
+                return hub
+                  .request<{ session?: { metadata?: { inputDraft?: string } } }>('session.get', {
+                    sessionId: targetSessionId,
+                  })
+                  .then((merged) => {
+                    if (currentSessionIdRef.current === targetSessionId) {
+                      // Only over an idle composer or unchanged observed text:
+                      // typing that began mid-reconcile is newer user state.
+                      const mergedDraft = merged.session?.metadata?.inputDraft ?? '';
+                      if (
+                        contentSignal.peek().trim() === '' ||
+                        contentSignal.peek() === observedDraft
+                      ) {
+                        contentSignal.value = mergedDraft;
+                      }
+                    }
+                    removeClearTombstone(targetSessionId);
+                    if (pendingClearRef.current === targetSessionId) {
+                      pendingClearRef.current = null;
+                    }
+                  });
+              })
+              .catch(() => {
+                /* stays owed — the reconnect subscription retries */
+              });
+          }
+          if (
+            typeof meta.inputDraftVoiceBaseline === 'string' &&
+            typeof meta.inputDraftVoiceBaselineSeq === 'number'
+          ) {
+            // Version the tombstone with the sequence BEFORE the strip is in
+            // flight: a tombstone saved without one (the original owe ran
+            // offline, before any get) could never be matched against
+            // inputDraftVoiceLastStrippedSeq if the strip commits but its
+            // acknowledgement is lost — the retry would fall into the
+            // no-baseline conditional clear and delete the transcript-only
+            // draft the strip produced.
+            saveClearTombstone(targetSessionId, meta.inputDraftVoiceBaselineSeq);
+            return hub
+              .request<{ updated?: boolean; value?: string }>('session.stripVoiceBaseline', {
+                sessionId: targetSessionId,
+                expected: meta.inputDraft ?? '',
+                expectedSeq: meta.inputDraftVoiceBaselineSeq,
+              })
+              .then((result) => {
+                if (!result.updated) {
+                  // Raced a newer sequence — the clear stays owed, and no
+                  // replay effect exists to retry it (the landing expired).
+                  // Arm the bounded retry pass, which re-runs this reconcile.
+                  flushKickRef.current();
+                  return;
+                }
+                if (canAdopt()) {
+                  contentSignal.value = result.value ?? '';
+                }
+                removeClearTombstone(targetSessionId);
+                // Clear the IN-MEMORY owed-clear marker too: a stale ref would
+                // make the replay effect treat a LATER landing (the user
+                // navigated away and back) as another owed clear and strip the
+                // new sequence's baseline.
+                if (pendingClearRef.current === targetSessionId) {
+                  pendingClearRef.current = null;
+                }
+              });
+          }
+          return hub
+            .request<{ cleared?: boolean }>('session.clearInputDraftIf', {
+              sessionId: targetSessionId,
+              expected: meta.inputDraft ?? '',
+            })
+            .then((result) => {
+              if (!result.cleared) {
+                flushKickRef.current(); // stays owed — arm the bounded retry
+                return;
+              }
+              if (canAdopt()) {
+                contentSignal.value = '';
+              }
+              removeClearTombstone(targetSessionId);
+              if (pendingClearRef.current === targetSessionId) {
+                pendingClearRef.current = null;
+              }
+            });
+        })
+        .catch(() => {
+          /* stays owed — the reconnect subscription retries */
         });
     },
     [contentSignal]
@@ -258,6 +449,12 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             // reconcile the merged draft instead of leaving the sent text on
             // screen.
             voiceTranscriptLandedSignal.value = new Map(voiceTranscriptLandedSignal.value);
+          } else {
+            // The landing EXPIRED (its marker pruned) while the tombstone is
+            // still fresh: the replay effect would exit at the liveness guard
+            // and the merged pre-clear text would resurrect. Reconcile the
+            // owed clear directly against the daemon's baseline snapshot.
+            void reconcileOwedClear(sessionId);
           }
           return;
         }
@@ -319,7 +516,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     return () => {
       cancelled = true;
     };
-  }, [sessionId, contentSignal, loadDraft]);
+  }, [sessionId, contentSignal, loadDraft, reconcileOwedClear]);
 
   // Per-session previous content: the clear-detection below must be scoped to
   // the CURRENT session — a deferred landing in another session must not make
@@ -375,9 +572,9 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     // A clear is owed but cannot commit yet: keep it in memory for the next
     // effect run AND persist a tombstone so a RELOAD before the reconnect
     // does not restore the pre-clear backup and resurrect the sent text.
-    const oweClear = () => {
+    const oweClear = (baselineSeq?: number) => {
       pendingClearRef.current = sessionId;
-      const persisted = saveClearTombstone(sessionId);
+      const persisted = saveClearTombstone(sessionId, baselineSeq);
       if (!persisted) {
         // localStorage refused the tombstone: the clear intent cannot survive
         // a reload, and the retained backup would restore the sent text. The
@@ -434,7 +631,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       loadDraft(
         sessionId,
         () => cancelled,
-        (ok, pendingRetained, _wasCancelled, draft) => {
+        (ok, pendingRetained, _wasCancelled, draft, _baseline, baselineSeq) => {
           if (!ok) {
             oweClear(); // get failed — retry on reconnect
             return;
@@ -467,11 +664,57 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
               });
             return;
           }
-          // Merged — by this get or another tab's. The merge landed on
-          // whatever draft was current; adopt the server's draft through the
-          // refresh, which consumes the landing once it sees the pending
-          // fully merged.
-          refresh();
+          // Merged — by this get or another tab's. Ask the DAEMON to strip the
+          // pre-sequence baseline (draft := transcripts): its baseline
+          // snapshot is exact across tabs and every entry of the sequence, so
+          // the strip never discards a transcript another tab merged; the
+          // `expected` + `expectedSeq` guards keep a NEWER draft (or a
+          // baseline a newer sequence replaced) intact. A declined strip just
+          // adopts the server draft via a refresh.
+          // Version the tombstone with the sequence BEFORE the strip is in
+          // flight, so a strip that commits with a lost acknowledgement (or
+          // a crash before the catch) is recognized on retry instead of
+          // falling into the no-baseline conditional clear.
+          if (typeof baselineSeq === 'number') saveClearTombstone(sessionId, baselineSeq);
+          hub
+            .request<{ updated?: boolean; value?: string }>('session.stripVoiceBaseline', {
+              sessionId,
+              expected: draft ?? '',
+              expectedSeq: baselineSeq ?? undefined,
+            })
+            .then((result) => {
+              if (!stillCurrent()) return;
+              if (result.updated) {
+                // Apply the stripped value only while the composer still
+                // shows what the chain's get applied (or is empty): typing
+                // since that get is NEWER user state, and overwriting it
+                // here would drop the keystrokes. But that typing never
+                // received the transcripts anywhere (this chain was not
+                // CANCELLED, so the reconcile-on-cancel fold never ran), and
+                // the strip just cleared the daemon baseline — consuming
+                // without folding would lift the save suppression so the
+                // next plain save replaces the transcript-only server draft
+                // with transcript-free typing, losing the voice text
+                // permanently. Fold the stripped transcripts into the newer
+                // content (blind append — the once-per-generation fold
+                // discipline) so the re-enabled save carries BOTH.
+                const currentContent = contentSignal.peek();
+                const stripped = result.value ?? '';
+                if (currentContent.trim() === '' || currentContent === (draft ?? '')) {
+                  contentSignal.value = stripped;
+                } else if (stripped.trim() !== '') {
+                  contentSignal.value = appendDraftText(currentContent, stripped);
+                }
+                consumeLanding(sessionId, generation);
+              } else {
+                refresh(); // raced a newer writer/sequence — adopt the server's draft
+              }
+            })
+            .catch(() => {
+              // The strip may have COMMITTED with a lost ack — the versioned
+              // tombstone above lets the retry recognize it as done.
+              oweClear(baselineSeq ?? undefined);
+            });
         },
         true
       );
@@ -487,6 +730,50 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       cancelled = true;
     };
   });
+
+  // Retry an owed clear whose landing expired once the connection is
+  // restored (or, while connected, on a bounded backoff armed by
+  // flushKickRef — the connection subscription only fires on CHANGES, and no
+  // replay effect exists to retry an expired landing's reconcile).
+  // Subscribed explicitly (not via a signal effect) so connection changes do
+  // not re-run the component's other signal effects.
+  useEffect(() => {
+    // A failed reconcile while still CONNECTED (RPC timeout / daemon
+    // transient) would never be retried by the connection subscription alone —
+    // back off and retry until it commits.
+    const retryTimerRef: { current: ReturnType<typeof setTimeout> | null } = {
+      current: null,
+    };
+    let retryDelayMs = 5_000;
+    const scheduleRetry = () => {
+      if (retryTimerRef.current) return;
+      retryTimerRef.current = setTimeout(() => {
+        retryTimerRef.current = null;
+        retryOwedClear();
+      }, retryDelayMs);
+      retryDelayMs = Math.min(retryDelayMs * 2, 60_000);
+    };
+    const retryOwedClear = () => {
+      if (connectionState.value !== 'connected') return;
+      // An owed clear whose landing expired has no replay effect to retry it —
+      // reconcile it directly for the active session.
+      if (
+        !isLandingLive(currentSessionIdRef.current) &&
+        hasClearTombstone(currentSessionIdRef.current)
+      ) {
+        reconcileOwedClear(currentSessionIdRef.current);
+      }
+    };
+    flushKickRef.current = () => {
+      if (connectionState.value === 'connected') scheduleRetry();
+    };
+    const unsubscribe = connectionState.subscribe(retryOwedClear);
+    return () => {
+      unsubscribe();
+      flushKickRef.current = () => {};
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    };
+  }, [reconcileOwedClear]);
 
   // Save draft with debouncing - uses useSignalEffect to react to signal changes
   // Last state observed for each session while it was active. The flush below
