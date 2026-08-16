@@ -3358,20 +3358,26 @@ export class TaskAgentManager {
    *
    * No-op if the session is not found or is not in a state that can be interrupted.
    */
-  async interruptBySessionId(agentSessionId: string): Promise<void> {
+  async interruptBySessionId(agentSessionId: string): Promise<boolean> {
     const session = this.agentSessionIndex.get(agentSessionId);
-    if (!session) return;
+    // Unknown session: nothing to interrupt — report success so callers
+    // (e.g. the validation-completion sweep) retire the execution row.
+    if (!session) return true;
     try {
       // Called to quiesce in-progress siblings when an end node finishes — a
       // workflow-completion interrupt, not a user interrupt. Suppress the
       // deferred replay so an event deferred while the sibling was processing
       // isn't promoted into a new turn after the workflow has finished.
       await session.handleInterrupt({ skipDeferredReplay: true });
+      return true;
     } catch (err) {
       log.warn(
         `TaskAgentManager.interruptBySessionId: failed to interrupt session ${agentSessionId}:`,
         err
       );
+      // Report failure so callers do NOT commit terminal row states for a
+      // worker that may still be running (the sweep keeps it in_progress).
+      return false;
     }
   }
 

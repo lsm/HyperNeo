@@ -1650,6 +1650,7 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
       callerSessionId: 'worker-session-mid',
       interruptBySessionId: async (sessionId: string) => {
         interrupted.push(sessionId);
+        return true;
       },
     });
 
@@ -1702,6 +1703,7 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     const handlers = makeValidationTool({
       interruptBySessionId: async (sessionId: string) => {
         interrupted.push(sessionId);
+        return true;
       },
     });
 
@@ -1748,6 +1750,7 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     const handlers = makeValidationTool({
       interruptBySessionId: async (sessionId: string) => {
         interrupted.push(sessionId);
+        return true;
       },
     });
 
@@ -3008,6 +3011,7 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
         callerSessionId: 'reattach-worker-session',
         interruptBySessionId: async (sessionId: string) => {
           interrupted.push(sessionId);
+          return true;
         },
       }).complete_validation_task({
         task_id: task.id,
@@ -3195,6 +3199,7 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
       const result = await makeValidationTool({
         interruptBySessionId: async (sessionId: string) => {
           interrupted.push(sessionId);
+          return true;
         },
       }).complete_validation_task({
         task_id: task.id,
@@ -3210,6 +3215,41 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     expect(executions.find((e) => e.agentSessionId === 'old-peer-session')?.status).toBe('idle');
     expect(executions.find((e) => e.agentSessionId === 'late-worker-session')?.status).toBe('idle');
     expect(interrupted.sort()).toEqual(['late-worker-session', 'old-peer-session']);
+  });
+
+  test('a failed interrupt leaves the execution in_progress instead of mislabeling it idle', async () => {
+    // The production interrupt suppresses handleInterrupt failures; the
+    // sweep must not have already committed `idle` for a worker that is
+    // still running — a mislabeled row is invisible to every later sweep
+    // (reconciliation spares the source node; active-execution sweeps only
+    // look at in_progress rows). Interrupt first, commit idle only on a
+    // reported success.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-fail',
+      agentName: 'Peer',
+      agentId: ctx.agentId,
+      status: 'in_progress',
+      agentSessionId: 'failing-peer-session',
+    });
+    const result = await makeValidationTool({
+      callerSessionId: undefined,
+      interruptBySessionId: async () => false,
+    }).complete_validation_task({
+      task_id: task.id,
+      validation_outcome: 'completed; interrupt fails',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(true);
+
+    // The uninterruptible worker stays truthfully in_progress.
+    expect(
+      ctx.nodeExecutionRepo
+        .listByWorkflowRun(task.workflowRunId!)
+        .find((e) => e.agentSessionId === 'failing-peer-session')?.status
+    ).toBe('in_progress');
   });
 
   test('the sweep stands down when the run is flipped done and reopened during the cascade', async () => {
@@ -3255,6 +3295,7 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
       const result = await makeValidationTool({
         interruptBySessionId: async (sessionId: string) => {
           interrupted.push(sessionId);
+          return true;
         },
       }).complete_validation_task({
         task_id: task.id,
@@ -3322,6 +3363,7 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
       const result = await makeValidationTool({
         interruptBySessionId: async (sessionId: string) => {
           interrupted.push(sessionId);
+          return true;
         },
       }).complete_validation_task({
         task_id: task.id,
@@ -3479,6 +3521,7 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
       const result = await makeValidationTool({
         interruptBySessionId: async (sessionId: string) => {
           interrupted.push(sessionId);
+          return true;
         },
       }).complete_validation_task({
         task_id: task.id,

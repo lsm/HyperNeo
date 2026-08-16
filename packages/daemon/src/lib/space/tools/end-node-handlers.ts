@@ -422,8 +422,16 @@ export interface CompleteValidationTaskHandlerDeps {
   resolvePrimaryLinkUrl: (workflowRunId: string) => string | null;
   /** Space manager — autonomy level source for the entry gate. */
   spaceManager?: Pick<SpaceManager, 'getSpace'>;
-  /** Interrupts a live worker sub-session (post-completion worker sweep). */
-  interruptBySessionId?: (sessionId: string) => Promise<void>;
+  /**
+   * Interrupts a live worker sub-session (post-completion worker sweep).
+   * Resolves FALSE when the session could not be interrupted (the interrupt
+   * threw and was suppressed) — the sweep then leaves the execution
+   * `in_progress` rather than mislabeling a still-running worker `idle`
+   * (a mislabeled row is excluded from every later sweep: reconciliation
+   * spares the source node, and active-execution sweeps only look at
+   * in_progress rows).
+   */
+  interruptBySessionId?: (sessionId: string) => Promise<boolean>;
   /** Audit callback — autonomy rejections and completions are attributable. */
   audit?: (params: Record<string, unknown>, taskId?: string) => void;
   /** Optional hub for emitting `space.task.updated` events after completion. */
@@ -1148,14 +1156,31 @@ export function createCompleteValidationTaskHandler(
         (currentTaskRow.workflowRunId ?? null) === (checkedWorkflowRunId ?? null);
       if (completionConfirmed && currentTaskRow.workflowRunId) {
         try {
-          const quiesce = (execution: { id: string; agentSessionId: string | null }) => {
-            nodeExecutionRepo.updateStatus(execution.id, 'idle');
-            if (execution.agentSessionId && interruptBySessionId) {
-              void interruptBySessionId(execution.agentSessionId).catch((err) => {
-                log.warn(
-                  `complete_validation_task: failed to interrupt run worker session ${execution.agentSessionId}: ${err instanceof Error ? err.message : String(err)}`
-                );
-              });
+          const quiesce = async (execution: { id: string; agentSessionId: string | null }) => {
+            if (!execution.agentSessionId || !interruptBySessionId) {
+              // No session to interrupt (or no interrupt wiring) — the row
+              // can be retired directly.
+              nodeExecutionRepo.updateStatus(execution.id, 'idle');
+              return;
+            }
+            // Interrupt FIRST, commit `idle` only on success: the production
+            // interrupt suppresses handleInterrupt failures, and a row
+            // already labeled idle while its worker still runs is invisible
+            // to every later sweep.
+            let interrupted = false;
+            try {
+              interrupted = await interruptBySessionId(execution.agentSessionId);
+            } catch (err) {
+              log.warn(
+                `complete_validation_task: failed to interrupt run worker session ${execution.agentSessionId}: ${err instanceof Error ? err.message : String(err)}`
+              );
+            }
+            if (interrupted) {
+              nodeExecutionRepo.updateStatus(execution.id, 'idle');
+            } else {
+              log.warn(
+                `complete_validation_task: session ${execution.agentSessionId} could not be interrupted; leaving its execution in_progress rather than mislabeling it idle`
+              );
             }
           };
           // Run-lifecycle gate. The tick can run CONCURRENTLY with the
@@ -1195,18 +1220,15 @@ export function createCompleteValidationTaskHandler(
             const activeExecutions = nodeExecutionRepo
               .listByWorkflowRun(currentTaskRow.workflowRunId)
               .filter((execution) => execution.status === 'in_progress');
-            if (completionSourceNodeId) {
-              for (const peer of activeExecutions.filter(
-                (execution) =>
-                  execution.workflowNodeId === completionSourceNodeId &&
-                  execution.id !== completionSourceExecutionId
-              )) {
-                quiesce(peer);
-              }
-            } else {
-              for (const worker of activeExecutions) {
-                quiesce(worker);
-              }
+            const targets = completionSourceNodeId
+              ? activeExecutions.filter(
+                  (execution) =>
+                    execution.workflowNodeId === completionSourceNodeId &&
+                    execution.id !== completionSourceExecutionId
+                )
+              : activeExecutions;
+            for (const worker of targets) {
+              await quiesce(worker);
             }
           }
         } catch (err) {
