@@ -655,6 +655,15 @@ export interface SessionMetadata {
    * clear it). Absent = no strip has committed.
    */
   inputDraftVoiceLastStrippedSeq?: number | null;
+  /**
+   * Timestamped log of session.mergeVoiceDraftBackup claim ids that COMMITTED.
+   * A LOG (not a single last marker) because two tabs can commit different
+   * backup claims for the same session while either's acknowledgement is in
+   * flight: a single marker lets the second commit evict the first, whose
+   * retry would then take the plain-write branch and overwrite the newer
+   * draft with older transcript-free content. Bounded to the backup TTL.
+   */
+  inputDraftVoiceMergeClaimLog?: Array<{ id: string; ts: number }> | null;
   removedOutputs?: string[]; // UUIDs of messages whose tool_result outputs were removed from SDK session file
   resolvedQuestions?: Record<string, ResolvedQuestion>; // Resolved AskUserQuestion responses, keyed by toolUseId
   // Cost tracking: SDK reports cumulative cost per run, but resets on agent restart

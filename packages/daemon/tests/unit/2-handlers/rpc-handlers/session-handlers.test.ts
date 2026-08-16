@@ -907,6 +907,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
   let existingDraft: string | null;
   let existingBaseline: string | null | undefined;
   let existingBaselineSeq: number | null | undefined;
+  let existingMergeClaimLog: Array<{ id: string; ts: number }> | null;
   let sessionExists: boolean;
 
   beforeEach(async () => {
@@ -917,6 +918,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     existingDraft = null;
     existingBaseline = undefined;
     existingBaselineSeq = undefined;
+    existingMergeClaimLog = null;
     sessionExists = true;
     sessionManager = {
       getSessionFromDB: mock(() =>
@@ -929,6 +931,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
                 inputDraftVoiceBaseline: existingBaseline,
                 inputDraftVoiceBaselineSeq: existingBaselineSeq,
                 inputDraftVoiceAppendLog: existingAppendLog,
+                inputDraftVoiceMergeClaimLog: existingMergeClaimLog,
               },
             }
           : null
@@ -1234,6 +1237,226 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     ).toEqual({ updated: false });
     expect(sessionManager.updateSession).not.toHaveBeenCalled();
   });
+
+  it('pushes a backup ONTO the merged transcripts, keeping both (mergeVoiceDraftBackup)', async () => {
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    expect(handler).toBeDefined();
+    // The expired-landing reload path: the draft holds baseline + merged
+    // transcripts; the client backup holds the user's newer transcript-free
+    // edits. The push must keep BOTH — never the backup alone.
+    existingPending = null;
+    existingBaseline = 'stale baseline';
+    existingBaselineSeq = 2;
+    existingDraft = 'stale baseline first second';
+    const result = (await handler!({ sessionId: 's1', content: 'user edits' }, {})) as {
+      merged: boolean;
+      value: string;
+    };
+    expect(result).toEqual({ merged: true, value: 'user edits first second' });
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: {
+        inputDraft: 'user edits first second',
+        inputDraftVoiceBaseline: null,
+        inputDraftVersion: 1,
+      },
+    });
+  });
+
+  it('re-anchors the baseline when the pending is still staged (nothing merged yet)', async () => {
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    existingPending = 'voice';
+    existingBaseline = 'old draft';
+    existingBaselineSeq = 1;
+    existingDraft = 'old draft';
+    const result = (await handler!({ sessionId: 's1', content: 'user edits' }, {})) as {
+      merged: boolean;
+      value: string;
+    };
+    // The staged pending merges onto whatever draft is current at merge time,
+    // so the push becomes the new draft and the baseline follows it.
+    expect(result).toEqual({ merged: true, value: 'user edits' });
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: {
+        inputDraft: 'user edits',
+        inputDraftVoiceBaseline: 'user edits',
+        inputDraftVersion: 1,
+      },
+    });
+  });
+
+  it('writes the backup as a plain draft when no sequence lingers', async () => {
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    existingBaseline = undefined;
+    existingDraft = 'anything';
+    const result = (await handler!({ sessionId: 's1', content: 'user edits' }, {})) as {
+      merged: boolean;
+      value: string;
+    };
+    expect(result).toEqual({ merged: true, value: 'user edits' });
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: 'user edits', inputDraftVersion: 1 },
+    });
+  });
+
+  it('declines the merge when the draft diverged from the baseline snapshot', async () => {
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    // A newer writer changed the draft after the sequence merged — folding
+    // against the stale snapshot would guess; decline and let the client retry.
+    existingPending = null;
+    existingBaseline = 'old';
+    existingBaselineSeq = 1;
+    existingDraft = 'an unrelated newer draft';
+    const result = (await handler!({ sessionId: 's1', content: 'user edits' }, {})) as {
+      merged: boolean;
+    };
+    expect(result).toEqual({ merged: false });
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('clears the draft when an empty backup is pushed (owed clear retry)', async () => {
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    existingBaseline = undefined;
+    existingDraft = 'stale';
+    const result = (await handler!({ sessionId: 's1', content: '' }, {})) as {
+      merged: boolean;
+      value: string;
+    };
+    expect(result).toEqual({ merged: true, value: '' });
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: null, inputDraftVersion: 1 },
+    });
+  });
+
+  it('acknowledges a retry of an already-committed claim without rewriting (mergeVoiceDraftBackup)', async () => {
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    // The first merge committed (draft := backup + transcripts, baseline
+    // cleared) but its acknowledgement was lost; the client retries under the
+    // SAME claim id. Rewriting would take the baseline-null branch and
+    // replace the combined draft with the transcript-free backup.
+    existingBaseline = 'old';
+    existingBaselineSeq = 1;
+    existingDraft = 'old voice';
+    existingMergeClaimLog = [{ id: 'claim-1', ts: Date.now() }];
+    const result = (await handler!(
+      { sessionId: 's1', content: 'user edits', claimId: 'claim-1' },
+      {}
+    )) as { merged: boolean; value: string };
+    expect(result).toEqual({ merged: true, value: 'old voice' });
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('retains every live claim across concurrent commits (merge claim LOG)', async () => {
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    // Tab A's claim committed but its ack is in flight when tab B's claim
+    // commits. A single last-marker would evict A, whose retry would then
+    // take the plain-write branch and overwrite B's newer draft with A's
+    // older transcript-free content — the LOG keeps both recognizable.
+    existingPending = null;
+    existingBaseline = 'old';
+    existingBaselineSeq = 1;
+    existingDraft = 'old voice';
+    existingMergeClaimLog = [{ id: 'claim-a', ts: Date.now() }];
+    const result = (await handler!(
+      { sessionId: 's1', content: 'tab b edits', claimId: 'claim-b' },
+      {}
+    )) as { merged: boolean };
+    expect(result.merged).toBe(true);
+    const write = sessionManager.updateSession.mock.calls[0][1] as {
+      metadata: Record<string, unknown>;
+    };
+    expect(write.metadata.inputDraftVoiceMergeClaimLog.map((e: { id: string }) => e.id)).toEqual([
+      'claim-a',
+      'claim-b',
+    ]);
+    // Tab A's retry (ack lost after B committed) is still acknowledged from
+    // the log without rewriting B's draft.
+    const replay = (await handler!(
+      { sessionId: 's1', content: 'tab a edits', claimId: 'claim-a' },
+      {}
+    )) as { merged: boolean; value: string };
+    expect(replay.merged).toBe(true);
+  });
+
+  it('declines the merge when backup + transcripts would truncate at the limit', async () => {
+    // appendDraftText silently slices at the character limit; committing a
+    // truncated draft while reporting merged:true would let the client retire
+    // its only durable copy of the lost tail. Decline — the claim retries
+    // once the draft has room.
+    existingPending = null;
+    existingBaseline = 'old';
+    existingBaselineSeq = 1;
+    existingDraft = `old ${'x'.repeat(99_000)}`;
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    const result = (await handler!({ sessionId: 's1', content: 'y'.repeat(5_000) }, {})) as {
+      merged: boolean;
+    };
+    expect(result).toEqual({ merged: false });
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('retains every claim for the full retry lifetime (no count cap)', async () => {
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    // More than 20 backup claims can commit inside the 24h retry window; a
+    // count cap would evict an older claim whose client is still retrying
+    // after a lost ack, sending that retry down the plain-write branch.
+    existingPending = null;
+    existingBaseline = 'old';
+    existingBaselineSeq = 1;
+    existingDraft = 'old voice';
+    existingMergeClaimLog = Array.from({ length: 25 }, (_, i) => ({
+      id: `claim-${i}`,
+      ts: Date.now(),
+    }));
+    await handler!({ sessionId: 's1', content: 'edits', claimId: 'claim-25' }, {});
+    const write = sessionManager.updateSession.mock.calls[0][1] as {
+      metadata: { inputDraftVoiceMergeClaimLog: Array<{ id: string }> };
+    };
+    expect(write.metadata.inputDraftVoiceMergeClaimLog).toHaveLength(26);
+    expect(write.metadata.inputDraftVoiceMergeClaimLog.map((e) => e.id)).toContain('claim-0');
+  });
+
+  it('records the committed claim id alongside the merged draft', async () => {
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    existingPending = null;
+    existingBaseline = 'old';
+    existingBaselineSeq = 1;
+    existingDraft = 'old voice';
+    await handler!({ sessionId: 's1', content: 'user edits', claimId: 'claim-2' }, {});
+    const write = sessionManager.updateSession.mock.calls[0][1] as {
+      metadata: Record<string, unknown>;
+    };
+    expect(write.metadata.inputDraft).toBe('user edits voice');
+    expect(write.metadata.inputDraftVoiceMergeClaimLog).toEqual([
+      { id: 'claim-2', ts: expect.any(Number) },
+    ]);
+  });
+});
+
+describe('Session RPC Handlers — session.get voice draft merge', () => {
+  let messageHubData: ReturnType<typeof createMockMessageHub>;
+  let eventBus: ReturnType<typeof createMockInternalEventBus>;
+  let sessionManager: {
+    getSessionAsync: ReturnType<typeof mock>;
+    updateSession: ReturnType<typeof mock>;
+  };
+
+  async function setup(metadata: Record<string, unknown>) {
+    messageHubData = createMockMessageHub();
+    eventBus = createMockInternalEventBus();
+    // getSessionData() returns the same live object both before and after the
+    // merge so the handler reads the pending value, then re-reads for its
+    // response — mirroring the real in-memory agent session.
+    const sessionData = { id: 's1', metadata };
+    sessionManager = {
+      getSessionAsync: mock(async () => ({ getSessionData: () => sessionData })),
+      updateSession: mock(async () => {}),
+    } as unknown as SessionManager;
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(messageHubData.hub, sessionManager, eventBus, {} as SpaceManager);
+    return messageHubData.handlers.get('session.get');
+  }
 });
 
 describe('Session RPC Handlers — session.get voice draft merge', () => {

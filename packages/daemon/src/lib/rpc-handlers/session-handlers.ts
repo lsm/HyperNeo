@@ -744,6 +744,100 @@ export function setupSessionHandlers(
     );
     return { updated: true, value };
   });
+  // Atomically push a draft BACKUP onto the server draft WITHOUT discarding
+  // voice transcripts the sequence merged. A backup holds save-suppressed
+  // edits whose landing EXPIRED — the client's localStorage marker is gone, so
+  // it can no longer reconcile locally — and pushing the transcript-free
+  // backup with a bare session.update would clobber transcripts sitting in the
+  // draft. The baseline snapshot separates them exactly: transcripts are
+  // draft-minus-baseline (appendDraftText joining), so the write becomes
+  // backup + transcripts. While the pending is still STAGED nothing has
+  // merged, so the backup lands as the new draft and the baseline re-anchors
+  // to it (mirroring session.update); a draft that diverged from the snapshot
+  // means a newer writer intervened — decline rather than guess, the client
+  // retries. Read+write is one synchronous step, like stripVoiceBaseline.
+  messageHub.onRequest('session.mergeVoiceDraftBackup', async (data, _ctx) => {
+    const { sessionId, content, claimId } = data as {
+      sessionId: string;
+      content: string;
+      claimId?: string;
+    };
+    if (typeof content !== 'string') throw new Error('Backup content is required');
+    const session = sessionManager.getSessionFromDB(sessionId);
+    if (!session) throw new Error('Session not found');
+    const metadata = session.metadata ?? {};
+    // Idempotent replay: this claim's merge already COMMITTED but its ack was
+    // lost. Rewriting now would take the baseline-null branch (the first
+    // commit cleared it) and replace the combined draft with the
+    // transcript-free backup, permanently dropping the voice text. A LOG, not
+    // a single marker: another tab's claim can commit while this claim's ack
+    // is in flight, and a last-only marker would evict it before its retry.
+    const claimLogCutoff = Date.now() - VOICE_APPEND_LOG_TTL_MS;
+    const committedClaims = (metadata.inputDraftVoiceMergeClaimLog ?? []).filter(
+      (entry) =>
+        typeof entry?.id === 'string' && typeof entry?.ts === 'number' && entry.ts > claimLogCutoff
+    );
+    if (claimId && committedClaims.some((entry) => entry.id === claimId)) {
+      return { merged: true, value: metadata.inputDraft ?? '' };
+    }
+    const baseline = metadata.inputDraftVoiceBaseline;
+    const draft = metadata.inputDraft ?? '';
+    const trimmed = content.trim();
+    const metadataUpdate: Partial<SessionMetadata> = {};
+    if (typeof baseline !== 'string') {
+      // No sequence staged or lingering — a plain draft write.
+      metadataUpdate.inputDraft = trimmed || null;
+    } else if ((metadata.inputDraftVoicePending ?? '').trim() !== '') {
+      // Still staged: the pending merges onto whatever draft is current at
+      // merge time, so re-anchor the baseline to the pushed backup.
+      metadataUpdate.inputDraft = trimmed || null;
+      metadataUpdate.inputDraftVoiceBaseline = trimmed;
+    } else {
+      // Merged: keep the transcripts, drop the stale pre-sequence baseline.
+      let transcripts: string;
+      if (draft === baseline) transcripts = '';
+      else if (draft.startsWith(`${baseline} `)) transcripts = draft.slice(baseline.length + 1);
+      else if (draft.startsWith(baseline)) transcripts = draft.slice(baseline.length);
+      else return { merged: false };
+      // The COMPLETE combination must fit, as the append and session.get
+      // merge paths require: appendDraftText silently slices at the character
+      // limit, and committing a truncated draft while reporting merged:true
+      // would let the client retire its only durable copy of the lost tail.
+      // Decline instead — the claim retries once the draft has room.
+      const value = appendDraftText(trimmed, transcripts);
+      const fits =
+        transcripts === '' ||
+        value === `${trimmed} ${transcripts}` ||
+        value === `${trimmed}${transcripts}`;
+      if (!fits) return { merged: false };
+      metadataUpdate.inputDraft = value || null;
+      metadataUpdate.inputDraftVoiceBaseline = null;
+    }
+    // Every branch mutates inputDraft — bump the draft version so OTHER
+    // tabs' in-flight saves become recognizably stale against this write.
+    metadataUpdate.inputDraftVersion = (metadata.inputDraftVersion ?? 0) + 1;
+    if (claimId) {
+      // Record the committed claim AFTER the branches above, so a retry of
+      // THIS merge is recognized before any branch can rewrite the draft.
+      // Appended to the TTL-pruned LOG with NO count cap: a still-retrying
+      // claim's acknowledgement can arrive long after later claims commit,
+      // and evicting its id would send the retry down the plain-write branch.
+      metadataUpdate.inputDraftVoiceMergeClaimLog = [
+        ...committedClaims,
+        { id: claimId, ts: Date.now() },
+      ];
+    }
+    const updates: UpdateSessionRequest = { metadata: metadataUpdate };
+    await sessionManager.updateSession(sessionId, updates as Partial<Session>);
+    messageHub.event(
+      'session.updated',
+      { ...updates, sessionId },
+      {
+        channel: `session:${sessionId}`,
+      }
+    );
+    return { merged: true, value: metadataUpdate.inputDraft ?? '' };
+  });
 
   messageHub.onRequest('session.delete', async (data, _ctx) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
