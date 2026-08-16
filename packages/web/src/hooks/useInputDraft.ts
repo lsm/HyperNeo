@@ -32,11 +32,15 @@ import { appendDraftText } from '@hyperneo/shared';
 import { connectionManager } from '../lib/connection-manager';
 import { connectionState } from '../lib/state';
 import {
+  clearDraftBackup,
   consumeVoiceTranscriptLanded,
   getDraftBackup,
   getLandingGeneration,
   getLandingTranscript,
+  hasClearTombstone,
   isLandingLive,
+  removeClearTombstone,
+  saveClearTombstone,
   saveDraftBackup,
   voiceTranscriptLandedSignal,
 } from '../lib/voice/voice-transcript-outbox';
@@ -90,6 +94,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // consistent with what was actually handled.
   const consumeLanding = useCallback((sessionId: string, generation: number): void => {
     foldedLandingRef.current.set(sessionId, generation);
+    removeClearTombstone(sessionId);
     consumeVoiceTranscriptLanded(sessionId, generation);
   }, []);
 
@@ -212,6 +217,24 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         // initial load settled; a stale rejection must not settle a newer load.
         if (wasCancelled) return;
         initialLoadSettledRef.current = sessionId;
+        // A clear the previous page life owed but could not COMMIT (socket
+        // down) persists as a tombstone: do NOT restore the pre-clear backup
+        // (that would resurrect text the user already sent or deleted) —
+        // re-arm the owed clear so the replay effect's reconcile runs as soon
+        // as the connection allows, and leave the landing for it to consume.
+        if (hasClearTombstone(sessionId)) {
+          pendingClearRef.current = sessionId;
+          if (isLandingLive(sessionId)) {
+            // Re-trigger the replay effect directly: the settle-time draft
+            // application changed content while that effect was dormant (it
+            // cannot subscribe to content before its settled guard without
+            // re-running on every keystroke), and the owed clear must
+            // reconcile the merged draft instead of leaving the sent text on
+            // screen.
+            voiceTranscriptLandedSignal.value = new Map(voiceTranscriptLandedSignal.value);
+          }
+          return;
+        }
         // Restore any draft backup from a deferred-landing session (the user's
         // edits persisted locally while the server draft kept the transcript),
         // so a reload does not lose what they were typing. The fold below
@@ -324,9 +347,18 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     if (content.trim() !== '' && pendingClearRef.current !== sessionId) return;
     let cancelled = false;
     // A clear is owed but cannot commit yet: keep it in memory for the next
-    // effect run (reconnect / content change retries it).
+    // effect run AND persist a tombstone so a RELOAD before the reconnect
+    // does not restore the pre-clear backup and resurrect the sent text.
     const oweClear = () => {
       pendingClearRef.current = sessionId;
+      const persisted = saveClearTombstone(sessionId);
+      if (!persisted) {
+        // localStorage refused the tombstone: the clear intent cannot survive
+        // a reload, and the retained backup would restore the sent text. The
+        // safe fallback is to drop the durable copy — its content is pre-clear
+        // text the user already sent or deleted.
+        clearDraftBackup(sessionId);
+      }
     };
     // The chained reconciles below guard on the SESSION, not the effect's
     // `cancelled`: applying the merged draft to the composer is itself a
@@ -362,6 +394,13 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         };
       }
       pendingClearRef.current = null;
+      // Persist the owed clear BEFORE the chain's first async step: a session
+      // switch mid-get cancels the failure callback (oweClear never runs), and
+      // only the tombstone survives to reconcile after a reload — without it,
+      // the retained backup could restore text the user already sent. Retired
+      // only by a successful reconciliation (consumeLanding / the reconciles).
+      // A failed persist falls back to dropping the backup (oweClear's rule).
+      if (!saveClearTombstone(sessionId)) clearDraftBackup(sessionId);
       // Get FIRST: session.get performs (or reveals) the pending merge, so the
       // transcript is IN the draft before anything is cleared. An unconditional
       // inputDraft:null here could delete a transcript ANOTHER tab already

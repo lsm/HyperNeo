@@ -25,11 +25,14 @@ import {
   removePendingTranscript,
   getDraftBackup,
   getLandingGeneration,
+  hasClearTombstone,
   isLandingLive,
   getLandingTranscript,
   peekExpiredDraftBackup,
   markVoiceTranscriptLanded,
   readTabId,
+  removeClearTombstone,
+  saveClearTombstone,
   removeDraftBackupKey,
   resetVoiceTranscriptOutbox,
   startVoiceTranscriptOutboxFlush,
@@ -728,5 +731,24 @@ describe('voice transcript outbox', () => {
     expect(cloneId).not.toBe('source-tab-id');
     // The clone's id is persisted for ITS reloads.
     expect(sessionStorage.getItem('hyperneo_tab_id')).not.toBe('source-tab-id');
+  });
+  it("keeps ANOTHER tab's owed-clear tombstone when consuming a landing", () => {
+    // Tab B owes a clear (persisted under ITS tab-owned tombstone key) while
+    // this tab refreshes and consumes the shared landing — the consumption is
+    // local and retires only THIS tab's tombstone (consumeLanding calls
+    // removeClearTombstone), never tab B's clear intent, or tab B's retained
+    // backup could resurrect text its user already sent.
+    markVoiceTranscriptLanded('s1', 'voice', 'e1');
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.clear.s1.foreign-tab',
+      JSON.stringify({ ts: Date.now() })
+    );
+    saveClearTombstone('s1');
+    consumeVoiceTranscriptLanded('s1', voiceTranscriptLandedSignal.value.get('s1') ?? 1);
+    removeClearTombstone('s1'); // what consumeLanding does on landing settlement
+    expect(hasClearTombstone('s1')).toBe(false); // own tombstone retired
+    expect(
+      localStorage.getItem('hyperneo_voice_transcript_outbox_v1.clear.s1.foreign-tab')
+    ).not.toBeNull();
   });
 });
