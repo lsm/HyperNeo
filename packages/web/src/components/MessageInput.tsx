@@ -7,6 +7,7 @@
  * Refactored to use shared hooks for better separation of concerns.
  */
 
+import { generateUUID } from '@hyperneo/shared';
 import type {
   MessageDeliveryMode,
   MessageImage,
@@ -32,6 +33,10 @@ import {
 
 import { getMessagesBottomPaddingPx } from '../lib/layout-metrics.ts';
 import { connectionManager } from '../lib/connection-manager';
+import {
+  enqueueTranscript,
+  isPermanentAppendRefusal,
+} from '../lib/voice/voice-transcript-outbox.ts';
 import type { SessionStore } from '../lib/session-store.ts';
 import { globalSettings, isAgentWorking } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
@@ -596,13 +601,19 @@ export default function MessageInput({
       // NOTE: no upfront hub gate here. The captured `payload.send` owns its
       // offline delivery (useSendMessage queues disconnected sends for retry),
       // so a missing hub must not prevent attempting it — only the staging and
-      // clearing RPCs below require a connection.
+      // clearing RPCs below require a connection. The outbox id is minted ONCE
+      // per delivery and reused by the initial staging RPC AND any queued
+      // retry: if the first append commits but its ack is lost in a disconnect,
+      // the replay carries the same id and the daemon's dedup set skips the
+      // double-merge instead of appending the transcript a second time.
+      const outboxId = generateUUID();
       const stageToDraft = async () => {
         const hub = connectionManager.getHubIfConnected();
         if (!hub) throw new Error('Not connected');
         await hub.request('session.appendVoiceDraft', {
           sessionId: targetSessionId,
           text: transcript,
+          dedupId: outboxId,
         });
       };
       // Last-resort preservation: stage the transcript into the pending draft
@@ -612,7 +623,25 @@ export default function MessageInput({
         try {
           await stageToDraft();
           return { ok: true, message };
-        } catch {
+        } catch (error) {
+          // Enqueue everything EXCEPT a genuinely permanent refusal (the
+          // session no longer exists — nothing can ever deliver it). A dead
+          // socket, a `Request timeout` whose append may have committed with a
+          // lost ack, or a character-limit refusal (room appears once the user
+          // sends/clears) are all retryable, and the flush replays them with
+          // backoff, deduplicated by the shared outbox id.
+          if (!isPermanentAppendRefusal(error)) {
+            const durable = enqueueTranscript(targetSessionId, transcript, outboxId);
+            // localStorage refused the write: the transcript survives only in
+            // this page's memory — delivered on reconnect, but a reload or
+            // close loses it. Say so instead of promising durable preservation.
+            return {
+              ok: true,
+              message: durable
+                ? 'Voice transcript saved — will be delivered when reconnected'
+                : 'Voice transcript kept in this tab — reconnect before closing it',
+            };
+          }
           return { ok: false, message: '' };
         }
       };
