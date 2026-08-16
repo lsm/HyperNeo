@@ -703,18 +703,19 @@ export function createCompleteValidationTaskHandler(
         });
       }
 
-      // Pending-human-approval guard: a `review` task carrying a
-      // `task_completion` checkpoint is parked there by `submit_for_approval`
-      // under an explicit promise that a HUMAN approves or rejects it. Letting
-      // this tool (or any agent) close it directly to `done` would clear the
-      // checkpoint and bypass that human gate — the exact bypass the review
-      // path exists to prevent. The human review flow (approve_pending_completion
-      // / reject) owns those tasks; a `review` task with no pending checkpoint
-      // remains eligible.
-      if (task.status === 'review' && task.pendingCheckpointType === 'task_completion') {
+      // Pending-human-approval guard: a `review` task carrying ANY pending
+      // checkpoint is parked there awaiting a human decision. The live path
+      // stamps `task_completion` (submit_for_approval's explicit promise that
+      // a HUMAN approves or rejects), and legacy/imported rows may still
+      // carry `gate` — this completion path owns NEITHER, so every non-null
+      // checkpoint rejects. Closing the task anyway would clear the
+      // checkpoint and bypass the human gate — the exact bypass the review
+      // path exists to prevent. The human approve/reject flows own those
+      // tasks; a `review` task with no pending checkpoint remains eligible.
+      if (task.status === 'review' && task.pendingCheckpointType !== null) {
         return jsonResult({
           success: false,
-          error: `Task ${args.task_id} is awaiting human completion approval (pending 'task_completion' checkpoint). complete_validation_task cannot bypass that review — it is resolved through the human approve/reject flow (approve_pending_completion), not by an agent.`,
+          error: `Task ${args.task_id} is awaiting human approval (pending '${task.pendingCheckpointType}' checkpoint). complete_validation_task cannot bypass that review — it is resolved through the human approve/reject flow, not by an agent.`,
         });
       }
 
@@ -913,11 +914,13 @@ export function createCompleteValidationTaskHandler(
           // `review` (stamping the human-approval checkpoint) between the
           // handler's early check and this reread — `review` is in the
           // allowed set and the exact-status predicate keys on the reread
-          // status, so only this recheck can catch it. Refuse so the
-          // requested human approval is not bypassed.
-          if (current.status === 'review' && current.pendingCheckpointType === 'task_completion') {
+          // status, so only this recheck can catch it. ANY non-null
+          // checkpoint refuses — the early guard's rationale covers legacy
+          // `gate` values too. Refuse so the requested human approval is
+          // not bypassed.
+          if (current.status === 'review' && current.pendingCheckpointType !== null) {
             throw new Error(
-              `Task ${args.task_id} was submitted for human approval during completion (pending 'task_completion' checkpoint); refusing so the requested review is not bypassed. The human approve/reject flow owns it now.`
+              `Task ${args.task_id} was submitted for human approval during completion (pending '${current.pendingCheckpointType}' checkpoint); refusing so the requested review is not bypassed. The human approve/reject flow owns it now.`
             );
           }
           // Run-identity binding: every run-dependent guard (autonomy's

@@ -2124,12 +2124,39 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     const parsed = JSON.parse(result.content[0].text);
 
     expect(parsed.success).toBe(false);
-    expect(parsed.error).toContain('awaiting human completion approval');
-    expect(parsed.error).toContain('approve_pending_completion');
+    expect(parsed.error).toContain(
+      "awaiting human approval (pending 'task_completion' checkpoint)"
+    );
+    expect(parsed.error).toContain('human approve/reject flow');
     // The checkpoint promise survives — the human still owns the decision.
     const after = ctx.taskRepo.getTask(taskId);
     expect(after?.status).toBe('review');
     expect(after?.pendingCheckpointType).toBe('task_completion');
+  });
+
+  test('rejects a review task carrying a legacy gate checkpoint', async () => {
+    // Legacy/imported rows can still carry pendingCheckpointType='gate'
+    // (the DB admits it; submitTaskForReview documents the runtime's
+    // reliance on it). This completion path owns no checkpoint flavor, so
+    // any non-null value rejects — closing the task would clear the
+    // checkpoint and bypass the pending human gate.
+    const taskId = await createTask('review');
+    ctx.taskRepo.updateTask(taskId, {
+      pendingCheckpointType: 'gate',
+      pendingCompletionReason: 'legacy gate approval',
+    });
+
+    const result = await makeValidationTool().complete_validation_task({
+      task_id: taskId,
+      validation_outcome: 'should be refused',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain("awaiting human approval (pending 'gate' checkpoint)");
+    const after = ctx.taskRepo.getTask(taskId);
+    expect(after?.status).toBe('review');
+    expect(after?.pendingCheckpointType).toBe('gate');
   });
 
   test('rejects an empty validation outcome', async () => {
