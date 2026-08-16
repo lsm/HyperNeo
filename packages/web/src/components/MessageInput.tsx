@@ -33,11 +33,6 @@ import {
 
 import { getMessagesBottomPaddingPx } from '../lib/layout-metrics.ts';
 import { connectionManager } from '../lib/connection-manager';
-import {
-  enqueueTranscript,
-  isPermanentAppendRefusal,
-  markVoiceTranscriptLanded,
-} from '../lib/voice/voice-transcript-outbox.ts';
 import type { SessionStore } from '../lib/session-store.ts';
 import { globalSettings, isAgentWorking } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
@@ -45,6 +40,11 @@ import { AttachmentPreview } from './AttachmentPreview.tsx';
 import { InputActionsMenu } from './InputActionsMenu.tsx';
 import { InputTextarea } from './InputTextarea.tsx';
 import { VoiceWaveform } from './voice/VoiceWaveform.tsx';
+import {
+  enqueueTranscript,
+  isPermanentAppendRefusal,
+  markVoiceTranscriptLanded,
+} from '../lib/voice/voice-transcript-outbox.ts';
 import { QueuePreviewTray, type QueuePreviewMessage } from './QueuePreviewTray.tsx';
 import { ContentContainer } from './ui/ContentContainer.tsx';
 

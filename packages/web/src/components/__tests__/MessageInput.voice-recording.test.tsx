@@ -119,11 +119,19 @@ vi.mock('../../lib/connection-manager', () => ({
 
 const enqueueTranscript = vi.hoisted(() => vi.fn());
 const markVoiceTranscriptLanded = vi.hoisted(() => vi.fn());
+const voiceTranscriptLandedSignal = vi.hoisted(() => ({ value: new Map() }));
+const consumeVoiceTranscriptLanded = vi.hoisted(() => vi.fn());
 const isPermanentAppendRefusal = vi.hoisted(() => vi.fn(() => false));
+const getDraftBackup = vi.hoisted(() => vi.fn(() => null));
+const saveDraftBackup = vi.hoisted(() => vi.fn());
 vi.mock('../../lib/voice/voice-transcript-outbox.ts', () => ({
   enqueueTranscript,
   markVoiceTranscriptLanded,
+  voiceTranscriptLandedSignal,
+  consumeVoiceTranscriptLanded,
   isPermanentAppendRefusal,
+  getDraftBackup,
+  saveDraftBackup,
 }));
 
 import { toast } from '../../lib/toast.ts';
@@ -147,6 +155,8 @@ describe('MessageInput — recording UI', () => {
     });
     enqueueTranscript.mockReset().mockReturnValue(true);
     markVoiceTranscriptLanded.mockClear();
+    // mockReset (not clear): a previous test's per-test return (e.g. the
+    // memory-backed false) must not leak into the next.
     // Timer-backed rAF so deferred hook work actually runs and can be drained
     // before the stubs are removed. A no-op stub leaves Preact cleanup pending
     // until after unstubAllGlobals, where cancelAnimationFrame no longer exists
