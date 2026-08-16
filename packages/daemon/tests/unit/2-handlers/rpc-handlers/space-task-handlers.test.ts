@@ -872,6 +872,33 @@ describe('space-task-handlers', () => {
       expect(result).toBeDefined();
     });
 
+    it('strips the storage-only expectedStatuses param from the client payload', async () => {
+      // A client-supplied list could widen (or, as [], silently refuse)
+      // the atomic status predicate the storage layer applies. The handler
+      // deletes it from the untyped request payload before the spread
+      // reaches the manager — both the widen and empty-list shapes.
+      await call('spaceTask.update', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        title: 'Updated',
+        expectedStatuses: ['open', 'in_progress', 'done', 'cancelled'],
+      });
+      const widenArgs = (taskManager.updateTask as ReturnType<typeof mock>).mock.calls[0];
+      expect(widenArgs[1]).not.toHaveProperty('expectedStatuses');
+
+      (taskManager.updateTask as ReturnType<typeof mock>).mockClear();
+      await call('spaceTask.update', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        title: 'Updated again',
+        expectedStatuses: [],
+      });
+      const emptyArgs = (taskManager.updateTask as ReturnType<typeof mock>).mock.calls[0];
+      expect(emptyArgs[1]).not.toHaveProperty('expectedStatuses');
+      // The real edit still lands.
+      expect(emptyArgs[1]).toEqual({ title: 'Updated again' });
+    });
+
     it('delegates non-status update to updateTask', async () => {
       const result = await call('spaceTask.update', {
         spaceId: 'space-1',

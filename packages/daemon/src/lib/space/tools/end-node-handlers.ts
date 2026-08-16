@@ -373,8 +373,9 @@ export interface CompleteValidationTaskHandlerDeps {
   /**
    * Raw db handle for the two synchronous terminal-write revalidations: the
    * `spaces.autonomy_level` reread and the caller-binding session-context read.
-   * Optional — absent, the autonomy reread falls back to the entry-gate
-   * snapshot and the caller-binding guard is skipped.
+   * Without it the autonomy reread falls back to the entry-gate snapshot, and
+   * the binding read returns unresolvable — which the fail-closed guard
+   * REJECTS, so a db-less handler admits no worker callers at all.
    */
   db?: BunDatabase;
   /** Task repository — task reads, run-task listing for canonical selection. */
@@ -430,9 +431,9 @@ function readSpaceAutonomyLevelSync(db: BunDatabase | undefined, spaceId: string
 /**
  * The caller's `session_context.taskId` binding, read from the persisted
  * session row (space-scoped). Returns undefined when the session is unknown,
- * in another space, or carries no task binding — callers treat that as broad
- * access, mirroring the coordinator/ad-hoc semantics this guard originated
- * from.
+ * in another space, or carries no task binding — the caller-binding guard
+ * treats that as UNRESOLVABLE and rejects (fail closed). On this
+ * workflow-worker-only surface an unresolvable binding is never privileged.
  */
 function readCallerSessionTaskId(
   db: BunDatabase | undefined,
@@ -483,8 +484,8 @@ function readCallerSessionTaskId(
  *     checkpoint is theirs to resolve, never this tool's.
  *
  * Result precedence: the validation outcome is written as `task.result` at
- * completion. For STANDALONE tasks it is durable. For workflow-backed
- * tasks, the tick loop's run reconciliation may replace it with the run's
+ * completion (run-backed tasks only — see the scope boundary below). The
+ * tick loop's run reconciliation may replace it with the run's
  * structured outcome summary when one exists (terminal `decision` artifact
  * or end-node execution summary) — the same precedence every completion
  * path accepts (`approve_task`, post-approval no-route). In the typical
@@ -517,30 +518,35 @@ function readCallerSessionTaskId(
  *     (approve_pending_completion) owns its resolution.
  *   - No-PR: a workflow-backed task whose run has a primary link (PR) is
  *     PR-bound and must use the normal approve/merge path. A task with no
- *     workflow run (standalone — the common Forge self_nag/review shape) is
- *     no-PR by definition and eligible.
- *   - Workflow-backed tasks whose workflow declares a dispatchable
- *     `postApproval` route are rejected — a direct done would silently skip
- *     the route (the tick loop treats an already-done task as resolved).
- *     They must close through submit_for_approval so the router fires.
- *   - The workflow run must be `in_progress` (pending/cancelled/done/blocked
- *     all refuse), carry node executions, and resolve its workflow
- *     definition — an unresolvable definition refuses rather than being
- *     treated as unconstrained (a missing/foreign run ROW was already
- *     refused above, before any of its policy was read).
+ *     workflow run is REJECTED for every production caller (see the
+ *     detached-worker guard): the tool serves run-backed workflow workers,
+ *     and standalone Forge tasks need a run attached or stay human-closed
+ *     (task #918 outcome record).
+ *   - The run must carry node executions (an execution-less run would strand
+ *     — the tick's completion detection early-returns on an empty list) and
+ *     be `in_progress` (pending/cancelled/done/blocked all refuse).
  *   - Workflow-backed completions apply the tick loop's canonical-task
  *     selection (`pickCanonicalRunTask`) and reject non-canonical
  *     duplicates — the tick archives duplicates, which would discard the
  *     completion while keeping its side effects.
+ *   - The run's workflow definition must resolve — an unresolvable
+ *     definition refuses rather than being treated as unconstrained (a
+ *     missing/foreign run ROW was already refused above, before any of its
+ *     policy was read).
+ *   - Workflows declaring a dispatchable `postApproval` route are rejected —
+ *     a direct done would silently skip the route (the tick loop treats an
+ *     already-done task as resolved). They must close through
+ *     submit_for_approval so the router fires.
  *   - Workflow-declared hooks on this method are NOT refused here: the
  *     node-agent registration wraps this handler with the WorkflowHookEngine
  *     (`wrapHandlerWithHooks`), so `complete_validation_task` validators run
  *     before the guard chain is ever entered.
- *   - The no-PR, run-status, and run-IDENTITY conditions are re-asserted
+ *   - The checkpoint, autonomy, no-PR, run-IDENTITY, run-status, canonical
+ *     ownership, and caller-execution conditions are re-asserted
  *     synchronously inside the terminal write's precondition against the
  *     reread state — the write is bound to the run whose guards were
- *     checked, so a mid-flight re-attachment to a different run refuses
- *     rather than bypassing that run's guards.
+ *     checked, so a mid-flight re-attachment, duplicate promotion, or
+ *     execution-slot recycling refuses rather than bypassing those guards.
  *
  * The validation outcome is captured as `task.result`; `approvalSource` is
  * stamped `'agent'` atomically with the done commit on every path
@@ -719,8 +725,12 @@ export function createCompleteValidationTaskHandler(
       // session_context.taskId. Completing the detached task would skip
       // every run guard (PR, lifecycle, canonical) while the old run and
       // its executions linger in_progress with no attached task left to
-      // reconcile them. Callers without a session id (unit tests) keep the
-      // standalone shape.
+      // reconcile them. Production has no session-less callers, so STANDALONE
+      // (run-less) TASKS ARE NOT COMPLETABLE THROUGH THIS TOOL — a Forge
+      // review/automation task needs a run attached or stays human-closed
+      // (task #918 outcome record). Session-less callers exist only in unit
+      // tests, which exercise the standalone shape directly against the
+      // factory.
       if (callerSessionId && !task.workflowRunId) {
         return jsonResult({
           success: false,
@@ -1119,14 +1129,23 @@ export function createCompleteValidationTaskHandler(
         }
       }
 
-      audit?.(
-        {
-          completionMode: 'validation_only',
-          reason: args.reason,
-          previousStatus: task.status,
-        },
-        args.task_id
-      );
+      // Best-effort, like every neighbor: the completion is already
+      // committed — a throwing audit callback must not convert it into a
+      // {success:false} that invites a pointless retry.
+      try {
+        audit?.(
+          {
+            completionMode: 'validation_only',
+            reason: args.reason,
+            previousStatus: task.status,
+          },
+          args.task_id
+        );
+      } catch (err) {
+        log.warn(
+          `complete_validation_task: completion audit callback threw for task "${updated.id}": ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
 
       if (completionConfirmed) {
         // Emit and return the REREAD row: while setTaskStatus awaited its

@@ -3796,6 +3796,8 @@ export class TaskAgentManager {
     //   - save_artifact: persist typed data to artifact store (all node agents).
     //   - approve_task : self-close (autonomy-gated, end-node only).
     //   - submit_for_approval: human sign-off (always available, end-node only).
+    //   - complete_validation_task: validation-only (no-PR) close (all node
+    //     agents; terminal final action, like the end-node closers).
     // Keep these strings in sync with `node-agent-tools.ts` and
     // `task-agent-manager.ts` where the handlers live.
     const endNodeContractLines = (indent: string): string[] => {
@@ -3824,6 +3826,7 @@ export class TaskAgentManager {
       '  - save_artifact({ shape, kind?, key?, summary?, data? }) — persist a STRUCTURED FACT as a generic shape (link/commit_set/check/metric/decision/note) with a freeform `kind` hint. Use shape="note" for rolling status, shape="decision" for verdicts/outcomes. Do not re-narrate the chat thread into artifacts.',
       ...endNodeContractLines('  '),
       '  - list_artifacts({ nodeId?, type? }) — list artifacts for the current workflow run',
+      "  - complete_validation_task({ task_id, validation_outcome, reason? }) — validation-only (no-PR) completion: when the task's deliverable is the validation itself (review/automation/diagnostics), capture the outcome and close the task without a PR. TERMINAL final action: do NOT send messages or call tools after a successful call.",
       '  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call returned "No such tool available", call this once and then retry the original tool',
       `Escalation: send_message({ target: "${WORKFLOW_ESCALATION_TARGET}", message }) requests human/space-level judgment (use for misrouted no-code tasks or hard blockers).`,
       'Only contact the task-agent via send_message if you are blocked or need human input.',

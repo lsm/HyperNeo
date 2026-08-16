@@ -166,9 +166,9 @@ export type MarkCompleteInput = z.infer<typeof MarkCompleteSchema>;
  * diagnostics, already-complete work). Autonomy-gated to the workflow's
  * `completionAutonomyLevel`; rejects tasks whose run already has a PR.
  *
- * Intentionally NOT a member of TASK_AGENT_TOOL_SCHEMAS — that map drives the
- * orchestration Task Agent's surface, and this tool belongs to workflow
- * workers only.
+ * Intentionally not registered on any Task-Agent surface map: this tool is
+ * wired exclusively through NodeAgentToolsConfig.onCompleteValidationTask
+ * (workflow node agents), and no orchestration surface carries it.
  */
 export const CompleteValidationTaskSchema = z
   .object({

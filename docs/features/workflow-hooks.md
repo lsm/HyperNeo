@@ -1,6 +1,6 @@
 # Workflow hooks
 
-Workflow hooks replace legacy workflow gate polling for MCP action checks. They run inside the daemon before a node-agent MCP action such as `send_message`, `save_artifact`, or `approve_task`. Hook results are persisted before the underlying action handler runs, so `side_effect` classification means "non-blocking pre-action side effect", not post-success handling.
+Workflow hooks replace legacy workflow gate polling for MCP action checks. They run inside the daemon before a node-agent MCP action such as `send_message`, `save_artifact`, `approve_task`, or `complete_validation_task`. Hook results are persisted before the underlying action handler runs, so `side_effect` classification means "non-blocking pre-action side effect", not post-success handling.
 
 ## Configure hooks
 
