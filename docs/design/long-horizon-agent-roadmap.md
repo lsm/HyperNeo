@@ -37,7 +37,7 @@ The full roadmap below is the robust target. It should not block first dogfoodin
 - Fall back visibly to the coordinator when no usable owner exists.
 - Do not block task completion on notification delivery, but do not rely on best-effort post-commit notification that can be lost or duplicated.
 - Consume terminal V2 `failed`/`rejected` delivery status for the wake: create a deterministic new delivery-attempt generation or a visible degraded/escalated state. An accepted-but-terminally-failed delivery must not leave the notification unprocessed with the owner never awakened; the G7 recovery machinery does not exist yet during the MC-only phase.
-- Reconcile completed-but-undisposed wakes. V2 `completed` only proves the turn ended, not that the owner called `review_goal_outcome` (tool error, context interruption, or ignored instruction). Unprocessed notifications whose latest delivery completed must receive bounded re-notification with backoff and eventual visible coordinator/human escalation.
+- Reconcile completed-but-undisposed wakes. V2 `completed` only proves the turn ended, not that the owner called `review_goal_outcome` (tool error, context interruption, or ignored instruction). Unprocessed notifications whose latest delivery completed must receive bounded re-notification with backoff and eventual visible coordinator/human escalation. Escalation must transfer or explicitly share decision authority, which MC3 validates atomically; otherwise an escalated coordinator/human cannot dispose the notification while the original owner remains technically usable, and bounded re-notification still ends stranded.
 - Supersede unprocessed notifications when their terminal transition is exited. Reopening a `done`/`blocked`/`cancelled` task currently clears the task result without advancing the goal revision or invalidating the notification; without supersession the reconciler keeps waking the owner and MC3's base-revision check can still pass, applying an obsolete terminal outcome over active rework.
 
 This intentionally reuses task results and current delivery/inbox primitives instead of building the full immutable report model first.
@@ -55,7 +55,7 @@ Add one explicit tool such as `review_goal_outcome` that the awakened owner can 
 - optional structured observations and metric changes;
 - summary, next steps, and follow-up intent.
 
-The tool validates that the caller is the current primary owner or coordinator fallback, then atomically records the notification as processed and applies the update through `SpaceGoalService`. It must compare the notification's base goal revision inside the same transaction; if the goal changed independently after the notification, reject the stale proposal and require an explicit edited merge rather than overwriting newer summary, metrics, or next steps. The goal revision must be a monotonically incremented counter updated by every goal mutation — not `updatedAt`, which every mutation assigns via `Date.now()` and which can therefore collide for two mutations in the same millisecond, letting a stale proposal pass the comparison. Retrying a durable wake or retrying after a tool timeout must return the original processed result rather than appending duplicate goal events, reapplying metrics, or creating duplicate follow-up work. Workers do not get this tool.
+The tool validates — inside the same transaction that claims the notification — that the caller is the current primary owner or an explicitly authorized coordinator/human (fallback or escalation recipient), and that the notification is still unsuperseded. A pre-transaction ownership check alone races with concurrent reassignment: the former owner could pass validation, watch MC1 supersede the notification, and still claim it and mutate the goal. It then atomically records the notification as processed and applies the update through `SpaceGoalService`. It must compare the notification's base goal revision inside the same transaction; if the goal changed independently after the notification, reject the stale proposal and require an explicit edited merge rather than overwriting newer summary, metrics, or next steps. The goal revision must be a monotonically incremented counter updated by every goal mutation — not `updatedAt`, which every mutation assigns via `Date.now()` and which can therefore collide for two mutations in the same millisecond, letting a stale proposal pass the comparison. Requested follow-up work must be persisted as a deterministic command or outbox entry in the same transaction and reconciled independently; committing only the processed-marker and goal update first would permanently lose the follow-up on a mid-review crash (retry returns the stored result), while creating it before the commit permits duplicates. Retrying a durable wake or retrying after a tool timeout must return the original processed result rather than appending duplicate goal events, reapplying metrics, or creating duplicate follow-up work. Workers do not get this tool.
 
 **Why it matters:** the LH agent becomes responsible for integrating outcomes and deciding next actions without immediately reworking every existing worker prompt or terminal path.
 **Estimated size:** 170–250 production lines.
@@ -121,6 +121,7 @@ Do not cut over at G6: report capture alone provides no owner integration path u
 
 - Stop creating new MC2 notifications at the same terminal seam when the cutover flag is enabled.
 - Backfill or link pending MC2 notifications to their corresponding outcome reports so no pending wake is silently dropped.
+- Correlate reports with **all** MC2 notification records, not only pending ones. During the G6–G8 coexistence a task termination creates both a report and a notification; when the owner already processed the MC2 notification, the duplicate report must be dispositioned or superseded at cutover so G7 does not keep routing and escalating an outcome that was already integrated (its stale base revision prevents application but does not terminalize it).
 - Disable `review_goal_outcome` for goals covered by authoritative reports and redirect owners to the G8 decision tools.
 - Update MC5 prompts in the same cutover so agents do not receive both the old and new instructions.
 - Make the cutover idempotent and reversible behind the explicit migration flag until report capture/routing has been verified in production.
@@ -267,7 +268,7 @@ The target is one behavioral contract per PR, normally no more than 200 changed 
 
 - Preserve actor activation and inbox persistence.
 - Mark inbox rows delivered only at the current `consumed` boundary, preserving existing behavior; durable V2 acceptance alone is insufficient because a later terminal V2 failure must not silently lose the message.
-- Persist the V2 job/message correlation and convert terminal failed/rejected delivery into another inbox attempt or a visible degraded state before the row leaves pending scans.
+- Persist the V2 job/message correlation and convert terminal failed/rejected delivery **before SDK consumption** into another inbox attempt before the row leaves pending scans. A post-consumption turn failure must not create another attempt — the row is already delivered and re-injection would replay a model-visible prompt, repeating autonomous tool side effects; it follows the orthogonal-state contract (visible degraded state or domain-idempotent recovery) instead.
 - Prevent restart races from creating duplicate transcript rows.
 
 **Estimate:** 100–180 lines.
@@ -529,7 +530,7 @@ L1 -> L2 -> L3
 L3 + L4 -> L5 -> L6
 
 L1 -> S1 -> S2 -> S3
-S2 -> L3/L4 producer enablement
+S2 + S3 -> L3/L4 producer enablement
 
 G1 -> G2 -> G3 -> G4
 G1 -> G5 -> G6
@@ -541,7 +542,7 @@ V3 -> V4 before reminder V2 migration is considered complete
 
 Parallel starting points: V1, L1, G1, and R1. G5 is **not** an independent starting point; it follows G1 so report routing records can reference the authoritative primary-owner model.
 
-S2 is a hard prerequisite for enabling the L3/L4 lifecycle producers — or publication must stay gated until filter enforcement is deployed. The LH runtime currently registers subscriptions by `source` and `topic` only and never evaluates the persisted `filter`, so once producers ship without S2, broad migrated subscriptions such as the coordinator's `task.*` would wake on every matching event regardless of intended status or label filters.
+S2 is a hard prerequisite for enabling the L3/L4 lifecycle producers — or publication must stay gated until filter enforcement is deployed. The LH runtime currently registers subscriptions by `source` and `topic` only and never evaluates the persisted `filter`, so once producers ship without S2, broad migrated subscriptions such as the coordinator's `task.*` would wake on every matching event regardless of intended status or label filters. S3's subscription-handler authorization is equally a prerequisite: today any same-Space member can add broad wakeups to or remove wakeups from another LH agent, so enabling native lifecycle flow before S3 lets members trigger unwanted autonomous turns or suppress a target's lifecycle processing.
 
 ## Scope intentionally deferred
 
