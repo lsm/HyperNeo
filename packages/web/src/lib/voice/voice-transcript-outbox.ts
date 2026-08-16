@@ -313,8 +313,117 @@ export function isLandingLive(sessionId: string): boolean {
 
 const DRAFT_BACKUP_TTL_MS = 24 * 60 * 60 * 1000;
 
+// Draft backups are TAB-OWNED: each tab defers its own evolving edits under
+// `${prefix}${sessionId}.${tabId}`. A single shared key let one tab's landing
+// consumption retire ANOTHER tab's deferred backup (consumption is local, but
+// the key was not) — the editing tab kept suppressing server saves while its
+// only durable copy was deleted. The tab id lives in sessionStorage: isolated
+// per browser tab, yet STABLE ACROSS RELOADS of the same tab — exactly the
+// ownership the reload-survival of these records requires.
+/** Resolve this context's tab id (exported for the clone-detection tests). */
+export function readTabId(): string {
+  let stored: string | null = null;
+  try {
+    stored = sessionStorage.getItem('hyperneo_tab_id');
+  } catch {
+    // sessionStorage unavailable (tests without a stub) — an ephemeral id
+    // still keeps this module instance's records distinct from others'.
+    return generateUUID();
+  }
+  if (!stored) {
+    const id = generateUUID();
+    try {
+      sessionStorage.setItem('hyperneo_tab_id', id);
+    } catch {
+      /* best-effort persistence */
+    }
+    return id;
+  }
+  // CLONED-TAB detection: duplicating a tab (or opening through an opener
+  // that retains it) initializes the copy's sessionStorage from the source,
+  // so both contexts would share the stored id and "tab-owned" keys would
+  // collide — divergent drafts overwrite each other and one context's
+  // consumption removes the other's only durable copy. A heartbeat marks the
+  // id LIVE while its owner runs: a fresh heartbeat at startup means the id
+  // belongs to a still-running context, so this one mints a new id. An
+  // ordinary reload finds no heartbeat (the previous context removed it on
+  // pagehide), preserving identity across reloads; a hard crash's heartbeat
+  // goes stale within the freshness window, so only a restart within seconds
+  // of a crash mints a new id.
+  try {
+    const raw = localStorage.getItem(`hyperneo_tab_heartbeat.${stored}`);
+    const beat = raw === null ? 0 : Number(raw);
+    if (Number.isFinite(beat) && Date.now() - beat < TAB_HEARTBEAT_FRESH_MS) {
+      const id = generateUUID();
+      sessionStorage.setItem('hyperneo_tab_id', id);
+      return id;
+    }
+  } catch {
+    /* storage unavailable — keep the stored id */
+  }
+  return stored;
+}
+
+// Generous freshness: background tabs throttle timers to ~1/minute, so a
+// short window would call a still-live source tab dead and hand its id to a
+// duplicate. visibilitychange/pageshow/resume refreshes cover the exact
+// duplication moment (the source hides or resumes as the clone opens).
+const TAB_HEARTBEAT_FRESH_MS = 90_000;
+const TAB_HEARTBEAT_INTERVAL_MS = 2000;
+
+const TAB_ID = readTabId();
+
+// Mark this tab id LIVE while this context runs, so a cloned copy of it
+// detects the collision and mints its own id. Removed on pagehide so an
+// ordinary reload immediately reclaims the identity.
+try {
+  const heartbeatKey = `hyperneo_tab_heartbeat.${TAB_ID}`;
+  const beat = () => {
+    try {
+      localStorage.setItem(heartbeatKey, String(Date.now()));
+    } catch {
+      /* best-effort liveness */
+    }
+  };
+  let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  const startHeartbeat = () => {
+    if (heartbeatTimer !== null) return;
+    beat();
+    heartbeatTimer = setInterval(beat, TAB_HEARTBEAT_INTERVAL_MS);
+    // pagehide tears the heartbeat down (an ordinary reload reclaims the id
+    // immediately); re-arm on the NEXT pageshow, including a BFCache restore
+    // of this same context — the once-listener is gone after its first fire,
+    // and a restored live tab must keep proving its liveness or a duplicate
+    // made later would inherit its id.
+    window.addEventListener('pagehide', stopHeartbeat, { once: true });
+  };
+  const stopHeartbeat = () => {
+    if (heartbeatTimer !== null) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+    try {
+      localStorage.removeItem(heartbeatKey);
+    } catch {
+      /* best-effort */
+    }
+  };
+  // Timer throttling makes the interval unreliable in background tabs;
+  // lifecycle transitions refresh the beat exactly when a clone is likely
+  // being created (this tab hiding or resuming).
+  window.addEventListener('visibilitychange', beat);
+  window.addEventListener('pageshow', (event) => {
+    beat();
+    if ((event as PageTransitionEvent).persisted) startHeartbeat();
+  });
+  window.addEventListener('resume', beat);
+  startHeartbeat();
+} catch {
+  /* storage unavailable — clone detection degrades to the stored id */
+}
+
 function draftBackupKey(sessionId: string): string {
-  return `${DRAFT_BACKUP_PREFIX}${sessionId}`;
+  return `${DRAFT_BACKUP_PREFIX}${sessionId}.${TAB_ID}`;
 }
 
 /** A draft backup located in storage, including the exact key it lives under. */
@@ -352,27 +461,34 @@ export function saveDraftBackup(sessionId: string, content: string, generation: 
  * is durably persisted or folded.
  */
 function freshestDraftBackup(sessionId: string): DraftBackupClaim | null {
+  let freshest: DraftBackupClaim | null = null;
   try {
-    const parsed = JSON.parse(localStorage.getItem(draftBackupKey(sessionId)) ?? 'null') as {
-      content?: unknown;
-      ts?: unknown;
-      generation?: unknown;
-    } | null;
-    if (!parsed || typeof parsed.content !== 'string') return null;
-    const ts = typeof parsed.ts === 'number' ? parsed.ts : 0;
-    if (Date.now() - ts >= DRAFT_BACKUP_TTL_MS) {
-      localStorage.removeItem(draftBackupKey(sessionId));
-      return null;
+    const staleKeys: string[] = [];
+    const prefix = `${DRAFT_BACKUP_PREFIX}${sessionId}.`;
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(prefix)) continue;
+      const parsed = JSON.parse(localStorage.getItem(key) ?? 'null') as {
+        content?: unknown;
+        ts?: unknown;
+        generation?: unknown;
+      } | null;
+      if (!parsed || typeof parsed.content !== 'string') continue;
+      const ts = typeof parsed.ts === 'number' ? parsed.ts : 0;
+      if (Date.now() - ts >= DRAFT_BACKUP_TTL_MS) {
+        staleKeys.push(key);
+        continue;
+      }
+      const generation = typeof parsed.generation === 'number' ? parsed.generation : 0;
+      if (!freshest || ts >= freshest.ts) {
+        freshest = { key, content: parsed.content, generation, ts };
+      }
     }
-    return {
-      key: draftBackupKey(sessionId),
-      content: parsed.content,
-      generation: typeof parsed.generation === 'number' ? parsed.generation : 0,
-      ts,
-    };
+    for (const key of staleKeys) localStorage.removeItem(key);
   } catch {
-    return null;
+    /* storage unavailable */
   }
+  return freshest;
 }
 
 export function getDraftBackup(sessionId: string): string | null {
@@ -386,9 +502,32 @@ export function getDraftBackup(sessionId: string): string | null {
 }
 
 /**
- * Remove this tab's draft backup for `sessionId`. When `generation` is given,
- * only a backup created for that exact landing generation is retired.
+ * Remove THIS TAB's draft backup for `sessionId`. When `generation` is given,
+ * only a backup created for that exact landing generation is retired. Only
+ * ever touches this tab's own key: consumption and retirement are local, and
+ * another tab's deferred edits under its own key must survive them — their
+ * tab retires its backup when IT consumes or pushes the content.
  */
+/**
+ * Retire the exact backup key a caller claimed (any tab's — the caller
+ * persisted or folded that content, so the durable copy is superseded). When
+ * `generation` is given, the stored generation must still match: a NEWER
+ * landing can have rewritten the backup while the claim was in flight.
+ */
+export function removeDraftBackupKey(key: string, generation?: number): void {
+  try {
+    if (generation !== undefined) {
+      const parsed = JSON.parse(localStorage.getItem(key) ?? 'null') as {
+        generation?: number;
+      } | null;
+      if (parsed?.generation !== generation) return;
+    }
+    localStorage.removeItem(key);
+  } catch {
+    /* backup best-effort */
+  }
+}
+
 export function clearDraftBackup(sessionId: string, generation?: number): void {
   try {
     if (generation !== undefined) {
