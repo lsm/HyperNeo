@@ -83,6 +83,20 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // draft would resurrect text the user already sent or cleared. The clear is
   // retried on the next effect run (reconnect / content change).
   const pendingClearRef = useRef<string | null>(null);
+  // The daemon draft VERSION each session's composer last read (from
+  // session.get). Saves echo it as expectedDraftVersion so the daemon can
+  // tell a write derived from the CURRENT draft (applied as-is) from a stale
+  // in-flight save (transcripts folded in) — a suffix comparison cannot.
+  const draftVersionsRef = useRef<Map<string, number>>(new Map());
+  // Advance the cached draft version MONOTONICALLY: overlapping saves and
+  // gets can acknowledge out of order, and an older response must never move
+  // the cache backward (the next save would then be misclassified as stale
+  // and fold a transcript the draft already contains).
+  const advanceDraftVersion = (sid: string, version: number | undefined): void => {
+    if (typeof version !== 'number') return;
+    const cached = draftVersionsRef.current.get(sid);
+    if (cached === undefined || version > cached) draftVersionsRef.current.set(sid, version);
+  };
   // The landing generation whose reconciliation was already folded into local
   // content (or consumed). Overlapping refresh gets can both observe the same
   // merged draft; without this, each cancelled response blindly appends the
@@ -133,7 +147,13 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       const requestedGeneration = voiceTranscriptLandedSignal.peek().get(targetSessionId);
       hub
         .request<{
-          session: { metadata?: { inputDraft?: string; inputDraftVoicePending?: string | null } };
+          session: {
+            metadata?: {
+              inputDraft?: string;
+              inputDraftVoicePending?: string | null;
+              inputDraftVersion?: number | null;
+            };
+          };
         }>('session.get', {
           sessionId: targetSessionId,
         })
@@ -141,6 +161,12 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           const cancelled = isCancelled();
           const draft = response.session?.metadata?.inputDraft;
           const pendingRetained = !!response.session?.metadata?.inputDraftVoicePending;
+          if (typeof response.session?.metadata?.inputDraftVersion === 'number') {
+            // Monotonic, like save acks: overlapping gets can complete out of
+            // order, and an older response must not regress the cache (the
+            // next save would fold a transcript the draft already contains).
+            advanceDraftVersion(targetSessionId, response.session.metadata.inputDraftVersion);
+          }
           if (!cancelled && draft) {
             contentSignal.value = draft;
           } else if (
@@ -507,11 +533,17 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       const hub = connectionManager.getHubIfConnected();
       if (hub && (trimmedContent || (last.sessionId === prevSessionId && last.cleared))) {
         hub
-          .request('session.update', {
+          .request<{ draftVersion?: number; draftValue?: string }>('session.update', {
             sessionId: prevSessionId,
+            expectedDraftVersion: draftVersionsRef.current.get(prevSessionId),
             metadata: {
               inputDraft: trimmedContent || null,
             },
+          })
+          .then((ack) => {
+            if (typeof ack?.draftValue !== 'string') {
+              advanceDraftVersion(prevSessionId, ack?.draftVersion);
+            }
           })
           .catch(() => {
             /* ignore flush errors */
@@ -554,13 +586,21 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       const hub = connectionManager.getHubIfConnected();
       if (hub) {
         hub
-          .request('session.update', {
+          .request<{ draftVersion?: number; draftValue?: string }>('session.update', {
             sessionId,
+            expectedDraftVersion: draftVersionsRef.current.get(sessionId),
             metadata: {
               inputDraft: null,
             },
           })
-          .then(() => {
+          .then((ack) => {
+            // A folded clear/flush must NOT advance the cache: the applied
+            // draft gained transcripts this composer does not hold, and the
+            // reconciliation chains own adopting them — staying stale makes
+            // the next write fold again instead of clearing the baseline.
+            if (typeof ack?.draftValue !== 'string') {
+              advanceDraftVersion(sessionId, ack?.draftVersion);
+            }
             // Deletion CONFIRMED server-side: drop the retry marker so a later
             // switch flush cannot null a NEWER draft another client saved in
             // the meantime. A rejected clear keeps the marker and retries.
@@ -582,12 +622,43 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       if (!hub) return;
 
       try {
-        await hub.request('session.update', {
-          sessionId,
-          metadata: {
-            inputDraft: trimmedContent,
-          },
-        });
+        const ack = await hub.request<{ draftVersion?: number; draftValue?: string }>(
+          'session.update',
+          {
+            sessionId,
+            // Echo the draft version this composer last READ: the daemon applies
+            // the write as-is only when it matches (a mismatch marks a stale
+            // in-flight save, whose transcripts it folds back in).
+            expectedDraftVersion: draftVersionsRef.current.get(sessionId),
+            metadata: {
+              inputDraft: trimmedContent,
+            },
+          }
+        );
+        if (typeof ack?.draftValue === 'string') {
+          // The daemon FOLDED transcripts into this write: its value is the
+          // true draft. Adopt it when THIS session's composer still shows what
+          // we sent (the shared contentSignal could otherwise belong to a
+          // different session whose composer happens to hold the same text);
+          // if the user typed meanwhile, leave the version cache STALE so the
+          // next save folds onto the newer content — advancing without
+          // adopting would let that save apply as-is and clear the baseline,
+          // deleting the transcript from the draft.
+          if (
+            currentSessionIdRef.current === sessionId &&
+            contentSignal.peek().trim() === trimmedContent
+          ) {
+            contentSignal.value = ack.draftValue;
+            advanceDraftVersion(sessionId, ack.draftVersion);
+          }
+          return;
+        }
+        // Advance the cache to the APPLIED version: without it, a concurrent
+        // daemon-side bump (another tab's folded save) would leave this
+        // composer echoing a stale version forever, and every later edit
+        // would be misclassified as stale and folded (duplicating the
+        // transcript it already contains).
+        advanceDraftVersion(sessionId, ack?.draftVersion);
       } catch {
         // Ignore draft save errors
       }
