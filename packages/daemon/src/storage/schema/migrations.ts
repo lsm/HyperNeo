@@ -12536,6 +12536,12 @@ function workspaceLabelFromPath(path: string): string {
  * Idempotent: CREATE TABLE/INDEX IF NOT EXISTS, and the backfill skips spaces
  * that already have any space_workspaces row — a re-run (e.g. crash before the
  * marker was written) only fills gaps, converging on one row per space.
+ *
+ * The backfill reads only (id, workspace_path) and guards on the column: a
+ * sentinel/partially-migrated spaces table (marker-seed path) may lack
+ * workspace_path — every real spaces table (created by M29) carries it, so
+ * there is simply nothing to backfill without it (mirrors the m170 backfill's
+ * minimal-column rule).
  */
 export function runMigration195(db: BunDatabase): void {
   db.exec(`
@@ -12554,6 +12560,7 @@ export function runMigration195(db: BunDatabase): void {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_space_workspaces_space_id ON space_workspaces(space_id)`);
 
   if (!tableExists(db, 'spaces')) return;
+  if (!tableHasColumn(db, 'spaces', 'workspace_path')) return;
 
   const spaces = db
     .prepare(`SELECT id, workspace_path FROM spaces`)

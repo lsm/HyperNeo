@@ -190,6 +190,17 @@ describe('Migration 195: space_workspaces table + primary backfill', () => {
       expect(() => runMigration195(db)).not.toThrow();
       expect(workspaceRows(db)).toHaveLength(0);
     });
+
+    test('sentinel spaces table without workspace_path (marker-seed path) — no throw, no backfill', () => {
+      // Mirrors createBaselineSchemaSentinels in migration-markers-runner.test.ts:
+      // marker-seeded DBs replay only migrations after the seed boundary against
+      // minimal sentinel schemas. The backfill must not assume extra columns.
+      db.exec(`DROP TABLE spaces`);
+      db.exec(`CREATE TABLE spaces (id TEXT PRIMARY KEY)`);
+      db.exec(`INSERT INTO spaces (id) VALUES ('sentinel-1')`);
+      expect(() => runMigration195(db)).not.toThrow();
+      expect(workspaceRows(db)).toHaveLength(0);
+    });
   });
 
   // ── Migrate-once through the full chain ─────────────────────────────────────
