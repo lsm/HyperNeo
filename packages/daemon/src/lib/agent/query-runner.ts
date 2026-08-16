@@ -1109,6 +1109,19 @@ export class QueryRunner {
           messageQueue.start();
         }
 
+        // The old SDK may have pulled the prompt out of the queue via
+        // messageGenerator() before going silent; restarting the queue above
+        // alone leaves the retry with no input, so it times out again at zero
+        // messages. Re-enqueue the recorded consumed message (mirroring the
+        // transient-connection retry) so the retry has something to feed.
+        // (Codex P1, PR #2499.)
+        const lastMsg = this._lastConsumedUserMessage;
+        if (lastMsg) {
+          logger.warn(`Re-enqueueing user message ${lastMsg.uuid} for startup-timeout retry.`);
+          messageQueue.enqueueWithId(lastMsg.uuid, lastMsg.content).catch(() => {});
+          this._lastConsumedUserMessage = null;
+        }
+
         // Use `return await` so this call's finally{} runs only after the retry
         // completes. Otherwise finally{} would race the retry and can tear down
         // shared state (queue/controller/queryObject) while it is still running.

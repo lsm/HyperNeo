@@ -216,6 +216,23 @@ describe('getConfig', () => {
     expect(config.dbPath).toBe('/custom/database.db');
   });
 
+  test('isolated DB files derive distinct per-database log paths', () => {
+    // Codex P2 (PR #2499): distinct DB files in the SAME directory (the
+    // documented worktree command's /tmp/hyperneo-worktree-a.db vs -b.db) must
+    // not share one rotating log file — dirname alone maps both to
+    // <dir>/logs/daemon.jsonl. Fold the DB basename into the filename.
+    process.env.NODE_ENV = 'production';
+
+    process.env.DB_PATH = '/tmp/hyperneo-worktree-a.db';
+    const a = getConfig().structuredLogFilePath;
+    process.env.DB_PATH = '/tmp/hyperneo-worktree-b.db';
+    const b = getConfig().structuredLogFilePath;
+
+    expect(a).toBe('/tmp/logs/hyperneo-worktree-a.jsonl');
+    expect(b).toBe('/tmp/logs/hyperneo-worktree-b.jsonl');
+    expect(a).not.toBe(b);
+  });
+
   test('default database path is ~/.hyperneo/data/daemon.db', () => {
     delete process.env.DB_PATH;
     process.env.NODE_ENV = 'production';

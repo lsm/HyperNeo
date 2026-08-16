@@ -287,6 +287,7 @@ import { ModelSwitchHandler, type ModelSwitchHandlerContext } from './model-swit
 import { ProcessingStateManager } from './processing-state-manager';
 import {
   QueryLifecycleManager,
+  type EnsureQueryStartedResult,
   type QueryLifecycleManagerContext,
 } from './query-lifecycle-manager';
 import type { QueryLike } from './query-like';
@@ -1989,11 +1990,13 @@ export class AgentSession
   incrementQueryGeneration(): number {
     const next = ++this._queryGeneration;
     // A delivery observer armed with `pendingStart` belongs to the query THIS
-    // bump is starting — retag it so the new query's first frame passes the
-    // generation fence instead of being dropped against the stale pre-start
-    // generation. Cleared once the driving attempt's startup returns.
+    // bump is starting — retag it AND claim it (clear pendingStart) so the new
+    // query's first frame fences clean while a predecessor's earlier frame
+    // (before this bump) stays inactive. The driving attempt's startup clears
+    // pendingStart on the already-running path instead. (Codex P2, PR #2499.)
     if (this.deliveryResponseObserver?.pendingStart) {
       this.deliveryResponseObserver.generation = next;
+      this.deliveryResponseObserver.pendingStart = false;
     }
     return next;
   }
@@ -2210,7 +2213,19 @@ export class AgentSession
           }
         };
         const ensureStartedAt = Date.now();
-        const queryStartResult = await this.lifecycleManager.ensureQueryStarted(signal);
+        let queryStartResult: EnsureQueryStartedResult;
+        try {
+          queryStartResult = await this.lifecycleManager.ensureQueryStarted(signal);
+        } catch (error) {
+          // ensureQueryStarted can reject (e.g. stale reclamation aborts the
+          // signal and throwIfDeliveryAborted throws) before any of the explicit
+          // in-lock exits below run. Disarm the observer by identity so a later
+          // generation bump cannot retag this still-pendingStart record and
+          // attribute another attempt's first frame to the aborted claim.
+          // (Codex P2, PR #2499.)
+          disarmObserver();
+          throw error;
+        }
         this.logger.debug(
           `delivery-turn: ensureQueryStarted → ${queryStartResult} ` +
             `(${Date.now() - ensureStartedAt}ms, uuid=${messageUuid})`
@@ -2650,7 +2665,13 @@ export class AgentSession
 
   reportFirstDeliverySDKResponse(responseType: string): void {
     const active = this.deliveryResponseObserver;
-    if (!active || active.generation !== this.getQueryGeneration()) return;
+    // A `pendingStart` observer is armed but not yet claimed by a query — the
+    // driving attempt's generation bump in incrementQueryGeneration is what
+    // claims it. Until then, any frame (e.g. a predecessor query's late
+    // terminal frame landing while ensureQueryStarted awaits an interrupt) must
+    // not be consumed as THIS delivery's first response, or the replacement's
+    // real first frame is omitted. (Codex P2, PR #2499.)
+    if (!active || active.pendingStart || active.generation !== this.getQueryGeneration()) return;
     this.deliveryResponseObserver = null;
     active.observer.reportStage('first_sdk_response', {
       generation: active.generation,

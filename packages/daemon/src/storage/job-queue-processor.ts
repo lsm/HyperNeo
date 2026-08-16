@@ -164,8 +164,14 @@ export class JobQueueProcessor {
   // Capped jobs count toward `maxConcurrent` (turns, and all non-exempt lanes).
   private inFlightCapped = 0;
   // Exempt jobs (message_delivery steers) run on a separate budget so they can't
-  // be starved by — nor starve — capped jobs. Both count toward `stop()` drain.
+  // be starved by — nor starve — capped jobs.
   private inFlightExempt = 0;
+  // Live handler count, independent of the admission budgets above: `stop()`
+  // drains on this, so slot eviction (evictWedgedClaimSlot, which releases an
+  // abort-ignoring reclaimed handler's ADMISSION slot while its handler is still
+  // running) can never make a still-live handler look quiescent during teardown.
+  // (Codex P2, PR #2499.)
+  private activeHandlers = 0;
   private running = false;
   private inFlightClaims = new Map<string, Map<string, InFlightClaimRecord>>();
   // Job IDs whose stale-reclaimed predecessor handler was aborted but has not
@@ -236,12 +242,12 @@ export class JobQueueProcessor {
   stop(): Promise<void> {
     this.stopPolling();
     return new Promise<void>((resolve) => {
-      if (this.inFlightCapped === 0 && this.inFlightExempt === 0) {
+      if (this.activeHandlers === 0) {
         resolve();
         return;
       }
       const check = setInterval(() => {
-        if (this.inFlightCapped === 0 && this.inFlightExempt === 0) {
+        if (this.activeHandlers === 0) {
           clearInterval(check);
           resolve();
         }
@@ -318,6 +324,7 @@ export class JobQueueProcessor {
   private async processJob(job: Job, exempt: boolean): Promise<void> {
     if (exempt) this.inFlightExempt++;
     else this.inFlightCapped++;
+    this.activeHandlers++;
     const reg = this.handlers.get(job.queue);
     const scope = scopeFromJob(job);
     const controller = new AbortController();
@@ -441,6 +448,9 @@ export class JobQueueProcessor {
       } else {
         if (!record.slotEvicted) this.inFlightCapped--;
       }
+      // Always release the live-handler count, even for an evicted-slot record:
+      // the handler is genuinely done now, so stop() must observe it drain.
+      this.activeHandlers--;
       this.emitLifecycle('slot_released', job, record.slotClass, {
         stage: record.stage,
         outcome: record.settlement,

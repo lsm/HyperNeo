@@ -1,4 +1,4 @@
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { DEFAULT_MAX_SUBSCRIPTIONS_PER_CLIENT } from '@hyperneo/shared';
 import { getDataDir } from './lib/data-dir';
 
@@ -101,11 +101,18 @@ export function getConfig(overrides?: ConfigOverrides): Config {
   // A pathless DB (`:memory:`) has no directory to anchor an isolated log to —
   // fall back to the shared default rather than a cwd-relative path.
   const customDbIsolatable = resolvedDbPath !== defaultDbPath && dirname(resolvedDbPath) !== '.';
+  // Distinct isolated DB files in the SAME directory (e.g. the documented
+  // worktree command's /tmp/hyperneo-worktree-a.db vs -b.db) must derive
+  // distinct log files: dirname alone maps both to <dir>/logs/daemon.jsonl, so
+  // their independent sinks rotate/drop each other's files. Fold the DB basename
+  // (sans extension) into the filename. (Codex P2, PR #2499.)
+  const dbLogComponent =
+    (customDbIsolatable && basename(resolvedDbPath).replace(/\.[^.]+$/, '')) || 'daemon';
   const defaultLogPath =
     nodeEnv === 'test'
       ? undefined
       : customDbIsolatable
-        ? join(dirname(resolvedDbPath), 'logs', 'daemon.jsonl')
+        ? join(dirname(resolvedDbPath), 'logs', `${dbLogComponent}.jsonl`)
         : join(getDataDir(), 'logs', 'daemon.jsonl');
   const structuredLogFilePath =
     overrides?.structuredLogFilePath === null

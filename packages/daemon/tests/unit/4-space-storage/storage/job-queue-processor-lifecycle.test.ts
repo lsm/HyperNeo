@@ -432,6 +432,68 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
       expect(after?.claimToken).not.toBe(firstClaim);
     });
 
+    it('stop() drains a live handler whose admission slot was evicted', async () => {
+      // Codex P2 (PR #2499): grace-expiry slot eviction releases the ADMISSION
+      // counter so a replacement can claim capacity, but the abort-ignoring
+      // predecessor is still running. stop() must drain on the LIVE handler
+      // count — not the admission counter — or teardown proceeds while the
+      // predecessor can still hydrate a session / touch resources.
+      const releases: Array<() => void> = [];
+      const delivery = new JobQueueProcessor(repo, {
+        pollIntervalMs: 5000,
+        maxConcurrent: 1,
+        staleThresholdMs: 60_000,
+      });
+      // Ignores the abort signal until explicitly released.
+      delivery.register(
+        'message_delivery',
+        () => new Promise((resolve) => releases.push(() => resolve({ outcome: 'settled' })))
+      );
+
+      const job = repo.enqueue({
+        queue: 'message_delivery',
+        payload: { sessionId: 'session-1', messageUuid: 'message-1', role: 'turn' },
+      });
+      await delivery.tick();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const firstClaim = repo.getJob(job.id)?.claimToken;
+      expect(firstClaim).toBeTruthy();
+
+      // Go stale → reclaim (deferring the replacement) → expire the grace so the
+      // wedged predecessor's admission slot is evicted while it still runs.
+      const staleLease = Date.now() - 120_000;
+      db.prepare(`UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?`).run(
+        staleLease,
+        staleLease,
+        job.id
+      );
+      (delivery as unknown as { lastStaleCheck: number }).lastStaleCheck = 0;
+      await delivery.tick();
+      const map = (
+        delivery as unknown as {
+          settlingReclaimedJobIds: Map<string, { claimToken: string | null; expireAt: number }>;
+        }
+      ).settlingReclaimedJobIds;
+      map.set(job.id, { claimToken: firstClaim, expireAt: Date.now() - 1 });
+      await delivery.tick();
+      // The replacement claimed the row — capacity was freed by slot eviction.
+      expect(repo.getJob(job.id)?.status).toBe('processing');
+      expect(repo.getJob(job.id)?.claimToken).not.toBe(firstClaim);
+
+      // The evicted predecessor is still live, so stop() must NOT resolve yet.
+      let resolved = false;
+      const stopPromise = delivery.stop().then(() => {
+        resolved = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect(resolved).toBe(false);
+
+      // Release both handlers → live count drains → stop() resolves.
+      releases.forEach((release) => release());
+      await stopPromise;
+      expect(resolved).toBe(true);
+    });
+
     it('a late-settling earlier attempt does not lift the replacement deferral', async () => {
       // Attempt A goes stale and its grace expires → attempt B claims the row.
       // B then ALSO goes stale and is aborted, installing B's own deferral. If

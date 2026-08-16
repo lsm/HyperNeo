@@ -1615,6 +1615,28 @@ describe('QueryRunner', () => {
       expect(startSpy.mock.calls.length).toBe(1);
     });
 
+    it('re-enqueues the consumed prompt before the startup-timeout retry', async () => {
+      // Codex P1 (PR #2499): if the old SDK pulled the prompt out of the queue
+      // via messageGenerator() before going silent, restarting the queue leaves
+      // the retry with no input and it times out again at zero messages.
+      // Re-enqueue the recorded consumed message (mirrors the transient-connection
+      // retry) so the retry has something to feed.
+      const consumedUuid = 'consumed-msg-uuid';
+      const consumedContent = [{ type: 'text' as const, text: 'Hello, Claude!' }];
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      (runner as unknown as { _lastConsumedUserMessage: unknown })._lastConsumedUserMessage = {
+        uuid: consumedUuid,
+        content: consumedContent,
+      };
+
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith(consumedUuid, consumedContent);
+    });
+
     it('should abandon the retry when a replacement query took ownership during the exit wait', async () => {
       // Codex P1 (PR #2491): the retry's recursive runQuery() bypasses
       // start()'s queue-running guard. If a replacement query started while

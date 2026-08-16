@@ -28,6 +28,26 @@ import {
 // Test the AgentSession class indirectly through its components
 // since direct testing with mock.module() causes global mock pollution
 
+type DeliveryResponseObserver = {
+  generation: number;
+  observer: { reportStage: (stage: string, details?: Record<string, unknown>) => void };
+  pendingStart?: boolean;
+};
+
+function getDeliveryResponseObserver(agentSession: AgentSession): DeliveryResponseObserver | null {
+  return (agentSession as unknown as { deliveryResponseObserver: DeliveryResponseObserver | null })
+    .deliveryResponseObserver;
+}
+
+function setDeliveryResponseObserver(
+  agentSession: AgentSession,
+  observer: DeliveryResponseObserver
+): void {
+  (
+    agentSession as unknown as { deliveryResponseObserver: DeliveryResponseObserver | null }
+  ).deliveryResponseObserver = observer;
+}
+
 describe('AgentSession', () => {
   describe('session data structure', () => {
     it('should have required session fields', () => {
@@ -1721,6 +1741,45 @@ describe('AgentSession', () => {
       const gen2 = agentSession.incrementQueryGeneration();
       expect(gen2).toBe(2);
       expect(agentSession.getQueryGeneration()).toBe(2);
+    });
+
+    it('incrementQueryGeneration claims a pending delivery observer', () => {
+      // Codex P2 (PR #2499): the bump that starts the delivery's query must
+      // retag AND claim (clear pendingStart) the armed observer, so the new
+      // query's first frame fences clean while a predecessor's earlier frame
+      // (before this bump) stays inactive.
+      const reportStage = mock(() => {});
+      setDeliveryResponseObserver(agentSession, {
+        generation: 0,
+        observer: { reportStage },
+        pendingStart: true,
+      });
+
+      const next = agentSession.incrementQueryGeneration();
+
+      const observer = getDeliveryResponseObserver(agentSession);
+      expect(next).toBe(1);
+      expect(observer?.generation).toBe(1);
+      expect(observer?.pendingStart).toBe(false);
+    });
+
+    it('reportFirstDeliverySDKResponse ignores a pending (unclaimed) observer', () => {
+      // Codex P2 (PR #2499): a predecessor query's late terminal frame landing
+      // while ensureQueryStarted awaits an interrupt must not be consumed as
+      // THIS delivery's first response — it carries the pre-bump generation and
+      // would clear the observer before the replacement query claims it.
+      const reportStage = mock(() => {});
+      setDeliveryResponseObserver(agentSession, {
+        generation: 0,
+        observer: { reportStage },
+        pendingStart: true,
+      });
+
+      agentSession.reportFirstDeliverySDKResponse('assistant');
+
+      const observer = getDeliveryResponseObserver(agentSession);
+      expect(observer).not.toBeNull();
+      expect(reportStage).not.toHaveBeenCalled();
     });
 
     it('setCleaningUp should update cleaning up state', () => {
