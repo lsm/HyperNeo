@@ -622,7 +622,8 @@ The contract (`TaskAgentManager.registerCompletionCallback`):
   `HYPERNEO_DELIVERY_SETTLE_RECONCILE_MS`) repays a settlement lost to a
   daemon crash between the job row's terminal transition and the publication —
   deriving its decision from the DURABLE job row via
-  `deliveryTurnOutcomeSince(execution.startedAt)`: a `dead` turn row for the
+  `deliveryTurnOutcomeSince(kickoffMessageUuid)` — the uuid IS the activation
+  scope: a `dead` row for that delivery
   current activation BLOCKS (repaying a lost `session.delivery_failed`
   publication), a `completed`-with-success-result turn row COMPLETES, anything
   else declines. This is strictly stronger than transcript evidence: a reused
@@ -641,15 +642,30 @@ The contract (`TaskAgentManager.registerCompletionCallback`):
   inject, and the same pre-generated id is passed as the injection's explicit
   message id (the inject awaits SDK consumption, so a post-inject stamp would
   leave a crash window with an unstamped execution under way — and a
-  post-await stamp would leave one during the construction awaits),
-  and the timer RE-ARMS while a delivery is in flight or the session is not
-  idle, so a turn longer than the delay is still repaired after it ends. A
+  post-await stamp would leave one during the construction awaits). Any stamp
+  left by a PREVIOUS activation is cleared synchronously before the
+  activation's first await: the fresh completion callback registers inside
+  the session-reuse branch before the new stamp lands, and a peer-turn
+  settle in that window must not correlate the OLD activation's evidence.
+  The timer RE-ARMS while a delivery is in flight or the session is not
+  idle, so a turn longer than the delay is still repaired after it ends —
+  and a THROWN shot re-arms once (bounded: two consecutive throws give up;
+  any successful shot resets the budget), so a transient SQLITE_BUSY cannot
+  surrender the repair permanently. A
   stamped kickoff with NO delivery row and nothing in flight consults the
   kickoff's PERSISTED MESSAGE ROW (it survives job-queue cleanup):
-  `send_status` `'consumed'`/`'failed'` COMPLETES (the job row aged out of the
-  7-day retention window, or the activation used the legacy inline path with
-  no job row at all — finished work must not be re-spawned), while
-  still-`'enqueued'` or a gone row (crash between the stamp and the enqueue)
+  `send_status='failed'` BLOCKS (the dead-letter settlement terminalized the
+  delivery — its job row aged out before the reconcile could read it);
+  `'consumed'` proves only that the SDK ACKNOWLEDGED the prompt (the
+  consumed-flip precedes the turn), so it COMPLETES only with transcript
+  evidence of a successful turn (`hasTerminalResultAfter`: a success
+  terminal result at/after the kickoff's consumption — covers the job row
+  aging out of the 7-day retention window and the legacy inline path with
+  no job row at all, without re-spawning finished work); `'deferred'`
+  DECLINES and re-arms (a rate-limit-cooldown / parent-limit kickoff is
+  healthy but paused — its re-enqueue settles the node live); anything
+  else — still `'enqueued'` or a gone row (crash between the stamp and the
+  enqueue) or a turn that crashed mid-run (consumed, no terminal result) —
   BLOCKS for the runtime's re-spawn machinery, and
   the settlement's uuid-less fallback `session.error` is attributed via the
   durable dead rows — it only blocks when the kickoff itself dead-lettered,

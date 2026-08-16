@@ -727,38 +727,38 @@ describe('JobQueueRepository', () => {
 
     it('kickoff as TURN: completed-with-success → completed', () => {
       seed('j1', 'kick', 'turn', 'completed', 'completed');
-      expect(repository.deliveryTurnOutcomeSince('sess-1', SINCE, 'kick')).toBe('completed');
+      expect(repository.deliveryTurnOutcomeSince('sess-1', 'kick')).toBe('completed');
     });
 
     it('kickoff dead-lettered (either role) → dead', () => {
       seed('j1', 'kick', 'turn', 'dead', null);
-      expect(repository.deliveryTurnOutcomeSince('sess-1', SINCE, 'kick')).toBe('dead');
+      expect(repository.deliveryTurnOutcomeSince('sess-1', 'kick')).toBe('dead');
       db.prepare('DELETE FROM job_queue').run();
       seed('j1', 'kick', 'steer', 'dead', null);
-      expect(repository.deliveryTurnOutcomeSince('sess-1', SINCE, 'kick')).toBe('dead');
+      expect(repository.deliveryTurnOutcomeSince('sess-1', 'kick')).toBe('dead');
     });
 
     it('kickoff as TURN with non-success outcome → null', () => {
       seed('j1', 'kick', 'turn', 'completed', 'skipped');
-      expect(repository.deliveryTurnOutcomeSince('sess-1', SINCE, 'kick')).toBeNull();
+      expect(repository.deliveryTurnOutcomeSince('sess-1', 'kick')).toBeNull();
     });
 
     it('kickoff as consumed STEER + owning turn completed → completed', () => {
       seed('j1', 'kick', 'steer', 'completed', 'consumed');
       seed('j2', 'peer', 'turn', 'completed', 'completed');
-      expect(repository.deliveryTurnOutcomeSince('sess-1', SINCE, 'kick')).toBe('completed');
+      expect(repository.deliveryTurnOutcomeSince('sess-1', 'kick')).toBe('completed');
     });
 
     it('kickoff as consumed STEER + owning turn dead → dead', () => {
       seed('j1', 'kick', 'steer', 'completed', 'consumed');
       seed('j2', 'peer', 'turn', 'dead', null);
-      expect(repository.deliveryTurnOutcomeSince('sess-1', SINCE, 'kick')).toBe('dead');
+      expect(repository.deliveryTurnOutcomeSince('sess-1', 'kick')).toBe('dead');
     });
 
     it('kickoff as consumed STEER with no terminated owning turn → null (still live)', () => {
       seed('j1', 'kick', 'steer', 'completed', 'consumed');
       seed('j2', 'peer', 'turn', 'pending', null);
-      expect(repository.deliveryTurnOutcomeSince('sess-1', SINCE, 'kick')).toBeNull();
+      expect(repository.deliveryTurnOutcomeSince('sess-1', 'kick')).toBeNull();
     });
 
     it('ACP shape: owner turn completed BEFORE the steer row completes → matched via creation window', () => {
@@ -779,17 +779,106 @@ describe('JobQueueRepository', () => {
         startedAt: T1,
         completedAt: T3,
       });
-      expect(repository.deliveryTurnOutcomeSince('sess-1', SINCE, 'kick')).toBe('completed');
+      expect(repository.deliveryTurnOutcomeSince('sess-1', 'kick')).toBe('completed');
     });
 
     it('unrelated uuid only → null (correlation filters it out)', () => {
       seed('j1', 'other', 'turn', 'completed', 'completed');
-      expect(repository.deliveryTurnOutcomeSince('sess-1', SINCE, 'kick')).toBeNull();
+      expect(repository.deliveryTurnOutcomeSince('sess-1', 'kick')).toBeNull();
+    });
+  });
+
+  describe('hasProcessingDeliveryForSession', () => {
+    /** Seed a message_delivery row directly with an explicit status/role. */
+    const seed = (id: string, status: string, role: string, sessionId = 'sess-1') => {
+      db.prepare(
+        `INSERT INTO job_queue (id, queue, status, payload, priority, max_retries,
+           retry_count, run_at, created_at)
+         VALUES (?, 'message_delivery', ?, ?, 0, 3, 0, ?, ?)`
+      ).run(
+        id,
+        status,
+        JSON.stringify({ sessionId, messageUuid: id, role }),
+        Date.now(),
+        Date.now()
+      );
+    };
+
+    it('true only for a processing TURN (the driven delivery)', () => {
+      seed('p1', 'processing', 'turn');
+      expect(repository.hasProcessingDeliveryForSession('sess-1')).toBe(true);
     });
 
-    it('session-scoped mode (no uuid) still resolves turn rows', () => {
-      seed('j1', 'peer', 'turn', 'completed', 'completed');
-      expect(repository.deliveryTurnOutcomeSince('sess-1', SINCE)).toBe('completed');
+    it('false for pending, completed, dead, or steer rows', () => {
+      seed('q1', 'pending', 'turn');
+      seed('q2', 'completed', 'turn');
+      seed('q3', 'dead', 'turn');
+      seed('q4', 'processing', 'steer');
+      expect(repository.hasProcessingDeliveryForSession('sess-1')).toBe(false);
+    });
+
+    it('false for another session processing turn', () => {
+      seed('r1', 'processing', 'turn', 'sess-2');
+      expect(repository.hasProcessingDeliveryForSession('sess-1')).toBe(false);
+    });
+  });
+
+  describe('hasDeadTurnExcept', () => {
+    const NOW = Date.now();
+    /** Seed a settled message_delivery row with explicit role/status/uuid. */
+    const seed = (id: string, role: 'turn' | 'steer', status: string, sessionId = 'sess-1') => {
+      db.prepare(
+        `INSERT INTO job_queue (id, queue, status, payload, priority, max_retries,
+           retry_count, run_at, created_at, completed_at)
+         VALUES (?, 'message_delivery', ?, ?, 0, 3, 0, ?, ?, ?)`
+      ).run(
+        id,
+        status,
+        JSON.stringify({ sessionId, messageUuid: id, role }),
+        NOW,
+        NOW,
+        status === 'pending' ? null : NOW
+      );
+    };
+
+    it('true when a dead turn exists besides the kickoff uuid', () => {
+      seed('peer', 'turn', 'dead');
+      expect(repository.hasDeadTurnExcept('sess-1', NOW - 60_000, 'kick')).toBe(true);
+    });
+
+    it('false when the only dead turn IS the excepted kickoff uuid', () => {
+      seed('kick', 'turn', 'dead');
+      expect(repository.hasDeadTurnExcept('sess-1', NOW - 60_000, 'kick')).toBe(false);
+    });
+
+    it('false when only dead steers exist (mid-turn handoff failures)', () => {
+      seed('steer-1', 'steer', 'dead');
+      expect(repository.hasDeadTurnExcept('sess-1', NOW - 60_000, 'kick')).toBe(false);
+    });
+
+    it('false when the dead turn settled before sinceMs', () => {
+      db.prepare(
+        `INSERT INTO job_queue (id, queue, status, payload, priority, max_retries,
+           retry_count, run_at, created_at, completed_at)
+         VALUES (?, 'message_delivery', 'dead', ?, 0, 3, 0, ?, ?, ?)`
+      ).run(
+        'old-peer',
+        JSON.stringify({ sessionId: 'sess-1', messageUuid: 'old-peer', role: 'turn' }),
+        NOW - 120_000,
+        NOW - 120_000,
+        NOW - 120_000
+      );
+      expect(repository.hasDeadTurnExcept('sess-1', NOW - 60_000, 'kick')).toBe(false);
+    });
+
+    it('scoped to the session', () => {
+      seed('peer', 'turn', 'dead', 'sess-2');
+      expect(repository.hasDeadTurnExcept('sess-1', NOW - 60_000, 'kick')).toBe(false);
+    });
+
+    it('without an except uuid, any dead turn qualifies', () => {
+      seed('any', 'turn', 'dead');
+      expect(repository.hasDeadTurnExcept('sess-1', NOW - 60_000)).toBe(true);
     });
   });
 });

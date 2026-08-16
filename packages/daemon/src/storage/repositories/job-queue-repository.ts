@@ -473,76 +473,87 @@ export class JobQueueRepository {
   }
 
   /**
-   * The durable terminal outcome of the session's TURN delivery jobs settled
-   * at/after `sinceMs` (the current node execution's start): `'dead'` when any
+   * The durable terminal outcome of the delivery identified by `messageUuid`
+   * (the current activation's expected kickoff, stamped on the node execution
+   * and cleared at the start of each re-activation — the uuid itself is the
+   * activation scope, so no time bound is needed): `'dead'` when that delivery
    * dead-lettered (blocks — a lost `session.delivery_failed` publication is
-   * repaid), `'completed'` when any completed with a genuinely successful turn
+   * repaid), `'completed'` when it completed with a genuinely successful turn
    * result (`outcome === 'completed'`, mirroring `isCompletedTurnResult` —
-   * non-success completions are NOT a success settlement), else `null`.
-   * Scoped to the current activation so a reused session's prior-activation
-   * rows cannot qualify. Used by TaskAgentManager's crash-window
-   * reconciliation, which must derive its decision from the durable job row,
-   * not from arbitrary recent transcript rows. (Task #944 review.)
+   * non-success completions are NOT a success settlement), else `null`. Used
+   * by TaskAgentManager's crash-window reconciliation, which must derive its
+   * decision from the durable job row, not from arbitrary recent transcript
+   * rows. (Task #944 review.)
    *
-   * When `messageUuid` is given (the activation's expected kickoff, stamped on
-   * the node execution), only THAT delivery qualifies: a pending-message flush
-   * can run a peer handoff as a `role:'turn'` job before the kickoff is even
-   * enqueued, and accepting any turn would false-complete the node. A kickoff
-   * that lost the active-turn arbiter to such a flush settles as a steer and
-   * correctly does not qualify (the reconciliation declines — conservative).
+   * A pending-message flush can run a peer handoff as a `role:'turn'` job
+   * before the kickoff is even enqueued — inspecting only the kickoff's OWN
+   * row(s) means that turn never qualifies. A kickoff that lost the
+   * active-turn arbiter to such a flush settles as a steer, and its
+   * consumption only counts when its OWNING turn also terminated.
    */
-  deliveryTurnOutcomeSince(
-    sessionId: string,
-    sinceMs: number,
-    messageUuid?: string
-  ): 'completed' | 'dead' | null {
-    // Correlated mode (an expected kickoff uuid): inspect THAT delivery's own
-    // row(s), any role. A kickoff that lost the turn arbiter to a concurrent
-    // flush is persisted as a `steer` — its consumption only counts as success
-    // when its OWNING turn also terminated (completed → success, dead → block).
-    if (messageUuid) {
-      const own = this.db
+  deliveryTurnOutcomeSince(sessionId: string, messageUuid: string): 'completed' | 'dead' | null {
+    const own = this.db
+      .prepare(
+        `SELECT status, json_extract(payload, '$.role') AS role,
+                json_extract(result, '$.outcome') AS outcome
+           FROM job_queue
+          WHERE queue = 'message_delivery'
+            AND json_extract(payload, '$.messageUuid') = ?
+            AND completed_at IS NOT NULL`
+      )
+      .all(messageUuid) as Array<{ status: string; role: string; outcome: string | null }>;
+    if (own.some((r) => r.status === 'dead')) return 'dead';
+    if (
+      own.some((r) => r.role === 'turn' && r.status === 'completed' && r.outcome === 'completed')
+    ) {
+      return 'completed';
+    }
+    const consumedSteer = own.find(
+      (r) =>
+        r.role === 'steer' &&
+        r.status === 'completed' &&
+        (r.outcome === 'consumed' || r.outcome === 'already_consumed')
+    );
+    if (consumedSteer) {
+      // Scope to the turn that OWNED the steer: the turn ACTIVE when the
+      // steer entered delivery (its job row's creation), matched by claim
+      // window [started_at, completed_at]. Keying on creation — not the
+      // steer row's completion — covers the ACP shape where the accepted
+      // steer stays parked and completes ('already_consumed') on a LATER
+      // claim, after its owning turn already finished; a completion-keyed
+      // match would miss that owner (or pick a later unrelated turn). A
+      // LATER turn's dead row must still not fail an activation whose
+      // kickoff was consumed successfully. (Task #944 review.)
+      const steerRow = this.db
         .prepare(
-          `SELECT status, json_extract(payload, '$.role') AS role,
-                  json_extract(result, '$.outcome') AS outcome
-             FROM job_queue
+          `SELECT created_at FROM job_queue
             WHERE queue = 'message_delivery'
               AND json_extract(payload, '$.messageUuid') = ?
-              AND completed_at IS NOT NULL`
+            ORDER BY created_at ASC LIMIT 1`
         )
-        .all(messageUuid) as Array<{ status: string; role: string; outcome: string | null }>;
-      if (own.some((r) => r.status === 'dead')) return 'dead';
-      if (
-        own.some((r) => r.role === 'turn' && r.status === 'completed' && r.outcome === 'completed')
-      ) {
-        return 'completed';
-      }
-      const consumedSteer = own.find(
-        (r) =>
-          r.role === 'steer' &&
-          r.status === 'completed' &&
-          (r.outcome === 'consumed' || r.outcome === 'already_consumed')
-      );
-      if (consumedSteer) {
-        // Scope to the turn that OWNED the steer: the turn ACTIVE when the
-        // steer entered delivery (its job row's creation), matched by claim
-        // window [started_at, completed_at]. Keying on creation — not the
-        // steer row's completion — covers the ACP shape where the accepted
-        // steer stays parked and completes ('already_consumed') on a LATER
-        // claim, after its owning turn already finished; a completion-keyed
-        // match would miss that owner (or pick a later unrelated turn). A
-        // LATER turn's dead row must still not fail an activation whose
-        // kickoff was consumed successfully. (Task #944 review.)
-        const steerRow = this.db
-          .prepare(
-            `SELECT created_at FROM job_queue
-              WHERE queue = 'message_delivery'
-                AND json_extract(payload, '$.messageUuid') = ?
-              ORDER BY created_at ASC LIMIT 1`
-          )
-          .get(messageUuid) as { created_at: number } | undefined;
-        if (!steerRow) return null;
-        const ownerWindow = this.db
+        .get(messageUuid) as { created_at: number } | undefined;
+      if (!steerRow) return null;
+      const ownerWindow = this.db
+        .prepare(
+          `SELECT status, json_extract(result, '$.outcome') AS outcome
+             FROM job_queue
+            WHERE queue = 'message_delivery'
+              AND json_extract(payload, '$.sessionId') = ?
+              AND json_extract(payload, '$.role') = 'turn'
+              AND completed_at IS NOT NULL
+              AND started_at IS NOT NULL
+              AND started_at <= ?
+              AND completed_at >= ?
+            ORDER BY completed_at ASC LIMIT 1`
+        )
+        .get(sessionId, steerRow.created_at, steerRow.created_at) as
+        | { status: string; outcome: string | null }
+        | undefined;
+      // Fallback for retried owners whose LAST claim postdates the steer's
+      // creation: the earliest turn terminal at/after creation.
+      const owner =
+        ownerWindow ??
+        (this.db
           .prepare(
             `SELECT status, json_extract(result, '$.outcome') AS outcome
                FROM job_queue
@@ -550,55 +561,15 @@ export class JobQueueRepository {
                 AND json_extract(payload, '$.sessionId') = ?
                 AND json_extract(payload, '$.role') = 'turn'
                 AND completed_at IS NOT NULL
-                AND started_at IS NOT NULL
-                AND started_at <= ?
                 AND completed_at >= ?
               ORDER BY completed_at ASC LIMIT 1`
           )
-          .get(sessionId, steerRow.created_at, steerRow.created_at) as
+          .get(sessionId, steerRow.created_at) as
           | { status: string; outcome: string | null }
-          | undefined;
-        // Fallback for retried owners whose LAST claim postdates the steer's
-        // creation: the earliest turn terminal at/after creation.
-        const owner =
-          ownerWindow ??
-          (this.db
-            .prepare(
-              `SELECT status, json_extract(result, '$.outcome') AS outcome
-                 FROM job_queue
-                WHERE queue = 'message_delivery'
-                  AND json_extract(payload, '$.sessionId') = ?
-                  AND json_extract(payload, '$.role') = 'turn'
-                  AND completed_at IS NOT NULL
-                  AND completed_at >= ?
-                ORDER BY completed_at ASC LIMIT 1`
-            )
-            .get(sessionId, steerRow.created_at) as
-            | { status: string; outcome: string | null }
-            | undefined);
-        if (!owner) return null;
-        if (owner.status === 'dead') return 'dead';
-        return owner.status === 'completed' && owner.outcome === 'completed' ? 'completed' : null;
-      }
-      return null;
-    }
-    // Session-scoped mode: the terminal outcome of the session's turn rows.
-    const rows = this.db
-      .prepare(
-        `SELECT status, json_extract(result, '$.outcome') AS outcome
-           FROM job_queue
-          WHERE queue = 'message_delivery'
-            AND json_extract(payload, '$.sessionId') = ?
-            AND json_extract(payload, '$.role') = 'turn'
-            AND completed_at IS NOT NULL
-            AND completed_at >= ?`
-      )
-      .all(sessionId, sinceMs) as Array<{ status: string; outcome: string | null }>;
-    for (const row of rows) {
-      if (row.status === 'dead') return 'dead';
-    }
-    for (const row of rows) {
-      if (row.status === 'completed' && row.outcome === 'completed') return 'completed';
+          | undefined);
+      if (!owner) return null;
+      if (owner.status === 'dead') return 'dead';
+      return owner.status === 'completed' && owner.outcome === 'completed' ? 'completed' : null;
     }
     return null;
   }

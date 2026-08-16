@@ -68,6 +68,12 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
   let deadNonKickoffTurn: boolean;
   /** Stand-in: the kickoff's persisted sdk_messages send_status (null = gone). */
   let kickoffSendStatus: string | null;
+  /** Stand-in: a SUCCESS terminal result after the kickoff's consumption. */
+  let kickoffTerminalResult: boolean;
+  /** Makes the durable-outcome lookup throw N times (catch-path tests). */
+  let outcomeThrowBudget: number;
+  /** Count of durable-outcome lookups the reconcile performed. */
+  let outcomeCalls: number;
   let executionId: string;
   let completed: boolean;
   /** Mutable stand-in for the session's active (pending/processing) delivery-job set. */
@@ -133,6 +139,9 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     turnOutcome = null;
     deadNonKickoffTurn = false;
     kickoffSendStatus = null;
+    kickoffTerminalResult = false;
+    outcomeThrowBudget = 0;
+    outcomeCalls = 0;
     const config = {
       db: {
         getDatabase: () => db,
@@ -142,14 +151,22 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
             uuid === 'kickoff-uuid' && kickoffSendStatus
               ? { content: 'x', sendStatus: kickoffSendStatus }
               : null,
+          hasTerminalResultAfter: (_sid: string, uuid: string) =>
+            uuid === 'kickoff-uuid' && kickoffTerminalResult,
         }),
         getJobQueueRepo: () => ({
           activeDeliveryMessageUuids: () => activeJobs,
           hasProcessingDeliveryForSession: () => processingTurnJobs.size > 0,
           hasDeadTurnExcept: () => deadNonKickoffTurn,
           // uuid-correlated: only the stamped kickoff's outcome qualifies.
-          deliveryTurnOutcomeSince: (_sid: string, _since: number, uuid?: string) =>
-            uuid === 'kickoff-uuid' ? turnOutcome : null,
+          deliveryTurnOutcomeSince: (_sid: string, uuid: string) => {
+            outcomeCalls++;
+            if (outcomeThrowBudget > 0) {
+              outcomeThrowBudget--;
+              throw new Error('database is locked');
+            }
+            return uuid === 'kickoff-uuid' ? turnOutcome : null;
+          },
         }),
       },
       taskRepo,
@@ -487,11 +504,13 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     expect(nodeStatus()).toBe('blocked');
   });
 
-  it('an expired settlement (consumed message row, job row aged out) completes (Codex P2)', async () => {
+  it('an expired settlement (consumed row + terminal result, job row aged out) completes', async () => {
     // Daemon down past the 7-day job retention: the completed kickoff's job
-    // row is gone but its sdk_messages row survives as 'consumed' — the node
-    // must complete, not block-and-re-spawn finished work.
+    // row is gone but its sdk_messages row survives as 'consumed' WITH a
+    // success terminal result after it — the node must complete, not
+    // block-and-re-spawn finished work.
     kickoffSendStatus = 'consumed';
+    kickoffTerminalResult = true;
     turnOutcome = null; // job row gone
     await publishIdle(); // suppressed while the job was active
     activeJobs.clear();
@@ -501,14 +520,63 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     expect(nodeStatus()).not.toBe('blocked');
   });
 
+  it('a consumed kickoff with NO terminal result after blocks (crash mid-turn)', async () => {
+    // 'consumed' is stamped when the SDK ACKNOWLEDGES the prompt — before the
+    // turn runs. A daemon exit mid-turn leaves consumed + no success result;
+    // the rowless classification must not complete the node (round-17/Codex
+    // P2) — it blocks for re-spawn like any never-finished turn.
+    kickoffSendStatus = 'consumed';
+    kickoffTerminalResult = false;
+    turnOutcome = null;
+    await publishIdle();
+    activeJobs.clear();
+    processingTurnJobs.clear();
+    await new Promise<void>((resolve) => setTimeout(resolve, 60));
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('blocked');
+  });
+
+  it('a FAILED message row blocks (aged-out dead-letter), never completes', async () => {
+    // send_status 'failed' means the delivery terminalized as failed (the
+    // dead-letter settlement flipped it; the dead job row then aged out).
+    // Block for re-spawn — completing here would advance the workflow over a
+    // failed kickoff.
+    kickoffSendStatus = 'failed';
+    turnOutcome = null;
+    await publishIdle();
+    activeJobs.clear();
+    processingTurnJobs.clear();
+    await new Promise<void>((resolve) => setTimeout(resolve, 60));
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('blocked');
+  });
+
+  it('a DEFERRED kickoff declines and does not block (rate-limit cooldown)', async () => {
+    // A kickoff deferred by a rate-limit cooldown / parent-task limit is
+    // persisted 'deferred' with NO delivery job — the node is healthy but
+    // paused. The reconciliation must decline (and re-arm), never block:
+    // blocking would mark a paused node failed and later re-spawn a duplicate
+    // kickoff when the cooldown re-enqueues the real one.
+    kickoffSendStatus = 'deferred';
+    turnOutcome = null;
+    await publishIdle();
+    activeJobs.clear();
+    processingTurnJobs.clear();
+    await new Promise<void>((resolve) => setTimeout(resolve, 60));
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('in_progress');
+  });
+
   it('a LEGACY (v2-off) activation with no job row completes via the message row (Codex P2)', async () => {
     // Stamped but delivered via the legacy inline path (no job row ever);
     // crash after the legacy turn idled but before the listener. The consumed
-    // message row classifies it as delivered → complete, not lost.
+    // message row plus its terminal result classifies it as delivered →
+    // complete, not lost.
     const prev = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
     process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
     try {
       kickoffSendStatus = 'consumed';
+      kickoffTerminalResult = true;
       turnOutcome = null;
       activeJobs.clear();
       processingTurnJobs.clear();
@@ -671,6 +739,36 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     processingTurnJobs.clear(); // settle lost — durable rows carry the truth
     await new Promise<void>((resolve) => setTimeout(resolve, 60)); // re-armed shot
     expect(completed).toBe(true);
+  });
+
+  it('a THROWN reconcile shot re-arms once and recovers (transient SQLITE_BUSY)', async () => {
+    // Round-17 P2: a transient throw in the one-shot used to surrender the
+    // crash repair permanently. The catch must re-arm so the next shot
+    // completes the repair. Deferred status keeps every later shot declining
+    // (and re-arming), so >= 2 lookups proves the re-arm happened.
+    outcomeThrowBudget = 1;
+    kickoffSendStatus = 'deferred';
+    turnOutcome = null;
+    await publishIdle();
+    activeJobs.clear();
+    processingTurnJobs.clear();
+    await new Promise<void>((resolve) => setTimeout(resolve, 80));
+    expect(outcomeCalls).toBeGreaterThanOrEqual(2);
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('in_progress');
+  });
+
+  it('a PERSISTENTLY throwing reconcile gives up after its one bounded re-arm', async () => {
+    // The catch-side re-arm is bounded: two consecutive throws, then stop —
+    // a broken lookup must not spin the timer forever.
+    outcomeThrowBudget = Number.POSITIVE_INFINITY;
+    await publishIdle();
+    activeJobs.clear();
+    processingTurnJobs.clear();
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    expect(outcomeCalls).toBe(2);
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('in_progress');
   });
 
   it('a settled STEER that was the last job repays the suppressed idle (ACP shape)', async () => {
