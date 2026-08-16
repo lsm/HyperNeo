@@ -2062,6 +2062,57 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(updated.status).toBe('in_progress');
       expect(updated.taskAgentSessionId).toBeTruthy();
     });
+
+    test('persistent worktree-creation failure fails closed: task blocked with human-readable reason', async () => {
+      // #2520: TaskAgentManager.spawnWorkflowNodeAgentForExecution no longer
+      // falls back to space.workspacePath when createTaskWorktree throws — it
+      // rejects with a plain error. The runtime must retry the spawn on later
+      // ticks and, once MAX_TASK_AGENT_CRASH_RETRIES (=2) is exhausted, block
+      // the execution/run/task with the worktree failure as the reason. This
+      // mock reproduces the manager's fail-closed rejection; the manager-side
+      // no-session guarantee is pinned in
+      // task-agent-manager-worktree-fail-closed.test.ts.
+      const WORKTREE_ERROR =
+        'Task worktree creation failed for workflow task; refusing to spawn a node agent in the shared space workspace: git worktree add failed';
+      let spawnAttempts = 0;
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionAlive: () => false,
+        spawnWorkflowNodeAgentForExecution: async () => {
+          spawnAttempts++;
+          throw new Error(WORKTREE_ERROR);
+        },
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const runId = tasks[0].workflowRunId!;
+
+      // Ticks 1–2: spawn fails, execution resets to pending for a later retry.
+      await rt.executeTick();
+      await rt.executeTick();
+      let execution = nodeExecutionRepo.listByWorkflowRun(runId)[0];
+      expect(execution.status).toBe('pending');
+      expect(execution.agentSessionId).toBeNull();
+
+      // Tick 3: retry budget exhausted → execution blocked with the reason.
+      await rt.executeTick();
+      execution = nodeExecutionRepo.listByWorkflowRun(runId)[0];
+      expect(execution.status).toBe('blocked');
+      expect(execution.result).toContain('worktree');
+      expect(execution.result).toContain('3 times');
+
+      // The canonical task surfaces the same human-readable reason.
+      const task = taskRepo.getTask(tasks[0].id)!;
+      expect(task.status).toBe('blocked');
+      expect(task.result).toContain('worktree');
+      expect(task.blockReason).toBe('agent_crashed');
+
+      // One spawn attempt per tick — the worker never started anywhere.
+      expect(spawnAttempts).toBe(3);
+    });
   });
 
   // -------------------------------------------------------------------------

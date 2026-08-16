@@ -1158,8 +1158,22 @@ export class TaskAgentManager {
           workspacePath = result.path;
           this.taskWorktreePaths.set(taskId, result.path);
         } catch (err) {
+          // Fail closed (#2520): the per-task worktree is what isolates
+          // concurrent tasks from each other's branches. Falling back to the
+          // shared space checkout would let workers mutate the same branch, so
+          // the spawn fails instead. Deliberately a plain (non-permanent,
+          // non-transient) error: processRunTick's generic spawn-failure
+          // handling resets the execution to pending and retries on later
+          // ticks (the manager already retried transient git errors
+          // internally); once MAX_TASK_AGENT_CRASH_RETRIES is exhausted the
+          // execution, run, and canonical task are blocked with this message
+          // as the human-readable reason.
+          const detail = err instanceof Error ? err.message : String(err);
           log.warn(
-            `TaskAgentManager: failed to create worktree for workflow task ${taskId}, falling back to space workspace: ${err instanceof Error ? err.message : String(err)}`
+            `TaskAgentManager: failed to create worktree for workflow task ${taskId}; failing the spawn instead of falling back to the space workspace: ${detail}`
+          );
+          throw new Error(
+            `Task worktree creation failed for workflow task ${taskId}; refusing to spawn a node agent in the shared space workspace: ${detail}`
           );
         }
       }
