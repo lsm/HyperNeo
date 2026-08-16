@@ -3038,6 +3038,148 @@ describe('useInputDraft', () => {
       expect(result.current.content).toBe('');
     });
 
+    it('drops a switch-queued backup flush when the restored composer is cleared', async () => {
+      // A switch away under a live landing queues the backup claim; the user
+      // returns and sends the restored text. The queued claim's content is
+      // pre-clear text the user just sent — the retry pass's idle-adoption
+      // must not merge it back into the daemon and adopt it into the
+      // composer (resurrecting it) after the explicit clear.
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') return { session: { metadata: {} } };
+        if (method === 'session.mergeVoiceDraftBackup') {
+          return { merged: true, value: 'user edits' };
+        }
+        return { success: true };
+      });
+      connectionState.value = 'connected';
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result, rerender } = renderHook(({ sessionId }) => useInputDraft(sessionId), {
+        initialProps: { sessionId: 'session-1' },
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // A deferred landing suppresses saves into a backup, then the user
+      // switches away (the claim queues for the departed session) and
+      // returns before the retry fires.
+      markVoiceTranscriptLanded('session-1', 'voice');
+      result.current.setContent('user edits');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(getDraftBackup('session-1')).toBe('user edits');
+      rerender({ sessionId: 'session-2' });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      await act(async () => {
+        rerender({ sessionId: 'session-1' });
+        // Bounded: let the return's restore settle WITHOUT firing the
+        // queued claim's 5s retry — the clear must beat it.
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      // The user sends the restored text: the queued claim must be dropped,
+      // not replayed over the cleared composer.
+      result.current.clear();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20_000);
+      });
+      const merges = mockHub.request.mock.calls.filter(
+        ([m]) => m === 'session.mergeVoiceDraftBackup'
+      );
+      expect(merges.some(([, data]) => data?.content === 'user edits')).toBe(false);
+      expect(result.current.content).toBe('');
+    });
+
+    it('keeps a newer active merge claim binding when an older merge acks late', async () => {
+      // Two active-content merges overlap with DIFFERENT content: the first
+      // hangs in flight, a newer claim (fresh content, fresh claim id)
+      // replaces the binding, and the first's late success must not delete
+      // the NEWER binding — the newer merge's lost-ack retry reuses its
+      // claim id only while the binding survives, and a fresh id would let
+      // the daemon rewrite the draft through the plain branch instead of
+      // recognizing its committed replay.
+      let firstMerge: ((v: { merged?: boolean; stale?: boolean; value?: string }) => void) | null =
+        null;
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') return { session: { metadata: {} } };
+        if (method === 'session.mergeVoiceDraftBackup') {
+          if (!firstMerge) {
+            return new Promise((resolve) => {
+              firstMerge = resolve;
+            });
+          }
+          return { merged: false, stale: true };
+        }
+        return { success: true };
+      });
+      connectionState.value = 'connected';
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result, rerender } = renderHook(({ sessionId }) => useInputDraft(sessionId), {
+        initialProps: { sessionId: 'session-1' },
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      markVoiceTranscriptLanded('session-1', 'voice');
+      result.current.setContent('first edits');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // Switch away (claim queues) and back: the retry fires the FIRST
+      // active merge ('newer edits') and hangs in flight.
+      rerender({ sessionId: 'session-2' });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      await act(async () => {
+        rerender({ sessionId: 'session-1' });
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      act(() => {
+        result.current.setContent('newer edits');
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(7_000);
+      });
+      expect(firstMerge).not.toBeNull(); // the first active merge is in flight
+      const firstId = mockHub.request.mock.calls
+        .filter(([m]) => m === 'session.mergeVoiceDraftBackup')
+        .at(-1)?.[1]?.claimId;
+      // A SECOND switch away and back queues a newer claim; the retry issues
+      // a second active merge with DIFFERENT content (a fresh claim id) and
+      // requeues it under that id when the daemon declines it stale.
+      rerender({ sessionId: 'session-2' });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      await act(async () => {
+        rerender({ sessionId: 'session-1' });
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      act(() => {
+        result.current.setContent('final edits');
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(40_000);
+      });
+      const secondId = mockHub.request.mock.calls
+        .filter(([m]) => m === 'session.mergeVoiceDraftBackup')
+        .at(-1)?.[1]?.claimId;
+      expect(secondId).not.toBe(firstId); // a different claim superseded
+      // The first merge's late success acks; the retry's requeue must still
+      // reuse the NEWER claim id (the binding survived the late ack).
+      await act(async () => {
+        firstMerge?.({ merged: true, value: 'newer edits merged' });
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      const requeuedId = mockHub.request.mock.calls
+        .filter(([m]) => m === 'session.mergeVoiceDraftBackup')
+        .at(-1)?.[1]?.claimId;
+      expect(requeuedId).toBe(secondId);
+    });
     it('queues refused-fold text as an in-memory claim when the user switches away', async () => {
       // localStorage refused the backup and the daemon refused the fold (too
       // long to carry the transcripts): the composer was the only copy. The

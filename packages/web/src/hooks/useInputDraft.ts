@@ -863,6 +863,12 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     const justCleared =
       prevReplayContentRef.current.sessionId === sessionId &&
       prevReplayContentRef.current.content.trim() !== '';
+    if (justCleared) {
+      // The composer emptied over its OWN previous text — an explicit
+      // send/clear, including under a live landing where the save effect's
+      // empty branch is suppressed and this chain owns the clear.
+      dropQueuedBackupFlush(sessionId);
+    }
     // An owed clear overrides the non-empty deferral: the content is the
     // SERVER's merged draft (applied by the failed attempt's own get), not
     // user typing — deferring here would leave text the user already sent
@@ -1163,6 +1169,23 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       }
     >
   >(new Map());
+  // An explicit clear invalidates any QUEUED backup flush for the session:
+  // its content is pre-clear text the user just sent or deleted, and the
+  // retry pass's idle-adoption would merge it back into the daemon and adopt
+  // it into the composer — resurrecting it. The durable claim retires too,
+  // so no restore path can bring the pre-clear text back either.
+  const dropQueuedBackupFlush = useCallback((sid: string): void => {
+    const queuedClaim = pendingBackupFlushRef.current.get(sid);
+    if (!queuedClaim) return;
+    pendingBackupFlushRef.current.delete(sid);
+    if (queuedClaim.key) {
+      retireDraftBackupClaim({
+        key: queuedClaim.key,
+        generation: queuedClaim.generation,
+        ts: queuedClaim.ts,
+      });
+    }
+  }, []);
   // Retry retained backup flushes once the connection is restored. A flush
   // whose session is active again is ADOPTED into an idle composer (its edits
   // are newer than the stale server draft; normal saves then persist them) —
@@ -1353,7 +1376,17 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                   return;
                 }
                 if (result.merged) {
-                  activeMergeClaimsRef.current.delete(flushSessionId);
+                  // Delete the binding ONLY when it still names THIS merge: a
+                  // newer active merge (e.g. a switch away and back queued a
+                  // fresher claim) replaced it meanwhile, and deleting that
+                  // binding would let the newer merge's lost-ack retry mint a
+                  // fresh claim id the daemon cannot recognize as its
+                  // committed replay — rewriting the draft through the plain
+                  // branch and discarding merged voice text.
+                  const boundClaim = activeMergeClaimsRef.current.get(flushSessionId);
+                  if (!boundClaim || boundClaim.claimId === activeClaimId) {
+                    activeMergeClaimsRef.current.delete(flushSessionId);
+                  }
                   // Retire through the claim path so the SUPERSEDE boundary
                   // is recorded: other tabs' older same-generation backups
                   // must become unrestorable over this committed draft.
@@ -1621,6 +1654,13 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         // daemon's expectedDraftVersion check folds any merged transcripts
         // into the write, so the fallback is transcript-safe.
       } else {
+        // The composer emptied under a live landing — an explicit send/clear
+        // whose reconciliation the replay effect's chain owns. Any queued
+        // backup flush holds pre-clear text the user just sent or deleted;
+        // drop it (this effect reads the content signal FIRST, so unlike the
+        // replay effect it cannot miss the clear through a lost
+        // subscription) or the retry's idle-adoption would resurrect it.
+        dropQueuedBackupFlush(sessionId);
         return;
       }
     }
@@ -1635,6 +1675,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     if (trimmedContent === '') {
       if (initialLoadSettledRef.current !== sessionId) return;
       lastSeenContentRef.current = { sessionId, content: '', cleared: true };
+      dropQueuedBackupFlush(sessionId);
       const hub = connectionManager.getHubIfConnected();
       if (hub) {
         // Bind any deferred retirement to the entry present when THIS request
@@ -1777,9 +1818,15 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     [contentSignal]
   );
 
-  // Stable clear function
+  // Stable clear function. The user's EXPLICIT clear invalidates any queued
+  // backup flush for this session (its content is pre-clear text the user
+  // just sent or deleted — the retry's idle-adoption would resurrect it).
+  // Done here, not in a signal effect: effect scheduling around session
+  // switches can skip or re-order runs (a stale prev-session branch returns
+  // early), while this callback fires exactly when the user clears.
   const clear = useCallback(() => {
     contentSignal.value = '';
+    dropQueuedBackupFlush(currentSessionIdRef.current);
   }, [contentSignal]);
 
   // Return the current signal value as content
