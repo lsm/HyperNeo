@@ -843,6 +843,54 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       expect(taskRepo.getTask(task.id)?.result).toBeNull();
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
     });
+
+    test('does not flip the run to done when a recovery reopens the task to open', async () => {
+      // recoverWorkflowBackedTask(..., 'open') leaves the run `in_progress`
+      // and the task `open` with reportedStatus cleared. `open` carries no
+      // completion signal, so the pre-transition recheck must refuse the
+      // flip — an open task attached to a done run would never be driven
+      // again by subsequent ticks.
+      const rt = makeRuntimeWithTam();
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: 'node-open-recovery', name: 'Coding', agentId: AGENT_A },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Open recovery run');
+      const task = tasks[0];
+      taskRepo.updateTask(task.id, { status: 'done', result: 'external validation outcome' });
+      seedNodeExec(db, run.id, 'node-open-recovery', 'agent', 'in_progress');
+
+      const rtInternal = rt as unknown as {
+        completionDetector: { isComplete: (query: unknown) => boolean };
+      };
+      const originalIsComplete = rtInternal.completionDetector.isComplete.bind(
+        rtInternal.completionDetector
+      );
+      let recovered = false;
+      rtInternal.completionDetector.isComplete = (query: unknown) => {
+        const result = originalIsComplete(query);
+        if (result && !recovered) {
+          recovered = true;
+          // Recovery to OPEN: run untouched (still in_progress), task reset.
+          taskRepo.updateTask(task.id, {
+            status: 'open',
+            reportedStatus: null,
+            result: null,
+            completedAt: null,
+          });
+        }
+        return result;
+      };
+
+      try {
+        await rt.executeTick();
+      } finally {
+        rtInternal.completionDetector.isComplete = originalIsComplete;
+      }
+
+      expect(recovered).toBe(true);
+      expect(taskRepo.getTask(task.id)?.status).toBe('open');
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+    });
   });
 
   // -------------------------------------------------------------------------

@@ -8235,6 +8235,10 @@ export class SpaceRuntime {
         // task's pending execution never spawns, and the periodic
         // reconciler later force-dispatches the task back to done —
         // silently reverting the reopen. Re-derive the completion state
+        // with the SAME completion signal the post-transition check uses
+        // (done/cancelled, or a non-null reportedStatus): a recovery to
+        // `open` clears reportedStatus without touching the run, and an
+        // `open` task attached to a done run would never be driven again
         // from the CURRENT rows and let the next tick evaluate the
         // recovered state instead.
         const preTransitionTask = this.config.taskRepo.getTask(canonicalTask.id);
@@ -8242,7 +8246,8 @@ export class SpaceRuntime {
         const preTransitionHolds =
           (preTransitionRun == null || preTransitionRun.status === 'in_progress') &&
           (preTransitionTask == null ||
-            preTransitionTask.status !== 'in_progress' ||
+            preTransitionTask.status === 'done' ||
+            preTransitionTask.status === 'cancelled' ||
             preTransitionTask.reportedStatus !== null);
         if (!preTransitionHolds) {
           return;

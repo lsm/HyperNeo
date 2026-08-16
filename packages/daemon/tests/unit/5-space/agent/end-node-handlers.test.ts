@@ -2987,4 +2987,75 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
       setStatusSpy.mockRestore();
     }
   });
+
+  test('the sweep spares executions activated after the completion write began', async () => {
+    // ChannelRouter.reopenRun flips the RUN back to in_progress while
+    // leaving its completed task `done`, then activates a replacement
+    // worker — all able to land during setTaskStatus' awaited dependency
+    // cascade. The task-only sweep gate cannot see it (task still done,
+    // run association unchanged), so the sweep discriminates by activation
+    // time: executions started AFTER the terminal write began are
+    // reopened-run work and must survive; pre-existing ones are quiesced.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    // Pre-existing peer (startedAt well before the completion write).
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-sweep',
+      agentName: 'OldPeer',
+      agentId: ctx.agentId,
+      status: 'in_progress',
+      agentSessionId: 'old-peer-session',
+    });
+    ctx.db
+      .prepare('UPDATE node_executions SET started_at = ? WHERE agent_session_id = ?')
+      .run(Date.now() - 60_000, 'old-peer-session');
+    const interrupted: string[] = [];
+    const originalSetStatus = ctx.taskManager.setTaskStatus.bind(ctx.taskManager);
+    const setStatusSpy = spyOn(ctx.taskManager, 'setTaskStatus').mockImplementation(
+      async (...callArgs: Parameters<typeof originalSetStatus>) => {
+        const result = await originalSetStatus(...callArgs);
+        // reopenRun shape inside the cascade: task stays done, run stays
+        // in_progress, and a replacement worker activates NOW.
+        ctx.nodeExecutionRepo.create({
+          workflowRunId: task.workflowRunId!,
+          workflowNodeId: 'node-sweep',
+          agentName: 'Replacement',
+          agentId: ctx.agentId,
+          status: 'in_progress',
+          agentSessionId: 'replacement-worker-session',
+        });
+        // Activation stamps startedAt (as spawnWorkflowNodeAgentForExecution
+        // does) — now, i.e. AFTER the completion write began.
+        ctx.db
+          .prepare('UPDATE node_executions SET started_at = ? WHERE agent_session_id = ?')
+          .run(Date.now(), 'replacement-worker-session');
+        return result;
+      }
+    );
+
+    try {
+      const result = await makeValidationTool({
+        interruptBySessionId: async (sessionId: string) => {
+          interrupted.push(sessionId);
+        },
+      }).complete_validation_task({
+        task_id: task.id,
+        validation_outcome: 'completed; replacement must survive',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.success).toBe(true);
+    } finally {
+      setStatusSpy.mockRestore();
+    }
+
+    const executions = ctx.nodeExecutionRepo.listByWorkflowRun(task.workflowRunId!);
+    // The pre-existing peer is quiesced...
+    expect(executions.find((e) => e.agentSessionId === 'old-peer-session')?.status).toBe('idle');
+    expect(interrupted).toEqual(['old-peer-session']);
+    // ...the freshly activated replacement survives untouched.
+    expect(executions.find((e) => e.agentSessionId === 'replacement-worker-session')?.status).toBe(
+      'in_progress'
+    );
+  });
 });
