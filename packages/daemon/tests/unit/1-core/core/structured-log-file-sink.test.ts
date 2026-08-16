@@ -244,6 +244,25 @@ describe('StructuredLogFileSink', () => {
     );
   });
 
+  it('redacts complete unquoted equals-form secrets', () => {
+    // An unquoted secret with spaces (or PEM material) must be consumed through
+    // the field boundary, not the first whitespace. (Codex P1, PR #2499.)
+    const redacted = redactStructuredLogEvent(event('PASSWORD=my secret phrase'));
+    expect(redacted.message).toBe('PASSWORD=[REDACTED]');
+  });
+
+  it('redacts object-form header entries', () => {
+    // `headersToAcp` represents headers as `{ name, value }`; the credential
+    // lives on `value` with no sensitive key, so the recursive walk persists it.
+    // (Codex P1, PR #2499.)
+    const redacted = redactStructuredLogEvent(
+      event('msg', { headers: [{ name: 'Authorization', value: 'Basic dXNlcjpwYXNz' }] })
+    );
+    expect(redacted.metadata).toEqual({
+      headers: [{ name: 'Authorization', value: '[REDACTED]' }],
+    });
+  });
+
   it('redacts unquoted colon-form values for every sensitive key', () => {
     // `token: abc` (no quotes, no `=`) previously passed through every rule —
     // only authorization and cookies had colon-form handling. Like the

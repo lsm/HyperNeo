@@ -171,8 +171,16 @@ function redactLogValue(value: unknown): unknown {
   }
   if (!value || typeof value !== 'object') return value;
 
+  const object = value as Record<string, unknown>;
+  // Object-form header entries (`{ name, value }` from headersToAcp) carry the
+  // credential in `value` with no sensitive key on that field itself; redact it
+  // when `name` is a sensitive header name. (Codex P1, PR #2499.)
+  if (typeof object.name === 'string' && SENSITIVE_KEY.test(object.name) && 'value' in object) {
+    return { ...object, value: '[REDACTED]' };
+  }
+
   const result: Record<string, unknown> = {};
-  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+  for (const [key, nested] of Object.entries(object)) {
     result[key] = SENSITIVE_KEY.test(key) ? '[REDACTED]' : redactLogValue(nested);
   }
   return result;
@@ -242,8 +250,12 @@ function redactString(value: string): string {
       // through end of line, mirroring the colon-form rules. (Codex P1, PR #2499.)
       .replace(/(authorization\s*=\s*)(?![\s"'])[^\r\n]+/gi, '$1[REDACTED]')
       .replace(/((?:cookie|set-cookie)\s*=\s*)(?![\s"'])[^\r\n]+/gi, '$1[REDACTED]')
+      // Space-bearing secret values (passphrases, PEM material) run through end
+      // of line; the single-token keys below keep a tighter boundary so a value
+      // followed by a JSON object is not over-consumed. (Codex P1, PR #2499.)
+      .replace(/((?:password|secret|private[-_]?key)\s*=\s*)(?![\s"'])[^\r\n]+/gi, '$1[REDACTED]')
       .replace(
-        /((?:[\w.-]{0,64}(?:api[-_]?key|private[-_]?key|token|secret|password|credential|signature)[\w.-]{0,64})\s*=\s*)([^\s&;,}]+)/gi,
+        /((?:[\w.-]{0,64}(?:api[-_]?key|token|credential|signature)[\w.-]{0,64})\s*=\s*)([^\s&;,}]+)/gi,
         '$1[REDACTED]'
       )
   );
