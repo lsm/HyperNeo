@@ -183,15 +183,16 @@ function redactString(value: string): string {
       .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
       // URL userinfo (`scheme://user:pass@host`) can carry Basic credentials
       // without any `authorization`/`token`/`password` label; redact the
-      // userinfo component. (Codex P1, PR #2499.)
-      .replace(/(\/\/)[^/\s@]+@/gi, '$1[REDACTED]@')
+      // userinfo component. Match through the FINAL `@` (the host delimiter) so
+      // a password containing an unescaped `@` is fully consumed. (Codex P1.)
+      .replace(/(\/\/)[^/\s]+@/gi, '$1[REDACTED]@')
       // Header tuple form (Array.from(headers.entries())) serializes a header as
       // `["Name","value"]` — the value carries no adjacent `Name:` label, so no
       // other rule catches it. Redact the second element when the first is a
       // sensitive header name. The value matcher is escape-aware so a quoted
       // Digest/AWS value is consumed through its real closing quote. (Codex P1.)
       .replace(
-        /(["'](?:authorization|cookie|set-cookie|api[-_]?key|token|secret|password)["']\s*,\s*)(["'])((?:\\.|(?!\2).)*)\2/gi,
+        /(["'](?:authorization|cookie|set-cookie|api[-_]?key|token|secret|password)["']\s*,\s*)(["'])((?:\\[\s\S]|(?!\2)[\s\S])*)\2/gi,
         '$1$2[REDACTED]$2'
       )
       // Authorization values legitimately contain structural commas (Digest
@@ -216,7 +217,7 @@ function redactString(value: string): string {
         '$1[REDACTED]'
       )
       .replace(
-        /(["']?(?:[\w.-]{0,64}(?:api[-_]?key|token|secret|password|authorization|cookie|set-cookie)[\w.-]{0,64})["']?\s*[:=]\s*)(["'])((?:\\.|(?!\2).)*)\2/gi,
+        /(["']?(?:[\w.-]{0,64}(?:api[-_]?key|token|secret|password|authorization|cookie|set-cookie)[\w.-]{0,64})["']?\s*[:=]\s*)(["'])((?:\\[\s\S]|(?!\2)[\s\S])*)\2/gi,
         '$1$2[REDACTED]$2'
       )
       // Equals-form Authorization/Cookie values legitimately contain spaces

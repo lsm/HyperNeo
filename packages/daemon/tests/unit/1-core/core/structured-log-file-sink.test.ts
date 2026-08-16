@@ -123,6 +123,20 @@ describe('StructuredLogFileSink', () => {
     expect(redacted.message).toBe('installing from https://[REDACTED]@host/repo.git');
   });
 
+  it('redacts URL userinfo through the final @ delimiter', () => {
+    // A password containing an unescaped `@` must be consumed through the host
+    // delimiter, not the first `@`. (Codex P1, PR #2499.)
+    const redacted = redactStructuredLogEvent(event('https://user:p@ass@host/repo.git'));
+    expect(redacted.message).toBe('https://[REDACTED]@host/repo.git');
+  });
+
+  it('redacts multiline quoted secret values', () => {
+    // `.` does not consume newlines, so a quoted value spanning a line break was
+    // previously left verbatim. (Codex P1, PR #2499.)
+    const redacted = redactStructuredLogEvent(event('token: "line1\nline2"'));
+    expect(redacted.message).toBe('token: "[REDACTED]"');
+  });
+
   it('redacts compound secret keys in serialized objects', () => {
     // A serialized env/config object carries compound credential names
     // (`AWS_SECRET_ACCESS_KEY`); the key matcher must recognize the sensitive
