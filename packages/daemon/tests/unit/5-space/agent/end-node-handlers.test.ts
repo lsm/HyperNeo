@@ -2208,11 +2208,53 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     expect(denied.error).toContain('own task');
     expect(ctx.taskRepo.getTask(taskB)?.status).toBe('in_progress');
 
-    // Same worker completing ITS OWN task is fine.
-    const allowed = JSON.parse(
+    // Same worker completing ITS OWN task — but a task-BOUND worker facing a
+    // run-LESS (standalone) task is a stale binding on this workflow-worker
+    // surface: rejected by the detached-worker guard.
+    const detached = JSON.parse(
       (
         await makeValidationTool({ callerSessionId: 'worker-session-a' }).complete_validation_task({
           task_id: taskA,
+          validation_outcome: 'should be refused',
+        })
+      ).content[0].text
+    );
+    expect(detached.success).toBe(false);
+    expect(detached.error).toContain('detached from its workflow run');
+    expect(ctx.taskRepo.getTask(taskA)?.status).toBe('in_progress');
+
+    // The own-task success shape is workflow-backed: the same worker with an
+    // execution in the task's run completes it.
+    const runTask = createWorkflowTask(5, { status: 'in_progress' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: runTask.workflowRunId!,
+      workflowNodeId: 'node-own',
+      agentName: 'Worker',
+      agentId: ctx.agentId,
+      status: 'in_progress',
+      agentSessionId: 'worker-session-run',
+    });
+    ctx.db
+      .prepare(
+        `INSERT INTO sessions (
+            id, title, workspace_path, created_at, last_active_at, status, config, metadata,
+            is_worktree, git_branch, processing_state, type, session_context
+          ) VALUES (?, ?, '/tmp/ws', ?, ?, 'active', '{}', '{}', 0, NULL, ?, 'worker', ?)`
+      )
+      .run(
+        'worker-session-run',
+        'Run worker',
+        new Date(0).toISOString(),
+        new Date().toISOString(),
+        JSON.stringify({ status: 'idle' }),
+        JSON.stringify({ spaceId: ctx.spaceId, taskId: runTask.id })
+      );
+    const allowed = JSON.parse(
+      (
+        await makeValidationTool({
+          callerSessionId: 'worker-session-run',
+        }).complete_validation_task({
+          task_id: runTask.id,
           validation_outcome: 'own task validated',
         })
       ).content[0].text
@@ -2319,6 +2361,61 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     expect(malformed.error).toContain('task binding cannot be resolved');
     // The task was never touched by any of the three attempts.
     expect(ctx.taskRepo.getTask(task)?.status).toBe('in_progress');
+  });
+
+  test('rejects a detached workflow worker whose task lost its run', async () => {
+    // spaceTask.update can clear workflowRunId on an in_progress workflow
+    // task while the old node session keeps its session_context.taskId
+    // binding. Completing the detached task would skip every run guard
+    // (PR, lifecycle, canonical) while the OLD run and its executions
+    // linger in_progress with no attached task left to reconcile them —
+    // the surface is workflow-worker-only, so a bound caller facing a
+    // run-less task is a stale binding, not a standalone caller.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-detached',
+      agentName: 'Worker',
+      agentId: ctx.agentId,
+      status: 'in_progress',
+      agentSessionId: 'detached-worker-session',
+    });
+    const runId = task.workflowRunId!;
+    ctx.db
+      .prepare(
+        `INSERT INTO sessions (
+            id, title, workspace_path, created_at, last_active_at, status, config, metadata,
+            is_worktree, git_branch, processing_state, type, session_context
+          ) VALUES (?, ?, '/tmp/ws', ?, ?, 'active', '{}', '{}', 0, NULL, ?, 'worker', ?)`
+      )
+      .run(
+        'detached-worker-session',
+        'Detached worker',
+        new Date(0).toISOString(),
+        new Date().toISOString(),
+        JSON.stringify({ status: 'idle' }),
+        JSON.stringify({ spaceId: ctx.spaceId, taskId: task.id })
+      );
+    // The task is detached from its run between the spawn and this call.
+    ctx.taskRepo.updateTask(task.id, { workflowRunId: null });
+
+    const result = await makeValidationTool({
+      callerSessionId: 'detached-worker-session',
+    }).complete_validation_task({
+      task_id: task.id,
+      validation_outcome: 'should be refused',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('detached from its workflow run');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
+    // The orphaned run's workers are untouched — nothing swept them either.
+    const orphanExec = ctx.nodeExecutionRepo
+      .listByWorkflowRun(runId)
+      .find((e) => e.agentSessionId === 'detached-worker-session');
+    expect(orphanExec?.status).toBe('in_progress');
   });
 
   test('rejects when the run PR state cannot be checked (indeterminate read)', async () => {

@@ -712,10 +712,26 @@ export function createCompleteValidationTaskHandler(
         });
       }
 
+      // Detached-worker guard: every caller on this node-agent-exclusive
+      // surface is a workflow node session, so a task-BOUND caller facing a
+      // task with NO workflow run is a stale binding — `spaceTask.update`
+      // can clear `workflowRunId` while the old session keeps its
+      // session_context.taskId. Completing the detached task would skip
+      // every run guard (PR, lifecycle, canonical) while the old run and
+      // its executions linger in_progress with no attached task left to
+      // reconcile them. Callers without a session id (unit tests) keep the
+      // standalone shape.
+      if (callerSessionId && !task.workflowRunId) {
+        return jsonResult({
+          success: false,
+          error: `Task ${args.task_id} is detached from its workflow run; this worker session's completion authority ended with it. Reconcile the task's run association or escalate to the coordinator.`,
+        });
+      }
+
       // No-PR guard: a workflow-backed task whose run has a primary link (PR) is
       // PR-bound and must close through the normal approve/merge path. A task
-      // with no workflow run (standalone) is no-PR by definition and eligible —
-      // this is the common Forge self_nag/review shape.
+      // with no workflow run (standalone) is no-PR by definition and eligible
+      // for unbound callers — this is the common Forge self_nag/review shape.
       if (task.workflowRunId) {
         const prUrl = resolvePrimaryLinkUrl(task.workflowRunId);
         // Fail closed on an indeterminate read: the strict resolver returns

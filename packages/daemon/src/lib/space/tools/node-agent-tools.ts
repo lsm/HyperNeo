@@ -1609,7 +1609,9 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
               '(Forge review/automation, diagnostics, already-complete work). Captures the validation outcome as the task ' +
               'result and transitions review/in_progress → done WITHOUT requiring a pr_url. Autonomy-gated to the ' +
               "workflow's completionAutonomyLevel; rejects tasks whose run already has a PR (use the normal approve/merge " +
-              'path for those). Worker sessions may only complete their own task.',
+              'path for those). Worker sessions may only complete their own task. TERMINAL final action: do NOT send ' +
+              'messages or call tools after a successful completion — a later peer send_message can reopen the run this ' +
+              'tool just completed and spawn replacement workers.',
             CompleteValidationTaskSchema.shape,
             (args) => wrappedCompleteValidation!(args)
           ),
