@@ -683,6 +683,171 @@ describe('space-workflow-run-handlers', () => {
   // Note: the spaceWorkflowRun.listGateData / approveGate / writeGateData RPCs
   // and the GateDataRepository were removed with the legacy gate subsystem.
 
+  // ─── spaceWorkflowRun.approveHook/retryHook — topicFrom refresh trigger ────
+
+  describe('spaceWorkflowRun.approveHook/retryHook — topicFrom refresh', () => {
+    interface HookScenario {
+      baseLocalState: Record<string, unknown>;
+      // What the repo's deepMerge produces for THIS write (the committed state).
+      mergedLocalState: Record<string, unknown>;
+    }
+
+    const runScenario = async (
+      method: 'spaceWorkflowRun.approveHook' | 'spaceWorkflowRun.retryHook',
+      scenario: HookScenario,
+      params: Record<string, unknown>
+    ): Promise<{ invalidate: number; materialize: number; replay: number }> => {
+      let existingVersion = 3;
+      const hookStateRepo = {
+        get: mock(() => ({
+          runId: 'run-1',
+          hookId: 'hook-1',
+          version: existingVersion,
+          localState: scenario.baseLocalState,
+          voteMaps: {},
+        })),
+        update: mock(() => {
+          existingVersion += 1;
+          return {
+            runId: 'run-1',
+            hookId: 'hook-1',
+            version: existingVersion,
+            localState: scenario.mergedLocalState,
+            voteMaps: {},
+          };
+        }),
+      } as unknown as WorkflowHookStateRepository;
+
+      const counters = { invalidate: 0, materialize: 0, replay: 0 };
+      const instrumentedService = {
+        createOrGetRuntime: mock(async () => runtime),
+        invalidatePrimaryLinkForRun: mock(() => {
+          counters.invalidate += 1;
+        }),
+        materializeRunTopicFromInterests: mock(() => {
+          counters.materialize += 1;
+          return false;
+        }),
+        replayRetainedEventsForMaterialization: mock(() => {
+          counters.replay += 1;
+        }),
+      } as unknown as SpaceRuntimeService;
+
+      const mh = createMockMessageHub();
+      const bus = createMockInternalEventBus();
+      setupSpaceWorkflowRunHandlers(
+        mh.hub,
+        createMockSpaceManager(mockSpace),
+        createMockWorkflowManager([mockWorkflow], mockWorkflow),
+        createMockRunRepo(mockRun),
+        instrumentedService,
+        mock(() => taskManager),
+        bus,
+        createMockSpaceTaskRepo([mockTask]),
+        createMockSpaceWorktreeManager(null),
+        createMockArtifactRepo(),
+        createMockArtifactCacheRepo(),
+        createMockJobQueue(),
+        hookStateRepo
+      );
+
+      await mh.handlers.get(method)!(params);
+      return counters;
+    };
+
+    it('does NOT refresh topicFrom when an approve leaves the stale pr_url untouched (R22-1)', async () => {
+      // The hook carries a stale PR-A pr_url; a NEWER artifact made PR-B
+      // primary. Approving changes only humanApproved fields, but the write
+      // bumps updated_at — an invalidate would re-rank the freshly stamped
+      // PR-A hook above PR-B and rematerialize the subscription to the
+      // superseded PR. The refresh must only fire on link-field changes.
+      const counters = await runScenario(
+        'spaceWorkflowRun.approveHook',
+        {
+          baseLocalState: { pr_url: 'https://github.com/lsm/HyperNeo/pull/111' },
+          mergedLocalState: {
+            pr_url: 'https://github.com/lsm/HyperNeo/pull/111',
+            humanApproved: true,
+            humanApprovedAt: NOW,
+          },
+        },
+        { runId: 'run-1', hookId: 'hook-1', approved: true }
+      );
+      expect(counters.invalidate).toBe(0);
+      expect(counters.materialize).toBe(0);
+      expect(counters.replay).toBe(0);
+    });
+
+    it('refreshes topicFrom when the write changes the pr_url value', async () => {
+      const counters = await runScenario(
+        'spaceWorkflowRun.approveHook',
+        {
+          baseLocalState: { pr_url: 'https://github.com/lsm/HyperNeo/pull/111' },
+          mergedLocalState: {
+            pr_url: 'https://github.com/lsm/HyperNeo/pull/222',
+            humanApproved: true,
+            humanApprovedAt: NOW,
+          },
+        },
+        { runId: 'run-1', hookId: 'hook-1', approved: true }
+      );
+      expect(counters.invalidate).toBe(1);
+      expect(counters.materialize).toBe(1);
+    });
+
+    it('refreshes topicFrom when the write clears the pr_url', async () => {
+      const counters = await runScenario(
+        'spaceWorkflowRun.approveHook',
+        {
+          baseLocalState: { pr_url: 'https://github.com/lsm/HyperNeo/pull/111' },
+          mergedLocalState: { pr_url: '', humanApproved: true },
+        },
+        { runId: 'run-1', hookId: 'hook-1', approved: true }
+      );
+      expect(counters.invalidate).toBe(1);
+      expect(counters.materialize).toBe(1);
+    });
+
+    it('does NOT refresh topicFrom on a retryHook that only clears the queued action (R22-1)', async () => {
+      const counters = await runScenario(
+        'spaceWorkflowRun.retryHook',
+        {
+          baseLocalState: {
+            pr_url: 'https://github.com/lsm/HyperNeo/pull/111',
+            __queued_retryable_action: { actionKey: 'send_message:xyz' },
+          },
+          mergedLocalState: {
+            pr_url: 'https://github.com/lsm/HyperNeo/pull/111',
+            __queued_retryable_action: null,
+          },
+        },
+        { runId: 'run-1', hookId: 'hook-1' }
+      );
+      expect(counters.invalidate).toBe(0);
+      expect(counters.materialize).toBe(0);
+      expect(counters.replay).toBe(0);
+    });
+
+    it('refreshes topicFrom when a retryHook coincides with a pr_url change', async () => {
+      const counters = await runScenario(
+        'spaceWorkflowRun.retryHook',
+        {
+          baseLocalState: {
+            pr_url: 'https://github.com/lsm/HyperNeo/pull/111',
+            __queued_retryable_action: { actionKey: 'send_message:xyz' },
+          },
+          mergedLocalState: {
+            pr_url: 'https://github.com/lsm/HyperNeo/pull/333',
+            __queued_retryable_action: null,
+          },
+        },
+        { runId: 'run-1', hookId: 'hook-1' }
+      );
+      expect(counters.invalidate).toBe(1);
+      expect(counters.materialize).toBe(1);
+    });
+  });
+
   // ─── spaceWorkflowRun.getGateArtifacts — worktree path resolution ─────────
 
   describe('spaceWorkflowRun.getGateArtifacts — worktree resolution', () => {

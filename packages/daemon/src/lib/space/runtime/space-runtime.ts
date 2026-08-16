@@ -5748,7 +5748,8 @@ export class SpaceRuntime {
   async drainReplayTasks(maxWaitMs = 60_000): Promise<void> {
     const start = Date.now();
     while (this.replayTasksInFlight.size > 0) {
-      if (Date.now() - start > maxWaitMs) {
+      const remaining = maxWaitMs - (Date.now() - start);
+      if (remaining <= 0) {
         log.warn(
           `SpaceRuntime: timed out draining ${this.replayTasksInFlight.size} replay task(s) ` +
             `after ${maxWaitMs}ms — proceeding`
@@ -5756,7 +5757,17 @@ export class SpaceRuntime {
         break;
       }
       const pending = [...this.replayTasksInFlight];
-      await Promise.allSettled(pending);
+      // Race the wave against the remaining deadline: a tracked task that NEVER
+      // settles (deadlocked recovery, unresolved injection lock) must not pin
+      // this await past the ceiling — awaiting allSettled alone would hang
+      // stop() indefinitely and make the bound decorative. On timeout the stuck
+      // task stays tracked but is dropped with the runtime instance.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, remaining);
+      });
+      await Promise.race([Promise.allSettled(pending), deadline]);
+      clearTimeout(timer);
     }
   }
 
@@ -6752,13 +6763,14 @@ export class SpaceRuntime {
         // The source may already be terminal (delivered via an earlier target's
         // settled delivery, or failed via per-target handling) — this scan
         // includes recent terminal rows precisely so late targets can receive
-        // them. Reopen it to `published` BEFORE inserting the pending row: the
-        // aggregate transitions advance the source to reflect EVERY expected
-        // delivery, so leaving it terminal would freeze a false success/failure
-        // in dedup and event-level diagnostics while the late delivery is still
-        // outstanding. No-op for the normal (published) case.
-        store.reopenTerminalEvent(payload.eventId);
-        store.registerExpectedDelivery(payload.eventId, deliveryKey, target);
+        // them. Reopen it to `published` and insert the pending row in ONE
+        // transaction: the aggregate transitions advance the source to reflect
+        // EVERY expected delivery, so leaving it terminal would freeze a false
+        // success/failure in dedup and event-level diagnostics while the late
+        // delivery is still outstanding — while a reopen that survived without
+        // its delivery row would leave a falsely-published source that no
+        // recovery sweep repairs. No-op reopen for the normal (published) case.
+        store.reopenTerminalEventWithDelivery(payload.eventId, deliveryKey, target);
       } catch (err) {
         log.warn(
           `SpaceRuntime: failed to register replay delivery for ${payload.eventId} to ` +

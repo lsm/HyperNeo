@@ -259,6 +259,74 @@ describe('registerExpectedDelivery', () => {
     expect(deliveries[0]!.workflowRunId).toBe('run-1');
   });
 
+  test('reopenTerminalEventWithDelivery is atomic: a failed registration rolls back the reopen', () => {
+    // R22-2 regression: the late-target replay must reopen a terminal source
+    // and insert its pending delivery row in ONE transaction. If the insert
+    // throws (e.g. delivery-key collision with another event), the reopen
+    // must NOT survive — a falsely-published source whose only deliveries are
+    // the old terminal ones is invisible to every recovery sweep (the TTL
+    // sweep scans events without deliveries; the new-target query excludes
+    // rows past its cutoff) and would be retained forever.
+    store.store(EVENT_A);
+    store.registerExpectedDelivery('evt-a', 'dk-first', {
+      workflowRunId: 'run-1',
+      taskId: 'task-1',
+      nodeId: 'node-1',
+      agentName: 'coder',
+    });
+    store.markDeliveryDelivered('evt-a', 'dk-first');
+    store.markEventDelivered('evt-a');
+    expect(store.getById('evt-a')?.state).toBe('delivered');
+
+    // Poison the target delivery key: same key registered against a
+    // DIFFERENT event makes registerExpectedDelivery throw a cross-event
+    // collision inside the transaction.
+    store.store(EVENT_B);
+    store.registerExpectedDelivery('evt-b', 'dk-late', {
+      workflowRunId: 'run-2',
+      taskId: 'task-2',
+      nodeId: 'node-2',
+      agentName: 'reviewer',
+    });
+
+    expect(() =>
+      store.reopenTerminalEventWithDelivery('evt-a', 'dk-late', {
+        workflowRunId: 'run-9',
+        taskId: 'task-9',
+        nodeId: 'node-9',
+        agentName: 'coder',
+      })
+    ).toThrow();
+    // The reopen was rolled back: the source stays `delivered`, exactly as
+    // before the failed composition — no falsely-published orphan.
+    expect(store.getById('evt-a')?.state).toBe('delivered');
+    // And no phantom pending row leaked for run-9.
+    expect(store.listDeliveries('evt-a').some((d) => d.workflowRunId === 'run-9')).toBe(false);
+  });
+
+  test('reopenTerminalEventWithDelivery reopens and registers together on success', () => {
+    store.store(EVENT_A);
+    store.registerExpectedDelivery('evt-a', 'dk-first', {
+      workflowRunId: 'run-1',
+      taskId: 'task-1',
+      nodeId: 'node-1',
+      agentName: 'coder',
+    });
+    store.markDeliveryDelivered('evt-a', 'dk-first');
+    store.markEventDelivered('evt-a');
+    expect(store.getById('evt-a')?.state).toBe('delivered');
+
+    store.reopenTerminalEventWithDelivery('evt-a', 'dk-late', {
+      workflowRunId: 'run-2',
+      taskId: 'task-2',
+      nodeId: 'node-2',
+      agentName: 'coder',
+    });
+    expect(store.getById('evt-a')?.state).toBe('published');
+    const late = store.listDeliveries('evt-a').find((d) => d.deliveryKey === 'dk-late');
+    expect(late?.state).toBe('pending');
+  });
+
   test('lists delivery log rows with source event metadata and filters', () => {
     store.store(EVENT_A);
     store.store(EVENT_B);

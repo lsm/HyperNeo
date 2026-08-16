@@ -348,23 +348,10 @@ export class ExternalEventStore {
   // ---------------------------------------------------------------------------
 
   /**
-   * Idempotently register the delivery row expected for an event/subscription.
-   *
-   * Implemented as `INSERT OR IGNORE` because retryable source duplicates and
-   * workflow runtime retries can prepare the same `(eventId, deliveryKey)` more than
-   * once. Existing terminal rows are preserved.
-   */
-  /**
    * Reopen a TERMINAL source event (`delivered`/`failed`) back to `published`.
-   *
-   * Called by the late-target replay before it registers a new expected delivery:
-   * once a pending row exists, aggregate transitions
-   * (markEventDeliveredIfAllDeliveriesDelivered / markEventFailedIfAllDeliveries
-   * Terminal) advance the source to reflect EVERY expected delivery, so leaving
-   * it terminal would freeze a false success/failure — dedup and event-level
-   * diagnostics would report settled state while the late delivery is still
-   * outstanding. No-op for non-terminal sources (the normal retained case) and
-   * for unknown events.
+   * No-op for non-terminal sources and unknown events. The late-target replay
+   * path composes this with delivery registration atomically — see
+   * {@link reopenTerminalEventWithDelivery}.
    */
   reopenTerminalEvent(eventId: string): void {
     const event = this.getById(eventId);
@@ -372,6 +359,13 @@ export class ExternalEventStore {
     this.setEventState(eventId, 'published');
   }
 
+  /**
+   * Idempotently register the delivery row expected for an event/subscription.
+   *
+   * Implemented as `INSERT OR IGNORE` because retryable source duplicates and
+   * workflow runtime retries can prepare the same `(eventId, deliveryKey)` more than
+   * once. Existing terminal rows are preserved.
+   */
   registerExpectedDelivery(eventId: string, deliveryKey: string, target: DeliveryTarget): void {
     if (!this.getById(eventId)) {
       throw new Error(`registerExpectedDelivery: unknown source event id "${eventId}"`);
@@ -449,6 +443,36 @@ export class ExternalEventStore {
         );
       }
     }
+  }
+
+  /**
+   * Reopen a TERMINAL source event (`delivered`/`failed`) back to `published` and
+   * register the new expected delivery, in ONE transaction.
+   *
+   * Used by the late-target replay path: once a pending row exists, aggregate
+   * transitions (markEventDeliveredIfAllDeliveriesDelivered /
+   * markEventFailedIfAllDeliveriesTerminal) advance the source to reflect EVERY
+   * expected delivery, so leaving it terminal would freeze a false success/failure
+   * — dedup and event-level diagnostics would report settled state while the late
+   * delivery is still outstanding. Atomicity matters because the reopen must
+   * never persist without its delivery row: a crash between the two statements
+   * would leave a falsely-`published` source whose only delivery rows are the old
+   * terminal ones — invisible to every recovery sweep (the TTL sweep only scans
+   * events without deliveries; the new-target query excludes rows past its
+   * cutoff), retained indefinitely. The reopen is a no-op for non-terminal
+   * sources (the normal retained case); unknown events still throw via
+   * registerExpectedDelivery's validation.
+   */
+  reopenTerminalEventWithDelivery(
+    eventId: string,
+    deliveryKey: string,
+    target: DeliveryTarget
+  ): void {
+    const tx = this.db.transaction(() => {
+      this.reopenTerminalEvent(eventId);
+      this.registerExpectedDelivery(eventId, deliveryKey, target);
+    });
+    tx();
   }
 
   /** Returns true when the delivery row is already terminal and should be skipped. */

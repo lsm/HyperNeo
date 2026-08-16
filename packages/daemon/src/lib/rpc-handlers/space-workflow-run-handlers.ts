@@ -810,13 +810,21 @@ export function setupSpaceWorkflowRunHandlers(
   // (which resolvePrimaryLinkUrl ranks as freshness), so without invalidation
   // the next cache miss would re-rank the stale hook above the newer artifact.
   // Fire the same invalidate + materialize + conditional replay the engine path
-  // uses, only when the pre-write state carried a link field.
+  // uses — but only when THIS write changes a link field. Testing the whole
+  // pre-write state would refresh on unrelated approvals/retries too: those
+  // bump updated_at without touching the link, so the invalidation would let
+  // the freshly-timestamped stale hook outrank a newer artifact's link and
+  // rematerialize the subscription back to the superseded PR.
   const refreshTopicFromAfterHookWrite = (
     runId: string,
-    baseLocalState: Record<string, unknown>
+    baseLocalState: Record<string, unknown>,
+    committedLocalState: Record<string, unknown>
   ) => {
-    const linkBearing = 'prUrl' in baseLocalState || 'pr_url' in baseLocalState;
-    if (!linkBearing) return;
+    const changed = (key: 'prUrl' | 'pr_url'): boolean =>
+      key in committedLocalState
+        ? !(key in baseLocalState) || baseLocalState[key] !== committedLocalState[key]
+        : key in baseLocalState;
+    if (!changed('prUrl') && !changed('pr_url')) return;
     try {
       spaceRuntimeService.invalidatePrimaryLinkForRun(runId);
       if (spaceRuntimeService.materializeRunTopicFromInterests(runId)) {
@@ -865,14 +873,15 @@ export function setupSpaceWorkflowRunHandlers(
     const baseLocalState = existing?.localState ?? {};
 
     const rejectionReason = params.reason?.trim() || 'Rejected by human';
+    const nextLocalState = {
+      ...baseLocalState,
+      humanApproved: params.approved,
+      humanApprovedAt: Date.now(),
+      humanRejectionReason: params.approved ? undefined : rejectionReason,
+    };
     const updateResult = hookStateRepo.update(params.runId, params.hookId, {
       expectedVersion: baseVersion,
-      localState: {
-        ...baseLocalState,
-        humanApproved: params.approved,
-        humanApprovedAt: Date.now(),
-        humanRejectionReason: params.approved ? undefined : rejectionReason,
-      },
+      localState: nextLocalState,
       lastResult: params.approved
         ? {
             type: 'allow',
@@ -891,7 +900,7 @@ export function setupSpaceWorkflowRunHandlers(
       throw new Error('Hook state update failed due to version conflict');
     }
 
-    refreshTopicFromAfterHookWrite(params.runId, baseLocalState);
+    refreshTopicFromAfterHookWrite(params.runId, baseLocalState, updateResult.localState);
 
     internalEventBus
       .publish('space.hookState.updated', {
@@ -932,12 +941,14 @@ export function setupSpaceWorkflowRunHandlers(
       queuedAction && typeof queuedAction === 'object'
         ? (queuedAction as Record<string, unknown>).actionKey
         : undefined;
+    const baseLocalState = existing?.localState ?? {};
+    const nextLocalState = {
+      ...baseLocalState,
+      [QUEUED_RETRYABLE_ACTION_STATE_KEY]: null,
+    };
     const updateResult = hookStateRepo.update(params.runId, params.hookId, {
       expectedVersion: baseVersion,
-      localState: {
-        ...existing?.localState,
-        [QUEUED_RETRYABLE_ACTION_STATE_KEY]: null,
-      },
+      localState: nextLocalState,
       lastResult: {
         type: 'allow',
         message: 'Retry requested by human',
@@ -950,7 +961,7 @@ export function setupSpaceWorkflowRunHandlers(
       throw new Error('Hook state update failed due to version conflict');
     }
 
-    refreshTopicFromAfterHookWrite(params.runId, existing?.localState ?? {});
+    refreshTopicFromAfterHookWrite(params.runId, baseLocalState, updateResult.localState);
 
     if (typeof queuedActionKey === 'string') {
       triggerRetryableHookAction(queuedActionKey);

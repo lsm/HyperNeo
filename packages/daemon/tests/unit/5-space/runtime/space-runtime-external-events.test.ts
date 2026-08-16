@@ -7448,6 +7448,30 @@ describe('SpaceRuntime external event subscriptions', () => {
     void settledAfterStop.dispatchedAfterStop;
   });
 
+  test('drainReplayTasks honors the deadline when a tracked task never settles', async () => {
+    // R22-3 regression: the drain's 60s ceiling must actually BOUND the await.
+    // A tracked task that never settles (deadlocked recovery, unresolved
+    // injection lock) must not pin Promise.allSettled past the deadline —
+    // awaiting the wave un-raced makes stop() hang indefinitely and the
+    // ceiling decorative.
+    const neverSettles = new Promise<void>(() => {});
+    (
+      runtime as unknown as { __trackReplayTaskForTest: (t: Promise<void>) => void }
+    ).__trackReplayTaskForTest(neverSettles);
+
+    const startedAt = Date.now();
+    // Short ceiling for the test; drainReplayTasks is public for exactly this.
+    await (
+      runtime as unknown as { drainReplayTasks: (maxWaitMs?: number) => Promise<void> }
+    ).drainReplayTasks(50);
+    const elapsed = Date.now() - startedAt;
+    // Returned despite the never-settling task, within a generous margin of
+    // the 50ms deadline (CI jitter adds timer latency; the pre-fix code would
+    // NEVER return).
+    expect(elapsed).toBeLessThan(5000);
+    expect(elapsed).toBeGreaterThanOrEqual(50);
+  });
+
   test('a non-link-bearing save_artifact skips the replay scan entirely', async () => {
     // R21-6 regression: onArtifactRecorded(linkBearing=false) must short-circuit
     // before invalidate/materialize/replay — a retained event that WOULD match a
