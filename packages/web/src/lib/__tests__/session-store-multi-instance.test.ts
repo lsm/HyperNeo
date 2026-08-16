@@ -19,6 +19,7 @@ import {
   refreshAllSessionStores,
   mergeSnapshotIntoTranscript,
   markAllSessionStoresRecovering,
+  applyOptimisticSessionInfo,
 } from '../session-store';
 
 // A single controllable hub that connectionManager.getHub() resolves to. Both
@@ -234,6 +235,38 @@ describe('SessionStore multi-instance isolation', () => {
 
     expect(storeA.activeSessionId.value).toBe('session-a');
     expect(storeB.activeSessionId.value).toBe('session-b');
+  });
+
+  it('applyOptimisticSessionInfo patches only stores where the session is active', async () => {
+    await storeA.select('session-a');
+    await storeB.select('session-b');
+
+    applyOptimisticSessionInfo('session-a', { title: 'Renamed A' });
+
+    // The store rendering session-a sees the optimistic title immediately…
+    expect(storeA.sessionInfo.value?.title).toBe('Renamed A');
+    // …and a different session's store is untouched, as is an inactive one.
+    expect(storeB.sessionInfo.value?.title).toBeUndefined();
+
+    // Non-active session ids (e.g. sidebar-only rows) are a no-op everywhere.
+    applyOptimisticSessionInfo('session-idle', { title: 'Ignored' });
+    expect(storeA.sessionInfo.value?.title).toBe('Renamed A');
+  });
+
+  it('applyOptimisticSessionInfo rollback guard preserves newer titles', async () => {
+    await storeA.select('session-a');
+
+    applyOptimisticSessionInfo('session-a', { title: 'Optimistic' });
+    expect(storeA.sessionInfo.value?.title).toBe('Optimistic');
+
+    // Matching expected title: the rollback applies.
+    applyOptimisticSessionInfo('session-a', { title: 'Old Title' }, 'Optimistic');
+    expect(storeA.sessionInfo.value?.title).toBe('Old Title');
+
+    // Mismatched expected title (a newer title landed while the request was
+    // pending): the rollback is skipped so the newer title survives.
+    applyOptimisticSessionInfo('session-a', { title: 'Stale Rollback' }, 'Optimistic');
+    expect(storeA.sessionInfo.value?.title).toBe('Old Title');
   });
 
   it('keeps transcripts independent — B never renders A messages', async () => {

@@ -13,7 +13,7 @@
 import { createLogger } from '../logger.ts';
 import { generateUUID } from '../utils.ts';
 
-const log = createLogger('kai:messagehub:protocol');
+const log = createLogger('hyperneo:messagehub:protocol');
 
 /**
  * Protocol version for compatibility checking

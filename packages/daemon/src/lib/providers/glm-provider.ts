@@ -95,6 +95,19 @@ export class GlmProvider implements Provider {
       available: true,
     },
     {
+      id: 'glm-5.3[1m]',
+      name: 'GLM-5.3',
+      alias: 'glm-5.3',
+      family: 'glm',
+      provider: 'glm',
+      contextWindow: 1_000_000,
+      // Same [1m] routing as glm-5.2[1m] — see that entry's comment.
+      preferContextWindowMetadata: true,
+      description: 'GLM-5.3 · 1M context window, post-trained for long-horizon coding',
+      releaseDate: '2026-08-14',
+      available: true,
+    },
+    {
       id: 'glm-5-turbo',
       name: 'GLM-5-Turbo',
       alias: 'glm-5-turbo',
@@ -286,12 +299,12 @@ export class GlmProvider implements Provider {
     // Strip ALL trailing [1m] suffixes (e.g. 'glm-5.2[1m][1m]' → 'glm-5.2')
     // to prevent double-suffix regressions from accumulating.
     const baseModelId = normalisedModelId.replace(/(\[1m\])+$/, '');
-    const routingModelId =
-      baseModelId === 'glm-5.2'
-        ? 'glm-5.2[1m]'
-        : baseModelId.startsWith('glm-')
-          ? baseModelId
-          : 'glm-5-turbo';
+    const ONE_M_MODEL_IDS = new Set(['glm-5.2', 'glm-5.3']);
+    const routingModelId = ONE_M_MODEL_IDS.has(baseModelId)
+      ? `${baseModelId}[1m]`
+      : baseModelId.startsWith('glm-')
+        ? baseModelId
+        : 'glm-5-turbo';
 
     // Resolve the real context window for the routing model ID so we can tell
     // the SDK the correct auto-compact threshold. Without this, the SDK uses

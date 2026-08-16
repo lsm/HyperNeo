@@ -10,12 +10,19 @@
  */
 
 import type { MessageContent, Session } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Logger } from '../logger';
+import {
+  deliverAndMarkQueued,
+  deliverBatchAndMarkQueued,
+  flattenDeliveryText,
+  isMessageDeliveryV2Enabled,
+  type MessageDeliveryOrigin,
+} from './message-delivery';
 import type { MessageQueue } from './message-queue';
-import { deliverAndMarkQueued, isMessageDeliveryV2Enabled } from './message-delivery';
 
 /**
  * Context interface - what QueryModeHandler needs from AgentSession
@@ -90,20 +97,9 @@ export class QueryModeHandler {
       if (isMessageDeliveryV2Enabled()) {
         // Durable: enqueue a delivery job per message (idempotent via
         // getActiveDeliveryRole). The handler drives the turn / feeds steers.
-        const jobQueue = db.getJobQueueRepo();
-        for (const msg of deferredMessages) {
-          if (!isSDKUserMessage(msg) || !msg.uuid) continue;
-          // Use the queued-marker wrapper so the first (turn) message marks the
-          // session busy — a concurrent deliveryMode:'defer' send then stays
-          // deferred instead of being mis-converted to immediate. (Codex review.)
-          await deliverAndMarkQueued({
-            jobQueue,
-            stateManager: this.ctx.stateManager,
-            sessionId: session.id,
-            messageUuid: msg.uuid as string,
-            origin: 'recovery',
-          });
-        }
+        // Multiple messages flushing together on an idle session coalesce into
+        // ONE batched turn (see deliverFlushUnderV2).
+        await this.deliverFlushUnderV2(deferredMessages, 'recovery');
       } else {
         // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out). Exclude
         // UUIDs still owned by a durable job — a rollback to v2=0 after a v2 run
@@ -132,6 +128,82 @@ export class QueryModeHandler {
   }
 
   /**
+   * Deliver a queue flush under durable delivery (v2). When the flush is
+   * entirely foldable plain-text messages (≥2) AND no turn is active, they are
+   * coalesced into ONE batched turn (payload.batchUuids — the handler combines
+   * the contents with numbered delimiters) so the model reads the whole queue
+   * before acting, instead of answering N steers one at a time. ANY
+   * non-foldable message in the flush (non-text content like images, or an SDK
+   * slash command that must reach the SDK standalone) disables batching for
+   * the whole flush — batching only the foldable subset would reorder the
+   * queue (a later text arriving before an earlier image/command). A turn
+   * active at enqueue time, or any member already owning a job, also falls
+   * back to per-message delivery — the pre-batch first-turn/rest-steer
+   * behavior.
+   */
+  private async deliverFlushUnderV2(
+    messages: Array<SDKMessage & { dbId: string; timestamp: number }>,
+    origin: MessageDeliveryOrigin
+  ): Promise<void> {
+    const jobQueue = this.ctx.db.getJobQueueRepo();
+    const pending = messages.filter(
+      (msg) => isSDKUserMessage(msg) && typeof msg.uuid === 'string' && msg.uuid.length > 0
+    );
+    const allBatchable = pending.every((msg) => {
+      if (!isSDKUserMessage(msg)) return false;
+      const text = flattenDeliveryText(msg.message.content ?? '');
+      // SDK slash commands (e.g. a deferred /compact) must reach the SDK as a
+      // standalone command — a batch delimiter prefix would turn the command
+      // into literal prompt text.
+      return text !== null && !text.startsWith('/');
+    });
+
+    if (allBatchable && pending.length >= 2) {
+      const batched = await deliverBatchAndMarkQueued({
+        jobQueue,
+        stateManager: this.ctx.stateManager,
+        sessionId: this.ctx.session.id,
+        messageUuids: pending.map((m) => m.uuid as string),
+        origin,
+      });
+      if (batched) return;
+    }
+    await this.deliverEachUnderV2(pending, origin);
+  }
+
+  /**
+   * Per-message durable delivery (the pre-batch flush behavior): first
+   * message wins the turn role via the atomic index, the rest steer. Uses the
+   * queued-marker wrapper so the first (turn) message marks the session busy
+   * — a concurrent deliveryMode:'defer' send then stays deferred instead of
+   * being mis-converted to immediate. (Codex review.)
+   *
+   * Batch-aware: messages owned by an ACTIVE batched turn (members have no
+   * job row of their own, so deliverMessage's per-UUID idempotency check
+   * cannot see them) are skipped — a startup/replay flush racing a pending
+   * batch would otherwise give every member its own steer job on top of the
+   * combined prompt, executing it twice.
+   */
+  private async deliverEachUnderV2(
+    messages: Array<SDKMessage & { dbId: string; timestamp: number }>,
+    origin: MessageDeliveryOrigin
+  ): Promise<void> {
+    const jobQueue = this.ctx.db.getJobQueueRepo();
+    const active = jobQueue.activeDeliveryMessageUuids(this.ctx.session.id);
+    for (const msg of messages) {
+      const uuid = msg.uuid as string;
+      if (active.has(uuid)) continue; // owned by an active job (incl. batch member)
+      await deliverAndMarkQueued({
+        jobQueue,
+        stateManager: this.ctx.stateManager,
+        sessionId: this.ctx.session.id,
+        messageUuid: uuid,
+        origin,
+      });
+    }
+  }
+
+  /**
    * Send enqueued messages when the agent turn ends / on (re)hydration
    * (auto-defer mode + startup replay). Under durable delivery, each enqueued
    * message is routed through `deliverMessage` — the handler drives it as a
@@ -152,17 +224,9 @@ export class QueryModeHandler {
         // Durable: enqueue a delivery job per message via the queued-marker
         // wrapper (see handleQueryTrigger). Already-enqueued rows need no
         // status flip; deliverAndMarkQueued is idempotent via getActiveDeliveryRole.
-        const jobQueue = db.getJobQueueRepo();
-        for (const msg of queuedMessages) {
-          if (!isSDKUserMessage(msg) || !msg.uuid) continue;
-          await deliverAndMarkQueued({
-            jobQueue,
-            stateManager: this.ctx.stateManager,
-            sessionId: session.id,
-            messageUuid: msg.uuid as string,
-            origin: 'recovery',
-          });
-        }
+        // Multiple messages flushing together on an idle session coalesce into
+        // ONE batched turn (see deliverFlushUnderV2).
+        await this.deliverFlushUnderV2(queuedMessages, 'recovery');
       } else {
         // Legacy inline path (HYPERNEO_MESSAGE_DELIVERY_V2=0 opt-out). Exclude
         // UUIDs still owned by a durable job (see handleQueryTrigger). (Codex P1.)

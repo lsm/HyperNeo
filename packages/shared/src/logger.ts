@@ -3,7 +3,8 @@
  *
  * Features:
  * - Log levels: SILENT, ERROR, WARN, INFO, DEBUG, TRACE
- * - Namespace support with filtering (e.g., "kai:messagehub:*")
+ * - Namespace support with filtering (e.g., "hyperneo:messagehub:*")
+ * - Timestamps on every line (ISO-8601) — disable with configureLogger({ timestamps: false })
  * - Environment-based defaults (test=SILENT, prod=WARN, dev=INFO)
  * - Child logger creation for scoped logging
  * - Works in both Node.js and browser environments
@@ -12,9 +13,9 @@
  * - LOG_LEVEL: Override default log level (silent, error, warn, info, debug, trace)
  * - LOG_FILTER: Namespace filter patterns (comma-separated, supports wildcards)
  *   - "*" = all namespaces
- *   - "kai:messagehub" = exact match
- *   - "kai:messagehub:*" = prefix match
- *   - "-kai:transport" = exclude namespace
+ *   - "hyperneo:messagehub" = exact match
+ *   - "hyperneo:messagehub:*" = prefix match
+ *   - "-hyperneo:transport" = exclude namespace
  *
  * Usage:
  *   import { createLogger, logger } from '@hyperneo/shared/logger';
@@ -23,12 +24,12 @@
  *   logger.info('Application started');
  *
  *   // Create namespaced logger
- *   const log = createLogger('kai:messagehub');
+ *   const log = createLogger('hyperneo:messagehub');
  *   log.debug('Processing message', { id: '123' });
  *
  *   // Create child logger
  *   const childLog = log.child('client');
- *   childLog.info('Connected'); // [kai:messagehub:client] Connected
+ *   childLog.info('Connected'); // [hyperneo:messagehub:client] Connected
  */
 
 /**
@@ -201,7 +202,7 @@ function matchesPattern(namespace: string, pattern: string): boolean {
   if (pattern === '*') return true;
 
   if (pattern.endsWith(':*')) {
-    // Prefix match: "kai:messagehub:*" matches "kai:messagehub:foo"
+    // Prefix match: "hyperneo:messagehub:*" matches "hyperneo:messagehub:foo"
     const prefix = pattern.slice(0, -1); // Remove the *
     return namespace === pattern.slice(0, -2) || namespace.startsWith(prefix);
   }
@@ -240,7 +241,7 @@ let globalConfig: LoggerConfig = {
   ...parseFilter(),
   filter: parseFilter().include,
   excludeFilter: parseFilter().exclude,
-  timestamps: false,
+  timestamps: true,
 };
 
 const structuredLogSubscribers = new Set<StructuredLogSubscriber>();

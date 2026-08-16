@@ -242,6 +242,7 @@ describe('EventSubscriptionSetup', () => {
           queryObject: null,
           queryPromise: null,
           queryAbortController: null,
+          internalEventBus: mockInternalEventBus,
         });
 
         const rpcContext: EventSubscriptionSetupContext = {
@@ -312,6 +313,7 @@ describe('EventSubscriptionSetup', () => {
           queryObject: null,
           queryPromise: null,
           queryAbortController: null,
+          internalEventBus: mockInternalEventBus,
         });
 
         await realInterruptHandler.handleInterrupt({ preserveDeliveryJobs: true });

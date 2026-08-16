@@ -306,6 +306,7 @@ describe('QueryLifecycleManager', () => {
       expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalledWith({
         forceDelayMs: 2000,
         processes: [],
+        noPidProcesses: [],
       });
       expect(closeMock).toHaveBeenCalled();
       expect(terminateTrackedAgentProcessesSpy.mock.invocationCallOrder[0]).toBeLessThan(
@@ -930,6 +931,72 @@ describe('QueryLifecycleManager', () => {
       // Should have force-stopped the stale queue, cleared queryObject, and started a new query
       expect(stopSpy).toHaveBeenCalled();
       expect(mockContext.queryObject).toBeNull();
+      expect(startStreamingCalled).toBe(true);
+    });
+
+    test('terminates orphaned tracked processes when recovering stale running state', async () => {
+      // Clean-slate guard: stale running state (queue running, no queryPromise) is
+      // usually an SDK subprocess that died without the queue being stopped — but it
+      // may also be an orphan still holding the workspace lock. The recovery must
+      // force-terminate the tracked set before starting a fresh query.
+      messageQueue.start(async function* () {
+        yield 'test';
+      });
+      mockContext = createMockContext();
+      mockContext.queryPromise = null;
+      mockContext.queryObject = null;
+      manager = new QueryLifecycleManager(mockContext);
+
+      await manager.ensureQueryStarted();
+
+      // Snapshot was taken and the tracked process group was asked to terminate.
+      expect(snapshotTrackedAgentProcessesSpy).toHaveBeenCalled();
+      expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalledWith({
+        forceDelayMs: 2000,
+        processes: [],
+        noPidProcesses: [],
+      });
+      // Recovery still proceeds to start a fresh query.
+      expect(startStreamingCalled).toBe(true);
+    });
+
+    test('does not clear a replacement query exit tracking when it replaces the orphan during recovery', async () => {
+      // Codex P1 regression: during the stale-running recovery's bounded wait
+      // for the orphaned process to exit, a concurrent ensureQueryStarted() can
+      // start the replacement query, whose trackAgentProcess() installs a NEW
+      // processExitedPromise. The recovery must only clear the exit tracking it
+      // captured — clearing the replacement's would drop its exit tracking and
+      // re-open the workspace-lock collision the guard exists to close.
+      messageQueue.start(async function* () {
+        yield 'test';
+      });
+      mockContext = createMockContext();
+      mockContext.queryPromise = null;
+      mockContext.queryObject = null;
+
+      // Orphan's exit promise resolves after a short delay (within the 5s cap).
+      const orphanExit = new Promise<void>((resolve) => setTimeout(resolve, 30));
+      mockContext.processExitedPromise = orphanExit;
+      // The replacement query's exit promise — installed while recovery awaits.
+      const replacementExit = new Promise<void>(() => {});
+      setTimeout(() => {
+        mockContext.processExitedPromise = replacementExit;
+      }, 10);
+
+      let resetCalled = false;
+      mockContext.resetProcessExitedPromise = () => {
+        resetCalled = true;
+        mockContext.processExitedPromise = null;
+      };
+
+      manager = new QueryLifecycleManager(mockContext);
+      await manager.ensureQueryStarted();
+
+      // The orphan was awaited to completion, but the reset must NOT have fired
+      // (the tracking no longer belongs to the orphan) and the replacement's
+      // promise must be intact.
+      expect(resetCalled).toBe(false);
+      expect(mockContext.processExitedPromise).toBe(replacementExit);
       expect(startStreamingCalled).toBe(true);
     });
 

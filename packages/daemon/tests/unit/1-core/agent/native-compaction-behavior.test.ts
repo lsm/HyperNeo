@@ -776,6 +776,14 @@ describe('N4: literal /compact never enters the transcript or provider request',
       session,
       messageQueue: queue,
       stateManager: { setProcessing: setProcessingSpy } as unknown as ProcessingStateManager,
+      logger: {
+        debug: () => {},
+        info: () => {},
+        warn: () => {},
+        error: () => {},
+        log: () => {},
+        trace: () => {},
+      },
     } as unknown as QueryRunnerContext);
 
     const yielded: Array<SDKUserMessage & { internal?: boolean }> = [];

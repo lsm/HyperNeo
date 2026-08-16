@@ -15,6 +15,8 @@ import { spaceStore } from '../lib/space-store.ts';
 import { isActionRequired, isActiveTask } from '../lib/task-filters.ts';
 import { SpaceCreateDialog } from '../components/space/SpaceCreateDialog.tsx';
 import { BottomTabBar } from './BottomTabBar.tsx';
+import { VoiceRecordingIndicator } from '../components/voice/VoiceRecordingIndicator.tsx';
+import { VoiceSurfaceContext } from '../hooks/useVoiceRecorder';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 
 // Lazy-loaded route components — reduces initial module count in dev mode
@@ -450,12 +452,20 @@ export default function MainContent() {
   // Wrap content in a keyed div so Preact remounts it (and replays animate-fadeIn-200)
   // whenever the major content view changes.
   // BottomTabBar sits outside the keyed div so it never remounts on view transitions.
+  // The VoiceSurfaceContext identifies this as the PRIMARY surface for voice
+  // composers (chat views and Space panes alike): the global recording chip
+  // needs to know which surface owns a recording when two surfaces display
+  // the same session, and the recorder needs the surface's Space to stamp
+  // recordings started here. The agent overlay provides its own context.
   return (
-    <>
+    <VoiceSurfaceContext.Provider
+      value={{ surfaceId: 'primary', spaceId: spaceId ?? null, taskId: null }}
+    >
       <div key={contentKey} class="flex-1 flex flex-col overflow-hidden animate-fadeIn-200">
         {renderContent()}
       </div>
+      <VoiceRecordingIndicator />
       <BottomTabBar inline />
-    </>
+    </VoiceSurfaceContext.Provider>
   );
 }

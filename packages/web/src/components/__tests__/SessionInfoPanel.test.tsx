@@ -14,6 +14,14 @@ import { extractBackgroundTasks } from '../../hooks/useRunningToolUseIds.ts';
 import type { ChatMessage, Session } from '@hyperneo/shared';
 import { connectionState } from '../../lib/state';
 
+// useSessionRename commits through api-helpers.updateSession; stub it (and
+// keep the rest of the module real — other imports rely on it).
+const renameMocks = vi.hoisted(() => ({ updateSession: vi.fn() }));
+vi.mock('../../lib/api-helpers', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  updateSession: renameMocks.updateSession,
+}));
+
 import {
   SessionInfoPanelButton,
   getSDKProjectDir,
@@ -191,6 +199,7 @@ describe('SessionInfoPanel', () => {
       expect(toolbar).toBeTruthy();
       expect(toolbar.querySelector('button[title="Tools"]')).toBeTruthy();
       expect(toolbar.querySelector('button[title="Export chat"]')).toBeTruthy();
+      expect(toolbar.querySelector('button[title="Rename session"]')).toBeTruthy();
       expect(toolbar.querySelector('button[title="Reset agent"]')).toBeTruthy();
       expect(toolbar.querySelector('button[title="Archive session"]')).toBeTruthy();
       expect(toolbar.querySelector('button[title="Delete chat"]')).toBeTruthy();
@@ -204,6 +213,151 @@ describe('SessionInfoPanel', () => {
       expect(toolbar.querySelector('button[title="Tools"]')).toBeNull();
       // Export/Reset remain available.
       expect(toolbar.querySelector('button[title="Export chat"]')).toBeTruthy();
+    });
+
+    it('renames the session inline from the toolbar', () => {
+      renameMocks.updateSession.mockClear();
+      const { container } = render(<SessionInfoPanelButton {...defaultProps} />);
+      openPanel(container);
+
+      const toolbar = container.querySelector('[data-testid="session-info-toolbar"]')!;
+      expect(toolbar.querySelector('[data-testid="session-info-rename-input"]')).toBeNull();
+
+      fireEvent.click(toolbar.querySelector('button[title="Rename session"]')!);
+      const input = toolbar.querySelector(
+        '[data-testid="session-info-rename-input"]'
+      ) as HTMLInputElement;
+      expect(input).toBeTruthy();
+      expect(input.value).toBe('Test Session');
+
+      fireEvent.input(input, { target: { value: 'Renamed Title' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+
+      expect(renameMocks.updateSession).toHaveBeenCalledWith('session-1', {
+        title: 'Renamed Title',
+        metadata: { titleSetBy: 'user' },
+      });
+      // Input is removed once the edit settles.
+      expect(toolbar.querySelector('[data-testid="session-info-rename-input"]')).toBeNull();
+    });
+
+    it('keeps the rename input open (cancel-only) when Escape is pressed', () => {
+      renameMocks.updateSession.mockClear();
+      const { container } = render(<SessionInfoPanelButton {...defaultProps} />);
+      openPanel(container);
+
+      fireEvent.click(container.querySelector('button[title="Rename session"]')!);
+      const input = container.querySelector(
+        '[data-testid="session-info-rename-input"]'
+      ) as HTMLInputElement;
+      fireEvent.input(input, { target: { value: 'Discarded' } });
+      fireEvent.keyDown(input, { key: 'Escape' });
+
+      expect(renameMocks.updateSession).not.toHaveBeenCalled();
+      // Escape cancels the edit without dismissing the whole panel.
+      expect(container.querySelector('[data-testid="session-info-panel"]')).toBeTruthy();
+      expect(container.querySelector('[data-testid="session-info-rename-input"]')).toBeNull();
+    });
+
+    it('commits an in-flight rename when the panel is closed mid-edit', () => {
+      // Closing the panel unmounts the input before blur fires — the edit
+      // must still settle, not silently drop (or leak a stale draft).
+      renameMocks.updateSession.mockClear();
+      const { container } = render(<SessionInfoPanelButton {...defaultProps} />);
+      openPanel(container);
+
+      fireEvent.click(container.querySelector('button[title="Rename session"]')!);
+      const input = container.querySelector(
+        '[data-testid="session-info-rename-input"]'
+      ) as HTMLInputElement;
+      fireEvent.input(input, { target: { value: 'Saved On Close' } });
+
+      // Toggle the trigger to close the panel while the edit is in flight.
+      fireEvent.click(container.querySelector('button[title="Session info"]')!);
+      expect(container.querySelector('[data-testid="session-info-panel"]')).toBeNull();
+
+      expect(renameMocks.updateSession).toHaveBeenCalledWith('session-1', {
+        title: 'Saved On Close',
+        metadata: { titleSetBy: 'user' },
+      });
+    });
+
+    it('commits an in-flight rename when an outside mousedown closes the panel', () => {
+      // A mousedown on a navigating control (another sidebar session) closes
+      // the panel AND may unmount this component on the following click —
+      // the commit must happen synchronously in the close path.
+      renameMocks.updateSession.mockClear();
+      const { container } = render(<SessionInfoPanelButton {...defaultProps} />);
+      openPanel(container);
+
+      fireEvent.click(container.querySelector('button[title="Rename session"]')!);
+      const input = container.querySelector(
+        '[data-testid="session-info-rename-input"]'
+      ) as HTMLInputElement;
+      fireEvent.input(input, { target: { value: 'Outside Close' } });
+
+      fireEvent.mouseDown(document.body);
+      expect(container.querySelector('[data-testid="session-info-panel"]')).toBeNull();
+      expect(renameMocks.updateSession).toHaveBeenCalledWith('session-1', {
+        title: 'Outside Close',
+        metadata: { titleSetBy: 'user' },
+      });
+    });
+
+    it('does not commit a stale draft when opening the panel after an external title change', () => {
+      // Auto-title generation can update the title before the panel is ever
+      // opened; the hook's draft still holds the old title, so the toggle's
+      // settle-commit must be a no-op when no edit is in flight.
+      renameMocks.updateSession.mockClear();
+      const session = createMockSession();
+      const { container, rerender } = render(
+        <SessionInfoPanelButton {...defaultProps} session={session} />
+      );
+      rerender(
+        <SessionInfoPanelButton
+          {...defaultProps}
+          session={createMockSession({ title: 'Auto Generated' })}
+        />
+      );
+
+      // Open and then close the panel without ever starting an edit.
+      fireEvent.click(container.querySelector('button[title="Session info"]')!);
+      fireEvent.click(container.querySelector('button[title="Session info"]')!);
+
+      expect(renameMocks.updateSession).not.toHaveBeenCalled();
+    });
+
+    it('disables the rename action while an edit is in flight', () => {
+      // Re-clicking the pencil mid-edit would blur-commit the draft and then
+      // reopen the editor seeded from the stale title prop.
+      renameMocks.updateSession.mockClear();
+      const { container } = render(<SessionInfoPanelButton {...defaultProps} />);
+      openPanel(container);
+
+      const renameButton = container.querySelector(
+        'button[title="Rename session"]'
+      ) as HTMLButtonElement;
+      fireEvent.click(renameButton);
+      expect(renameButton.disabled).toBe(true);
+
+      expect(renameMocks.updateSession).not.toHaveBeenCalled();
+    });
+
+    it('hides the Rename action when readonly', () => {
+      const { container } = render(<SessionInfoPanelButton {...defaultProps} readonly />);
+      openPanel(container);
+
+      const toolbar = container.querySelector('[data-testid="session-info-toolbar"]')!;
+      expect(toolbar.querySelector('button[title="Rename session"]')).toBeNull();
+    });
+
+    it('disables the Rename action when disconnected', () => {
+      connectionState.value = 'connecting';
+      const { container } = render(<SessionInfoPanelButton {...defaultProps} />);
+      openPanel(container);
+
+      const toolbar = container.querySelector('[data-testid="session-info-toolbar"]')!;
+      expect(toolbar.querySelector('button[title="Rename session"]')?.disabled).toBe(true);
     });
 
     it('hides Archive and Delete when features.archive is false', () => {

@@ -1,5 +1,5 @@
-import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
+import type { Database as BunDatabase } from '../sqlite-compat';
 
 export type JobStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'dead';
 
@@ -307,7 +307,9 @@ export class JobQueueRepository {
   /**
    * Cancel active jobs and return their message UUIDs so lifecycle callers can
    * terminalize the matching persisted prompts instead of leaving hidden
-   * `enqueued` rows behind.
+   * `enqueued` rows behind. Batch-aware: members of a coalesced turn's
+   * `batchUuids` are included (they own no job row, but their prompts are as
+   * undelivered as the kickoff's).
    */
   cancelForSessionWithMessages(sessionId: string, queue: string = 'message_delivery'): string[] {
     return this.db.transaction(() => {
@@ -320,6 +322,32 @@ export class JobQueueRepository {
               AND status IN ('pending', 'processing')`
         )
         .all(queue, sessionId) as Array<{ message_uuid: string | null }>;
+      // Batch members (batchUuids) plus the over-budget/removed tail preserved
+      // at narrowing time (droppedBatchUuids): all three groups need their
+      // rows terminalized when the session's deliveries are cancelled — the
+      // dropped tail lost its job ownership but would otherwise linger
+      // `enqueued` in a session that never reconciles again (archive/reset).
+      const batchRows = this.db
+        .prepare(
+          `SELECT je.value AS message_uuid
+             FROM job_queue, json_each(
+                  CASE WHEN json_type(payload, '$.batchUuids') = 'array'
+                       THEN json_extract(payload, '$.batchUuids') ELSE '[]' END
+                ) AS je
+            WHERE queue = ?
+              AND json_extract(payload, '$.sessionId') = ?
+              AND status IN ('pending', 'processing')
+            UNION
+            SELECT jd.value AS message_uuid
+             FROM job_queue, json_each(
+                  CASE WHEN json_type(payload, '$.droppedBatchUuids') = 'array'
+                       THEN json_extract(payload, '$.droppedBatchUuids') ELSE '[]' END
+                ) AS jd
+            WHERE queue = ?
+              AND json_extract(payload, '$.sessionId') = ?
+              AND status IN ('pending', 'processing')`
+        )
+        .all(queue, sessionId, queue, sessionId) as Array<{ message_uuid: string | null }>;
       this.db
         .prepare(
           `DELETE FROM job_queue
@@ -328,7 +356,7 @@ export class JobQueueRepository {
               AND status IN ('pending', 'processing')`
         )
         .run(queue, sessionId);
-      return rows.flatMap((row) =>
+      return [...rows, ...batchRows].flatMap((row) =>
         typeof row.message_uuid === 'string' ? [row.message_uuid] : []
       );
     })();
@@ -357,19 +385,127 @@ export class JobQueueRepository {
    * turn AND a steer for the same prompt. See Codex (#3744886832).
    */
   getActiveDeliveryRole(sessionId: string, messageUuid: string): 'turn' | 'steer' | null {
+    // Batch-aware: a member of an active batched turn (payload.batchUuids)
+    // owns no job row of its own — without the EXISTS clause, a promote RPC
+    // (Move to Steer) on such a member would insert an individual steer on
+    // top of the pending combined prompt and deliver it twice.
     const row = this.db
       .prepare(
         `SELECT json_extract(payload, '$.role') AS role
            FROM job_queue
           WHERE queue = 'message_delivery'
             AND json_extract(payload, '$.sessionId') = ?
-            AND json_extract(payload, '$.messageUuid') = ?
             AND status IN ('pending', 'processing')
+            AND (
+              json_extract(payload, '$.messageUuid') = ?
+              OR EXISTS (
+                SELECT 1 FROM json_each(
+                  CASE WHEN json_type(payload, '$.batchUuids') = 'array'
+                       THEN json_extract(payload, '$.batchUuids') ELSE '[]' END
+                ) AS je WHERE je.value = ?
+              )
+            )
           LIMIT 1`
       )
-      .get(sessionId, messageUuid) as { role: string | null } | undefined;
+      .get(sessionId, messageUuid, messageUuid) as { role: string | null } | undefined;
     const role = row?.role;
     return role === 'turn' || role === 'steer' ? role : null;
+  }
+
+  /**
+   * The `batchUuids` of the active (pending/processing) message_delivery job
+   * whose kickoff is `kickoffUuid`, or null when none. Used by the ACP
+   * acceptance path (SdkMessageHandler.markMessageAccepted) to consume a
+   * batched flush's members together with the kickoff — the membership lives
+   * in the durable payload, so a crash + reclaim between admission and
+   * acceptance still resolves the same batch.
+   */
+  getActiveDeliveryBatchUuids(sessionId: string, kickoffUuid: string): string[] | null {
+    const row = this.db
+      .prepare(
+        `SELECT json_extract(payload, '$.batchUuids') AS batch
+           FROM job_queue
+          WHERE queue = 'message_delivery'
+            AND json_extract(payload, '$.sessionId') = ?
+            AND json_extract(payload, '$.messageUuid') = ?
+            AND json_type(payload, '$.batchUuids') = 'array'
+            AND status IN ('pending', 'processing')
+          ORDER BY created_at DESC LIMIT 1`
+      )
+      .get(sessionId, kickoffUuid) as { batch: string | null } | undefined;
+    if (typeof row?.batch !== 'string') return null;
+    try {
+      const parsed = JSON.parse(row.batch) as unknown;
+      return Array.isArray(parsed)
+        ? parsed.filter((u): u is string => typeof u === 'string')
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Narrow an active batched-turn job's `batchUuids` payload to the members
+   * ACTUALLY admitted into the prompt (the bridge revalidates under its lock
+   * and drops members removed/deferred/over-budget since enqueue). Every
+   * payload consumer — the ACP acceptance consume, dead-letter settlement,
+   * and the batch-aware active lookups — then operates on exactly what was
+   * fed, so never-admitted tails are neither marked consumed, nor failed, nor
+   * shielded from redelivery. The dropped tail is preserved separately as
+   * `droppedBatchUuids` so lifecycle cancellation
+   * ({@link cancelForSessionWithMessages}) can still settle those rows — they
+   * lost their job ownership but not their need for terminalization when the
+   * session is archived/reset mid-batch. Returns true when a row was updated.
+   */
+  narrowActiveDeliveryBatchUuids(
+    sessionId: string,
+    kickoffUuid: string,
+    admitted: string[]
+  ): boolean {
+    const current = this.getActiveDeliveryBatchUuids(sessionId, kickoffUuid);
+    if (!current) return false;
+    const admittedSet = new Set(admitted);
+    const dropped = current.filter((uuid) => !admittedSet.has(uuid));
+    // Only record drops that still need lifecycle settlement: rows currently
+    // `enqueued`/`submitted`. A user-deferred or failed member is in its
+    // user-intended state — including it would let a later archive/reset
+    // cancellation (which fails everything it is handed) terminalize the
+    // user's deliberately-queued message.
+    const settleableDropped =
+      dropped.length > 0 ? this.settleableBatchMembers(sessionId, dropped) : [];
+    // json(?) parses the bound text INTO a JSON array — binding it directly
+    // would store a string value and break the json_type(...)= 'array' guards.
+    const res = this.db
+      .prepare(
+        `UPDATE job_queue
+            SET payload = json_set(
+                  json_set(payload, '$.batchUuids', json(?)),
+                  '$.droppedBatchUuids', json(?)
+                )
+          WHERE queue = 'message_delivery'
+            AND json_extract(payload, '$.sessionId') = ?
+            AND json_extract(payload, '$.messageUuid') = ?
+            AND status IN ('pending', 'processing')`
+      )
+      .run(JSON.stringify(admitted), JSON.stringify(settleableDropped), sessionId, kickoffUuid);
+    return res.changes > 0;
+  }
+
+  /**
+   * The subset of `uuids` whose sdk_messages rows are still pending delivery
+   * (`enqueued`/`submitted`) — the only members lifecycle cancellation needs
+   * to settle. User-deferred/failed/removed rows keep their own state.
+   */
+  private settleableBatchMembers(sessionId: string, uuids: string[]): string[] {
+    const placeholders = uuids.map(() => '?').join(',');
+    const rows = this.db
+      .prepare(
+        `SELECT sdk_uuid AS uuid FROM sdk_messages
+          WHERE session_id = ? AND sdk_uuid IN (${placeholders})
+            AND send_status IN ('enqueued', 'submitted')`
+      )
+      .all(sessionId, ...uuids) as Array<{ uuid: string }>;
+    return rows.map((r) => r.uuid);
   }
 
   /**
@@ -403,6 +539,11 @@ export class JobQueueRepository {
    * replay would deliver the same message (duplicate). Empty when v2 is off (no
    * message_delivery jobs exist), so legacy behavior is unchanged. See
    * message-delivery-v2.md §10 + Codex review (legacy-replay race).
+   *
+   * Batch-aware: UUIDs listed in an active job's `batchUuids` (queue-flush
+   * coalesced turns) are included — they own no job row of their own, so
+   * without this the orphan reconciler / legacy replays would re-enqueue the
+   * members individually and duplicate the batched prompt.
    */
   activeDeliveryMessageUuids(sessionId: string): Set<string> {
     const rows = this.db
@@ -416,6 +557,23 @@ export class JobQueueRepository {
       .all(sessionId) as Array<{ uuid: string | null }>;
     const out = new Set<string>();
     for (const r of rows) {
+      if (typeof r.uuid === 'string') out.add(r.uuid);
+    }
+    // Members of batched turns (payload.batchUuids arrays). The CASE guard
+    // keeps json_each from erroring on payloads without a batchUuids array.
+    const batchRows = this.db
+      .prepare(
+        `SELECT je.value AS uuid
+           FROM job_queue, json_each(
+                CASE WHEN json_type(payload, '$.batchUuids') = 'array'
+                     THEN json_extract(payload, '$.batchUuids') ELSE '[]' END
+              ) AS je
+          WHERE queue = 'message_delivery'
+            AND json_extract(payload, '$.sessionId') = ?
+            AND status IN ('pending', 'processing')`
+      )
+      .all(sessionId) as Array<{ uuid: string | null }>;
+    for (const r of batchRows) {
       if (typeof r.uuid === 'string') out.add(r.uuid);
     }
     return out;
@@ -458,7 +616,7 @@ export class JobQueueRepository {
     const maxRetries = row.max_retries as number;
 
     if (retryCount < maxRetries) {
-      const delay = Math.pow(2, retryCount) * 1000;
+      const delay = 2 ** retryCount * 1000;
       this.db
         .prepare(
           `UPDATE job_queue SET retry_count = retry_count + 1, status = 'pending', error = ?, run_at = ?, started_at = NULL WHERE id = ?`

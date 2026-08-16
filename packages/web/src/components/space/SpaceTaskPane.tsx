@@ -40,6 +40,8 @@ import { ReadOnlyWorkflowCanvas } from './ReadOnlyWorkflowCanvas';
 import { SpaceTaskUnifiedThread } from './SpaceTaskUnifiedThread';
 import { SubmitForReviewModal } from './SubmitForReviewModal';
 import { TaskBlockedBanner } from './TaskBlockedBanner';
+import { VoiceSurfaceContext } from '../../hooks/useVoiceRecorder';
+import { voiceReturnTaskTargetSessionSignal } from '../../lib/voice/voice-composer-registry';
 import { TaskCanvasToggleButton, TaskSessionChatComposer } from './TaskSessionChatComposer';
 import { ImageDropOverlay } from '../ImageDropOverlay.tsx';
 import { getTransitionActions } from './TaskStatusActions';
@@ -738,6 +740,22 @@ export function SpaceTaskPane({
     if (selectedTargetId === defaultTarget.id) return;
     setSelectedTargetId(defaultTarget.id);
   }, [defaultTarget, hasComposerDraft, selectedTargetId, targetLocked]);
+
+  // The global recording chip asked this task thread to restore a specific
+  // recipient (the target whose session owns the recording). Select + lock it
+  // once its target row is present, then clear the request so a later mount
+  // does not re-select a stale target.
+  const voiceReturnTargetSession = voiceReturnTaskTargetSessionSignal.value;
+  useEffect(() => {
+    if (!voiceReturnTargetSession) return;
+    const target = composerTargets.find(
+      (t) => t.nodeExecutionSessionId === voiceReturnTargetSession
+    );
+    if (!target) return;
+    setSelectedTargetId(target.id);
+    setTargetLocked(true);
+    voiceReturnTaskTargetSessionSignal.value = null;
+  }, [composerTargets, voiceReturnTargetSession]);
 
   useEffect(() => {
     if (activeView !== 'thread' || !showInlineComposer) return;
@@ -1652,31 +1670,39 @@ export function SpaceTaskPane({
             )}
 
             {showInlineComposer && (
-              <TaskSessionChatComposer
-                mentionCandidates={mentionCandidates}
-                targets={composerTargets}
-                selectedTargetId={selectedTarget?.id ?? null}
-                canSend={canSendThreadMessage}
-                isSending={sendingThread}
-                autoScroll={autoScrollEnabled}
-                errorMessage={threadSendError}
-                activityMembers={activityMembers}
-                defaultAgentModels={defaultAgentModels}
-                taskId={task.id}
-                onAutoScrollChange={setAutoScrollEnabled}
-                onTargetSelect={(targetId) => {
-                  setSelectedTargetId(targetId);
-                  setTargetLocked(true);
+              <VoiceSurfaceContext.Provider
+                value={{
+                  surfaceId: 'primary',
+                  spaceId: spaceId ?? null,
+                  taskId: task.id,
                 }}
-                onDraftActiveChange={(hasDraft) => {
-                  setHasComposerDraft(hasDraft);
-                  if (draftWasActiveRef.current && !hasDraft) setTargetLocked(false);
-                  draftWasActiveRef.current = hasDraft;
-                }}
-                onComposerRef={setTaskComposerElement}
-                onSend={sendThreadMessage}
-                registerDropTarget={registerDropTarget}
-              />
+              >
+                <TaskSessionChatComposer
+                  mentionCandidates={mentionCandidates}
+                  targets={composerTargets}
+                  selectedTargetId={selectedTarget?.id ?? null}
+                  canSend={canSendThreadMessage}
+                  isSending={sendingThread}
+                  autoScroll={autoScrollEnabled}
+                  errorMessage={threadSendError}
+                  activityMembers={activityMembers}
+                  defaultAgentModels={defaultAgentModels}
+                  taskId={task.id}
+                  onAutoScrollChange={setAutoScrollEnabled}
+                  onTargetSelect={(targetId) => {
+                    setSelectedTargetId(targetId);
+                    setTargetLocked(true);
+                  }}
+                  onDraftActiveChange={(hasDraft) => {
+                    setHasComposerDraft(hasDraft);
+                    if (draftWasActiveRef.current && !hasDraft) setTargetLocked(false);
+                    draftWasActiveRef.current = hasDraft;
+                  }}
+                  onComposerRef={setTaskComposerElement}
+                  onSend={sendThreadMessage}
+                  registerDropTarget={registerDropTarget}
+                />
+              </VoiceSurfaceContext.Provider>
             )}
           </div>
         )}

@@ -3361,7 +3361,11 @@ export class TaskAgentManager {
     const session = this.agentSessionIndex.get(agentSessionId);
     if (!session) return;
     try {
-      await session.handleInterrupt();
+      // Called to quiesce in-progress siblings when an end node finishes — a
+      // workflow-completion interrupt, not a user interrupt. Suppress the
+      // deferred replay so an event deferred while the sibling was processing
+      // isn't promoted into a new turn after the workflow has finished.
+      await session.handleInterrupt({ skipDeferredReplay: true });
     } catch (err) {
       log.warn(
         `TaskAgentManager.interruptBySessionId: failed to interrupt session ${agentSessionId}:`,
@@ -4735,9 +4739,15 @@ export class TaskAgentManager {
       // the session's message_delivery jobs — app.ts already requeued them for
       // the next boot, and handleInterrupt's default cancel would delete the
       // durable handoff we just preserved. (Codex P1.)
-      await session.handleInterrupt(
-        options.preserveDeliveryJobs ? { preserveDeliveryJobs: true } : undefined
-      );
+      // skipDeferredReplay: this stop path is teardown-bound (task
+      // cancellation/completion/shutdown) — the deferred-queue trigger
+      // published on user interrupts must not run here, or it promotes
+      // deferred rows to enqueued and drives new delivery jobs for a session
+      // that is about to be cleaned up.
+      await session.handleInterrupt({
+        ...(options.preserveDeliveryJobs ? { preserveDeliveryJobs: true } : {}),
+        skipDeferredReplay: true,
+      });
     } catch (err) {
       stopError = err;
       log.warn(`TaskAgentManager: failed to interrupt session ${sessionId}:`, err);

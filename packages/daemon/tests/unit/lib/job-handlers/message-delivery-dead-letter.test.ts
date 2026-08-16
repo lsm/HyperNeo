@@ -114,4 +114,26 @@ describe('settleMessageDeliveryDeadLetter (onDead → session.error → settle o
     expect(settlement.publishStatusChanged).not.toHaveBeenCalled();
     expect(calls).toEqual(['markFailed', 'sessionError', 'settle']);
   });
+
+  it('terminalizes every batch member alongside the kickoff (batch-aware)', async () => {
+    // A dead-lettered batched turn must flip the member rows too — they own no
+    // job of their own and would otherwise linger `enqueued` (hidden by
+    // pagination) with nothing left to deliver them.
+    const { settlement } = recordingSettlement('db-flip');
+    const payload: MessageDeliveryPayload = {
+      ...CHAT_PAYLOAD,
+      batchUuids: ['uuid-2', 'member-a', 'member-b'],
+    };
+    await settleMessageDeliveryDeadLetter(payload, settlement);
+
+    expect(settlement.markDeliveryFailedByUuid).toHaveBeenCalledWith('sess-1', 'uuid-2');
+    expect(settlement.markDeliveryFailedByUuid).toHaveBeenCalledWith('sess-1', 'member-a');
+    expect(settlement.markDeliveryFailedByUuid).toHaveBeenCalledWith('sess-1', 'member-b');
+    // One broadcast carries every flipped row id (deduped per UUID).
+    expect(settlement.publishStatusChanged).toHaveBeenCalledWith('sess-1', [
+      'db-flip',
+      'db-flip',
+      'db-flip',
+    ]);
+  });
 });

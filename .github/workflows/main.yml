@@ -86,6 +86,7 @@ jobs:
         run: |
           bash scripts/lib/shard-split.sh --self-test
           ./scripts/test-daemon.sh --verify
+          scripts/test-online.sh --verify
 
       - name: Validate space task RPC handler tests
         run: bun run check:space-task-handler-tests
@@ -156,10 +157,12 @@ jobs:
         module:
           - agent-sdk
           - components
-          - coordinator
           - convo
-          - features-1
-          - features-2
+          - coordinator
+          # features/ is hash-split 3-way by scripts/test-online.sh (features-a/b/c).
+          - features-a
+          - features-b
+          - features-c
           - git
           - lifecycle
           - mcp
@@ -167,153 +170,89 @@ jobs:
           # - providers-anthropic-to-codex-bridge
           # Copilot bridge tests disabled — COPILOT_GITHUB_TOKEN credential issue causing hard-fail
           # - providers-anthropic-copilot
-          - rewind-1
-          - rewind-2
-          # Room tests temporarily disabled during refactoring
-          # - room-1
-          # - room-multi-agent
-          # - room-replan
-          # - room-planner
-          # - room-reviewer
-          - rpc-1
-          - rpc-2
-          - rpc-3
-          - rpc-4
+          # rewind/ is hash-split 2-way by scripts/test-online.sh (rewind-a/b).
+          - rewind-a
+          - rewind-b
+          # rpc/ is hash-split 6-way by scripts/test-online.sh (rpc-a…rpc-f).
+          - rpc-a
+          - rpc-b
+          - rpc-c
+          - rpc-d
+          - rpc-e
+          - rpc-f
           - sdk
-          - space-1
-          - space-2
+          # space/ is hash-split 4-way by scripts/test-online.sh (space-a…space-d).
+          - space-a
+          - space-b
+          - space-c
+          - space-d
           - websocket
         include:
           # mock_sdk: true → uses Dev Proxy (HYPERNEO_USE_DEV_PROXY) for mocking instead of real API calls.
           # These modules test infrastructure/plumbing and don't need real AI responses.
           # To run with real API locally, just omit the env var.
           #
-          # Modules with directory-level test_path auto-discover new test files.
-          # Split modules (rpc-*, room-*, features-*) use explicit file lists.
-          # Run `bash scripts/validate-test-matrix.sh` to verify all files are covered.
+          # NO module carries a hand-listed test_path anymore: every module's
+          # files are resolved at run time by scripts/test-online.sh (directory
+          # globs; oversized directories hash-split via scripts/lib/shard-split.sh),
+          # so a new online test file auto-routes to a shard with no YAML edit.
+          # Rebalance a split by editing its split count in scripts/test-online.sh.
+          # Run `bash scripts/validate-test-matrix.sh` + `scripts/test-online.sh --verify`
+          # to verify all files are covered.
           - module: agent-sdk
-            test_path: tests/online/agent/agent-session-sdk.test.ts
             mock_sdk: true
           - module: components
-            test_path: tests/online/components
             mock_sdk: true
           # GLM online tests disabled due to flakiness
           # - module: glm
-          #   test_path: tests/online/glm
           - module: convo
-            test_path: tests/online/convo
             mock_sdk: true
           - module: coordinator
-            test_path: tests/online/coordinator
             timeout: 10
             mock_sdk: true
-          - module: features-1
-            test_path: >-
-              tests/online/features/auto-title.test.ts
-              tests/online/features/message-delivery-mode-queue.test.ts
+          - module: features-a
             mock_sdk: true
-          - module: features-2
-            test_path: >-
-              tests/online/features/github-poll-job.test.ts
-              tests/online/features/message-persistence.test.ts
+          - module: features-b
+            mock_sdk: true
+          - module: features-c
             mock_sdk: true
           - module: git
-            test_path: tests/online/git
             timeout: 10
             mock_sdk: true
           - module: lifecycle
-            test_path: tests/online/lifecycle
             mock_sdk: true
           - module: mcp
-            test_path: tests/online/mcp
             mock_sdk: true
           # - module: providers-anthropic-to-codex-bridge
-          #   test_path: tests/online/providers/anthropic-to-codex-bridge-provider.test.ts
           # - module: providers-anthropic-copilot
-          #   test_path: tests/online/providers/anthropic-to-copilot-bridge-provider.test.ts
           #   timeout: 15
-          # rewind: split into 2 parallel jobs (largest dir-level module without custom timeout)
-          - module: rewind-1
-            test_path: tests/online/rewind/rewind-feature.test.ts
+          - module: rewind-a
             mock_sdk: true
-          - module: rewind-2
-            test_path: tests/online/rewind/selective-rewind.test.ts
+          - module: rewind-b
             mock_sdk: true
-          # Room tests temporarily disabled during refactoring
-          # - module: room-1
-          #   test_path: >-
-          #     tests/online/room/room-advanced-scenarios.test.ts
-          #     tests/online/room/room-chat-agent-tools.test.ts
-          #     tests/online/room/room-chat-constraints.test.ts
-          #   timeout: 10
-          # - module: room-multi-agent
-          #   test_path: tests/online/room/room-multi-agent-flow.test.ts
-          #   timeout: 10
-          # - module: room-replan
-          #   test_path: tests/online/room/room-replan-recovery.test.ts
-          #   timeout: 10
-          # - module: room-planner
-          #   test_path: tests/online/room/room-planner-two-phase.test.ts
-          #   timeout: 10
-          # - module: room-reviewer
-          #   test_path: tests/online/room/room-reviewer-flow.test.ts
-          #   timeout: 10
-          # - module: room-short-id
-          #   test_path: tests/online/room/short-id-flow.test.ts
-          #   mock_sdk: true
-          #   timeout: 10
-          # rpc-1: heaviest files (task-lifecycle ~647 + config-handlers ~573 lines ≈ 1 220)
-          - module: rpc-1
-            test_path: >-
-              tests/online/rpc/rpc-config-handlers.test.ts
-              tests/online/rpc/rpc-task-lifecycle.test.ts
+          - module: rpc-a
             mock_sdk: true
-          # rpc-2: settings + remove-output + message + agent (≈ 1 241 lines)
-          - module: rpc-2
-            test_path: >-
-              tests/online/rpc/rpc-agent-handlers.test.ts
-              tests/online/rpc/rpc-message-handlers.test.ts
-              tests/online/rpc/rpc-remove-output.test.ts
-              tests/online/rpc/rpc-settings-handlers.test.ts
+          - module: rpc-b
             mock_sdk: true
-          # rpc-3: session-extended + live-query + task-draft + rewind
-          # (the legacy MCP toggle online test was removed in M5 of unify-mcp-config-model)
-          - module: rpc-3
-            test_path: >-
-              tests/online/rpc/rpc-live-query.test.ts
-              tests/online/rpc/rpc-rewind-handlers.test.ts
-              tests/online/rpc/rpc-session-handlers-extended.test.ts
-              tests/online/rpc/rpc-task-draft-handlers.test.ts
+          - module: rpc-c
             mock_sdk: true
-          # rpc-4: remaining smaller files (≈ 1 382 lines)
-          - module: rpc-4
-            test_path: >-
-              tests/online/rpc/rpc-draft-handlers.test.ts
-              tests/online/rpc/rpc-file-handlers.test.ts
-              tests/online/rpc/rpc-interrupt-handlers.test.ts
-              tests/online/rpc/rpc-model-handlers.test.ts
-              tests/online/rpc/rpc-model-switching.test.ts
-              tests/online/rpc/rpc-session-filtering.test.ts
-              tests/online/rpc/rpc-session-workflow.test.ts
-              tests/online/rpc/rpc-state-sync.test.ts
-              tests/online/rpc/session-handlers.test.ts
+          - module: rpc-d
+            mock_sdk: true
+          - module: rpc-e
+            mock_sdk: true
+          - module: rpc-f
             mock_sdk: true
           - module: sdk
-            test_path: tests/online/sdk
             mock_sdk: true
-          # Online space tests - split into 2 parallel jobs to reduce overall CI time.
-          - module: space-1
-            test_path: >-
-              tests/online/space/space-chat-session.test.ts
+          - module: space-a
             mock_sdk: true
-          - module: space-2
-            test_path: >-
-              tests/online/space/task-agent-lifecycle.test.ts
-              tests/online/space/task-agent-skills.test.ts
-              tests/online/space/prompt-too-long-kimi-recovery.test.ts
+          - module: space-b
+            mock_sdk: true
+          - module: space-c
+            mock_sdk: true
+          - module: space-d
             mock_sdk: true
           - module: websocket
-            test_path: tests/online/websocket
             mock_sdk: true
           # Real-key cross-provider shards are manual-only in real-api-tests.yml.
 
@@ -361,7 +300,7 @@ jobs:
           --results-dir test-results/daemon-online-${{ matrix.module }}
           --report test-results/flaky-quarantine-daemon-online-${{ matrix.module }}.json
           --
-          bash -lc 'cd packages/daemon && node_modules/.bin/vitest run --config vitest.online.config.ts ${{ matrix.test_path }}
+          bash -lc 'set -o pipefail; cd packages/daemon && paths=$(cd ../.. && scripts/test-online.sh ${{ matrix.module }}) && [ -n "$paths" ] || exit 1; node_modules/.bin/vitest run --config vitest.online.config.ts $paths
           --coverage
           --coverage.reporter=lcov
           --coverage.reportsDirectory=coverage-online-${{ matrix.module }}

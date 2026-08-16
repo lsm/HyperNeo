@@ -19,7 +19,7 @@ import { createLogger } from '../logger.ts';
 type UnsubscribeFn = () => void;
 
 // Create logger for WebSocket transport (uses unified log levels)
-const log = createLogger('kai:transport:client');
+const log = createLogger('hyperneo:transport:client');
 
 export interface WebSocketClientTransportOptions {
   /**

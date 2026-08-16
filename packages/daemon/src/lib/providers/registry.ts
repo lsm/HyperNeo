@@ -13,7 +13,7 @@ import { createLogger } from '@hyperneo/shared/logger';
 import type { Provider, ProviderId, ProviderInfo } from '@hyperneo/shared/provider';
 import type { Provider as ProviderIdStr } from '@hyperneo/shared';
 
-const log = createLogger('kai:providers:registry');
+const log = createLogger('hyperneo:providers:registry');
 
 /**
  * Provider Registry class

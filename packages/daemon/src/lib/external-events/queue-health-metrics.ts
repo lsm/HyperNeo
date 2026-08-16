@@ -192,8 +192,21 @@ const FAILURE_CATEGORY_PREFIXES: Array<{
 /**
  * Map a persisted terminal failure reason to an operator category. Reasons that
  * do not match a known prefix fall back to `other`.
+ *
+ * SpaceRuntime prefixes parked/deferred delivery reasons with
+ * `deliveryMode:<mode>; ` — strip it before category matching so e.g.
+ * `deliveryMode:defer; node_execution_not_active` still categorizes as
+ * retry-exhaustion rather than falling through to injection_error.
  */
 export function categorizeFailureReason(reason: string): FailureCategory {
+  // Prefer the stripped payload (so defer-prefixed activation reasons keep
+  // their retry-exhaustion category); fall back to the raw reason so a
+  // genuine injection failure (`deliveryMode:<mode>; <inject error>`) still
+  // matches the deliveryMode: prefix rule.
+  const stripped = reason.replace(/^deliveryMode:[^;]*;\s*/, '');
+  for (const { category, test } of FAILURE_CATEGORY_PREFIXES) {
+    if (test(stripped)) return category;
+  }
   for (const { category, test } of FAILURE_CATEGORY_PREFIXES) {
     if (test(reason)) return category;
   }

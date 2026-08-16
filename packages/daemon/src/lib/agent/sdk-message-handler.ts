@@ -494,7 +494,41 @@ export class SDKMessageHandler {
   }
 
   markMessageSubmitted(messageId: string): boolean {
-    return this.transitionPersistedMessage(messageId, 'enqueued', 'submitted');
+    const persisted = this.transitionPersistedMessage(messageId, 'enqueued', 'submitted');
+    if (persisted) {
+      this.submitBatchMembersWithKickoff(messageId);
+    }
+    return persisted;
+  }
+
+  /**
+   * Batched queue flush on an ACP session: the kickoff's submission writes the
+   * COMBINED prompt to the subprocess — the admitted members' text is already
+   * in flight, so they must leave `enqueued` (mutable in the queue UI) at the
+   * same moment. Otherwise ACP's potentially minutes-long
+   * submission→acceptance window lets a member be deleted/deferred in the UI,
+   * an operation that cannot retract text already written to the subprocess.
+   * Membership comes from the durable (narrowed-to-admitted) job payload.
+   * Best-effort: a member that fails to transition is still consumed at
+   * acceptance (see consumeBatchMembersAtAcceptance) or settled by the
+   * reconciler.
+   */
+  private submitBatchMembersWithKickoff(kickoffUuid: string): void {
+    try {
+      const jobQueue = this.ctx.db.getJobQueueRepo?.();
+      if (!jobQueue?.getActiveDeliveryBatchUuids) return;
+      const members = jobQueue.getActiveDeliveryBatchUuids(this.ctx.session.id, kickoffUuid);
+      if (!members) return;
+      for (const uuid of members) {
+        if (uuid === kickoffUuid) continue;
+        const row = this.ctx.db.getMessageByStatusAndUuid(this.ctx.session.id, 'enqueued', uuid);
+        if (row) {
+          this.transitionPersistedMessage(row.dbId, 'enqueued', 'submitted');
+        }
+      }
+    } catch (err) {
+      this.logger.warn('Failed to submit batch members with the kickoff:', err);
+    }
   }
 
   markMessageAccepted(messageId: string): void {
@@ -520,6 +554,45 @@ export class SDKMessageHandler {
     );
     if (consumed) {
       signalDeliveryConsumed(this.ctx.session.id, messageId);
+      this.consumeBatchMembersAtAcceptance(messageId);
+    }
+  }
+
+  /**
+   * Batched queue flush on an ACP session: the kickoff's prompt folded the
+   * members in, and ACP's consume boundary is acceptance (here) — not onSent.
+   * Flip the members with the kickoff or their rows stay `enqueued` and the
+   * orphan reconciler re-delivers them individually, repeating already-executed
+   * prompts. The membership is read from the durable job payload
+   * (`getActiveDeliveryBatchUuids`), so a crash + reclaim between admission and
+   * acceptance resolves the same batch. Best-effort: a throw here must not
+   * break the kickoff's acceptance path (the members are then picked up by the
+   * reconciler after the job settles).
+   */
+  private consumeBatchMembersAtAcceptance(kickoffUuid: string): void {
+    try {
+      const jobQueue = this.ctx.db.getJobQueueRepo?.();
+      const repo = this.ctx.db.getSDKMessageRepo();
+      if (!jobQueue || !repo) return;
+      const members = jobQueue.getActiveDeliveryBatchUuids?.(this.ctx.session.id, kickoffUuid);
+      if (!members) return;
+      const uuids = members.filter((uuid) => uuid !== kickoffUuid);
+      if (uuids.length === 0) return;
+      const flippedIds = repo.markDeliveryConsumedByUuids(this.ctx.session.id, uuids);
+      if (flippedIds.length > 0) {
+        void this.ctx.internalEventBus
+          .publish('messages.statusChanged', {
+            sessionId: this.ctx.session.id,
+            messageIds: flippedIds,
+            status: 'consumed',
+          })
+          .catch(() => {});
+      }
+      for (const uuid of uuids) {
+        signalDeliveryConsumed(this.ctx.session.id, uuid);
+      }
+    } catch (err) {
+      this.logger.warn('Failed to consume batch members at ACP acceptance:', err);
     }
   }
 

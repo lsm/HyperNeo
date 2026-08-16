@@ -38,6 +38,13 @@ interface VoiceWaveformProps {
   isStarting?: boolean;
   /** Discard the recording (the X button at the left end of the row). */
   onCancel: () => void;
+  /**
+   * Wall-clock start of the recording. An ADOPTED recording (orphaned by a
+   * previous composer, picked up on remount) started before this waveform
+   * mounted — without this the countdown restarts from the adoption and the
+   * cap fires "early" from the user's perspective.
+   */
+  startedAt?: number | null;
 }
 
 function formatElapsed(seconds: number): string {
@@ -50,6 +57,7 @@ export function VoiceWaveform({
   isTranscribing,
   isStarting = false,
   onCancel,
+  startedAt,
 }: VoiceWaveformProps) {
   // Phone-width composers get tighter gaps/smaller labels; also selects pitch.
   const [isNarrow] = useState(
@@ -105,15 +113,17 @@ export function VoiceWaveform({
   // the display drift from the recorder's real deadline.
   useEffect(() => {
     if (!isRecording || isTranscribing) return;
-    startTimestampRef.current = Date.now();
-    setElapsed(0);
+    // Seed from the recording's true start when known (adopted recordings),
+    // falling back to this mount for recordings started here.
+    startTimestampRef.current = startedAt ?? Date.now();
+    setElapsed(Math.min(MAX_SECONDS, Math.floor((Date.now() - startTimestampRef.current) / 1000)));
     const id = setInterval(() => {
       setElapsed(
         Math.min(MAX_SECONDS, Math.floor((Date.now() - startTimestampRef.current) / 1000))
       );
     }, 1000);
     return () => clearInterval(id);
-  }, [isRecording, isTranscribing]);
+  }, [isRecording, isTranscribing, startedAt]);
 
   // Level meter. Runs at ~60fps ONLY while recording; when frozen (transcribing
   // or startup) it applies the frozen styles once and stops scheduling frames.

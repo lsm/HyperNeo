@@ -16,7 +16,7 @@ import type { LiveQuerySnapshotEvent, LiveQueryDeltaEvent, SpaceMcpEntry } from 
 import { Logger } from '@hyperneo/shared';
 import { connectionManager } from './connection-manager';
 
-const logger = new Logger('kai:web:space-mcp-store');
+const logger = new Logger('hyperneo:web:space-mcp-store');
 
 class SpaceMcpStore {
   /** Per-space registry entries keyed by serverId, with resolved `enabled` state. */

@@ -1,11 +1,14 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ChatMessage, Session, SessionFeatures } from '@hyperneo/shared';
 import { DEFAULT_WORKER_FEATURES, normalizeThinkingLevel } from '@hyperneo/shared';
+import { useSessionRename } from '../hooks/useSessionRename';
+import type { SessionRenameInputProps } from '../hooks/useSessionRename';
 import { extractBackgroundTasks, type BackgroundTask } from '../hooks/useRunningToolUseIds.ts';
 import { connectionState } from '../lib/state';
 import { cn } from '../lib/utils.ts';
 import { IconButton } from './ui/IconButton.tsx';
 import { InfoRow, InfoSection } from './ui/InfoRow.tsx';
+import { RenameIcon } from './icons/RenameIcon.tsx';
 
 interface SessionInfoPanelButtonProps {
   session: Session | null;
@@ -303,6 +306,10 @@ function ActionToolbar({
   resettingAgent,
   readonly,
   archived,
+  canRename,
+  isRenaming,
+  renameInputProps,
+  onRenameClick,
   onToolsClick,
   onExportClick,
   onResetClick,
@@ -315,6 +322,10 @@ function ActionToolbar({
   resettingAgent: boolean;
   readonly: boolean;
   archived: boolean;
+  canRename: boolean;
+  isRenaming: boolean;
+  renameInputProps: SessionRenameInputProps;
+  onRenameClick: () => void;
   onToolsClick: () => void;
   onExportClick: () => void;
   onResetClick: () => void;
@@ -334,6 +345,26 @@ function ActionToolbar({
       <IconButton size="sm" title="Export chat" onClick={onExportClick} disabled={!isConnected}>
         <ExportIcon />
       </IconButton>
+      {!readonly && (
+        <IconButton
+          size="sm"
+          title="Rename session"
+          onClick={onRenameClick}
+          // Disabled while editing: re-clicking would blur-commit the draft
+          // and then reopen the editor seeded from the stale title prop.
+          disabled={!canRename || !isConnected || isRenaming}
+        >
+          <RenameIcon className="h-4 w-4" />
+        </IconButton>
+      )}
+      {isRenaming && (
+        <input
+          {...renameInputProps}
+          data-testid="session-info-rename-input"
+          placeholder="Session title"
+          class="basis-full rounded-md border border-white/20 bg-dark-900/80 px-2.5 py-1.5 text-sm text-gray-100 outline-none focus:border-gray-500"
+        />
+      )}
       <IconButton
         size="sm"
         title={resettingAgent ? 'Resetting agent...' : 'Reset agent'}
@@ -468,6 +499,15 @@ export function SessionInfoPanelButton({
     top: 0,
     right: 0,
   });
+  // Inline rename lives entirely inside the panel (optimistic store update +
+  // rollback handled by the hook), so no callback needs threading through
+  // ChatHeader/ChatContainer.
+  const {
+    isEditing: isRenaming,
+    startEditing,
+    commit: commitRename,
+    inputProps: renameInputProps,
+  } = useSessionRename(session?.id ?? '', session?.title ?? '');
   const todos = useMemo(() => extractLatestTodos(messages), [messages]);
   const tasks = useMemo(
     () => extractBackgroundTasks(backgroundTaskMessages, toolInputsMap),
@@ -475,16 +515,30 @@ export function SessionInfoPanelButton({
   );
   const sources = useMemo(() => extractSources(messages), [messages]);
 
+  // Latest commit callback without resubscribing the listeners on every draft
+  // keystroke (its identity changes with the draft).
+  const commitRenameRef = useRef(commitRename);
+  commitRenameRef.current = commitRename;
+
   useEffect(() => {
     if (!open) return;
 
+    const closePanel = () => {
+      // Settle an in-flight rename synchronously: a click on a control that
+      // also navigates (another sidebar session, the overlay Back button)
+      // replaces the keyed ChatContainer on the subsequent click event —
+      // unmounting this component before a passive effect could run and
+      // silently dropping the edit.
+      commitRenameRef.current();
+      setOpen(false);
+    };
     const handlePointerDown = (event: MouseEvent) => {
       const target = event.target;
       if (target instanceof Node && rootRef.current?.contains(target)) return;
-      setOpen(false);
+      closePanel();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
+      if (event.key === 'Escape') closePanel();
     };
 
     window.addEventListener('mousedown', handlePointerDown);
@@ -494,6 +548,14 @@ export function SessionInfoPanelButton({
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [open]);
+
+  // Backstop for any other close path: closing the panel unmounts the rename
+  // input before it can emit blur, so settle the edit explicitly — otherwise
+  // the draft is neither saved nor cancelled and a stale editor reappears on
+  // reopen.
+  useEffect(() => {
+    if (!open && isRenaming) commitRename();
+  }, [open, isRenaming, commitRename]);
 
   // Position the panel below the trigger, right-aligned to it, but clamp the
   // right offset so the panel never spills off the left of the viewport. This
@@ -532,7 +594,13 @@ export function SessionInfoPanelButton({
     <div ref={rootRef} class="relative">
       <IconButton
         title="Session info"
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => {
+          // Toggle-closing must also settle an in-flight rename synchronously
+          // (the close-effect backstop is passive and can be skipped by an
+          // unmount). No-op when no edit is in flight.
+          commitRename();
+          setOpen((value) => !value);
+        }}
         class={cn('flex-shrink-0 text-gray-400', open && 'bg-white/10 text-gray-100')}
       >
         <InfoIcon />
@@ -552,6 +620,10 @@ export function SessionInfoPanelButton({
             resettingAgent={resettingAgent}
             readonly={readonly}
             archived={archived}
+            canRename={!!session}
+            isRenaming={isRenaming}
+            renameInputProps={renameInputProps}
+            onRenameClick={startEditing}
             onToolsClick={onToolsClick}
             onExportClick={onExportClick}
             onResetClick={onResetClick}

@@ -29,6 +29,10 @@ import {
   pickPrNumbersByHeadSha,
   pullRequestNumberFrom,
 } from './github-pr-head-ref';
+import {
+  addPullRequestNumberByHeadRef,
+  removePullRequestNumberByHeadRef,
+} from './github-pr-head-ref-index';
 import { isPullRequestOpen, pullRequestUpdatedAt } from './github-pr-row-state';
 import { isPositiveReaction, reactionIdFrom } from './github-reaction-fields';
 import {
@@ -3311,7 +3315,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       const headRepo =
         recentPullRequestHeadRepos[Number(prNumber)] ?? gitHubRepoPath(watched.owner, watched.repo);
       if (headSha)
-        addPullRequestNumberByHeadSha(
+        addPullRequestNumberByHeadRef(
           pullRequestNumbersByHeadRef,
           headRefKey(headRepo, headSha),
           Number(prNumber)
@@ -3540,7 +3544,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             if (!isPullRequestOpen(row)) {
               if (previousHeadSha) {
                 const previousHeadRef = headRefKey(previousHeadRepo, previousHeadSha);
-                removePullRequestNumberByHeadSha(
+                removePullRequestNumberByHeadRef(
                   pullRequestNumbersByHeadRef,
                   previousHeadRef,
                   prNumber
@@ -3553,7 +3557,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             }
             if (previousHeadSha && (previousHeadSha !== headSha || previousHeadRepo !== headRepo)) {
               const previousHeadRef = headRefKey(previousHeadRepo, previousHeadSha);
-              removePullRequestNumberByHeadSha(
+              removePullRequestNumberByHeadRef(
                 pullRequestNumbersByHeadRef,
                 previousHeadRef,
                 prNumber
@@ -3562,7 +3566,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             }
             const headRef = headRefKey(headRepo, headSha);
             const previousHeadPrNumbers = [...(pullRequestNumbersByHeadRef.get(headRef) ?? [])];
-            addPullRequestNumberByHeadSha(pullRequestNumbersByHeadRef, headRef, prNumber);
+            addPullRequestNumberByHeadRef(pullRequestNumbersByHeadRef, headRef, prNumber);
             if (!previousHeadPrNumbers.includes(prNumber)) {
               // A new PR joined this head: clear the ETag and reset the per-head
               // check-run watermark so older failed rows are re-evaluated for the
@@ -4413,31 +4417,6 @@ function rowsFromPollingPayload(payload: unknown, endpointKey: string): unknown[
     return Array.isArray(checkRuns) ? checkRuns : [];
   }
   return Array.isArray(payload) ? payload : [];
-}
-
-function addPullRequestNumberByHeadSha(
-  pullRequestNumbersByHeadSha: Map<string, number[]>,
-  headSha: string,
-  prNumber: number
-): void {
-  const numbers = pullRequestNumbersByHeadSha.get(headSha) ?? [];
-  if (!numbers.includes(prNumber)) numbers.push(prNumber);
-  pullRequestNumbersByHeadSha.set(headSha, numbers);
-}
-
-function removePullRequestNumberByHeadSha(
-  pullRequestNumbersByHeadSha: Map<string, number[]>,
-  headSha: string,
-  prNumber: number
-): void {
-  const numbers = pullRequestNumbersByHeadSha.get(headSha);
-  if (!numbers) return;
-  const next = numbers.filter((number) => number !== prNumber);
-  if (next.length > 0) {
-    pullRequestNumbersByHeadSha.set(headSha, next);
-  } else {
-    pullRequestNumbersByHeadSha.delete(headSha);
-  }
 }
 
 function clearCheckRunEtagsForHead(checkRunEtags: Record<string, string>, headRef: string): void {

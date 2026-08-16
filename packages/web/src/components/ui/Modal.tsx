@@ -48,14 +48,22 @@ export function createFocusTrapHandler(
  * @returns cleanup function to remove the event listener
  */
 export function setupFocusTrap(container: HTMLElement): () => void {
-  const focusableElements = container.querySelectorAll(FOCUSABLE_SELECTOR);
-  const firstElement = focusableElements[0] as HTMLElement;
-  const lastElement = focusableElements[focusableElements.length - 1] as HTMLElement;
-
-  const handleTab = createFocusTrapHandler(firstElement, lastElement);
+  // Query the focusable list AT EVENT TIME rather than snapshotting it at
+  // setup: conditionally-rendered controls (e.g. the global recording chip
+  // inside the agent overlay panel) can appear after the trap was set up,
+  // and a snapshotted first/last pair would keep wrapping Tab past them.
+  const handleTab = (e: KeyboardEvent) => {
+    if (e.key !== 'Tab') return;
+    const focusableElements = container.querySelectorAll(FOCUSABLE_SELECTOR);
+    if (focusableElements.length === 0) return;
+    const firstElement = focusableElements[0] as HTMLElement;
+    const lastElement = focusableElements[focusableElements.length - 1] as HTMLElement;
+    const wrap = createFocusTrapHandler(firstElement, lastElement);
+    wrap(e);
+  };
 
   container.addEventListener('keydown', handleTab as EventListener);
-  firstElement?.focus();
+  container.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)?.focus();
 
   return () => {
     container.removeEventListener('keydown', handleTab as EventListener);

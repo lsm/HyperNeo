@@ -247,7 +247,8 @@ export function getSpaceTaskViewFromPath(
   };
 }
 
-function getCurrentPath(): string {
+/** Current location pathname — exported for callers that mirror route decisions. */
+export function getCurrentPath(): string {
   return window.location.pathname;
 }
 
@@ -1000,22 +1001,22 @@ export function clearOverlayHighlightMessageId(): void {
   spaceOverlayHighlightMessageIdSignal.value = null;
 }
 
+/** Clear all open/pending overlay signals without touching history. */
+export function clearOverlaySignals(): void {
+  spaceOverlaySessionIdSignal.value = null;
+  spaceOverlayAgentNameSignal.value = null;
+  spaceOverlayHighlightMessageIdSignal.value = null;
+  spaceOverlayTaskContextSignal.value = null;
+  spaceOverlayPendingTaskIdSignal.value = null;
+  spaceOverlayPendingAgentNameSignal.value = null;
+}
+
 export function closeOverlayHistory(): void {
   if (window.history.state?.overlaySessionId) {
-    spaceOverlaySessionIdSignal.value = null;
-    spaceOverlayAgentNameSignal.value = null;
-    spaceOverlayHighlightMessageIdSignal.value = null;
-    spaceOverlayTaskContextSignal.value = null;
-    spaceOverlayPendingTaskIdSignal.value = null;
-    spaceOverlayPendingAgentNameSignal.value = null;
+    clearOverlaySignals();
     window.history.back();
   } else {
-    spaceOverlaySessionIdSignal.value = null;
-    spaceOverlayAgentNameSignal.value = null;
-    spaceOverlayHighlightMessageIdSignal.value = null;
-    spaceOverlayTaskContextSignal.value = null;
-    spaceOverlayPendingTaskIdSignal.value = null;
-    spaceOverlayPendingAgentNameSignal.value = null;
+    clearOverlaySignals();
   }
 }
 

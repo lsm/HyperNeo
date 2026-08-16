@@ -87,6 +87,10 @@ function makeEvent(overrides: Partial<ExternalEvent> = {}): ExternalEvent {
 
 class MockTaskAgentManager {
   alive = new Set<string>();
+  /** sessionId → processing-state status (unset = not interrupted). */
+  processingStates = new Map<string, string>();
+  /** sessionIds with an interrupt actually in flight (vs stale persisted state). */
+  interrupting = new Set<string>();
   spawned: string[] = [];
   activationCalls: Array<{
     taskId: string;
@@ -102,8 +106,24 @@ class MockTaskAgentManager {
     return this.alive.has(sessionId);
   }
 
-  getAgentSessionById(_sessionId: string): null {
-    return null;
+  getAgentSessionById(sessionId: string): {
+    getProcessingState: () => { status: string };
+    isInterruptInProgress: () => boolean;
+    normalizeStaleInterruptedState: () => Promise<void>;
+  } | null {
+    const status = this.processingStates.get(sessionId);
+    if (status === undefined) return null;
+    return {
+      getProcessingState: () => ({ status }),
+      isInterruptInProgress: () => this.interrupting.has(sessionId),
+      // Mirror AgentSession.normalizeStaleInterruptedState: flip a stale
+      // persisted 'interrupted' state to idle.
+      normalizeStaleInterruptedState: async () => {
+        if (status === 'interrupted' && !this.interrupting.has(sessionId)) {
+          this.processingStates.set(sessionId, 'idle');
+        }
+      },
+    };
   }
 
   async rehydrate(): Promise<void> {}
@@ -1016,13 +1036,150 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(injected).toHaveLength(1);
     expect(injected[0]!.sessionId).toBe('session-live');
-    expect(injected[0]!.deliveryMode).toBe('immediate');
+    // External events always defer to the next idle boundary — never injected
+    // mid-work, even when the live session is actively processing.
+    expect(injected[0]!.deliveryMode).toBe('defer');
     expect(JSON.parse(injected[0]!.message).eventId).toBe(event.id);
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
     const deliveries = eventStore.listDeliveries(event.id);
     expect(deliveries).toHaveLength(1);
     expect(deliveries[0]!.state).toBe('delivered');
     expect(deliveries[0]!.taskId).toBe(task.id);
+  });
+
+  test('defers external events to the next idle boundary for both busy and idle live sessions (never mid-work)', async () => {
+    // Design intent (2026-08-13): an external event to a LIVE session must
+    // ALWAYS be handed to the inject layer in 'defer' mode — insert when idle,
+    // queue and replay at the next idle point when busy. The runtime never
+    // requests 'immediate' (which would inject mid-work and derail an
+    // actively-processing agent). The inject layer (injectMessageIntoSession)
+    // owns the idle→deliver-now vs busy→replay-at-idle decision; here we assert
+    // the runtime always asks for 'defer', for both a busy and an idle session.
+    // This test fails before the change (live-session deliveries defaulted to
+    // 'immediate') and passes after.
+    const BUSY_TOPIC = 'github/lsm/neokai/pull_request/42.review_*';
+    const IDLE_TOPIC = 'github/lsm/neokai/pull_request/43.review_*';
+
+    // Busy live session — actively processing.
+    const { run: busyRun, task: busyTask } = await startRunWithSubscription(
+      BUSY_TOPIC,
+      'code-busy'
+    );
+    const busyExec = nodeExecutionRepo.listByNode(busyRun.id, 'code-busy')[0]!;
+    nodeExecutionRepo.update(busyExec.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-busy-defer',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-busy-defer');
+
+    // Idle live session — waiting, not processing.
+    const { run: idleRun, task: idleTask } = await startRunWithSubscription(
+      IDLE_TOPIC,
+      'code-idle'
+    );
+    const idleExec = nodeExecutionRepo.listByNode(idleRun.id, 'code-idle')[0]!;
+    nodeExecutionRepo.update(idleExec.id, {
+      status: 'idle',
+      agentSessionId: 'session-idle-defer',
+      startedAt: Date.now(),
+      completedAt: Date.now(),
+    });
+    tam.alive.add('session-idle-defer');
+
+    const busyEvent = makeEvent({
+      topic: 'github/lsm/neokai/pull_request/42.review_submitted',
+    });
+    const idleEvent = makeEvent({
+      topic: 'github/lsm/neokai/pull_request/43.review_submitted',
+    });
+    await eventService.publish(busyEvent);
+    await eventService.publish(idleEvent);
+
+    const busyInject = injected.find((i) => i.sessionId === 'session-busy-defer')!;
+    const idleInject = injected.find((i) => i.sessionId === 'session-idle-defer')!;
+
+    // Both reach the inject layer in 'defer' mode — never 'immediate'. This is
+    // the assertion that flips from 'immediate' to 'defer' under this change.
+    expect(busyInject.deliveryMode).toBe('defer');
+    expect(idleInject.deliveryMode).toBe('defer');
+
+    // Both are accepted by the inject layer ('delivered' = handed off). For the
+    // busy session the inject layer persists a deferred row for replay at the
+    // next idle point; for the idle session it delivers now.
+    expect(eventStore.getById(busyEvent.id)?.state).toBe('delivered');
+    expect(eventStore.getById(idleEvent.id)?.state).toBe('delivered');
+    expect(eventStore.listDeliveries(busyEvent.id)[0]!.taskId).toBe(busyTask.id);
+    expect(eventStore.listDeliveries(idleEvent.id)[0]!.taskId).toBe(idleTask.id);
+  });
+
+  test('keeps an external event pending while the live session is mid-interrupt, delivering after the interrupt resolves', async () => {
+    // P2 regression guard: InterruptHandler completes via setIdle WITHOUT
+    // publishing query.trigger, so a deferred row handed to a mid-interrupt
+    // session is never replayed — the delivery would be marked delivered while
+    // the row sits unconsumed indefinitely. The runtime must park the delivery
+    // (queue + retry) instead of handing it off in 'defer' mode, then deliver
+    // at the true idle once the interrupt resolves.
+    const { run } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-interrupted',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-interrupted');
+    tam.processingStates.set('session-interrupted', 'interrupted');
+    tam.interrupting.add('session-interrupted');
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    // Not handed off while mid-interrupt: no injection, delivery still pending.
+    expect(injected).toHaveLength(0);
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('pending');
+    // Parked with a defer-encoded reason (non-terminal): after a daemon
+    // restart, requeuePersistedPendingDeliveries reconstructs 'defer' from it
+    // — a null reason would recover as 'immediate'.
+    expect(delivery.failureReason).toBe('deliveryMode:defer; target_session_interrupted');
+
+    // The interrupt resolves — the session reaches a true idle.
+    tam.processingStates.set('session-interrupted', 'idle');
+
+    // The parked retry fires and delivers at the true idle boundary.
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-interrupted');
+    expect(injected[0]!.deliveryMode).toBe('defer');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
+    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+    await runtime.stop();
+  });
+
+  test('does not park on a stale persisted interrupted state (no interrupt in flight)', async () => {
+    // A daemon crash between setInterrupted and setIdle leaves the persisted
+    // processing state 'interrupted' with no interrupt operation remaining to
+    // resolve it — parking on that state would hold the delivery until TTL.
+    // Only an interrupt actually in flight is a parking signal; a stale
+    // interrupted session takes the normal defer handoff.
+    const { run } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-stale-interrupted',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-stale-interrupted');
+    tam.processingStates.set('session-stale-interrupted', 'interrupted');
+    // No tam.interrupting entry — the interrupt is not in flight.
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(1);
+    expect(injected[0]!.sessionId).toBe('session-stale-interrupted');
+    expect(injected[0]!.deliveryMode).toBe('defer');
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
   test('a shared-PR synchronize (commit push) does NOT stamp any co-subscriber lastActivityAt', async () => {
@@ -1087,7 +1244,8 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(injected).toHaveLength(1);
     expect(injected[0]!.sessionId).toBe('session-idle');
-    expect(injected[0]!.deliveryMode).toBe('immediate');
+    // Still delivered promptly when idle — defer mode delivers now when idle.
+    expect(injected[0]!.deliveryMode).toBe('defer');
     expect(JSON.parse(injected[0]!.message).eventId).toBe(event.id);
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
@@ -1116,7 +1274,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(injected).toHaveLength(1);
     expect(injected[0]!.sessionId).toBe('session-review-task-idle');
-    expect(injected[0]!.deliveryMode).toBe('immediate');
+    expect(injected[0]!.deliveryMode).toBe('defer');
     expect(JSON.parse(injected[0]!.message).eventId).toBe(event.id);
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
@@ -1269,7 +1427,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected).toHaveLength(0);
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('pending');
-    expect(delivery.failureReason).toBe('node_execution_not_active');
+    expect(delivery.failureReason).toBe('deliveryMode:defer; node_execution_not_active');
   });
 
   test('queues matching events for pending nodes and flushes after session creation', async () => {
@@ -1294,6 +1452,11 @@ describe('SpaceRuntime external event subscriptions', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(injected).toHaveLength(1);
     expect(injected[0]!.sessionId).toBe('session-flush');
+    // Pre-activation queued events flush in 'defer' mode too: the stored mode
+    // is forwarded unchanged, and 'immediate' would steer an already-processing
+    // session mid-turn. Defer + idle at flush delivers now (no difference for
+    // a fresh session).
+    expect(injected[0]!.deliveryMode).toBe('defer');
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
@@ -1326,6 +1489,35 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
     expect(injected).toHaveLength(1);
     expect(injected[0]!.sessionId).toBe('session-late-subscription');
+  });
+
+  test('persists the defer mode when a live session is skipped while its space is paused', async () => {
+    // The paused-live early return must not leave a null failureReason:
+    // onSpaceResumed reconstructs the mode from it, so the defer intent is
+    // recorded explicitly rather than relying on the recovery default.
+    const { run } = await startRunWithSubscription();
+    const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: 'session-paused-live',
+      startedAt: Date.now(),
+    });
+    tam.alive.add('session-paused-live');
+    db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+    // The paused check reads the synchronous delivery-hold cache (kept in
+    // sync by the space pause/stop registers), not the raw column.
+    runtime.holdSpaceDeliveries(SPACE_ID);
+
+    const event = makeEvent();
+    await eventService.publish(event);
+
+    expect(injected).toHaveLength(0);
+    const delivery = eventStore.listDeliveries(event.id)[0]!;
+    expect(delivery.state).toBe('pending');
+    expect(delivery.failureReason).toBe('deliveryMode:defer; space_paused');
+
+    db.prepare(`UPDATE spaces SET paused = 0 WHERE id = ?`).run(SPACE_ID);
+    await runtime.stop();
   });
 
   test('delivers a linked-PR event after a matching subscription registers', async () => {
@@ -1955,7 +2147,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected).toHaveLength(10);
     const digestDelivery = eventStore.listDeliveries(events[10]!.id)[0]!;
     expect(digestDelivery.failureReason).toBe(
-      'deliveryMode:immediate; digest; temporary digest target failure'
+      'deliveryMode:defer; digest; temporary digest target failure'
     );
 
     await new Promise((resolve) => setTimeout(resolve, 1100));
@@ -2904,7 +3096,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected).toHaveLength(0);
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('pending');
-    expect(delivery.failureReason).toBe('node_execution_not_active');
+    expect(delivery.failureReason).toBe('deliveryMode:defer; node_execution_not_active');
     expect(eventStore.listPendingDeliveries()).toContainEqual(delivery);
     expect(eventStore.getById(event.id)?.state).toBe('published');
   });
@@ -3000,15 +3192,18 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     const event = makeEvent();
     await eventService.publish(event);
+    // Defer-encoded prefix so a daemon restart before the retry succeeds
+    // reconstructs 'defer' (a bare activation_failed reason recovers as
+    // 'immediate').
     expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe(
-      'activation_failed; spawn failed'
+      'deliveryMode:defer; activation_failed; spawn failed'
     );
 
     await new Promise((resolve) => setTimeout(resolve, 5_600));
 
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('failed');
-    expect(delivery.failureReason).toBe('activation_failed; spawn failed');
+    expect(delivery.failureReason).toBe('deliveryMode:defer; activation_failed; spawn failed');
     expect(eventStore.getById(event.id)?.state).toBe('failed');
     expect(tam.activationCalls.length).toBeGreaterThanOrEqual(5);
     expect(tam.activationCalls.length).toBeLessThanOrEqual(6);
@@ -3031,7 +3226,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(tam.activationCalls).toHaveLength(0);
     const pending = eventStore.listDeliveries(event.id)[0]!;
     expect(pending.state).toBe('pending');
-    expect(pending.failureReason).toBe('node_execution_not_active');
+    expect(pending.failureReason).toBe('deliveryMode:defer; node_execution_not_active');
 
     db.prepare(`UPDATE spaces SET paused = 0 WHERE id = ?`).run(SPACE_ID);
     nodeExecutionRepo.update(execution.id, {
@@ -3101,7 +3296,9 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(injected).toHaveLength(1);
     expect(injected[0]!.sessionId).toBe('session-idle-stale');
-    expect(injected[0]!.deliveryMode).toBe('immediate');
+    // Delivered promptly (the inject layer delivers defer-mode input now when
+    // idle); the runtime still always requests 'defer' — never mid-work.
+    expect(injected[0]!.deliveryMode).toBe('defer');
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('delivered');
     expect(eventStore.listPendingDeliveries()).not.toContainEqual(delivery);
@@ -3281,7 +3478,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     await eventService.publish(idleEvent);
     expect(eventStore.listDeliveries(idleEvent.id)[0]!.state).toBe('pending');
     expect(eventStore.listDeliveries(idleEvent.id)[0]!.failureReason).toBe(
-      'node_execution_not_active'
+      'deliveryMode:defer; node_execution_not_active'
     );
 
     // Simulate a separate in-memory queued delivery (from a transient failure
@@ -4390,7 +4587,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     const codeDelivery = deliveries.find((d) => d.nodeId === 'code')!;
     expect(codeDelivery).toBeDefined();
     expect(codeDelivery.state).toBe('pending');
-    expect(codeDelivery.failureReason).toBe('node_execution_not_active');
+    expect(codeDelivery.failureReason).toBe('deliveryMode:defer; node_execution_not_active');
   });
 
   test('preserves queued deliveries while re-registering unchanged interests', async () => {
@@ -4456,7 +4653,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected).toHaveLength(0);
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
     expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe(
-      'deliveryMode:immediate; temporary injection failure'
+      'deliveryMode:defer; temporary injection failure'
     );
 
     runtime.flushPendingNodeQueue({
@@ -4485,7 +4682,9 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('pending');
-    expect(delivery.failureReason).toBeNull();
+    // Defer-encoded reason (non-terminal) so a daemon restart reconstructs
+    // 'defer' — a null reason would recover as 'immediate'.
+    expect(delivery.failureReason).toBe('deliveryMode:defer; node_execution_pending');
 
     runtime.flushPendingNodeQueue({
       workflowRunId: run.id,
@@ -5424,7 +5623,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     await eventService.publish(event);
     const persisted = eventStore.listDeliveries(event.id)[0]!;
     expect(persisted.state).toBe('pending');
-    expect(persisted.failureReason).toBe('node_execution_not_active');
+    expect(persisted.failureReason).toBe('deliveryMode:defer; node_execution_not_active');
 
     // Run transitions to terminal, but the task is still active and the node
     // reactivates with a live session — run status no longer gates delivery.
@@ -5453,7 +5652,9 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     const event = makeEvent();
     await eventService.publish(event);
-    expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe('node_execution_not_active');
+    expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe(
+      'deliveryMode:defer; node_execution_not_active'
+    );
 
     // Run becomes blocked with no active execution, but the task is still
     // active and the node reactivates with a live session.
@@ -5482,7 +5683,9 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     const event = makeEvent();
     await eventService.publish(event);
-    expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe('node_execution_not_active');
+    expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe(
+      'deliveryMode:defer; node_execution_not_active'
+    );
 
     // Reactivate the node execution, then leave the run blocked — a blocked run
     // with an active execution is still externally deliverable.
@@ -5722,13 +5925,15 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     const event = makeEvent();
     await eventService.publish(event);
-    expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe('node_execution_not_active');
+    expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe(
+      'deliveryMode:defer; node_execution_not_active'
+    );
 
     await new Promise((resolve) => setTimeout(resolve, 5_600));
 
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('failed');
-    expect(delivery.failureReason).toBe('node_execution_not_active');
+    expect(delivery.failureReason).toBe('deliveryMode:defer; node_execution_not_active');
     expect(eventStore.getById(event.id)?.state).toBe('failed');
     expect(tam.activationCalls.length).toBeGreaterThanOrEqual(5);
     expect(tam.activationCalls.length).toBeLessThanOrEqual(6);
@@ -5937,7 +6142,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(tam.activationCalls).toHaveLength(0);
     const pending = eventStore.listDeliveries(event.id)[0]!;
     expect(pending.state).toBe('pending');
-    expect(pending.failureReason).toBe('node_execution_not_active');
+    expect(pending.failureReason).toBe('deliveryMode:defer; node_execution_not_active');
 
     // Resume the space. The runtime's onSpaceResumed hook must schedule an
     // activation retry for the sessionless pending delivery.
@@ -6050,7 +6255,9 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     const event = makeEvent({ id: 'evt-exclude-retry' });
     await eventService.publish(event);
-    expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe('node_execution_not_active');
+    expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe(
+      'deliveryMode:defer; node_execution_not_active'
+    );
 
     // Before the activation retry fires, make activation succeed. The retry
     // calls flushPendingNodeQueueAsync with the current deliveryKey excluded;
@@ -6087,7 +6294,9 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     const event = makeEvent({ id: 'evt-sessionless-rehydrate' });
     await eventService.publish(event);
-    expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe('node_execution_not_active');
+    expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe(
+      'deliveryMode:defer; node_execution_not_active'
+    );
     await runtime.stop();
 
     const commandBus = createInternalCommandBus();
