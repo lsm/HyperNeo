@@ -8246,6 +8246,9 @@ export class SpaceRuntime {
         const preTransitionHolds =
           (preTransitionRun == null || preTransitionRun.status === 'in_progress') &&
           (preTransitionTask == null ||
+            preTransitionTask.workflowRunId === runId ||
+            preTransitionTask.workflowRunId == null) &&
+          (preTransitionTask == null ||
             preTransitionTask.status === 'done' ||
             preTransitionTask.status === 'cancelled' ||
             preTransitionTask.reportedStatus !== null);
@@ -8280,6 +8283,12 @@ export class SpaceRuntime {
         const runAfterTransition = this.config.workflowRunRepo.getRun(runId);
         const completionStillHolds =
           runAfterTransition?.status === 'done' &&
+          // The refreshed task must still belong to THIS run: a mid-tick
+          // `spaceTask.update` can move a done task to another run while
+          // retaining its completion signal — finalizing this run would
+          // then apply its outcome and post-approval routing to a task the
+          // new run owns, prematurely completing that workflow.
+          (canonicalTask.workflowRunId == null || canonicalTask.workflowRunId === runId) &&
           (canonicalTask.status === 'done' ||
             canonicalTask.status === 'cancelled' ||
             canonicalTask.reportedStatus !== null);

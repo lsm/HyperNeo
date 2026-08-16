@@ -3213,6 +3213,105 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     expect(interrupted).toEqual([]);
   });
 
+  test('a metadata-only run edit during the cascade does not stand the sweep down', async () => {
+    // The lifecycle gate keys on status/startedAt, NOT the row version: a
+    // coordinator's description-only update_workflow_run bumps updatedAt
+    // while leaving both untouched, and the sweep must still quiesce
+    // same-node peers (the runtime sweep excludes the whole source node).
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-sweep',
+      agentName: 'Peer',
+      agentId: ctx.agentId,
+      status: 'in_progress',
+      agentSessionId: 'metadata-peer-session',
+    });
+    const interrupted: string[] = [];
+    const originalSetStatus = ctx.taskManager.setTaskStatus.bind(ctx.taskManager);
+    const setStatusSpy = spyOn(ctx.taskManager, 'setTaskStatus').mockImplementation(
+      async (...callArgs: Parameters<typeof originalSetStatus>) => {
+        const result = await originalSetStatus(...callArgs);
+        // Metadata-only edit inside the cascade: no lifecycle transition.
+        ctx.workflowRunRepo.updateRun(task.workflowRunId!, {
+          description: 'coordinator note mid-cascade',
+        });
+        return result;
+      }
+    );
+
+    try {
+      const result = await makeValidationTool({
+        interruptBySessionId: async (sessionId: string) => {
+          interrupted.push(sessionId);
+        },
+      }).complete_validation_task({
+        task_id: task.id,
+        validation_outcome: 'completed; sweep must proceed',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.success).toBe(true);
+    } finally {
+      setStatusSpy.mockRestore();
+    }
+
+    expect(
+      ctx.nodeExecutionRepo
+        .listByWorkflowRun(task.workflowRunId!)
+        .find((e) => e.agentSessionId === 'metadata-peer-session')?.status
+    ).toBe('idle');
+    expect(interrupted).toEqual(['metadata-peer-session']);
+  });
+
+  test('a confirmed completion returns the reread row, not the superseded snapshot', async () => {
+    // Result precedence: while setTaskStatus awaits its post-commit
+    // cascade, the tick can replace the validation outcome with the run's
+    // structured result and publish that newer task. The confirmed tail
+    // must emit and return the REREAD row — republishing the older
+    // snapshot would overwrite the web store with the superseded result.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-reread',
+      agentName: 'Review',
+      agentId: ctx.agentId,
+      status: 'idle',
+    });
+    const published: string[] = [];
+    const originalSetStatus = ctx.taskManager.setTaskStatus.bind(ctx.taskManager);
+    const setStatusSpy = spyOn(ctx.taskManager, 'setTaskStatus').mockImplementation(
+      async (...callArgs: Parameters<typeof originalSetStatus>) => {
+        const result = await originalSetStatus(...callArgs);
+        // The tick's result precedence lands inside the cascade.
+        ctx.taskRepo.updateTask(task.id, { result: 'Structured run outcome summary' });
+        return result;
+      }
+    );
+
+    try {
+      const result = await makeValidationTool({
+        internalEventBus: {
+          publish: (async (_topic: string, payload: { task: { result: string | null } }) => {
+            published.push(payload.task.result ?? '');
+            return Promise.resolve();
+          }) as CompleteValidationTaskHandlerDeps['internalEventBus'],
+        },
+      }).complete_validation_task({
+        task_id: task.id,
+        validation_outcome: 'original validation outcome',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+
+      expect(parsed.success).toBe(true);
+      expect(parsed.task.result).toBe('Structured run outcome summary');
+      expect(published).toEqual(['Structured run outcome summary']);
+    } finally {
+      setStatusSpy.mockRestore();
+    }
+  });
+
   test('terminal precondition refuses when the task loses canonical ownership mid-flight', async () => {
     // spaceTask.update can attach a legacy duplicate to the run while this
     // handler awaits — the task that was canonical at the early guard no

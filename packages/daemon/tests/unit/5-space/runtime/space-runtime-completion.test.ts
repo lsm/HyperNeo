@@ -891,6 +891,62 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       expect(taskRepo.getTask(task.id)?.status).toBe('open');
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
     });
+
+    test('does not finalize the old run when the done task moves to another run mid-tick', async () => {
+      // spaceTask.update can move a done task to a DIFFERENT run while the
+      // tick is between its completion decision and the run→done transition.
+      // The refreshed task keeps its completion signal, but finalizing the
+      // OLD run would apply its outcome and post-approval routing to a task
+      // the new run owns — prematurely completing that workflow. Both the
+      // pre- and post-transition predicates require the task to still be
+      // attached to this run.
+      const rt = makeRuntimeWithTam();
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: 'node-move', name: 'Coding', agentId: AGENT_A },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Move run');
+      const task = tasks[0];
+      taskRepo.updateTask(task.id, { status: 'done', result: 'external validation outcome' });
+      seedNodeExec(db, run.id, 'node-move', 'agent', 'in_progress');
+      const otherWorkflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: 'node-move-other', name: 'Other', agentId: AGENT_B },
+      ]);
+      const otherRun = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: otherWorkflow.id,
+        title: 'Other run',
+        description: '',
+      });
+      workflowRunRepo.updateRun(otherRun.id, { status: 'in_progress' });
+
+      const rtInternal = rt as unknown as {
+        completionDetector: { isComplete: (query: unknown) => boolean };
+      };
+      const originalIsComplete = rtInternal.completionDetector.isComplete.bind(
+        rtInternal.completionDetector
+      );
+      let moved = false;
+      rtInternal.completionDetector.isComplete = (query: unknown) => {
+        const result = originalIsComplete(query);
+        if (result && !moved) {
+          moved = true;
+          // The task moves runs after the completion decision, status kept.
+          taskRepo.updateTask(task.id, { workflowRunId: otherRun.id });
+        }
+        return result;
+      };
+
+      try {
+        await rt.executeTick();
+      } finally {
+        rtInternal.completionDetector.isComplete = originalIsComplete;
+      }
+
+      expect(moved).toBe(true);
+      // The OLD run was never finalized on the moved task's signal.
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      expect(taskRepo.getTask(task.id)?.workflowRunId).toBe(otherRun.id);
+    });
   });
 
   // -------------------------------------------------------------------------

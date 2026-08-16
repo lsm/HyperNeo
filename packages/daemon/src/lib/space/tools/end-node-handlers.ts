@@ -1055,29 +1055,33 @@ export function createCompleteValidationTaskHandler(
               });
             }
           };
-          // Run-generation gate. The tick can run CONCURRENTLY with the
+          // Run-lifecycle gate. The tick can run CONCURRENTLY with the
           // awaited post-commit cascade: it observes the committed `done`
           // task, flips the run to `done`, and an explicit activation
           // (ChannelRouter, allowTerminalReopen) can then reopen that done
           // run and start a replacement worker — all before this handler
           // resumes. The task-only predicate cannot see that roundtrip
           // (task still done, association unchanged), so the sweep binds to
-          // the run row's generation: sweep only when the run is `done`
-          // (the normal finalize shape — the tick's own sweep excludes the
-          // source node, so ours must cover same-node peers) or its row is
-          // UNWRITTEN since entry (still the same in_progress lifecycle —
-          // late racers without a run write are same-run work the
-          // completion supersedes, and nothing else would quiesce them). A
-          // run row that changed while NOT done was flipped and reopened
-          // (or blocked): its active workers may be freshly activated
-          // replacement work of a lifecycle this completion no longer owns,
-          // so the sweep stands down for all of them.
+          // the run's LIFECYCLE rather than its row version: a status move
+          // is a lifecycle change, and a transition back to `in_progress`
+          // restamps `startedAt` (updateRun does) while metadata-only edits
+          // (description updates) leave both untouched. Sweep when the run
+          // is `done` (the normal finalize shape — the tick's own sweep
+          // excludes the source node, so ours must cover same-node peers)
+          // or its lifecycle is unchanged since entry (late racers without
+          // a lifecycle move are same-run work the completion supersedes,
+          // and nothing else would quiesce them). A run that flipped and
+          // reopened (or blocked) carries freshly activated replacement
+          // work of a lifecycle this completion no longer owns — the sweep
+          // stands down for all of it.
           const runAfterCascade = workflowRunRepo.getRun(currentTaskRow.workflowRunId);
-          const runGenerationStable =
+          const runLifecycleStable =
             runAfterCascade != null &&
             (runAfterCascade.status === 'done' ||
-              (run?.updatedAt != null && runAfterCascade.updatedAt === run.updatedAt));
-          if (runGenerationStable) {
+              (run != null &&
+                runAfterCascade.status === run.status &&
+                runAfterCascade.startedAt === run.startedAt));
+          if (runLifecycleStable) {
             const activeExecutions = nodeExecutionRepo
               .listByWorkflowRun(currentTaskRow.workflowRunId)
               .filter((execution) => execution.status === 'in_progress');
@@ -1125,8 +1129,14 @@ export function createCompleteValidationTaskHandler(
       );
 
       if (completionConfirmed) {
-        emitTaskUpdated(updated);
-        return jsonResult({ success: true, task: updated });
+        // Emit and return the REREAD row: while setTaskStatus awaited its
+        // post-commit cascade, the tick's result precedence may already
+        // have replaced the validation outcome with the run's structured
+        // result and published that newer task — republishing the older
+        // `updated` snapshot would overwrite it with the superseded result.
+        const confirmedRow = currentTaskRow ?? updated;
+        emitTaskUpdated(confirmedRow);
+        return jsonResult({ success: true, task: confirmedRow });
       }
       // A recovery landed during the post-commit cascade: the CURRENT row
       // (and the recovery's own event) already reflect the reopened state.
