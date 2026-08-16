@@ -229,13 +229,34 @@ export default function SpaceIsland({
   // instead of silently dead-lettering. Events for other spaces are ignored;
   // one event fanned out to multiple deliveries collapses to a single toast,
   // and the dedupe key expires after a short window so recurring drops on the
-  // same event are not suppressed forever.
+  // same event are not suppressed forever. Retry exhaustion is burst-shaped (a
+  // backlog draining after reconnect), and the toast container renders only the
+  // last few toasts — so beyond the first few drops in a short window the rest
+  // collapse into one counted summary instead of toasts the user can never see.
   useEffect(() => {
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
     /** eventId → epoch ms the toast fired; evicted lazily once past the window. */
     const toastedAt = new Map<string, number>();
     const TOAST_DEDUPE_WINDOW_MS = 60_000;
+    const BURST_INDIVIDUAL_TOASTS = 3;
+    const BURST_WINDOW_MS = 10_000;
+    let burstWindowStart: number | null = null;
+    let burstShown = 0;
+    let burstSuppressed = 0;
+    let burstSummaryTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const showBurstSummary = () => {
+      burstSummaryTimer = undefined;
+      if (burstSuppressed > 0) {
+        toast.warning(
+          `${burstSuppressed} more external event${burstSuppressed === 1 ? '' : 's'} dropped in this Space`,
+          8000
+        );
+      }
+      burstSuppressed = 0;
+      burstWindowStart = null;
+    };
 
     const subscribe = () => {
       void (async () => {
@@ -260,14 +281,30 @@ export default function SpaceIsland({
               if (now - at >= TOAST_DEDUPE_WINDOW_MS) toastedAt.delete(key);
             }
           }
-          const detail =
-            event.category === 'ttl_expired'
-              ? 'expired before delivery'
-              : 'exhausted delivery retries';
-          toast.warning(
-            `External event dropped for ${event.agentName}: ${event.summary} (${detail})`,
-            8000
-          );
+          if (burstWindowStart === null || now - burstWindowStart >= BURST_WINDOW_MS) {
+            burstWindowStart = now;
+            burstShown = 0;
+            burstSuppressed = 0;
+          }
+          if (burstShown < BURST_INDIVIDUAL_TOASTS) {
+            burstShown += 1;
+            const detail =
+              event.category === 'ttl_expired'
+                ? 'expired before delivery'
+                : 'exhausted delivery retries';
+            toast.warning(
+              `External event dropped for ${event.agentName}: ${event.summary} (${detail})`,
+              8000
+            );
+            return;
+          }
+          // Past the individual budget: count the drop and surface the total
+          // once, when the burst window closes.
+          burstSuppressed += 1;
+          if (!burstSummaryTimer) {
+            const remaining = BURST_WINDOW_MS - (now - burstWindowStart);
+            burstSummaryTimer = setTimeout(showBurstSummary, Math.max(remaining, 0));
+          }
         });
       })().catch(() => {
         // Hub unavailable (daemon offline) — the connection-state subscription
@@ -289,6 +326,7 @@ export default function SpaceIsland({
 
     return () => {
       cancelled = true;
+      if (burstSummaryTimer) clearTimeout(burstSummaryTimer);
       unsubscribe?.();
       unsubscribeConnection();
     };

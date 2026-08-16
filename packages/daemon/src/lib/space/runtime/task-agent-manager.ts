@@ -142,6 +142,16 @@ import {
 const log = new Logger('task-agent-manager');
 const AGENT_MESSAGE_ENVELOPE_HEADER = /^─── Message from ([^\n]+) ───\n\n/;
 
+/**
+ * Marker embedded in the inject-guard error for a terminal (cancelled/archived)
+ * task or run. Exported because `SpaceRuntime` matches on it to classify the
+ * failure as non-retryable — the throw site and the classifier must share this
+ * single constant so rewording one cannot silently drift the other (the error
+ * text crosses the command-bus boundary as a string, so instanceof is not an
+ * option there).
+ */
+export const TASK_RUN_TERMINAL_MARKER = 'task/run is terminal';
+
 /** Central escalation target referenced by workflow slot prompts for misrouted tasks. */
 const WORKFLOW_ESCALATION_TARGET = 'space-agent';
 const AGENT_MESSAGE_ENVELOPE_REPLY_BLOCK = '\n\n─── Reply ───\nTo reply, use: ';
@@ -2027,7 +2037,7 @@ export class TaskAgentManager {
           `TaskAgentManager.injectSubSessionMessageWithOrigin: rejecting inject to session ${subSessionId} — task/run is terminal (${guardTask?.status ?? guardRun?.status})`
         );
         throw new Error(
-          `Cannot inject message to session ${subSessionId} — task/run is terminal (${guardTask?.status ?? guardRun?.status})`
+          `Cannot inject message to session ${subSessionId} — ${TASK_RUN_TERMINAL_MARKER} (${guardTask?.status ?? guardRun?.status})`
         );
       }
     }

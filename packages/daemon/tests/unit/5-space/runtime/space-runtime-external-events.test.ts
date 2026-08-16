@@ -6977,7 +6977,14 @@ describe('SpaceRuntime external event retry bounds', () => {
   const RETRY_BASE_DELAY_MS = 20;
 
   async function startRunWithLiveSession(
-    commandBus: ReturnType<typeof createInternalCommandBus>
+    commandBus: ReturnType<typeof createInternalCommandBus>,
+    options: {
+      /** Start the node idle + sessionless so events park with activation retries. */
+      sessionless?: boolean;
+      /** Retry backoff knobs; defaults keep this suite's timings fast. */
+      baseDelayMs?: number;
+      maxDelayMs?: number;
+    } = {}
   ): Promise<{ runId: string; taskId: string }> {
     runtime = new SpaceRuntime({
       db,
@@ -6991,8 +6998,8 @@ describe('SpaceRuntime external event retry bounds', () => {
       commandBus,
       externalEventStore: eventStore,
       taskAgentManager: tam as never,
-      externalEventRetryBaseDelayMs: RETRY_BASE_DELAY_MS,
-      externalEventRetryMaxDelayMs: 160,
+      externalEventRetryBaseDelayMs: options.baseDelayMs ?? RETRY_BASE_DELAY_MS,
+      externalEventRetryMaxDelayMs: options.maxDelayMs ?? 160,
     });
     const workflow = workflowManager.createWorkflow({
       spaceId: SPACE_ID,
@@ -7008,6 +7015,15 @@ describe('SpaceRuntime external event retry bounds', () => {
     const task = tasks[0]!;
     runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+    if (options.sessionless) {
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+      tam.activationResult = [];
+      return { runId: run.id, taskId: task.id };
+    }
     nodeExecutionRepo.update(execution.id, {
       status: 'in_progress',
       agentSessionId: 'session-stuck',
@@ -7266,5 +7282,106 @@ describe('SpaceRuntime external event retry bounds', () => {
     expect(ttlDrop).toBeDefined();
     expect(ttlDrop!.category).toBe('ttl_expired');
     expect(ttlDrop!.agentName).toBe('coder');
+  });
+
+  test('activation-success flush dispatches queued siblings without waiting out their activation backoff', async () => {
+    // Pins the activation carve-out: scheduleActivationRetry arms NO backoff
+    // deadline, so when one sibling's activation retry succeeds and flushes the
+    // target, the older queued sibling rides along in the same flush. If the
+    // activation path ever recorded a dueAt (like the delivery-retry path
+    // does), the older sibling would be skipped behind its own activation
+    // backoff — stranding a just-activated target's backlog behind a timer.
+    const commandBus = createInternalCommandBus();
+    const injectedAt = new Map<string, number>();
+    commandBus.register('agent.message.inject', async (command) => {
+      const eventId = (JSON.parse(command.message) as { eventId?: string }).eventId ?? 'unknown';
+      injectedAt.set(eventId, Date.now());
+      injected.push({ sessionId: command.sessionId, deliveryMode: command.deliveryMode });
+      return { ok: true };
+    });
+    const { runId } = await startRunWithLiveSession(commandBus, { sessionless: true });
+    const execution = nodeExecutionRepo.listByNode(runId, 'code')[0]!;
+
+    const older = makeEvent({
+      id: 'evt-activation-older',
+      dedupeKey: 'dedupe-activation-older',
+      occurredAt: 1_700_000_000_000,
+    });
+    await eventService.publish(older);
+    // Let the older sibling burn one activation retry (attempts 1→2, backoff
+    // 40ms) so that — were a deadline recorded — it would still be unelapsed
+    // when the newer sibling's first retry fires below.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    const newer = makeEvent({
+      id: 'evt-activation-newer',
+      dedupeKey: 'dedupe-activation-newer',
+      occurredAt: 1_700_000_000_100,
+    });
+    await eventService.publish(newer);
+    expect(eventStore.listDeliveries(older.id)[0]!.state).toBe('pending');
+    expect(eventStore.listDeliveries(newer.id)[0]!.state).toBe('pending');
+
+    // Activation now succeeds. The newer sibling's armed retry (20ms) fires
+    // into the just-activated target and must drain the older sibling too.
+    nodeExecutionRepo.update(execution.id, {
+      status: 'in_progress',
+      agentSessionId: null,
+      completedAt: null,
+    });
+    tam.activationResult = [{ agentName: 'coder', sessionId: 'session-activation-carveout' }];
+    tam.onActivate = () => {
+      nodeExecutionRepo.update(execution.id, {
+        agentSessionId: 'session-activation-carveout',
+      });
+    };
+
+    // Poll only until the newer sibling delivers; the instant it does, the
+    // older sibling must already have dispatched in the same flush rather than
+    // waiting out its own (longer, attempt-2) backoff.
+    const deadline = Date.now() + 500;
+    while (eventStore.listDeliveries(newer.id)[0]!.state !== 'delivered' && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+    expect(eventStore.listDeliveries(newer.id)[0]!.state).toBe('delivered');
+    expect(eventStore.listDeliveries(older.id)[0]!.state).toBe('delivered');
+    expect(injectedAt.get(older.id)).toBeDefined();
+    // Same flush, chronological order: the older sibling dispatched no later
+    // than the newer one it was drained with.
+    expect(injectedAt.get(older.id)!).toBeLessThanOrEqual(injectedAt.get(newer.id)!);
+  });
+
+  test('a flush skipping many cooling siblings terminalizes none of them', async () => {
+    // A burst of >50 siblings each dispatch, fail recoverably, and park with an
+    // armed delivery backoff; every subsequent sibling publish runs a flush
+    // that must SKIP the cooling ones. Skipping must leave every one as a
+    // persisted pending delivery on its own timer — none may die as
+    // pending_node_queue_overflow (or anything else) without an injection, and
+    // after recovery every one must still deliver. Terminal states are
+    // absorbing, so "all delivered" at the end proves none terminalized.
+    const commandBus = createInternalCommandBus();
+    let failInjections = true;
+    commandBus.register('agent.message.inject', async (command) => {
+      injected.push({ sessionId: command.sessionId, deliveryMode: command.deliveryMode });
+      return failInjections ? { ok: false, error: 'recoverable failure' } : { ok: true };
+    });
+    // Wider backoff than the suite default so the earliest siblings cannot
+    // exhaust their retry budget while the 60-event burst is still publishing.
+    await startRunWithLiveSession(commandBus, { baseDelayMs: 50, maxDelayMs: 500 });
+
+    const ids = Array.from({ length: 60 }, (_, i) => `evt-cooling-${i + 1}`);
+    for (const [i, id] of ids.entries()) {
+      await eventService.publish(
+        makeEvent({ id, dedupeKey: `dedupe-cooling-${i + 1}`, occurredAt: 1_700_000_000_000 + i })
+      );
+    }
+
+    // Recovery: the target accepts injections again. Every parked sibling must
+    // deliver on its own timer — nothing stranded, nothing terminalized.
+    failInjections = false;
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    for (const id of ids) {
+      expect(eventStore.listDeliveries(id)[0]!.state).toBe('delivered');
+    }
   });
 });

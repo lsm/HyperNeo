@@ -1217,6 +1217,47 @@ describe('SpaceIsland — externalEvent.dropped surfacing', () => {
     view.unmount();
   });
 
+  it('collapses a burst of drops beyond the first three into one counted summary', async () => {
+    // The toast container renders only the last few toasts, so one toast per
+    // dropped event hides the tail of a burst. The first three drops toast
+    // individually; the rest land as a single counted summary when the burst
+    // window closes.
+    render(<SpaceIsland spaceId="space-1" viewMode="overview" />);
+    await waitFor(() => {
+      expect(hubEventHandlers.get('externalEvent.dropped')).toBeTruthy();
+    });
+    const drop = (n: number) => ({
+      spaceId: 'space-1',
+      eventId: `evt-burst-${n}`,
+      topic: 'github/o/r/pull_request/42.review_comment_polled',
+      summary: `PR review comment ${n}`,
+      category: 'retry_exhausted',
+      agentName: 'coder',
+    });
+    // Emit the burst under fake timers so the summary timer the component
+    // arms for the window close is itself fake and advanceable.
+    vi.useFakeTimers();
+    try {
+      for (let i = 1; i <= 6; i++) {
+        for (const handler of hubEventHandlers.get('externalEvent.dropped') ?? []) handler(drop(i));
+      }
+      // The individually shown toasts are the FIRST three drops, in order;
+      // the tail is suppressed with no immediate toast.
+      expect(mockToastWarning).toHaveBeenCalledTimes(3);
+      expect(mockToastWarning.mock.calls[0][0]).toContain('PR review comment 1');
+      expect(mockToastWarning.mock.calls[1][0]).toContain('PR review comment 2');
+      expect(mockToastWarning.mock.calls[2][0]).toContain('PR review comment 3');
+
+      // Advance past the burst window: the suppressed tail surfaces as ONE
+      // counted summary instead of three more invisible toasts.
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(mockToastWarning).toHaveBeenCalledTimes(4);
+      expect(mockToastWarning.mock.calls[3][0]).toContain('3 more external events dropped');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('re-subscribes after the connection recovers from a daemon-offline mount', async () => {
     // Mount while the daemon is unreachable: getHub rejects, no subscription.
     // The stored promise carries a no-op .catch of its own so vitest never

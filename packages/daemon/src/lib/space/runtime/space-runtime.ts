@@ -122,6 +122,7 @@ import {
   clearPendingCompletionState,
 } from './post-approval-router';
 
+import { TASK_RUN_TERMINAL_MARKER } from './task-agent-manager';
 import type { TaskAgentManager } from './task-agent-manager';
 import type { SpaceActorRegistryAdapter } from '../actor-registry';
 import type { SpaceAgentInboxRepository } from '../../../storage/repositories/space-agent-inbox-repository';
@@ -766,14 +767,17 @@ function longHorizonSpaceIdFromWorkflowRunId(workflowRunId: string): string | nu
 /**
  * Whether an `agent.message.inject` failure is non-retryable: the target's
  * task/run is terminal, so re-injecting on the next tick can only manufacture
- * another dead letter. Matches the guard error thrown by
- * `TaskAgentManager.injectSubSessionMessageWithOrigin` when the canonical task
- * or run is cancelled/archived/done. Other inject errors (a busy session, a
- * transient provider failure, `Sub-session not found` while a respawn is in
- * flight) stay retryable — the bounded retry + backoff path handles them.
+ * another dead letter. Matches the marker embedded in the guard error thrown
+ * by `TaskAgentManager.injectSubSessionMessageWithOrigin` when the canonical
+ * task or run is cancelled/archived/done — via the shared exported constant, so
+ * the throw site and this classifier cannot drift apart (the error crosses the
+ * command bus as a string, which rules out an instanceof check). Other inject
+ * errors (a busy session, a transient provider failure, `Sub-session not
+ * found` while a respawn is in flight) stay retryable — the bounded retry +
+ * backoff path handles them.
  */
 function isNonRetryableInjectFailure(rawFailureReason: string): boolean {
-  return rawFailureReason.includes('task/run is terminal');
+  return rawFailureReason.includes(TASK_RUN_TERMINAL_MARKER);
 }
 
 type ExternalEventTaskDecision =
@@ -2124,15 +2128,18 @@ export class SpaceRuntime {
       // NOT elapsed stays on its timer — force-dispatching it here would let a
       // burst of sibling events burn the whole retry budget in milliseconds,
       // defeating the exponential backoff for exactly the transient failures it
-      // exists to out-wait. Requeue for the timer's own dispatch.
+      // exists to out-wait. Skip it WITHOUT requeueing into the in-memory
+      // pending queue: every cooling item is also a persisted pending delivery
+      // (rows exist from publish time) with its retry timer still armed, so the
+      // timer re-attempts it and the next flush re-discovers it through
+      // collectPersistedPendingDeliveries — the same persisted-only design the
+      // activation-hold branch uses. Requeueing instead would route through
+      // queueForPendingNode's 50-entry guard, whose eviction terminalizes the
+      // oldest entry: a flush draining >50 cooling siblings would kill deliveries
+      // with zero injection attempts via a path this guard itself introduced.
+      // Skipping also preserves the event record's createdAt TTL anchor
+      // untouched — the persisted row keeps expiring on the original schedule.
       if (item !== includeCurrent && this.isExternalEventRetryCoolingDown(item.deliveryKey)) {
-        this.queueForPendingNode(
-          target,
-          item.event,
-          item.deliveryKey,
-          item.deliveryMode,
-          item.createdAt
-        );
         continue;
       }
       // The flush takes over dispatch from any scheduled retry — cancel the
@@ -3455,8 +3462,11 @@ export class SpaceRuntime {
     if (attempts > EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS) {
       // Prefix with a retry-exhaustion marker so the queue-health categorizer
       // recognizes these as retry_exhausted regardless of the underlying error
-      // message (mirrors the long-horizon retry path). Terminalizes directly —
-      // a prior non-terminal mark would already have consumed the row update.
+      // message (mirrors the long-horizon retry path). Terminalizes in a single
+      // write rather than falling through to the non-terminal mark below — not
+      // because the store would reject a later terminal update (its guard only
+      // excludes rows already in a terminal state), but to avoid a redundant
+      // intermediate row update that briefly carries the un-prefixed reason.
       this.config.externalEventStore?.markDeliveryFailed(event.eventId, deliveryKey, {
         terminal: true,
         reason: `retry_exhausted; ${failureReason}`,
