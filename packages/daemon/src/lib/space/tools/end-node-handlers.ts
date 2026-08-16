@@ -1039,30 +1039,44 @@ export function createCompleteValidationTaskHandler(
               });
             }
           };
-          // Every active execution of the run is swept, INCLUDING ones
-          // activated during the awaited post-commit cascade (a message-
-          // driven lazy activation or a tick spawn racing this completion).
-          // Mid-cascade "reopened-run work" cannot exist: reopenRun targets
-          // a `done` run, and this handler's guards require the run to be
-          // `in_progress` at entry AND at the terminal write — so any
-          // post-commit activation is same-run late work the completion
-          // supersedes, and leaving it `in_progress` would strand it: the
-          // next tick's reconciliation excludes the entire source node, so
-          // nothing else would quiesce it either.
-          const activeExecutions = nodeExecutionRepo
-            .listByWorkflowRun(currentTaskRow.workflowRunId)
-            .filter((execution) => execution.status === 'in_progress');
-          if (completionSourceNodeId) {
-            for (const peer of activeExecutions.filter(
-              (execution) =>
-                execution.workflowNodeId === completionSourceNodeId &&
-                execution.id !== completionSourceExecutionId
-            )) {
-              quiesce(peer);
-            }
-          } else {
-            for (const worker of activeExecutions) {
-              quiesce(worker);
+          // Run-generation gate. The tick can run CONCURRENTLY with the
+          // awaited post-commit cascade: it observes the committed `done`
+          // task, flips the run to `done`, and an explicit activation
+          // (ChannelRouter, allowTerminalReopen) can then reopen that done
+          // run and start a replacement worker — all before this handler
+          // resumes. The task-only predicate cannot see that roundtrip
+          // (task still done, association unchanged), so the sweep binds to
+          // the run row's generation: sweep only when the run is `done`
+          // (the normal finalize shape — the tick's own sweep excludes the
+          // source node, so ours must cover same-node peers) or its row is
+          // UNWRITTEN since entry (still the same in_progress lifecycle —
+          // late racers without a run write are same-run work the
+          // completion supersedes, and nothing else would quiesce them). A
+          // run row that changed while NOT done was flipped and reopened
+          // (or blocked): its active workers may be freshly activated
+          // replacement work of a lifecycle this completion no longer owns,
+          // so the sweep stands down for all of them.
+          const runAfterCascade = workflowRunRepo.getRun(currentTaskRow.workflowRunId);
+          const runGenerationStable =
+            runAfterCascade != null &&
+            (runAfterCascade.status === 'done' ||
+              (run?.updatedAt != null && runAfterCascade.updatedAt === run.updatedAt));
+          if (runGenerationStable) {
+            const activeExecutions = nodeExecutionRepo
+              .listByWorkflowRun(currentTaskRow.workflowRunId)
+              .filter((execution) => execution.status === 'in_progress');
+            if (completionSourceNodeId) {
+              for (const peer of activeExecutions.filter(
+                (execution) =>
+                  execution.workflowNodeId === completionSourceNodeId &&
+                  execution.id !== completionSourceExecutionId
+              )) {
+                quiesce(peer);
+              }
+            } else {
+              for (const worker of activeExecutions) {
+                quiesce(worker);
+              }
             }
           }
         } catch (err) {

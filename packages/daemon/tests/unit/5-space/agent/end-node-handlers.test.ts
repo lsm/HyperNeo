@@ -3050,6 +3050,72 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     expect(interrupted.sort()).toEqual(['late-worker-session', 'old-peer-session']);
   });
 
+  test('the sweep stands down when the run is flipped done and reopened during the cascade', async () => {
+    // The tick can run concurrently with setTaskStatus' awaited post-commit
+    // cascade: it sees the committed done task and flips the run to done,
+    // and an explicit activation (ChannelRouter allowTerminalReopen) then
+    // reopens that done run and starts a replacement worker — before this
+    // handler resumes. The task-only gate cannot see the roundtrip; the
+    // sweep binds to the run row's generation (updatedAt) and stands down
+    // for every worker of a reopened lifecycle.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-sweep',
+      agentName: 'OldPeer',
+      agentId: ctx.agentId,
+      status: 'in_progress',
+      agentSessionId: 'old-peer-session',
+    });
+    const interrupted: string[] = [];
+    const originalSetStatus = ctx.taskManager.setTaskStatus.bind(ctx.taskManager);
+    const setStatusSpy = spyOn(ctx.taskManager, 'setTaskStatus').mockImplementation(
+      async (...callArgs: Parameters<typeof originalSetStatus>) => {
+        const result = await originalSetStatus(...callArgs);
+        // Concurrent tick finalizes the run, then an explicit activation
+        // reopens it and spawns a replacement — all inside the cascade.
+        ctx.workflowRunRepo.transitionStatus(task.workflowRunId!, 'done');
+        ctx.workflowRunRepo.transitionStatus(task.workflowRunId!, 'in_progress');
+        ctx.nodeExecutionRepo.create({
+          workflowRunId: task.workflowRunId!,
+          workflowNodeId: 'node-sweep',
+          agentName: 'Replacement',
+          agentId: ctx.agentId,
+          status: 'in_progress',
+          agentSessionId: 'reopened-replacement-session',
+        });
+        return result;
+      }
+    );
+
+    try {
+      const result = await makeValidationTool({
+        interruptBySessionId: async (sessionId: string) => {
+          interrupted.push(sessionId);
+        },
+      }).complete_validation_task({
+        task_id: task.id,
+        validation_outcome: 'committed; reopened lifecycle must stand down',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.success).toBe(true);
+    } finally {
+      setStatusSpy.mockRestore();
+    }
+
+    // The reopened lifecycle's workers — replacement AND pre-existing — are
+    // left to the reopened run; the completion no longer owns them.
+    const executions = ctx.nodeExecutionRepo.listByWorkflowRun(task.workflowRunId!);
+    expect(executions.find((e) => e.agentSessionId === 'old-peer-session')?.status).toBe(
+      'in_progress'
+    );
+    expect(
+      executions.find((e) => e.agentSessionId === 'reopened-replacement-session')?.status
+    ).toBe('in_progress');
+    expect(interrupted).toEqual([]);
+  });
+
   test('terminal precondition refuses when the task loses canonical ownership mid-flight', async () => {
     // spaceTask.update can attach a legacy duplicate to the run while this
     // handler awaits — the task that was canonical at the early guard no
