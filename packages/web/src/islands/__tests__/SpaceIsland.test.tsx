@@ -61,6 +61,30 @@ const { mockToastError } = vi.hoisted(() => ({
   mockToastError: vi.fn(),
 }));
 
+const { mockToastWarning } = vi.hoisted(() => ({
+  mockToastWarning: vi.fn(),
+}));
+
+// Captured hub.onEvent subscriptions so tests can emit client events into the
+// component (externalEvent.dropped drop surfacing). Each entry is the handler
+// registered for that client event name.
+const { mockGetHub, hubEventHandlers } = vi.hoisted(() => {
+  const hubEventHandlers = new Map<string, Array<(event: unknown) => void>>();
+  const mockGetHub = vi.fn().mockImplementation(async () => ({
+    onEvent: (name: string, handler: (event: unknown) => void) => {
+      const existing = hubEventHandlers.get(name) ?? [];
+      existing.push(handler);
+      hubEventHandlers.set(name, existing);
+      return () => {
+        const handlers = hubEventHandlers.get(name);
+        const idx = handlers?.indexOf(handler) ?? -1;
+        if (idx >= 0) handlers!.splice(idx, 1);
+      };
+    },
+  }));
+  return { mockGetHub, hubEventHandlers };
+});
+
 // Real Preact signal for the configure tab (read during render — needs reactivity)
 const mockCurrentSpaceConfigureTabSignal = signal<string>('agents');
 const mockCurrentSpaceIdSignal = signal<string | null>(null);
@@ -340,9 +364,19 @@ vi.mock('../../lib/api-helpers', () => ({
   createSession: mockCreateSession,
 }));
 
+// SpaceIsland subscribes to `externalEvent.dropped` through the real
+// connection manager — unmocked it would open a WebSocket under happy-dom and
+// reject, surfacing as unhandled rejections in CI.
+vi.mock('../../lib/connection-manager', () => ({
+  connectionManager: {
+    getHub: mockGetHub,
+  },
+}));
+
 vi.mock('../../lib/toast', () => ({
   toast: {
     error: mockToastError,
+    warning: mockToastWarning,
   },
 }));
 
@@ -417,6 +451,9 @@ beforeEach(() => {
   mockNavigateToSpaceTask.mockClear();
   mockCreateSession.mockClear();
   mockToastError.mockClear();
+  mockToastWarning.mockClear();
+  mockGetHub.mockClear();
+  hubEventHandlers.clear();
   mockEnsureConfigData.mockClear();
   mockEnsureConfigData.mockResolvedValue(undefined);
   mockEnsureWorkflowDetails.mockClear();
@@ -1032,5 +1069,96 @@ describe('SpaceIsland — tasks view', () => {
     fireEvent.click(getByRole('button', { name: 'Create Test Task' }));
 
     expect(mockNavigateToSpaceTask).not.toHaveBeenCalled();
+  });
+});
+
+describe('SpaceIsland — externalEvent.dropped surfacing', () => {
+  async function emitDrop(event: Record<string, unknown>): Promise<void> {
+    await waitFor(() => {
+      expect(hubEventHandlers.get('externalEvent.dropped')).toBeTruthy();
+    });
+    for (const handler of hubEventHandlers.get('externalEvent.dropped') ?? []) {
+      handler(event);
+    }
+  }
+
+  it('toasts a retry-exhausted drop for the open space', async () => {
+    render(<SpaceIsland spaceId="space-1" viewMode="overview" />);
+    await emitDrop({
+      spaceId: 'space-1',
+      eventId: 'evt-1',
+      deliveryKey: 'dk-1',
+      topic: 'github/o/r/pull_request/42.review_comment_polled',
+      summary: 'PR review comment',
+      category: 'retry_exhausted',
+      reason: 'retry_exhausted; deliveryMode:defer; ...',
+      agentName: 'coder',
+      timestamp: 0,
+    });
+
+    await waitFor(() => {
+      expect(mockToastWarning).toHaveBeenCalledTimes(1);
+    });
+    const [message] = mockToastWarning.mock.calls[0];
+    expect(message).toContain('coder');
+    expect(message).toContain('PR review comment');
+    expect(message).toContain('exhausted delivery retries');
+  });
+
+  it('toasts a ttl-expired drop with the expiry detail', async () => {
+    render(<SpaceIsland spaceId="space-1" viewMode="overview" />);
+    await emitDrop({
+      spaceId: 'space-1',
+      eventId: 'evt-ttl',
+      topic: 'github/o/r/pull_request/42.push',
+      summary: 'PR pushed',
+      category: 'ttl_expired',
+      agentName: 'coder',
+    });
+
+    await waitFor(() => {
+      expect(mockToastWarning).toHaveBeenCalledTimes(1);
+    });
+    expect(mockToastWarning.mock.calls[0][0]).toContain('expired before delivery');
+  });
+
+  it('ignores drops for other spaces', async () => {
+    render(<SpaceIsland spaceId="space-1" viewMode="overview" />);
+    await emitDrop({
+      spaceId: 'space-other',
+      eventId: 'evt-other',
+      topic: 'github/o/r/pull_request/42.review_comment_polled',
+      summary: 'PR review comment',
+      category: 'retry_exhausted',
+      agentName: 'coder',
+    });
+
+    // Give the (filtered) handler a tick — no toast may fire.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(mockToastWarning).not.toHaveBeenCalled();
+  });
+
+  it('collapses duplicate drops of the same event but still toasts a distinct later drop on the same topic', async () => {
+    render(<SpaceIsland spaceId="space-1" viewMode="overview" />);
+    const baseDrop = {
+      spaceId: 'space-1',
+      topic: 'github/o/r/pull_request/42.review_comment_polled',
+      summary: 'PR review comment',
+      category: 'retry_exhausted',
+      agentName: 'coder',
+    };
+    // Same event fanned out to multiple deliveries (coder + reviewer).
+    await emitDrop({ ...baseDrop, eventId: 'evt-dup', deliveryKey: 'dk-a' });
+    await emitDrop({ ...baseDrop, eventId: 'evt-dup', deliveryKey: 'dk-b' });
+    await waitFor(() => {
+      expect(mockToastWarning).toHaveBeenCalledTimes(1);
+    });
+
+    // A genuinely distinct later drop on the SAME topic still surfaces — the
+    // dedupe key is the eventId, not the topic.
+    await emitDrop({ ...baseDrop, eventId: 'evt-distinct', deliveryKey: 'dk-c' });
+    await waitFor(() => {
+      expect(mockToastWarning).toHaveBeenCalledTimes(2);
+    });
   });
 });

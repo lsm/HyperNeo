@@ -226,11 +226,13 @@ export default function SpaceIsland({
   // Surface dropped external events (retry budget exhausted / queue TTL
   // expired) for THIS space so a lost PR review comment or CI event is visible
   // instead of silently dead-lettering. Events for other spaces are ignored;
-  // one burst of drops on the same topic collapses into a single toast.
+  // a burst of drops collapses per (topic, eventId) — the same event can fan
+  // out to multiple deliveries, but a genuinely distinct later drop on the
+  // same topic still toasts.
   useEffect(() => {
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
-    const toastedTopics = new Set<string>();
+    const toastedEventIds = new Set<string>();
 
     void (async () => {
       const hub = await connectionManager.getHub();
@@ -244,8 +246,8 @@ export default function SpaceIsland({
         agentName: string;
       }>('externalEvent.dropped', (event) => {
         if (event.spaceId !== spaceId) return;
-        if (toastedTopics.has(event.topic)) return;
-        toastedTopics.add(event.topic);
+        if (toastedEventIds.has(event.eventId)) return;
+        toastedEventIds.add(event.eventId);
         const detail =
           event.category === 'ttl_expired'
             ? 'expired before delivery'
@@ -255,7 +257,11 @@ export default function SpaceIsland({
           8000
         );
       });
-    })();
+    })().catch(() => {
+      // Hub unavailable (daemon offline) — nothing to subscribe through; the
+      // drop remains visible in the space's delivery log. Never surface as an
+      // unhandled rejection.
+    });
 
     return () => {
       cancelled = true;
