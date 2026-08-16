@@ -375,6 +375,13 @@ export class AgentSession
   private deliveryTurnStalled = false;
 
   /**
+   * Number of `driveDeliveryTurn` calls currently in flight (normally 0 or 1).
+   * Read via {@link isDeliveryTurnDriving} — distinguishes a turn the delivery
+   * lane is actively driving from a merely claimed job row. (Task #944.)
+   */
+  private deliveryTurnDriveCount = 0;
+
+  /**
    * Outstanding `tool_use` IDs for this session (added on `sdk.toolUse.created`,
    * removed on `sdk.toolUse.consumed`). Non-empty means a tool is mid-execution,
    * so a quiet window is the tool running — NOT a stall. Cleared per turn. Used
@@ -2063,6 +2070,38 @@ export class AgentSession
    * bounded by `maxRetries`.
    */
   async driveDeliveryTurn(
+    messageUuid: string,
+    content: string | MessageContent[],
+    _parentToolUseId?: string | null,
+    alreadyConsumed = false,
+    claimGuard?: () => boolean
+  ): Promise<DriveTurnOutcome> {
+    // In-flight drive marker (see isDeliveryTurnDriving): distinguishes a
+    // turn the delivery lane is ACTIVELY driving from a merely claimed row.
+    // TaskAgentManager's recoverable-error deferral keys on it — during
+    // rehydration a restored turn job can be claimed (processing row) while
+    // a DIRECT continuation replay runs the actual work, and that replay's
+    // error must not be suppressed by a job that cannot retry it. (Task #944.)
+    this.deliveryTurnDriveCount++;
+    try {
+      return await this.driveDeliveryTurnCore(
+        messageUuid,
+        content,
+        _parentToolUseId,
+        alreadyConsumed,
+        claimGuard
+      );
+    } finally {
+      this.deliveryTurnDriveCount--;
+    }
+  }
+
+  /** True while a delivery job is actively driving a turn on this session. */
+  isDeliveryTurnDriving(): boolean {
+    return this.deliveryTurnDriveCount > 0;
+  }
+
+  private async driveDeliveryTurnCore(
     messageUuid: string,
     content: string | MessageContent[],
     _parentToolUseId?: string | null,

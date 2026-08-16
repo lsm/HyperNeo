@@ -782,6 +782,60 @@ describe('JobQueueRepository', () => {
       expect(repository.deliveryTurnOutcomeSince('sess-1', 'kick')).toBe('completed');
     });
 
+    it('LATE-consumed steer: the consuming turn wins over the creation-time turn (dead consumer)', () => {
+      // The steer sat unclaimed past its creation-time turn and was consumed
+      // by a LATER turn (feedDeliverySteer runs inside whatever turn is live
+      // at claim). The consuming turn's outcome — not the earlier turn's —
+      // is the activation's.
+      const T0 = SINCE + 1000; // turn1 claimed
+      const T1 = SINCE + 1500; // steer created (during turn1)
+      const T2 = SINCE + 2000; // turn1 completed successfully
+      const T3 = SINCE + 2500; // turn2 claimed
+      const T4 = SINCE + 4000; // steer consumed + completed; turn2 dead-letters
+      seed('j-turn1', 'peer-1', 'turn', 'completed', 'completed', {
+        createdAt: T0,
+        startedAt: T0,
+        completedAt: T2,
+      });
+      seed('j-turn2', 'peer-2', 'turn', 'dead', null, {
+        createdAt: T3,
+        startedAt: T3,
+        completedAt: T4,
+      });
+      seed('j-kick', 'kick', 'steer', 'completed', 'consumed', {
+        createdAt: T1,
+        startedAt: T3,
+        completedAt: T4,
+      });
+      expect(repository.deliveryTurnOutcomeSince('sess-1', 'kick')).toBe('dead');
+    });
+
+    it('LATE-consumed steer: a successful consuming turn completes despite the creation-time turn failing', () => {
+      // Inverse of the above: the creation-time turn dead-lettered, but the
+      // turn that actually consumed the steer succeeded.
+      const T0 = SINCE + 1000;
+      const T1 = SINCE + 1500;
+      const T2 = SINCE + 2000; // turn1 dead
+      const T3 = SINCE + 2500;
+      const T4 = SINCE + 4000; // steer consumed; turn2 completed
+      seed('j-turn1', 'peer-1', 'turn', 'dead', null, {
+        createdAt: T0,
+        startedAt: T0,
+        completedAt: T2,
+      });
+      seed('j-turn2', 'peer-2', 'turn', 'completed', 'completed', {
+        createdAt: T3,
+        startedAt: T3,
+        completedAt: T4,
+      });
+      seed('j-kick', 'kick', 'steer', 'completed', 'consumed', {
+        createdAt: T1,
+        startedAt: T3,
+        completedAt: T4,
+      });
+      expect(repository.deliveryTurnOutcomeSince('sess-1', 'kick')).toBe('completed');
+    });
+
     it('unrelated uuid only → null (correlation filters it out)', () => {
       seed('j1', 'other', 'turn', 'completed', 'completed');
       expect(repository.deliveryTurnOutcomeSince('sess-1', 'kick')).toBeNull();

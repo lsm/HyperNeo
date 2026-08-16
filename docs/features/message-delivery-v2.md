@@ -586,12 +586,14 @@ recoverable one mid-turn while the turn still succeeds.
 The contract (`TaskAgentManager.registerCompletionCallback`):
 
 - **Recoverable `session.error`** (`details.recoverable === true`, v2 on, AND
-  a delivery TURN job currently being DRIVEN for the session — claimed
-  `processing` with role `turn`; a claimed steer is a mid-turn feed whose
-  driving turn owns the retry) does not block the node — without a driven
-  job there is no retry and no `delivery_failed` repayment, so errors from
-  non-delivery work (rehydration's direct streaming start / tool-continuation
-  replays, which can overlap an unrelated merely-queued job) keep the
+  a delivery turn actively DRIVING the session — a claimed `processing`
+  role-`turn` row PLUS an in-flight `driveDeliveryTurn`
+  (`AgentSession.isDeliveryTurnDriving`); a claimed steer is a mid-turn feed
+  whose driving turn owns the retry) does not block the node — without an
+  in-flight DRIVE there is no retry and no `delivery_failed` repayment, so
+  errors from non-delivery work (rehydration's direct streaming start /
+  tool-continuation replays, which can overlap an unrelated restored turn
+  claimed in the publish-before-replay window) keep the
   first-error-blocks behavior. The classification is advisory: even a misclassification
   (ErrorManager's taxonomy has diverged from delivery's — auth is
   delivery-terminal despite `recoverable === true`) only delays the block until
@@ -604,7 +606,11 @@ The contract (`TaskAgentManager.registerCompletionCallback`):
   completes. Suppressed on both sides of that race.
 - **`session.delivery_settled`** (processor `onComplete` lane hook — job row
   `processing`→`completed`, parks excluded) completes the node when nothing
-  else is in flight. A TURN settle completes only when it IS the current
+  else is in flight. (Rollout: an execution already `in_progress` at deploy
+  time carries no stamp — the parent revision never wrote one — and is
+  recognized by an activation start BEFORE this daemon's boot; it keeps the
+  stamp-less behavior on the settle and dead-letter paths so a rollout cannot
+  strand in-flight executions.) A TURN settle completes only when it IS the current
   activation's stamped kickoff (`data.kickoffMessageUuid` — a pending-message
   flush can run a peer handoff as a turn job before the kickoff is enqueued;
   sessions without a node execution keep the stamp-less path). A uuid
@@ -636,8 +642,12 @@ The contract (`TaskAgentManager.registerCompletionCallback`):
   peer handoff as a `role:'turn'` job before the kickoff is enqueued, and
   that is not the node's work. A kickoff that lost the turn arbiter to such a
   flush is persisted as a `steer`; its consumption counts only when its
-  OWNING turn — the earliest turn terminal at/after the steer's consumption,
-  not any later turn — also terminated (completed → success, dead → block).
+  OWNING turn — the LATEST-STARTED turn whose claim window overlaps the
+  steer's active interval [created, completed], i.e. the turn that actually
+  consumed it (a steer can sit unclaimed past its creation-time turn and be
+  fed to a later one), with an earliest-terminal-after-creation fallback for
+  retried owners whose consuming claim was overwritten — also terminated
+  (completed → success, dead → block).
   The stamp is written — in one write that also clears any stamp left by a
   PREVIOUS activation — BEFORE the activation's first await (the
   createSubSession call whose session-reuse branch registers the fresh

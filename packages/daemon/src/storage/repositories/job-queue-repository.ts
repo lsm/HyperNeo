@@ -515,24 +515,29 @@ export class JobQueueRepository {
         (r.outcome === 'consumed' || r.outcome === 'already_consumed')
     );
     if (consumedSteer) {
-      // Scope to the turn that OWNED the steer: the turn ACTIVE when the
-      // steer entered delivery (its job row's creation), matched by claim
-      // window [started_at, completed_at]. Keying on creation — not the
-      // steer row's completion — covers the ACP shape where the accepted
-      // steer stays parked and completes ('already_consumed') on a LATER
-      // claim, after its owning turn already finished; a completion-keyed
-      // match would miss that owner (or pick a later unrelated turn). A
-      // LATER turn's dead row must still not fail an activation whose
-      // kickoff was consumed successfully. (Task #944 review.)
       const steerRow = this.db
         .prepare(
-          `SELECT created_at FROM job_queue
+          `SELECT created_at, completed_at FROM job_queue
             WHERE queue = 'message_delivery'
               AND json_extract(payload, '$.messageUuid') = ?
             ORDER BY created_at ASC LIMIT 1`
         )
-        .get(messageUuid) as { created_at: number } | undefined;
+        .get(messageUuid) as { created_at: number; completed_at: number | null } | undefined;
       if (!steerRow) return null;
+      // Scope to the turn that OWNED the steer. A steer can sit unclaimed
+      // past its creation-time turn and be consumed by a LATER turn
+      // (feedDeliverySteer runs inside whatever turn is live when the exempt
+      // pass claims it) — so keying on creation alone misattributes the
+      // outcome to a turn that never touched the message. Instead take the
+      // LATEST-STARTED turn whose claim window OVERLAPS the steer's active
+      // interval [created_at, completed_at]: consumption happens inside the
+      // consuming turn's claim, so the consuming turn always overlaps, while
+      // an earlier creation-time turn that ended before the consumption does
+      // not win the latest-started ordering. The ACP shape still matches its
+      // owner: the steer was consumed during the owner's claim and merely
+      // completes ('already_consumed') on a later administrative claim, so
+      // the owner's window overlaps the interval even though it ended before
+      // the steer row's completion. (Task #944 review.)
       const ownerWindow = this.db
         .prepare(
           `SELECT status, json_extract(result, '$.outcome') AS outcome
@@ -544,13 +549,14 @@ export class JobQueueRepository {
               AND started_at IS NOT NULL
               AND started_at <= ?
               AND completed_at >= ?
-            ORDER BY completed_at ASC LIMIT 1`
+            ORDER BY started_at DESC LIMIT 1`
         )
-        .get(sessionId, steerRow.created_at, steerRow.created_at) as
+        .get(sessionId, steerRow.completed_at ?? steerRow.created_at, steerRow.created_at) as
         | { status: string; outcome: string | null }
         | undefined;
       // Fallback for retried owners whose LAST claim postdates the steer's
-      // creation: the earliest turn terminal at/after creation.
+      // active interval (the retry overwrote the consuming claim's window):
+      // the earliest turn terminal at/after creation.
       const owner =
         ownerWindow ??
         (this.db

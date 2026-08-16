@@ -82,6 +82,8 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
   let activeJobs: Set<string>;
   /** Stand-in for jobs currently being DRIVEN (claimed processing). */
   let processingTurnJobs: Set<string>;
+  /** Stand-in: the session is inside driveDeliveryTurn (an in-flight drive). */
+  let deliveryTurnDriving: boolean;
 
   beforeEach(() => {
     // Shorten the crash-window reconciliation delay (read at subscribe time in
@@ -119,23 +121,13 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     });
     taskRepo.updateTask(task.id, { status: 'in_progress' });
 
-    nodeExecRepo = new NodeExecutionRepository(db);
-    const execution = nodeExecRepo.create({
-      workflowRunId: 'run-1',
-      workflowNodeId: 'n-1',
-      agentName: 'coder',
-      agentSessionId: SUB_SESSION_ID,
-      status: 'in_progress',
-    });
-    executionId = execution.id;
-    // Stamp this activation's expected kickoff (as spawnWorkflowNodeAgentForExecution
-    // does after the inject) so the reconcile can correlate with it.
-    nodeExecRepo.update(executionId, { data: { kickoffMessageUuid: 'kickoff-uuid' } });
-
     bus = createDaemonInternalEventBus();
+
+    nodeExecRepo = new NodeExecutionRepository(db);
 
     activeJobs = new Set(['kickoff-uuid']);
     processingTurnJobs = new Set(['kickoff-uuid']); // the kickoff TURN is being driven
+    deliveryTurnDriving = true; // the drive is in flight
     // Stand-in for the durable turn-delivery outcome the reconcile reads
     // (deliveryTurnOutcomeSince): null = no settled turn for this activation.
     turnOutcome = null;
@@ -181,6 +173,21 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     } as unknown as TaskAgentManagerConfig;
     manager = new TaskAgentManager(config);
 
+    // Seed the execution AFTER the manager so its activation postdates the
+    // runtime boot (isPreUpgradeActivation keys on manager construction ≈
+    // daemon start — a pre-boot activation is the rollout-compat shape).
+    const execution = nodeExecRepo.create({
+      workflowRunId: 'run-1',
+      workflowNodeId: 'n-1',
+      agentName: 'coder',
+      agentSessionId: SUB_SESSION_ID,
+      status: 'in_progress',
+    });
+    executionId = execution.id;
+    // Stamp this activation's expected kickoff (as spawnWorkflowNodeAgentForExecution
+    // does before the first await) so the reconcile can correlate with it.
+    nodeExecRepo.update(executionId, { data: { kickoffMessageUuid: 'kickoff-uuid' } });
+
     // Seed the in-memory session→task map both findParentTaskIdForSubSession and
     // getSubSession resolve through. The fake session reports a non-zero SDK
     // message count so the idle-completion path does not bail as "not started".
@@ -191,6 +198,7 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
       id: SUB_SESSION_ID,
       getSDKMessageCount: () => 5,
       getProcessingState: () => ({ status: 'idle' }),
+      isDeliveryTurnDriving: () => deliveryTurnDriving,
     });
 
     completed = false;
@@ -837,6 +845,48 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     processingTurnJobs.clear();
     await new Promise<void>((resolve) => setTimeout(resolve, 80));
     expect(persistAttempts).toBeGreaterThanOrEqual(2); // retried after the rejection
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('blocked');
+  });
+
+  it('a recoverable error while a turn row is CLAIMED but not DRIVING blocks (rehydration race)', async () => {
+    // Round-19 P2: during rehydration the restored session is published to
+    // the runtime caches before the direct streaming/continuation-replay
+    // awaits, and the processor can claim an unrelated restored turn in that
+    // window — a processing ROW exists, but no drive is in flight and that
+    // job cannot retry the replay's error. The deferral must not apply.
+    deliveryTurnDriving = false; // claimed, driveDeliveryTurn not entered
+    await publishError(RECOVERABLE_DETAILS);
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('blocked');
+  });
+
+  it('a PRE-UPGRADE unstamped execution completes via the live settle (rollout compat)', async () => {
+    // Round-19 P1: executions already in_progress at deploy time carry no
+    // kickoffMessageUuid (the parent revision never wrote one). Their
+    // reclaimed delivery settles the node through the stamp-less path
+    // instead of being declined as "pre-kickoff window".
+    nodeExecRepo.update(executionId, { data: null, startedAt: Date.now() - 3_600_000 });
+    activeJobs.clear();
+    await bus.publish('session.delivery_settled', {
+      sessionId: SUB_SESSION_ID,
+      messageUuid: 'legacy-kickoff-uuid', // unknown uuid — no stamp to match
+      role: 'turn',
+    });
+    await flush();
+    expect(completed).toBe(true);
+  });
+
+  it('a PRE-UPGRADE unstamped execution blocks on a dead turn (rollout compat)', async () => {
+    nodeExecRepo.update(executionId, { data: null, startedAt: Date.now() - 3_600_000 });
+    activeJobs.clear();
+    await bus.publish('session.delivery_failed', {
+      sessionId: SUB_SESSION_ID,
+      messageUuid: 'legacy-kickoff-uuid',
+      origin: 'space_inject',
+      role: 'turn',
+    });
+    await flush();
     expect(completed).toBe(false);
     expect(nodeStatus()).toBe('blocked');
   });

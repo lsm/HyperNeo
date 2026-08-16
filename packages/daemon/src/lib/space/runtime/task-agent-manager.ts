@@ -625,6 +625,30 @@ export class TaskAgentManager {
   private preInjectKickoffExecutions = new Set<string>();
 
   /**
+   * Daemon-boot timestamp (manager construction ≈ boot). An in_progress
+   * execution whose activation started BEFORE this cannot carry a
+   * `kickoffMessageUuid` (the parent revision never wrote one — there is no
+   * retroactive migration), so its unstamped shape is treated as PRE-UPGRADE
+   * rather than this build's pre-kickoff window: the live settle/dead-letter
+   * paths keep the pre-#944 unconditional behavior so a rollout cannot
+   * strand in-flight executions. (Task #944 review.)
+   */
+  private readonly runtimeBootMs = Date.now();
+
+  /**
+   * True when the execution was activated before this daemon booted — i.e.
+   * by a parent revision that never stamped a kickoff uuid. See
+   * {@link runtimeBootMs}.
+   */
+  private isPreUpgradeActivation(execution: {
+    startedAt: number | null;
+    createdAt: number;
+  }): boolean {
+    const startedAt = execution.startedAt ?? execution.createdAt;
+    return startedAt != null && startedAt < this.runtimeBootMs;
+  }
+
+  /**
    * Completion callbacks registered via onComplete().
    * Key: session ID (of the sub-session).
    * Value: list of callbacks to fire when the session goes idle.
@@ -3174,6 +3198,23 @@ export class TaskAgentManager {
     return this.config.db.getJobQueueRepo().hasProcessingDeliveryForSession(subSessionId);
   }
 
+  /**
+   * Whether a delivery job is actively INSIDE `driveDeliveryTurn` for the
+   * session right now — stronger than a claimed `processing` row: during
+   * rehydration the restored session is published to the runtime caches
+   * before the direct streaming/continuation-replay awaits, and the delivery
+   * processor can claim an unrelated restored turn in that window. Its row
+   * then satisfies `hasProcessingDeliveryForSession` while being unable to
+   * retry the replay's error, and its later settlement would false-complete
+   * the node. Only an in-flight DRIVE owns (and can retry) the session's
+   * turn. (Task #944 review.)
+   */
+  private isDeliveryTurnDriving(subSessionId: string): boolean {
+    const session = this.getSubSession(subSessionId);
+    if (!session || typeof session.isDeliveryTurnDriving !== 'function') return false;
+    return session.isDeliveryTurnDriving();
+  }
+
   /** Returns a sub-session by its session ID, or undefined if not found. */
   getSubSession(subSessionId: string): AgentSession | undefined {
     for (const [, nodeMap] of this.subSessions) {
@@ -3885,8 +3926,15 @@ export class TaskAgentManager {
               if (outcome === 'dead') fireTerminalError(DEAD_LETTER_SESSION_ERROR);
               return;
             }
-          } else if (typeof kickoffMessageUuid !== 'string') {
-            return; // unstamped — the kickoff has not been injected yet
+          } else if (
+            typeof kickoffMessageUuid !== 'string' &&
+            !this.isPreUpgradeActivation(execution)
+          ) {
+            // Unstamped under this build — the kickoff has not been injected
+            // yet. A PRE-UPGRADE activation (no stamp was ever written) falls
+            // through instead: its reclaimed delivery settles the node live,
+            // preserving the pre-#944 behavior across the rollout.
+            return;
           }
         }
         completeFromDeliveryState();
@@ -4108,10 +4156,17 @@ export class TaskAgentManager {
         // the unconditional behavior. (Task #944 review.)
         if (event.role === 'turn') {
           const kickoff = this.kickoffDeliveryOutcome(subSessionId);
-          // Covers the unstamped execution (pre-kickoff window) too:
-          // kickoffMessageUuid is null there, so any turn dead-letter fails
-          // the !== match and returns.
-          if (kickoff && event.messageUuid !== kickoff.kickoffMessageUuid) return;
+          if (kickoff && kickoff.kickoffMessageUuid === null) {
+            // Unstamped: this build's pre-kickoff window declines (the dead
+            // turn is not this activation's kickoff). A PRE-UPGRADE
+            // activation (never stamped; started before this daemon booted)
+            // keeps the pre-#944 unconditional block so a reclaimed legacy
+            // delivery that dead-letters still fails the node.
+            const execution = this.config.nodeExecutionRepo.getByAgentSessionId(subSessionId);
+            if (!execution || !this.isPreUpgradeActivation(execution)) return;
+          } else if (kickoff && event.messageUuid !== kickoff.kickoffMessageUuid) {
+            return;
+          }
         }
         if (event.role !== 'turn') {
           // The KICKOFF itself can be persisted as a steer (it lost the turn
@@ -4167,13 +4222,15 @@ export class TaskAgentManager {
 
         // A RECOVERABLE error during a delivery-driven turn (transient provider
         // 5xx / connection / timeout) must be INVISIBLE to Space — but ONLY
-        // while a delivery job is actually being DRIVEN for this session. The
+        // while a delivery job is actually DRIVING this session's turn. The
         // message_delivery job driving the turn retries the error (PR #2471)
-        // and only its dead-letter is terminal; a merely QUEUED/parked job
+        // and only its dead-letter is terminal; a merely QUEUED/parked job —
+        // or a CLAIMED row that has not entered driveDeliveryTurn yet —
         // cannot retry anything, so an error from non-delivery work
         // (rehydration's direct streaming start / tool-continuation replays,
-        // which can overlap an unrelated queued job) keeps the
-        // first-error-blocks behavior. The dead-letter settlement publishes
+        // which can overlap an unrelated restored turn claimed in the
+        // publish-before-replay window) keeps the first-error-blocks
+        // behavior. The dead-letter settlement publishes
         // `session.error` with NO `details`, and a genuinely non-recoverable
         // error carries `details.recoverable === false` — both fall through to
         // the terminal handling below. (Task #944.)
@@ -4186,7 +4243,8 @@ export class TaskAgentManager {
         // dead-letter; it can never flip the outcome.
         if (
           isRecoverableSessionError(event.details) &&
-          this.hasProcessingDeliveryJob(subSessionId)
+          this.hasProcessingDeliveryJob(subSessionId) &&
+          this.isDeliveryTurnDriving(subSessionId)
         ) {
           return;
         }
