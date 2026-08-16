@@ -3746,6 +3746,18 @@ describe('node-agent-tools: complete_validation_task', () => {
       endNodeId: nodeId,
       rules: [],
       completionAutonomyLevel: options?.completionAutonomyLevel ?? 5,
+      // Validation-only completion is opt-in: fixtures declare the enabling
+      // hook (a trivially-allowing validator on the run's own node).
+      hooks: [
+        {
+          id: 'allow-validation',
+          enabled: true,
+          sourceNode: 'Validation',
+          method: 'complete_validation_task',
+          validator: { kind: 'script', interpreter: 'bash', source: 'echo allow' },
+          authorizedCallers: [{ sourceNode: 'Validation' }],
+        } as WorkflowHook,
+      ],
     });
     const run = workflowRunRepo.createRun({
       spaceId: ctx.spaceId,

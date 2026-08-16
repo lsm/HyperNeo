@@ -842,25 +842,24 @@ export function createCompleteValidationTaskHandler(
             error: `Task ${args.task_id} belongs to a workflow with a post-approval route; validation-only completion would skip it. Use submit_for_approval (then approval) so the route fires.`,
           });
         }
-        // PR-shaped workflow guard: a workflow whose hooks declare a
-        // pr_ready-family built-in validator is a PR workflow even without
-        // a post-approval route — before the required handoff its run
-        // records no PR, so the no-PR check above passes and a worker
-        // could mark the coding run done without creating or validating a
-        // PR, bypassing the pr_ready gate (that validator only runs on
-        // send_message). Fail closed: PR-shaped workflows close through
-        // the PR path, not the validation-only one.
-        const PR_VALIDATOR_IDS = new Set(['pr_open', 'pr_mergeable', 'pr_ready', 'pr_merged']);
-        const isPrShapedWorkflow = (routeWorkflow?.hooks ?? []).some(
-          (hook) =>
-            hook.enabled &&
-            hook.validator.kind === 'built_in' &&
-            PR_VALIDATOR_IDS.has(hook.validator.id)
+        // Explicit opt-in guard: on this worker surface, validation-only
+        // completion is available ONLY to workflows that declare it — an
+        // enabled `complete_validation_task` hook on the definition. Every
+        // inference alternative fails open somewhere: a custom PR workflow
+        // can gate its handoff with an arbitrary script validator (or a
+        // pr_ready built-in) rather than a route, so "no route + no
+        // built-in PR validator" still admits runs whose deliverable is a
+        // PR. Declaring the hook is the workflow author's explicit signal
+        // that the validation-only close is legitimate here — and it names
+        // the authorized validator node/slot for the registration-level
+        // authorization probe.
+        const declaresValidationHook = (routeWorkflow?.hooks ?? []).some(
+          (hook) => hook.enabled && hook.method === 'complete_validation_task'
         );
-        if (isPrShapedWorkflow) {
+        if (!declaresValidationHook) {
           return jsonResult({
             success: false,
-            error: `Task ${args.task_id} belongs to a workflow that requires a PR (pr_ready-family validators are declared); validation-only completion is not available for it. Use the normal PR creation/review/merge path instead.`,
+            error: `Task ${args.task_id} belongs to a workflow that does not declare a complete_validation_task hook; validation-only completion requires the workflow definition to opt in (declare the hook, naming the authorized validator node/slot). Use the workflow's normal completion path instead.`,
           });
         }
       }

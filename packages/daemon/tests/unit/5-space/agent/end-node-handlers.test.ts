@@ -1192,6 +1192,18 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
       endNodeId: nodeId,
       rules: [],
       completionAutonomyLevel: requiredLevel,
+      // Validation-only completion is opt-in: fixtures declare the enabling
+      // hook (a trivially-allowing validator on the run's own node).
+      hooks: [
+        {
+          id: 'allow-validation',
+          enabled: true,
+          sourceNode: 'Review',
+          method: 'complete_validation_task',
+          validator: { kind: 'script', interpreter: 'bash', source: 'echo allow' },
+          authorizedCallers: [{ sourceNode: 'Review' }],
+        } as WorkflowHook,
+      ],
     });
     const run = ctx.workflowRunRepo.createRun({
       spaceId: ctx.spaceId,
@@ -3422,7 +3434,7 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     const parsed = JSON.parse(result.content[0].text);
 
     expect(parsed.success).toBe(false);
-    expect(parsed.error).toContain('requires a PR');
+    expect(parsed.error).toContain('does not declare a complete_validation_task hook');
     expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
   });
 

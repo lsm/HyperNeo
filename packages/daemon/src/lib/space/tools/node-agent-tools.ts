@@ -1624,7 +1624,8 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
       ? [
           tool(
             'complete_validation_task',
-            'Validation-only (no-PR) task completion — for tasks that complete via validation rather than a reviewed PR ' +
+            'Validation-only (no-PR) task completion — OPT-IN: only for workflows that declare a complete_validation_task hook. ' +
+              'For tasks that complete via validation rather than a reviewed PR ' +
               '(Forge review/automation, diagnostics, already-complete work). Captures the validation outcome as the task ' +
               'result and transitions review/in_progress → done WITHOUT requiring a pr_url. Autonomy-gated to the ' +
               "workflow's completionAutonomyLevel; rejects tasks whose run already has a PR (use the normal approve/merge " +

@@ -159,7 +159,12 @@ export type MarkCompleteInput = z.infer<typeof MarkCompleteSchema>;
  * Schema for `complete_validation_task` input (task #918).
  *
  * Validation-only (no-PR) completion — node-agent-exclusive (like
- * `mark_complete`), NOT shipped on `space-agent-tools`. Captures the
+ * `mark_complete`), NOT shipped on `space-agent-tools`, and OPT-IN: a
+ * workflow-backed task is only eligible when its workflow definition
+ * declares an enabled `complete_validation_task` hook (the explicit
+ * signal that the validation-only close is legitimate — inferring
+ * eligibility cannot distinguish a PR workflow that gates its handoff
+ * with a script validator). Captures the
  * validation outcome as `task.result` and transitions
  * `review`/`in_progress → done` without a pr_url, for tasks that complete
  * via validation rather than a reviewed PR (Forge review/automation,
