@@ -199,6 +199,28 @@ export function isSDKSessionStateChangedMessage(
 }
 
 /**
+ * Check if message is a background-tasks-changed system push (REPLACE-semantics
+ * task roster). Internal state signal with no downstream consumer — filtered
+ * before persistence, same as stream_event.
+ */
+export function isSDKBackgroundTasksChangedMessage(
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "system"; subtype: "background_tasks_changed" }> {
+  return msg.type === "system" && (msg as { subtype?: string }).subtype === "background_tasks_changed";
+}
+
+/**
+ * Check if message is a control-request-progress system push (in-flight
+ * control_request progress). Internal state signal with no downstream consumer
+ * — filtered before persistence, same as stream_event.
+ */
+export function isSDKControlRequestProgressMessage(
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "system"; subtype: "control_request_progress" }> {
+  return msg.type === "system" && (msg as { subtype?: string }).subtype === "control_request_progress";
+}
+
+/**
  * Check if message is a stream event (partial assistant message)
  */
 export function isSDKStreamEvent(

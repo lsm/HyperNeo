@@ -27,9 +27,11 @@ import {
   isSDKAPIRetryMessage,
   isSDKAssistantMessage,
   flattenSDKSlashCommands,
+  isSDKBackgroundTasksChangedMessage,
   isSDKCommandLifecycleMessage,
   isSDKCommandsChangedMessage,
   isSDKCompactBoundary,
+  isSDKControlRequestProgressMessage,
   isSDKConversationResetMessage,
   isSDKActiveGoalMessage,
   isSDKModelRefusalFallbackMessage,
@@ -812,6 +814,17 @@ export class SDKMessageHandler {
       return;
     }
 
+    // background_tasks_changed and control_request_progress are internal state
+    // pushes with no downstream consumer in HyperNeo. Filter before
+    // persistence/broadcast so they don't accumulate invisible DB rows or wake
+    // every live subscriber.
+    if (
+      isSDKBackgroundTasksChangedMessage(message) ||
+      isSDKControlRequestProgressMessage(message)
+    ) {
+      return;
+    }
+
     // Check for API error patterns that indicate an infinite loop
     // This MUST happen BEFORE any other processing to catch errors early
     const circuitBreakerTripped = await this.circuitBreaker.checkMessage(message);
@@ -1091,8 +1104,12 @@ export class SDKMessageHandler {
     // This is the authoritative source — it includes all SDK built-ins plus
     // any custom skills, and fires immediately when a query starts.
     // Use isSDKSystemInit which narrows specifically to SDKSystemMessage (subtype: 'init').
+    // Terminal-bound commands (exit, statusline, …) have no browser UX and can
+    // dead-interact or kill the CLI — strip them before caching/broadcasting.
     if (isSDKSystemInit(message) && message.slash_commands?.length > 0) {
-      await this.ctx.onInitSlashCommands(message.slash_commands);
+      const terminalCommands = new Set(message.terminal_slash_commands ?? []);
+      const browserCommands = message.slash_commands.filter((cmd) => !terminalCommands.has(cmd));
+      await this.ctx.onInitSlashCommands(browserCommands);
     }
 
     if (isSDKCommandsChangedMessage(message)) {
