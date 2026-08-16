@@ -15,6 +15,7 @@ import type { RoutingClassification } from './prompts/router-prompt';
 import { ROUTER_AGENT_SYSTEM_PROMPT } from './prompts/router-prompt';
 import { Logger } from '../logger';
 import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver';
+import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention';
 
 const logger = new Logger('router-agent');
 
@@ -284,6 +285,7 @@ Analyze the event and determine which room should handle it. Respond with valid 
           // NO tools array - truly sandboxed
           pathToClaudeCodeExecutable: resolveSDKCliPath(),
           executable: isRunningUnderBun() ? 'bun' : undefined,
+          settings: withSdkTranscriptRetention(),
         },
       });
     } finally {

@@ -26,6 +26,7 @@ import { resolveSDKCliPath, isRunningUnderBun } from '../../agent/sdk-cli-resolv
 import { mergeProviderEnvVars } from '../../provider-service';
 import { KimiProvider } from '../../providers/kimi-provider.js';
 import { Logger } from '../../logger';
+import { withSdkTranscriptRetention } from '../../agent/sdk-transcript-retention';
 
 const log = new Logger('llm-workflow-selector');
 
@@ -106,6 +107,7 @@ export async function selectWorkflowWithLlmDefault(
         tools: [],
         pathToClaudeCodeExecutable: cliPath,
         executable: isRunningUnderBun() ? 'bun' : undefined,
+        settings: withSdkTranscriptRetention(),
         env: mergedEnv,
         // We only need a short text response; adaptive-thinking models can
         // otherwise return only thinking blocks with no text payload.

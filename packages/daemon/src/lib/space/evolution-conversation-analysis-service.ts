@@ -14,6 +14,7 @@ import { Logger } from '../logger';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service';
 import { inferProviderForModel } from '../providers/registry';
 import { KimiProvider } from '../providers/kimi-provider.js';
+import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention';
 
 const CONVERSATION_ANALYSIS_VERSION = 1;
 const DEFAULT_CONFIDENCE_THRESHOLD = 0.5;
@@ -306,6 +307,7 @@ async function analyzeConversationWithModel(
         tools: [],
         pathToClaudeCodeExecutable: resolveSDKCliPath(),
         executable: isRunningUnderBun() ? 'bun' : undefined,
+        settings: withSdkTranscriptRetention(),
         env: mergeProviderEnvVars(providerEnvVars),
         // Kimi K3 rejects `thinking.type` and K2.7 requires enabled thinking.
         // Only apply the Kimi-specific override for the Kimi provider; other

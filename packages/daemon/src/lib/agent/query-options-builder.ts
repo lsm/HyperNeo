@@ -72,6 +72,7 @@ import {
 import { getCoordinatorAgents } from './coordinator-agents';
 import { createLoopDetectorHooks } from './loop-detector-hook';
 import { isMessageDeliveryV2Enabled } from './message-delivery';
+import { withSdkTranscriptRetention } from './sdk-transcript-retention';
 import {
   createOutputLimiterPostHook,
   createOutputLimiterPreHook,
@@ -322,22 +323,6 @@ export function shouldUseHyperNeoCompactFallback(providerId: string): boolean {
   // `/v1/models` metadata. Kimi has no equivalent SDK-visible metadata path.
   return PROVIDER_NO_SDK_AUTO_COMPACT.has(providerId);
 }
-
-/**
- * SDK transcript retention (days) for every session the daemon spawns.
- *
- * The SDK/Claude CLI deletes chat transcripts idle longer than
- * `cleanupPeriodDays` (default 30) on startup, scanning ALL of
- * `~/.claude/projects` — including transcripts of long-idle HyperNeo sessions
- * the daemon DB still considers active and resumable. A purged transcript
- * wedges the session's delivery queue on `sdk_resume_choice` forever (the
- * resume can never succeed and nothing dead-letters it). Retention is
- * therefore owned solely by HyperNeo: session archive moves transcripts to
- * `~/.hyperneo/claude-session-archives/`; live sessions' transcripts must never
- * be swept by the subprocess. The SDK documents a large value as the way to
- * opt out of cleanup (min 1; `persistSession: false` would break resume).
- */
-export const SDK_TRANSCRIPT_RETENTION_DAYS = 3650;
 
 export function buildProviderSettings(
   providerId: string,
@@ -643,16 +628,11 @@ export class QueryOptionsBuilder {
       // Inline `settings` is the SDK's flag-settings layer — it takes precedence
       // over the on-disk user/project settings, so the daemon's transcript
       // retention cannot be narrowed by ~/.claude/settings.json. Retention is
-      // set for every provider (spread first so provider overrides still apply
-      // to their own keys, but nothing overrides retention).
-      settings: {
-        ...buildProviderSettings(
-          providerId,
-          modelInfo?.contextWindow,
-          this.ctx.session.config.model
-        ),
-        cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS,
-      },
+      // set for every provider (provider overrides still apply to their own
+      // keys, but nothing overrides retention).
+      settings: withSdkTranscriptRetention(
+        buildProviderSettings(providerId, modelInfo?.contextWindow, this.ctx.session.config.model)
+      ),
 
       // ============ Streaming ============
       // Partial/streaming messages (`stream_event`) double as a LIVENESS

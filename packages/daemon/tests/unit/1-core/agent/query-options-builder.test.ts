@@ -15,8 +15,11 @@ import {
   ensureAgentTools,
   QueryOptionsBuilder,
   type QueryOptionsBuilderContext,
-  SDK_TRANSCRIPT_RETENTION_DAYS,
 } from '../../../../src/lib/agent/query-options-builder';
+import {
+  SDK_TRANSCRIPT_RETENTION_DAYS,
+  withSdkTranscriptRetention,
+} from '../../../../src/lib/agent/sdk-transcript-retention';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../../../../src/lib/space/agents/long-horizon-agent-tools';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
@@ -329,6 +332,19 @@ describe('QueryOptionsBuilder', () => {
       // pinned regardless of provider settings.
       const options = await builder.build();
       expect(options.settings?.cleanupPeriodDays).toBe(SDK_TRANSCRIPT_RETENTION_DAYS);
+    });
+
+    it('withSdkTranscriptRetention merges over caller settings without dropping them', () => {
+      // Direct query() launches (title generation, workflow selection, model
+      // discovery, GitHub agents, evolution services) pass their own settings
+      // through this helper; existing keys must survive.
+      expect(withSdkTranscriptRetention()).toEqual({
+        cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS,
+      });
+      expect(withSdkTranscriptRetention({ autoCompactWindow: 1000 })).toEqual({
+        autoCompactWindow: 1000,
+        cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS,
+      });
     });
 
     it('should remove undefined values from options', async () => {
