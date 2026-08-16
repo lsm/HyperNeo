@@ -658,6 +658,136 @@ describe('useInputDraft', () => {
       expect(result.current.content).toBe('typing transcript');
     });
 
+    it('advances the cached draft version from acknowledged saves', async () => {
+      // A concurrent daemon-side bump (another tab's folded save) must not
+      // leave this composer echoing a stale version forever — every later
+      // edit would then be folded as stale, duplicating the transcript the
+      // local draft already contains. The save's ack carries the APPLIED
+      // version and the cache advances.
+      let version = 1;
+      mockHub.request.mockImplementation(
+        async (method: string, payload?: { expectedDraftVersion?: number }) => {
+          if (method === 'session.get') {
+            return { session: { metadata: { inputDraft: '', inputDraftVersion: version } } };
+          }
+          if (method === 'session.update') {
+            version += 1;
+            return { success: true, draftVersion: version };
+          }
+          return {};
+        }
+      );
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      result.current.setContent('first edit');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // The acknowledged save advanced the daemon version to 2; the NEXT save
+      // must echo 2 — not the stale get-time version 1.
+      result.current.setContent('second edit');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      const saves = mockHub.request.mock.calls.filter(([m]) => m === 'session.update');
+      expect(saves[saves.length - 1][1]?.expectedDraftVersion).toBe(2);
+    });
+
+    it('adopts a folded save ack when the composer still shows the sent content', async () => {
+      // The backup write failed, so the fallback save is STALE — the daemon
+      // folds the merged transcript into it and returns the applied value.
+      // The composer adopts that value (its content lacked the transcript);
+      // advancing the version WITHOUT adopting would let the next edit apply
+      // as-is and clear the baseline, deleting the transcript.
+      const quotaStorage = createMemoryStorage();
+      const baseStorage = createMemoryStorage();
+      quotaStorage.setItem = (k: string, v: string) => {
+        if (k.startsWith('hyperneo_voice_transcript_outbox_v1.draft.')) {
+          throw new DOMException('quota', 'QuotaExceededError');
+        }
+        baseStorage.setItem(k, v);
+      };
+      globalThis.localStorage = quotaStorage as Storage;
+      mockHub.request.mockImplementation(
+        async (method: string, payload?: { metadata?: { inputDraft?: string | null } }) => {
+          if (method === 'session.get') {
+            return { session: { metadata: { inputDraft: '' } } };
+          }
+          if (method === 'session.update' && payload?.metadata?.inputDraft === 'typed text') {
+            return { success: true, draftVersion: 2, draftValue: 'typed text voice' };
+          }
+          return { success: true };
+        }
+      );
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      result.current.setContent('typed text');
+      markVoiceTranscriptLanded('session-1', 'voice');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // The folded value was adopted into the composer.
+      expect(result.current.content).toBe('typed text voice');
+    });
+
+    it('never moves the cached draft version backward', async () => {
+      // A newer save acknowledged version 5; a LATE, out-of-order
+      // acknowledgement for an older overlapping save carries version 4 —
+      // assigning it unconditionally would regress the cache and misclassify
+      // the next save as stale (folding a transcript the draft contains).
+      let saveAcks = 0;
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return { session: { metadata: { inputDraft: 'seed', inputDraftVersion: 3 } } };
+        }
+        saveAcks += 1;
+        // First save acks 4, second acks 5 — the cache should reach 5.
+        return { success: true, draftVersion: saveAcks === 1 ? 4 : 5 };
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1', 50));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      await act(async () => {
+        result.current.setContent('first');
+        await vi.runAllTimersAsync();
+      });
+      await act(async () => {
+        result.current.setContent('second');
+        await vi.runAllTimersAsync();
+      });
+      expect(saveAcks).toBe(2);
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return { session: { metadata: { inputDraft: 'seed', inputDraftVersion: 5 } } };
+        }
+        // The stale, out-of-order acknowledgement.
+        return { success: true, draftVersion: 4 };
+      });
+      await act(async () => {
+        result.current.setContent('third');
+        await vi.runAllTimersAsync();
+      });
+      // The cache kept 5 — the next save echoes it, not the regressed 4.
+      await act(async () => {
+        result.current.setContent('fourth');
+        await vi.runAllTimersAsync();
+      });
+      const saves = mockHub.request.mock.calls.filter(([m]) => m === 'session.update');
+      expect(saves[saves.length - 1][1]?.expectedDraftVersion).toBe(5);
+    });
+
     it('refreshes the mounted draft when the outbox lands a transcript for its session', async () => {
       // The initial get sees no draft; the replay's get returns the landed one.
       mockHub.request.mockResolvedValueOnce({ session: { metadata: { inputDraft: '' } } });

@@ -1447,6 +1447,69 @@ describe('SessionManager', () => {
         // Should update session to clear draft
         expect(mockDb.updateSession).toHaveBeenCalled();
       });
+
+      it('re-anchors a staged voice baseline when the send-clear runs', async () => {
+        // A voice pending staged at send time must not keep a baseline naming
+        // the SENT draft: the pending merges onto the now-empty draft, and a
+        // stale baseline would make later reconciliation extract no
+        // transcript — letting a stale save overwrite the only merged copy.
+        const handler = eventHandlers.get('message.persisted');
+
+        (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+          id: 'test-id',
+          metadata: {
+            inputDraft: 'test draft',
+            inputDraftVersion: 2,
+            inputDraftVoicePending: 'voice',
+            inputDraftVoiceBaseline: 'test draft',
+          },
+        });
+
+        await handler?.({
+          sessionId: 'test-id',
+          userMessageText: 'test message',
+          needsWorkspaceInit: false,
+          hasDraftToClear: true,
+        });
+
+        expect(mockDb.updateSession).toHaveBeenCalledWith(
+          'test-id',
+          expect.objectContaining({
+            metadata: expect.objectContaining({
+              inputDraft: null,
+              inputDraftVersion: 3,
+              inputDraftVoiceBaseline: '',
+            }),
+          })
+        );
+      });
+
+      it('bumps inputDraftVersion when the sent-message draft clear runs', async () => {
+        // Another tab's debounced save still holds the PRE-send version; the
+        // stale-vs-current equality check in session.update would treat that
+        // write as current and resurrect the sent content — the clear must
+        // invalidate prior versions like every other draft mutation.
+        const handler = eventHandlers.get('message.persisted');
+
+        (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+          id: 'test-id',
+          metadata: { inputDraft: 'test draft', inputDraftVersion: 4 },
+        });
+
+        await handler?.({
+          sessionId: 'test-id',
+          userMessageText: 'test message',
+          needsWorkspaceInit: false,
+          hasDraftToClear: true,
+        });
+
+        expect(mockDb.updateSession).toHaveBeenCalledWith(
+          'test-id',
+          expect.objectContaining({
+            metadata: expect.objectContaining({ inputDraft: null, inputDraftVersion: 5 }),
+          })
+        );
+      });
     });
 
     describe('MCP registry / skills change handlers', () => {
