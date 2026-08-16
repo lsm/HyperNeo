@@ -810,7 +810,7 @@ describe('QueryRunner', () => {
         messageQueue: mockQueue as unknown as MessageQueue,
       });
 
-      const generator = runner.createMessageGeneratorWrapper();
+      const generator = runner.createMessageGeneratorWrapper(0);
       const results: unknown[] = [];
 
       for await (const msg of generator) {
@@ -838,7 +838,7 @@ describe('QueryRunner', () => {
         messageQueue: mockQueue as unknown as MessageQueue,
       });
 
-      const generator = runner.createMessageGeneratorWrapper();
+      const generator = runner.createMessageGeneratorWrapper(0);
 
       for await (const _msg of generator) {
         // Consume the generator
@@ -864,7 +864,7 @@ describe('QueryRunner', () => {
         messageQueue: mockQueue as unknown as MessageQueue,
       });
 
-      const generator = runner.createMessageGeneratorWrapper();
+      const generator = runner.createMessageGeneratorWrapper(0);
       for await (const _msg of generator) {
         // Consume generator
       }
@@ -890,7 +890,7 @@ describe('QueryRunner', () => {
         messageQueue: mockQueue as unknown as MessageQueue,
       });
 
-      const generator = runner.createMessageGeneratorWrapper();
+      const generator = runner.createMessageGeneratorWrapper(0);
 
       for await (const _msg of generator) {
         // Consume the generator
@@ -924,7 +924,7 @@ describe('QueryRunner', () => {
         messageQueue: mockQueue as unknown as MessageQueue,
       });
 
-      const generator = runner.createMessageGeneratorWrapper();
+      const generator = runner.createMessageGeneratorWrapper(0);
       for await (const _msg of generator) {
         // Consume the generator
       }
@@ -964,7 +964,7 @@ describe('QueryRunner', () => {
         messageQueue: mockQueue as unknown as MessageQueue,
       });
 
-      const generator = runner.createMessageGeneratorWrapper();
+      const generator = runner.createMessageGeneratorWrapper(0);
       for await (const _msg of generator) {
         // Consume the generator
       }
@@ -1626,10 +1626,10 @@ describe('QueryRunner', () => {
 
       const ctx = createContext();
       runner = new QueryRunner(ctx);
-      (runner as unknown as { _consumedUserMessages: unknown })._consumedUserMessages = [
-        kickoff,
-        steer,
-      ];
+      // start() bumps the generation to 1, so the replay list lives under key 1.
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages = new Map([[1, [kickoff, steer]]]);
 
       runner.start();
       await ctx.queryPromise?.catch(() => {});
@@ -1666,9 +1666,13 @@ describe('QueryRunner', () => {
         processExitedPromise: exitPromise,
       });
       runner = new QueryRunner(ctx);
-      (runner as unknown as { _consumedUserMessages: unknown })._consumedUserMessages = [
-        { uuid: 'stale-uuid', content: [{ type: 'text' as const, text: 'stale' }] },
-      ];
+      // start() bumps the generation to 1; the superseded generation's entry
+      // (key 1) must be cleared when the replacement takes ownership.
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages = new Map([
+        [1, [{ uuid: 'stale-uuid', content: [{ type: 'text' as const, text: 'stale' }] }]],
+      ]);
 
       runner.start();
       // Let the first attempt reach the catch block (build rejects with the
@@ -1685,8 +1689,10 @@ describe('QueryRunner', () => {
       // The superseded generation's replay history is cleared so the
       // replacement does not inherit (and duplicate) it. (Codex P2, PR #2499.)
       expect(
-        (runner as unknown as { _consumedUserMessages: unknown[] })._consumedUserMessages
-      ).toEqual([]);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages.get(1)
+      ).toBeUndefined();
     });
   });
 

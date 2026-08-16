@@ -443,17 +443,18 @@ export class QueryRunner {
   } | null = null;
 
   /**
-   * Ordered list of every non-internal user message consumed by the generator
-   * in the current query run, for the startup-timeout retry to replay. The
-   * single `_lastConsumedUserMessage` slot is enough for the transient/rate-limit
-   * retries (only the in-flight message needs replay), but a silent SDK can pull
-   * the kickoff AND trailing steers before the startup timer fires — those all
-   * need re-feeding, in order. Cleared alongside `_lastConsumedUserMessage`.
+   * Ordered list, per query generation, of every non-internal user message
+   * consumed by that generation's generator, for the startup-timeout retry to
+   * replay. The single `_lastConsumedUserMessage` slot is enough for the
+   * transient/rate-limit retries (only the in-flight message needs replay), but
+   * a silent SDK can pull the kickoff AND trailing steers before the startup
+   * timer fires — those all need re-feeding, in order. Keyed by generation so a
+   * superseded query cannot clear (or inherit) a replacement's history.
    */
-  private _consumedUserMessages: Array<{
-    uuid: string;
-    content: string | MessageContent[];
-  }> = [];
+  private _consumedUserMessages = new Map<
+    number,
+    Array<{ uuid: string; content: string | MessageContent[] }>
+  >();
 
   /**
    * Public accessor for the last consumed user message.
@@ -805,7 +806,7 @@ export class QueryRunner {
 
       // Create query with AsyncGenerator
       const queryObject = query({
-        prompt: this.createMessageGeneratorWrapper(),
+        prompt: this.createMessageGeneratorWrapper(queryGeneration),
         options: queryOptions,
       });
       this.ctx.queryObject = queryObject;
@@ -908,7 +909,7 @@ export class QueryRunner {
           // longer be used for startup recovery and would otherwise retain every
           // message's full content for the session's lifetime. `_lastConsumedUserMessage`
           // stays for the transient/rate-limit retries. (Codex P2, PR #2499.)
-          this._consumedUserMessages = [];
+          this._consumedUserMessages.delete(queryGeneration);
         }
 
         try {
@@ -1137,7 +1138,7 @@ export class QueryRunner {
         // last would silently drop the earlier prompts whose durable rows are
         // already consumed). Mirror the transient-connection retry's feed.
         // (Codex P1, PR #2499.)
-        const consumed = this._consumedUserMessages;
+        const consumed = this._consumedUserMessages.get(queryGeneration) ?? [];
         if (consumed.length > 0) {
           logger.warn(
             `Re-enqueueing ${consumed.length} consumed user message(s) for startup-timeout retry.`
@@ -1153,7 +1154,7 @@ export class QueryRunner {
               .enqueueWithId(message.uuid, message.content, false, { prepend: true })
               .catch(() => {});
           }
-          this._consumedUserMessages = [];
+          this._consumedUserMessages.delete(queryGeneration);
           this._lastConsumedUserMessage = null;
         }
 
@@ -1235,7 +1236,7 @@ export class QueryRunner {
           // consumes the message, or rejects on timeout/interrupt (harmless).
           messageQueue.enqueueWithId(lastMsg.uuid, lastMsg.content).catch(() => {});
           this._lastConsumedUserMessage = null;
-          this._consumedUserMessages = [];
+          this._consumedUserMessages.delete(queryGeneration);
         }
 
         // Display a sanitized retry message so the user knows what's happening,
@@ -1341,7 +1342,7 @@ export class QueryRunner {
         // turn.
         const retryMsg = this._lastConsumedUserMessage;
         this._lastConsumedUserMessage = null;
-        this._consumedUserMessages = [];
+        this._consumedUserMessages.delete(queryGeneration);
 
         // Display a sanitized retry message so the user knows what's happening,
         // but never show the raw provider error string.
@@ -1433,7 +1434,7 @@ export class QueryRunner {
           );
           messageQueue.enqueueWithId(retryMsg.uuid, retryMsg.content).catch(() => {});
           this._lastConsumedUserMessage = null;
-          this._consumedUserMessages = [];
+          this._consumedUserMessages.delete(queryGeneration);
         }
 
         return await this.runQuery(queryGeneration, retryAttempt + 1, recoveryState);
@@ -1671,7 +1672,7 @@ export class QueryRunner {
         // that fires before the next turn's generator yields would re-enqueue
         // the previous turn's already-completed message.
         this._lastConsumedUserMessage = null;
-        this._consumedUserMessages = [];
+        this._consumedUserMessages.delete(queryGeneration);
 
         // Null queryPromise last so callers awaiting it see queryObject=null.
         this.ctx.queryPromise = null;
@@ -1828,7 +1829,7 @@ export class QueryRunner {
     // by the replacement: if it also times out, replaying the superseded query's
     // prompts would duplicate an earlier request / rerun its tools.
     // (Codex P2, PR #2499.)
-    this._consumedUserMessages = [];
+    this._consumedUserMessages.delete(queryGeneration);
     return true;
   }
 
@@ -1836,7 +1837,7 @@ export class QueryRunner {
    * Create wrapper for MessageQueue's AsyncGenerator
    * Public for testing
    */
-  async *createMessageGeneratorWrapper() {
+  async *createMessageGeneratorWrapper(queryGeneration: number) {
     const { session, messageQueue, stateManager, logger } = this.ctx;
 
     for await (const { message, onSent } of messageQueue.messageGenerator(session.id)) {
@@ -1854,12 +1855,14 @@ export class QueryRunner {
           uuid: message.uuid ?? '',
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
         };
-        // Accumulate the full ordered set of consumed messages for the
-        // startup-timeout retry's replay (see _consumedUserMessages).
-        this._consumedUserMessages.push({
+        // Accumulate the full ordered set of consumed messages for THIS
+        // generation's startup-timeout replay (see _consumedUserMessages).
+        const generationMessages = this._consumedUserMessages.get(queryGeneration) ?? [];
+        generationMessages.push({
           uuid: message.uuid ?? '',
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
         });
+        this._consumedUserMessages.set(queryGeneration, generationMessages);
       }
 
       // Delivery observability: this yield is the moment the kickoff actually
