@@ -215,6 +215,46 @@ export function staleReclaimJitterDelays(count: number, random: () => number): n
   return slots.map((slot) => slot * slotWidth + draw() * slotWidth);
 }
 
+/**
+ * Apply {@link staleReclaimJitterDelays} to a re-enqueued herd's pending rows.
+ * The single shared sequence for both herd paths — the processor's stale-reclaim
+ * pass (crash recovery) and the graceful-shutdown requeue in `app.cleanup()`
+ * (deploy/restart) — so they roll identically instead of drifting apart.
+ *
+ * Per-job isolation: one failed UPDATE (disk-full / I/O error) leaves THAT row
+ * at its original — past, immediately claimable — run_at (the pre-jitter
+ * behavior) while the rest of the herd keeps its jitter, and the failure is
+ * surfaced through `onRescheduleError` (the processor emits a
+ * `stale_reclaim_jitter_failed` lifecycle event; the shutdown path logs).
+ * Errors never propagate, so this can never skip the caller's remaining
+ * reclaim work (predecessor aborts, settling deferrals). A throw from the
+ * reclaim transaction itself — before any row flipped — still propagates from
+ * the caller; that rejects tick()'s promise and exits the daemon on the
+ * unhandled rejection, and recovery is a restart whose eager reclaim re-sweeps
+ * (and re-jitters) the herd.
+ *
+ * @returns how many rows were successfully rescheduled.
+ */
+export function applyStaleReclaimJitter(
+  repo: Pick<JobQueueRepository, 'reschedulePending'>,
+  jobIds: string[],
+  random: () => number,
+  onRescheduleError?: (jobId: string, error: unknown) => void
+): number {
+  if (jobIds.length === 0) return 0;
+  const delays = staleReclaimJitterDelays(jobIds.length, random);
+  const jitteredAt = Date.now();
+  let applied = 0;
+  for (let i = 0; i < jobIds.length; i++) {
+    try {
+      if (repo.reschedulePending(jobIds[i], jitteredAt + delays[i])) applied++;
+    } catch (error) {
+      onRescheduleError?.(jobIds[i], error);
+    }
+  }
+  return applied;
+}
+
 export class JobQueueProcessor {
   private handlers = new Map<string, Registration>();
   private pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -614,25 +654,32 @@ export class JobQueueProcessor {
       // Re-enqueue the whole herd with randomized run_at jitter: a crash that
       // froze N in-flight deliveries would otherwise make every replacement
       // claim cold-start its SDK subprocess in the same instant (see
-      // staleReclaimJitterDelays). Applied synchronously, before any tick can
-      // dequeue, so no reclaimed job slips through un-jittered.
-      try {
-        const jitteredAt = Date.now();
-        const delays = staleReclaimJitterDelays(claims.length, this.jitterRandom);
-        for (let i = 0; i < claims.length; i++) {
-          this.repo.reschedulePending(claims[i].jobId, jitteredAt + delays[i]);
+      // applyStaleReclaimJitter). Applied synchronously, before any tick can
+      // dequeue, so no reclaimed job slips through un-jittered. A failed
+      // reschedule emits stale_reclaim_jitter_failed and falls back to the
+      // pre-jitter (immediately claimable) behavior for that row — it can
+      // never skip the abort/deferral loop below, whose predecessor
+      // cancellation is what prevents replacement claims from overlapping
+      // live attempts.
+      const claimByJobId = new Map(claims.map((claim) => [claim.jobId, claim] as const));
+      applyStaleReclaimJitter(
+        this.repo,
+        claims.map((claim) => claim.jobId),
+        this.jitterRandom,
+        (jobId) => {
+          const claim = claimByJobId.get(jobId);
+          if (claim) {
+            this.emitLifecycle(
+              'stale_reclaim_jitter_failed',
+              jobFromReclaimedClaim(claim),
+              undefined,
+              {
+                reason: 'reschedule_failed',
+              }
+            );
+          }
         }
-      } catch {
-        // Best-effort: a failed reschedule (disk-full / I/O error) leaves the
-        // affected rows pending with their original — past — run_at, i.e.
-        // immediately claimable, the pre-jitter behavior. It must never skip
-        // the abort/deferral loop below: cancelling the stale predecessors is
-        // what prevents replacement claims from overlapping live attempts.
-        // (A throw from reclaimStale itself still propagates — that
-        // all-or-nothing transaction failed before any row flipped — and
-        // checkStaleJobs then retries on the next tick, as lastStaleCheck
-        // only advances after a non-throwing pass.)
-      }
+      );
     }
     for (const claim of claims) {
       const record = claim.claimToken

@@ -13,10 +13,15 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   JobQueueProcessor,
+  applyStaleReclaimJitter,
   staleReclaimJitterDelays,
 } from '../../../../src/storage/job-queue-processor';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import {
+  clearStructuredLogSubscribers,
+  subscribeToStructuredLogs,
+} from '../../../../src/lib/logger';
 
 const DB_SCHEMA = `
 	CREATE TABLE IF NOT EXISTS job_queue (
@@ -461,11 +466,7 @@ describe('stale-reclaim herd jitter (run_at spread)', () => {
 
     // The shutdown jitter app.ts applies (constant 0.5 → fixed permutation,
     // offsets at each 2 s slot's midpoint; every run_at ≥ 1 s out).
-    const jitteredAt = Date.now();
-    const delays = staleReclaimJitterDelays(requeued.length, () => 0.5);
-    requeued.forEach((id, i) => {
-      expect(repo.reschedulePending(id, jitteredAt + delays[i])).toBe(true);
-    });
+    expect(applyStaleReclaimJitter(repo, requeued, () => 0.5)).toBe(M);
 
     // Next boot: a fresh processor's eager reclaim finds nothing `processing`,
     // and its first tick claims NONE of the herd — every run_at is future.
@@ -495,6 +496,105 @@ describe('stale-reclaim herd jitter (run_at spread)', () => {
     expect(processed).toHaveLength(M);
     for (const id of jobIds) {
       expect(repo.getJob(id)?.status).toBe('completed');
+    }
+  });
+
+  it('a failed jitter reschedule falls back to claimable rows, still aborts predecessors, and warns', async () => {
+    // Negative path for the reschedule-failure handling: one live in-flight
+    // delivery whose predecessor the reclaim must still abort (and whose
+    // replacement must still be deferred), plus two crash-frozen rows — with
+    // reschedulePending throwing for every claim.
+    const events: Array<{ message: string; metadata: Record<string, unknown> }> = [];
+    const unsubscribe = subscribeToStructuredLogs((event) => events.push(event));
+    const originalReschedule = repo.reschedulePending.bind(repo);
+
+    processor = new JobQueueProcessor(repo, {
+      staleThresholdMs: 60_000, // heartbeat every ~20 s — no lease renewal races
+      maxConcurrent: 10,
+      pollIntervalMs: 60_000,
+      jitterRandom: () => 0.5,
+    });
+    const signals: AbortSignal[] = [];
+    let handlerCalls = 0;
+    processor.register('message_delivery', (_job, context) => {
+      handlerCalls++;
+      signals.push(context!.signal);
+      if (handlerCalls === 1) {
+        // The live predecessor: parks until its stale reclaim aborts it.
+        return new Promise<void>((resolve) => {
+          context!.signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+      }
+    });
+
+    try {
+      const live = repo.enqueue({
+        queue: 'message_delivery',
+        payload: { sessionId: 's-live', messageUuid: 'm-live', role: 'turn' },
+      });
+      expect(await processor.tick()).toBe(1); // claims the live turn
+      await flush();
+      expect(signals).toHaveLength(1);
+
+      // Two crash-frozen rows: claimed straight through the repo, leases
+      // backdated like a daemon that died mid-flight.
+      const frozen = [
+        repo.enqueue({
+          queue: 'message_delivery',
+          payload: { sessionId: 's-a', messageUuid: 'm-a', role: 'turn' },
+        }),
+        repo.enqueue({
+          queue: 'message_delivery',
+          payload: { sessionId: 's-b', messageUuid: 'm-b', role: 'turn' },
+        }),
+      ];
+      repo.dequeue('message_delivery', 2);
+
+      const staleLease = Date.now() - 30_000;
+      db.prepare(
+        `UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id IN (${[live, ...frozen].map(() => '?').join(',')})`
+      ).run(staleLease, staleLease, live.id, ...frozen.map((j) => j.id));
+
+      const beforeReclaim = Date.now();
+      repo.reschedulePending = () => {
+        throw new Error('simulated disk-full');
+      };
+
+      expect(() => reclaimNow(processor)).not.toThrow();
+
+      // The mitigation's failure is observable, not silent: one warn-level
+      // lifecycle event per claim whose jitter could not be applied.
+      const jitterFailures = events.filter(
+        (event) => event.metadata.event === 'stale_reclaim_jitter_failed'
+      );
+      expect(jitterFailures).toHaveLength(3);
+      expect(jitterFailures[0].metadata).toMatchObject({ reason: 'reschedule_failed' });
+
+      // Un-jittered rows keep their original — past — run_at and stay
+      // claimable: the pre-jitter behavior, never a NULL/future park.
+      for (const job of [live, ...frozen]) {
+        const row = repo.getJob(job.id);
+        expect(row?.status).toBe('pending');
+        expect(row?.runAt).toBeLessThanOrEqual(beforeReclaim);
+      }
+
+      // The abort/deferral loop still ran: the predecessor is aborted and its
+      // replacement deferred, so this tick claims only the two frozen rows.
+      expect(await processor.tick()).toBe(2);
+      expect(repo.getJob(live.id)?.status).toBe('pending');
+
+      // Once the aborted predecessor settles, its un-jittered row claims too.
+      await flush();
+      expect(signals[0].aborted).toBe(true);
+      expect(await processor.tick()).toBe(1);
+      await flush();
+      for (const job of [live, ...frozen]) {
+        expect(repo.getJob(job.id)?.status).toBe('completed');
+      }
+    } finally {
+      repo.reschedulePending = originalReschedule;
+      unsubscribe();
+      clearStructuredLogSubscribers();
     }
   });
 });

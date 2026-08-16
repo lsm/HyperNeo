@@ -69,7 +69,7 @@ import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-serv
 import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager';
 import type { SpaceWorktreeManager } from './lib/space/managers/space-worktree-manager';
 import { JobQueueRepository } from './storage/repositories/job-queue-repository';
-import { JobQueueProcessor, staleReclaimJitterDelays } from './storage/job-queue-processor';
+import { JobQueueProcessor, applyStaleReclaimJitter } from './storage/job-queue-processor';
 import { createCleanupHandler } from './lib/job-handlers/cleanup.handler';
 import {
   createMemoryConsolidationHandler,
@@ -1438,20 +1438,18 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         try {
           const requeued = jobQueue.requeueAllProcessing(MESSAGE_DELIVERY, Date.now());
           if (requeued.length > 0) {
+            logInfo(
+              `[Daemon] Requeued ${requeued.length} in-flight message_delivery job(s) for restart`
+            );
             // Spread the restart herd with the stale-reclaim jitter: pending
             // rows all at run_at=now would be claimed by the next boot's
             // FIRST tick in one instant (up to the 64-slot delivery budget) —
             // the graceful-shutdown twin of the crash herd, with every
             // replacement cold-starting its SDK subprocess at once. A single
             // requeued job keeps zero delay (#2593's instant recovery).
-            const jitteredAt = Date.now();
-            const delays = staleReclaimJitterDelays(requeued.length, Math.random);
-            for (let i = 0; i < requeued.length; i++) {
-              jobQueue.reschedulePending(requeued[i], jitteredAt + delays[i]);
-            }
-            logInfo(
-              `[Daemon] Requeued ${requeued.length} in-flight message_delivery job(s) for restart`
-            );
+            applyStaleReclaimJitter(jobQueue, requeued, Math.random, (jobId) => {
+              logInfo(`[Daemon] stale-reclaim jitter reschedule failed for job ${jobId}`);
+            });
           }
         } catch {
           /* best-effort on shutdown */
