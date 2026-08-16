@@ -812,13 +812,14 @@ export class SDKMessageHandler {
     }
 
     // Conversation reset is a fresh-session boundary (/clear, plan-mode exit):
-    // reset the auto-generated title so the browser doesn't keep the old title
-    // attached to the new conversation, then drop the boundary event itself.
+    // reset the auto-generated title (both the displayed string and the
+    // generation flag) so the browser doesn't keep the old title attached to
+    // the new conversation, then drop the boundary event itself.
     if (isSDKConversationResetMessage(message)) {
-      if (session.metadata.titleSetBy !== 'user' && session.metadata.titleGenerated) {
+      if (session.metadata.titleSetBy !== 'user') {
         const metadata = { ...session.metadata, titleGenerated: false };
         session.metadata = metadata;
-        db.updateSession(session.id, { metadata });
+        db.updateSession(session.id, { metadata, title: 'New Session' });
       }
       return;
     }
