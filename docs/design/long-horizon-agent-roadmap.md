@@ -10,7 +10,7 @@ Marketing is the first forcing scenario, but the architecture is intentionally g
 
 ## Minimal core
 
-The full roadmap below is the robust target. It should not block first dogfooding. We already have goal persistence, goal tasks, LH sessions, assignments, reminders, task tools, agent memory, and Forge. The smallest useful core is therefore **five PRs**, sequenced after the Message Delivery V2 follow-up in task #860.
+The full roadmap below is the robust target. It should not block first dogfooding. We already have goal persistence, goal tasks, LH sessions, assignments, reminders, task tools, agent memory, and Forge. The smallest useful core is therefore **six PRs**, sequenced after the Message Delivery V2 follow-up in task #860.
 
 ### MC1. Goal owner assignment and resolver
 
@@ -26,15 +26,17 @@ The full roadmap below is the robust target. It should not block first dogfoodin
 ### MC2. Minimal owner wake-up on goal-task terminal state
 
 - At the existing goal terminal seam, resolve the primary owner.
-- Persist a minimal outcome-notification record.
+- Persist a minimal outcome-notification record atomically with the terminal transition, or give the transition a deterministic identity and enforce one notification per identity with reconciliation for committed tasks missing notifications.
+- The notification stores the goal revision sampled after required terminal goal bookkeeping so later review can detect independent goal changes.
 - Wake the owner through the LH durable-injection adapter from task #860 / V3.
 - Include the completed task result, linked goal, and current rolling goal state.
-- Fall back to the coordinator when no usable owner exists.
+- Fall back visibly to the coordinator when no usable owner exists.
+- Do not block task completion on notification delivery, but do not rely on best-effort post-commit notification that can be lost or duplicated.
 
 This intentionally reuses task results and current delivery/inbox primitives instead of building the full immutable report model first.
 
-**Why it matters:** the goal now reacts to work completing instead of waiting for a human or a weekly reminder.  
-**Estimated size:** 170–250 production lines.
+**Why it matters:** the goal now reacts to work completing instead of waiting for a human or a weekly reminder.
+**Estimated size:** 190–270 production lines; split deterministic terminal identity/notification persistence from owner delivery if it exceeds 250.
 
 ### MC3. Idempotent owner goal-review MCP tool
 
@@ -46,7 +48,7 @@ Add one explicit tool such as `review_goal_outcome` that the awakened owner can 
 - optional structured observations and metric changes;
 - summary, next steps, and follow-up intent.
 
-The tool validates that the caller is the current primary owner or coordinator fallback, then atomically records the notification as processed and applies the update through `SpaceGoalService`. Retrying a durable wake or retrying after a tool timeout must return the original processed result rather than appending duplicate goal events, reapplying metrics, or creating duplicate follow-up work. Workers do not get this tool.
+The tool validates that the caller is the current primary owner or coordinator fallback, then atomically records the notification as processed and applies the update through `SpaceGoalService`. It must compare the notification's base goal revision inside the same transaction; if the goal changed independently after the notification, reject the stale proposal and require an explicit edited merge rather than overwriting newer summary, metrics, or next steps. Retrying a durable wake or retrying after a tool timeout must return the original processed result rather than appending duplicate goal events, reapplying metrics, or creating duplicate follow-up work. Workers do not get this tool.
 
 **Why it matters:** the LH agent becomes responsible for integrating outcomes and deciding next actions without immediately reworking every existing worker prompt or terminal path.
 **Estimated size:** 170–250 production lines.
@@ -75,9 +77,9 @@ Use existing goal history, task links, and goal editing surfaces. Do not build a
 
 Add a configurable inactivity watchdog for each LH agent. Keep the first version deliberately simple: use the latest message timestamp in the agent's persistent session as its last activity time.
 
-- Read the latest message timestamp for the LH agent's persistent session.
-- If `now - latestMessageAt` exceeds the configured threshold, inject a wake-up message into that session.
-- The injected message becomes the latest session message, so the inactivity window naturally resets.
+- Read the latest **successful/consumed** message timestamp for the LH agent's persistent session. For a session with no messages, use the session creation time, falling back to agent creation time, so new agents have a deterministic first inactivity window.
+- If `now - lastActivityAt` exceeds the configured threshold, inject a wake-up message into that session.
+- A successfully consumed injected message becomes the latest session activity, so the inactivity window naturally resets. A persisted but failed/rejected nag must not reset the window; track the delivery attempt and rearm a new attempt or enter a visible degraded state on terminal delivery failure.
 - This covers external events, reminders, task/goal wake-ups, direct human messages, agent-to-agent messages, and ongoing session work without a separate activity taxonomy.
 - Make the threshold and prompt configurable per agent.
 - Support enable/pause/resume and run-now controls.
