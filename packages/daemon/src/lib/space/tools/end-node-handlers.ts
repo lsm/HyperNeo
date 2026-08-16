@@ -1004,12 +1004,14 @@ export function createCompleteValidationTaskHandler(
       // (status unchanged, so the identity check above cannot see it), and
       // sweeping the new run's executions with the OLD run's source
       // node/execution exclusions would idle workers just launched for it.
+      // `completionConfirmed` also gates the tail: goal terminal handling,
+      // the task-updated event, and the returned snapshot must reflect the
+      // CURRENT row, never a stale `done` the recovery already superseded.
       const currentTaskRow = taskRepo.getTask(updated.id);
-      if (
+      const completionConfirmed =
         currentTaskRow?.status === 'done' &&
-        currentTaskRow.workflowRunId &&
-        currentTaskRow.workflowRunId === checkedWorkflowRunId
-      ) {
+        (currentTaskRow.workflowRunId ?? null) === (checkedWorkflowRunId ?? null);
+      if (completionConfirmed && currentTaskRow.workflowRunId) {
         try {
           const quiesce = (execution: { id: string; agentSessionId: string | null }) => {
             nodeExecutionRepo.updateStatus(execution.id, 'idle');
@@ -1044,13 +1046,17 @@ export function createCompleteValidationTaskHandler(
         }
       }
 
-      // Best-effort goal terminal handling — must not block completion.
-      try {
-        goalService?.handleTaskTerminal(updated.id);
-      } catch (err) {
-        log.warn(
-          `Goal terminal handling threw for task "${updated.id}": ${err instanceof Error ? err.message : String(err)}`
-        );
+      // Best-effort goal terminal handling — must not block completion, and
+      // only applies when the completion actually stuck (a task recovered
+      // mid-cascade is no longer terminal).
+      if (completionConfirmed) {
+        try {
+          goalService?.handleTaskTerminal(updated.id);
+        } catch (err) {
+          log.warn(
+            `Goal terminal handling threw for task "${updated.id}": ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
       }
 
       audit?.(
@@ -1062,9 +1068,23 @@ export function createCompleteValidationTaskHandler(
         args.task_id
       );
 
-      emitTaskUpdated(updated);
-
-      return jsonResult({ success: true, task: updated });
+      if (completionConfirmed) {
+        emitTaskUpdated(updated);
+        return jsonResult({ success: true, task: updated });
+      }
+      // A recovery landed during the post-commit cascade: the CURRENT row
+      // (and the recovery's own event) already reflect the reopened state.
+      // Republishing the stale `done` snapshot would overwrite the web
+      // store's recovered view, and handing it back as the tool result
+      // would tell the recovered worker its task completed. Report the
+      // commit AND the concurrent reopen, returning the current row.
+      return jsonResult({
+        success: true,
+        task: currentTaskRow ?? updated,
+        concurrentlyReopened: true,
+        message:
+          'Completion committed, but the task was concurrently reopened during the post-commit cascade; the task/run are active again and the current state is returned.',
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return jsonResult({ success: false, error: message });

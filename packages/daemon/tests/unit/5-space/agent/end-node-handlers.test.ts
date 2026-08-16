@@ -2934,4 +2934,57 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
       getTaskSpy.mockRestore();
     }
   });
+
+  test('a recovery landing in the post-commit cascade suppresses the stale done event and snapshot', async () => {
+    // The done commit happened, then recoverWorkflowBackedTask reopens the
+    // task during setTaskStatus' awaited dependency cascade. The recovery
+    // emits its own current-state event; republishing the handler's stale
+    // `done` snapshot would overwrite the web store's recovered view, and
+    // returning it would tell the recovered worker the task completed.
+    // The tail must suppress the stale event and return the CURRENT row.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const taskId = await createTask('in_progress');
+    const published: Array<{ status: string | undefined }> = [];
+    const originalSetStatus = ctx.taskManager.setTaskStatus.bind(ctx.taskManager);
+    const setStatusSpy = spyOn(ctx.taskManager, 'setTaskStatus').mockImplementation(
+      async (...callArgs: Parameters<typeof originalSetStatus>) => {
+        const result = await originalSetStatus(...callArgs);
+        // The recovery commits inside the post-commit cascade — after the
+        // done commit, before the handler regains control.
+        ctx.taskRepo.updateTask(taskId, {
+          status: 'in_progress',
+          result: null,
+          completedAt: null,
+        });
+        return result;
+      }
+    );
+
+    try {
+      const result = await makeValidationTool({
+        internalEventBus: {
+          publish: (async (_topic: string, payload: { task: { status: string } }) => {
+            published.push({ status: payload.task.status });
+            return Promise.resolve();
+          }) as CompleteValidationTaskHandlerDeps['internalEventBus'],
+        },
+      }).complete_validation_task({
+        task_id: taskId,
+        validation_outcome: 'committed, then reopened',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+
+      // The commit is reported honestly, but the CURRENT (reopened) row is
+      // returned — never the stale done snapshot.
+      expect(parsed.success).toBe(true);
+      expect(parsed.concurrentlyReopened).toBe(true);
+      expect(parsed.task.status).toBe('in_progress');
+      expect(parsed.task.result).toBeNull();
+      // No stale `done` snapshot was ever published.
+      expect(published).toEqual([]);
+      expect(ctx.taskRepo.getTask(taskId)?.status).toBe('in_progress');
+    } finally {
+      setStatusSpy.mockRestore();
+    }
+  });
 });
