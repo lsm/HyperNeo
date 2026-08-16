@@ -1666,6 +1666,9 @@ describe('QueryRunner', () => {
         processExitedPromise: exitPromise,
       });
       runner = new QueryRunner(ctx);
+      (runner as unknown as { _consumedUserMessages: unknown })._consumedUserMessages = [
+        { uuid: 'stale-uuid', content: [{ type: 'text' as const, text: 'stale' }] },
+      ];
 
       runner.start();
       // Let the first attempt reach the catch block (build rejects with the
@@ -1679,6 +1682,11 @@ describe('QueryRunner', () => {
       // The retry was abandoned — runQuery must not have been re-entered
       // (options build runs exactly once, for the first attempt only).
       expect(buildSpy).toHaveBeenCalledTimes(1);
+      // The superseded generation's replay history is cleared so the
+      // replacement does not inherit (and duplicate) it. (Codex P2, PR #2499.)
+      expect(
+        (runner as unknown as { _consumedUserMessages: unknown[] })._consumedUserMessages
+      ).toEqual([]);
     });
   });
 

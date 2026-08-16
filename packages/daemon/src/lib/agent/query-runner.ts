@@ -1824,6 +1824,11 @@ export class QueryRunner {
   private retrySupersededByReplacement(queryGeneration: number): boolean {
     if (this.ctx.getQueryGeneration() === queryGeneration) return false;
     this.ctx.logger.warn('Auto-retry abandoned: a replacement query owns the session.');
+    // The superseded generation's startup-replay history must not be inherited
+    // by the replacement: if it also times out, replaying the superseded query's
+    // prompts would duplicate an earlier request / rerun its tools.
+    // (Codex P2, PR #2499.)
+    this._consumedUserMessages = [];
     return true;
   }
 
