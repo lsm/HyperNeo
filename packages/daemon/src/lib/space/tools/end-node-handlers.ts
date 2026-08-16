@@ -949,6 +949,30 @@ export function createCompleteValidationTaskHandler(
               `Task ${args.task_id} belongs to a ${runNow.status} workflow run (rechecked at the terminal write); validation-only completion is not applicable. Reconcile or retry the task instead.`
             );
           }
+          // Caller-execution recheck: an execution can stop representing
+          // this caller WITHOUT the run association changing — the runtime's
+          // alive-stuck restart path clears the row's agentSessionId and
+          // flips it to `pending` so the slot can be reused by a
+          // replacement worker. If that landed after the source lookup
+          // above, this session is no longer the live worker of record,
+          // and the post-commit sweep's execution-id exclusion would spare
+          // the REUSED row — leaving the replacement worker active on a
+          // done task. Require the caller's execution to still be
+          // `in_progress` and still bound to this session.
+          if (completionSourceExecutionId) {
+            const executionNow = nodeExecutionRepo
+              .listByWorkflowRun(actualRunId)
+              .find((e) => e.id === completionSourceExecutionId);
+            if (
+              !executionNow ||
+              executionNow.status !== 'in_progress' ||
+              executionNow.agentSessionId !== callerSessionId
+            ) {
+              throw new Error(
+                `Task ${args.task_id}'s completing worker execution was recycled during completion (restarted for a replacement session); refusing so the replacement worker's lifecycle owns the task. Re-check and retry if still appropriate.`
+              );
+            }
+          }
         },
         onCascadedTasks: async (cascadedTasks) => {
           for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
@@ -974,9 +998,18 @@ export function createCompleteValidationTaskHandler(
       // revival) can restore the task and restart executions while the
       // returned `updated` snapshot still says done — sweeping then would
       // idle/interrupt the newly recovered workers. Require the CURRENT
-      // task row to still be `done` and run-attached before sweeping.
+      // task row to still be `done` AND still attached to the run every
+      // guard evaluated against: `startWorkflowRun({parentTaskId})` can
+      // re-attach a done task to a NEW run during the same awaited cascade
+      // (status unchanged, so the identity check above cannot see it), and
+      // sweeping the new run's executions with the OLD run's source
+      // node/execution exclusions would idle workers just launched for it.
       const currentTaskRow = taskRepo.getTask(updated.id);
-      if (currentTaskRow?.status === 'done' && currentTaskRow.workflowRunId) {
+      if (
+        currentTaskRow?.status === 'done' &&
+        currentTaskRow.workflowRunId &&
+        currentTaskRow.workflowRunId === checkedWorkflowRunId
+      ) {
         try {
           const quiesce = (execution: { id: string; agentSessionId: string | null }) => {
             nodeExecutionRepo.updateStatus(execution.id, 'idle');

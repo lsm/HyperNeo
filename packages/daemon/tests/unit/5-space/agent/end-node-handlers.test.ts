@@ -2767,4 +2767,171 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     expect(parsed.error).toContain('cannot be resolved');
     expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
   });
+
+  test('skips the worker sweep when the task re-attaches to a new run during the post-commit cascade', async () => {
+    // setTaskStatus commits `done` BEFORE awaiting its post-commit cascade,
+    // and `startWorkflowRun({parentTaskId})` can re-attach the task to a NEW
+    // run during that await — status unchanged (done), so the sweep's
+    // status gate alone cannot see it. Sweeping then would list the NEW
+    // run's executions while excluding the OLD run's source node/execution,
+    // idling workers just launched for it. The sweep is bound to the run
+    // every guard evaluated against.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-mid-worker',
+      agentName: 'Worker',
+      agentId: ctx.agentId,
+      status: 'in_progress',
+      agentSessionId: 'reattach-worker-session',
+    });
+    ctx.db
+      .prepare(
+        `INSERT INTO sessions (
+            id, title, workspace_path, created_at, last_active_at, status, config, metadata,
+            is_worktree, git_branch, processing_state, type, session_context
+          ) VALUES (?, ?, '/tmp/ws', ?, ?, 'active', '{}', '{}', 0, NULL, ?, 'worker', ?)`
+      )
+      .run(
+        'reattach-worker-session',
+        'Reattaching worker',
+        new Date(0).toISOString(),
+        new Date().toISOString(),
+        JSON.stringify({ status: 'idle' }),
+        JSON.stringify({ spaceId: ctx.spaceId, taskId: task.id })
+      );
+    // The new run carries a worker on the SAME node id as the old source —
+    // without the run binding the sweep would quiesce it.
+    const reattachWorkflow = ctx.workflowManager.createWorkflow({
+      spaceId: ctx.spaceId,
+      name: 'Reattach sweep workflow',
+      description: '',
+      nodes: [{ id: 'node-mid-worker', name: 'Worker', agentId: ctx.agentId }],
+      transitions: [],
+      startNodeId: 'node-mid-worker',
+      endNodeId: 'node-mid-worker',
+      rules: [],
+      completionAutonomyLevel: 5,
+    });
+    const reattachRun = ctx.workflowRunRepo.createRun({
+      spaceId: ctx.spaceId,
+      workflowId: reattachWorkflow.id,
+      title: 'Reattach sweep run',
+      description: '',
+    });
+    ctx.workflowRunRepo.updateRun(reattachRun.id, { status: 'in_progress' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: reattachRun.id,
+      workflowNodeId: 'node-mid-worker',
+      agentName: 'NewWorker',
+      agentId: ctx.agentId,
+      status: 'in_progress',
+      agentSessionId: 'new-run-worker-session',
+    });
+    const interrupted: string[] = [];
+    const originalSetStatus = ctx.taskManager.setTaskStatus.bind(ctx.taskManager);
+    const setStatusSpy = spyOn(ctx.taskManager, 'setTaskStatus').mockImplementation(
+      async (...callArgs: Parameters<typeof originalSetStatus>) => {
+        const result = await originalSetStatus(...callArgs);
+        // The re-attachment lands inside the post-commit cascade — after the
+        // done commit, before the handler regains control. Status stays done.
+        ctx.taskRepo.updateTask(task.id, { workflowRunId: reattachRun.id });
+        return result;
+      }
+    );
+
+    try {
+      const result = await makeValidationTool({
+        callerSessionId: 'reattach-worker-session',
+        interruptBySessionId: async (sessionId: string) => {
+          interrupted.push(sessionId);
+        },
+      }).complete_validation_task({
+        task_id: task.id,
+        validation_outcome: 'completed for the original run',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.success).toBe(true);
+    } finally {
+      setStatusSpy.mockRestore();
+    }
+
+    // The NEW run's worker is untouched: never idled, never interrupted.
+    const newRunWorker = ctx.nodeExecutionRepo
+      .listByWorkflowRun(reattachRun.id)
+      .find((e) => e.agentSessionId === 'new-run-worker-session');
+    expect(newRunWorker?.status).toBe('in_progress');
+    expect(interrupted).toEqual([]);
+  });
+
+  test('terminal precondition refuses when the completing worker execution is recycled mid-flight', async () => {
+    // The runtime's alive-stuck restart path clears an execution row's
+    // agentSessionId and flips it to `pending` so the slot can be reused by
+    // a replacement worker — WITHOUT changing the run association. When
+    // that lands between the handler's source lookup and the terminal
+    // write, this session is no longer the live worker of record; the
+    // post-commit sweep's execution-id exclusion would then spare the
+    // REUSED row and leave the replacement worker active on a done task.
+    // The precondition requires the caller's execution to still be
+    // in_progress and still bound to the caller's session.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    const recycledExec = ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-recycled',
+      agentName: 'Worker',
+      agentId: ctx.agentId,
+      status: 'in_progress',
+      agentSessionId: 'recycled-worker-session',
+    });
+    ctx.db
+      .prepare(
+        `INSERT INTO sessions (
+            id, title, workspace_path, created_at, last_active_at, status, config, metadata,
+            is_worktree, git_branch, processing_state, type, session_context
+          ) VALUES (?, ?, '/tmp/ws', ?, ?, 'active', '{}', '{}', 0, NULL, ?, 'worker', ?)`
+      )
+      .run(
+        'recycled-worker-session',
+        'Recycled worker',
+        new Date(0).toISOString(),
+        new Date().toISOString(),
+        JSON.stringify({ status: 'idle' }),
+        JSON.stringify({ spaceId: ctx.spaceId, taskId: task.id })
+      );
+    const originalGetTask = ctx.taskManager.getTask.bind(ctx.taskManager);
+    let recycled = false;
+    const getTaskSpy = spyOn(ctx.taskManager, 'getTask').mockImplementation(
+      async (taskId: string) => {
+        if (taskId === task.id && !recycled) {
+          recycled = true;
+          // The restart path recycles the caller's execution slot inside
+          // setTaskStatus' reread, before the precondition runs.
+          ctx.nodeExecutionRepo.update(recycledExec.id, {
+            agentSessionId: null,
+            status: 'pending',
+          });
+        }
+        return originalGetTask(taskId);
+      }
+    );
+
+    try {
+      const result = await makeValidationTool({
+        callerSessionId: 'recycled-worker-session',
+      }).complete_validation_task({
+        task_id: task.id,
+        validation_outcome: 'should be refused',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+
+      expect(parsed.success).toBe(false);
+      expect(parsed.error).toContain('recycled');
+      expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
+      expect(ctx.taskRepo.getTask(task.id)?.result).toBeNull();
+    } finally {
+      getTaskSpy.mockRestore();
+    }
+  });
 });
