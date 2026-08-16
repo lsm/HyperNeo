@@ -494,14 +494,22 @@ function advanceCursor(
 }
 
 /**
- * Whether a single evidence row can be empty or purely process-level:
- * a free-form manual note, or an auto-generated session trace diagnostic
- * (`metadata.traceDiagnostic === true`, e.g. a `no_friction` marker). A genuine
- * session conversation summary lacks that marker and is substantive, so only
- * the marked diagnostics — not every `session` row — count as thin.
+ * Whether a single evidence row can be empty or purely process-level.
+ * A manual note is thin only when it carries status/pending language or is
+ * empty — a qualitative note without outcome keywords (a diagnosis, lesson,
+ * or decision) is substantive. A session row is thin only when it is an
+ * auto-generated trace diagnostic (`metadata.traceDiagnostic === true`).
  */
 function isThinEvidence(item: EvidenceRef): boolean {
-  if (item.kind === 'manual_note') return true;
+  if (item.kind === 'manual_note') {
+    const texts = [item.summary ?? ''];
+    for (const value of Object.values(item.metadata ?? {})) {
+      if (typeof value === 'string' && value.trim()) texts.push(value);
+    }
+    return (
+      !texts.some((text) => text.trim()) || texts.some((text) => STATUS_LANGUAGE_RE.test(text))
+    );
+  }
   if (item.kind === 'session') return item.metadata?.traceDiagnostic === true;
   return false;
 }
@@ -571,7 +579,7 @@ function hasQuantitativeOutcome(text: string): boolean {
  * passed" and "No errors and tests passed" both count "passed" as affirmative.
  */
 const NON_AFFIRMATIVE_PREFIX_RE =
-  /\b(?:not|never|no|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|without|yet|still|pending|wait(?:ing)?|queued|incomplete|unfinished|planned|scheduled|upcoming|will|would|should|could|might|expect(?:ed|s)? to|hop(?:e|es|ing) to|plan(?:s|ned)? to)\b[^.!?;:,\n]{0,32}$/i;
+  /\b(?:not|never|no|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|without|yet|still|pending|wait(?:ing)?|queued|incomplete|unfinished|planned|scheduled|upcoming|will|would|should|could|might|need(?:s|ed)? to|must|has to|have to|required to|expect(?:ed|s)? to|hop(?:e|es|ing) to|plan(?:s|ned)? to)\b[^.!?;:,\n]{0,32}$/i;
 
 /**
  * Coordinating conjunctions that can introduce a new clause. A qualifier on
@@ -731,11 +739,24 @@ function hasArtifactOutcome(text: string): boolean {
 }
 
 /**
+ * Status/pending language: the recognizable signature of the process-level
+ * notes the no-op gate targets ("waiting for X", "not done yet", "will do
+ * Y", "no update"). A manual note WITHOUT any status language and without a
+ * recognized affirmative outcome is substantive qualitative content (a
+ * diagnosis, lesson, decision, or observation) and keeps its retrospective —
+ * substantive content is not always an achieved outcome.
+ */
+const STATUS_LANGUAGE_RE =
+  /\b(?:waiting|wait|pending|queued|incomplete|unfinished|planned|scheduled|upcoming|todo|blocked|stalled|goal|target|aim|need(?:s|ed)? to|must|has to|have to|required to|not\s+(?:yet|done|started|run|runned)|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|no\s|never|not\s|will|would|should|could|might|maybe|later|soon|tomorrow|tbd|n\/a)\b/i;
+
+/**
  * A self_nag tick is a no-op worth skipping when the selection itself carries
  * no substantive signal: no affirmative outcome (a PR reference or a
- * merge/pass/fail/quantitative result — not a negated, pending, or prospective
- * mention) and every row thin (manual notes and marked session diagnostics).
- * The preflight level is advisory only — scope-wide metrics and loose keyword
+ * merge/pass/fail/quantitative/artifact result — not a negated, pending, or
+ * prospective mention) and every row thin. A manual note is thin only when it
+ * carries status/pending language (or is empty) — substantive qualitative
+ * content without a recognized outcome keyword still keeps its episode. The
+ * preflight level is advisory only — scope-wide metrics and loose keyword
  * outcomes can inflate a thin batch to medium, so the selection-aware content
  * test decides rather than the score. Any structural/task-linked evidence
  * kind (task results, friction traces, artifacts, errors, in-batch metrics,
