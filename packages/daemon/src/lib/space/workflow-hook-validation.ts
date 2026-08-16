@@ -13,6 +13,7 @@ import {
 // `pr_ready`, `pr_merged`, …) so admission below is populated before any
 // validation runs. (epic #2299, P2 #2302)
 import './runtime/built-in-validators';
+import { TOOL_PR_IDENTITY_HOOK_ID } from './runtime/workflow-hook-engine';
 import {
   getRegisteredBuiltInValidatorIds,
   isRegisteredBuiltInValidator,
@@ -273,6 +274,12 @@ export function validateWorkflowHooks(hooks: unknown, nodes: WorkflowNodeInput[]
       } else if (!validNodes.has(hook.targetNode)) {
         errors.push(`${loc}.targetNode: unknown node "${hook.targetNode}"`);
       }
+    }
+
+    if (hook.id === TOOL_PR_IDENTITY_HOOK_ID) {
+      errors.push(
+        `${loc}.id: reserved by the runtime (${TOOL_PR_IDENTITY_HOOK_ID}); user-defined hooks may not use it`
+      );
     }
 
     if (typeof hook.method !== 'string' || !VALID_METHODS.has(hook.method)) {

@@ -3225,6 +3225,52 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     }
   });
 
+  test('a dependent re-blocked while the prerequisite completes again is reopened immediately', async () => {
+    // The re-block write awaits; the prerequisite can complete AGAIN during
+    // it — that completion cascade saw the dependent open and skipped it,
+    // so nothing would ever reopen it. The re-block path revalidates and
+    // reopens when dependencies are met.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const taskId = await createTask('in_progress');
+    const dependent = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'Dependent',
+      description: '',
+      status: 'in_progress',
+      dependsOn: [taskId],
+    });
+    await ctx.taskManager.setTaskStatus(dependent.id, 'blocked', {
+      blockReason: 'dependency_failed',
+    });
+    const originalSetStatus = ctx.taskManager.setTaskStatus.bind(ctx.taskManager);
+    const setStatusSpy = spyOn(ctx.taskManager, 'setTaskStatus').mockImplementation(
+      async (...callArgs: Parameters<typeof originalSetStatus>) => {
+        const result = await originalSetStatus(...callArgs);
+        if (callArgs[0] === dependent.id && callArgs[1] === 'blocked') {
+          // The prerequisite completes AGAIN while the re-block write is in
+          // flight — its own cascade ran before this write and saw the
+          // dependent still open, so it skipped the dependent.
+          await originalSetStatus(taskId, 'done', { result: 'completed again' });
+          await originalSetStatus(dependent.id, 'open');
+        }
+        return result;
+      }
+    );
+
+    try {
+      const result = await makeValidationTool().complete_validation_task({
+        task_id: taskId,
+        validation_outcome: 'committed, then reopened, then completed again',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.success).toBe(true);
+      // The dependent ends OPEN — not stranded blocked.
+      expect(ctx.taskRepo.getTask(dependent.id)?.status).toBe('open');
+    } finally {
+      setStatusSpy.mockRestore();
+    }
+  });
+
   test('a dependency_incomplete block is unblockable once the prerequisite completes', async () => {
     // The recovery re-block uses a NEW reason; the cascade's unblocking
     // predicate must include it, or the dependent is stranded forever

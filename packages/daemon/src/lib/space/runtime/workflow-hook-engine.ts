@@ -558,7 +558,8 @@ export class WorkflowHookEngine {
           if (
             result.data &&
             typeof result.data === 'object' &&
-            hook.id !== PR_READY_VALIDATED_IDENTITY_HOOK_ID
+            hook.id !== PR_READY_VALIDATED_IDENTITY_HOOK_ID &&
+            hook.id !== TOOL_PR_IDENTITY_HOOK_ID
           ) {
             stateUpdates.push({ hookId: hook.id, state: result.data as Record<string, unknown> });
           }
@@ -691,7 +692,8 @@ export class WorkflowHookEngine {
           if (
             result.state &&
             typeof result.state === 'object' &&
-            hook.id !== PR_READY_VALIDATED_IDENTITY_HOOK_ID
+            hook.id !== PR_READY_VALIDATED_IDENTITY_HOOK_ID &&
+            hook.id !== TOOL_PR_IDENTITY_HOOK_ID
           ) {
             stateUpdates.push({ hookId: hook.id, state: result.state as Record<string, unknown> });
           }

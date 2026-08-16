@@ -769,7 +769,8 @@ export class SpaceTaskManager {
 
     // Gap 1 fix: if dependsOn was changed, re-check dependency constraints.
     // - in_progress + unmet deps: block the task
-    // - blocked (dependency_added/dependency_failed) + now met: reopen
+    // - blocked (dependency_added/dependency_failed/dependency_incomplete)
+    //   + now met: reopen
     // - open + unmet deps: tick loop handles it
     if (depsChanged) {
       const depsMet = await this.areDependenciesMet(updated);
@@ -788,7 +789,9 @@ export class SpaceTaskManager {
       } else if (
         depsMet &&
         updated.status === 'blocked' &&
-        (updated.blockReason === 'dependency_added' || updated.blockReason === 'dependency_failed')
+        (updated.blockReason === 'dependency_added' ||
+          updated.blockReason === 'dependency_failed' ||
+          updated.blockReason === 'dependency_incomplete')
       ) {
         return this.setTaskStatus(taskId, 'open');
       }

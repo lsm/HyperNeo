@@ -46,6 +46,14 @@ describe('workflow hook validation', () => {
     expect(errors).toEqual([]);
   });
 
+  test('rejects a user-defined hook using the reserved tool PR identity id', () => {
+    // __tool_pr_identity__ is the validation tool's write-once PR memory; a
+    // user-defined hook (or a record_state.stateForHook write) must not be
+    // able to target it — workflow admission rejects the id outright.
+    const errors = validateWorkflowHooks([validHook({ id: '__tool_pr_identity__' })], nodes);
+    expect(errors.join('\n')).toContain('reserved by the runtime');
+  });
+
   test('rejects unknown MCP methods and invalid node references', () => {
     const errors = validateWorkflowHooks(
       [validHook({ method: 'unknown' as never, sourceNode: 'Missing', targetNode: 'Gone' })],

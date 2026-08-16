@@ -399,7 +399,7 @@ export interface CompleteValidationTaskHandlerDeps {
   /** Task repository — task reads, run-task listing for canonical selection. */
   taskRepo: Pick<SpaceTaskRepository, 'getTask' | 'listByWorkflowRun'>;
   /** Task manager bound to `spaceId` — runs the centralised transition validator. */
-  taskManager: Pick<SpaceTaskManager, 'setTaskStatus'>;
+  taskManager: Pick<SpaceTaskManager, 'setTaskStatus' | 'getTask' | 'areDependenciesMet'>;
   /** Workflow run repository — run ownership + status guards. */
   workflowRunRepo: Pick<SpaceWorkflowRunRepository, 'getRun'>;
   /** Resolves a run's workflow definition; null when unresolvable (imported/legacy). */
@@ -1431,6 +1431,23 @@ export function createCompleteValidationTaskHandler(
                   // Best-effort stop.
                 }
               }
+            }
+          }
+          // Revalidate the prerequisite AFTER the awaited block write: it
+          // may have completed AGAIN during the await — that completion's
+          // cascade saw this dependent open/in_progress and skipped it, so
+          // nothing would ever reopen it. If all its dependencies are met,
+          // reopen immediately.
+          const prerequisiteAfterBlock = await taskManager.getTask(args.task_id);
+          if (prerequisiteAfterBlock?.status === 'done') {
+            const met = await taskManager.areDependenciesMet(reblocked);
+            if (met) {
+              const reopenedDependent = await taskManager.setTaskStatus(dependent.id, 'open');
+              emitTaskUpdated(reopenedDependent);
+              log.warn(
+                `complete_validation_task: reopened dependent ${dependent.id} — its prerequisite completed again during the re-block`
+              );
+              continue;
             }
           }
           emitTaskUpdated(reblocked);
