@@ -1,12 +1,88 @@
-# Long-Horizon Marketing Agent Roadmap
+# Long-Horizon Agent Roadmap
 
 **Status:** Proposed
 
 ## Purpose
 
-Build the platform capabilities required for a long-horizon marketing agent to act as a durable manager: maintain multiple goals, delegate bounded work, react to external and internal events, schedule future-self wakeups, integrate worker outcomes, update structured state, and preserve knowledge across context windows.
+Build the platform capabilities required for any long-horizon (LH) Space agent to act as a durable manager: maintain multiple goals, delegate bounded work, react to external and internal events, schedule future-self wakeups, integrate worker outcomes, update structured state, and preserve knowledge across context windows.
 
-Marketing is the forcing scenario, but the design applies to every long-horizon (LH) Space agent.
+Marketing is the first forcing scenario, but the architecture is intentionally general and applies to coordinator, product-quality, release, research, security, sales, and custom LH agents.
+
+## Minimal core
+
+The full roadmap below is the robust target. It should not block first dogfooding. We already have goal persistence, goal tasks, LH sessions, assignments, reminders, task tools, agent memory, and Forge. The smallest useful core is therefore **five PRs**, sequenced after the Message Delivery V2 follow-up in task #860.
+
+### MC1. Goal owner assignment and resolver
+
+- Use the existing LH-agent/goal assignment relationship.
+- Enforce or safely resolve one primary owner per goal.
+- Add `getPrimaryGoalOwner(goalId)` and coordinator fallback.
+- Reconcile duplicate owners deterministically before enforcing the invariant.
+- Keep managers/watchers non-authoritative for now.
+
+**Why it matters:** routing and goal authority need a stable destination.  
+**Estimated size:** 130–220 production lines.
+
+### MC2. Minimal owner wake-up on goal-task terminal state
+
+- At the existing goal terminal seam, resolve the primary owner.
+- Persist a minimal outcome-notification record.
+- Wake the owner through the LH durable-injection adapter from task #860 / V3.
+- Include the completed task result, linked goal, and current rolling goal state.
+- Fall back to the coordinator when no usable owner exists.
+
+This intentionally reuses task results and current delivery/inbox primitives instead of building the full immutable report model first.
+
+**Why it matters:** the goal now reacts to work completing instead of waiting for a human or a weekly reminder.  
+**Estimated size:** 170–250 production lines.
+
+### MC3. Owner goal-review MCP tool
+
+Add one explicit tool such as `review_goal_outcome` that the awakened owner can call. It receives:
+
+- goal ID;
+- completed task ID;
+- optional structured observations and metric changes;
+- summary, next steps, and follow-up intent.
+
+The tool validates that the caller is the current primary owner or coordinator fallback, then applies the update through `SpaceGoalService`. Workers do not get this tool.
+
+**Why it matters:** the LH agent becomes responsible for integrating outcomes and deciding next actions without immediately reworking every existing worker prompt or terminal path.  
+**Estimated size:** 150–230 production lines.
+
+### MC4. Minimal goal detail and ownership UI
+
+- Show the primary owner on goal detail.
+- Let a coordinator/human assign or reassign the owner.
+- Show the latest owner-review outcome and next check-in.
+
+Use existing goal history, task links, and goal editing surfaces. Do not build a broad dashboard yet.
+
+**Why it matters:** operators can see and correct goal ownership before relying on autonomous behavior.  
+**Estimated size:** 120–200 production lines.
+
+### MC5. Prompt and template migration for the core loop
+
+- Teach LH templates to create/own goals, inspect linked task outcomes, call the review tool, and create follow-up work.
+- Teach goal workers to report bounded results without claiming ownership of overall strategy.
+- Update the marketing template only as the first dogfood profile; keep the mechanism generic.
+
+**Why it matters:** existing primitives only become a management loop when the prompts use the same contract.  
+**Estimated size:** 80–160 production lines.
+
+### Minimal-core boundaries
+
+This core deliberately does **not** yet provide:
+
+- full immutable outcome-report schema;
+- terminal-generation bookkeeping for every terminal writer;
+- typed lifecycle-event outbox;
+- typed lifecycle subscription filters;
+- reminder editing and goal-linked context;
+- broad subscription or dashboard UI;
+- every authorization restriction in the final architecture.
+
+Those remain in the robust roadmap below. The minimal core is a dogfood bridge: it makes LH goal ownership usable while preserving the later migration path.
 
 ## Prerequisite: Message Delivery V2
 
@@ -428,8 +504,9 @@ Each external connector is a separate project requiring credentials, ingestion/p
 
 ## Estimate and review policy
 
-The roadmap contains **28 PRs**:
+The roadmap contains **5 minimal-core PRs plus 28 robust-roadmap PRs**:
 
+- Minimal core: 5
 - V2 last mile: 6
 - Lifecycle publication: 6
 - Subscription filtering/UI: 3
@@ -442,7 +519,7 @@ Tests are not included in these estimates. Schema migrations, failure-path tests
 
 ## Success criteria
 
-A marketing LH agent can:
+An LH agent can:
 
 1. Own multiple structured goals while each goal has one primary owner.
 2. Receive immutable worker outcomes without workers rewriting strategy.
