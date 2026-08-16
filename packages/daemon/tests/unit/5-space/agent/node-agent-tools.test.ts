@@ -3656,7 +3656,8 @@ describe('node-agent-tools: pr_url payloads do not auto-subscribe', () => {
 // ---------------------------------------------------------------------------
 //
 // The tool ships ONLY on this server (task #918): workflow workers are its
-// callers, and they never receive space-agent-tools. The guard-chain suite
+// callers. The tool ships only on the node-agent server (space-agent-tools
+// does not carry it). The guard-chain suite
 // lives in space-agent-tools.test.ts (driving the factory directly); these
 // tests cover the node-agent surface — registration gating, the worker happy
 // path, worker caller binding, the WorkflowHookEngine-wrapped variant, and

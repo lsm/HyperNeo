@@ -1123,7 +1123,10 @@ export interface InternalUpdateSpaceTaskParams extends UpdateSpaceTaskParams {
    * row's CURRENT status being one of these (`WHERE id = ? AND status IN (…)`),
    * making the check and the write one atomic SQL statement. A concurrent
    * status change yields a 0-row update (repository returns null) instead of a
-   * lost update. Storage-only — never accepted from RPC/tool callers.
+   * lost update. An EMPTY list is fail-closed (nothing matches; the repository
+   * returns null without touching the row). Storage-only — the spaceTask.update
+   * RPC strips it before the params reach the manager; never accepted from
+   * RPC/tool callers.
    */
   expectedStatuses?: SpaceTaskStatus[];
 }

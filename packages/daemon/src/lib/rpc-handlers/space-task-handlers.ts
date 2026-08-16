@@ -291,6 +291,11 @@ export function setupSpaceTaskHandlers(
       throw new Error('taskId is required');
     }
 
+    // `expectedStatuses` is a storage-only optimistic-concurrency guard: a
+    // client-supplied list would let the caller widen (or, as [], silently
+    // refuse) the atomic status predicate. Strip it from the untyped request
+    // payload before the spread reaches the manager.
+    delete (params as { expectedStatuses?: unknown }).expectedStatuses;
     const { spaceId, taskId, goalId: _goalId, ...updateParams } = params;
 
     // Verify space exists — consistent with create/list/get validation.

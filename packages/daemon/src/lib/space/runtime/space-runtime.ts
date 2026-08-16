@@ -4982,9 +4982,10 @@ export class SpaceRuntime {
 
   /**
    * Choose the canonical task for a workflow run in one-task-per-run mode.
-   * Delegates to the exported pure `pickCanonicalRunTask` (also used by
-   * `space-agent-tools` so external completion paths reject duplicates with
-   * the exact same selection rule the tick loop applies).
+   * Delegates to the exported pure `pickCanonicalRunTask` (also used by the
+   * node-agent `complete_validation_task` handler so external completion
+   * paths reject duplicates with the exact same selection rule the tick
+   * loop applies).
    */
   private pickCanonicalTaskForRun(run: SpaceWorkflowRun, runTasks: SpaceTask[]): SpaceTask | null {
     return pickCanonicalRunTask(run, runTasks);
@@ -8223,6 +8224,29 @@ export class SpaceRuntime {
       // completion by setting `task.reportedStatus`, not by calling
       // `setTaskStatus` directly.
       if (runIsComplete) {
+        // Recovery recheck BEFORE the terminal flip: `runIsComplete` was
+        // decided before the awaited sweeps above (stall/blocked/timeout
+        // handling, idle-execution recovery, handoff repair), and a
+        // concurrent `recoverWorkflowBackedTask` can land during one of
+        // those awaits — reopening the task (in_progress, reportedStatus
+        // cleared) while the local snapshot still reads terminal. Flipping
+        // the run to done on the stale decision would stomp the recovery:
+        // subsequent ticks early-return for the succeeded run, the reopened
+        // task's pending execution never spawns, and the periodic
+        // reconciler later force-dispatches the task back to done —
+        // silently reverting the reopen. Re-derive the completion state
+        // from the CURRENT rows and let the next tick evaluate the
+        // recovered state instead.
+        const preTransitionTask = this.config.taskRepo.getTask(canonicalTask.id);
+        const preTransitionRun = this.config.workflowRunRepo.getRun(runId);
+        const preTransitionHolds =
+          (preTransitionRun == null || preTransitionRun.status === 'in_progress') &&
+          (preTransitionTask == null ||
+            preTransitionTask.status !== 'in_progress' ||
+            preTransitionTask.reportedStatus !== null);
+        if (!preTransitionHolds) {
+          return;
+        }
         await this.transitionRunStatusAndEmit(runId, 'done');
         // Re-read the canonical task before deciding routing: the snapshot
         // above predates awaits (duplicate-repair, this transition), and

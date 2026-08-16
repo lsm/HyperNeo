@@ -1,10 +1,17 @@
 /**
  * End-node tool handlers.
  *
- * Factory for the two "terminal" MCP tool handlers exposed to end-node agents:
- *   - approve_task        — Agent self-close. Gated by space.autonomyLevel >=
- *                           workflow.completionAutonomyLevel.
- *   - submit_for_approval — Request human sign-off. Always available.
+ * Factories for the completion-family MCP tool handlers exposed to node-agent
+ * sub-sessions:
+ *   - approve_task             — Agent self-close. Gated by
+ *                                space.autonomyLevel >= workflow
+ *                                .completionAutonomyLevel (end nodes).
+ *   - submit_for_approval      — Request human sign-off. Always available
+ *                                (end nodes).
+ *   - mark_complete            — `approved → done` for post-approval workers
+ *                                (mirrored onto every node agent).
+ *   - complete_validation_task — Validation-only (no-PR) completion
+ *                                (mirrored onto every node agent; task #918).
  *
  * These were previously inline closures inside
  * `SpaceTaskAgentManager.buildNodeAgentMcpServer`. Extracting them here lets
@@ -12,7 +19,7 @@
  * manager focused on orchestration.
  *
  * Contract notes:
- *   - Both handlers return a `ToolResult` (never throw).
+ *   - Every handler returns a `ToolResult` (never throws).
  *   - `onApproveTask` re-checks autonomy at call time as defense-in-depth;
  *     tool registration already gates the surface, but a racing autonomy-level
  *     downgrade between registration and invocation would otherwise slip
@@ -394,13 +401,6 @@ export interface CompleteValidationTaskHandlerDeps {
   resolvePrimaryLinkUrl: (workflowRunId: string) => string | null;
   /** Space manager — autonomy level source for the entry gate. */
   spaceManager?: Pick<SpaceManager, 'getSpace'>;
-  /** Async space-autonomy fallback when the space manager has no level. */
-  getSpaceAutonomyLevel?: (spaceId: string) => Promise<number>;
-  /**
-   * Calling long-horizon agent's autonomy ceiling (null/absent = uncapped —
-   * node agents are workers and carry no ceiling of their own).
-   */
-  getCallingAgentAutonomyLevel?: () => number | null;
   /** Interrupts a live worker sub-session (post-completion worker sweep). */
   interruptBySessionId?: (sessionId: string) => Promise<void>;
   /** Audit callback — autonomy rejections and completions are attributable. */
@@ -491,18 +491,23 @@ function readCallerSessionTaskId(
  * no-PR case there IS no such artifact, so the outcome survives via the
  * existing-result fallback.
  *
- * Guards (order is load-bearing — autonomy runs before any task-state
- * reveal, mirroring `approve_task`):
+ * Guards (order is load-bearing — run identity runs before any run policy
+ * is read, autonomy before any task-state reveal, mirroring `approve_task`):
  *   - Task must belong to this space.
  *   - Caller binding, fail closed: every caller on this node-agent-exclusive
  *     surface is a WORKER session, so its `session_context.taskId` binding
  *     MUST resolve (a missing/foreign/malformed/unset binding is rejected,
  *     not treated as an unbound privileged caller) and must equal the target
  *     task.
+ *   - Run identity BEFORE policy: a workflow-backed task whose run row is
+ *     missing or belongs to another space is refused up front — the foreign
+ *     run's workflow (completionAutonomyLevel) and primary link (PR URL)
+ *     are never read from this space.
  *   - Autonomy-gated to the workflow's `completionAutonomyLevel` (default 5)
- *     — the same capability-vs-autonomy framing as `approve_task`. The gate
- *     runs BEFORE the status/no-PR checks so a task's status or PR URL is
- *     never surfaced to a caller below the threshold.
+ *     — the same capability-vs-autonomy framing as `approve_task`; node
+ *     agents are workers, so the SPACE level is the effective level. The
+ *     gate runs BEFORE the status/no-PR checks so a task's status or PR URL
+ *     is never surfaced to a caller below the threshold.
  *   - Task must be `review` or `in_progress`. `in_progress` is intentionally
  *     eligible (Forge review tasks complete while still in_progress); the
  *     autonomy gate is the control.
@@ -518,10 +523,11 @@ function readCallerSessionTaskId(
  *     `postApproval` route are rejected — a direct done would silently skip
  *     the route (the tick loop treats an already-done task as resolved).
  *     They must close through submit_for_approval so the router fires.
- *   - The workflow run must belong to THIS space, be `in_progress`
- *     (pending/cancelled/done/blocked all refuse), carry node executions,
- *     and resolve its workflow definition — an unresolvable or foreign
- *     run refuses rather than being treated as unconstrained.
+ *   - The workflow run must be `in_progress` (pending/cancelled/done/blocked
+ *     all refuse), carry node executions, and resolve its workflow
+ *     definition — an unresolvable definition refuses rather than being
+ *     treated as unconstrained (a missing/foreign run ROW was already
+ *     refused above, before any of its policy was read).
  *   - Workflow-backed completions apply the tick loop's canonical-task
  *     selection (`pickCanonicalRunTask`) and reject non-canonical
  *     duplicates — the tick archives duplicates, which would discard the
@@ -559,8 +565,6 @@ export function createCompleteValidationTaskHandler(
     nodeExecutionRepo,
     resolvePrimaryLinkUrl,
     spaceManager,
-    getSpaceAutonomyLevel,
-    getCallingAgentAutonomyLevel,
     interruptBySessionId,
     audit,
     internalEventBus,
@@ -587,218 +591,221 @@ export function createCompleteValidationTaskHandler(
       });
     }
 
-    const task = taskRepo.getTask(args.task_id);
-    if (!task) {
-      return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
-    }
-    if (task.spaceId !== spaceId) {
-      return jsonResult({
-        success: false,
-        error: `Task ${args.task_id} does not belong to this space.`,
-      });
-    }
-
-    // Caller-binding guard, fail closed. This surface is node-agent-exclusive:
-    // every legitimate caller is a WORKER sub-session spawned for one task
-    // (its session_context carries that taskId). Two refusals:
-    //   - The binding must RESOLVE. A missing/foreign-space session row,
-    //     malformed context JSON, or an absent taskId is anomalous on this
-    //     surface, not privileged — treating it as an unbound "external"
-    //     caller would grant broad same-space completion plus the
-    //     quiesce-ALL sweep over any run's workers.
-    //   - The resolved binding must equal the target: a worker for task A
-    //     must not close an unrelated in_progress task B (the next tick
-    //     would finalize B's run and quiesce its workers).
-    if (callerSessionId) {
-      const callerTaskId = readCallerSessionTaskId(db, spaceId, callerSessionId);
-      if (callerTaskId === undefined || callerTaskId === null) {
+    // The whole guard chain — including the awaited manager reads (getSpace,
+    // getWorkflowForRun) — runs inside this try so the file-header contract
+    // holds: the handler returns a ToolResult, never throws.
+    try {
+      const task = taskRepo.getTask(args.task_id);
+      if (!task) {
+        return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+      }
+      if (task.spaceId !== spaceId) {
         return jsonResult({
           success: false,
-          error: `This worker session's task binding cannot be resolved (no session_context.taskId for this space); complete_validation_task requires a task-bound worker session. Retry after the session context is restored (restore_node_agent) or escalate to the coordinator.`,
+          error: `Task ${args.task_id} does not belong to this space.`,
         });
       }
-      if (callerTaskId !== args.task_id) {
-        return jsonResult({
-          success: false,
-          error: `Worker sessions may only complete their own task; task ${args.task_id} belongs to another task's workers. Escalate to the coordinator if it needs closing.`,
-        });
-      }
-    }
 
-    // Autonomy gate FIRST — mirrors `approve_task`'s ordering. Resolve the
-    // workflow's completionAutonomyLevel (default 5) and reject when effective
-    // autonomy (min(space, agent-ceiling)) is below it. Running this before the
-    // status/no-PR checks avoids leaking a task's status or PR URL to a caller
-    // below the threshold. Both the agent-ceiling and space-level blocks log
-    // an audit entry so every rejection is attributable.
-    const space = spaceManager ? await spaceManager.getSpace(spaceId) : null;
-    const spaceLevel =
-      space?.autonomyLevel ?? (getSpaceAutonomyLevel ? await getSpaceAutonomyLevel(spaceId) : 1);
-    const agentLevel = getCallingAgentAutonomyLevel?.() ?? null;
-    const currentLevel = agentLevel == null ? spaceLevel : Math.min(spaceLevel, agentLevel);
-    let completionAutonomyLevel = 5;
-    if (task.workflowRunId) {
-      const run = workflowRunRepo.getRun(task.workflowRunId);
-      if (run?.workflowId) {
-        const workflow = getWorkflowForRun(run);
-        if (workflow?.completionAutonomyLevel !== undefined) {
-          completionAutonomyLevel = workflow.completionAutonomyLevel;
+      // Caller-binding guard, fail closed. This surface is node-agent-exclusive:
+      // every legitimate caller is a WORKER sub-session spawned for one task
+      // (its session_context carries that taskId). Two refusals:
+      //   - The binding must RESOLVE. A missing/foreign-space session row,
+      //     malformed context JSON, or an absent taskId is anomalous on this
+      //     surface, not privileged — treating it as an unbound "external"
+      //     caller would grant broad same-space completion plus the
+      //     quiesce-ALL sweep over any run's workers.
+      //   - The resolved binding must equal the target: a worker for task A
+      //     must not close an unrelated in_progress task B (the next tick
+      //     would finalize B's run and quiesce its workers).
+      if (callerSessionId) {
+        const callerTaskId = readCallerSessionTaskId(db, spaceId, callerSessionId);
+        if (callerTaskId === undefined || callerTaskId === null) {
+          return jsonResult({
+            success: false,
+            error: `This worker session's task binding cannot be resolved (no session_context.taskId for this space); complete_validation_task requires a task-bound worker session. Retry after the session context is restored (restore_node_agent) or escalate to the coordinator.`,
+          });
+        }
+        if (callerTaskId !== args.task_id) {
+          return jsonResult({
+            success: false,
+            error: `Worker sessions may only complete their own task; task ${args.task_id} belongs to another task's workers. Escalate to the coordinator if it needs closing.`,
+          });
         }
       }
-    }
 
-    if (currentLevel < completionAutonomyLevel) {
-      const ceilingBinding = agentLevel != null && agentLevel < spaceLevel;
-      audit?.(
-        {
-          blocked: true,
-          reason: ceilingBinding ? 'agent_autonomy_ceiling' : 'space_autonomy',
-          agentLevel,
-          spaceLevel,
-          required: completionAutonomyLevel,
-        },
-        args.task_id
-      );
-      return jsonResult({
-        success: false,
-        error: ceilingBinding
-          ? `complete_validation_task not permitted: agent autonomy ceiling ${agentLevel} (space ${spaceLevel}) < workflow completionAutonomyLevel ${completionAutonomyLevel}. Use submit_for_approval to request human review.`
-          : `complete_validation_task not permitted: space autonomy level ${spaceLevel} < workflow completionAutonomyLevel ${completionAutonomyLevel}. Use submit_for_approval to request human review.`,
-      });
-    }
-
-    // Eligibility: only `review` and `in_progress` may close via the
-    // validation-only path. `open` has produced no work to validate; terminal
-    // statuses are already closed.
-    if (task.status !== 'review' && task.status !== 'in_progress') {
-      return jsonResult({
-        success: false,
-        error: `Task is in '${task.status}' status. complete_validation_task only applies to tasks in 'review' or 'in_progress' that complete without a PR.`,
-      });
-    }
-
-    // Pending-human-approval guard: a `review` task carrying a
-    // `task_completion` checkpoint is parked there by `submit_for_approval`
-    // under an explicit promise that a HUMAN approves or rejects it. Letting
-    // this tool (or any agent) close it directly to `done` would clear the
-    // checkpoint and bypass that human gate — the exact bypass the review
-    // path exists to prevent. The human review flow (approve_pending_completion
-    // / reject) owns those tasks; a `review` task with no pending checkpoint
-    // remains eligible.
-    if (task.status === 'review' && task.pendingCheckpointType === 'task_completion') {
-      return jsonResult({
-        success: false,
-        error: `Task ${args.task_id} is awaiting human completion approval (pending 'task_completion' checkpoint). complete_validation_task cannot bypass that review — it is resolved through the human approve/reject flow (approve_pending_completion), not by an agent.`,
-      });
-    }
-
-    // No-PR guard: a workflow-backed task whose run has a primary link (PR) is
-    // PR-bound and must close through the normal approve/merge path. A task
-    // with no workflow run (standalone) is no-PR by definition and eligible —
-    // this is the common Forge self_nag/review shape.
-    if (task.workflowRunId) {
-      const prUrl = resolvePrimaryLinkUrl(task.workflowRunId);
-      // Fail closed on an indeterminate read: the strict resolver returns
-      // null when hook state or artifacts could not be checked (or no domain
-      // profile is wired). Treating that as "no PR" would let a PR-bound run
-      // bypass the normal review/merge path on a transient read failure.
-      if (prUrl === null) {
+      // Run-identity guard, BEFORE any run policy is consulted. Imported/
+      // malformed rows carry no constraint tying a task's workflowRunId to a
+      // run in the SAME space: a foreign run's workflow (its
+      // completionAutonomyLevel) or primary link (its PR URL) must not be read
+      // — let alone completed or swept — from this space, and a runId that
+      // resolves to NO row is equally refused (the handler doc's "an
+      // unresolvable or foreign run refuses", now enforced before the leaks
+      // the guards exist to prevent).
+      const run = task.workflowRunId ? workflowRunRepo.getRun(task.workflowRunId) : null;
+      if (task.workflowRunId && !run) {
         return jsonResult({
           success: false,
-          error: `Task ${args.task_id}'s workflow run could not be checked for a PR (PR state could not be read); refusing validation-only completion rather than bypassing the review/merge path. Retry, or use the normal PR path if a PR exists.`,
+          error: `Task ${args.task_id} references a workflow run that cannot be resolved (${task.workflowRunId}); completing it would operate on an unknown lifecycle. Reconcile or cancel the task instead.`,
         });
       }
-      if (prUrl) {
-        return jsonResult({
-          success: false,
-          error: `Task ${args.task_id} has a PR (${prUrl}); validation-only completion is for no-PR tasks. Use approve_task (if in review) or the normal PR merge path instead.`,
-        });
-      }
-      const run = workflowRunRepo.getRun(task.workflowRunId);
-      // Run-space ownership (before any lifecycle consultation): imported/
-      // malformed rows carry no constraint tying a task's workflowRunId to
-      // a run in the SAME space. A foreign run's task must not be completed
-      // (or its executions swept) from this space — that lifecycle belongs
-      // to the run's own space.
       if (run && run.spaceId !== spaceId) {
         return jsonResult({
           success: false,
           error: `Task ${args.task_id} references a workflow run belonging to a different space; validation-only completion is not applicable here. Reconcile the task's run association.`,
         });
       }
-      // Run-lifecycle guard: the tick loop's completion detection only runs
-      // when the run has node executions (`space-runtime.ts` early-returns on
-      // an empty list), so completing a run's task while zero executions
-      // exist would leave the run active forever — the same stranding shape
-      // the `archive_task` active-run guard rejects (task #849, G1). An
-      // execution-less run is degenerate (never initialized, or an import
-      // edge case): direct the caller to cancel it rather than strand it.
-      const executions = nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
-      if (executions.length === 0) {
-        return jsonResult({
-          success: false,
-          error: `Task ${args.task_id} belongs to a workflow run with no node executions (${task.workflowRunId}); completing it would strand the run. Cancel the run instead so its lifecycle is torn down.`,
-        });
-      }
-      // Run-status guard: a task can linger in review/in_progress while its
-      // run is already terminal or waiting — cancelled (cancellation/
-      // recovery edge — e.g. shutdown leaves the task unreconciled), done,
-      // or BLOCKED (the runtime's blocking paths transition the run first
-      // and update the task behind awaits, so a window exists where the run
-      // is blocked but the task row still reads review/in_progress). A
-      // blocked run never reaches completion detection in the tick loop
-      // (`processRunTick` routes it through blocked-run recovery first), so
-      // completing the task would strand the run in blocked limbo or be
-      // overwritten by the pending task-block step. PENDING is equally
-      // ineligible: it is a transient pre-initialization state (the start
-      // path promotes a run to in_progress before attaching its task, and
-      // rehydration excludes pending runs), so a completion landing on a
-      // still-pending run would strand it outside every lifecycle loop.
-      // Only `in_progress` runs are eligible.
-      if (run && run.status !== 'in_progress') {
-        return jsonResult({
-          success: false,
-          error: `Task ${args.task_id} belongs to a ${run.status} workflow run; validation-only completion is not applicable. Reconcile or retry the task instead.`,
-        });
-      }
-      // Canonical-task guard: a run should have exactly one task, but
-      // imported/legacy runs can temporarily carry duplicates. The tick loop
-      // picks the canonical task (pickCanonicalRunTask) and archives every
-      // duplicate, so completing a non-canonical duplicate here would be
-      // discarded by that archive while its side effects (evidence capture,
-      // dependent unblocking) persisted. Apply the tick's exact selection
-      // rule and reject duplicates up front.
-      const runTasks = taskRepo.listByWorkflowRun(task.workflowRunId);
-      const canonicalTask = run ? pickCanonicalRunTask(run, runTasks) : null;
-      if (canonicalTask && canonicalTask.id !== task.id) {
-        return jsonResult({
-          success: false,
-          error: `Task ${args.task_id} is not the canonical task of its workflow run (a duplicate the runtime will archive); completing it would be discarded. Complete or reconcile the canonical task (${canonicalTask.taskNumber}) instead.`,
-        });
-      }
-      const routeWorkflow = run?.workflowId ? getWorkflowForRun(run) : null;
-      // Workflow-definition guard: an imported/legacy run whose referenced
-      // definition is missing resolves no workflow — treating that as "no
-      // hooks, no routes" would let the task complete while the run
-      // strands `in_progress` forever (rehydration cannot register
-      // executorMeta for it, and processRunTick returns before completion
-      // handling when that metadata is absent). Refuse so the run's
-      // lifecycle is reconciled instead.
-      if (run && run.workflowId && !routeWorkflow) {
-        return jsonResult({
-          success: false,
-          error: `Task ${args.task_id} belongs to a workflow run whose workflow definition cannot be resolved (${run.workflowId}); completing it would strand the run. Reconcile or cancel the run instead.`,
-        });
-      }
-      if (collectDispatchablePostApprovalRoutes(routeWorkflow).length > 0) {
-        return jsonResult({
-          success: false,
-          error: `Task ${args.task_id} belongs to a workflow with a post-approval route; validation-only completion would skip it. Use submit_for_approval (then approval) so the route fires.`,
-        });
-      }
-    }
 
-    try {
+      // Autonomy gate — mirrors `approve_task`'s ordering. Resolve the
+      // workflow's completionAutonomyLevel (default 5) and reject when the
+      // space autonomy level is below it. Running this before the status/no-PR
+      // checks avoids leaking a task's status or PR URL to a caller below the
+      // threshold. (Node agents are workers: no per-agent autonomy ceiling
+      // exists on this surface, so the space level is the effective level.)
+      const space = spaceManager ? await spaceManager.getSpace(spaceId) : null;
+      const spaceLevel = space?.autonomyLevel ?? 1;
+      let completionAutonomyLevel = 5;
+      if (run?.workflowId) {
+        const workflow = getWorkflowForRun(run);
+        if (workflow?.completionAutonomyLevel !== undefined) {
+          completionAutonomyLevel = workflow.completionAutonomyLevel;
+        }
+      }
+
+      if (spaceLevel < completionAutonomyLevel) {
+        audit?.(
+          {
+            blocked: true,
+            reason: 'space_autonomy',
+            spaceLevel,
+            required: completionAutonomyLevel,
+          },
+          args.task_id
+        );
+        return jsonResult({
+          success: false,
+          error: `complete_validation_task not permitted: space autonomy level ${spaceLevel} < workflow completionAutonomyLevel ${completionAutonomyLevel}. Use submit_for_approval to request human review.`,
+        });
+      }
+
+      // Eligibility: only `review` and `in_progress` may close via the
+      // validation-only path. `open` has produced no work to validate; terminal
+      // statuses are already closed.
+      if (task.status !== 'review' && task.status !== 'in_progress') {
+        return jsonResult({
+          success: false,
+          error: `Task is in '${task.status}' status. complete_validation_task only applies to tasks in 'review' or 'in_progress' that complete without a PR.`,
+        });
+      }
+
+      // Pending-human-approval guard: a `review` task carrying a
+      // `task_completion` checkpoint is parked there by `submit_for_approval`
+      // under an explicit promise that a HUMAN approves or rejects it. Letting
+      // this tool (or any agent) close it directly to `done` would clear the
+      // checkpoint and bypass that human gate — the exact bypass the review
+      // path exists to prevent. The human review flow (approve_pending_completion
+      // / reject) owns those tasks; a `review` task with no pending checkpoint
+      // remains eligible.
+      if (task.status === 'review' && task.pendingCheckpointType === 'task_completion') {
+        return jsonResult({
+          success: false,
+          error: `Task ${args.task_id} is awaiting human completion approval (pending 'task_completion' checkpoint). complete_validation_task cannot bypass that review — it is resolved through the human approve/reject flow (approve_pending_completion), not by an agent.`,
+        });
+      }
+
+      // No-PR guard: a workflow-backed task whose run has a primary link (PR) is
+      // PR-bound and must close through the normal approve/merge path. A task
+      // with no workflow run (standalone) is no-PR by definition and eligible —
+      // this is the common Forge self_nag/review shape.
+      if (task.workflowRunId) {
+        const prUrl = resolvePrimaryLinkUrl(task.workflowRunId);
+        // Fail closed on an indeterminate read: the strict resolver returns
+        // null when hook state or artifacts could not be checked (or no domain
+        // profile is wired). Treating that as "no PR" would let a PR-bound run
+        // bypass the normal review/merge path on a transient read failure.
+        if (prUrl === null) {
+          return jsonResult({
+            success: false,
+            error: `Task ${args.task_id}'s workflow run could not be checked for a PR (PR state could not be read); refusing validation-only completion rather than bypassing the review/merge path. Retry, or use the normal PR path if a PR exists.`,
+          });
+        }
+        if (prUrl) {
+          return jsonResult({
+            success: false,
+            error: `Task ${args.task_id} has a PR (${prUrl}); validation-only completion is for no-PR tasks. Use approve_task (if in review) or the normal PR merge path instead.`,
+          });
+        }
+        // Run-lifecycle guard: the tick loop's completion detection only runs
+        // when the run has node executions (`space-runtime.ts` early-returns on
+        // an empty list), so completing a run's task while zero executions
+        // exist would leave the run active forever — the same stranding shape
+        // the `archive_task` active-run guard rejects (task #849, G1). An
+        // execution-less run is degenerate (never initialized, or an import
+        // edge case): direct the caller to cancel it rather than strand it.
+        const executions = nodeExecutionRepo.listByWorkflowRun(task.workflowRunId);
+        if (executions.length === 0) {
+          return jsonResult({
+            success: false,
+            error: `Task ${args.task_id} belongs to a workflow run with no node executions (${task.workflowRunId}); completing it would strand the run. Cancel the run instead so its lifecycle is torn down.`,
+          });
+        }
+        // Run-status guard: a task can linger in review/in_progress while its
+        // run is already terminal or waiting — cancelled (cancellation/
+        // recovery edge — e.g. shutdown leaves the task unreconciled), done,
+        // or BLOCKED (the runtime's blocking paths transition the run first
+        // and update the task behind awaits, so a window exists where the run
+        // is blocked but the task row still reads review/in_progress). A
+        // blocked run never reaches completion detection in the tick loop
+        // (`processRunTick` routes it through blocked-run recovery first), so
+        // completing the task would strand the run in blocked limbo or be
+        // overwritten by the pending task-block step. PENDING is equally
+        // ineligible: it is a transient pre-initialization state (the start
+        // path promotes a run to in_progress before attaching its task, and
+        // rehydration excludes pending runs), so a completion landing on a
+        // still-pending run would strand it outside every lifecycle loop.
+        // Only `in_progress` runs are eligible.
+        if (run && run.status !== 'in_progress') {
+          return jsonResult({
+            success: false,
+            error: `Task ${args.task_id} belongs to a ${run.status} workflow run; validation-only completion is not applicable. Reconcile or retry the task instead.`,
+          });
+        }
+        // Canonical-task guard: a run should have exactly one task, but
+        // imported/legacy runs can temporarily carry duplicates. The tick loop
+        // picks the canonical task (pickCanonicalRunTask) and archives every
+        // duplicate, so completing a non-canonical duplicate here would be
+        // discarded by that archive while its side effects (evidence capture,
+        // dependent unblocking) persisted. Apply the tick's exact selection
+        // rule and reject duplicates up front.
+        const runTasks = taskRepo.listByWorkflowRun(task.workflowRunId);
+        const canonicalTask = run ? pickCanonicalRunTask(run, runTasks) : null;
+        if (canonicalTask && canonicalTask.id !== task.id) {
+          return jsonResult({
+            success: false,
+            error: `Task ${args.task_id} is not the canonical task of its workflow run (a duplicate the runtime will archive); completing it would be discarded. Complete or reconcile the canonical task (${canonicalTask.taskNumber}) instead.`,
+          });
+        }
+        const routeWorkflow = run?.workflowId ? getWorkflowForRun(run) : null;
+        // Workflow-definition guard: an imported/legacy run whose referenced
+        // definition is missing resolves no workflow — treating that as "no
+        // hooks, no routes" would let the task complete while the run
+        // strands `in_progress` forever (rehydration cannot register
+        // executorMeta for it, and processRunTick returns before completion
+        // handling when that metadata is absent). Refuse so the run's
+        // lifecycle is reconciled instead.
+        if (run && run.workflowId && !routeWorkflow) {
+          return jsonResult({
+            success: false,
+            error: `Task ${args.task_id} belongs to a workflow run whose workflow definition cannot be resolved (${run.workflowId}); completing it would strand the run. Reconcile or cancel the run instead.`,
+          });
+        }
+        if (collectDispatchablePostApprovalRoutes(routeWorkflow).length > 0) {
+          return jsonResult({
+            success: false,
+            error: `Task ${args.task_id} belongs to a workflow with a post-approval route; validation-only completion would skip it. Use submit_for_approval (then approval) so the route fires.`,
+          });
+        }
+      }
+
       // Snapshots the terminal precondition revalidates against (autonomy
       // can be revoked between the entry gate and the write).
       const requiredAutonomyLevel = completionAutonomyLevel;
@@ -895,20 +902,16 @@ export function createCompleteValidationTaskHandler(
           // which the exact-status SQL predicate cannot see — refuse if the
           // association moved so the newly attached run's guards are
           // evaluated instead of bypassed.
-          // Autonomy revalidation: an operator can lower the space level or
-          // the calling agent's ceiling after the entry gate but before this
-          // write — authority revoked mid-flight must not complete work
-          // under the old policy. The agent-ceiling closure is synchronous;
-          // the space level is reread synchronously from the spaces row,
+          // Autonomy revalidation: an operator can lower the space level
+          // after the entry gate but before this write — authority revoked
+          // mid-flight must not complete work under the old policy. The
+          // space level is reread synchronously from the spaces row,
           // falling back to the entry-gate snapshot when no synchronous
           // source exists (handlers built without a db handle).
-          const agentLevelNow = getCallingAgentAutonomyLevel?.() ?? null;
           const spaceLevelNow = readSpaceAutonomyLevelSync(db, spaceId) ?? entrySpaceLevel;
-          const effectiveNow =
-            agentLevelNow == null ? spaceLevelNow : Math.min(spaceLevelNow, agentLevelNow);
-          if (effectiveNow < requiredAutonomyLevel) {
+          if (spaceLevelNow < requiredAutonomyLevel) {
             throw new Error(
-              `Task ${args.task_id} cannot be completed: effective autonomy was lowered to ${effectiveNow} (required ${requiredAutonomyLevel}) before the write. The completion authority was revoked — use submit_for_approval to request human review.`
+              `Task ${args.task_id} cannot be completed: effective autonomy was lowered to ${spaceLevelNow} (required ${requiredAutonomyLevel}) before the write. The completion authority was revoked — use submit_for_approval to request human review.`
             );
           }
           const expectedRunId = checkedWorkflowRunId ?? null;

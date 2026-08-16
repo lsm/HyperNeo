@@ -781,6 +781,68 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       expect(execution?.status).toBe('in_progress');
       expect(mockTam.interruptedSessions).not.toContain(recoveredSessionId);
     });
+
+    test('does not flip the run to done when a recovery lands before the transition', async () => {
+      // Interleaving (task #918): CompletionDetector decides `runIsComplete`
+      // from the done task, then several AWAITED sweeps run before the
+      // run→done transition. A recoverWorkflowBackedTask landing inside one
+      // of those awaits reopens the task (in_progress, reportedStatus
+      // cleared). Transitioning on the stale decision would stomp the
+      // recovery — the run reads done, ticks early-return for it, the
+      // reopened task's pending execution never spawns, and the periodic
+      // reconciler later force-dispatches the task back to done. The
+      // pre-transition recheck must let the next tick evaluate the
+      // recovered state instead.
+      const rt = makeRuntimeWithTam();
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: 'node-pre-transition', name: 'Coding', agentId: AGENT_A },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(
+        SPACE_ID,
+        workflow.id,
+        'Pre-transition recovery run'
+      );
+      const task = tasks[0];
+      // External validation-completion shape: task done, run still active.
+      taskRepo.updateTask(task.id, { status: 'done', result: 'external validation outcome' });
+      seedNodeExec(db, run.id, 'node-pre-transition', 'agent', 'in_progress');
+
+      const rtInternal = rt as unknown as {
+        completionDetector: { isComplete: (query: unknown) => boolean };
+      };
+      const originalIsComplete = rtInternal.completionDetector.isComplete.bind(
+        rtInternal.completionDetector
+      );
+      let recovered = false;
+      rtInternal.completionDetector.isComplete = (query: unknown) => {
+        const result = originalIsComplete(query);
+        if (result && !recovered) {
+          recovered = true;
+          // The recovery commits right AFTER the completion decision —
+          // inside the awaited sweeps, before the transition.
+          taskRepo.updateTask(task.id, {
+            status: 'in_progress',
+            reportedStatus: null,
+            result: null,
+            completedAt: null,
+          });
+        }
+        return result;
+      };
+
+      try {
+        await rt.executeTick();
+      } finally {
+        rtInternal.completionDetector.isComplete = originalIsComplete;
+      }
+
+      expect(recovered).toBe(true);
+      // The recovery is honored: task AND run stay in_progress — the run was
+      // never flipped to done on the stale decision.
+      expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+      expect(taskRepo.getTask(task.id)?.result).toBeNull();
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+    });
   });
 
   // -------------------------------------------------------------------------

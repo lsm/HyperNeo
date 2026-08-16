@@ -5342,11 +5342,14 @@ export class TaskAgentManager {
     });
 
     // `complete_validation_task` (task #918) — validation-only (no-PR)
-    // completion, node-agent-exclusive like `mark_complete`: workflow workers
-    // are the tool's callers, and they receive only this server (never
-    // space-agent-tools). The handler self-validates (worker caller binding,
-    // autonomy vs completionAutonomyLevel, no-PR + run guards); an agent with
-    // no validation verdict to record simply never calls it.
+    // completion, node-agent-exclusive like `mark_complete`: the tool ships
+    // ONLY on this server (space-agent-tools does not carry it), so the
+    // completion family stays node-agent-scoped and hook-wrapped. Workers on
+    // the session-reuse path hold both servers, but the validation close is
+    // reachable only through node-agent. The handler self-validates (worker
+    // caller binding, autonomy vs completionAutonomyLevel, no-PR + run
+    // guards); an agent with no validation verdict to record simply never
+    // calls it.
     const onCompleteValidationTask = createCompleteValidationTaskHandler({
       spaceId,
       callerSessionId: subSessionId,

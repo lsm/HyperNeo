@@ -664,6 +664,12 @@ export class SpaceTaskRepository {
       // always leaves an interleaving window.)
       let statusGuard = '';
       if (params.expectedStatuses !== undefined) {
+        // Fail closed on an empty list: "no status is acceptable" must mean
+        // the update matches nothing — building `IN ()` instead would be a
+        // SQL syntax error, and skipping the guard would be fail-open.
+        if (params.expectedStatuses.length === 0) {
+          return null;
+        }
         const placeholders = params.expectedStatuses.map(() => '?').join(', ');
         statusGuard = ` AND status IN (${placeholders})`;
         values.push(...params.expectedStatuses);

@@ -243,7 +243,7 @@ type ApprovalSource = 'human' | 'auto_policy' | 'agent';
 
 - `human` — user clicked approve in the UI
 - `auto_policy` — space autonomy level >= required level (replaces `semi_auto`)
-- `agent` — agent used approve_gate/approve_task tool (collapses all agent sub-types; specific agent identity is tracked in session metadata)
+- `agent` — agent used approve_gate/approve_task tool, or the node-agent `complete_validation_task` validation-only close (collapses all agent sub-types; specific agent identity is tracked in session metadata)
 
 #### Approval record
 

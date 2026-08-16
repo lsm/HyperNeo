@@ -504,6 +504,26 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
     expect(hit?.result).toBe('validated');
   });
 
+  test('an empty expectedStatuses list fails closed (no write, no invalid IN () SQL)', async () => {
+    // "No status is acceptable" must mean the update matches nothing — an
+    // empty list once produced a syntax error (`IN ()`), and silently
+    // dropping the guard would be fail-open.
+    const task = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    const missed = taskRepo.updateTask(task.id, {
+      status: 'done',
+      result: 'should never land',
+      expectedStatuses: [],
+    });
+    expect(missed).toBeNull();
+    expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+    expect(taskRepo.getTask(task.id)?.result).toBeNull();
+  });
+
   test('approved → done nulls the durable source field (primed)', async () => {
     const task = taskRepo.createTask({
       spaceId: SPACE_ID,

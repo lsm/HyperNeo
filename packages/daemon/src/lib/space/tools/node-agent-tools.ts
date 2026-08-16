@@ -208,10 +208,11 @@ export interface NodeAgentToolsConfig {
   /**
    * Optional callback for the `complete_validation_task` tool (task #918) —
    * validation-only (no-PR) task completion. Mirrored onto every node-agent
-   * like `mark_complete` because workflow WORKERS are this tool's callers:
-   * they receive only this server, never space-agent-tools. The handler
-   * self-validates (caller binding, autonomy, no-PR + run checks) so a
-   * worker that has no validation verdict to record simply never calls it.
+   * like `mark_complete`: the tool ships ONLY on this server (space-agent-tools
+   * does not carry it), keeping the completion family node-agent-scoped and
+   * hook-wrapped. The handler self-validates (caller binding, autonomy,
+   * no-PR + run checks) so a worker that has no validation verdict to record
+   * simply never calls it.
    */
   onCompleteValidationTask?: (args: CompleteValidationTaskInput) => Promise<ToolResult>;
   /**
