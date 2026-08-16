@@ -340,6 +340,14 @@ jobs:
           # Strip test utility coverage (helpers, fixtures, mocks)
           awk '/^SF:(packages\/daemon\/)?tests\//{skip=1} /^end_of_record/{if(skip){skip=0;next}} !skip' $LCOV > ${LCOV}.clean && mv ${LCOV}.clean $LCOV || true
 
+      - name: Upload junit on failure (diagnostics)
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: daemon-online-junit-${{ matrix.module }}-${{ github.run_number }}
+          path: test-results/daemon-online-${{ matrix.module }}/
+          retention-days: 7
+
       - name: Upload to Coveralls (parallel)
         uses: coverallsapp/github-action@v2
         with:
