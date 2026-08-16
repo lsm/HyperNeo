@@ -952,6 +952,8 @@ export function createCompleteValidationTaskHandler(
       // allowed set, which the exact-status SQL predicate refuses with its
       // own message) refuses.
       const checkedTaskUpdatedAt = task.updatedAt;
+      // Dependents unblocked by the post-commit cascade (see onCascadedTasks).
+      const cascadedDependents: SpaceTask[] = [];
 
       // `approvalSource: 'agent'` is passed unconditionally: setTaskStatus
       // stamps it atomically with the done commit on BOTH paths — review→done
@@ -1118,6 +1120,11 @@ export function createCompleteValidationTaskHandler(
           }
         },
         onCascadedTasks: async (cascadedTasks) => {
+          // Collected: the dependency cascade runs INSIDE setTaskStatus'
+          // awaited post-commit phase, so it can commit dependents'
+          // blocked → open flips before this handler observes a concurrent
+          // recovery. If the completion is not confirmed, they are re-blocked.
+          cascadedDependents.push(...cascadedTasks);
           for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
         },
       });
@@ -1285,6 +1292,30 @@ export function createCompleteValidationTaskHandler(
       // store's recovered view, and handing it back as the tool result
       // would tell the recovered worker its task completed. Report the
       // commit AND the concurrent reopen, returning the current row.
+      // The dependency cascade ran inside the awaited post-commit phase and
+      // may have flipped dependents blocked → open on the strength of a
+      // `done` this recovery has now undone. Re-block any cascaded
+      // dependent that is currently open: its declared prerequisite is
+      // in_progress again, and a dependent running against an incomplete
+      // dependency is exactly the invariant the cascade exists to prevent.
+      // Best-effort — a failure never disturbs the honest result below.
+      try {
+        for (const dependent of cascadedDependents) {
+          const dependentRow = taskRepo.getTask(dependent.id);
+          if (dependentRow?.status !== 'open') continue;
+          const reblocked = await taskManager.setTaskStatus(dependent.id, 'blocked', {
+            blockReason: 'dependency_incomplete',
+          });
+          emitTaskUpdated(reblocked);
+          log.warn(
+            `complete_validation_task: re-blocked dependent ${dependent.id} — its prerequisite ${args.task_id} was reopened during the completion cascade`
+          );
+        }
+      } catch (err) {
+        log.warn(
+          `complete_validation_task: failed to re-block dependents of reopened task "${updated.id}": ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
       return jsonResult({
         success: true,
         task: currentTaskRow ?? updated,

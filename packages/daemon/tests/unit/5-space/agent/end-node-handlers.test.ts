@@ -3154,6 +3154,76 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     }
   });
 
+  test('dependents unblocked by the cascade are re-blocked when the completion is revoked', async () => {
+    // The dependency cascade (unblockDependentTasks) runs INSIDE
+    // setTaskStatus' awaited post-commit phase — it can flip a dependent
+    // blocked → open on the strength of the `done` commit before a
+    // concurrent recovery reopens this prerequisite. The revoked-completion
+    // path re-blocks those dependents: their declared dependency is
+    // in_progress again.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const taskId = await createTask('in_progress');
+    // A dependent, blocked on this task via dependsOn.
+    const dependent = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'Dependent',
+      description: '',
+      status: 'in_progress',
+      dependsOn: [taskId],
+    });
+    // The blocked shape the cascade looks for (createTask ignores
+    // blockReason; the cascade filter requires a dependency-* reason).
+    await ctx.taskManager.setTaskStatus(dependent.id, 'blocked', {
+      blockReason: 'dependency_failed',
+    });
+    const published: string[] = [];
+    const originalSetStatus = ctx.taskManager.setTaskStatus.bind(ctx.taskManager);
+    const setStatusSpy = spyOn(ctx.taskManager, 'setTaskStatus').mockImplementation(
+      async (...callArgs: Parameters<typeof originalSetStatus>) => {
+        const result = await originalSetStatus(...callArgs);
+        // The cascade has run: the dependent is open. Recovery lands now —
+        // but only on the PARENT's call (the recursive dependent-open call
+        // also passes through this spy).
+        if (callArgs[0] === taskId) {
+          ctx.taskRepo.updateTask(taskId, {
+            status: 'in_progress',
+            result: null,
+            completedAt: null,
+          });
+        }
+        return result;
+      }
+    );
+
+    try {
+      const result = await makeValidationTool({
+        internalEventBus: {
+          publish: (async (_topic: string, payload: { task: { id: string } }) => {
+            published.push(payload.task.id);
+            return Promise.resolve();
+          }) as CompleteValidationTaskHandlerDeps['internalEventBus'],
+        },
+      }).complete_validation_task({
+        task_id: taskId,
+        validation_outcome: 'committed, then reopened',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+
+      expect(parsed.success).toBe(true);
+      expect(parsed.concurrentlyReopened).toBe(true);
+      // The prerequisite is in_progress again AND the dependent is back to
+      // blocked — no dependent runs against an incomplete dependency.
+      expect(ctx.taskRepo.getTask(taskId)?.status).toBe('in_progress');
+      const dependentAfter = ctx.taskRepo.getTask(dependent.id);
+      expect(dependentAfter?.status).toBe('blocked');
+      expect(dependentAfter?.blockReason).toBe('dependency_incomplete');
+      // The re-block was published (the cascade's open event is superseded).
+      expect(published).toContain(dependent.id);
+    } finally {
+      setStatusSpy.mockRestore();
+    }
+  });
+
   test('the sweep quiesces a worker activated during the post-commit cascade', async () => {
     // A message-driven lazy activation or tick spawn can race the awaited
     // post-commit cascade. Mid-cascade "reopened-run work" cannot exist —
