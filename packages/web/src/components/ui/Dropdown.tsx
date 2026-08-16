@@ -163,10 +163,14 @@ export function Dropdown({
     };
 
     if (isOpen) {
+      // The Escape keydown can never be the interaction that opened the menu,
+      // so its listener attaches synchronously — no race where a keydown
+      // arrives before a deferred listener is registered.
+      document.addEventListener('keydown', handleEscape);
+
       // Delay adding the click listener to avoid closing immediately from the same click that opened it
       const timeoutId = setTimeout(() => {
         document.addEventListener('click', handleClickOutside);
-        document.addEventListener('keydown', handleEscape);
       }, 0);
 
       return () => {
