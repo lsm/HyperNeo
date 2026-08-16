@@ -158,3 +158,10 @@ delete process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
 delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
 delete process.env.ANTHROPIC_BASE_URL;
 delete process.env.API_TIMEOUT_MS;
+// query-runner.ts snapshots HYPERNEO_SDK_STARTUP_TIMEOUT_MS at module load,
+// and Bun auto-loads packages/daemon/.env under the documented `cd
+// packages/daemon && bun test` workflow. Delete so an ambient override —
+// exactly what .env.example invites setting there — cannot make the pinned
+// 'current: 60000ms' default assertion fail while pointing at daemon code.
+// Tests that need the override set it AFTER this preload runs.
+delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;

@@ -215,3 +215,9 @@ delete process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
 delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
 delete process.env.ANTHROPIC_BASE_URL;
 delete process.env.API_TIMEOUT_MS;
+// Delete the SDK startup-timeout override for the same ambient-env reason as
+// above: query-runner.ts snapshots it at module load (and Bun auto-loads
+// packages/daemon/.env), so a developer-set value would break the pinned
+// 'current: 60000ms' default assertion. Tests needing the override set it
+// after preload.
+delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
