@@ -1219,6 +1219,35 @@ describe('voice transcript outbox — review-hardening round', () => {
     expect(peekExpiredDraftBackup('s1')).toBeNull();
   });
 
+  it('hydrates the newer marker aggregate when advancing the local generation', () => {
+    // Advancing the signal to a newer persisted marker must carry the SAME
+    // marker's aggregate: the local landingTexts/Ids/Entries otherwise stay
+    // on the old sequence and WIN the reads (getLandingTranscript prefers
+    // local state), so a reconciliation without a structural baseline would
+    // fold the STALE transcript into typing and later overwrite the daemon
+    // draft without the new one.
+    markVoiceTranscriptLanded('s1', 'local voice', 'e-local', 1);
+    const local = voiceTranscriptLandedSignal.value.get('s1') ?? 0;
+    const newer = local + 500;
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+      JSON.stringify({
+        v: 1,
+        ts: Date.now(),
+        n: newer,
+        text: 'marker aggregate',
+        ids: ['e-marker'],
+        entries: [{ id: 'e-marker', text: 'marker aggregate', seq: 2 }],
+      })
+    );
+    expect(getLandingGeneration('s1')).toBe(newer);
+    // The aggregate reads now follow the NEWER marker, not the stale local
+    // marks — including the order-trust flag its entries recompute.
+    expect(getLandingTranscript('s1')).toBe('marker aggregate');
+    expect(getAnnouncedEntryIds('s1')).toContain('e-marker');
+    expect(isLandingAggregateOrdered('s1')).toBe(true);
+  });
+
   it('keeps every retained marker entry announced in ids when the union exceeds the cap', () => {
     vi.useRealTimers();
     // 19 local entries, then a persisted marker with two unseen entries: the

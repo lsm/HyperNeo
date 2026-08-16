@@ -573,21 +573,27 @@ export function getLandingGeneration(sessionId: string): number | undefined {
       const marker = parseLandedMarker(raw);
       const persisted = marker?.n;
       if (typeof persisted === 'number' && (local === undefined || persisted > local)) {
-        // ADVANCE the local signal to the persisted generation (no aggregate
-        // changes — no text): a backup saved against this EFFECTIVE generation
-        // must be retired by a consumption carrying the SAME generation. With
-        // the signal left behind, a later consume would match the OLD local
-        // generation — clearing only an older-generation backup while acking
-        // the newer marker as consumed — and the mismatched backup would
-        // restore already-sent text through the peek paths after a reload.
+        // ADVANCE the local signal to the persisted generation, hydrating the
+        // SAME marker's aggregate atomically: a backup saved against this
+        // EFFECTIVE generation must be retired by a consumption carrying the
+        // SAME generation. With the signal left behind, a later consume would
+        // match the OLD local generation — clearing only an older-generation
+        // backup while acking the newer marker as consumed — and the
+        // mismatched backup would restore already-sent text through the peek
+        // paths after a reload. Advancing the generation WITHOUT the
+        // aggregate would leave landingTexts/Ids/Entries on the old sequence
+        // shadowing the newer marker (the local state wins the reads), so a
+        // reconciliation without a structural baseline would fold the STALE
+        // transcript into local typing and later overwrite the daemon draft
+        // without the new one.
         markVoiceTranscriptLandedLocal(
           sessionId,
-          undefined,
-          false,
+          marker?.text ?? undefined,
+          true,
           persisted,
           undefined,
-          undefined,
-          undefined,
+          marker?.ids,
+          marker?.entries,
           marker?.ts
         );
         return persisted;

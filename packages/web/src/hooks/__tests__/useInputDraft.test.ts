@@ -15,6 +15,7 @@ import {
   getClearTombstone,
   getDraftBackup,
   hasClearTombstone,
+  isLandingAggregateOrdered,
   markVoiceTranscriptLanded,
   peekExpiredDraftBackup,
   resetVoiceTranscriptOutbox,
@@ -2923,6 +2924,66 @@ describe('useInputDraft', () => {
       expect(peekExpiredDraftBackup('session-1')).not.toBeNull();
     });
 
+    it('drops an active-content retry once the composer is cleared', async () => {
+      // The active-merge retry queues the composer's text under the same
+      // claim id. If the user sends or clears before the retry fires, the
+      // queue's idle-adoption branch would merge that pre-clear text back
+      // into the daemon — resurrecting content the user just sent or
+      // deleted. An active-sourced claim must be dropped (and its durable
+      // key retired) when the composer is settled-empty at retry time.
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') return { session: { metadata: {} } };
+        if (method === 'session.mergeVoiceDraftBackup') return { merged: false, stale: true };
+        return { success: true };
+      });
+      connectionState.value = 'connected';
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result, rerender } = renderHook(({ sessionId }) => useInputDraft(sessionId), {
+        initialProps: { sessionId: 'session-1' },
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // A deferred landing suppresses saves into a backup; the user switches
+      // away (the claim queues) and returns, typing over the restored backup.
+      markVoiceTranscriptLanded('session-1', 'voice');
+      result.current.setContent('older edits');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      rerender({ sessionId: 'session-2' });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      await act(async () => {
+        rerender({ sessionId: 'session-1' });
+      });
+      result.current.setContent('newer typing');
+      await act(async () => {
+        // The queued claim's retry fires while the session is CURRENT with
+        // non-empty content — the ACTIVE-content merge path declines stale
+        // and requeues the active text.
+        await vi.advanceTimersByTimeAsync(7_000);
+      });
+      const firstMerges = mockHub.request.mock.calls.filter(
+        ([m]) => m === 'session.mergeVoiceDraftBackup'
+      ).length;
+      expect(firstMerges).toBeGreaterThan(0);
+      // The user sends: the composer clears…
+      result.current.clear();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20_000);
+      });
+      // …and no further merge pushes the pre-clear text back into the
+      // daemon — the active-sourced claim was dropped, not adopted.
+      const laterMerges = mockHub.request.mock.calls
+        .filter(([m]) => m === 'session.mergeVoiceDraftBackup')
+        .slice(firstMerges);
+      expect(laterMerges).toHaveLength(0);
+      expect(result.current.content).toBe('');
+    });
+
     it('queues refused-fold text as an in-memory claim when the user switches away', async () => {
       // localStorage refused the backup and the daemon refused the fold (too
       // long to carry the transcripts): the composer was the only copy. The
@@ -3039,6 +3100,147 @@ describe('useInputDraft', () => {
       expect(result.current.content).toBe('post-clear typing voice');
       expect(hasClearTombstone('session-1')).toBe(false);
       expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(false);
+    });
+
+    it('never folds a stale refresh into the next session composer', async () => {
+      // The owed-clear chain's refresh get resolves AFTER the user switched
+      // sessions: the shared signal now backs the NEW session's composer,
+      // whose text would classify as "guard refused" for the OLD session's
+      // chain. Folding across sessions would append session-1's transcripts
+      // into a composer they never belonged to.
+      markVoiceTranscriptLanded('session-1', 'voice', 'e1', 1);
+      const gen = voiceTranscriptLandedSignal.value.get('session-1') ?? 1;
+      saveClearTombstone('session-1');
+      const tombstoneKeys: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i) ?? '';
+        if (key.startsWith('hyperneo_voice_transcript_outbox_v1.clear.session-1.')) {
+          tombstoneKeys.push(key);
+        }
+      }
+      for (const key of tombstoneKeys) {
+        const parsed = JSON.parse(localStorage.getItem(key) ?? '{}');
+        localStorage.setItem(key, JSON.stringify({ ...parsed, ts: parsed.ts - 1000 }));
+      }
+      saveDraftBackup('session-1', 'post-clear typing', gen);
+      let s1Gets = 0;
+      let resolveRefresh: ((v: unknown) => void) | null = null;
+      mockHub.request.mockImplementation(
+        async (method: string, payload?: { sessionId?: string }) => {
+          if (method === 'session.get') {
+            if (payload?.sessionId === 'session-2') {
+              return { session: { metadata: { inputDraft: 'session two draft' } } };
+            }
+            s1Gets += 1;
+            if (s1Gets === 1) return { session: { metadata: { inputDraft: 'sent text' } } };
+            if (s1Gets === 2) {
+              // The chain's first get: the pending is RETAINED (draft too full).
+              return {
+                session: {
+                  metadata: { inputDraft: 'sent text', inputDraftVoicePending: 'voice' },
+                },
+              };
+            }
+            // The post-clear refresh hangs until the switch has happened.
+            return new Promise((resolve) => {
+              resolveRefresh = resolve;
+            });
+          }
+          if (method === 'session.clearInputDraftIf') return { cleared: true };
+          return {};
+        }
+      );
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result, rerender } = renderHook(({ s }) => useInputDraft(s), {
+        initialProps: { s: 'session-1' },
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+        // Drain the chain's microtask hops (clear-ack -> refresh get) so the
+        // deferred get is genuinely IN FLIGHT before the switch below.
+        for (let i = 0; i < 20 && !resolveRefresh; i++) await Promise.resolve();
+      });
+      expect(resolveRefresh).not.toBeNull(); // the refresh get is in flight
+      // The user switches to session-2 and types.
+      rerender({ s: 'session-2' });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      result.current.setContent('typing in session two');
+      await act(async () => {
+        resolveRefresh?.({
+          session: { metadata: { inputDraft: 'voice', inputDraftVoiceBaseline: '' } },
+        });
+        await vi.runAllTimersAsync();
+      });
+      // The new session's composer never received the old session's
+      // transcripts, and the old session's landing was still consumed
+      // (its get merged server-side).
+      expect(result.current.content).toBe('typing in session two');
+      expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(false);
+    });
+
+    it('keeps the clear owed when no trustworthy transcript source exists', async () => {
+      // The refresh returns a full draft with NO baseline (a concurrent
+      // writer already cleared it) and the landing aggregate is untrusted
+      // (mixed sequenced/unsequenced entries): the old fallback folded the
+      // ENTIRE server draft into the typing, resurrecting non-voice content
+      // and duplicating the transcript. With no structural extraction and no
+      // trusted aggregate the clear must stay owed instead.
+      markVoiceTranscriptLanded('session-1', 'voice one', 'e1', 1);
+      markVoiceTranscriptLanded('session-1', 'voice two', 'e2');
+      expect(isLandingAggregateOrdered('session-1')).toBe(false);
+      const gen = voiceTranscriptLandedSignal.value.get('session-1') ?? 1;
+      saveClearTombstone('session-1');
+      const tombstoneKeys: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i) ?? '';
+        if (key.startsWith('hyperneo_voice_transcript_outbox_v1.clear.session-1.')) {
+          tombstoneKeys.push(key);
+        }
+      }
+      for (const key of tombstoneKeys) {
+        const parsed = JSON.parse(localStorage.getItem(key) ?? '{}');
+        localStorage.setItem(key, JSON.stringify({ ...parsed, ts: parsed.ts - 1000 }));
+      }
+      saveDraftBackup('session-1', 'post-clear typing', gen);
+      let gets = 0;
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          gets += 1;
+          if (gets === 1) return { session: { metadata: { inputDraft: 'sent text' } } };
+          if (gets === 2) {
+            return {
+              session: {
+                metadata: { inputDraft: 'sent text', inputDraftVoicePending: 'voice' },
+              },
+            };
+          }
+          // The post-clear refresh: merged draft, but NO baseline snapshot.
+          return { session: { metadata: { inputDraft: 'merged draft' } } };
+        }
+        if (method === 'session.clearInputDraftIf') return { cleared: true };
+        return {};
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // The typing was NOT appended with the whole server draft…
+      expect(result.current.content).toBe('post-clear typing');
+      // …and the clear stays owed: the landing is unconsumed (saves stay
+      // suppressed) and the tombstone survives for the retry.
+      expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(true);
+      expect(hasClearTombstone('session-1')).toBe(true);
     });
 
     it('keeps local content and a stale version cache when the daemon refuses a truncating fold', async () => {

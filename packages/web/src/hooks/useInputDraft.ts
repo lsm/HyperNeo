@@ -892,9 +892,26 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           // "Guard refused" = the composer shows something OTHER than what
           // this chain applied (chainDraft) or this refresh just applied
           // (the draft itself): newer user state the application skipped.
-          const guardRefused = current.trim() !== '' && current !== chainDraft && current !== draft;
+          // SESSION-GATED: after a switch the signal backs the NEW session's
+          // composer — classifying its text as "guard refused" would fold the
+          // OLD session's transcripts into a session they never belonged to.
+          const guardRefused =
+            stillCurrent() && current.trim() !== '' && current !== chainDraft && current !== draft;
           if (guardRefused && !alreadyFolded) {
-            const transcripts = transcriptsFromMerge(draft, baseline) ?? draft ?? '';
+            // Structural extraction first (the daemon's baseline snapshot is
+            // exact across tabs); fall back to the landing aggregate ONLY
+            // when its commit order is trusted. With NEITHER there is no
+            // trustworthy transcript source: folding the ENTIRE server draft
+            // (the old fallback) would resurrect non-voice content and
+            // duplicate the transcript — keep the clear owed instead.
+            const transcripts =
+              transcriptsFromMerge(draft, baseline) ??
+              (isLandingAggregateOrdered(sessionId) ? getLandingTranscript(sessionId) : null);
+            if (transcripts === null) {
+              oweClear();
+              flushKickRef.current();
+              return;
+            }
             if (transcripts.trim() !== '') {
               const combined = appendDraftText(current, transcripts);
               const fits =
@@ -1108,6 +1125,11 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         key: string;
         claimId: string;
         ts: number;
+        // Set when the content was captured from the ACTIVE composer (the
+        // active-merge retries below) rather than a departed session's
+        // backup: an idle composer at retry time then means the user SENT or
+        // deleted that text, and adopting it back would resurrect it.
+        fromActive?: boolean;
       }
     >
   >(new Map());
@@ -1159,7 +1181,14 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       // marker the newer claim's acknowledged retire writes.
       const requeueClaim = (
         flushSessionId: string,
-        entry: { content: string; generation: number; key: string; claimId: string; ts: number }
+        entry: {
+          content: string;
+          generation: number;
+          key: string;
+          claimId: string;
+          ts: number;
+          fromActive?: boolean;
+        }
       ) => {
         const newer = pendingBackupFlushRef.current.get(flushSessionId);
         if (
@@ -1172,9 +1201,27 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         pendingBackupFlushRef.current.set(flushSessionId, entry);
         scheduleFlushRetry();
       };
-      for (const [flushSessionId, { content, generation, key, claimId, ts }] of queued) {
+      for (const [
+        flushSessionId,
+        { content, generation, key, claimId, ts, fromActive },
+      ] of queued) {
         if (flushSessionId === currentSessionIdRef.current) {
           if (contentSignal.peek().trim() === '') {
+            if (fromActive) {
+              // The queued content was the ACTIVE composer text captured when
+              // its merge was declined — an empty composer now means the user
+              // SENT or deleted that text since. Adopting it back through the
+              // idle branch would resurrect it; retire the durable claim (its
+              // supersede marker also blocks stale restores). A TRANSIENT
+              // pre-load '' (initial load not settled) is not a user clear —
+              // keep the claim and retry after the load settles.
+              if (initialLoadSettledRef.current !== flushSessionId) {
+                requeueClaim(flushSessionId, { content, generation, key, claimId, ts, fromActive });
+                continue;
+              }
+              if (key) retireDraftBackupClaim({ key, generation, ts });
+              continue;
+            }
             // ADOPT into the idle composer through the daemon-side MERGE: it
             // persists the backup PLUS any merged transcripts in one atomic
             // write (the backup alone is transcript-free), so the durable
@@ -1271,6 +1318,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                     key,
                     claimId: activeClaimId,
                     ts,
+                    fromActive: true,
                   });
                   return;
                 }
@@ -1302,6 +1350,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                   key,
                   claimId: activeClaimId,
                   ts,
+                  fromActive: true,
                 });
               })
               .catch(() => {
@@ -1311,6 +1360,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                   key,
                   claimId: activeClaimId,
                   ts,
+                  fromActive: true,
                 });
               });
           }
