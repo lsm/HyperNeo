@@ -19,6 +19,7 @@ const LAZY_LOAD_TIMEOUT = 5000;
 
 import type { Space, SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
 import { signal } from '@preact/signals';
+import { connectionState } from '../../lib/state';
 
 let mockLoading = signal(false);
 let mockError = signal<string | null>(null);
@@ -67,22 +68,30 @@ const { mockToastWarning } = vi.hoisted(() => ({
 
 // Captured hub.onEvent subscriptions so tests can emit client events into the
 // component (externalEvent.dropped drop surfacing). Each entry is the handler
-// registered for that client event name.
-const { mockGetHub, hubEventHandlers } = vi.hoisted(() => {
+// registered for that client event name. getHub can be made to reject to
+// simulate a daemon-offline mount, then succeed on reconnection.
+const { mockGetHub, hubEventHandlers, setGetHubResult } = vi.hoisted(() => {
   const hubEventHandlers = new Map<string, Array<(event: unknown) => void>>();
-  const mockGetHub = vi.fn().mockImplementation(async () => ({
-    onEvent: (name: string, handler: (event: unknown) => void) => {
-      const existing = hubEventHandlers.get(name) ?? [];
-      existing.push(handler);
-      hubEventHandlers.set(name, existing);
-      return () => {
-        const handlers = hubEventHandlers.get(name);
-        const idx = handlers?.indexOf(handler) ?? -1;
-        if (idx >= 0) handlers!.splice(idx, 1);
-      };
-    },
-  }));
-  return { mockGetHub, hubEventHandlers };
+  let hubResult: Promise<unknown> | null = null;
+  const mockGetHub = vi.fn().mockImplementation(() => {
+    if (hubResult) return hubResult;
+    return Promise.resolve({
+      onEvent: (name: string, handler: (event: unknown) => void) => {
+        const existing = hubEventHandlers.get(name) ?? [];
+        existing.push(handler);
+        hubEventHandlers.set(name, existing);
+        return () => {
+          const handlers = hubEventHandlers.get(name);
+          const idx = handlers?.indexOf(handler) ?? -1;
+          if (idx >= 0) handlers!.splice(idx, 1);
+        };
+      },
+    });
+  });
+  const setGetHubResult = (result: Promise<unknown> | null) => {
+    hubResult = result;
+  };
+  return { mockGetHub, hubEventHandlers, setGetHubResult };
 });
 
 // Real Preact signal for the configure tab (read during render — needs reactivity)
@@ -454,6 +463,8 @@ beforeEach(() => {
   mockToastWarning.mockClear();
   mockGetHub.mockClear();
   hubEventHandlers.clear();
+  setGetHubResult(null);
+  connectionState.value = 'connected';
   mockEnsureConfigData.mockClear();
   mockEnsureConfigData.mockResolvedValue(undefined);
   mockEnsureWorkflowDetails.mockClear();
@@ -1159,6 +1170,76 @@ describe('SpaceIsland — externalEvent.dropped surfacing', () => {
     await emitDrop({ ...baseDrop, eventId: 'evt-distinct', deliveryKey: 'dk-c' });
     await waitFor(() => {
       expect(mockToastWarning).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('re-toasts the same event after the dedupe window expires', async () => {
+    // Subscribe under real timers first — waitFor needs a live clock and the
+    // component's getHub resolves on the microtask queue.
+    const view = render(<SpaceIsland spaceId="space-1" viewMode="overview" />);
+    await waitFor(() => {
+      expect(hubEventHandlers.get('externalEvent.dropped')).toBeTruthy();
+    });
+    const drop = {
+      spaceId: 'space-1',
+      eventId: 'evt-window',
+      topic: 'github/o/r/pull_request/42.review_comment_polled',
+      summary: 'PR review comment',
+      category: 'retry_exhausted',
+      agentName: 'coder',
+    };
+    for (const handler of hubEventHandlers.get('externalEvent.dropped') ?? []) handler(drop);
+    await waitFor(() => {
+      expect(mockToastWarning).toHaveBeenCalledTimes(1);
+    });
+
+    vi.useFakeTimers();
+    try {
+      // Same event again inside the window: suppressed.
+      for (const handler of hubEventHandlers.get('externalEvent.dropped') ?? []) handler(drop);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(mockToastWarning).toHaveBeenCalledTimes(1);
+
+      // Past the 60s window the key expires — a re-drop toasts again.
+      await vi.advanceTimersByTimeAsync(61_000);
+      for (const handler of hubEventHandlers.get('externalEvent.dropped') ?? []) handler(drop);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(mockToastWarning).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+    view.unmount();
+  });
+
+  it('re-subscribes after the connection recovers from a daemon-offline mount', async () => {
+    // Mount while the daemon is unreachable: getHub rejects, no subscription.
+    setGetHubResult(Promise.reject(new Error('WebSocket closed before open')));
+    connectionState.value = 'disconnected';
+    render(<SpaceIsland spaceId="space-1" viewMode="overview" />);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(hubEventHandlers.get('externalEvent.dropped')).toBeFalsy();
+
+    // Connection recovers → the effect re-subscribes through the new hub.
+    setGetHubResult(null);
+    connectionState.value = 'connecting';
+    connectionState.value = 'connected';
+    await waitFor(() => {
+      expect(hubEventHandlers.get('externalEvent.dropped')?.length).toBeGreaterThan(0);
+    });
+
+    // The re-established handler still toasts drops.
+    for (const handler of hubEventHandlers.get('externalEvent.dropped') ?? []) {
+      handler({
+        spaceId: 'space-1',
+        eventId: 'evt-after-reconnect',
+        topic: 'github/o/r/pull_request/42.review_comment_polled',
+        summary: 'PR review comment',
+        category: 'retry_exhausted',
+        agentName: 'coder',
+      });
+    }
+    await waitFor(() => {
+      expect(mockToastWarning).toHaveBeenCalledTimes(1);
     });
   });
 });

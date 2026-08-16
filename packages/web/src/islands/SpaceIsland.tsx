@@ -28,6 +28,7 @@ import {
   pushOverlayHistory,
 } from '../lib/router';
 import { sessionStore } from '../lib/session-store';
+import { connectionState } from '../lib/state';
 import type { SpaceViewMode } from '../lib/signals';
 import {
   currentSpaceAgentHandleSignal,
@@ -226,46 +227,69 @@ export default function SpaceIsland({
   // Surface dropped external events (retry budget exhausted / queue TTL
   // expired) for THIS space so a lost PR review comment or CI event is visible
   // instead of silently dead-lettering. Events for other spaces are ignored;
-  // a burst of drops collapses per (topic, eventId) — the same event can fan
-  // out to multiple deliveries, but a genuinely distinct later drop on the
-  // same topic still toasts.
+  // one event fanned out to multiple deliveries collapses to a single toast,
+  // and the dedupe key expires after a short window so recurring drops on the
+  // same event are not suppressed forever.
   useEffect(() => {
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
-    const toastedEventIds = new Set<string>();
+    /** eventId → epoch ms the toast fired; evicted lazily once past the window. */
+    const toastedAt = new Map<string, number>();
+    const TOAST_DEDUPE_WINDOW_MS = 60_000;
 
-    void (async () => {
-      const hub = await connectionManager.getHub();
-      if (cancelled) return;
-      unsubscribe = hub.onEvent<{
-        spaceId: string;
-        eventId: string;
-        topic: string;
-        summary: string;
-        category: string;
-        agentName: string;
-      }>('externalEvent.dropped', (event) => {
-        if (event.spaceId !== spaceId) return;
-        if (toastedEventIds.has(event.eventId)) return;
-        toastedEventIds.add(event.eventId);
-        const detail =
-          event.category === 'ttl_expired'
-            ? 'expired before delivery'
-            : 'exhausted delivery retries';
-        toast.warning(
-          `External event dropped for ${event.agentName}: ${event.summary} (${detail})`,
-          8000
-        );
+    const subscribe = () => {
+      void (async () => {
+        const hub = await connectionManager.getHub();
+        if (cancelled) return;
+        unsubscribe = hub.onEvent<{
+          spaceId: string;
+          eventId: string;
+          topic: string;
+          summary: string;
+          category: string;
+          agentName: string;
+        }>('externalEvent.dropped', (event) => {
+          if (event.spaceId !== spaceId) return;
+          const now = Date.now();
+          const lastToastAt = toastedAt.get(event.eventId);
+          if (lastToastAt !== undefined && now - lastToastAt < TOAST_DEDUPE_WINDOW_MS) return;
+          toastedAt.set(event.eventId, now);
+          if (toastedAt.size > 64) {
+            for (const [key, at] of toastedAt) {
+              if (now - at >= TOAST_DEDUPE_WINDOW_MS) toastedAt.delete(key);
+            }
+          }
+          const detail =
+            event.category === 'ttl_expired'
+              ? 'expired before delivery'
+              : 'exhausted delivery retries';
+          toast.warning(
+            `External event dropped for ${event.agentName}: ${event.summary} (${detail})`,
+            8000
+          );
+        });
+      })().catch(() => {
+        // Hub unavailable (daemon offline) — the connectionState subscription
+        // below retries once the connection recovers. Never surface as an
+        // unhandled rejection.
       });
-    })().catch(() => {
-      // Hub unavailable (daemon offline) — nothing to subscribe through; the
-      // drop remains visible in the space's delivery log. Never surface as an
-      // unhandled rejection.
+    };
+
+    subscribe();
+    // Re-subscribe after a disconnect → reconnect: the previous hub died with
+    // the socket, so drops arriving on the new connection would otherwise stay
+    // invisible for the remainder of this mount.
+    const unsubscribeConnection = connectionState.subscribe(() => {
+      if (connectionState.value !== 'connected') return;
+      unsubscribe?.();
+      unsubscribe = undefined;
+      subscribe();
     });
 
     return () => {
       cancelled = true;
       unsubscribe?.();
+      unsubscribeConnection();
     };
   }, [spaceId]);
 
