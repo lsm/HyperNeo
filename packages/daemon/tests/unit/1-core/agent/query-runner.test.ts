@@ -1399,9 +1399,10 @@ describe('QueryRunner', () => {
       // Should NOT contain retry count language
       const userMessage = handleErrorSpy.mock.calls[0][3] as string;
       expect(userMessage).not.toContain('attempt(s)');
-      // The hint prints the effective startup window; no test infrastructure
-      // sets HYPERNEO_SDK_STARTUP_TIMEOUT_MS, so the module-load snapshot is
-      // the 60s default. Pins both the default and the effective-value hint.
+      // The hint prints the effective startup window. The unit/vitest preloads
+      // delete any ambient override, and every test that sets it restores in
+      // finally (acp-query-runner.test.ts), so the module-load snapshot here
+      // is the 60s default. Pins both the default and the effective-value hint.
       expect(userMessage).toContain('current: 60000ms');
     });
 
