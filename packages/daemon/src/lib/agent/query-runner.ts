@@ -85,7 +85,17 @@ function defaultSpawn(opts: SpawnOptions): SpawnedProcess {
   return proc as unknown as SpawnedProcess;
 }
 
-const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
+// 60s: a cold-starting SDK subprocess (fresh worktree + resumed transcript)
+// measures ~4–5s solo, and a herd of simultaneous cold-starts (e.g. a daemon
+// restart fanning out resumed sessions) exceeded the old 15s default across
+// the board. The timer only guards silent hangs — real spawn failures exit
+// and are detected immediately — so a generous default is cheap insurance.
+// Ordering: this window stays BELOW the delivery-turn stall watchdog's
+// no-activity window (default 3min, see query-options-builder.ts build()) so
+// a silently hung startup is aborted here first. The delivery lane's 35s
+// settlementGraceMs (app.ts) is ordered against the job queue's 30s
+// acknowledgment bound, not against this window.
+const DEFAULT_STARTUP_TIMEOUT_MS = 60000;
 /** Max time to wait for subprocess exit before retrying after startup timeout. */
 const RETRY_EXIT_TIMEOUT_MS = 5000;
 

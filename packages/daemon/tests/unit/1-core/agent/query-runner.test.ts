@@ -1399,6 +1399,10 @@ describe('QueryRunner', () => {
       // Should NOT contain retry count language
       const userMessage = handleErrorSpy.mock.calls[0][3] as string;
       expect(userMessage).not.toContain('attempt(s)');
+      // The hint prints the effective startup window; no test infrastructure
+      // sets HYPERNEO_SDK_STARTUP_TIMEOUT_MS, so the module-load snapshot is
+      // the 60s default. Pins both the default and the effective-value hint.
+      expect(userMessage).toContain('current: 60000ms');
     });
 
     it('should preserve sdkSessionId and surface error for conversation-not-found', async () => {
@@ -2892,10 +2896,9 @@ describe('QueryRunner API validation error parsing', () => {
 });
 
 describe('QueryRunner startup timeout handling', () => {
-  it('should define startup timeout constant', () => {
-    const STARTUP_TIMEOUT_MS = 15000;
-    expect(STARTUP_TIMEOUT_MS).toBe(15000);
-  });
+  // The 60s default itself is pinned by the 'should pass actionable user
+  // message with timeout hint to handleError (startup timeout)' test above,
+  // which asserts the hint prints the effective default ('current: 60000ms').
 
   it('should track timeout state', () => {
     let startupTimeoutReached = false;
@@ -2918,7 +2921,7 @@ describe('QueryRunner startup timeout handling', () => {
 
   it('should clear timeout on first message', () => {
     let timerCleared = false;
-    const timer = setTimeout(() => {}, 15000);
+    const timer = setTimeout(() => {}, 60000);
 
     // Simulate clearing on first message
     clearTimeout(timer);
