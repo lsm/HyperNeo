@@ -637,13 +637,20 @@ The contract (`TaskAgentManager.registerCompletionCallback`):
   flush is persisted as a `steer`; its consumption counts only when its
   OWNING turn — the earliest turn terminal at/after the steer's consumption,
   not any later turn — also terminated (completed → success, dead → block). The stamp
-  is written BEFORE the inject (a pre-generated id passed as the injection's
-  explicit message id — the inject awaits SDK consumption, so a post-inject
-  stamp would leave a crash window with an unstamped execution under way),
+  is written BEFORE the awaited goal/memory construction that precedes the
+  inject, and the same pre-generated id is passed as the injection's explicit
+  message id (the inject awaits SDK consumption, so a post-inject stamp would
+  leave a crash window with an unstamped execution under way — and a
+  post-await stamp would leave one during the construction awaits),
   and the timer RE-ARMS while a delivery is in flight or the session is not
   idle, so a turn longer than the delay is still repaired after it ends. A
-  stamped kickoff with NO delivery row and nothing in flight (crash between
-  the stamp and the enqueue) BLOCKS for the runtime's re-spawn machinery, and
+  stamped kickoff with NO delivery row and nothing in flight consults the
+  kickoff's PERSISTED MESSAGE ROW (it survives job-queue cleanup):
+  `send_status` `'consumed'`/`'failed'` COMPLETES (the job row aged out of the
+  7-day retention window, or the activation used the legacy inline path with
+  no job row at all — finished work must not be re-spawned), while
+  still-`'enqueued'` or a gone row (crash between the stamp and the enqueue)
+  BLOCKS for the runtime's re-spawn machinery, and
   the settlement's uuid-less fallback `session.error` is attributed via the
   durable dead rows — it only blocks when the kickoff itself dead-lettered,
   never an unrelated non-kickoff turn.

@@ -66,6 +66,8 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
   let turnOutcome: 'completed' | 'dead' | null;
   /** Stand-in: a dead turn row NOT belonging to the stamped kickoff. */
   let deadNonKickoffTurn: boolean;
+  /** Stand-in: the kickoff's persisted sdk_messages send_status (null = gone). */
+  let kickoffSendStatus: string | null;
   let executionId: string;
   let completed: boolean;
   /** Mutable stand-in for the session's active (pending/processing) delivery-job set. */
@@ -130,10 +132,17 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     // (deliveryTurnOutcomeSince): null = no settled turn for this activation.
     turnOutcome = null;
     deadNonKickoffTurn = false;
+    kickoffSendStatus = null;
     const config = {
       db: {
         getDatabase: () => db,
         // hasActiveDeliveryJob / reconciliation resolve job state from here.
+        getSDKMessageRepo: () => ({
+          getDeliveryContent: (_sid: string, uuid: string) =>
+            uuid === 'kickoff-uuid' && kickoffSendStatus
+              ? { content: 'x', sendStatus: kickoffSendStatus }
+              : null,
+        }),
         getJobQueueRepo: () => ({
           activeDeliveryMessageUuids: () => activeJobs,
           hasProcessingDeliveryForSession: () => processingTurnJobs.size > 0,
@@ -476,6 +485,40 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     await new Promise<void>((resolve) => setTimeout(resolve, 60));
     expect(completed).toBe(false);
     expect(nodeStatus()).toBe('blocked');
+  });
+
+  it('an expired settlement (consumed message row, job row aged out) completes (Codex P2)', async () => {
+    // Daemon down past the 7-day job retention: the completed kickoff's job
+    // row is gone but its sdk_messages row survives as 'consumed' — the node
+    // must complete, not block-and-re-spawn finished work.
+    kickoffSendStatus = 'consumed';
+    turnOutcome = null; // job row gone
+    await publishIdle(); // suppressed while the job was active
+    activeJobs.clear();
+    processingTurnJobs.clear();
+    await new Promise<void>((resolve) => setTimeout(resolve, 60));
+    expect(completed).toBe(true);
+    expect(nodeStatus()).not.toBe('blocked');
+  });
+
+  it('a LEGACY (v2-off) activation with no job row completes via the message row (Codex P2)', async () => {
+    // Stamped but delivered via the legacy inline path (no job row ever);
+    // crash after the legacy turn idled but before the listener. The consumed
+    // message row classifies it as delivered → complete, not lost.
+    const prev = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+    process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
+    try {
+      kickoffSendStatus = 'consumed';
+      turnOutcome = null;
+      activeJobs.clear();
+      processingTurnJobs.clear();
+      await publishIdle(); // the legacy idle — no suppression (no rows)
+      await new Promise<void>((resolve) => setTimeout(resolve, 60));
+      expect(completed).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = prev;
+    }
   });
 
   it('the settlement fallback session.error for a NON-kickoff dead turn does not block', async () => {

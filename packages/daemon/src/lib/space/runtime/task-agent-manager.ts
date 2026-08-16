@@ -1321,6 +1321,21 @@ export class TaskAgentManager {
       });
 
       if (shouldKickoff) {
+        // Stamp the kickoff id BEFORE the awaited goal/memory construction
+        // below: a daemon exit during those awaits would otherwise rehydrate
+        // an unstamped in_progress execution that neither the live settle nor
+        // the reconciliation can ever resolve. (Task #944 review.)
+        const stampedKickoffMessageUuid = generateUUID();
+        const stampedExecution = this.config.nodeExecutionRepo.getByAgentSessionId(actualSessionId);
+        if (stampedExecution) {
+          this.config.nodeExecutionRepo.update(stampedExecution.id, {
+            data: {
+              ...(stampedExecution.data ?? {}),
+              kickoffMessageUuid: stampedKickoffMessageUuid,
+            },
+          });
+        }
+
         const goal = task.goalId ? this.config.goalService?.getGoal(task.goalId) : null;
         const linkedGoal = goal?.spaceId === task.spaceId ? goal : null;
 
@@ -1357,22 +1372,11 @@ export class TaskAgentManager {
         const kickoffMessage = runtimeContract
           ? `${initialMessage}\n\n${runtimeContract}`
           : initialMessage;
-        // Durable correlation of this activation's expected kickoff with the
-        // node execution: the crash-window reconciliation only accepts the
-        // settlement of THIS delivery, never any turn that happened to run
-        // (e.g. a pending-message flush racing ahead of the kickoff). The id
-        // is generated and stamped BEFORE the inject — injectMessageIntoSession
-        // awaits SDK consumption, so stamping afterwards would leave a window
-        // where a crash strands an unstamped execution with delivery underway,
-        // which both the live settle and the reconciliation would reject
-        // forever. (Task #944 review.)
-        const kickoffMessageUuid = generateUUID();
-        const owningExecution = this.config.nodeExecutionRepo.getByAgentSessionId(actualSessionId);
-        if (owningExecution) {
-          this.config.nodeExecutionRepo.update(owningExecution.id, {
-            data: { ...(owningExecution.data ?? {}), kickoffMessageUuid },
-          });
-        }
+        // The kickoff id was already generated and stamped before the awaited
+        // construction above (stampedKickoffMessageUuid) — reuse it for the
+        // inject's explicit message id. injectMessageIntoSession awaits SDK
+        // consumption, so a per-inject generation would leave a window where
+        // the durable stamp lags the delivery. (Task #944 review.)
         await this.injectMessageIntoSession(
           spawned,
           kickoffMessage,
@@ -1381,7 +1385,7 @@ export class TaskAgentManager {
           true,
           undefined,
           'task',
-          kickoffMessageUuid
+          stampedKickoffMessageUuid
         );
       }
       return actualSessionId;
@@ -3934,11 +3938,25 @@ export class TaskAgentManager {
               scheduleReconcile();
               return;
             }
-            // Stamped kickoff, no settlement row, nothing in flight: the
-            // daemon exited between the execution update (stamp) and the
-            // inject's enqueue. No settlement or idle event can ever arrive —
-            // block so the runtime's blocked-execution re-spawn machinery
-            // re-activates the node with a fresh kickoff. (Task #944 review.)
+            // Stamped kickoff, no settlement row, nothing in flight. Consult
+            // the kickoff's PERSISTED MESSAGE ROW (it survives job-queue
+            // cleanup) to classify: still 'enqueued' (or gone) → the daemon
+            // exited between the stamp and the inject's enqueue — nothing can
+            // ever settle, so block for the runtime's re-spawn machinery.
+            // 'consumed'/'failed' → the delivery DID happen but its job row
+            // aged out of the 7-day retention window, or the activation used
+            // the legacy inline path (no job row at all) — complete rather
+            // than re-spawning finished work. (Task #944 review.)
+            const persisted = this.config.db
+              .getSDKMessageRepo()
+              .getDeliveryContent(subSessionId, kickoffMessageUuid);
+            if (
+              persisted &&
+              (persisted.sendStatus === 'consumed' || persisted.sendStatus === 'failed')
+            ) {
+              completeFromDeliveryState();
+              return;
+            }
             fireTerminalError(
               'Task-agent kickoff delivery was lost before enqueue (daemon crash during activation); execution blocked for re-spawn.'
             );
