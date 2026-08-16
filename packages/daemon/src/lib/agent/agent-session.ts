@@ -2115,7 +2115,8 @@ export class AgentSession
         content,
         _parentToolUseId,
         alreadyConsumed,
-        claimGuard
+        claimGuard,
+        batchUuids
       );
     } finally {
       this.deliveryTurnDriveCount--;
@@ -2132,7 +2133,8 @@ export class AgentSession
     content: string | MessageContent[],
     _parentToolUseId?: string | null,
     alreadyConsumed = false,
-    claimGuard?: () => boolean
+    claimGuard?: () => boolean,
+    batchUuids?: string[]
   ): Promise<DriveTurnOutcome> {
     // Timestamp gates the terminal-error read to "fired during THIS turn" — a
     // stale error from a prior turn must not turn a clean turn into a retry.
