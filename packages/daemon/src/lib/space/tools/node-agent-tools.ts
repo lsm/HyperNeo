@@ -841,6 +841,25 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
           data: normalized,
         });
 
+        // Write-once PR memory at RECORD time: a PR-bearing payload (a
+        // `link kind:'pr'`, or a legacy `pr_url` field on any shape) is
+        // remembered under the reserved hook id, so a later same-key
+        // artifact overwrite cannot erase the run's PR-bound identity from
+        // the no-PR completion gate (task #918).
+        const prUrlInPayload =
+          shape === 'link' && normalized.kind === 'pr'
+            ? typeof normalized.url === 'string'
+              ? normalized.url
+              : ''
+            : typeof normalized.pr_url === 'string'
+              ? normalized.pr_url
+              : typeof normalized.prUrl === 'string'
+                ? normalized.prUrl
+                : '';
+        if (prUrlInPayload) {
+          config.artifactProfile?.rememberPrimaryLinkUrl?.(workflowRunId, prUrlInPayload);
+        }
+
         logAudit('save_artifact', {
           shape,
           kind: kind ?? undefined,

@@ -1157,6 +1157,8 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
           const strict = ctx.artifactProfile.resolvePrimaryLinkUrlStrict(runId);
           return strict.readable ? strict.url : null;
         },
+        resolveInitialPrimaryLinkUrl: (runId) =>
+          ctx.artifactProfile.resolveInitialPrimaryLinkUrl(runId),
         spaceManager: ctx.spaceManager,
         goalService: ctx.goalService,
         ...overrides,
@@ -3342,6 +3344,107 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
       executions.find((e) => e.agentSessionId === 'reclosed-replacement-session')?.status
     ).toBe('in_progress');
     expect(interrupted).toEqual([]);
+  });
+
+  test('a decision artifact overwriting its pr_url cannot erase PR-bound identity', async () => {
+    // A legacy/custom workflow can record its PR only as pr_url on a
+    // kindless decision artifact. A later same-key save replaces the row's
+    // entire data payload and may omit pr_url — the current-state resolver
+    // then reads '' (a successful read, not a failure). The immutable
+    // initial-identity resolver still remembers the PR, so the no-PR gate
+    // rejects instead of granting validation-only completion.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    const artifactRepo = new WorkflowRunArtifactRepository(ctx.db);
+    // Initial decision artifact carries the PR; the record-time write-once
+    // memory stamps it under the reserved hook id (as save_artifact now
+    // does for PR-bearing payloads).
+    artifactRepo.upsert({
+      id: 'artifact-historical-pr',
+      runId: task.workflowRunId!,
+      nodeId: 'Review',
+      artifactType: 'decision',
+      artifactKey: 'current',
+      data: { pr_url: 'https://github.com/owner/repo/pull/777' },
+    });
+    ctx.artifactProfile.rememberPrimaryLinkUrl(
+      task.workflowRunId!,
+      'https://github.com/owner/repo/pull/777'
+    );
+    // A later same-key save overwrites the payload WITHOUT pr_url.
+    artifactRepo.upsert({
+      id: 'artifact-historical-pr-2',
+      runId: task.workflowRunId!,
+      nodeId: 'Review',
+      artifactType: 'decision',
+      artifactKey: 'current',
+      data: { summary: 'outcome rewritten without the PR link' },
+    });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'Review',
+      agentName: 'Review',
+      agentId: ctx.agentId,
+      status: 'idle',
+    });
+
+    const result = await makeValidationTool().complete_validation_task({
+      task_id: task.id,
+      validation_outcome: 'should be refused',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    // The write-once memory survives the overwrite and feeds BOTH the
+    // current-state and historical resolvers — either rejection names the PR.
+    expect(parsed.error).toContain('https://github.com/owner/repo/pull/777');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
+  });
+
+  test('a review round trip back to in_progress cannot be overridden by the stale call', async () => {
+    // submit_for_approval flips in_progress → review (checkpoint stamped);
+    // a human REJECTS back to in_progress (checkpoint cleared) — all while
+    // this call awaits its reads. Every status/checkpoint predicate then
+    // passes as if nothing happened; only the task-row generation
+    // (updatedAt) binds the write to the state validated at entry.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const taskId = await createTask('in_progress');
+    const originalGetTask = ctx.taskManager.getTask.bind(ctx.taskManager);
+    let roundTripped = false;
+    const getTaskSpy = spyOn(ctx.taskManager, 'getTask').mockImplementation(async (id: string) => {
+      if (id === taskId && !roundTripped) {
+        roundTripped = true;
+        // Submit for review, then the human rejects — inside setTaskStatus'
+        // reread, before the precondition observes it.
+        ctx.taskRepo.updateTask(taskId, {
+          status: 'review',
+          pendingCheckpointType: 'task_completion',
+          pendingCompletionReason: 'needs human approval',
+        });
+        ctx.taskRepo.updateTask(taskId, {
+          status: 'in_progress',
+          pendingCheckpointType: null,
+          pendingCompletionReason: null,
+        });
+      }
+      return originalGetTask(taskId);
+    });
+
+    try {
+      const result = await makeValidationTool().complete_validation_task({
+        task_id: taskId,
+        validation_outcome: 'should be refused',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+
+      expect(parsed.success).toBe(false);
+      expect(parsed.error).toContain('modified during completion');
+      // The human's rejection stands.
+      expect(ctx.taskRepo.getTask(taskId)?.status).toBe('in_progress');
+      expect(ctx.taskRepo.getTask(taskId)?.result).toBeNull();
+    } finally {
+      getTaskSpy.mockRestore();
+    }
   });
 
   test('a metadata-only run edit during the cascade does not stand the sweep down', async () => {

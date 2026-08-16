@@ -77,6 +77,38 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
     return this.collectPrimaryLink(runId).url;
   }
 
+  /**
+   * Write-once memory of a run's primary-link (PR) URL, stored under the
+   * RESERVED hook id (no user-defined hook can write there). Called from the
+   * artifact write path at RECORD time so a later same-key artifact overwrite
+   * (a kindless decision row rewritten without its pr_url) cannot erase the
+   * run's PR-bound identity: resolveInitialPrimaryLinkUrl reads the reserved
+   * state first. Idempotent — the first recorded URL wins; later calls with
+   * a different URL do not rewrite history.
+   */
+  rememberPrimaryLinkUrl(runId: string, url: string): void {
+    const trimmed = url.trim();
+    if (!trimmed) return;
+    try {
+      const hookStateRepo = new WorkflowHookStateRepository(this.db);
+      const reserved = hookStateRepo.get(runId, PR_READY_VALIDATED_IDENTITY_HOOK_ID);
+      if (reserved && legacyPrUrl(reserved.localState)) return; // first wins
+      const snapshot = hookStateRepo.ensure(runId, PR_READY_VALIDATED_IDENTITY_HOOK_ID, {
+        pr_url: trimmed,
+      });
+      if (!legacyPrUrl(snapshot.localState ?? {})) {
+        hookStateRepo.update(runId, PR_READY_VALIDATED_IDENTITY_HOOK_ID, {
+          expectedVersion: snapshot.version,
+          localState: { ...snapshot.localState, pr_url: trimmed },
+        });
+      }
+    } catch (err) {
+      log.warn(
+        `rememberPrimaryLinkUrl: failed to record PR identity for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
   resolvePrimaryLinkUrlStrict(runId: string): { url: string; readable: boolean } {
     const { url, fullyReadable } = this.collectPrimaryLink(runId);
     // A FOUND url answers "PR-bound" with certainty even when another source

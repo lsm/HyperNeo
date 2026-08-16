@@ -402,6 +402,16 @@ export interface CompleteValidationTaskHandlerDeps {
     'listByWorkflowRun' | 'listByAgentSessionId' | 'updateStatus'
   >;
   /**
+   * Resolves the run's FIRST primary-link (PR) identity — the immutable
+   * historical record (reserved hook state / validated handoff state / the
+   * oldest eligible artifact). Mutable current rows (e.g. a kindless
+   * `decision` artifact overwritten by a later save) can lose a recorded
+   * pr_url; when this resolver still returns one, the run WAS PR-bound and
+   * the no-PR gate must reject even though the current read is ''.
+   * Optional — when absent, only the current-state resolver is consulted.
+   */
+  resolveInitialPrimaryLinkUrl?: (workflowRunId: string) => string;
+  /**
    * Resolves a run's primary-link (PR) URL for the no-PR gate. Three-state:
    * a non-empty string is the PR (PR-bound → reject), '' means definitively
    * no PR, and null means the PR state could NOT be checked (hook-state or
@@ -581,6 +591,7 @@ export function createCompleteValidationTaskHandler(
     getWorkflowForRun,
     nodeExecutionRepo,
     resolvePrimaryLinkUrl,
+    resolveInitialPrimaryLinkUrl,
     spaceManager,
     interruptBySessionId,
     audit,
@@ -772,6 +783,17 @@ export function createCompleteValidationTaskHandler(
             error: `Task ${args.task_id} has a PR (${prUrl}); validation-only completion is for no-PR tasks. Use approve_task (if in review) or the normal PR merge path instead.`,
           });
         }
+        // Historical PR identity: mutable current rows can lose a recorded
+        // pr_url (a kindless decision artifact overwritten by a later save).
+        // The immutable initial-identity resolver still remembers it — a run
+        // that WAS PR-bound does not become no-PR by payload overwrite.
+        const initialPrUrl = resolveInitialPrimaryLinkUrl?.(task.workflowRunId) ?? '';
+        if (initialPrUrl) {
+          return jsonResult({
+            success: false,
+            error: `Task ${args.task_id}'s workflow run previously recorded a PR (${initialPrUrl}) that the current artifacts no longer carry; validation-only completion is not available. Use the normal PR review/merge path instead.`,
+          });
+        }
         // Run-lifecycle guard: the tick loop's completion detection only runs
         // when the run has node executions (`space-runtime.ts` early-returns on
         // an empty list), so completing a run's task while zero executions
@@ -912,6 +934,16 @@ export function createCompleteValidationTaskHandler(
       // The run every guard above evaluated against — the terminal write is
       // bound to this association remaining unchanged (see the precondition).
       const checkedWorkflowRunId = task.workflowRunId;
+      // The task-row generation validated at entry: a full in_progress →
+      // review → in_progress round trip (submit_for_approval followed by a
+      // human rejection) lands back on an allowed status with the checkpoint
+      // cleared — every status/checkpoint predicate passes as if nothing
+      // happened, and the stale call would override the human's rejection.
+      // The row's updatedAt binds the write to the generation validated
+      // here; any intervening task write (except a status move OUT of the
+      // allowed set, which the exact-status SQL predicate refuses with its
+      // own message) refuses.
+      const checkedTaskUpdatedAt = task.updatedAt;
 
       // `approvalSource: 'agent'` is passed unconditionally: setTaskStatus
       // stamps it atomically with the done commit on BOTH paths — review→done
@@ -987,6 +1019,19 @@ export function createCompleteValidationTaskHandler(
               `Task ${args.task_id}'s workflow run association changed during completion (expected ${expectedRunId ?? 'none'}, found ${actualRunId ?? 'none'}); refusing so the attached run's guards are evaluated. Re-check and retry if still appropriate.`
             );
           }
+          // Task-generation binding (LAST, after every specific check so
+          // their messages win): a review round trip returns the row to an
+          // allowed status with no checkpoint — only the generation stamp
+          // distinguishes it from the state validated at entry.
+          if (
+            checkedTaskUpdatedAt !== undefined &&
+            current.updatedAt !== checkedTaskUpdatedAt &&
+            (current.status === 'review' || current.status === 'in_progress')
+          ) {
+            throw new Error(
+              `Task ${args.task_id} was modified during completion (its row was rewritten — e.g. a submit_for_approval round trip with a human rejection — after this call validated it); refusing so the stale validation cannot override the newer lifecycle. Re-check and retry if still appropriate.`
+            );
+          }
           if (!actualRunId) return;
           const prUrl = resolvePrimaryLinkUrl(actualRunId);
           if (prUrl === null) {
@@ -997,6 +1042,12 @@ export function createCompleteValidationTaskHandler(
           if (prUrl) {
             throw new Error(
               `Task ${args.task_id} acquired a PR (${prUrl}) during completion; validation-only completion is for no-PR tasks. Use the normal approve/merge path instead.`
+            );
+          }
+          const initialPrUrlNow = resolveInitialPrimaryLinkUrl?.(actualRunId) ?? '';
+          if (initialPrUrlNow) {
+            throw new Error(
+              `Task ${args.task_id}'s workflow run carries a historical PR identity (${initialPrUrlNow}); validation-only completion is not available. Use the normal PR review/merge path instead.`
             );
           }
           // Run-active recheck: `stopActiveWork` cancels a `review` task's RUN

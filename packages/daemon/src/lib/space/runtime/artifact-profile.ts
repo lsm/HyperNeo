@@ -35,6 +35,14 @@ export interface WorkflowArtifactProfile {
   resolvePrimaryLinkUrlStrict?(runId: string): { url: string; readable: boolean };
 
   /**
+   * Write-once memory of a run's primary-link URL, persisted at RECORD time
+   * by the artifact write path so a later same-key overwrite cannot erase
+   * the run's PR-bound identity. Optional — absent, no memory is kept and
+   * the no-PR gate relies on current rows alone.
+   */
+  rememberPrimaryLinkUrl?(runId: string, url: string): void;
+
+  /**
    * Resolve the first primary link identity established for a run. Completion
    * safety checks use this immutable identity so a later artifact cannot swap
    * the reviewed PR for a different already-merged PR.
