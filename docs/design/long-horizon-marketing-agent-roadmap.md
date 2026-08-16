@@ -143,10 +143,11 @@ The target is one behavioral contract per PR, normally no more than 200 changed 
 #### V6. Migrate inactive LH inbox delivery
 
 - Preserve actor activation and inbox persistence.
-- Mark inbox rows terminal according to an explicit V2 receipt.
+- Mark inbox rows delivered only at the current `consumed` boundary, preserving existing behavior; durable V2 acceptance alone is insufficient because a later terminal V2 failure must not silently lose the message.
+- Persist the V2 job/message correlation and convert terminal failed/rejected delivery into another inbox attempt or a visible degraded state before the row leaves pending scans.
 - Prevent restart races from creating duplicate transcript rows.
 
-**Estimate:** 90–170 lines.
+**Estimate:** 100–180 lines.
 
 Task-agent and Space-chat injection require separate later migration because they also carry defer, image, cooldown, reset-context, topology, and reply-session behavior.
 
