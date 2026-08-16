@@ -16,22 +16,24 @@ vi.mock('../../connection-manager', () => ({
   connectionManager: { getHubIfConnected: vi.fn(() => ({ request: hubRequest })) },
 }));
 
+import { connectionManager } from '../../connection-manager.ts';
+import { connectionState } from '../../state.ts';
 import {
   consumeVoiceTranscriptLanded,
   enqueueTranscript,
   flushPendingTranscripts,
   getAnnouncedEntryIds,
   getDraftBackup,
+  getLandingGeneration,
   getLandingTranscript,
   getPendingTranscripts,
   hasClearTombstone,
   isLandingLive,
-  getLandingGeneration,
   markVoiceTranscriptLanded,
   peekExpiredDraftBackup,
   readTabId,
-  removeDraftBackupKey,
   removeClearTombstone,
+  removeDraftBackupKey,
   removePendingTranscript,
   resetVoiceTranscriptOutbox,
   retireDraftBackupClaim,
@@ -41,8 +43,6 @@ import {
   stopVoiceTranscriptOutboxFlush,
   voiceTranscriptLandedSignal,
 } from '../voice-transcript-outbox.ts';
-import { connectionManager } from '../../connection-manager.ts';
-import { connectionState } from '../../state.ts';
 
 // happy-dom's localStorage is unreliable across module boundaries — stub the
 // global with an in-memory Storage, the established pattern in this repo.
@@ -795,11 +795,14 @@ describe('voice transcript outbox', () => {
 
   it('keeps the supersede marker monotonic across racing acknowledgements', () => {
     // A newer generation's merge acknowledges FIRST; an older claim's late
-    // acknowledgement must not move the marker backward and un-supersede a
-    // sibling the newer marker already ruled out.
+    // acknowledgement writes its OWN record key (content-derived, so it can
+    // never overwrite a stronger record) and the effective boundary stays the
+    // maximum — a sibling the generation-2 record ruled out must remain
+    // unrestorable.
+    const suppressedTs = Date.now() - 10_000;
     localStorage.setItem(
-      'hyperneo_voice_transcript_outbox_v1.superseded.s1',
-      JSON.stringify({ generation: 2, beforeTs: Date.now() + 5000 })
+      'hyperneo_voice_transcript_outbox_v1.superseded.s1.2.1000',
+      JSON.stringify({ generation: 2, beforeTs: suppressedTs })
     );
     const lateOlderClaim = {
       key: 'hyperneo_voice_transcript_outbox_v1.draft.s1.late-tab',
@@ -811,24 +814,26 @@ describe('voice transcript outbox', () => {
       JSON.stringify({ content: 'older edits', ts: lateOlderClaim.ts, generation: 1 })
     );
     retireDraftBackupClaim(lateOlderClaim);
-    // The stronger (generation-2) marker survives the late write.
-    expect(
-      JSON.parse(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.superseded.s1') ?? '{}')
-    ).toEqual({ generation: 2, beforeTs: expect.any(Number) });
-    // A same-generation LATER claim still advances the marker.
-    const newerClaim = {
-      key: 'hyperneo_voice_transcript_outbox_v1.draft.s1.newest-tab',
-      generation: 2,
-      ts: Date.now() + 6000,
-    };
+    // The weaker record exists under its own key but never un-supersedes: a
+    // generation-2 backup written before the strong record's boundary stays
+    // unrestorable.
     localStorage.setItem(
-      newerClaim.key,
-      JSON.stringify({ content: 'newest edits', ts: newerClaim.ts, generation: 2 })
+      'hyperneo_voice_transcript_outbox_v1.draft.s1.ruled-out',
+      JSON.stringify({ content: 'stale sibling edits', ts: suppressedTs - 1, generation: 2 })
     );
-    retireDraftBackupClaim(newerClaim);
-    expect(
-      JSON.parse(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.superseded.s1') ?? '{}')
-    ).toEqual({ generation: 2, beforeTs: newerClaim.ts });
+    expect(peekExpiredDraftBackup('s1')?.content).not.toBe('stale sibling edits');
+    // A same-generation LATER claim still advances the effective boundary:
+    // a backup written after it becomes unrestorable too.
+    const newerBoundary = Date.now() + 60_000;
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.superseded.s1.2.2000',
+      JSON.stringify({ generation: 2, beforeTs: newerBoundary })
+    );
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.draft.s1.late-sibling',
+      JSON.stringify({ content: 'later sibling edits', ts: newerBoundary - 1, generation: 2 })
+    );
+    expect(peekExpiredDraftBackup('s1')?.content).not.toBe('later sibling edits');
   });
 
   it('clears the supersede record when a landing epoch restarts', () => {
@@ -851,26 +856,27 @@ describe('voice transcript outbox', () => {
     expect(peekExpiredDraftBackup('s1')?.content).toBe('fresh edits');
   });
 
-  it('delivers the OLDEST batch when concurrent enqueues exceed the cap', () => {
+  it('exposes EVERY live entry when concurrent enqueues exceed the cap', () => {
     // Two tabs' pre-write prunes cannot see each other's writes, so more
-    // than 20 live keys can exist. The flush batch must start at the OLDEST
-    // entry, or the hidden older transcript would append AFTER the newer
-    // ones and reverse the order the user dictated them in.
+    // than 20 live keys can exist. The flush selection must return ALL of
+    // them OLDEST-first: capping the batch would let one blocked session's
+    // 20 oldest entries hide another session's deliverable entry (#21) —
+    // global head-of-line blocking for up to the 24h TTL.
     for (let i = 0; i < 25; i++) {
       localStorage.setItem(
         `hyperneo_voice_transcript_outbox_v1.entry.over-${i}`,
         JSON.stringify({
           id: `over-${i}`,
-          sessionId: 's1',
+          sessionId: i === 24 ? 's2' : 's1',
           text: `t${i}`,
           createdAt: Date.now() + i,
         })
       );
     }
     const pending = getPendingTranscripts();
-    expect(pending).toHaveLength(20);
+    expect(pending).toHaveLength(25);
     expect(pending[0].text).toBe('t0'); // oldest-first
-    expect(pending[19].text).toBe('t19');
+    expect(pending[24].text).toBe('t24'); // the other session's entry is exposed too
   });
 
   it('drops this tab’s own local landing state when its expired marker is pruned', () => {
@@ -956,5 +962,196 @@ describe('voice transcript outbox', () => {
     const rest = getPendingTranscripts();
     expect(rest).toHaveLength(1);
     expect(rest[0].text).toBe('b');
+  });
+});
+
+describe('voice transcript outbox — review-hardening round', () => {
+  beforeEach(() => {
+    globalThis.localStorage = createMemoryStorage();
+    vi.useFakeTimers();
+    resetVoiceTranscriptOutbox();
+  });
+  afterEach(() => {
+    globalThis.localStorage = originalStorage;
+    vi.useRealTimers();
+  });
+
+  it('prefers the persisted marker generation when it is newer than the stale local one', () => {
+    // Another tab wrote a NEWER generation while this tab's storage event is
+    // still in flight: a backup tagged with the stale LOCAL generation would
+    // escape the newer landing's generation-matched retirement.
+    markVoiceTranscriptLanded('s1', 'local voice');
+    const local = voiceTranscriptLandedSignal.value.get('s1') ?? 0;
+    const newer = local + 500;
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+      JSON.stringify({ v: 1, ts: Date.now(), n: newer, text: 'agg', ids: [] })
+    );
+    expect(getLandingGeneration('s1')).toBe(newer);
+    // Hydrate the marker (as a reload would) so this tab can consume it — a
+    // CONSUMED marker never revives a generation afterwards.
+    startVoiceTranscriptOutboxFlush();
+    expect(voiceTranscriptLandedSignal.value.get('s1')).toBe(newer);
+    consumeVoiceTranscriptLanded('s1', newer);
+    expect(getLandingGeneration('s1')).toBeUndefined();
+    stopVoiceTranscriptOutboxFlush();
+  });
+
+  it('expires a hydrated landing on the MARKER timestamp, not the hydration time', () => {
+    // A marker written 23h ago is hydrated near its expiry: the local landing
+    // must die with the marker 1h later, not live a fresh 24h from hydration.
+    vi.useRealTimers();
+    const staleTs = Date.now() - 23 * 60 * 60 * 1000;
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+      JSON.stringify({ v: 1, ts: staleTs, n: 3, text: 'agg', ids: [] })
+    );
+    startVoiceTranscriptOutboxFlush(); // hydrates the marker into the signal
+    expect(isLandingLive('s1')).toBe(true);
+    vi.useFakeTimers();
+    vi.setSystemTime(staleTs + 25 * 60 * 60 * 1000); // 25h after the marker
+    expect(isLandingLive('s1')).toBe(false);
+    stopVoiceTranscriptOutboxFlush();
+  });
+
+  it('raises the persisted generation from a revalidated marker before writing', () => {
+    // A competing tab published a HIGHER generation (clock-scaled counters put
+    // it above this tab's computed seq) between the initial marker read and the
+    // compare-and-revalidate read: the write must not regress the persisted
+    // counter below the competing generation + 1.
+    vi.useRealTimers();
+    const now = Date.now();
+    const baseMarker = JSON.stringify({
+      v: 1,
+      ts: now - 1000,
+      n: now - 60_000,
+      text: null,
+      ids: [],
+    });
+    const higherMarker = JSON.stringify({
+      v: 1,
+      ts: now,
+      n: now + 100_000,
+      text: 'other tab',
+      ids: ['e-other'],
+    });
+    localStorage.setItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1', baseMarker);
+    const realGetItem = localStorage.getItem.bind(localStorage);
+    let reads = 0;
+    const spy = vi.spyOn(localStorage, 'getItem').mockImplementation((key: string) => {
+      if (key === 'hyperneo_voice_transcript_outbox_v1.entry.landed.s1') {
+        reads += 1;
+        // read #1: markVoiceTranscriptLanded's initial read (base marker);
+        // read #2: the CAS loop's revalidation read observes the competing
+        // tab's higher marker.
+        if (reads === 2) return higherMarker;
+      }
+      return realGetItem(key);
+    });
+    markVoiceTranscriptLanded('s1', 'my voice', 'e-mine');
+    spy.mockRestore();
+    const written = JSON.parse(
+      localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1')
+    );
+    expect(written.n).toBeGreaterThanOrEqual(now + 100_001);
+  });
+
+  it('writes the landed marker exactly once when no tab contends', () => {
+    vi.useRealTimers();
+    const setSpy = vi.spyOn(localStorage, 'setItem');
+    markVoiceTranscriptLanded('s1', 'solo voice', 'e-solo');
+    const markerWrites = setSpy.mock.calls.filter(
+      ([key]) => key === 'hyperneo_voice_transcript_outbox_v1.entry.landed.s1'
+    );
+    expect(markerWrites).toHaveLength(1);
+    setSpy.mockRestore();
+  });
+
+  it('unions persisted entries BEFORE the local entry (daemon append order)', () => {
+    vi.useRealTimers();
+    // The persisted marker's entry committed first; the local entry landed
+    // after — the aggregate must read persisted-then-local, or a fallback
+    // reconciliation restores the dictated order backwards.
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+      JSON.stringify({
+        v: 1,
+        ts: Date.now(),
+        n: 40,
+        text: null,
+        ids: ['e-first'],
+        entries: [{ id: 'e-first', text: 'first words' }],
+      })
+    );
+    // Seed a live local landing for the same session whose id the marker
+    // lacks, then rewrite through the CAS union path.
+    markVoiceTranscriptLanded('s1', 'second words', 'e-second');
+    expect(getLandingTranscript('s1')).toBe('first words second words');
+  });
+
+  it('never lists an announced entry id twice in the marker', () => {
+    vi.useRealTimers();
+    // The same entry id is recorded twice in one landing sequence (the
+    // per-entry record and the explicit id insertion) — the announced-id set
+    // must dedupe, or a duplicate evicts the oldest id at the cap and a delayed
+    // ack for it looks unannounced.
+    markVoiceTranscriptLanded('s1', 'hello', 'e-dup');
+    markVoiceTranscriptLanded('s1', 'hello', 'e-dup');
+    const marker = JSON.parse(
+      localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1')
+    );
+    expect(marker.ids).toEqual(['e-dup']);
+  });
+
+  it('prefers this tab’s own backup over a newer foreign record', () => {
+    // Two tabs hold deferred edits; the foreign record is NEWER, but
+    // restoring it while this tab's own key holds DIFFERENT edits would
+    // retire the wrong copy on reconciliation — recovery of an abandoned
+    // foreign record happens only when this tab has none.
+    vi.useRealTimers();
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.draft.s1.foreign-tab',
+      JSON.stringify({ content: 'foreign edits', ts: Date.now() + 50_000, generation: 3 })
+    );
+    saveDraftBackup('s1', 'own edits', 3); // this tab's own (older) key
+    // The landing must be live for a restore.
+    markVoiceTranscriptLanded('s1', 'voice');
+    expect(getDraftBackup('s1')).toBe('own edits');
+  });
+
+  it('keeps a fresh lower-generation backup restorable past an older supersede boundary', () => {
+    vi.useRealTimers();
+    // A tab stuck on an older generation (storage event unprocessed) writes a
+    // FRESH backup AFTER the committed reconciliation's boundary: its edits
+    // are newer user state and must stay restorable.
+    const boundary = Date.now();
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.superseded.s1.5.1',
+      JSON.stringify({ generation: 5, beforeTs: boundary })
+    );
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.draft.s1.stuck-tab',
+      JSON.stringify({ content: 'fresh old-gen edits', ts: boundary + 1000, generation: 2 })
+    );
+    expect(peekExpiredDraftBackup('s1')?.content).toBe('fresh old-gen edits');
+    // A pre-boundary lower-generation backup is still superseded.
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.draft.s1.stale-tab',
+      JSON.stringify({ content: 'stale old-gen edits', ts: boundary - 1000, generation: 2 })
+    );
+    expect(peekExpiredDraftBackup('s1')?.content).toBe('fresh old-gen edits');
+  });
+
+  it('clears per-record supersede keys when a landing epoch restarts', () => {
+    vi.useRealTimers();
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.superseded.s1.5.1',
+      JSON.stringify({ generation: 5, beforeTs: Date.now() })
+    );
+    // No retained landed marker — a fresh epoch begins.
+    markVoiceTranscriptLanded('s1', 'new voice', 'e-new');
+    expect(
+      localStorage.getItem('hyperneo_voice_transcript_outbox_v1.superseded.s1.5.1')
+    ).toBeNull();
   });
 });

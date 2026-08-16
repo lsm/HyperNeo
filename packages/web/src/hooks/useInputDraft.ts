@@ -46,6 +46,7 @@ import {
   saveClearTombstone,
   saveDraftBackup,
   voiceTranscriptLandedSignal,
+  type DraftBackupClaim,
 } from '../lib/voice/voice-transcript-outbox';
 
 /**
@@ -124,6 +125,15 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // would let the daemon dedup the request as the earlier merge and return
   // its value, replacing newer edits with older committed content.
   const activeMergeClaimsRef = useRef<Map<string, { claimId: string; content: string }>>(new Map());
+  // Backup retirements DEFERRED until the combined draft they produced is
+  // durably persisted: a reconciliation that folds a backup into the composer
+  // signal persists it only through the next debounced save, so deleting the
+  // durable copy at consumption would lose the user's edits to a reload,
+  // crash, or dropped socket inside that window. The first acknowledged save
+  // after the fold flushes the deferred retirement.
+  const deferredBackupRetiresRef = useRef<
+    Map<string, { generation: number; claim?: DraftBackupClaim }>
+  >(new Map());
 
   // Advance the cached draft version MONOTONICALLY: overlapping saves and
   // gets can acknowledge out of order, and an older response must never move
@@ -137,10 +147,39 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // Consume a landing generation and record it as reconciled — every path
   // that settles a landing goes through here, so the fold guard above and the
   // clear tombstone below stay consistent with what was actually handled.
-  const consumeLanding = useCallback((sessionId: string, generation: number): void => {
-    foldedLandingRef.current.set(sessionId, generation);
-    removeClearTombstone(sessionId);
-    consumeVoiceTranscriptLanded(sessionId, generation);
+  // The tombstone removal and consumption are gated on the generation still
+  // being CURRENT: a newer landing that arrived mid-reconciliation owns that
+  // state now, and dropping the tombstone out from under it would leave the
+  // newer sequence's pre-clear backup unprotected. `deferClaim` keeps the
+  // landing's backup durable until the save-ack flush retires it.
+  const consumeLanding = useCallback(
+    (sessionId: string, generation: number, deferClaim?: DraftBackupClaim | null): void => {
+      foldedLandingRef.current.set(sessionId, generation);
+      if (voiceTranscriptLandedSignal.peek().get(sessionId) !== generation) {
+        return; // a newer landing owns the tombstone/backup state
+      }
+      removeClearTombstone(sessionId);
+      if (deferClaim !== undefined) {
+        deferredBackupRetiresRef.current.set(sessionId, {
+          generation,
+          claim: deferClaim ?? undefined,
+        });
+        consumeVoiceTranscriptLanded(sessionId, generation, true);
+        return;
+      }
+      consumeVoiceTranscriptLanded(sessionId, generation);
+    },
+    []
+  );
+  // Retire deferred backups once the session's combined draft is ACKNOWLEDGED
+  // server-side — the durable copy is superseded only now that the combined
+  // text is itself durable.
+  const flushDeferredBackupRetire = useCallback((sessionId: string): void => {
+    const deferred = deferredBackupRetiresRef.current.get(sessionId);
+    if (!deferred) return;
+    deferredBackupRetiresRef.current.delete(sessionId);
+    if (deferred.claim) retireDraftBackupClaim(deferred.claim);
+    clearDraftBackup(sessionId, deferred.generation);
   }, []);
 
   // Fetch the server draft into the signal, guarded against staleness (the
@@ -177,7 +216,8 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         baseline?: string | null,
         baselineSeq?: number | null
       ) => void,
-      reconcileOnCancel?: boolean
+      reconcileOnCancel?: boolean,
+      applyGuard?: () => boolean
     ): void => {
       const hub = connectionManager.getHubIfConnected();
       if (!hub) {
@@ -214,7 +254,12 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             // next save would fold a transcript the draft already contains).
             advanceDraftVersion(targetSessionId, response.session.metadata.inputDraftVersion);
           }
-          if (!cancelled && draft) {
+          // An `applyGuard` lets the owed-clear chains decline the local
+          // application: their get returns the STALE pre-clear draft plus
+          // transcripts, and applying it would overwrite typing (or a
+          // restored post-clear backup) that is NEWER user state — the strip
+          // fold below merges the transcripts into that content instead.
+          if (!cancelled && draft && (applyGuard ? applyGuard() : true)) {
             contentSignal.value = draft;
           } else if (
             cancelled &&
@@ -297,7 +342,18 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             (contentSignal.peek().trim() === '' || contentSignal.peek() === observedDraft);
           if (
             tombstone?.baselineSeq !== undefined &&
-            meta.inputDraftVoiceLastStrippedSeq === tombstone.baselineSeq
+            meta.inputDraftVoiceLastStrippedSeq === tombstone.baselineSeq &&
+            // A NEWER unstripped sequence must NOT be satisfied by the old
+            // strip marker: sequence N+1 can have replaced the baseline (and
+            // merged) after N's strip committed, and retiring the tombstone
+            // here would leave N+1's pre-clear baseline resurrected. The old
+            // strip satisfies the owed clear only when no newer baseline is
+            // live.
+            !(
+              typeof meta.inputDraftVoiceBaseline === 'string' &&
+              typeof meta.inputDraftVoiceBaselineSeq === 'number' &&
+              meta.inputDraftVoiceBaselineSeq > tombstone.baselineSeq
+            )
           ) {
             // The owed strip COMMITTED but its acknowledgement was lost: the
             // draft already holds only the transcripts and the baseline is
@@ -355,7 +411,8 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                   });
               })
               .catch(() => {
-                /* stays owed — the reconnect subscription retries */
+                /* stays owed — the reconnect subscription or bounded retry re-runs this */
+                flushKickRef.current();
               });
           }
           if (
@@ -386,6 +443,15 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                 }
                 if (canAdopt()) {
                   contentSignal.value = result.value ?? '';
+                } else if ((result.value ?? '').trim() !== '') {
+                  // Typing began mid-reconcile: the daemon now holds ONLY the
+                  // transcripts (the strip cleared the baseline), and this
+                  // composer's next ordinary save would overwrite them with
+                  // transcript-free typing. Fold the stripped transcripts
+                  // into the newer content — the live-landing strip path's
+                  // once-per-generation discipline — so the re-enabled save
+                  // carries BOTH.
+                  contentSignal.value = appendDraftText(contentSignal.peek(), result.value ?? '');
                 }
                 removeClearTombstone(targetSessionId);
                 // Clear the IN-MEMORY owed-clear marker too: a stale ref would
@@ -417,7 +483,8 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             });
         })
         .catch(() => {
-          /* stays owed — the reconnect subscription retries */
+          /* stays owed — the reconnect subscription or bounded retry re-runs this */
+          flushKickRef.current();
         });
     },
     [contentSignal]
@@ -459,6 +526,17 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         // re-arm the owed clear so the replay effect's reconcile runs as soon
         // as the connection allows, and leave the landing for it to consume.
         if (hasClearTombstone(sessionId)) {
+          // A backup written AFTER the tombstone is POST-clear typing (the
+          // user kept editing after sending/clearing): the scan's tombstone
+          // skip already excluded pre-clear copies, so whatever survives it
+          // here IS newer user state and must be restored — otherwise the
+          // early return below discards it. The owed-clear chain's apply
+          // guard keeps its merged-draft application off this content, and
+          // the strip fold merges the transcripts into it.
+          const postClearClaim = peekExpiredDraftBackup(sessionId);
+          if (postClearClaim && postClearClaim.content.trim() !== '') {
+            contentSignal.value = postClearClaim.content;
+          }
           pendingClearRef.current = sessionId;
           if (isLandingLive(sessionId)) {
             // Re-trigger the replay effect directly: the settle-time draft
@@ -555,6 +633,33 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           transcripts = aggregate;
         }
         if (backup === null) {
+          // Verify this response actually OBSERVED the merge before settling
+          // the landing: a landing that raced the REQUEST (another tab's
+          // flush, or this tab's outbox ack) leaves the transcript still
+          // staged in inputDraftVoicePending, and consuming here would hide
+          // it until the next navigation. Structural extraction or a
+          // matching aggregate tail proves the merge; otherwise issue the
+          // replay refresh to merge and consume it now.
+          const merged =
+            transcripts !== null || (aggregate !== null && !!draft?.endsWith(aggregate));
+          if (landingLive && !merged) {
+            loadDraft(
+              sessionId,
+              () => cancelled,
+              (refreshOk, refreshRetained) => {
+                if (
+                  refreshOk &&
+                  !refreshRetained &&
+                  currentSessionIdRef.current === sessionId &&
+                  voiceTranscriptLandedSignal.peek().get(sessionId) === generation
+                ) {
+                  consumeLanding(sessionId, generation);
+                }
+              },
+              true
+            );
+            return;
+          }
           if (landingLive) consumeLanding(sessionId, generation);
           return;
         }
@@ -567,6 +672,20 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           if (landingLive) contentSignal.value = backup;
           return;
         }
+        // The COMPLETE combination must fit before adopting: appendDraftText
+        // silently slices at the composer limit, and a truncated fold adopted
+        // here would let the re-enabled save overwrite the complete server
+        // draft — permanently dropping the transcript's tail. Keep the
+        // landing deferred (saves stay suppressed into the backup) until the
+        // draft has room for both; the daemon-side merge declines truncating
+        // combinations for the same reason.
+        const combined = appendDraftText(backup, transcripts);
+        const fits =
+          combined === `${backup}${transcripts}` || combined === `${backup} ${transcripts}`;
+        if (!fits) {
+          if (landingLive) contentSignal.value = backup;
+          return;
+        }
         // Appended blindly rather than substring-checked: the user's draft
         // may legitimately contain the same PHRASE as the transcript, and a
         // presence check would then drop the new voice occurrence when the
@@ -574,8 +693,14 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         // transcripts provably never reached the backup: every fold path
         // that puts them into local content consumes the landing (lifting
         // the suppression) before another backup can be written.
-        contentSignal.value = appendDraftText(backup, transcripts);
-        if (landingLive) consumeLanding(sessionId, generation);
+        contentSignal.value = combined;
+        if (landingLive) {
+          // The combined text is durable only in the composer signal until
+          // the debounced save commits — DEFER the backup retirement to that
+          // save's acknowledgement instead of deleting the only durable copy
+          // of the user's edits at consumption.
+          consumeLanding(sessionId, generation, claimed);
+        }
         // The claimed backup's edits (plus transcripts) are now in a composer
         // with saves enabled — retire it AND its same-generation siblings,
         // whose older edits a later reload must not restore over this.
@@ -663,7 +788,13 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     // would otherwise abort the strip/refresh mid-chain. Only a real session
     // switch (or unmount) must stop the reconcile.
     const stillCurrent = () => currentSessionIdRef.current === sessionId;
-    const refresh = () => {
+    // The owed-clear chain's gets return the STALE pre-clear draft (plus
+    // transcripts): applying it must never overwrite typing or a restored
+    // post-clear backup that is NEWER user state. Apply only into an EMPTY
+    // composer — the strip's fold then merges the transcripts into whatever
+    // newer content is showing.
+    const applyOnlyWhenIdle = () => contentSignal.peek().trim() === '';
+    const refresh = (chainDraft?: string) => {
       if (!stillCurrent()) return;
       loadDraft(
         sessionId,
@@ -678,7 +809,16 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         // A replay get cancelled by typing must reconcile the merged transcript
         // into the local draft (see loadDraft) so the re-enabled save does not
         // overwrite it.
-        true
+        true,
+        // The chain's own follow-up refresh may also replace the stale draft
+        // the chain's previous get APPLIED (`chainDraft`) — that text is not
+        // user typing.
+        chainDraft === undefined
+          ? applyOnlyWhenIdle
+          : () => {
+              const c = contentSignal.peek();
+              return c.trim() === '' || c === chainDraft;
+            }
       );
     };
     if (justCleared || pendingClearRef.current === sessionId) {
@@ -708,6 +848,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         (ok, pendingRetained, _wasCancelled, draft, _baseline, baselineSeq) => {
           if (!ok) {
             oweClear(); // get failed — retry on reconnect
+            flushKickRef.current(); // …and on the bounded retry if still connected
             return;
           }
           if (pendingRetained) {
@@ -728,13 +869,16 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                   oweClear();
                   return;
                 }
-                if (stillCurrent()) refresh();
+                if (stillCurrent()) refresh(draft);
               })
               .catch(() => {
                 // The clear did not commit — the merge must wait, or the
                 // pending would land on the stale draft and resurrect
-                // already-sent text.
+                // already-sent text. Arm the bounded retry: a rejection while
+                // still connected (timeout) never re-fires the connection
+                // subscription on its own.
                 oweClear();
+                flushKickRef.current();
               });
             return;
           }
@@ -771,26 +915,36 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                 // with transcript-free typing, losing the voice text
                 // permanently. Fold the stripped transcripts into the newer
                 // content (blind append — the once-per-generation fold
-                // discipline) so the re-enabled save carries BOTH.
+                // discipline) so the re-enabled save carries BOTH. Skip the
+                // fold when a CANCELLED get already folded this generation's
+                // transcripts into the typing — appending again would
+                // duplicate the voice text.
+                const alreadyFolded =
+                  foldedLandingRef.current.get(sessionId) === generation &&
+                  contentSignal.peek().trim() !== '' &&
+                  contentSignal.peek() !== (draft ?? '');
                 const currentContent = contentSignal.peek();
                 const stripped = result.value ?? '';
                 if (currentContent.trim() === '' || currentContent === (draft ?? '')) {
                   contentSignal.value = stripped;
-                } else if (stripped.trim() !== '') {
+                } else if (stripped.trim() !== '' && !alreadyFolded) {
                   contentSignal.value = appendDraftText(currentContent, stripped);
                 }
                 consumeLanding(sessionId, generation);
               } else {
-                refresh(); // raced a newer writer/sequence — adopt the server's draft
+                refresh(draft); // raced a newer writer/sequence — adopt the server's draft
               }
             })
             .catch(() => {
               // The strip may have COMMITTED with a lost ack — the versioned
-              // tombstone above lets the retry recognize it as done.
+              // tombstone above lets the retry recognize it as done. Arm the
+              // bounded retry for a while-connected rejection.
               oweClear(baselineSeq ?? undefined);
+              flushKickRef.current();
             });
         },
-        true
+        true,
+        applyOnlyWhenIdle
       );
       // Register the cleanup so switching sessions mid-chain cancels the
       // refresh (the stale session's draft must not load into the signal now
@@ -860,12 +1014,16 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     const retryBackupFlush = () => {
       if (connectionState.value !== 'connected') return;
       // An owed clear whose landing expired has no replay effect to retry it —
-      // reconcile it directly for the active session.
-      if (
-        !isLandingLive(currentSessionIdRef.current) &&
-        hasClearTombstone(currentSessionIdRef.current)
-      ) {
-        reconcileOwedClear(currentSessionIdRef.current);
+      // reconcile it directly for the active session. One whose landing is
+      // still LIVE is retried by re-triggering that effect (the signal write
+      // re-runs it; its chain is idempotent), because no content or
+      // connection change will.
+      if (hasClearTombstone(currentSessionIdRef.current)) {
+        if (!isLandingLive(currentSessionIdRef.current)) {
+          reconcileOwedClear(currentSessionIdRef.current);
+        } else if (pendingClearRef.current === currentSessionIdRef.current) {
+          voiceTranscriptLandedSignal.value = new Map(voiceTranscriptLandedSignal.value);
+        }
       }
       const hub = connectionManager.getHubIfConnected();
       if (!hub) return; // not actually reachable yet — retry on the next change
@@ -907,13 +1065,28 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             // under the SAME claim id, so a merge that committed with a lost
             // ack is recognized idempotently on the retry.
             hub
-              .request<{ merged?: boolean; value?: string }>('session.mergeVoiceDraftBackup', {
-                sessionId: flushSessionId,
-                content,
-                claimId,
-              })
+              .request<{ merged?: boolean; stale?: boolean; value?: string }>(
+                'session.mergeVoiceDraftBackup',
+                {
+                  sessionId: flushSessionId,
+                  content,
+                  claimId,
+                  // Echo the draft version this tab last read: a mismatch
+                  // means a NEWER write or merge already committed, and this
+                  // (older) claim lost the last-writer-wins race — pushing it
+                  // over the newer draft would discard both the newer edits
+                  // and any merged transcript.
+                  expectedDraftVersion: draftVersionsRef.current.get(flushSessionId),
+                }
+              )
               .then((result) => {
                 if (!result.merged) {
+                  if (result.stale) {
+                    // Superseded by a newer committed write — retire the
+                    // claim instead of requeueing an eternally-stale push.
+                    retireDraftBackupClaim({ key, generation, ts });
+                    return;
+                  }
                   requeueClaim(flushSessionId, { content, generation, key, claimId, ts });
                   return;
                 }
@@ -951,12 +1124,24 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
               content: active,
             });
             hub
-              .request<{ merged?: boolean; value?: string }>('session.mergeVoiceDraftBackup', {
-                sessionId: flushSessionId,
-                content: active,
-                claimId: activeClaimId,
-              })
+              .request<{ merged?: boolean; stale?: boolean; value?: string }>(
+                'session.mergeVoiceDraftBackup',
+                {
+                  sessionId: flushSessionId,
+                  content: active,
+                  claimId: activeClaimId,
+                  expectedDraftVersion: draftVersionsRef.current.get(flushSessionId),
+                }
+              )
               .then((result) => {
+                if (result.stale && !result.merged) {
+                  // A newer committed write superseded this push — drop the
+                  // claim binding (a later push mints its own) and retire the
+                  // backup rather than requeueing an eternally-stale merge.
+                  activeMergeClaimsRef.current.delete(flushSessionId);
+                  retireDraftBackupClaim({ key, generation, ts });
+                  return;
+                }
                 if (result.merged) {
                   activeMergeClaimsRef.current.delete(flushSessionId);
                   // Retire through the claim path so the SUPERSEDE boundary
@@ -1000,13 +1185,20 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           continue;
         }
         hub
-          .request<{ merged?: boolean }>('session.mergeVoiceDraftBackup', {
+          .request<{ merged?: boolean; stale?: boolean }>('session.mergeVoiceDraftBackup', {
             sessionId: flushSessionId,
             content,
             claimId,
+            expectedDraftVersion: draftVersionsRef.current.get(flushSessionId),
           })
           .then((result) => {
             if (result.merged) {
+              retireDraftBackupClaim({ key, generation, ts });
+              return;
+            }
+            if (result.stale) {
+              // A newer committed write superseded this backup — retire
+              // instead of requeueing an eternally-stale push.
               retireDraftBackupClaim({ key, generation, ts });
               return;
             }
@@ -1156,17 +1348,20 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         // declines while a newer sequence is unresolved, instead of
         // clobbering them.
         hub
-          .request<{ merged?: boolean }>('session.mergeVoiceDraftBackup', {
+          .request<{ merged?: boolean; stale?: boolean }>('session.mergeVoiceDraftBackup', {
             sessionId: prevSessionId,
             content: flushContent,
             claimId: flushClaimId ?? undefined,
+            expectedDraftVersion: draftVersionsRef.current.get(prevSessionId),
           })
           .then((result) => {
             // Acknowledged — now the durable copy is safely superseded,
             // retired (with its same-generation siblings) by the exact key
-            // and generation it held. A declined merge (newer sequence
-            // unresolved) is requeued for retry.
-            if (result.merged) retireDraftBackupClaim(claimed);
+            // and generation it held. A STALE decline means a newer write
+            // superseded the backup — retire it rather than requeue. A
+            // declined merge (newer sequence unresolved) is requeued for
+            // retry.
+            if (result.merged || result.stale) retireDraftBackupClaim(claimed);
             else queueRetry();
           })
           .catch(() => {
@@ -1236,6 +1431,9 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             if (lastSeenContentRef.current.sessionId === sessionId) {
               lastSeenContentRef.current = { sessionId, content: '' };
             }
+            // Any backup whose retirement was deferred until this combined
+            // draft became durable is now safely superseded.
+            flushDeferredBackupRetire(sessionId);
           })
           .catch(() => {
             /* ignore clear errors */
@@ -1279,6 +1477,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           ) {
             contentSignal.value = ack.draftValue;
             advanceDraftVersion(sessionId, ack.draftVersion);
+            flushDeferredBackupRetire(sessionId);
           }
           return;
         }
@@ -1288,6 +1487,9 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         // would be misclassified as stale and folded (duplicating the
         // transcript it already contains).
         advanceDraftVersion(sessionId, ack?.draftVersion);
+        // The combined draft (backup edits + transcripts) is now durable —
+        // retire any backup whose deletion was deferred to this ack.
+        flushDeferredBackupRetire(sessionId);
       } catch {
         // Ignore draft save errors
       }

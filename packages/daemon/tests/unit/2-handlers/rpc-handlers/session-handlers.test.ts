@@ -10,23 +10,22 @@
  * is unaffected, so we use setModelsCache(new Map()) to empty the cache.
  */
 
-import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
-import { MessageHub } from '@hyperneo/shared';
-import type { ModelInfo } from '@hyperneo/shared';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import type { MessageHub, ModelInfo } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
-import type { SessionManager } from '../../../../src/lib/session-manager';
-import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type {
   DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus';
-import { setModelsCache } from '../../../../src/lib/model-service.js';
-import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
-import { resetProviderFactory } from '../../../../src/lib/providers/factory';
-import { detectStrandedProviders } from '../../../../src/lib/rpc-handlers/session-handlers';
-import { Database } from '../../../../src/storage/sqlite-compat';
-import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
+import { setModelsCache } from '../../../../src/lib/model-service.js';
+import { resetProviderFactory } from '../../../../src/lib/providers/factory';
+import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
+import { detectStrandedProviders } from '../../../../src/lib/rpc-handlers/session-handlers';
+import type { SessionManager } from '../../../../src/lib/session-manager';
+import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { Database } from '../../../../src/storage/sqlite-compat';
 
 function createMockInternalEventBus(): InternalEventBus<DaemonInternalEventMap> {
   return {
@@ -895,6 +894,28 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
       },
     });
   });
+
+  it('refuses a truncating fold and returns the retained merged draft for adoption', async () => {
+    // appendDraftText silently slices at the character limit: persisting the
+    // truncated fold would irrecoverably drop the transcript's tail while the
+    // pending is already cleared. The stale write is REFUSED — the merged
+    // draft stays authoritative and the ack carries it (plus its version) so
+    // the client adopts it instead of retrying the same over-long write.
+    existingPending = null;
+    existingDraft = `old ${'x'.repeat(99_000)}`;
+    existingBaseline = 'old';
+    existingDraftVersion = 2;
+    const handler = messageHubData.handlers.get('session.update');
+    const result = (await handler!(
+      { sessionId: 's1', metadata: { inputDraft: 'y'.repeat(5_000) } },
+      {}
+    )) as { success: boolean; draftVersion?: number; draftValue?: string };
+    expect(result.success).toBe(true);
+    expect(result.draftVersion).toBe(2);
+    expect(result.draftValue).toBe(existingDraft);
+    // Nothing about the draft or the sequence snapshot was rewritten.
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', { metadata: {} });
+  });
 });
 
 describe('Session RPC Handlers — session.appendVoiceDraft', () => {
@@ -1435,6 +1456,49 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     expect(write.metadata.inputDraftVoiceMergeClaimLog).toEqual([
       { id: 'claim-2', ts: expect.any(Number) },
     ]);
+  });
+
+  it('declines with stale:true when the echoed draft version no longer matches', async () => {
+    // A NEWER tab's write or merge committed after this claim's client last
+    // read the draft: its late push would overwrite the newer draft with older
+    // transcript-free content. The version mismatch proves it — decline with
+    // `stale` so the client retires the claim instead of retrying forever.
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    existingPending = null;
+    existingBaseline = 'old';
+    existingBaselineSeq = 1;
+    existingDraft = 'newer tab edits voice';
+    existingDraftVersion = 7;
+    const result = (await handler!(
+      { sessionId: 's1', content: 'older edits', claimId: 'claim-old', expectedDraftVersion: 6 },
+      {}
+    )) as { merged: boolean; stale?: boolean };
+    expect(result).toEqual({ merged: false, stale: true });
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('acknowledges a committed claim from the log even when its version echo is stale', async () => {
+    // The claim-log replay check precedes the version guard: this claim's own
+    // merge COMMITTED (clearing the baseline, bumping the version), so its
+    // echo is now stale BY CONSTRUCTION — a version-first guard would decline
+    // the retry and the client would never receive its acknowledgement.
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    existingPending = null;
+    existingBaseline = null;
+    existingDraft = 'user edits voice';
+    existingDraftVersion = 3;
+    existingMergeClaimLog = [{ id: 'claim-1', ts: Date.now() }];
+    const result = (await handler!(
+      {
+        sessionId: 's1',
+        content: 'user edits',
+        claimId: 'claim-1',
+        expectedDraftVersion: 2,
+      },
+      {}
+    )) as { merged: boolean; value: string };
+    expect(result).toEqual({ merged: true, value: 'user edits voice' });
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
   });
 });
 

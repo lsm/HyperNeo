@@ -464,6 +464,10 @@ export function setupSessionHandlers(
     // Whether this write took the transcript-folding branch (its ack carries
     // the applied value so the client can adopt it).
     let didFold = false;
+    // A fold REFUSED because the transcripts cannot fit whole: the merged
+    // draft is retained untouched and returned for adoption instead.
+    let retainedFoldValue: string | null = null;
+    let retainedFoldVersion: number | undefined;
     if (draftWrite !== undefined) {
       const existing = sessionManager.getSessionFromDB(targetSessionId);
       const meta = existing?.metadata;
@@ -497,7 +501,26 @@ export function setupSessionHandlers(
           : transcripts
             ? appendDraftText(written, transcripts)
             : written;
-        (updates.metadata as Partial<SessionMetadata>).inputDraft = folded || null;
+        // The COMPLETE combination must fit, exactly as the pending merge and
+        // backup-merge paths require: appendDraftText silently slices at the
+        // character limit, `inputDraftVoicePending` is already cleared by the
+        // merge, and persisting a truncated fold would irrecoverably drop the
+        // transcript's tail while reporting success. A stale write too long
+        // for the transcripts to fit is REFUSED instead — the merged draft
+        // stays authoritative and the ack carries it back for adoption.
+        const foldFits =
+          alreadyIncluded ||
+          !transcripts ||
+          folded === `${written}${transcripts}` ||
+          folded === `${written} ${transcripts}`;
+        if (!foldFits) {
+          delete (updates.metadata as Partial<SessionMetadata>).inputDraft;
+          didFold = true; // the ack below carries the retained merged value
+          retainedFoldValue = draft;
+          retainedFoldVersion = currentVersion;
+        } else {
+          (updates.metadata as Partial<SessionMetadata>).inputDraft = folded || null;
+        }
         // A version-current writer read the merged draft — its write IS the
         // reconciliation, so the snapshot clears. A STALE writer's fold instead
         // RE-ANCHORS the baseline to its (pre-merge) content with the sequence
@@ -505,14 +528,18 @@ export function setupSessionHandlers(
         // so an in-flight or retrying clear's strip still recognizes the
         // sequence and reduces the draft to the transcripts alone — clearing
         // here would strand the strip (declined on the vanished snapshot) and
-        // resurrect text the user had sent or cleared.
-        if (alreadyIncluded) {
-          (updates.metadata as Partial<SessionMetadata>).inputDraftVoiceBaseline = null;
-        } else {
-          (updates.metadata as Partial<SessionMetadata>).inputDraftVoiceBaseline = written;
-          didFold = true;
+        // resurrect text the user had sent or cleared. (A REFUSED fold above
+        // skips all of this: the merged draft and its snapshot are retained
+        // untouched.)
+        if (foldFits) {
+          if (alreadyIncluded) {
+            (updates.metadata as Partial<SessionMetadata>).inputDraftVoiceBaseline = null;
+          } else {
+            (updates.metadata as Partial<SessionMetadata>).inputDraftVoiceBaseline = written;
+            didFold = true;
+          }
+          (updates.metadata as Partial<SessionMetadata>).inputDraftVersion = currentVersion + 1;
         }
-        (updates.metadata as Partial<SessionMetadata>).inputDraftVersion = currentVersion + 1;
       } else {
         // A plain draft write (no sequence involved) still bumps the version
         // so OTHER tabs' in-flight saves become recognizably stale.
@@ -548,11 +575,11 @@ export function setupSessionHandlers(
     // stale — advancing without adopting would let its next edit apply as-is
     // and clear the baseline, deleting the transcript from the draft.
     const appliedMeta = (updates.metadata as Partial<SessionMetadata> | undefined) ?? {};
-    const appliedVersion = appliedMeta.inputDraftVersion;
+    const appliedVersion = appliedMeta.inputDraftVersion ?? retainedFoldVersion;
     return {
       success: true,
       ...(appliedVersion !== undefined ? { draftVersion: appliedVersion } : {}),
-      ...(didFold ? { draftValue: appliedMeta.inputDraft ?? '' } : {}),
+      ...(didFold ? { draftValue: appliedMeta.inputDraft ?? retainedFoldValue ?? '' } : {}),
     };
   });
 
@@ -758,10 +785,11 @@ export function setupSessionHandlers(
   // means a newer writer intervened — decline rather than guess, the client
   // retries. Read+write is one synchronous step, like stripVoiceBaseline.
   messageHub.onRequest('session.mergeVoiceDraftBackup', async (data, _ctx) => {
-    const { sessionId, content, claimId } = data as {
+    const { sessionId, content, claimId, expectedDraftVersion } = data as {
       sessionId: string;
       content: string;
       claimId?: string;
+      expectedDraftVersion?: number;
     };
     if (typeof content !== 'string') throw new Error('Backup content is required');
     const session = sessionManager.getSessionFromDB(sessionId);
@@ -780,6 +808,20 @@ export function setupSessionHandlers(
     );
     if (claimId && committedClaims.some((entry) => entry.id === claimId)) {
       return { merged: true, value: metadata.inputDraft ?? '' };
+    }
+    // STALE-CLAIM guard: the claim log only deduplicates identical ids, so a
+    // NEWER tab's claim can commit (clearing the baseline, bumping the draft
+    // version) while an OLDER claim is still in flight — its late arrival
+    // would take the baseline-null plain-write branch and overwrite the newer
+    // draft with older transcript-free content. An echoed expectedDraftVersion
+    // that no longer matches proves a newer write intervened: decline with
+    // `stale` so the client retires the superseded claim instead of retrying.
+    if (
+      expectedDraftVersion !== undefined &&
+      typeof metadata.inputDraftVersion === 'number' &&
+      expectedDraftVersion !== metadata.inputDraftVersion
+    ) {
+      return { merged: false, stale: true };
     }
     const baseline = metadata.inputDraftVoiceBaseline;
     const draft = metadata.inputDraft ?? '';

@@ -7,9 +7,8 @@
  * Note: Tests that require connection mocking are limited due to module initialization order.
  */
 
-import { renderHook, act } from '@testing-library/preact';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { useInputDraft } from '../useInputDraft.ts';
+import { act, renderHook } from '@testing-library/preact';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectionManager } from '../../lib/connection-manager.ts';
 import { connectionState } from '../../lib/state.ts';
 import {
@@ -23,6 +22,7 @@ import {
   saveDraftBackup,
   voiceTranscriptLandedSignal,
 } from '../../lib/voice/voice-transcript-outbox.ts';
+import { useInputDraft } from '../useInputDraft.ts';
 
 // Mock the connection manager
 vi.mock('../../lib/connection-manager.ts', () => ({
@@ -777,10 +777,21 @@ describe('useInputDraft', () => {
       // the stale baseline ("hello world hello voice").
       expect(result.current.content).toBe('hello world voice');
       expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(false);
-      expect(peekExpiredDraftBackup('session-1')).toBeNull();
+      // The combined text is durable only in the composer signal until the
+      // debounced save commits — the backup SURVIVES the fold and is retired
+      // only once that save is acknowledged (a reload inside the debounce
+      // window must not lose the user's edits).
+      expect(peekExpiredDraftBackup('session-1')).not.toBeNull();
       // The landing was settled by the INITIAL load — no second refresh get
       // raced the restore.
       expect(mockHub.request.mock.calls.filter(([m]) => m === 'session.get')).toHaveLength(1);
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      const saveCalls = mockHub.request.mock.calls.filter(([m]) => m === 'session.update');
+      expect(saveCalls.length).toBeGreaterThan(0);
+      // Acknowledged save — the deferred retirement fires now.
+      expect(peekExpiredDraftBackup('session-1')).toBeNull();
     });
 
     it('does not fold or consume when the reload could not merge (pendingRetained)', async () => {
@@ -2258,6 +2269,262 @@ describe('useInputDraft', () => {
       });
 
       expect(result.current.content).toBe('');
+    });
+  });
+
+  describe('review-hardening round', () => {
+    it('issues the merging refresh itself when the initial get cannot prove the merge', async () => {
+      // A landing raced the initial load's REQUEST (another tab's flush merged
+      // after it was sent): the response shows no baseline snapshot and its
+      // draft does not end with the landing aggregate — consuming here would
+      // hide the transcript, so the settle path must issue the merging get and
+      // consume only on its full merge.
+      markVoiceTranscriptLanded('session-1', 'voice');
+      mockHub.request
+        .mockResolvedValueOnce({ session: { metadata: { inputDraft: 'hello' } } }) // initial
+        .mockResolvedValueOnce({
+          session: {
+            metadata: { inputDraft: 'hello voice', inputDraftVoiceBaseline: 'hello' },
+          },
+        }); // the settle path's own refresh
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // The initial get could not prove the merge — the landing survived it…
+      expect(mockHub.request.mock.calls.filter(([m]) => m === 'session.get')).toHaveLength(2);
+      // …and the refresh's full merge applied the draft and consumed it.
+      expect(result.current.content).toBe('hello voice');
+      expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(false);
+    });
+
+    it('keeps the landing deferred when backup + transcripts cannot fit the draft limit', async () => {
+      // appendDraftText silently slices at the character limit: a truncated
+      // fold adopted here would let the re-enabled saves overwrite the complete
+      // server draft, permanently dropping the transcript's tail. The landing
+      // must stay deferred (saves suppressed into the backup) instead.
+      markVoiceTranscriptLanded('session-1', 'voice words here');
+      const longBackup = 'a'.repeat(99_999);
+      saveDraftBackup(
+        'session-1',
+        longBackup,
+        voiceTranscriptLandedSignal.value.get('session-1') ?? 1
+      );
+      mockHub.request.mockResolvedValue({
+        session: {
+          metadata: {
+            inputDraft: `${longBackup} voice words here`,
+            inputDraftVoiceBaseline: longBackup,
+          },
+        },
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // The backup restores unchanged; the landing stays pending and the
+      // durable backup survives (nothing consumed or retired).
+      expect(result.current.content).toBe(longBackup);
+      expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(true);
+      expect(peekExpiredDraftBackup('session-1')?.content).toBe(longBackup);
+    });
+
+    it('does not double-fold transcripts a cancelled refresh already folded before the strip', async () => {
+      // The clear chain's get is cancelled by typing; its reconcile-on-cancel
+      // fold merges the transcripts into the typing and records the generation.
+      // The chain's strip then acknowledges — appending the stripped value
+      // AGAIN would duplicate the voice text.
+      const gets: Array<{ resolve: (value: unknown) => void }> = [];
+      mockHub.request.mockImplementation((method: string) => {
+        if (method === 'session.get') {
+          let resolve!: (value: unknown) => void;
+          const promise = new Promise((r) => {
+            resolve = r;
+          });
+          gets.push({ resolve });
+          return promise;
+        }
+        if (method === 'session.stripVoiceBaseline') {
+          return Promise.resolve({ updated: true, value: 'voice' });
+        }
+        return {};
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        gets[0]?.resolve({ session: { metadata: { inputDraft: 'sent text' } } });
+        await vi.runAllTimersAsync();
+      });
+      // A live landing defers behind the user's text; the user then sends.
+      result.current.setContent('sent text');
+      markVoiceTranscriptLanded('session-1', 'voice');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // The clear starts the chain (its get #2 stays in flight), and typing
+      // begins before that get resolves — cancelling its effect run.
+      result.current.clear();
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(gets.length).toBe(2);
+      result.current.setContent('new typing');
+      await act(async () => {
+        gets[1]?.resolve({
+          session: {
+            metadata: {
+              inputDraft: 'sent text voice',
+              inputDraftVoiceBaseline: 'sent text',
+              inputDraftVoiceBaselineSeq: 1,
+            },
+          },
+        });
+        await vi.runAllTimersAsync();
+      });
+
+      // The cancelled get folded the transcript into the typing exactly once —
+      // the strip's acknowledgement must not append a second occurrence.
+      expect(result.current.content).toBe('new typing voice');
+      expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(false);
+      expect(hasClearTombstone('session-1')).toBe(false);
+    });
+
+    it('restores a backup written AFTER the tombstone (post-clear typing)', async () => {
+      // The user sent/cleared (owed clear, tombstone armed) and kept typing —
+      // that newer backup is post-clear user state and must be restored, not
+      // discarded with the pre-clear copies the scan skips.
+      saveClearTombstone('session-1');
+      // Age the tombstone below the backup the user writes afterwards.
+      const tombstoneKeys: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i) ?? '';
+        if (key.startsWith('hyperneo_voice_transcript_outbox_v1.clear.session-1.')) {
+          tombstoneKeys.push(key);
+        }
+      }
+      for (const key of tombstoneKeys) {
+        const parsed = JSON.parse(localStorage.getItem(key) ?? '{}');
+        localStorage.setItem(key, JSON.stringify({ ...parsed, ts: parsed.ts - 1000 }));
+      }
+      saveDraftBackup('session-1', 'post-clear typing', 1);
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') return { session: { metadata: { inputDraft: '' } } };
+        if (method === 'session.clearInputDraftIf') return { cleared: true };
+        return {};
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      expect(result.current.content).toBe('post-clear typing');
+      // The owed clear reconciled against the (empty) daemon draft and retired.
+      expect(hasClearTombstone('session-1')).toBe(false);
+    });
+
+    it('retires a backup whose merge lost the draft-version race instead of requeueing it', async () => {
+      // The daemon's expectedDraftVersion guard reports {merged:false,
+      // stale:true}: a newer committed write superseded this backup — pushing it
+      // again would overwrite the newer draft, and requeueing would retry an
+      // eternally-stale claim. It must be retired (with its supersede record).
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get')
+          return { session: { metadata: { inputDraft: 'sent earlier' } } };
+        if (method === 'session.mergeVoiceDraftBackup') return { merged: false, stale: true };
+        return {};
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result, rerender } = renderHook(({ sessionId }) => useInputDraft(sessionId), {
+        initialProps: { sessionId: 'session-1' },
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      saveDraftBackup('session-1', 'user edits', 1);
+      rerender({ sessionId: 'session-2' });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+
+      // The stale-declined claim retired under its supersede record…
+      expect(peekExpiredDraftBackup('session-1')).toBeNull();
+      const supersedeKeys: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i) ?? '';
+        if (key.startsWith('hyperneo_voice_transcript_outbox_v1.superseded.session-1.')) {
+          supersedeKeys.push(key);
+        }
+      }
+      expect(supersedeKeys.length).toBeGreaterThan(0);
+      // …and was never requeued (exactly one merge attempt).
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(70_000);
+      });
+      const merges = mockHub.request.mock.calls.filter(
+        ([m]) => m === 'session.mergeVoiceDraftBackup'
+      );
+      expect(merges).toHaveLength(1);
+    });
+
+    it('re-arms the bounded retry after a strip rejects while still connected', async () => {
+      // A strip rejection while CONNECTED never re-fires the connection
+      // subscription (it only fires on CHANGES) and no content change follows —
+      // without an explicit kick, the owed clear would idle until a reload.
+      connectionState.value = 'connected';
+      let strips = 0;
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return {
+            session: {
+              metadata: {
+                inputDraft: 'sent text voice',
+                inputDraftVoiceBaseline: 'sent text',
+                inputDraftVoiceBaselineSeq: 1,
+              },
+            },
+          };
+        }
+        if (method === 'session.stripVoiceBaseline') {
+          strips += 1;
+          if (strips === 1) throw new Error('Request timeout');
+          return { updated: true, value: 'voice' };
+        }
+        return {};
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      // Arm the tombstone AFTER mount: the connection subscription calls the
+      // retry once immediately, and a pre-existing tombstone would let that
+      // call run a SECOND reconcile beside the settle path's own.
+      saveClearTombstone('session-1', 5);
+      // A bounded advance settles the initial chain WITHOUT firing the 5s
+      // bounded retry the rejection arms.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      // The reconcile's strip rejected while connected — the owed clear stays.
+      expect(hasClearTombstone('session-1')).toBe(true);
+      expect(strips).toBe(1);
+
+      // The kicked bounded retry (5s) re-runs the reconcile — the strip now
+      // commits and the tombstone retires without any connection change.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      expect(strips).toBe(2);
+      expect(hasClearTombstone('session-1')).toBe(false);
+      expect(result.current.content).toBe('voice');
     });
   });
 
