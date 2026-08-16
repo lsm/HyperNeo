@@ -1720,6 +1720,28 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     expect(result.value).toBe('typed edits voice');
   });
 
+  it('does not duplicate the transcripts in a merge that already carries them', async () => {
+    // The client's load fold can combine the backup with the landed
+    // transcript BEFORE a queued claim's merge retries (a failed debounced
+    // save falls back to the active-content merge path): the push already
+    // ends with the baseline-identified transcripts, and appending again
+    // would duplicate the voice occurrence — the same suffix discipline
+    // session.update's fold uses.
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    existingPending = null;
+    existingBaseline = 'old';
+    existingBaselineSeq = 1;
+    existingDraft = 'old voice';
+    existingDraftVersion = 6;
+    existingMergedVersion = 6;
+    const result = (await handler!(
+      { sessionId: 's1', content: 'user edits voice', claimId: 'claim-1', expectedDraftVersion: 5 },
+      {}
+    )) as { merged: boolean; value: string };
+    expect(result.merged).toBe(true);
+    expect(result.value).toBe('user edits voice');
+  });
+
   it('declines a version-mismatched merge while a pending is still staged', async () => {
     // A staged pending makes every version bump another tab's DRAFT WRITE
     // (session.update re-anchors the baseline to the newer text and bumps the

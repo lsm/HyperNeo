@@ -944,9 +944,20 @@ export function setupSessionHandlers(
       // limit, and committing a truncated draft while reporting merged:true
       // would let the client retire its only durable copy of the lost tail.
       // Decline instead — the claim retries once the draft has room.
-      const value = appendDraftText(trimmed, transcripts);
+      // A push that ALREADY ends with the exact transcripts carries them
+      // (the client's load fold can combine the backup with the landed
+      // transcript before this merge retries): appending again would
+      // duplicate the voice occurrence, so it applies as-is — the same
+      // suffix discipline session.update's fold uses.
+      const carriesTranscripts =
+        transcripts !== '' &&
+        (trimmed === transcripts ||
+          trimmed.endsWith(transcripts) ||
+          trimmed.endsWith(` ${transcripts}`));
+      const value = carriesTranscripts ? trimmed : appendDraftText(trimmed, transcripts);
       const fits =
         transcripts === '' ||
+        carriesTranscripts ||
         value === `${trimmed} ${transcripts}` ||
         value === `${trimmed}${transcripts}`;
       if (!fits) return { merged: false };

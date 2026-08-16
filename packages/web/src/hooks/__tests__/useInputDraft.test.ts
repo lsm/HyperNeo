@@ -3092,6 +3092,64 @@ describe('useInputDraft', () => {
       expect(result.current.content).toBe('');
     });
 
+    it('drops the queued claim when the load fold adopts the combined draft', async () => {
+      // The user returns before the queued flush runs and the initial get's
+      // settle path folds the backup with the transcripts into the composer,
+      // consuming the landing. The queued claim still holds the
+      // transcript-FREE backup: its later active-content merge would push the
+      // already-combined text and (without the daemon's suffix guard) get the
+      // transcript appended a second time. The adoption must drop the queued
+      // claim — the save path owns persisting the combination.
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return {
+            session: {
+              metadata: { inputDraft: 'old voice', inputDraftVoiceBaseline: 'old' },
+            },
+          };
+        }
+        if (method === 'session.mergeVoiceDraftBackup') {
+          return { merged: true, value: 'user edits voice' };
+        }
+        return { success: true };
+      });
+      connectionState.value = 'connected';
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result, rerender } = renderHook(({ sessionId }) => useInputDraft(sessionId), {
+        initialProps: { sessionId: 'session-1' },
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      markVoiceTranscriptLanded('session-1', 'voice');
+      result.current.setContent('user edits');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(getDraftBackup('session-1')).toBe('user edits');
+      rerender({ sessionId: 'session-2' });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      mockHub.request.mockClear();
+      await act(async () => {
+        rerender({ sessionId: 'session-1' });
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      // The settle fold adopted backup + transcripts into the composer…
+      expect(result.current.content).toBe('user edits voice');
+      // …and no queued claim replayed over it afterwards.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20_000);
+      });
+      const merges = mockHub.request.mock.calls.filter(
+        ([m]) => m === 'session.mergeVoiceDraftBackup'
+      );
+      expect(merges).toHaveLength(0);
+      expect(result.current.content).toBe('user edits voice');
+    });
+
     it('keeps a newer active merge claim binding when an older merge acks late', async () => {
       // Two active-content merges overlap with DIFFERENT content: the first
       // hangs in flight, a newer claim (fresh content, fresh claim id)

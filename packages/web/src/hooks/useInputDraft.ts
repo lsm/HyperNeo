@@ -801,6 +801,13 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         // that puts them into local content consumes the landing (lifting
         // the suppression) before another backup can be written.
         contentSignal.value = combined;
+        // The composer now holds the COMBINED content — a queued backup
+        // flush (from an earlier switch away) still carries the
+        // transcript-free backup: its active-content merge would push the
+        // already-combined text and the daemon's baseline-identified
+        // transcript would be appended a second time. The save path owns
+        // persisting the combination; drop the queued claim.
+        dropQueuedBackupFlush(sessionId);
         if (landingLive) {
           // The combined text is durable only in the composer signal until
           // the debounced save commits — DEFER the backup retirement to that
