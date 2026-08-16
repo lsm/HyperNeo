@@ -193,10 +193,14 @@ function redactString(value: string): string {
         /(["']?(?:api[-_]?key|token|secret|password|authorization|cookie|set-cookie)["']?\s*[:=]\s*)(["'])((?:\\.|(?!\2).)*)\2/gi,
         '$1$2[REDACTED]$2'
       )
-      .replace(
-        /((?:api[-_]?key|token|secret|password|authorization|cookie|set-cookie)\s*=\s*)([^\s&;,}]+)/gi,
-        '$1[REDACTED]'
-      )
+      // Equals-form Authorization/Cookie values legitimately contain spaces
+      // (Digest `username=…, nonce=…`, AWS `Credential=…, Signature=…`,
+      // Set-Cookie attributes); the generic `=` rule below stops at the first
+      // whitespace and would persist the credential/nonce/signature. Redact
+      // through end of line, mirroring the colon-form rules. (Codex P1, PR #2499.)
+      .replace(/(authorization\s*=\s*)(?![\s"'])[^\r\n]+/gi, '$1[REDACTED]')
+      .replace(/((?:cookie|set-cookie)\s*=\s*)(?![\s"'])[^\r\n]+/gi, '$1[REDACTED]')
+      .replace(/((?:api[-_]?key|token|secret|password)\s*=\s*)([^\s&;,}]+)/gi, '$1[REDACTED]')
   );
 }
 

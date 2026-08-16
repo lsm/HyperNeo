@@ -1,4 +1,4 @@
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { DEFAULT_MAX_SUBSCRIPTIONS_PER_CLIENT } from '@hyperneo/shared';
 import { getDataDir } from './lib/data-dir';
 
@@ -98,9 +98,14 @@ export function getConfig(overrides?: ConfigOverrides): Config {
   // for the default instance; a custom DB derives its default log directory
   // next to its own database. (Codex P2, PR #2499.)
   const resolvedDbPath = overrides?.dbPath ?? process.env.DB_PATH ?? defaultDbPath;
+  // Resolve a relative custom DB path to an absolute one so its derived log
+  // identity is stable and distinct from other relative DBs in the same cwd.
+  // `:memory:` has no filesystem location — keep the shared default. (Codex P2.)
+  const isMemoryDb = resolvedDbPath === ':memory:';
+  const absoluteDbPath = isMemoryDb ? resolvedDbPath : resolve(resolvedDbPath);
   // A pathless DB (`:memory:`) has no directory to anchor an isolated log to —
   // fall back to the shared default rather than a cwd-relative path.
-  const customDbIsolatable = resolvedDbPath !== defaultDbPath && dirname(resolvedDbPath) !== '.';
+  const customDbIsolatable = absoluteDbPath !== defaultDbPath && dirname(absoluteDbPath) !== '.';
   // Distinct isolated DB files in the SAME directory (e.g. the documented
   // worktree command's /tmp/hyperneo-worktree-a.db vs -b.db) must derive
   // distinct log files: dirname alone maps both to <dir>/logs/daemon.jsonl, so
@@ -108,12 +113,12 @@ export function getConfig(overrides?: ConfigOverrides): Config {
   // DB basename (extension included) into the filename — stripping the
   // extension would still collide same-stem/different-extension DBs (foo.db vs
   // foo.sqlite). (Codex P2, PR #2499.)
-  const dbLogComponent = (customDbIsolatable && basename(resolvedDbPath)) || 'daemon';
+  const dbLogComponent = (customDbIsolatable && basename(absoluteDbPath)) || 'daemon';
   const defaultLogPath =
     nodeEnv === 'test'
       ? undefined
       : customDbIsolatable
-        ? join(dirname(resolvedDbPath), 'logs', `${dbLogComponent}.jsonl`)
+        ? join(dirname(absoluteDbPath), 'logs', `${dbLogComponent}.jsonl`)
         : join(getDataDir(), 'logs', 'daemon.jsonl');
   const structuredLogFilePath =
     overrides?.structuredLogFilePath === null

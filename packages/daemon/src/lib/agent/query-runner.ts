@@ -903,6 +903,13 @@ export class QueryRunner {
         }
 
         this.ctx.firstMessageReceived = true;
+        if (messageCount === 1) {
+          // Startup succeeded (timer cleared above): the replay history can no
+          // longer be used for startup recovery and would otherwise retain every
+          // message's full content for the session's lifetime. `_lastConsumedUserMessage`
+          // stays for the transient/rate-limit retries. (Codex P2, PR #2499.)
+          this._consumedUserMessages = [];
+        }
 
         try {
           await this.handleSDKMessage(message as SDKMessage);

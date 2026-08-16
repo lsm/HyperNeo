@@ -337,6 +337,10 @@ export class JobQueueProcessor {
           reason: 'heartbeat_rejected',
         });
         controller.abort();
+        // Ownership loss is terminal: stop renewing so a wedged handler that
+        // ignores the abort does not emit a duplicate old_handler_aborted (and
+        // corrupt event counts) on every subsequent heartbeat. (Codex P2.)
+        clearInterval(heartbeat);
         return;
       }
       const now = Date.now();
@@ -560,6 +564,13 @@ export class JobQueueProcessor {
   snapshot(queue?: string): JobQueueProcessorSnapshot {
     const now = Date.now();
     const handlers: InFlightJobSnapshot[] = [];
+    // Admission counts exclude slot-evicted records: their slot was already
+    // released to a replacement, so they must not inflate the capacity the
+    // diagnostics RPC reports against tick()'s budget. The handler list and
+    // inFlightTotal still include them (they are genuinely live handlers).
+    // (Codex P2, PR #2499.)
+    let cappedAdmitted = 0;
+    let exemptAdmitted = 0;
     for (const claims of this.inFlightClaims.values()) {
       for (const record of claims.values()) {
         if (queue && record.job.queue !== queue) continue;
@@ -577,19 +588,21 @@ export class JobQueueProcessor {
           stageAgeMs: Math.max(0, now - record.stageChangedAt),
           aborted: record.controller.signal.aborted,
         });
+        if (!record.slotEvicted) {
+          if (record.slotClass === 'capped') cappedAdmitted++;
+          else exemptAdmitted++;
+        }
       }
     }
     const stageCounts: Record<string, number> = {};
     for (const handler of handlers) {
       stageCounts[handler.stage] = (stageCounts[handler.stage] ?? 0) + 1;
     }
-    const capped = handlers.filter((handler) => handler.slotClass === 'capped').length;
-    const exempt = handlers.length - capped;
     return {
       running: this.running,
       maxConcurrent: this.maxConcurrent,
-      inFlightCapped: queue ? capped : this.inFlightCapped,
-      inFlightExempt: queue ? exempt : this.inFlightExempt,
+      inFlightCapped: queue ? cappedAdmitted : this.inFlightCapped,
+      inFlightExempt: queue ? exemptAdmitted : this.inFlightExempt,
       inFlightTotal: handlers.length,
       activeControllers: handlers.length,
       oldestInFlightAgeMs:

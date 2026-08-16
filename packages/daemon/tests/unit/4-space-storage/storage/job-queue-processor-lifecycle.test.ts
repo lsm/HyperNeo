@@ -519,6 +519,52 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
       expect(snapshot.handlers[0].stage).toBe('first_sdk_response');
     });
 
+    it('excludes slot-evicted records from filtered admission counts', async () => {
+      // Codex P2 (PR #2499): after grace expiry evicts a wedged predecessor's
+      // slot and admits its replacement, both records stay live. The
+      // queue-filtered snapshot must report the ADMITTED capped count (1),
+      // matching tick()'s budget, while inFlightTotal still shows both.
+      const delivery = new JobQueueProcessor(repo, {
+        pollIntervalMs: 5000,
+        maxConcurrent: 1,
+        staleThresholdMs: 60_000,
+      });
+      delivery.register('message_delivery', () => new Promise(() => {}));
+
+      const job = repo.enqueue({
+        queue: 'message_delivery',
+        payload: { sessionId: 'session-1', messageUuid: 'message-1', role: 'turn' },
+      });
+      await delivery.tick();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const firstClaim = repo.getJob(job.id)?.claimToken;
+      expect(firstClaim).toBeTruthy();
+
+      // Go stale → reclaim (defers the replacement) → expire the grace so the
+      // wedged predecessor's slot is evicted and the replacement is admitted.
+      const staleLease = Date.now() - 120_000;
+      db.prepare(`UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?`).run(
+        staleLease,
+        staleLease,
+        job.id
+      );
+      (delivery as unknown as { lastStaleCheck: number }).lastStaleCheck = 0;
+      await delivery.tick();
+      const map = (
+        delivery as unknown as {
+          settlingReclaimedJobIds: Map<string, { claimToken: string | null; expireAt: number }>;
+        }
+      ).settlingReclaimedJobIds;
+      map.set(job.id, { claimToken: firstClaim, expireAt: Date.now() - 1 });
+      await delivery.tick();
+
+      const snapshot = delivery.snapshot('message_delivery');
+      expect(snapshot.inFlightTotal).toBe(2);
+      expect(snapshot.handlers).toHaveLength(2);
+      expect(snapshot.inFlightCapped).toBe(1);
+      expect(snapshot.inFlightExempt).toBe(0);
+    });
+
     it('a late-settling earlier attempt does not lift the replacement deferral', async () => {
       // Attempt A goes stale and its grace expires → attempt B claims the row.
       // B then ALSO goes stale and is aborted, installing B's own deferral. If

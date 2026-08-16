@@ -249,6 +249,22 @@ describe('getConfig', () => {
     expect(a).not.toBe(b);
   });
 
+  test('relative custom DB paths derive distinct per-database log paths', () => {
+    // Codex P2 (PR #2499): `dirname('worktree-a.db')` is '.', which the
+    // previous gate treated as non-isolatable — both relative DBs fell back to
+    // the shared log. Resolve the relative path before deriving the identity.
+    process.env.NODE_ENV = 'production';
+
+    process.env.DB_PATH = 'worktree-a.db';
+    const a = getConfig().structuredLogFilePath;
+    process.env.DB_PATH = 'worktree-b.db';
+    const b = getConfig().structuredLogFilePath;
+
+    expect(a).toBe(join(process.cwd(), 'logs', 'worktree-a.db.jsonl'));
+    expect(b).toBe(join(process.cwd(), 'logs', 'worktree-b.db.jsonl'));
+    expect(a).not.toBe(b);
+  });
+
   test('structured log retained-file overrides are capped like the env fallback', () => {
     // Codex P2 (PR #2499): the 1,000-file cap previously applied only to the env
     // fallback; an embedder override of Number.MAX_SAFE_INTEGER would wedge

@@ -103,6 +103,16 @@ describe('StructuredLogFileSink', () => {
     expect(redacted.message).toBe('{"Authorization":"[REDACTED]"}');
   });
 
+  it('redacts equals-form Authorization values containing spaces through end of line', () => {
+    // AWS/Digest equals-form values carry spaces and structural commas; the
+    // generic `=` rule stops at the first whitespace and would persist the
+    // credential/signature. (Codex P1, PR #2499.)
+    const redacted = redactStructuredLogEvent(
+      event('Authorization=AWS4-HMAC-SHA256 Credential=AKIA123, Signature=deadbeef')
+    );
+    expect(redacted.message).toBe('Authorization=[REDACTED]');
+  });
+
   it('redacts unquoted colon-form values for every sensitive key', () => {
     // `token: abc` (no quotes, no `=`) previously passed through every rule —
     // only authorization and cookies had colon-form handling. Like the
