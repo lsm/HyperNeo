@@ -3276,6 +3276,74 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     expect(interrupted).toEqual([]);
   });
 
+  test('the sweep stands down when a re-closed run carries the reopen generation', async () => {
+    // Flip→reopen→RE-CLOSE inside the cascade: a second tick re-closes the
+    // reopened run (the activation left its task done), so the post-commit
+    // reread sees status done — but with the reopen's newer startedAt. The
+    // done-branch of the lifecycle gate must compare the generation too,
+    // or it would label the reopened lifecycle stable and quiesce the
+    // replacement worker.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-sweep',
+      agentName: 'OldPeer',
+      agentId: ctx.agentId,
+      status: 'in_progress',
+      agentSessionId: 'old-peer-session',
+    });
+    const interrupted: string[] = [];
+    const originalSetStatus = ctx.taskManager.setTaskStatus.bind(ctx.taskManager);
+    const setStatusSpy = spyOn(ctx.taskManager, 'setTaskStatus').mockImplementation(
+      async (...callArgs: Parameters<typeof originalSetStatus>) => {
+        const result = await originalSetStatus(...callArgs);
+        // Tick #1 finalizes; an activation reopens (restamping startedAt)
+        // and spawns a replacement; tick #2 re-closes — the task stayed
+        // done throughout, so both flips are legal for the tick.
+        ctx.workflowRunRepo.transitionStatus(task.workflowRunId!, 'done');
+        ctx.workflowRunRepo.transitionStatus(task.workflowRunId!, 'in_progress');
+        ctx.nodeExecutionRepo.create({
+          workflowRunId: task.workflowRunId!,
+          workflowNodeId: 'node-sweep',
+          agentName: 'Replacement',
+          agentId: ctx.agentId,
+          status: 'in_progress',
+          agentSessionId: 'reclosed-replacement-session',
+        });
+        ctx.workflowRunRepo.transitionStatus(task.workflowRunId!, 'done');
+        return result;
+      }
+    );
+
+    try {
+      const result = await makeValidationTool({
+        interruptBySessionId: async (sessionId: string) => {
+          interrupted.push(sessionId);
+        },
+      }).complete_validation_task({
+        task_id: task.id,
+        validation_outcome: 'committed; reopened-then-reclosed lifecycle must stand down',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.success).toBe(true);
+    } finally {
+      setStatusSpy.mockRestore();
+    }
+
+    // Both workers of the reopened-and-reclosed lifecycle survive: the
+    // run's terminal state is the reopened lifecycle's business, not this
+    // completion's sweep.
+    const executions = ctx.nodeExecutionRepo.listByWorkflowRun(task.workflowRunId!);
+    expect(executions.find((e) => e.agentSessionId === 'old-peer-session')?.status).toBe(
+      'in_progress'
+    );
+    expect(
+      executions.find((e) => e.agentSessionId === 'reclosed-replacement-session')?.status
+    ).toBe('in_progress');
+    expect(interrupted).toEqual([]);
+  });
+
   test('a metadata-only run edit during the cascade does not stand the sweep down', async () => {
     // The lifecycle gate keys on status/startedAt, NOT the row version: a
     // coordinator's description-only update_workflow_run bumps updatedAt

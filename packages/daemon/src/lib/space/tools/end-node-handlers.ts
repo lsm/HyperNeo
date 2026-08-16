@@ -1127,12 +1127,19 @@ export function createCompleteValidationTaskHandler(
           // work of a lifecycle this completion no longer owns — the sweep
           // stands down for all of it.
           const runAfterCascade = workflowRunRepo.getRun(currentTaskRow.workflowRunId);
+          // The generation comparison (startedAt) applies to the `done` case
+          // too: a flip→reopen→RE-CLOSE sequence ends `done` while carrying
+          // the reopen's newer startedAt — a second tick re-closes the
+          // reopened run because the activation left its task `done` — and
+          // accepting every done row would quiesce the replacement worker
+          // of the reopened lifecycle. `done` transitions never restamp
+          // startedAt (only in_progress ones do), so an unchanged startedAt
+          // plus a done status is exactly the single clean flip.
           const runLifecycleStable =
             runAfterCascade != null &&
-            (runAfterCascade.status === 'done' ||
-              (run != null &&
-                runAfterCascade.status === run.status &&
-                runAfterCascade.startedAt === run.startedAt));
+            run != null &&
+            runAfterCascade.startedAt === run.startedAt &&
+            (runAfterCascade.status === run.status || runAfterCascade.status === 'done');
           if (runLifecycleStable) {
             const activeExecutions = nodeExecutionRepo
               .listByWorkflowRun(currentTaskRow.workflowRunId)
