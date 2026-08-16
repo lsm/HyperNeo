@@ -35,6 +35,17 @@ describe('workflow hook validation', () => {
     expect(validateWorkflowHooks([validHook()], nodes)).toEqual([]);
   });
 
+  test('admits complete_validation_task as a hook method (task #918)', () => {
+    // The validation-completion tool is node-agent-exclusive and wrapped by
+    // the hook engine, so workflows must be able to declare validators on
+    // this method through every supported configuration path.
+    const errors = validateWorkflowHooks(
+      [validHook({ method: 'complete_validation_task' })],
+      nodes
+    );
+    expect(errors).toEqual([]);
+  });
+
   test('rejects unknown MCP methods and invalid node references', () => {
     const errors = validateWorkflowHooks(
       [validHook({ method: 'unknown' as never, sourceNode: 'Missing', targetNode: 'Gone' })],

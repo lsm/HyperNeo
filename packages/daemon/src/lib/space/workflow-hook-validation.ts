@@ -25,6 +25,7 @@ const VALID_METHODS = new Set([
   'mark_complete',
   'submit_for_approval',
   'approve_task',
+  'complete_validation_task',
 ]);
 const VALID_RESULT_TYPES = new Set([
   'allow',

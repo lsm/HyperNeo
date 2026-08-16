@@ -8376,6 +8376,28 @@ export class SpaceRuntime {
           finalTaskStatus === 'blocked' ||
           finalTaskStatus === 'approved';
         if (taskTerminal) {
+          // Recovery recheck: the decision above was computed from the
+          // `canonicalTask` snapshot taken before the awaited publishes
+          // (outcome updates, dispatch, evidence recapture). A concurrent
+          // `recoverWorkflowBackedTask` can commit during one of those awaits
+          // — reopening the run AND the task to `in_progress` and restarting
+          // node executions — while the local snapshot still says terminal.
+          // The sweep's victim list is read FRESH below, so proceeding on the
+          // stale decision would idle + interrupt the freshly recovered
+          // workers. Reread both rows and only sweep when the recovery did
+          // not land: task still terminal AND run still `done`.
+          const refreshedTask = this.config.taskRepo.getTask(canonicalTask.id);
+          const refreshedRun = this.config.workflowRunRepo.getRun(runId);
+          const refreshedStatus = refreshedTask?.status ?? canonicalTask.status;
+          const stillTerminal =
+            (refreshedStatus === 'done' ||
+              refreshedStatus === 'cancelled' ||
+              refreshedStatus === 'blocked' ||
+              refreshedStatus === 'approved') &&
+            refreshedRun?.status === 'done';
+          if (!stillTerminal) {
+            return;
+          }
           // Resolve the source node to exclude from quiescing. Prefer the DURABLE
           // `postApprovalSourceNodeId`; fall back to `pendingCompletionSubmittedByNodeId`
           // (the no-route branch clears the durable field on approved → done but

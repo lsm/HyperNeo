@@ -590,6 +590,7 @@ export function createCompleteValidationTaskHandler(
     // an unrelated in_progress task B, and the next tick would finalize B's
     // run and quiesce its workers. Unbound sessions (none exist on the
     // node-agent surface, but the guard is shared) retain broad access.
+    let callerBoundToThisTask = false;
     if (callerSessionId) {
       const callerTaskId = readCallerSessionTaskId(db, spaceId, callerSessionId);
       if (callerTaskId !== undefined && callerTaskId !== null && callerTaskId !== args.task_id) {
@@ -598,6 +599,7 @@ export function createCompleteValidationTaskHandler(
           error: `Worker sessions may only complete their own task; task ${args.task_id} belongs to another task's workers. Escalate to the coordinator if it needs closing.`,
         });
       }
+      callerBoundToThisTask = callerTaskId === args.task_id;
     }
 
     // Autonomy gate FIRST — mirrors `approve_task`'s ordering. Resolve the
@@ -787,6 +789,21 @@ export function createCompleteValidationTaskHandler(
           .find((e) => e.workflowRunId === task.workflowRunId);
         completionSourceNodeId = callerExecution?.workflowNodeId;
         completionSourceExecutionId = callerExecution?.id;
+        // Stale-worker guard: a task-BOUND caller with NO execution in the
+        // task's CURRENT run is a worker from a previous run attachment —
+        // `startWorkflowRun({parentTaskId})` re-attaches the task to a new
+        // run while the old worker keeps its session_context.taskId binding
+        // and its executions stay on the old run. Its completion authority
+        // ended with that run: this handler is wrapped in the SPAWN-TIME
+        // run's hook engine, and resolving to "no source" would grant it the
+        // external-caller quiesce-ALL sweep over the new run's workers.
+        // Reject so the current run's own workers drive the completion.
+        if (!callerExecution && callerBoundToThisTask) {
+          return jsonResult({
+            success: false,
+            error: `Task ${args.task_id} was re-attached to a different workflow run after this worker spawned; this session has no node execution in the current run. Validation completion belongs to the current run's workers — escalate to the coordinator if it still needs closing.`,
+          });
+        }
       }
       // The run every guard above evaluated against — the terminal write is
       // bound to this association remaining unchanged (see the precondition).

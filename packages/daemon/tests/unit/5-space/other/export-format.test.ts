@@ -2512,6 +2512,29 @@ describe('validateExportedWorkflow — handoff transitions', () => {
       expect(result.error).toContain('hookId "ghost" does not reference a known hook');
   });
 
+  test('admits a complete_validation_task hook in the import schema (task #918)', () => {
+    // The validation-completion tool ships on node-agent servers wrapped by
+    // the hook engine; an exported workflow declaring a validator on that
+    // method must pass import validation, not be rejected as an unknown
+    // method.
+    const result = validateExportedWorkflow(
+      wfWithTransitions(
+        [],
+        [
+          {
+            id: 'hook-validate-close',
+            enabled: true,
+            sourceNode: 'Code',
+            method: 'complete_validation_task',
+            validator: { kind: 'script', interpreter: 'bash', source: 'echo allow' },
+            authorizedCallers: [{ sourceNode: 'Code', agentSlots: ['coder'] }],
+          },
+        ]
+      )
+    );
+    expect(result.ok).toBe(true);
+  });
+
   test('trims and rejects whitespace-only id/target (mirrors eventInterestTopicFrom)', () => {
     const idResult = validateExportedWorkflow(wfWithTransitions([{ id: '   ', target: 'Review' }]));
     expect(idResult.ok).toBe(false);

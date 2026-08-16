@@ -180,6 +180,7 @@ const workflowHookSchema = z.object({
     'mark_complete',
     'submit_for_approval',
     'approve_task',
+    'complete_validation_task',
   ]),
   classification: z.enum(['validation', 'side_effect']).optional(),
   order: z.number().optional(),

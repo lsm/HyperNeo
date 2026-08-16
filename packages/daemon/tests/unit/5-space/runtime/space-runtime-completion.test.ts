@@ -672,6 +672,115 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       const execution = nodeExecutionRepo.listByWorkflowRun(run.id);
       expect(execution.some((e) => e.status === 'in_progress')).toBe(true);
     });
+
+    test('does not quiesce workers recovered during the resolved-branch outcome publish', async () => {
+      // Interleaving (task #918, resolved-task branch): the externally
+      // completed task is `done` with a result, and the decision-artifact
+      // summary DIFFERS — so buildTaskOutcomeUpdates produces updates and the
+      // branch awaits updateTaskAndEmit. A concurrent recoverWorkflowBackedTask
+      // commits during that await (run → in_progress, task reset, execution
+      // restarted). The sibling-sweep decision (`finalTaskStatus`) was computed
+      // from the PRE-await snapshot (done); without a recovery recheck the
+      // sweep's freshly-read victim list would idle + interrupt the recovered
+      // worker.
+      const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
+      mockTam.isSessionAlive = () => true;
+      const rt = makeRuntimeWithTam({
+        taskAgentManager: mockTam as unknown as TaskAgentManager,
+      });
+      // Two nodes so the recovered worker sits on a NON-end node — the sweep
+      // excludes the end node's executions via its sourceNodeId fallback, so
+      // an end-node victim would never prove the recheck.
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Outcome Publish Recovery ${Date.now()}`,
+        description: '',
+        nodes: [
+          { id: 'node-outcome-recover', name: 'Coding', agentId: AGENT_A },
+          { id: 'node-outcome-end', name: 'Review', agentId: AGENT_B },
+        ],
+        startNodeId: 'node-outcome-recover',
+        endNodeId: 'node-outcome-end',
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+      const { run, tasks } = await rt.startWorkflowRun(
+        SPACE_ID,
+        workflow.id,
+        'Outcome publish recovery run'
+      );
+      const task = tasks[0];
+      // External validation-completion shape: task done with an outcome, run
+      // still active; the terminal decision artifact carries a DIFFERENT
+      // summary so the resolved branch's outcome update is non-empty.
+      taskRepo.updateTask(task.id, {
+        status: 'done',
+        result: 'external validation outcome',
+      });
+      artifactRepo.upsert({
+        id: 'artifact-outcome-recovery',
+        runId: run.id,
+        nodeId: 'node-outcome-recover',
+        artifactType: 'decision',
+        artifactKey: 'final',
+        data: { summary: 'Reconciled artifact summary' },
+      });
+      const recoveredExecId = seedNodeExec(
+        db,
+        run.id,
+        'node-outcome-recover',
+        'agent',
+        'in_progress'
+      );
+      const recoveredSessionId = 'recovered-worker-session';
+      db.prepare('UPDATE node_executions SET agent_session_id = ? WHERE id = ?').run(
+        recoveredSessionId,
+        recoveredExecId
+      );
+
+      type UpdateTaskAndEmit = (
+        spaceId: string,
+        taskId: string,
+        params: Record<string, unknown>
+      ) => Promise<unknown>;
+      const rtInternal = rt as unknown as { updateTaskAndEmit: UpdateTaskAndEmit };
+      const original = rtInternal.updateTaskAndEmit.bind(rt);
+      let recovered = false;
+      rtInternal.updateTaskAndEmit = (async (spaceId, taskId, params) => {
+        const result = await original(spaceId, taskId, params);
+        if (!recovered && params.result) {
+          recovered = true;
+          // The recovery transaction commits after the outcome publish —
+          // exactly what a concurrent recoverWorkflowBackedTask does while
+          // the tick is inside this await.
+          workflowRunRepo.transitionStatus(run.id, 'in_progress');
+          taskRepo.updateTask(task.id, {
+            status: 'in_progress',
+            reportedStatus: null,
+            result: null,
+            completedAt: null,
+          });
+        }
+        return result;
+      }) as UpdateTaskAndEmit;
+
+      try {
+        await rt.executeTick();
+      } finally {
+        rtInternal.updateTaskAndEmit = original;
+      }
+
+      expect(recovered).toBe(true);
+      // The recovery is not undone: task and run stay in_progress, and the
+      // recovered worker is neither idled nor interrupted.
+      expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      const execution = nodeExecutionRepo
+        .listByWorkflowRun(run.id)
+        .find((e) => e.agentSessionId === recoveredSessionId);
+      expect(execution?.status).toBe('in_progress');
+      expect(mockTam.interruptedSessions).not.toContain(recoveredSessionId);
+    });
   });
 
   // -------------------------------------------------------------------------

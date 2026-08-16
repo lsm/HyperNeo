@@ -6859,6 +6859,94 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     expect(ctx.taskRepo.getTask(taskB)?.status).toBe('done');
   });
 
+  test('rejects a task-bound worker whose executions live on a previous run attachment', async () => {
+    // `startWorkflowRun({parentTaskId})` re-attaches a task to a new run
+    // while the OLD run's workers keep their session_context.taskId binding.
+    // Such a stale worker must not complete the task: it is wrapped in the
+    // spawn-time run's hook engine, and falling through to the
+    // no-source/external shape would grant it the quiesce-ALL sweep over the
+    // new run's workers. The guard rejects instead of granting external
+    // semantics to a bound caller.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    // The current run's own worker (must stay untouched by the rejection).
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-current',
+      agentName: 'CurrentWorker',
+      agentId: ctx.agentId,
+      status: 'in_progress',
+      agentSessionId: 'current-worker-session',
+    });
+    // A PREVIOUS run the task was once attached to, still carrying this
+    // worker's execution.
+    const prevNodeId = `node-prev-${Math.random().toString(36).slice(2, 8)}`;
+    const prevWorkflow = ctx.workflowManager.createWorkflow({
+      spaceId: ctx.spaceId,
+      name: `Previous workflow ${prevNodeId.slice(-6)}`,
+      description: '',
+      nodes: [{ id: prevNodeId, name: 'Previous', agentId: ctx.agentId }],
+      transitions: [],
+      startNodeId: prevNodeId,
+      endNodeId: prevNodeId,
+      rules: [],
+      completionAutonomyLevel: 5,
+    });
+    const prevRun = ctx.workflowRunRepo.createRun({
+      spaceId: ctx.spaceId,
+      workflowId: prevWorkflow.id,
+      title: 'Previous run',
+      description: '',
+    });
+    ctx.workflowRunRepo.updateRun(prevRun.id, { status: 'in_progress' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: prevRun.id,
+      workflowNodeId: prevNodeId,
+      agentName: 'StaleWorker',
+      agentId: ctx.agentId,
+      status: 'in_progress',
+      agentSessionId: 'stale-worker-session',
+    });
+    // The stale worker's session is bound to the task (its binding survives
+    // the re-attachment) but has no execution in the CURRENT run.
+    ctx.db
+      .prepare(
+        `INSERT INTO sessions (
+            id, title, workspace_path, created_at, last_active_at, status, config, metadata,
+            is_worktree, git_branch, processing_state, type, session_context
+          ) VALUES (?, ?, '/tmp/ws', ?, ?, 'active', '{}', '{}', 0, NULL, ?, 'worker', ?)`
+      )
+      .run(
+        'stale-worker-session',
+        'Stale worker',
+        new Date(0).toISOString(),
+        new Date().toISOString(),
+        JSON.stringify({ status: 'idle' }),
+        JSON.stringify({ spaceId: ctx.spaceId, taskId: task.id })
+      );
+
+    const result = await makeValidationTool({
+      callerSessionId: 'stale-worker-session',
+    }).complete_validation_task({
+      task_id: task.id,
+      validation_outcome: 'should be refused',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('re-attached to a different workflow run');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
+    // Neither run's workers were swept.
+    const currentExec = ctx.nodeExecutionRepo
+      .listByWorkflowRun(task.workflowRunId!)
+      .find((e) => e.agentSessionId === 'current-worker-session');
+    expect(currentExec?.status).toBe('in_progress');
+    const staleExec = ctx.nodeExecutionRepo
+      .listByWorkflowRun(prevRun.id)
+      .find((e) => e.agentSessionId === 'stale-worker-session');
+    expect(staleExec?.status).toBe('in_progress');
+  });
+
   test('records the completing worker’s node so reconciliation quiesce spares the caller', async () => {
     // A non-end-node worker completing its own workflow-backed task: the
     // completion must carry the caller's node (committed atomically with done
