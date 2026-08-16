@@ -1131,9 +1131,10 @@ export class SDKMessageHandler {
     }
 
     if (isSDKCommandsChangedMessage(message)) {
-      const allCommands = flattenSDKSlashCommands(message.commands);
-      const browserCommands = allCommands.filter((cmd) => !this.terminalCommands.has(cmd));
-      await this.ctx.onCommandsChanged(browserCommands);
+      // Filter the command records (not the flattened names) so a terminal
+      // command's aliases are excluded too — flattening first would re-add them.
+      const browserRecords = message.commands.filter((cmd) => !this.terminalCommands.has(cmd.name));
+      await this.ctx.onCommandsChanged(flattenSDKSlashCommands(browserRecords));
     }
   }
 
