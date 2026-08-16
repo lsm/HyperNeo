@@ -16,13 +16,11 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { MessageContent, MessageHub, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import { drainDeliveryWaitersOnTerminalSDKMessage } from './message-delivery';
 import type { UUID } from 'crypto';
-import { Database } from '../../storage/database';
-import { ErrorCategory, ErrorManager } from '../error-manager';
+import type { Database } from '../../storage/database';
+import { ErrorCategory, type ErrorManager } from '../error-manager';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import { Logger } from '../logger';
-import { isNonRetryableBillingError } from './fallback-recovery';
+import type { Logger } from '../logger';
 import type { OriginalEnvVars, ProviderEnvVars } from '../provider-service';
 import {
   missingMcpServers,
@@ -31,11 +29,14 @@ import {
   SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS,
 } from '../space/runtime/space-mcp-session-policy';
 import type { AskUserQuestionHandler } from './ask-user-question-handler';
+import { isNonRetryableBillingError } from './fallback-recovery';
+import { drainDeliveryWaitersOnTerminalSDKMessage } from './message-delivery';
 import type { MessageQueue } from './message-queue';
-import type { SDKMessageHandler } from './sdk-message-handler';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { QueryLike } from './query-like';
 import type { QueryOptionsBuilder } from './query-options-builder';
+import type { SDKMessageHandler } from './sdk-message-handler';
+import { getSdkStartupGate, type SdkStartupPermit } from './sdk-startup-gate';
 import {
   isRetryableProviderError,
   TRANSIENT_CONNECTION_ERROR_SUBSTRINGS,
@@ -513,6 +514,24 @@ export class QueryRunner {
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
 
+    // Startup-phase admission permit (daemon-wide cold-start gate). Acquired
+    // just before the SDK query is created below and released on the first SDK
+    // message, on any throw (catch entry), and on attempt exit (finally
+    // backstop) — release is idempotent, and the permit is attempt-local so it
+    // is safe to free even when the attempt is stale. Declared outside the try
+    // so all three release sites share one slot.
+    let startupPermit: SdkStartupPermit | null = null;
+    const releaseStartupPermit = (reason: string): void => {
+      if (!startupPermit) return;
+      const permit = startupPermit;
+      startupPermit = null;
+      logger.debug(
+        `SDK startup gate: slot released (session=${session.id} reason=${reason} ` +
+          `heldMs=${Date.now() - permit.admittedAt})`
+      );
+      permit.release();
+    };
+
     try {
       // Verify authentication for the selected provider
       const { initializeProviders, waitForOptionalProviderRegistration } = await import(
@@ -804,6 +823,47 @@ export class QueryRunner {
         return proc;
       };
 
+      // ── Startup-phase admission gate ─────────────────────────────────────
+      // The expensive resource at session start is the spawn→first-message
+      // window (fork/exec of the CLI + transcript parse), not steady-state
+      // streaming. The daemon-wide gate bounds how many sessions may be in
+      // that phase at once, so a reclaimed herd rolls its admissions instead
+      // of missing the startup window en masse. The SDK spawns the subprocess
+      // synchronously inside query() below, so the permit must be held BEFORE
+      // that call. It is released when the first SDK message arrives (next to
+      // clearing the startup timer) and on every other attempt exit via the
+      // catch/finally backstops below — retries re-queue like any other start.
+      const abortController = new AbortController();
+      this.ctx.queryAbortController = abortController;
+      {
+        const startupGate = getSdkStartupGate();
+        startupPermit = await startupGate.acquire({
+          sessionId: session.id,
+          signal: abortController.signal,
+        });
+        if (startupPermit.queuedBehind > 0) {
+          logger.info(
+            `SDK startup gate: session ${session.id} admitted after waiting ` +
+              `${startupPermit.waitedMs}ms behind ${startupPermit.queuedBehind} session(s) ` +
+              `(gate=${JSON.stringify(startupGate.getStats())})`
+          );
+        }
+      }
+      // The wait can straddle a stop/interrupt/restart. An abort wins via the
+      // signal, a replacement query via the generation check; either way
+      // release the slot and surface as an abort so the existing cleanup paths
+      // run — never spawn into a session that has moved on.
+      if (
+        abortController.signal.aborted ||
+        this.ctx.isCleaningUp() ||
+        this.ctx.getQueryGeneration() !== queryGeneration
+      ) {
+        releaseStartupPermit('aborted_while_queued');
+        const gateAbort = new Error('SDK startup gate: query aborted while awaiting admission');
+        gateAbort.name = 'AbortError';
+        throw gateAbort;
+      }
+
       // Create query with AsyncGenerator
       const queryObject = query({
         prompt: this.createMessageGeneratorWrapper(queryGeneration),
@@ -828,11 +888,10 @@ export class QueryRunner {
         });
       }
 
-      // Publish this attempt's abort controller before arming its timer. The
-      // timer closes over this exact controller so it cannot miss the narrow
-      // setup window or abort a replacement query through mutable shared state.
-      const abortController = new AbortController();
-      this.ctx.queryAbortController = abortController;
+      // The abort controller was created and published before the admission
+      // gate above; the timer below closes over that exact controller so it
+      // cannot miss the narrow setup window or abort a replacement query
+      // through mutable shared state.
 
       // Set up startup timeout
       const queryStartTime = Date.now();
@@ -896,11 +955,16 @@ export class QueryRunner {
 
         messageCount++;
 
-        // Clear startup timeout on first message
-        const timer = this.ctx.startupTimeoutTimer;
-        if (timer && messageCount === 1) {
-          clearTimeout(timer);
-          this.ctx.startupTimeoutTimer = null;
+        // Clear startup timeout on first message. The startup phase is over
+        // here — also free the daemon-wide admission slot so queued sessions
+        // can cold-start while this one streams (streaming holds no slot).
+        if (messageCount === 1) {
+          const timer = this.ctx.startupTimeoutTimer;
+          if (timer) {
+            clearTimeout(timer);
+            this.ctx.startupTimeoutTimer = null;
+          }
+          releaseStartupPermit('first_message');
         }
 
         this.ctx.firstMessageReceived = true;
@@ -974,6 +1038,13 @@ export class QueryRunner {
       }
     } catch (error) {
       logger.error('Streaming query error:', error);
+
+      // The attempt is exiting without completing its startup phase (or its
+      // permit was already freed at the first message — release is idempotent).
+      // Free the admission slot NOW, before the teardown waits and recursive
+      // retries below: retries must re-queue like any other start, and
+      // subprocess-exit waits must never hold cold-start capacity.
+      releaseStartupPermit('query_error');
 
       // During cleanup the database may already be closed. Skip all
       // error-recovery DB writes to avoid cascading "closed database"
@@ -1606,6 +1677,13 @@ export class QueryRunner {
         }
       }
     } finally {
+      // Admission-slot backstop: covers every non-throw exit (iterator EOF,
+      // including a zero-message end) and attempts whose shared-state cleanup
+      // is skipped below as stale. The permit is attempt-local, so releasing
+      // it is safe even when stale — unlike the shared state guarded by
+      // isStaleQuery. No-op once the first message or catch entry released it.
+      releaseStartupPermit('attempt_finished');
+
       // Check for stale query FIRST to avoid race conditions.
       // When a query is restarted (e.g., model switch), the old query's finally block
       // must not touch shared state (abort controller, timers) that belongs to the new query.
