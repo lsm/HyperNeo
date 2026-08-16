@@ -3286,6 +3286,108 @@ describe('useInputDraft', () => {
       expect(saves.length).toBeGreaterThan(1);
       expect(saves.every(([, data]) => data?.expectedDraftVersion === undefined)).toBe(true);
     });
+
+    it('does not cache a load version its content never adopted', async () => {
+      // A replay refresh get cancelled by typing returns a MERGED draft with
+      // a version, but the cancellation fold can DECLINE (no baseline, and
+      // the landing aggregate is untrusted): the local typing carries none of
+      // that draft. Advancing the version cache anyway would make the next
+      // save echo it, and the daemon would apply the transcript-free text
+      // as-is and clear the baseline — deleting the merged transcript. The
+      // cache may only advance once the draft (or its transcripts) actually
+      // reached the local content.
+      let resolveGet: ((v: unknown) => void) | null = null;
+      let gets = 0;
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          gets += 1;
+          if (gets === 1) return { session: { metadata: {} } };
+          return new Promise((resolve) => {
+            resolveGet = resolve;
+          });
+        }
+        return { success: true };
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // A landing whose aggregate is ORDER-UNTRUSTED (mixed sequenced and
+      // legacy entries) with an empty composer defers to the replay refresh.
+      markVoiceTranscriptLanded('session-1', 'voice one', 'e1', 1);
+      markVoiceTranscriptLanded('session-1', 'voice two', 'e2');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(resolveGet).not.toBeNull(); // the refresh get is in flight
+      // The user types before the merged draft resolves — the get cancels
+      // and the cancellation fold declines (no baseline, untrusted
+      // aggregate), so nothing of the merged draft reaches the content.
+      act(() => {
+        result.current.setContent('user typing');
+      });
+      await act(async () => {
+        resolveGet?.({
+          session: { metadata: { inputDraft: 'merged text', inputDraftVersion: 7 } },
+        });
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // The typing's debounced save must NOT echo the un-adopted version —
+      // the daemon folds the transcripts back into it instead of applying
+      // it as-is.
+      const saves = mockHub.request.mock.calls.filter(([m]) => m === 'session.update');
+      expect(saves.length).toBeGreaterThan(0);
+      expect(saves.every(([, data]) => data?.expectedDraftVersion === undefined)).toBe(true);
+    });
+
+    it('re-reads the draft after a save is refused over an empty daemon draft', async () => {
+      // Another tab (or the send) cleared the draft and bumped the version
+      // past this composer's echo: the daemon refuses the write as a stale
+      // resurrection and marks the ack. The client must re-read so the
+      // composer syncs to the cleared state — otherwise every later save
+      // re-echoes the stale version and is refused forever.
+      let gets = 0;
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          gets += 1;
+          // First load: the pre-clear draft. Re-read: the cleared daemon.
+          return {
+            session: {
+              metadata:
+                gets === 1
+                  ? { inputDraft: 'hello', inputDraftVersion: 3 }
+                  : { inputDraft: null, inputDraftVersion: 5 },
+            },
+          };
+        }
+        if (method === 'session.update') {
+          return { success: true, draftVersion: 5, staleRefused: true };
+        }
+        return { success: true };
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // The loaded (pre-clear) text schedules a save whose echo is stale.
+      expect(result.current.content).toBe('hello');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      const save = mockHub.request.mock.calls.find(([m]) => m === 'session.update');
+      expect(save?.[1]?.expectedDraftVersion).toBe(3);
+      // The refusal proved the cleared state: the composer adopted it and
+      // the cache re-armed to the ack's version — no re-read round trip
+      // needed.
+      expect(result.current.content).toBe('');
+      expect(gets).toBe(1);
+    });
   });
 
   describe('debounced saving', () => {

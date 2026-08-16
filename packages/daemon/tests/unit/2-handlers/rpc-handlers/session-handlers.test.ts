@@ -874,12 +874,16 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
     });
   });
 
-  it('folds a stale save that coincidentally ends with the transcript phrase', async () => {
-    // The stale writer's content happens to END with the same text as the
-    // transcript — a suffix comparison cannot tell this apart from a genuine
-    // post-merge save. The DRAFT VERSION can: the stale writer echoes an
-    // older (or no) version, so the dictated occurrence is folded in rather
-    // than silently dropped.
+  it('applies a stale save as-is when it already ends with the transcripts', async () => {
+    // POLICY (tenth codex round): a stale ECHO does not prove the write lacks
+    // the transcripts — two tabs can both have read the merged draft, one
+    // folds and saves (bumping the version), and the other's now-stale save
+    // whose content ALREADY carries the transcripts would get them appended a
+    // second time ("A edits voice" -> "A edits voice voice"). A write that
+    // ends with the exact transcripts carries them, version-current or not.
+    // The coincidental-typing case is textually identical to the genuine one
+    // (the phrase is present exactly once either way), so the suffix check
+    // strictly dominates the blind append.
     existingPending = null;
     existingDraft = 'please say hello';
     existingBaseline = 'please say';
@@ -888,10 +892,104 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
     await handler!({ sessionId: 's1', metadata: { inputDraft: 'please say hello' } }, {});
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
       metadata: {
-        inputDraft: 'please say hello hello',
-        inputDraftVoiceBaseline: 'please say hello',
+        inputDraft: 'please say hello',
+        inputDraftVoiceBaseline: null,
         inputDraftVersion: 3,
       },
+    });
+  });
+
+  it('does not duplicate the transcripts in a stale save that already carries them', async () => {
+    // The exact both-read interleave: tabs A and B each read the merged draft
+    // (version N); B's stale-relative save folds and bumps to N+1; A — whose
+    // content genuinely carries the transcript — saves with the now-stale
+    // echo N. Blind classification as pre-merge appended a second occurrence.
+    existingPending = null;
+    existingDraft = 'old voice';
+    existingBaseline = 'old';
+    existingDraftVersion = 2;
+    const handler = messageHubData.handlers.get('session.update');
+    const result = (await handler!(
+      {
+        sessionId: 's1',
+        expectedDraftVersion: 1,
+        metadata: { inputDraft: 'A edits voice' },
+      },
+      {}
+    )) as { draftVersion?: number; draftValue?: string };
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: {
+        inputDraft: 'A edits voice',
+        inputDraftVoiceBaseline: null,
+        inputDraftVersion: 3,
+      },
+    });
+    expect(result.draftValue).toBeUndefined(); // applied as-is, not folded
+  });
+
+  it('refuses a stale save that would resurrect an already-cleared draft', async () => {
+    // The send cleared the draft and bumped the version (messagePersisted);
+    // another tab's in-flight save still echoes the pre-clear version. A
+    // plain last-writer-wins apply would bring back text the user already
+    // sent — the write is dropped and the ack marks the refusal so the
+    // client re-reads instead of re-echoing the stale version forever.
+    existingPending = null;
+    existingDraft = null;
+    existingBaseline = null;
+    existingDraftVersion = 5;
+    const handler = messageHubData.handlers.get('session.update');
+    const result = (await handler!(
+      {
+        sessionId: 's1',
+        expectedDraftVersion: 4,
+        metadata: { inputDraft: 'text the user already sent' },
+      },
+      {}
+    )) as { success: boolean; draftVersion?: number; staleRefused?: boolean };
+    expect(result).toEqual({ success: true, draftVersion: 5, staleRefused: true });
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', { metadata: {} });
+  });
+
+  it('still applies a version-current write over a cleared draft', async () => {
+    // Only STALE echoes are refused over an empty draft — a writer whose echo
+    // matches is the legitimate next author of the draft.
+    existingPending = null;
+    existingDraft = null;
+    existingBaseline = null;
+    existingDraftVersion = 5;
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!(
+      {
+        sessionId: 's1',
+        expectedDraftVersion: 5,
+        metadata: { inputDraft: 'fresh typing' },
+      },
+      {}
+    );
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: 'fresh typing', inputDraftVersion: 6 },
+    });
+  });
+
+  it('still applies a stale write over a non-empty draft (ordinary concurrency)', async () => {
+    // Refusing every stale write would deadlock ordinary two-tab editing
+    // (each tab's echo goes stale after the other's save). Only the
+    // resurrection over an EMPTY draft is refused.
+    existingPending = null;
+    existingDraft = 'tab B typing';
+    existingBaseline = null;
+    existingDraftVersion = 5;
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!(
+      {
+        sessionId: 's1',
+        expectedDraftVersion: 4,
+        metadata: { inputDraft: 'tab A typing' },
+      },
+      {}
+    );
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: 'tab A typing', inputDraftVersion: 6 },
     });
   });
 

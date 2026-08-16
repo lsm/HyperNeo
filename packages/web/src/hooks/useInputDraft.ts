@@ -256,12 +256,17 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           const baseline = response.session?.metadata?.inputDraftVoiceBaseline;
           const baselineSeq = response.session?.metadata?.inputDraftVoiceBaselineSeq;
           const pendingRetained = !!response.session?.metadata?.inputDraftVoicePending;
-          if (typeof response.session?.metadata?.inputDraftVersion === 'number') {
-            // Monotonic, like save acks: overlapping gets can complete out of
-            // order, and an older response must not regress the cache (the
-            // next save would fold a transcript the draft already contains).
-            advanceDraftVersion(targetSessionId, response.session.metadata.inputDraftVersion);
-          }
+          const draftVersion = response.session?.metadata?.inputDraftVersion;
+          // Whether this response's draft (or its transcripts) actually
+          // reached the local content. The version cache may advance ONLY
+          // then: a get whose application was refused and whose
+          // cancellation-fold declined (no baseline, untrusted aggregate)
+          // describes a merged draft the local content does NOT carry, and
+          // echoing its version on the next save would let the daemon apply
+          // that save as-is and clear the baseline — irrecoverably deleting
+          // the merged transcript. A stale echo instead makes the daemon fold
+          // the transcripts back in (idempotently, by suffix).
+          let adopted = draft === undefined || draft === '';
           // An `applyGuard` lets the owed-clear chains decline the local
           // application: their get returns the STALE pre-clear draft plus
           // transcripts, and applying it would overwrite typing (or a
@@ -269,6 +274,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           // fold below merges the transcripts into that content instead.
           if (!cancelled && draft && (applyGuard ? applyGuard() : true)) {
             contentSignal.value = draft;
+            adopted = true;
           } else if (
             cancelled &&
             reconcileOnCancel &&
@@ -301,10 +307,17 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                 : null);
             if (transcript) {
               contentSignal.value = appendDraftText(contentSignal.peek(), transcript);
+              adopted = true;
             }
             if (requestedGeneration !== undefined) {
               foldedLandingRef.current.set(targetSessionId, requestedGeneration);
             }
+          }
+          if (typeof draftVersion === 'number' && adopted) {
+            // Monotonic, like save acks: overlapping gets can complete out of
+            // order, and an older response must not regress the cache (the
+            // next save would fold a transcript the draft already contains).
+            advanceDraftVersion(targetSessionId, draftVersion);
           }
           onResult?.(true, pendingRetained, cancelled, draft, baseline, baselineSeq);
         })
@@ -1659,6 +1672,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           draftVersion?: number;
           draftValue?: string;
           foldRefused?: boolean;
+          staleRefused?: boolean;
         }>('session.update', {
           sessionId,
           // Echo the draft version this composer last READ: the daemon applies
@@ -1696,6 +1710,24 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           // keep the version cache STALE: advancing to the retained draft's
           // version would make the NEXT save apply as-is, clearing the
           // baseline and deleting the transcripts from the draft.
+          return;
+        }
+        if (ack?.staleRefused) {
+          // The daemon REFUSED this write as a stale echo over an EMPTY
+          // draft (another tab or the send already cleared it past our
+          // version): nothing was persisted, and the refusal itself proves
+          // the daemon state — it fires only over an empty draft — while the
+          // ack carries that state's version. Adopt both when the composer
+          // still shows EXACTLY the refused text; newer typing is fresher
+          // user state to keep (its own next save re-attempts, and the
+          // daemon re-refuses rather than resurrecting).
+          if (
+            currentSessionIdRef.current === sessionId &&
+            contentSignal.peek() === trimmedContent
+          ) {
+            contentSignal.value = '';
+            advanceDraftVersion(sessionId, ack?.draftVersion);
+          }
           return;
         }
         // Advance the cache to the APPLIED version: without it, a concurrent

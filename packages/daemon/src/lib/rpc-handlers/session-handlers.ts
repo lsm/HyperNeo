@@ -477,6 +477,10 @@ export function setupSessionHandlers(
     // persisted, and advancing the cache would let the client's next save
     // apply as-is and clear the baseline, deleting the transcripts.
     let foldRefused = false;
+    // A plain-write refusal for a stale echo over an empty (sent/cleared)
+    // draft: the client must RE-READ the draft (its cache and composer both
+    // predate the send) rather than merely keep its local text.
+    let staleRefused = false;
     let retainedFoldValue: string | null = null;
     let retainedFoldVersion: number | undefined;
     if (draftWrite !== undefined) {
@@ -504,9 +508,25 @@ export function setupSessionHandlers(
         if (draft.startsWith(`${baseline} `)) transcripts = draft.slice(baseline.length + 1);
         else if (draft.startsWith(baseline)) transcripts = draft.slice(baseline.length);
         const currentVersion = meta.inputDraftVersion ?? 0;
-        const alreadyIncluded =
-          expectedDraftVersion !== undefined && expectedDraftVersion === currentVersion;
+        // A stale ECHO does not prove the write lacks the transcripts: two
+        // tabs can both have read the merged draft, one folds and saves
+        // (bumping the version), and the other's now-stale save whose content
+        // ALREADY carries the transcripts would get them appended a second
+        // time ("A edits voice" -> "A edits voice voice"). A write that ends
+        // with the exact transcripts carries them — apply as-is, exactly like
+        // a version-current writer. (The coincidental-typing case is
+        // textually identical to the genuine one — the phrase is present
+        // exactly once either way — so the suffix check strictly dominates
+        // the blind append.)
         const written = draftWrite ?? '';
+        const endsWithTranscripts =
+          transcripts.length > 0 &&
+          (written === transcripts ||
+            written.endsWith(transcripts) ||
+            written.endsWith(` ${transcripts}`));
+        const alreadyIncluded =
+          (expectedDraftVersion !== undefined && expectedDraftVersion === currentVersion) ||
+          endsWithTranscripts;
         const folded = alreadyIncluded
           ? written
           : transcripts
@@ -557,7 +577,30 @@ export function setupSessionHandlers(
         // A plain draft write (no sequence involved) still bumps the version
         // so OTHER tabs' in-flight saves become recognizably stale.
         const currentVersion = meta?.inputDraftVersion ?? 0;
-        (updates.metadata as Partial<SessionMetadata>).inputDraftVersion = currentVersion + 1;
+        // A stale echo over an EMPTY draft is a resurrection attempt: the
+        // version moved past the writer's knowledge precisely because the
+        // draft was sent/cleared (messagePersisted bumps the version on the
+        // send), and persisting the older non-empty write would bring back
+        // text the user already sent or deleted. Drop the write (no version
+        // bump — the refuting mutation owns the newer version) and mark the
+        // refusal so the client re-reads the draft instead of echoing the
+        // stale version forever. Stale writes over a NON-EMPTY draft stay
+        // last-writer-wins: rejecting ordinary concurrent two-tab editing
+        // would deadlock both composers' saves.
+        const written = draftWrite ?? '';
+        const staleOverClear =
+          typeof expectedDraftVersion === 'number' &&
+          expectedDraftVersion !== currentVersion &&
+          (meta?.inputDraft ?? '').trim() === '' &&
+          written.trim() !== '';
+        if (staleOverClear) {
+          delete (updates.metadata as Partial<SessionMetadata>).inputDraft;
+          staleRefused = true;
+          retainedFoldValue = meta?.inputDraft ?? '';
+          retainedFoldVersion = currentVersion;
+        } else {
+          (updates.metadata as Partial<SessionMetadata>).inputDraftVersion = currentVersion + 1;
+        }
       }
     }
 
@@ -593,6 +636,7 @@ export function setupSessionHandlers(
       success: true,
       ...(appliedVersion !== undefined ? { draftVersion: appliedVersion } : {}),
       ...(foldRefused ? { foldRefused: true } : {}),
+      ...(staleRefused ? { staleRefused: true } : {}),
       ...(didFold ? { draftValue: appliedMeta.inputDraft ?? retainedFoldValue ?? '' } : {}),
     };
   });
