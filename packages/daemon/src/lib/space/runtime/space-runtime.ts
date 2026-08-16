@@ -8212,8 +8212,18 @@ export class SpaceRuntime {
         // recovered state instead.
         const preTransitionTask = this.config.taskRepo.getTask(canonicalTask.id);
         const preTransitionRun = this.config.workflowRunRepo.getRun(runId);
+        // Run-generation binding: another tick can close this run and
+        // ChannelRouter reopen it (done → in_progress, NEW startedAt) while
+        // this tick awaited its earlier completion work — the reopened run
+        // is in_progress with a newer generation, and the channel reopen
+        // leaves the completed task done, so every status-only predicate
+        // passes. Only an unchanged startedAt (or a run this tick itself
+        // finalized to done) may transition.
+        const runStartedAtAtDecision = run.startedAt;
         const preTransitionHolds =
-          (preTransitionRun == null || preTransitionRun.status === 'in_progress') &&
+          (preTransitionRun == null ||
+            (preTransitionRun.status === 'in_progress' &&
+              preTransitionRun.startedAt === runStartedAtAtDecision)) &&
           // The refreshed task must remain attached to THIS run — a mid-tick
           // `spaceTask.update` can reattach it elsewhere OR detach it
           // entirely (workflowRunId → null); either way this run's
@@ -8254,6 +8264,7 @@ export class SpaceRuntime {
         const runAfterTransition = this.config.workflowRunRepo.getRun(runId);
         const completionStillHolds =
           runAfterTransition?.status === 'done' &&
+          runAfterTransition.startedAt === runStartedAtAtDecision &&
           // The refreshed task must still belong to THIS run: a mid-tick
           // `spaceTask.update` can move a done task to another run OR
           // detach it entirely while retaining its completion signal —

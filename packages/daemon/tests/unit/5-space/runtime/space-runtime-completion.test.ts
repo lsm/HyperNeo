@@ -993,6 +993,57 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       // carries for this run.)
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
     });
+
+    test('a stale tick does not re-close a channel-reopened run generation', async () => {
+      // Another tick closes the run; ChannelRouter reopens it (done →
+      // in_progress, NEW startedAt) while THIS tick awaits earlier
+      // completion work. The reopened run is in_progress and its task
+      // stayed done (channel reopen leaves it), so every status-only
+      // predicate passes — the stale tick must not transition the new
+      // lifecycle back to done. Both tick predicates bind to the run
+      // generation observed at entry.
+      const rt = makeRuntimeWithTam();
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: 'node-reopened-gen', name: 'Coding', agentId: AGENT_A },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(
+        SPACE_ID,
+        workflow.id,
+        'Reopened generation run'
+      );
+      const task = tasks[0];
+      taskRepo.updateTask(task.id, { status: 'done', result: 'external validation outcome' });
+      seedNodeExec(db, run.id, 'node-reopened-gen', 'agent', 'in_progress');
+
+      const rtInternal = rt as unknown as {
+        completionDetector: { isComplete: (query: unknown) => boolean };
+      };
+      const originalIsComplete = rtInternal.completionDetector.isComplete.bind(
+        rtInternal.completionDetector
+      );
+      let reopened = false;
+      rtInternal.completionDetector.isComplete = (query: unknown) => {
+        const result = originalIsComplete(query);
+        if (result && !reopened) {
+          reopened = true;
+          // Concurrent tick closes; a channel activation reopens (restamps
+          // startedAt); the task stays done throughout.
+          workflowRunRepo.transitionStatus(run.id, 'done');
+          workflowRunRepo.transitionStatus(run.id, 'in_progress');
+        }
+        return result;
+      };
+
+      try {
+        await rt.executeTick();
+      } finally {
+        rtInternal.completionDetector.isComplete = originalIsComplete;
+      }
+
+      expect(reopened).toBe(true);
+      // The reopened lifecycle survives: the run stays in_progress.
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+    });
   });
 
   // -------------------------------------------------------------------------

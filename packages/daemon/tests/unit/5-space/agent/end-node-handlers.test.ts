@@ -3295,6 +3295,54 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     expect(ctx.taskRepo.getTask(dependent.id)?.status).toBe('open');
   });
 
+  test('goal-terminal handling is suppressed when a re-closed run carries the reopen generation', async () => {
+    // Flip→reopen→RE-CLOSE during the cascade: the task stays done and the
+    // run reads done again, but with the reopen's newer startedAt. The goal
+    // gate must compare the generation on the done branch too — clearing
+    // the goal's active-task pointer would start its successor against a
+    // lifecycle whose replacement work is still running.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-goal2',
+      agentName: 'Review',
+      agentId: ctx.agentId,
+      status: 'idle',
+    });
+    const goalsHandled: string[] = [];
+    const originalSetStatus = ctx.taskManager.setTaskStatus.bind(ctx.taskManager);
+    const setStatusSpy = spyOn(ctx.taskManager, 'setTaskStatus').mockImplementation(
+      async (...callArgs: Parameters<typeof originalSetStatus>) => {
+        const result = await originalSetStatus(...callArgs);
+        // done → reopened (restamps startedAt) → re-closed (task stayed done).
+        ctx.workflowRunRepo.transitionStatus(task.workflowRunId!, 'done');
+        ctx.workflowRunRepo.transitionStatus(task.workflowRunId!, 'in_progress');
+        ctx.workflowRunRepo.transitionStatus(task.workflowRunId!, 'done');
+        return result;
+      }
+    );
+
+    try {
+      const result = await makeValidationTool({
+        goalService: {
+          handleTaskTerminal: (taskIdNow: string) => {
+            goalsHandled.push(taskIdNow);
+          },
+        } as unknown as CompleteValidationTaskHandlerDeps['goalService'],
+      }).complete_validation_task({
+        task_id: task.id,
+        validation_outcome: 'committed; re-closed generation must not finalize goals',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.success).toBe(true);
+      expect(ctx.taskRepo.getTask(task.id)?.status).toBe('done');
+      expect(goalsHandled).toEqual([]);
+    } finally {
+      setStatusSpy.mockRestore();
+    }
+  });
+
   test('goal-terminal handling is suppressed while the reopened run is unstable', async () => {
     // The tick can commit the done task while a message-driven reopen
     // reopens the run during the awaited cascade — completionConfirmed

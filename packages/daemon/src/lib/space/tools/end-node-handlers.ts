@@ -1331,10 +1331,15 @@ export function createCompleteValidationTaskHandler(
         (() => {
           if (!currentTaskRow?.workflowRunId) return true; // standalone
           const runRow = workflowRunRepo.getRun(currentTaskRow.workflowRunId);
+          // Same predicate as the worker sweep — generation compared on the
+          // DONE branch too: a flip→reopen→RE-CLOSE roundtrip ends done
+          // carrying the reopen's newer startedAt, and the goal's successor
+          // must not trigger against that still-running lifecycle.
           return (
             runRow != null &&
-            (runRow.status === 'done' ||
-              (run != null && runRow.status === run.status && runRow.startedAt === run.startedAt))
+            run != null &&
+            runRow.startedAt === run.startedAt &&
+            (runRow.status === run.status || runRow.status === 'done')
           );
         })();
       if (runLifecycleStableForGoal) {
@@ -1439,9 +1444,22 @@ export function createCompleteValidationTaskHandler(
           // nothing would ever reopen it. If all its dependencies are met,
           // reopen immediately.
           const prerequisiteAfterBlock = await taskManager.getTask(args.task_id);
+          const prerequisiteGeneration = prerequisiteAfterBlock?.updatedAt;
           if (prerequisiteAfterBlock?.status === 'done') {
             const met = await taskManager.areDependenciesMet(reblocked);
             if (met) {
+              // Generation recheck after the awaited deps read: the
+              // prerequisite can be RECOVERED to in_progress in that window
+              // (nothing re-blocks open dependents on recovery), and
+              // reopening against an incomplete dependency would let a tick
+              // start the dependent incorrectly.
+              const stablePrerequisite = await taskManager.getTask(args.task_id);
+              if (
+                stablePrerequisite?.status !== 'done' ||
+                stablePrerequisite.updatedAt !== prerequisiteGeneration
+              ) {
+                continue;
+              }
               const reopenedDependent = await taskManager.setTaskStatus(dependent.id, 'open');
               emitTaskUpdated(reopenedDependent);
               log.warn(
