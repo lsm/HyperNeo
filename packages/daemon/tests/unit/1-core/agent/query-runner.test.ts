@@ -977,6 +977,49 @@ describe('QueryRunner', () => {
       ).lastConsumedUserMessage;
       expect(tracked).toBeNull();
     });
+
+    it('does not accumulate startup replay after the first SDK frame', async () => {
+      // Codex P2 (PR #2499): once the generation has produced its first frame,
+      // the startup timer is disabled and later prompts/steers must not rebuild
+      // the replay list (unbounded full-content retention in long sessions).
+      async function* mockMessageGenerator() {
+        yield {
+          message: {
+            uuid: 'msg-1',
+            session_id: 'test-session-id',
+            parent_tool_use_id: null,
+            message: { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
+            internal: false,
+          },
+          onSent: () => {},
+        };
+      }
+
+      const mockQueue = {
+        ...mockMessageQueue,
+        messageGenerator: mock(() => mockMessageGenerator()),
+      } as unknown as MessageQueue;
+
+      runner = createRunner({
+        messageQueue: mockQueue as unknown as MessageQueue,
+        firstMessageReceived: true,
+      });
+
+      const generator = runner.createMessageGeneratorWrapper(0);
+      for await (const _msg of generator) {
+        // Consume the generator
+      }
+
+      // `_lastConsumedUserMessage` is still tracked for the transient/rate-limit
+      // retries (mid-stream drops), but the startup-replay list stays empty.
+      expect(
+        (runner as unknown as { lastConsumedUserMessage: unknown }).lastConsumedUserMessage
+      ).not.toBeNull();
+      expect(
+        (runner as unknown as { _consumedUserMessages: Map<number, unknown[]> })
+          ._consumedUserMessages.size
+      ).toBe(0);
+    });
   });
 
   describe('handleSDKMessage', () => {

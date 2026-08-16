@@ -1856,13 +1856,20 @@ export class QueryRunner {
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
         };
         // Accumulate the full ordered set of consumed messages for THIS
-        // generation's startup-timeout replay (see _consumedUserMessages).
-        const generationMessages = this._consumedUserMessages.get(queryGeneration) ?? [];
-        generationMessages.push({
-          uuid: message.uuid ?? '',
-          content: (message.message?.content ?? '') as unknown as string | MessageContent[],
-        });
-        this._consumedUserMessages.set(queryGeneration, generationMessages);
+        // generation's startup-timeout replay (see _consumedUserMessages). Stop
+        // collecting once the generation has produced its first SDK frame — the
+        // startup timer is then disabled and later messages are a healthy turn's
+        // inputs, not something a startup retry would need to replay. Without
+        // this, a long-lived session rebuilds the list on every prompt/steer and
+        // re-introduces unbounded full-content retention. (Codex P2, PR #2499.)
+        if (!this.ctx.firstMessageReceived) {
+          const generationMessages = this._consumedUserMessages.get(queryGeneration) ?? [];
+          generationMessages.push({
+            uuid: message.uuid ?? '',
+            content: (message.message?.content ?? '') as unknown as string | MessageContent[],
+          });
+          this._consumedUserMessages.set(queryGeneration, generationMessages);
+        }
       }
 
       // Delivery observability: this yield is the moment the kickoff actually

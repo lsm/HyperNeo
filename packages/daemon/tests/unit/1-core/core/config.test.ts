@@ -287,6 +287,9 @@ describe('getConfig', () => {
     expect(parsePositiveInt(undefined, 64)).toBe(64);
     expect(parsePositiveInt('64', 64)).toBe(64);
     expect(parsePositiveInt(' 8 ', 8)).toBe(8);
+    // A very long digit string parses to Infinity, which must fall back rather
+    // than disable a guardrail (e.g. maxBytes: Infinity → rotation never runs).
+    expect(parsePositiveInt('9'.repeat(400), 64)).toBe(64);
   });
 
   test('default database path is ~/.hyperneo/data/daemon.db', () => {
