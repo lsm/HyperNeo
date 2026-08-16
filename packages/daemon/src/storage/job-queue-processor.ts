@@ -525,6 +525,15 @@ export class JobQueueProcessor {
     record.slotEvicted = true;
     if (record.slotClass === 'exempt') this.inFlightExempt--;
     else this.inFlightCapped--;
+    // Record the admission-slot release NOW — the handler's own `slot_released`
+    // fires only when it eventually settles (possibly much later or never), so
+    // without this the lifecycle trace shows a replacement acquiring an
+    // apparently-occupied slot. (Codex P2, PR #2499.)
+    this.emitLifecycle('slot_released', record.job, record.slotClass, {
+      stage: record.stage,
+      reason: 'slot_evicted',
+      elapsedMs: Date.now() - record.startedAt,
+    });
   }
 
   private untrackInFlightClaim(job: Job, record: InFlightClaimRecord): void {

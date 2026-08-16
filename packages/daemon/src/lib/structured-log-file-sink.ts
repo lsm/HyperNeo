@@ -178,10 +178,11 @@ function redactString(value: string): string {
       // Header tuple form (Array.from(headers.entries())) serializes a header as
       // `["Name","value"]` — the value carries no adjacent `Name:` label, so no
       // other rule catches it. Redact the second element when the first is a
-      // sensitive header name. (Codex P1, PR #2499.)
+      // sensitive header name. The value matcher is escape-aware so a quoted
+      // Digest/AWS value is consumed through its real closing quote. (Codex P1.)
       .replace(
-        /(["'](?:authorization|cookie|set-cookie|api[-_]?key|token|secret|password)["']\s*,\s*["'])([^"']+)(["'])/gi,
-        '$1[REDACTED]$3'
+        /(["'](?:authorization|cookie|set-cookie|api[-_]?key|token|secret|password)["']\s*,\s*)(["'])((?:\\.|(?!\2).)*)\2/gi,
+        '$1$2[REDACTED]$2'
       )
       // Authorization values legitimately contain structural commas (Digest
       // `username="u", nonce="…", response="…"`, AWS `…, Signature=…`), so —

@@ -76,9 +76,11 @@ export function parsePositiveInt(raw: string | undefined, fallback: number): num
   // Require a pure digit string (no prefix, no exponent, no decimals, no sign).
   if (!/^[0-9]+$/.test(raw.trim())) return fallback;
   const parsed = parseInt(raw, 10);
-  // A very long digit string parses to Infinity, which `parsed > 0` would accept
-  // and then disable a guardrail (e.g. maxBytes: Infinity → rotation never runs).
-  return parsed > 0 && Number.isFinite(parsed) ? parsed : fallback;
+  // A very long digit string parses to Infinity (or an out-of-range float),
+  // which `parsed > 0` would accept and then disable a guardrail (e.g.
+  // maxBytes: Infinity → rotation never runs) or exceed SQLite's LIMIT range
+  // (`datatype mismatch`). Require a finite safe integer.
+  return parsed > 0 && Number.isSafeInteger(parsed) ? parsed : fallback;
 }
 
 function positiveOverride(value: number | undefined, fallback: number): number {
