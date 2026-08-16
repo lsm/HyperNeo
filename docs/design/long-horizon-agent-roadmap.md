@@ -70,6 +70,25 @@ Use existing goal history, task links, and goal editing surfaces. Do not build a
 **Why it matters:** existing primitives only become a management loop when the prompts use the same contract.  
 **Estimated size:** 80–160 production lines.
 
+### MC6. Inactivity self-nag
+
+Add a configurable inactivity watchdog for each LH agent. Keep the first version deliberately simple: use the latest message timestamp in the agent's persistent session as its last activity time.
+
+- Read the latest message timestamp for the LH agent's persistent session.
+- If `now - latestMessageAt` exceeds the configured threshold, inject a wake-up message into that session.
+- The injected message becomes the latest session message, so the inactivity window naturally resets.
+- This covers external events, reminders, task/goal wake-ups, direct human messages, agent-to-agent messages, and ongoing session work without a separate activity taxonomy.
+- Make the threshold and prompt configurable per agent.
+- Support enable/pause/resume and run-now controls.
+- Do not fire while the agent or Space is paused, stopped, disabled, or archived.
+
+Default policy can be enabled every 8 hours with a prompt such as:
+
+> No session activity has been recorded for the configured period. Review assigned goals, active or stuck tasks, pending follow-ups, and current status. Create follow-up work or request help if needed.
+
+**Why it matters:** an LH agent should not silently remain idle when no external event or task outcome arrives.
+**Estimated size:** 140–220 production lines.
+
 ### Minimal-core boundaries
 
 This core deliberately does **not** yet provide:
@@ -504,9 +523,9 @@ Each external connector is a separate project requiring credentials, ingestion/p
 
 ## Estimate and review policy
 
-The roadmap contains **5 minimal-core PRs plus 28 robust-roadmap PRs**:
+The roadmap contains **6 minimal-core PRs plus 28 robust-roadmap PRs**:
 
-- Minimal core: 5
+- Minimal core: 6
 - V2 last mile: 6
 - Lifecycle publication: 6
 - Subscription filtering/UI: 3
