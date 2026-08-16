@@ -20,6 +20,7 @@ import { runMigration185 as runMigration185External } from './m185-workflow-even
 import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug';
 import {
   deriveArtifactKey,
+  generateUUID,
   isArtifactShape,
   normalizeLinkData,
   resolveLegacyShape,
@@ -1001,6 +1002,14 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   // Migration 194: Persist a dedicated job-claim heartbeat without overwriting
   // the attempt's immutable started_at timestamp.
   run(migrationMarkerKey(194), () => runMigration194(db));
+
+  // Migration 195: space_workspaces — registry of the git repositories attached
+  // to a Space (multi-workspace epic, #2521). Backfills one is_primary = 1 row
+  // per space from spaces.workspace_path (label = repo basename).
+  // spaces.workspace_path stays the denormalized primary; consumers are
+  // unchanged in this slice. Renumbered from the issue's 194 (dev shipped M194
+  // for the job-claim heartbeat).
+  run(migrationMarkerKey(195), () => runMigration195(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -12488,5 +12497,82 @@ export function runMigration194(db: BunDatabase): void {
   if (!tableExists(db, 'job_queue')) return;
   if (!tableHasColumn(db, 'job_queue', 'heartbeat_at')) {
     db.exec(`ALTER TABLE job_queue ADD COLUMN heartbeat_at INTEGER`);
+  }
+}
+
+interface SpaceWorkspaceBackfillRow {
+  id: string;
+  workspace_path: string;
+}
+
+/**
+ * Repo basename for a workspace path — the backfill label. Trailing slashes
+ * collapse; a path with no non-empty segment (e.g. '/') yields ''.
+ */
+function workspaceLabelFromPath(path: string): string {
+  return path.split('/').filter(Boolean).pop() ?? '';
+}
+
+/**
+ * Migration 195: space_workspaces — first slice of the multi-workspace epic
+ * (#2521). A Space can register multiple git repositories while every
+ * task/session still binds to exactly one workspace.
+ *
+ * Schema:
+ *   id          - UUID primary key
+ *   space_id    - owning space (FK → spaces, ON DELETE CASCADE)
+ *   path        - absolute filesystem path to the repository
+ *   label       - human-readable display name
+ *   is_primary  - 1 for the space's primary workspace
+ *
+ * Constraints:
+ *   UNIQUE(space_id, path) — one registration per path per space
+ *
+ * Backfills exactly one is_primary = 1 row per space from
+ * spaces.workspace_path (label = repo basename). spaces.workspace_path remains
+ * the denormalized primary and is untouched here — no consumer changes in this
+ * slice (repository/manager/RPC/UI layers land in follow-up issues #2522–#2526).
+ *
+ * Idempotent: CREATE TABLE/INDEX IF NOT EXISTS, and the backfill skips spaces
+ * that already have any space_workspaces row — a re-run (e.g. crash before the
+ * marker was written) only fills gaps, converging on one row per space.
+ */
+export function runMigration195(db: BunDatabase): void {
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS space_workspaces (
+			id         TEXT PRIMARY KEY,
+			space_id   TEXT NOT NULL,
+			path       TEXT NOT NULL,
+			label      TEXT NOT NULL DEFAULT '',
+			is_primary INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			UNIQUE(space_id, path),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_space_workspaces_space_id ON space_workspaces(space_id)`);
+
+  if (!tableExists(db, 'spaces')) return;
+
+  const spaces = db
+    .prepare(`SELECT id, workspace_path FROM spaces`)
+    .all() as SpaceWorkspaceBackfillRow[];
+  const now = Date.now();
+  const hasRow = db.prepare(`SELECT 1 FROM space_workspaces WHERE space_id = ? LIMIT 1`);
+  const insert = db.prepare(
+    `INSERT INTO space_workspaces (id, space_id, path, label, is_primary, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, 1, ?, ?)`
+  );
+  for (const space of spaces) {
+    if (hasRow.get(space.id)) continue;
+    insert.run(
+      generateUUID(),
+      space.id,
+      space.workspace_path,
+      workspaceLabelFromPath(space.workspace_path),
+      now,
+      now
+    );
   }
 }

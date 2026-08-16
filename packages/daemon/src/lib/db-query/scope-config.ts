@@ -275,6 +275,13 @@ const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
     description: 'Git worktree mappings for space tasks with slug and path tracking.',
   },
   {
+    tableName: 'space_workspaces',
+    scopeColumn: 'space_id',
+    blacklistedColumns: [],
+    description:
+      'Workspace repository registrations for a space with path, display label, and primary flag.',
+  },
+  {
     tableName: 'workflow_hook_state',
     scopeJoin: {
       localColumn: 'run_id',
