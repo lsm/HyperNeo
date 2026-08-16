@@ -157,7 +157,17 @@ export function redactStructuredLogEvent(event: StructuredLogEvent): StructuredL
 
 function redactLogValue(value: unknown): unknown {
   if (typeof value === 'string') return redactString(value);
-  if (Array.isArray(value)) return value.map(redactLogValue);
+  if (Array.isArray(value)) {
+    // A sensitive header tuple (Array.from(headers.entries())) is a two-element
+    // array [name, value]; the value has no adjacent `Name:` label once the
+    // object is serialized, so element-wise recursion would persist it. Redact
+    // the second element before falling back to the ordinary array walk.
+    // (Codex P1, PR #2499.)
+    if (value.length === 2 && typeof value[0] === 'string' && SENSITIVE_KEY.test(value[0])) {
+      return [value[0], '[REDACTED]'];
+    }
+    return value.map(redactLogValue);
+  }
   if (!value || typeof value !== 'object') return value;
 
   const result: Record<string, unknown> = {};

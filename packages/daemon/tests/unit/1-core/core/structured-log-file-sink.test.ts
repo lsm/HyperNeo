@@ -155,6 +155,16 @@ describe('StructuredLogFileSink', () => {
     expect(redacted.message).toBe(`["Authorization","[REDACTED]"]`);
   });
 
+  it('redacts structured header tuples in metadata arrays', () => {
+    // `Array.from(headers.entries())` in `metadata`/`context` is a real nested
+    // array, not a string — the string rules never see it, and element-wise
+    // recursion persists the credential. (Codex P1, PR #2499.)
+    const redacted = redactStructuredLogEvent(
+      event('msg', { headers: [['Authorization', 'Basic dXNlcjpwYXNz']] })
+    );
+    expect(redacted.metadata).toEqual({ headers: [['Authorization', '[REDACTED]']] });
+  });
+
   it('redacts unquoted colon-form values for every sensitive key', () => {
     // `token: abc` (no quotes, no `=`) previously passed through every rule —
     // only authorization and cookies had colon-form handling. Like the
