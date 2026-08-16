@@ -67,7 +67,11 @@ const markerVerifyTimers = new Map<string, ReturnType<typeof setTimeout>[]>();
 // whose reads never observe the writes would repair forever.
 const markerRepairBudget = new Map<string, number>();
 const MARKER_VERIFY_DELAYS_MS = [25, 250, 2000];
-function scheduleMarkerVerification(sessionId: string, announced: LandingEntry[]): void {
+function scheduleMarkerVerification(
+  sessionId: string,
+  announced: LandingEntry[],
+  opts?: { repair?: boolean }
+): void {
   if (announced.length === 0) return;
   // A newer landing's chain SUPERSEDES any pending one: its announced set is
   // current, and the older chain would otherwise interpret legitimate
@@ -75,7 +79,13 @@ function scheduleMarkerVerification(sessionId: string, announced: LandingEntry[]
   for (const timer of markerVerifyTimers.get(sessionId) ?? []) clearTimeout(timer);
   const timers: ReturnType<typeof setTimeout>[] = [];
   markerVerifyTimers.set(sessionId, timers);
-  markerRepairBudget.set(sessionId, 3);
+  // Only a GENUINE new landing initializes the budget: a repair's own mark
+  // schedules this chain, and re-initializing here would refund the very
+  // budget the repair just spent — repeated cross-tab overwrites (or a
+  // storage layer whose reads never observe writes) could then churn repair
+  // timers and marker writes forever. Repair chains SHARE the session's
+  // remaining budget and stop repairing once it is spent.
+  if (!opts?.repair) markerRepairBudget.set(sessionId, 3);
   const check = (pass: number) => {
     try {
       // No repair once this tab consumed the CURRENT marker (a NEWER marker is
@@ -105,7 +115,9 @@ function scheduleMarkerVerification(sessionId: string, announced: LandingEntry[]
         if (missing.length > 0 && budget > 0) {
           markerRepairBudget.set(sessionId, budget - 1);
           for (const entry of missing) {
-            markVoiceTranscriptLanded(sessionId, entry.text, entry.id, entry.seq);
+            markVoiceTranscriptLanded(sessionId, entry.text, entry.id, entry.seq, {
+              repair: true,
+            });
           }
           return;
         }
@@ -135,7 +147,8 @@ export function markVoiceTranscriptLanded(
   sessionId: string,
   text?: string,
   entryId?: string,
-  entrySeq?: number
+  entrySeq?: number,
+  opts?: { repair?: boolean }
 ): void {
   // The GENERATION is the marker's persisted counter (not a process-local
   // count): a reload rehydrates the same generation from the marker, so a
@@ -358,7 +371,7 @@ export function markVoiceTranscriptLanded(
         // write (storage failing), and verifying against a permanently
         // unreadable marker would repair forever.
         if (markerRaw === written) {
-          scheduleMarkerVerification(sessionId, landingEntries.get(sessionId) ?? []);
+          scheduleMarkerVerification(sessionId, landingEntries.get(sessionId) ?? [], opts);
         }
         break;
       }

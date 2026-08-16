@@ -1035,7 +1035,22 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                 if (currentContent.trim() === '' || currentContent === (draft ?? '')) {
                   contentSignal.value = stripped;
                 } else if (stripped.trim() !== '' && !alreadyFolded) {
-                  contentSignal.value = appendDraftText(currentContent, stripped);
+                  const combined = appendDraftText(currentContent, stripped);
+                  const fits =
+                    combined === `${currentContent}${stripped}` ||
+                    combined === `${currentContent} ${stripped}`;
+                  if (!fits) {
+                    // appendDraftText silently truncated at the limit, and
+                    // consuming the landing anyway would let the next plain
+                    // save overwrite the daemon's complete transcript-only
+                    // draft with the truncated combination. Keep the clear
+                    // owed — the versioned tombstone records the strip that
+                    // already committed — and retry when room appears.
+                    oweClear(baselineSeq ?? undefined);
+                    flushKickRef.current();
+                    return;
+                  }
+                  contentSignal.value = combined;
                 }
                 consumeLanding(sessionId, generation);
               } else {

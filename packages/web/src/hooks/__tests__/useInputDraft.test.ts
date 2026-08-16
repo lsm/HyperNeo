@@ -1587,6 +1587,68 @@ describe('useInputDraft', () => {
       expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(false);
     });
 
+    it('keeps the clear owed when the live strip fold cannot fit whole', async () => {
+      // Same chain as the fold test above, but the mid-strip typing plus the
+      // stripped transcripts exceeds the draft limit: appendDraftText would
+      // silently truncate the transcript's tail, and consuming the landing
+      // anyway would lift the save suppression so the next plain save
+      // overwrites the daemon's complete transcript-only draft with the
+      // truncated combination. The clear stays owed instead — the versioned
+      // tombstone records the strip that already committed — and retries
+      // when room appears.
+      let resolveStrip: ((v: { updated: boolean; value?: string }) => void) | null = null;
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return {
+            session: {
+              metadata: {
+                inputDraft: 'sent text voice',
+                inputDraftVoiceBaseline: 'sent text',
+                inputDraftVoiceBaselineSeq: 1,
+              },
+            },
+          };
+        }
+        if (method === 'session.stripVoiceBaseline') {
+          return new Promise((resolve) => {
+            resolveStrip = resolve;
+          });
+        }
+        return {};
+      });
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      result.current.setContent('sent text');
+      markVoiceTranscriptLanded('session-1', 'voice');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      result.current.clear();
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('sent text voice');
+      // Typing grew past the point where the stripped transcripts can fold
+      // in whole (the draft limit is 100_000 characters).
+      result.current.setContent(`${'x'.repeat(100_000)} tail`);
+      const before = result.current.content;
+      await act(async () => {
+        resolveStrip?.({ updated: true, value: 'voice' });
+        await vi.runAllTimersAsync();
+      });
+      // No truncating fold: the typing stays untouched, the landing stays
+      // UNCONSUMED (the save suppression holds), and the owed clear's
+      // tombstone is VERSIONED with the committed strip's sequence.
+      expect(result.current.content).toBe(before);
+      expect(voiceTranscriptLandedSignal.value.has('session-1')).toBe(true);
+      expect(hasClearTombstone('session-1')).toBe(true);
+      expect(getClearTombstone('session-1')?.baselineSeq).toBe(1);
+    });
+
     it('versions an unversioned owed tombstone with the sequence before stripping', async () => {
       // The original owe ran offline (no get had happened), so the tombstone
       // carries no baselineSeq. The reconcile learns the sequence from its

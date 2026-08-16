@@ -1407,6 +1407,71 @@ describe('voice transcript outbox — review-hardening round', () => {
     stopVoiceTranscriptOutboxFlush();
   });
 
+  it('shares the repair budget across repair chains, re-arming per genuine landing', async () => {
+    // A repair's own mark schedules a fresh verification chain; if that chain
+    // re-initialized the per-session budget, a stale-state writer that keeps
+    // overwriting the marker could churn repair timers and marker writes
+    // forever. Repair-triggered chains must SHARE the remaining budget —
+    // three repairs, then silence — while a genuinely NEW landing re-arms it.
+    const markerKey = 'hyperneo_voice_transcript_outbox_v1.entry.landed.s1';
+    const backing = globalThis.localStorage;
+    startVoiceTranscriptOutboxFlush();
+    // The genuine landing writes CLEANLY (its readback must survive so the
+    // first chain is scheduled with a fresh budget).
+    markVoiceTranscriptLanded('s1', 'mine', 'e-mine');
+    // A stale-state writer clobbers right after every union write: the clobber
+    // lands in a MICROTASK, so the writing tab's synchronous CAS readback
+    // still observes its own write and schedules the follow-up chain — the
+    // exact interleave the bounded-repair safeguard exists for.
+    let clobberN = 0;
+    const markerWrites: string[] = [];
+    const clobber = () => {
+      clobberN += 1;
+      return JSON.stringify({
+        v: 1,
+        ts: Date.now(),
+        n: 1_000_000 + clobberN,
+        text: 'theirs',
+        ids: ['e-theirs'],
+        entries: [{ id: 'e-theirs', text: 'theirs' }],
+      });
+    };
+    globalThis.localStorage = {
+      get length() {
+        return backing.length;
+      },
+      clear: () => backing.clear(),
+      getItem: (k) => backing.getItem(k),
+      key: (i) => backing.key(i),
+      removeItem: (k) => backing.removeItem(k),
+      setItem: (k, v) => {
+        backing.setItem(k, String(v));
+        if (k !== markerKey) return;
+        markerWrites.push(String(v));
+        const next = clobber();
+        queueMicrotask(() => {
+          backing.setItem(markerKey, next);
+          window.dispatchEvent(new StorageEvent('storage', { key: markerKey, newValue: next }));
+        });
+      },
+    } as Storage;
+    // The first clobber precedes any verification pass.
+    const first = clobber();
+    backing.setItem(markerKey, first);
+    window.dispatchEvent(new StorageEvent('storage', { key: markerKey, newValue: first }));
+    await vi.advanceTimersByTimeAsync(30_000);
+    // Three repairs (the initial budget), then the cascade stops despite the
+    // marker still being clobbered after every write.
+    expect(markerWrites.filter((v) => v.includes('e-mine'))).toHaveLength(3);
+    // A genuinely NEW landing re-arms the budget for the new sequence: its
+    // chain repairs the fresh entry's clobber three more times (the genuine
+    // write itself plus three repairs = four writes carrying the entry).
+    markVoiceTranscriptLanded('s1', 'fresh voice', 'e-fresh');
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(markerWrites.filter((v) => v.includes('e-fresh'))).toHaveLength(4);
+    stopVoiceTranscriptOutboxFlush();
+  });
+
   it('revalidates epoch ownership before deleting supersede records', () => {
     vi.useRealTimers();
     // Two tabs read an absent marker; tab A establishes the epoch and
