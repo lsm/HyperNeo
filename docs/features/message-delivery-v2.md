@@ -587,8 +587,10 @@ The contract (`TaskAgentManager.registerCompletionCallback`):
 
 - **Recoverable `session.error`** (`details.recoverable === true`, v2 on, AND
   a delivery turn actively DRIVING the session — a claimed `processing`
-  role-`turn` row PLUS an in-flight `driveDeliveryTurn`
-  (`AgentSession.isDeliveryTurnDriving`); a claimed steer is a mid-turn feed
+  role-`turn` row PLUS an in-flight drive that has passed the session-lock
+  critical section (`AgentSession.isDeliveryTurnDriving`; set only on the
+  driving path, not while the call waits to acquire the lock); a claimed
+  steer is a mid-turn feed
   whose driving turn owns the retry) does not block the node — without an
   in-flight DRIVE there is no retry and no `delivery_failed` repayment, so
   errors from non-delivery work (rehydration's direct streaming start /
@@ -642,12 +644,17 @@ The contract (`TaskAgentManager.registerCompletionCallback`):
   peer handoff as a `role:'turn'` job before the kickoff is enqueued, and
   that is not the node's work. A kickoff that lost the turn arbiter to such a
   flush is persisted as a `steer`; its consumption counts only when its
-  OWNING turn — the LATEST-STARTED turn whose claim window overlaps the
-  steer's active interval [created, completed], i.e. the turn that actually
-  consumed it (a steer can sit unclaimed past its creation-time turn and be
-  fed to a later one), with an earliest-terminal-after-creation fallback for
-  retried owners whose consuming claim was overwritten — also terminated
-  (completed → success, dead → block).
+  OWNING turn — matched by the claim window CONTAINING the kickoff's
+  persisted CONSUMPTION timestamp (`getDeliveryConsumedAt`; the flip aligns
+  the row timestamp atomically), the ground truth for which turn actually
+  consumed it — with a latest-started-window-overlap approximation when no
+  consumption timestamp exists (legacy rows) and an
+  earliest-terminal-after-creation fallback for retried owners whose
+  consuming claim was overwritten — also terminated (completed → success,
+  dead → block). Correlation is BATCH-AWARE: a queue-flush batch job keys
+  its row on the head uuid and lists members in `payload.batchUuids`, so a
+  non-head kickoff resolves through the batch array, and a batch-head
+  dead-letter blocks via the durable outcome.
   The stamp is written — in one write that also clears any stamp left by a
   PREVIOUS activation — BEFORE the activation's first await (the
   createSubSession call whose session-reuse branch registers the fresh
@@ -673,11 +680,14 @@ The contract (`TaskAgentManager.registerCompletionCallback`):
   `send_status='failed'` BLOCKS (the dead-letter settlement terminalized the
   delivery — its job row aged out before the reconcile could read it);
   `'consumed'` proves only that the SDK ACKNOWLEDGED the prompt (the
-  consumed-flip precedes the turn), so it COMPLETES only with transcript
-  evidence of a successful turn (`hasTerminalResultAfter`: a success
-  terminal result at/after the kickoff's consumption — covers the job row
+  consumed-flip precedes the turn), so it COMPLETES only when the FIRST
+  terminal result after the kickoff's consumption is a success
+  (`getFirstTerminalResultSubtypeAfter` — the FIRST result bounds the
+  outcome to the kickoff's own turn, so a reused session's later peer
+  success cannot classify a kickoff whose turn failed; covers the job row
   aging out of the 7-day retention window and the legacy inline path with
-  no job row at all, without re-spawning finished work); `'deferred'`
+  no job row at all, without re-spawning finished work; an error subtype or
+  no result blocks); `'deferred'`
   DECLINES and re-arms (a rate-limit-cooldown / parent-limit kickoff is
   healthy but paused — its re-enqueue settles the node live); anything
   else — still `'enqueued'` or a gone row (crash between the stamp and the

@@ -3182,9 +3182,7 @@ export class TaskAgentManager {
     if (typeof kickoffMessageUuid !== 'string') {
       return { kickoffMessageUuid: null, outcome: null };
     }
-    const outcome = this.config.db
-      .getJobQueueRepo()
-      .deliveryTurnOutcomeSince(subSessionId, kickoffMessageUuid);
+    const outcome = this.durableKickoffOutcome(subSessionId, kickoffMessageUuid);
     return { kickoffMessageUuid, outcome };
   }
 
@@ -3213,6 +3211,25 @@ export class TaskAgentManager {
     const session = this.getSubSession(subSessionId);
     if (!session || typeof session.isDeliveryTurnDriving !== 'function') return false;
     return session.isDeliveryTurnDriving();
+  }
+
+  /**
+   * The durable terminal outcome of a stamped kickoff delivery, correlated by
+   * uuid AND batch membership, with the kickoff's persisted CONSUMPTION
+   * timestamp steering the consumed-steer owner match (ground truth — see
+   * JobQueueRepository.deliveryTurnOutcomeSince). Shared by the settle, live
+   * dead-letter, and reconciliation paths. (Task #944 review.)
+   */
+  private durableKickoffOutcome(
+    subSessionId: string,
+    kickoffMessageUuid: string
+  ): 'completed' | 'dead' | null {
+    const consumedAt = this.config.db
+      .getSDKMessageRepo()
+      .getDeliveryConsumedAt(subSessionId, kickoffMessageUuid);
+    return this.config.db
+      .getJobQueueRepo()
+      .deliveryTurnOutcomeSince(subSessionId, kickoffMessageUuid, consumedAt);
   }
 
   /** Returns a sub-session by its session ID, or undefined if not found. */
@@ -3919,9 +3936,7 @@ export class TaskAgentManager {
             execution.data as { kickoffMessageUuid?: unknown } | null | undefined
           )?.kickoffMessageUuid;
           if (typeof kickoffMessageUuid === 'string' && event.messageUuid !== kickoffMessageUuid) {
-            const outcome = this.config.db
-              .getJobQueueRepo()
-              .deliveryTurnOutcomeSince(subSessionId, kickoffMessageUuid);
+            const outcome = this.durableKickoffOutcome(subSessionId, kickoffMessageUuid);
             if (outcome !== 'completed') {
               if (outcome === 'dead') fireTerminalError(DEAD_LETTER_SESSION_ERROR);
               return;
@@ -3998,9 +4013,7 @@ export class TaskAgentManager {
         execution?.data as { kickoffMessageUuid?: unknown } | null | undefined
       )?.kickoffMessageUuid;
       if (typeof kickoffMessageUuid !== 'string') return;
-      const outcome = this.config.db
-        .getJobQueueRepo()
-        .deliveryTurnOutcomeSince(subSessionId, kickoffMessageUuid);
+      const outcome = this.durableKickoffOutcome(subSessionId, kickoffMessageUuid);
       if (outcome === 'dead') {
         fireTerminalError(DEAD_LETTER_SESSION_ERROR);
         return;
@@ -4029,13 +4042,17 @@ export class TaskAgentManager {
         // out before this reconcile could read it) → block. 'consumed'
         // alone proves only that the SDK ACKNOWLEDGED the prompt — the
         // consumed-flip is stamped before the turn runs — so it completes
-        // only with transcript evidence that the turn ran to a successful
-        // result (hasTerminalResultAfter). That covers the job row aging
-        // out of the 7-day retention window and the legacy inline path
-        // (no job row at all) without re-spawning finished work. Anything
-        // else — still 'enqueued' or a gone row (the daemon exited
-        // between the stamp and the inject's enqueue) or a turn that
-        // crashed mid-run (consumed, no terminal result) — blocks for the
+        // only when the FIRST terminal result after the kickoff's
+        // consumption is a success (getFirstTerminalResultSubtypeAfter):
+        // the first result bounds the outcome to the kickoff's own turn,
+        // so a reused session's LATER peer success cannot classify a
+        // kickoff whose turn failed or never produced a result. That
+        // covers the job row aging out of the 7-day retention window and
+        // the legacy inline path (no job row at all) without re-spawning
+        // finished work. Anything else — still 'enqueued' or a gone row
+        // (the daemon exited between the stamp and the inject's enqueue),
+        // a turn that crashed mid-run (consumed, no terminal result), or a
+        // turn that terminalized in an error result — blocks for the
         // runtime's re-spawn machinery. (Task #944 review.)
         const sdkMessageRepo = this.config.db.getSDKMessageRepo();
         const persisted = sdkMessageRepo.getDeliveryContent(subSessionId, kickoffMessageUuid);
@@ -4055,15 +4072,24 @@ export class TaskAgentManager {
           );
           return;
         }
-        if (
-          persisted?.sendStatus === 'consumed' &&
-          sdkMessageRepo.hasTerminalResultAfter(subSessionId, kickoffMessageUuid)
-        ) {
-          completeFromDeliveryState();
+        if (persisted?.sendStatus === 'consumed') {
+          const firstResult = sdkMessageRepo.getFirstTerminalResultSubtypeAfter(
+            subSessionId,
+            kickoffMessageUuid
+          );
+          if (firstResult === 'success') {
+            completeFromDeliveryState();
+            return;
+          }
+          fireTerminalError(
+            firstResult
+              ? `Task-agent kickoff turn ended in a terminal error result (${firstResult}); execution blocked for re-spawn.`
+              : 'Task-agent kickoff turn never reached a terminal result; execution blocked for re-spawn.'
+          );
           return;
         }
         fireTerminalError(
-          'Task-agent kickoff delivery was lost before enqueue or never reached a successful result; execution blocked for re-spawn.'
+          'Task-agent kickoff delivery was lost before enqueue; execution blocked for re-spawn.'
         );
         return;
       }
@@ -4165,6 +4191,13 @@ export class TaskAgentManager {
             const execution = this.config.nodeExecutionRepo.getByAgentSessionId(subSessionId);
             if (!execution || !this.isPreUpgradeActivation(execution)) return;
           } else if (kickoff && event.messageUuid !== kickoff.kickoffMessageUuid) {
+            // A batch-flush dead-letter carries the HEAD uuid while the
+            // stamped kickoff may be a non-head member — the durable
+            // (batch-aware) outcome still resolves it. (Task #944 review.)
+            if (kickoff.outcome === 'dead') {
+              fireTerminalError(DEAD_LETTER_SESSION_ERROR);
+              return;
+            }
             return;
           }
         }

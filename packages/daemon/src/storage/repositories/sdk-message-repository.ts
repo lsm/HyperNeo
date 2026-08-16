@@ -2029,6 +2029,61 @@ export class SDKMessageRepository {
   }
 
   /**
+   * The subtype of the FIRST terminal `result` after the message identified by
+   * `uuid` (ordered by `consumed_seq`), or null when none exists. Unlike
+   * {@link hasTerminalResultAfter} (which accepts ANY later success), the
+   * FIRST result bounds the outcome to the turn that consumed the message: a
+   * reused session can process a later peer message successfully after the
+   * kickoff's own turn failed or produced nothing, and that later success must
+   * not classify the failed activation. `'success'` → the consuming turn
+   * succeeded; any error subtype → it terminalized in an error; null → no
+   * terminal result (crash mid-run or a result-less termination). Used by
+   * TaskAgentManager's rowless-kickoff reconciliation. (Task #944 review.)
+   */
+  getFirstTerminalResultSubtypeAfter(sessionId: string, uuid: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT r.message_subtype AS subtype
+           FROM sdk_messages r
+          WHERE r.session_id = ?
+            AND r.message_type = 'result'
+            AND r.is_terminal = 1
+            AND r.parent_tool_use_id IS NULL
+            AND r.consumed_seq IS NOT NULL
+            AND r.consumed_seq >= (
+              SELECT m.consumed_seq FROM sdk_messages m
+               WHERE m.session_id = ? AND m.sdk_uuid = ? LIMIT 1
+            )
+          ORDER BY r.consumed_seq ASC
+          LIMIT 1`
+      )
+      .get(sessionId, sessionId, uuid) as { subtype: string | null } | undefined | null;
+    return row?.subtype ?? null;
+  }
+
+  /**
+   * The CONSUMPTION timestamp of a delivered message (the row `timestamp`,
+   * atomically aligned to T_consumed by {@link markDeliveryConsumedByUuid}), or
+   * null when the row is absent or not yet consumed. Delivery owner
+   * correlation uses it to attribute a consumed kickoff/steer to the turn that
+   * actually consumed it — the turn whose job-row claim window contains this
+   * instant — rather than inferring ownership from the job row's own
+   * created/completed interval (which includes administrative parks after
+   * acceptance). (Task #944 review.)
+   */
+  getDeliveryConsumedAt(sessionId: string, uuid: string): number | null {
+    const row = this.db
+      .prepare(
+        `SELECT timestamp FROM sdk_messages
+          WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+            AND send_status = 'consumed'
+          ORDER BY timestamp ASC LIMIT 1`
+      )
+      .get(sessionId, uuid) as { timestamp: number } | undefined;
+    return row?.timestamp ?? null;
+  }
+
+  /**
    * Atomically draw the next value from the shared monotonic consumption
    * counter (delivery_consumed_seq). Used to stamp both consumed messages (at
    * the consumed-flip) and terminal results (at insert) so

@@ -707,7 +707,8 @@ describe('JobQueueRepository', () => {
       role: 'turn' | 'steer',
       status: 'completed' | 'dead' | 'pending',
       outcome: string | null,
-      times?: { createdAt?: number; startedAt?: number | null; completedAt?: number | null }
+      times?: { createdAt?: number; startedAt?: number | null; completedAt?: number | null },
+      batchUuids?: string[]
     ) => {
       db.prepare(
         `INSERT INTO job_queue (id, queue, status, payload, result, priority, max_retries,
@@ -716,7 +717,12 @@ describe('JobQueueRepository', () => {
       ).run(
         id,
         status,
-        JSON.stringify({ sessionId: 'sess-1', messageUuid, role }),
+        JSON.stringify({
+          sessionId: 'sess-1',
+          messageUuid,
+          role,
+          ...(batchUuids ? { batchUuids } : {}),
+        }),
         outcome ? JSON.stringify({ outcome }) : null,
         SINCE + 1000,
         times?.createdAt ?? SINCE + 1100,
@@ -834,6 +840,75 @@ describe('JobQueueRepository', () => {
         completedAt: T4,
       });
       expect(repository.deliveryTurnOutcomeSince('sess-1', 'kick')).toBe('completed');
+    });
+
+    it('ACP park: consumption instant steers the owner past a later overlapping turn (dead consumer)', () => {
+      // Round-20 P1: turn A consumed the steer and finished; turn B started;
+      // only then did the parked steer complete ('already_consumed'). Both
+      // turns overlap the steer's active interval, so the interval
+      // approximation would pick B (completed) — the CONSUMPTION timestamp
+      // attributes the outcome to A, which dead-lettered.
+      const T0 = SINCE + 1000; // turn A claimed
+      const TC = SINCE + 1500; // steer CONSUMED by A
+      const T2 = SINCE + 2000; // A dead-letters
+      const T3 = SINCE + 2500; // turn B claimed
+      const T5 = SINCE + 5000; // parked steer completes administratively
+      seed('j-a', 'peer-a', 'turn', 'dead', null, {
+        createdAt: T0,
+        startedAt: T0,
+        completedAt: T2,
+      });
+      seed('j-b', 'peer-b', 'turn', 'completed', 'completed', {
+        createdAt: T3,
+        startedAt: T3,
+        completedAt: T5,
+      });
+      seed('j-kick', 'kick', 'steer', 'completed', 'already_consumed', {
+        createdAt: TC,
+        startedAt: T3,
+        completedAt: T5,
+      });
+      expect(repository.deliveryTurnOutcomeSince('sess-1', 'kick', TC)).toBe('dead');
+    });
+
+    it('ACP park: a successful consumer wins when the later overlapping turn failed', () => {
+      const T0 = SINCE + 1000;
+      const TC = SINCE + 1500;
+      const T2 = SINCE + 2000; // A completed successfully
+      const T3 = SINCE + 2500;
+      const T5 = SINCE + 5000; // B dead; parked steer completes
+      seed('j-a', 'peer-a', 'turn', 'completed', 'completed', {
+        createdAt: T0,
+        startedAt: T0,
+        completedAt: T2,
+      });
+      seed('j-b', 'peer-b', 'turn', 'dead', null, {
+        createdAt: T3,
+        startedAt: T3,
+        completedAt: T5,
+      });
+      seed('j-kick', 'kick', 'steer', 'completed', 'already_consumed', {
+        createdAt: TC,
+        startedAt: T3,
+        completedAt: T5,
+      });
+      expect(repository.deliveryTurnOutcomeSince('sess-1', 'kick', TC)).toBe('completed');
+    });
+
+    it('BATCH member correlation: a non-head kickoff resolves through batchUuids (completed)', () => {
+      // Round-20 P2: a queue-flush batch keys its row on the head uuid; the
+      // stamped kickoff may be a member.
+      seed('j-batch', 'batch-head', 'turn', 'completed', 'completed', undefined, [
+        'batch-head',
+        'kick',
+        'other-member',
+      ]);
+      expect(repository.deliveryTurnOutcomeSince('sess-1', 'kick')).toBe('completed');
+    });
+
+    it('BATCH member correlation: a dead batch containing the kickoff → dead', () => {
+      seed('j-batch', 'batch-head', 'turn', 'dead', null, undefined, ['batch-head', 'kick']);
+      expect(repository.deliveryTurnOutcomeSince('sess-1', 'kick')).toBe('dead');
     });
 
     it('unrelated uuid only → null (correlation filters it out)', () => {

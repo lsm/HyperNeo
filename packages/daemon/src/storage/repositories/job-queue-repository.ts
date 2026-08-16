@@ -648,18 +648,45 @@ export class JobQueueRepository {
    * row(s) means that turn never qualifies. A kickoff that lost the
    * active-turn arbiter to such a flush settles as a steer, and its
    * consumption only counts when its OWNING turn also terminated.
+   *
+   * Batch-aware: a queue-flush batch job keys its row on the FIRST member
+   * (`payload.messageUuid`) and lists every admitted member in
+   * `payload.batchUuids`, so a kickoff that is not the head is matched through
+   * the batch array. (Task #944 review.)
+   *
+   * When `consumedAtMs` is supplied (the message's persisted consumption
+   * timestamp — see SDKMessageRepository.getDeliveryConsumedAt), a consumed
+   * steer's owning turn is matched by the claim window CONTAINING that
+   * instant: consumption is the ground truth, immune to the job row's
+   * administrative park/complete lag. Without it the LATEST-STARTED turn
+   * overlapping the steer's active interval is used (approximation; both
+   * turns can overlap when an ACP park outlives its consumer).
    */
-  deliveryTurnOutcomeSince(sessionId: string, messageUuid: string): 'completed' | 'dead' | null {
+  deliveryTurnOutcomeSince(
+    sessionId: string,
+    messageUuid: string,
+    consumedAtMs?: number | null
+  ): 'completed' | 'dead' | null {
+    // Matches the head uuid OR any admitted batch member.
+    const uuidMatch = `(json_extract(payload, '$.messageUuid') = ?
+           OR EXISTS (SELECT 1 FROM json_each(
+                CASE WHEN json_type(payload, '$.batchUuids') = 'array'
+                     THEN json_extract(payload, '$.batchUuids') ELSE '[]' END
+              ) AS je WHERE je.value = ?))`;
     const own = this.db
       .prepare(
         `SELECT status, json_extract(payload, '$.role') AS role,
                 json_extract(result, '$.outcome') AS outcome
            FROM job_queue
           WHERE queue = 'message_delivery'
-            AND json_extract(payload, '$.messageUuid') = ?
+            AND ${uuidMatch}
             AND completed_at IS NOT NULL`
       )
-      .all(messageUuid) as Array<{ status: string; role: string; outcome: string | null }>;
+      .all(messageUuid, messageUuid) as Array<{
+      status: string;
+      role: string;
+      outcome: string | null;
+    }>;
     if (own.some((r) => r.status === 'dead')) return 'dead';
     if (
       own.some((r) => r.role === 'turn' && r.status === 'completed' && r.outcome === 'completed')
@@ -677,25 +704,21 @@ export class JobQueueRepository {
         .prepare(
           `SELECT created_at, completed_at FROM job_queue
             WHERE queue = 'message_delivery'
-              AND json_extract(payload, '$.messageUuid') = ?
+              AND ${uuidMatch}
             ORDER BY created_at ASC LIMIT 1`
         )
-        .get(messageUuid) as { created_at: number; completed_at: number | null } | undefined;
+        .get(messageUuid, messageUuid) as
+        | { created_at: number; completed_at: number | null }
+        | undefined;
       if (!steerRow) return null;
-      // Scope to the turn that OWNED the steer. A steer can sit unclaimed
-      // past its creation-time turn and be consumed by a LATER turn
-      // (feedDeliverySteer runs inside whatever turn is live when the exempt
-      // pass claims it) — so keying on creation alone misattributes the
-      // outcome to a turn that never touched the message. Instead take the
-      // LATEST-STARTED turn whose claim window OVERLAPS the steer's active
-      // interval [created_at, completed_at]: consumption happens inside the
-      // consuming turn's claim, so the consuming turn always overlaps, while
-      // an earlier creation-time turn that ended before the consumption does
-      // not win the latest-started ordering. The ACP shape still matches its
-      // owner: the steer was consumed during the owner's claim and merely
-      // completes ('already_consumed') on a later administrative claim, so
-      // the owner's window overlaps the interval even though it ended before
-      // the steer row's completion. (Task #944 review.)
+      // Scope to the turn that OWNED the steer. Preferred: the claim window
+      // containing the message's CONSUMPTION instant (ground truth — the
+      // consuming turn is live at consumption, while the steer row itself
+      // can complete much later on an administrative already_consumed
+      // reclaim, letting an unrelated later turn also overlap the steer's
+      // active interval). Approximation when the consumption timestamp is
+      // unavailable (legacy rows): the LATEST-STARTED turn whose claim window
+      // overlaps [created_at, completed_at]. (Task #944 review.)
       const ownerWindow = this.db
         .prepare(
           `SELECT status, json_extract(result, '$.outcome') AS outcome
@@ -709,9 +732,11 @@ export class JobQueueRepository {
               AND completed_at >= ?
             ORDER BY started_at DESC LIMIT 1`
         )
-        .get(sessionId, steerRow.completed_at ?? steerRow.created_at, steerRow.created_at) as
-        | { status: string; outcome: string | null }
-        | undefined;
+        .get(
+          sessionId,
+          consumedAtMs != null ? consumedAtMs : (steerRow.completed_at ?? steerRow.created_at),
+          consumedAtMs != null ? consumedAtMs : steerRow.created_at
+        ) as { status: string; outcome: string | null } | undefined;
       // Fallback for retried owners whose LAST claim postdates the steer's
       // active interval (the retry overwrote the consuming claim's window):
       // the earliest turn terminal at/after creation.

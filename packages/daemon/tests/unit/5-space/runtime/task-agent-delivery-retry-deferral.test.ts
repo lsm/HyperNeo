@@ -68,8 +68,10 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
   let deadNonKickoffTurn: boolean;
   /** Stand-in: the kickoff's persisted sdk_messages send_status (null = gone). */
   let kickoffSendStatus: string | null;
-  /** Stand-in: a SUCCESS terminal result after the kickoff's consumption. */
-  let kickoffTerminalResult: boolean;
+  /** Stand-in: the FIRST terminal result subtype after the kickoff's consumption. */
+  let kickoffFirstResultSubtype: string | null;
+  /** Stand-in: the kickoff's persisted consumption timestamp (null = unknown). */
+  let kickoffConsumedAt: number | null;
   /** Makes the durable-outcome lookup throw N times (catch-path tests). */
   let outcomeThrowBudget: number;
   /** Throw on every ODD lookup instead of consuming a budget. */
@@ -133,7 +135,8 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     turnOutcome = null;
     deadNonKickoffTurn = false;
     kickoffSendStatus = null;
-    kickoffTerminalResult = false;
+    kickoffFirstResultSubtype = null;
+    kickoffConsumedAt = null;
     outcomeThrowBudget = 0;
     throwOnOddOutcomeCalls = false;
     outcomeCalls = 0;
@@ -146,8 +149,10 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
             uuid === 'kickoff-uuid' && kickoffSendStatus
               ? { content: 'x', sendStatus: kickoffSendStatus }
               : null,
-          hasTerminalResultAfter: (_sid: string, uuid: string) =>
-            uuid === 'kickoff-uuid' && kickoffTerminalResult,
+          getFirstTerminalResultSubtypeAfter: (_sid: string, uuid: string) =>
+            uuid === 'kickoff-uuid' ? kickoffFirstResultSubtype : null,
+          getDeliveryConsumedAt: (_sid: string, uuid: string) =>
+            uuid === 'kickoff-uuid' ? kickoffConsumedAt : null,
         }),
         getJobQueueRepo: () => ({
           activeDeliveryMessageUuids: () => activeJobs,
@@ -524,7 +529,7 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     // success terminal result after it — the node must complete, not
     // block-and-re-spawn finished work.
     kickoffSendStatus = 'consumed';
-    kickoffTerminalResult = true;
+    kickoffFirstResultSubtype = 'success';
     turnOutcome = null; // job row gone
     await publishIdle(); // suppressed while the job was active
     activeJobs.clear();
@@ -536,11 +541,12 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
 
   it('a consumed kickoff with NO terminal result after blocks (crash mid-turn)', async () => {
     // 'consumed' is stamped when the SDK ACKNOWLEDGES the prompt — before the
-    // turn runs. A daemon exit mid-turn leaves consumed + no success result;
+    // turn runs. A daemon exit mid-turn leaves consumed + no terminal result;
     // the rowless classification must not complete the node (round-17/Codex
     // P2) — it blocks for re-spawn like any never-finished turn.
     kickoffSendStatus = 'consumed';
-    kickoffTerminalResult = false;
+    kickoffFirstResultSubtype = null;
+    kickoffConsumedAt = null;
     turnOutcome = null;
     await publishIdle();
     activeJobs.clear();
@@ -590,7 +596,7 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
     try {
       kickoffSendStatus = 'consumed';
-      kickoffTerminalResult = true;
+      kickoffFirstResultSubtype = 'success';
       turnOutcome = null;
       activeJobs.clear();
       processingTurnJobs.clear();
@@ -883,6 +889,41 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     await bus.publish('session.delivery_failed', {
       sessionId: SUB_SESSION_ID,
       messageUuid: 'legacy-kickoff-uuid',
+      origin: 'space_inject',
+      role: 'turn',
+    });
+    await flush();
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('blocked');
+  });
+
+  it('a consumed kickoff whose FIRST terminal result is an ERROR blocks (peer success cannot rescue)', async () => {
+    // Round-20 P2: any-later-success evidence would let a reused session's
+    // LATER peer result classify a kickoff whose own turn failed. The FIRST
+    // terminal result after the kickoff's consumption bounds the outcome to
+    // the kickoff's turn: an error subtype blocks.
+    kickoffSendStatus = 'consumed';
+    kickoffFirstResultSubtype = 'error_max_turns';
+    turnOutcome = null;
+    await publishIdle();
+    activeJobs.clear();
+    processingTurnJobs.clear();
+    await new Promise<void>((resolve) => setTimeout(resolve, 60));
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('blocked');
+  });
+
+  it('a BATCH-HEAD dead-letter blocks via the durable outcome (kickoff is a member)', async () => {
+    // Round-20 P2: a queue-flush batch job keys its row on the head uuid and
+    // lists members in batchUuids — the stamped kickoff may not be the head.
+    // The live dead-letter carries the head uuid; the durable batch-aware
+    // outcome must still block the node instead of declining the mismatch.
+    turnOutcome = 'dead'; // durable: the batch containing the kickoff dead-lettered
+    activeJobs.clear();
+    processingTurnJobs.clear();
+    await bus.publish('session.delivery_failed', {
+      sessionId: SUB_SESSION_ID,
+      messageUuid: 'batch-head-uuid', // ≠ stamped 'kickoff-uuid'
       origin: 'space_inject',
       role: 'turn',
     });

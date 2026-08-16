@@ -2066,6 +2066,11 @@ export class AgentSession
   // Message delivery v2 — turn/steer driving bridge
   // ============================================================================
 
+  /** True while a delivery job is actively driving a turn on this session. */
+  isDeliveryTurnDriving(): boolean {
+    return this.deliveryTurnDriveCount > 0;
+  }
+
   /**
    * Drive a new SDK turn for a durable message_delivery job (v2). Ensures the
    * query is started (parking if blocked on sdk_resume_choice), feeds the
@@ -2089,46 +2094,6 @@ export class AgentSession
    * bounded by `maxRetries`.
    */
   async driveDeliveryTurn(
-    messageUuid: string,
-    content: string | MessageContent[],
-    _parentToolUseId?: string | null,
-    alreadyConsumed = false,
-    claimGuard?: () => boolean,
-    /**
-     * Batched queue flush: the UUIDs whose content was folded into `content`.
-     * Flipped to `consumed` (and their consumption waiters signaled) together
-     * with the kickoff. `messageUuid` (the kickoff) may be a member itself —
-     * it is skipped in the member loop.
-     */
-    batchUuids?: string[]
-  ): Promise<DriveTurnOutcome> {
-    // In-flight drive marker (see isDeliveryTurnDriving): distinguishes a
-    // turn the delivery lane is ACTIVELY driving from a merely claimed row.
-    // TaskAgentManager's recoverable-error deferral keys on it — during
-    // rehydration a restored turn job can be claimed (processing row) while
-    // a DIRECT continuation replay runs the actual work, and that replay's
-    // error must not be suppressed by a job that cannot retry it. (Task #944.)
-    this.deliveryTurnDriveCount++;
-    try {
-      return await this.driveDeliveryTurnCore(
-        messageUuid,
-        content,
-        _parentToolUseId,
-        alreadyConsumed,
-        claimGuard,
-        batchUuids
-      );
-    } finally {
-      this.deliveryTurnDriveCount--;
-    }
-  }
-
-  /** True while a delivery job is actively driving a turn on this session. */
-  isDeliveryTurnDriving(): boolean {
-    return this.deliveryTurnDriveCount > 0;
-  }
-
-  private async driveDeliveryTurnCore(
     messageUuid: string,
     content: string | MessageContent[],
     _parentToolUseId?: string | null,
@@ -2352,146 +2317,160 @@ export class AgentSession
     if (started.kind === 'aborted') {
       return { outcome: 'aborted' };
     }
-    // Long awaits OUTSIDE the lock — ownership mutations and mid-turn steers can
-    // proceed while the provider acknowledges the kickoff and runs the turn.
-    // Complete at TURN-END (the idle transition). queryPromise is raced only as
-    // a safety net for a query that closes without an idle (e.g. a hard crash);
-    // in streaming-input mode queryPromise never resolves at turn-end, so
-    // turnEnd wins and the job completes promptly when the SDK finishes the turn.
-    this.deliveryTurnStalled = false;
-    this.outstandingToolUseIds.clear();
-    // Stall watchdog placeholder; armed once we begin awaiting the turn (below).
-    let stallPromise: Promise<void> = new Promise<void>(() => {});
+    // Ownership marker (see isDeliveryTurnDriving): set only once the drive has
+    // passed the session-lock critical section and actually owns the turn — NOT
+    // while the call merely waits to acquire the lock, so a recoverable error
+    // from rehydration's direct replay during that wait is not suppressed by a
+    // delivery job that cannot retry it. (Task #944 review.)
+    this.deliveryTurnDriveCount++;
     try {
-      // An alreadyConsumed reclaim skips the feed (admitWithId not called), so
-      // `started.acknowledgment` is null — `await null` resolves immediately.
-      // The feed + consumed-flip + waiter signal must fire ONLY for a genuine
-      // handoff; a consumed-reclaim that re-drives from history must NOT be
-      // counted as a fresh feed (it would falsely inflate feedsObserved + read
-      // as a ground-truth duplicate, and record a residual sample for a handoff
-      // that never occurred). (Codex review.)
-      if (started.acknowledgment) {
-        await started.acknowledgment;
-        // Delivery observability: onSent elapsed measures spawn → kickoff-write.
-        // A long window here (approaching STARTUP_TIMEOUT_MS) is the feed
-        // starvation that produces 0-message startup timeouts.
-        this.logger.debug(
-          `delivery-turn: kickoff consumed by SDK ` +
-            `(${Date.now() - turnStartedAt}ms since turn start, uuid=${messageUuid})`
-        );
-        // onSent fired → the prompt reached the SDK / subprocess (the ACTUAL
-        // handoff). Record the feed here, not at admission: admitWithId only
-        // places the row in the in-memory queue, so a provider-startup stall,
-        // queue interrupt, or admission timeout before the generator yields is
-        // NOT a handoff and must not be counted as one. (Codex review.)
-        deliveryMetrics.recordFeed(messageUuid);
-        // For the Claude SDK, onSent is the consume signal — flip send_status →
-        // 'consumed' SYNCHRONOUSLY (item 12) so reclaimStale almost always sees
-        // 'consumed' and skips the re-feed, and signal delivery waiters (LTA /
-        // task-agent confirm their source only after genuine consumption). ACP
-        // is EXCLUDED: its onSent fires at submission; the real consume boundary
-        // is acceptance (markMessageAccepted). (Codex.)
-        if (this.session.config.provider !== 'acp') {
-          const consumeSignalMs = Date.now();
-          // Batched queue flush: the kickoff's prompt folded the admitted
-          // members in — flip them ATOMICALLY with the kickoff (see
-          // markDeliveryBatchConsumed) so a crash between flips can't leave
-          // members `enqueued` under a consumed kickoff (the reconciler would
-          // re-deliver them individually, repeating executed prompts).
-          this.markDeliveryBatchConsumed(started.admittedBatchUuids ?? [messageUuid]);
-          deliveryMetrics.recordResidualWindow(Date.now() - consumeSignalMs);
-          signalDeliveryConsumed(this.session.id, messageUuid);
-          if (started.admittedBatchUuids) {
-            for (const memberUuid of started.admittedBatchUuids) {
-              if (memberUuid === messageUuid) continue;
-              signalDeliveryConsumed(this.session.id, memberUuid);
+      // Long awaits OUTSIDE the lock — ownership mutations and mid-turn steers can
+      // proceed while the provider acknowledges the kickoff and runs the turn.
+      // Complete at TURN-END (the idle transition). queryPromise is raced only as
+      // a safety net for a query that closes without an idle (e.g. a hard crash);
+      // in streaming-input mode queryPromise never resolves at turn-end, so
+      // turnEnd wins and the job completes promptly when the SDK finishes the turn.
+      this.deliveryTurnStalled = false;
+      this.outstandingToolUseIds.clear();
+      // Stall watchdog placeholder; armed once we begin awaiting the turn (below).
+      let stallPromise: Promise<void> = new Promise<void>(() => {});
+      try {
+        // An alreadyConsumed reclaim skips the feed (admitWithId not called), so
+        // `started.acknowledgment` is null — `await null` resolves immediately.
+        // The feed + consumed-flip + waiter signal must fire ONLY for a genuine
+        // handoff; a consumed-reclaim that re-drives from history must NOT be
+        // counted as a fresh feed (it would falsely inflate feedsObserved + read
+        // as a ground-truth duplicate, and record a residual sample for a handoff
+        // that never occurred). (Codex review.)
+        if (started.acknowledgment) {
+          await started.acknowledgment;
+          // Delivery observability: onSent elapsed measures spawn → kickoff-write.
+          // A long window here (approaching STARTUP_TIMEOUT_MS) is the feed
+          // starvation that produces 0-message startup timeouts.
+          this.logger.debug(
+            `delivery-turn: kickoff consumed by SDK ` +
+              `(${Date.now() - turnStartedAt}ms since turn start, uuid=${messageUuid})`
+          );
+          // onSent fired → the prompt reached the SDK / subprocess (the ACTUAL
+          // handoff). Record the feed here, not at admission: admitWithId only
+          // places the row in the in-memory queue, so a provider-startup stall,
+          // queue interrupt, or admission timeout before the generator yields is
+          // NOT a handoff and must not be counted as one. (Codex review.)
+          deliveryMetrics.recordFeed(messageUuid);
+          // For the Claude SDK, onSent is the consume signal — flip send_status →
+          // 'consumed' SYNCHRONOUSLY (item 12) so reclaimStale almost always sees
+          // 'consumed' and skips the re-feed, and signal delivery waiters (LTA /
+          // task-agent confirm their source only after genuine consumption). ACP
+          // is EXCLUDED: its onSent fires at submission; the real consume boundary
+          // is acceptance (markMessageAccepted). (Codex.)
+          if (this.session.config.provider !== 'acp') {
+            const consumeSignalMs = Date.now();
+            // Batched queue flush: the kickoff's prompt folded the admitted
+            // members in — flip them ATOMICALLY with the kickoff (see
+            // markDeliveryBatchConsumed) so a crash between flips can't leave
+            // members `enqueued` under a consumed kickoff (the reconciler would
+            // re-deliver them individually, repeating executed prompts).
+            this.markDeliveryBatchConsumed(started.admittedBatchUuids ?? [messageUuid]);
+            deliveryMetrics.recordResidualWindow(Date.now() - consumeSignalMs);
+            signalDeliveryConsumed(this.session.id, messageUuid);
+            if (started.admittedBatchUuids) {
+              for (const memberUuid of started.admittedBatchUuids) {
+                if (memberUuid === messageUuid) continue;
+                signalDeliveryConsumed(this.session.id, memberUuid);
+              }
             }
           }
         }
+        // Arm the stall watchdog now that the kickoff is consumed (or this is a
+        // consumed reclaim): a live-but-silent turn (no result, no error) would
+        // otherwise pin the job via the lease heartbeat forever. Raced against the
+        // turn-end await; cleared in `finally`.
+        stallPromise = this.armDeliveryTurnStall();
+        await Promise.race([
+          started.turnEnd.promise,
+          started.queryPromise.catch(() => {}),
+          stallPromise,
+        ]);
+      } finally {
+        // Cancel the waiter if it didn't win the race (e.g. queryPromise resolved
+        // on query-close, or acknowledgment rejected) so it isn't left in the map.
+        started.turnEnd.cancel();
+        this.clearDeliveryTurnStall();
       }
-      // Arm the stall watchdog now that the kickoff is consumed (or this is a
-      // consumed reclaim): a live-but-silent turn (no result, no error) would
-      // otherwise pin the job via the lease heartbeat forever. Raced against the
-      // turn-end await; cleared in `finally`.
-      stallPromise = this.armDeliveryTurnStall();
-      await Promise.race([
-        started.turnEnd.promise,
-        started.queryPromise.catch(() => {}),
-        stallPromise,
-      ]);
-    } finally {
-      // Cancel the waiter if it didn't win the race (e.g. queryPromise resolved
-      // on query-close, or acknowledgment rejected) so it isn't left in the map.
-      started.turnEnd.cancel();
-      this.clearDeliveryTurnStall();
-    }
-    // The turn ended (or the stall watchdog fired). Determine whether it
-    // actually produced output: a terminal `result` row after consumption is the
-    // "processed" signal. If one exists, the turn SUCCEEDED — return completed
-    // even if a `session.error` happened to fire during the window (it came
-    // from an unrelated subsystem; this avoids a false-positive retry). If NOT,
-    // the turn failed to produce a response — clear the turn-end marker (so a
-    // retry's reclaim re-drives instead of short-circuiting on `turn_terminated`)
-    // and throw so the job retries (recoverable error OR stall) or dead-letters
-    // (non-recoverable). See message-delivery-v2.md.
-    const producedResult = !!this.db
-      .getSDKMessageRepo()
-      ?.hasTerminalResultAfter(this.session.id, messageUuid);
-    if (!producedResult) {
-      const turnError = this.consumeTerminalTurnError(turnStartedAt);
-      this.db.getSDKMessageRepo()?.clearDeliveryTurnEnd(this.session.id, messageUuid);
-      // The SDK persists terminal error results (error_max_budget_usd, …)
-      // WITHOUT emitting session.error, so a turnError-null no-result can still
-      // be a classified failure: consult the persisted error subtype and treat
-      // non-retryable subtypes (cost/structured-output exhaustion) as terminal —
-      // retrying those repeats spend for a deterministic limit. Retryable
-      // subtypes (error_during_execution / error_max_turns) fall through to the
-      // normal recoverable retry. (Codex review.)
-      const errorResultSubtype = this.db
+      // The turn ended (or the stall watchdog fired). Determine whether it
+      // actually produced output: a terminal `result` row after consumption is the
+      // "processed" signal. If one exists, the turn SUCCEEDED — return completed
+      // even if a `session.error` happened to fire during the window (it came
+      // from an unrelated subsystem; this avoids a false-positive retry). If NOT,
+      // the turn failed to produce a response — clear the turn-end marker (so a
+      // retry's reclaim re-drives instead of short-circuiting on `turn_terminated`)
+      // and throw so the job retries (recoverable error OR stall) or dead-letters
+      // (non-recoverable). See message-delivery-v2.md.
+      const producedResult = !!this.db
         .getSDKMessageRepo()
-        ?.getErrorTerminalResultSubtypeAfter(this.session.id, messageUuid);
-      const detail =
-        turnError?.userMessage ||
-        turnError?.message ||
-        (errorResultSubtype
-          ? `Turn ended with a terminal error (${errorResultSubtype})`
-          : this.deliveryTurnStalled
-            ? 'No response from the model — resetting and retrying'
-            : 'Turn ended without a response');
-      // Non-recoverable OR auth (Codex #2): retrying cannot fix a credential/
-      // permission/quota error — dead-letter immediately with a Retry affordance
-      // instead of burning the budget re-invoking a provider that cannot auth.
-      if (turnError && isTerminalTurnError(turnError)) {
-        throw new MessageDeliveryTerminalTurnError(detail, turnError.category);
+        ?.hasTerminalResultAfter(this.session.id, messageUuid);
+      if (!producedResult) {
+        const turnError = this.consumeTerminalTurnError(turnStartedAt);
+        this.db.getSDKMessageRepo()?.clearDeliveryTurnEnd(this.session.id, messageUuid);
+        // The SDK persists terminal error results (error_max_budget_usd, …)
+        // WITHOUT emitting session.error, so a turnError-null no-result can still
+        // be a classified failure: consult the persisted error subtype and treat
+        // non-retryable subtypes (cost/structured-output exhaustion) as terminal —
+        // retrying those repeats spend for a deterministic limit. Retryable
+        // subtypes (error_during_execution / error_max_turns) fall through to the
+        // normal recoverable retry. (Codex review.)
+        const errorResultSubtype = this.db
+          .getSDKMessageRepo()
+          ?.getErrorTerminalResultSubtypeAfter(this.session.id, messageUuid);
+        const detail =
+          turnError?.userMessage ||
+          turnError?.message ||
+          (errorResultSubtype
+            ? `Turn ended with a terminal error (${errorResultSubtype})`
+            : this.deliveryTurnStalled
+              ? 'No response from the model — resetting and retrying'
+              : 'Turn ended without a response');
+        // Non-recoverable OR auth (Codex #2): retrying cannot fix a credential/
+        // permission/quota error — dead-letter immediately with a Retry affordance
+        // instead of burning the budget re-invoking a provider that cannot auth.
+        if (turnError && isTerminalTurnError(turnError)) {
+          throw new MessageDeliveryTerminalTurnError(detail, turnError.category);
+        }
+        // A non-retryable persisted error result is equally terminal (Codex
+        // review): budget/limit exhaustion will not succeed on re-drive.
+        if (
+          !turnError &&
+          errorResultSubtype &&
+          !isRetryableErrorResultSubtype(errorResultSubtype)
+        ) {
+          throw new MessageDeliveryTerminalTurnError(detail, errorResultSubtype);
+        }
+        // Recoverable provider error OR a no-progress stall (turnError null): the
+        // turn consumed the kickoff but produced no result — reset+retry. Reopen
+        // the row to `enqueued` so the retry RE-FEEDS the prompt: a resumed SDK
+        // query only loads history, it does not continue an incomplete trailing
+        // user turn, so a no-feed re-drive would sit silent until this watchdog
+        // fires again and burn the budget without another provider attempt. (The
+        // crash-reclaim path is different: there the SDK may still be
+        // mid-execution, so `consumed` rows are NOT re-fed on reclaim — this flip
+        // happens only after we confirmed the turn produced nothing.) (Codex P1.)
+        //
+        // Gated on the claim still being current: an interrupt (Stop) deletes the
+        // delivery job FIRST and leaves the consumed row untouched by design, then
+        // the query unwind's idle transition lands HERE. Reopening in that state
+        // would strand an `enqueued` row with no job, which the periodic orphan
+        // reconciler re-enqueues — replaying a prompt the user just cancelled
+        // (potentially re-running tools). A dead/replaced claim means this attempt
+        // no longer owns the retry, so it must not mutate the row. (Codex P1.)
+        if (!claimGuard || claimGuard()) {
+          this.reopenDeliveryForRetry(messageUuid);
+        }
+        throw new MessageDeliveryRecoverableTurnError(detail, turnError?.category);
       }
-      // A non-retryable persisted error result is equally terminal (Codex
-      // review): budget/limit exhaustion will not succeed on re-drive.
-      if (!turnError && errorResultSubtype && !isRetryableErrorResultSubtype(errorResultSubtype)) {
-        throw new MessageDeliveryTerminalTurnError(detail, errorResultSubtype);
-      }
-      // Recoverable provider error OR a no-progress stall (turnError null): the
-      // turn consumed the kickoff but produced no result — reset+retry. Reopen
-      // the row to `enqueued` so the retry RE-FEEDS the prompt: a resumed SDK
-      // query only loads history, it does not continue an incomplete trailing
-      // user turn, so a no-feed re-drive would sit silent until this watchdog
-      // fires again and burn the budget without another provider attempt. (The
-      // crash-reclaim path is different: there the SDK may still be
-      // mid-execution, so `consumed` rows are NOT re-fed on reclaim — this flip
-      // happens only after we confirmed the turn produced nothing.) (Codex P1.)
-      //
-      // Gated on the claim still being current: an interrupt (Stop) deletes the
-      // delivery job FIRST and leaves the consumed row untouched by design, then
-      // the query unwind's idle transition lands HERE. Reopening in that state
-      // would strand an `enqueued` row with no job, which the periodic orphan
-      // reconciler re-enqueues — replaying a prompt the user just cancelled
-      // (potentially re-running tools). A dead/replaced claim means this attempt
-      // no longer owns the retry, so it must not mutate the row. (Codex P1.)
-      if (!claimGuard || claimGuard()) {
-        this.reopenDeliveryForRetry(messageUuid);
-      }
-      throw new MessageDeliveryRecoverableTurnError(detail, turnError?.category);
+      return { outcome: 'completed' };
+    } finally {
+      this.deliveryTurnDriveCount--;
     }
-    return { outcome: 'completed' };
   }
 
   /**
