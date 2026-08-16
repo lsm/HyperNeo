@@ -138,12 +138,22 @@ export class AskUserQuestionHandler {
         blockedPath?: string;
         decisionReason?: string;
         agentID?: string;
+        matchedAskRule?: { source: string; toolName: string; ruleContent?: string };
       }
     ): Promise<PermissionResult> => {
       const { session, stateManager, internalEventBus } = this.ctx;
 
       // Only intercept AskUserQuestion tool
       if (toolName !== 'AskUserQuestion') {
+        // A user-configured permissions.ask rule forced this prompt. In an
+        // auto-allow mode the generic path would silently bypass the user's
+        // explicit ask, so fail closed rather than approve without consent.
+        if (options.matchedAskRule) {
+          return {
+            behavior: 'deny',
+            message: `Permission required by ask rule: ${options.matchedAskRule.ruleContent ?? options.matchedAskRule.toolName}`,
+          };
+        }
         // Allow all other tools (they go through permission mode settings)
         return { behavior: 'allow', updatedInput: input };
       }

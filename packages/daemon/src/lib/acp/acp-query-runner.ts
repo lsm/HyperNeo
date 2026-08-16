@@ -342,9 +342,10 @@ async function handleAcpPermissionRequest(
     title: question,
     displayName: params.toolCall.title ?? params.toolCall.kind ?? 'ACP tool',
     description: params.toolCall.kind,
+    requestId: generateUUID(),
   });
 
-  if (result.behavior === 'deny') {
+  if (!result || result.behavior === 'deny') {
     return { outcome: { outcome: 'cancelled' } };
   }
 

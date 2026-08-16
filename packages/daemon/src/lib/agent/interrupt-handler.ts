@@ -178,18 +178,33 @@ export class InterruptHandler {
       // right object even if ctx.queryObject changes during async operations.
       const queryObjectSnapshot = this.ctx.queryObject;
 
-      // STEP 2: Call SDK interrupt()
+      // STEP 2: Call SDK interrupt(). The receipt (interrupt_receipt_v1) lists
+      // uuid-stamped async commands the SDK already pulled from our queue that
+      // will still run unless cancelled. The wrapper does not expose a follow-up
+      // cancel, so the only way to stop them is to close the subprocess before
+      // its drain loop starts the next queued turn.
+      let hasInterruptSurvivors = false;
       if (queryObjectSnapshot && typeof queryObjectSnapshot.interrupt === 'function') {
         try {
-          await queryObjectSnapshot.interrupt();
+          const receipt = await queryObjectSnapshot.interrupt();
+          const survivors = receipt?.still_queued?.length ?? 0;
+          if (survivors > 0) {
+            hasInterruptSurvivors = true;
+            logger.warn(
+              `SDK interrupt left ${survivors} queued message(s) still running; closing immediately to stop them`
+            );
+          }
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           logger.warn('SDK interrupt() failed (may be expected):', errorMessage);
         }
       }
 
-      // STEP 3: Wait for old query to finish
-      if (this.ctx.queryPromise) {
+      // STEP 3: Wait for old query to finish — but only when the interrupt did
+      // not report survivors. A survivor means the SDK queue is about to drain a
+      // queued turn despite the stop; skip the grace wait so STEP 4 closes the
+      // subprocess before that turn can begin.
+      if (this.ctx.queryPromise && !hasInterruptSurvivors) {
         try {
           await Promise.race([
             this.ctx.queryPromise,

@@ -334,6 +334,55 @@ describe('SDKMessageHandler', () => {
       expect(saveSDKMessageSpy).toHaveBeenCalledWith('test-session-id', message);
     });
 
+    it('never persists or broadcasts internal CLI lifecycle/state messages', async () => {
+      // New in Claude Code 2.1.x (SDK 0.3.233): fire-and-forget signals that
+      // carry no chat content and have no downstream consumer. Persisting them
+      // would accumulate invisible rows and wake every live subscriber.
+      const internalMessages: SDKMessage[] = [
+        {
+          type: 'command_lifecycle',
+          command_uuid: 'cmd-1',
+          state: 'queued',
+          uuid: 'm-1',
+          session_id: 'test-session-id',
+        },
+        {
+          type: 'conversation_reset',
+          new_conversation_id: 'conv-2',
+          uuid: 'm-2',
+          session_id: 'test-session-id',
+        },
+        {
+          type: 'active_goal',
+          value: null,
+          uuid: 'm-3',
+          session_id: 'test-session-id',
+        },
+        {
+          type: 'system',
+          subtype: 'background_tasks_changed',
+          tasks: [],
+          uuid: 'm-4',
+          session_id: 'test-session-id',
+        },
+        {
+          type: 'system',
+          subtype: 'control_request_progress',
+          request_id: 'req-1',
+          status: 'started',
+          uuid: 'm-5',
+          session_id: 'test-session-id',
+        },
+      ] as unknown as SDKMessage[];
+
+      for (const message of internalMessages) {
+        await handler.handleMessage(message);
+      }
+
+      expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+      expect(publishSpy).not.toHaveBeenCalled();
+    });
+
     it('should normalize missing usage on messages with BetaMessage (bridge provider crash guard)', async () => {
       // Bridge providers (Codex, Copilot) may produce messages without a
       // usage field on the nested BetaMessage. The Claude Agent SDK's
@@ -632,6 +681,36 @@ describe('SDKMessageHandler', () => {
 
       expect(mockSession.sdkSessionId).toBe('same-session-id');
       expect(updateSessionSpy).not.toHaveBeenCalledWith('test-session-id', expect.anything());
+    });
+
+    it('strips terminal-bound commands from the init slash command list', async () => {
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'init',
+        uuid: 'test-uuid',
+        session_id: 'sdk-session-123',
+        slash_commands: ['help', 'exit', 'compact', 'statusline'],
+        terminal_slash_commands: ['exit', 'statusline'],
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      // Browser autocomplete must not advertise terminal-only commands.
+      expect(mockContext.onInitSlashCommands).toHaveBeenCalledWith(['help', 'compact']);
+    });
+
+    it('passes the full command list through when no terminal commands are tagged', async () => {
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'init',
+        uuid: 'test-uuid',
+        session_id: 'sdk-session-123',
+        slash_commands: ['help', 'compact'],
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(mockContext.onInitSlashCommands).toHaveBeenCalledWith(['help', 'compact']);
     });
 
     it('suppresses setIdle for the result of an in-stream /clear (resetContextPerTurn)', async () => {

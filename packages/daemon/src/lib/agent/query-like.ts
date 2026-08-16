@@ -4,12 +4,13 @@ import type {
   ModelInfo as SDKModelInfo,
   RewindFilesResult,
   SDKControlGetContextUsageResponse,
+  SDKControlInterruptResponse,
   SDKMessage,
   SlashCommand,
 } from '@hyperneo/shared/sdk';
 
 export type QueryLike = AsyncIterable<SDKMessage> & {
-  interrupt(): Promise<void>;
+  interrupt(): Promise<SDKControlInterruptResponse | undefined>;
   close(): void;
   setMcpServers?(servers: Record<string, McpServerConfig>): Promise<McpSetServersResult>;
   sessionId?: string;

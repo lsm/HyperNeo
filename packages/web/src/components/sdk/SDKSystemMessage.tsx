@@ -27,6 +27,7 @@ import type {
   SDKInformationalMessage,
   SDKMessage,
   SDKModelRefusalFallbackMessage,
+  SDKModelRefusalNoFallbackMessage,
   SDKNotificationMessage,
   SDKPermissionDeniedMessage,
   SDKFilesPersistedEvent,
@@ -139,6 +140,12 @@ export function SDKSystemMessage({ message, isLiveTail = false, completedHookUui
   // Model refusal fallback
   if (isSDKModelRefusalFallbackMessage(message)) {
     return <ModelRefusalFallbackMessage message={message} />;
+  }
+
+  // Model refusal with no fallback configured — surface the refusal content
+  // so the user sees why the turn stopped (no retry ran).
+  if (message.subtype === 'model_refusal_no_fallback') {
+    return <ModelRefusalNoFallbackMessage message={message as SDKModelRefusalNoFallbackMessage} />;
   }
 
   // Permission denied
@@ -259,6 +266,16 @@ function ModelRefusalFallbackMessage({ message }: { message: SDKModelRefusalFall
       <div class="mt-2 text-xs text-amber-700 dark:text-amber-300">
         {message.original_model} → {message.fallback_model}
       </div>
+    </div>
+  );
+}
+
+function ModelRefusalNoFallbackMessage({ message }: { message: SDKModelRefusalNoFallbackMessage }) {
+  return (
+    <div class="my-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900 dark:border-red-800 dark:bg-red-950/30 dark:text-red-100">
+      <div class="mb-1 font-semibold">Model refusal</div>
+      <div>{message.content}</div>
+      <div class="mt-2 text-xs text-red-700 dark:text-red-300">{message.original_model}</div>
     </div>
   );
 }

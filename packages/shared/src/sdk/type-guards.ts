@@ -199,12 +199,72 @@ export function isSDKSessionStateChangedMessage(
 }
 
 /**
+ * Check if message is a background-tasks-changed system push (REPLACE-semantics
+ * task roster). Internal state signal with no downstream consumer — filtered
+ * before persistence, same as stream_event.
+ */
+export function isSDKBackgroundTasksChangedMessage(
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "system"; subtype: "background_tasks_changed" }> {
+  return msg.type === "system" && (msg as { subtype?: string }).subtype === "background_tasks_changed";
+}
+
+/**
+ * Check if message is a control-request-progress system push (in-flight
+ * control_request progress). Internal state signal with no downstream consumer
+ * — filtered before persistence, same as stream_event.
+ */
+export function isSDKControlRequestProgressMessage(
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "system"; subtype: "control_request_progress" }> {
+  return msg.type === "system" && (msg as { subtype?: string }).subtype === "control_request_progress";
+}
+
+/**
  * Check if message is a stream event (partial assistant message)
  */
 export function isSDKStreamEvent(
   msg: SDKMessage,
 ): msg is Extract<SDKMessage, { type: "stream_event" }> {
   return msg.type === "stream_event";
+}
+
+/**
+ * Check if message is a command lifecycle event.
+ *
+ * The native Claude Code CLI (2.1.x) emits these to track a slash command's
+ * queue lifecycle (`queued` → `started` → `completed`/`failed`/`cancelled`).
+ * They are internal progress signals, not user-facing content, and are not
+ * declared in the wrapper SDK's `SDKMessage` union — so this guard returns a
+ * plain boolean (no type predicate) and filters on the raw runtime `type`.
+ */
+export function isSDKCommandLifecycleMessage(msg: SDKMessage): boolean {
+  return (msg as { type?: string }).type === "command_lifecycle";
+}
+
+/**
+ * Check if message is a conversation reset event.
+ *
+ * Emitted when the SDK resets the conversation (e.g. `/clear` or `/new`),
+ * carrying the fresh `new_conversation_id`. A session-boundary signal, not
+ * user-facing content — hidden from the transcript.
+ */
+export function isSDKConversationResetMessage(
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "conversation_reset" }> {
+  return msg.type === "conversation_reset";
+}
+
+/**
+ * Check if message is an active-goal update (`/goal` feature).
+ *
+ * Declared in the native CLI's raw `StdoutMessage` union but not in the
+ * wrapper's `SDKMessage` union, so — like {@link isSDKCommandLifecycleMessage}
+ * — this returns a plain boolean and filters on the raw runtime `type`.
+ * Carries goal state, not chat content; hidden from the transcript.
+ */
+export function isSDKActiveGoalMessage(msg: SDKMessage): boolean {
+  return (msg as { type?: string }).type === "active_goal";
 }
 
 /**
@@ -496,6 +556,9 @@ export const HIDDEN_SYSTEM_SUBTYPES = new Set([
   'task_updated',
   'mirror_error',
   'elicitation_complete',
+  // New in Claude Code 2.1.x (SDK 0.3.233): internal state/progress pushes.
+  'background_tasks_changed',
+  'control_request_progress',
 ]);
 
 /**
@@ -535,6 +598,9 @@ export function isUserVisibleMessage(msg: SDKMessage): boolean {
   // User should NOT see: stream events or thinking_tokens deltas (transient only)
   if (isSDKStreamEvent(msg)) return false;
   if (isSDKThinkingTokensMessage(msg)) return false;
+  if (isSDKCommandLifecycleMessage(msg)) return false;
+  if (isSDKConversationResetMessage(msg)) return false;
+  if (isSDKActiveGoalMessage(msg)) return false;
 
   return true;
 }

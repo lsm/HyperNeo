@@ -27,8 +27,13 @@ import {
   isSDKAPIRetryMessage,
   isSDKAssistantMessage,
   flattenSDKSlashCommands,
+  isSDKBackgroundTasksChangedMessage,
+  isSDKCommandLifecycleMessage,
   isSDKCommandsChangedMessage,
   isSDKCompactBoundary,
+  isSDKControlRequestProgressMessage,
+  isSDKConversationResetMessage,
+  isSDKActiveGoalMessage,
   isSDKModelRefusalFallbackMessage,
   isSDKResultMessage,
   isSDKResultSuccess,
@@ -137,6 +142,10 @@ export class SDKMessageHandler {
   // in the current turn. The delta between current and last stamped is what we
   // persist on each new thinking block.
   private lastStampedThinkingTokensEstimate: number = 0;
+
+  /** Terminal-bound slash commands (exit, statusline, …) reported by init, applied
+   * to both init and mid-session commands_changed refreshes. */
+  private terminalCommands: Set<string> = new Set();
 
   /** Guardrail that breaks repeated identical tool-use errors in Forge task sessions. */
   private repeatedToolErrorGuardrail: RepeatedToolErrorGuardrail;
@@ -795,6 +804,42 @@ export class SDKMessageHandler {
       return;
     }
 
+    // Command lifecycle events (slash-command queue tracking) are internal
+    // progress signals emitted by the native CLI, not user-facing content.
+    // Never persist or broadcast them — same treatment as stream_event above.
+    if (isSDKCommandLifecycleMessage(message)) {
+      return;
+    }
+
+    // Conversation reset is a fresh-session boundary (/clear, plan-mode exit):
+    // reset the auto-generated title (both the displayed string and the
+    // generation flag) so the browser doesn't keep the old title attached to
+    // the new conversation, then drop the boundary event itself.
+    if (isSDKConversationResetMessage(message)) {
+      if (session.metadata.titleSetBy !== 'user') {
+        const metadata = { ...session.metadata, titleGenerated: false };
+        session.metadata = metadata;
+        db.updateSession(session.id, { metadata, title: 'New Session' });
+      }
+      return;
+    }
+
+    // Active-goal is a fire-and-forget goal-state push, not chat content.
+    if (isSDKActiveGoalMessage(message)) {
+      return;
+    }
+
+    // background_tasks_changed and control_request_progress are internal state
+    // pushes with no downstream consumer in HyperNeo. Filter before
+    // persistence/broadcast so they don't accumulate invisible DB rows or wake
+    // every live subscriber.
+    if (
+      isSDKBackgroundTasksChangedMessage(message) ||
+      isSDKControlRequestProgressMessage(message)
+    ) {
+      return;
+    }
+
     // Check for API error patterns that indicate an infinite loop
     // This MUST happen BEFORE any other processing to catch errors early
     const circuitBreakerTripped = await this.circuitBreaker.checkMessage(message);
@@ -1074,12 +1119,22 @@ export class SDKMessageHandler {
     // This is the authoritative source — it includes all SDK built-ins plus
     // any custom skills, and fires immediately when a query starts.
     // Use isSDKSystemInit which narrows specifically to SDKSystemMessage (subtype: 'init').
+    // Terminal-bound commands (exit, statusline, …) have no browser UX and can
+    // dead-interact or kill the CLI — strip them before caching/broadcasting,
+    // and retain the set so the commands_changed refresh below applies it too.
     if (isSDKSystemInit(message) && message.slash_commands?.length > 0) {
-      await this.ctx.onInitSlashCommands(message.slash_commands);
+      this.terminalCommands = new Set(message.terminal_slash_commands ?? []);
+      const browserCommands = message.slash_commands.filter(
+        (cmd) => !this.terminalCommands.has(cmd)
+      );
+      await this.ctx.onInitSlashCommands(browserCommands);
     }
 
     if (isSDKCommandsChangedMessage(message)) {
-      await this.ctx.onCommandsChanged(flattenSDKSlashCommands(message.commands));
+      // Filter the command records (not the flattened names) so a terminal
+      // command's aliases are excluded too — flattening first would re-add them.
+      const browserRecords = message.commands.filter((cmd) => !this.terminalCommands.has(cmd.name));
+      await this.ctx.onCommandsChanged(flattenSDKSlashCommands(browserRecords));
     }
   }
 
@@ -1237,6 +1292,11 @@ export class SDKMessageHandler {
   private async handleModelRefusalFallbackMessage(message: SDKMessage): Promise<void> {
     const { session, db, internalEventBus } = this.ctx;
     if (!isSDKModelRefusalFallbackMessage(message) || message.direction !== 'retry') return;
+    // A `local` fallback (subagent, /btw side question, or background fork) only
+    // swaps that one response's model — the main session model is unchanged. Do
+    // not persist the fallback into session.config for local scopes; an absent
+    // scope is the legacy session-wide behavior.
+    if (message.scope === 'local') return;
     const fallbackModel = this.resolveConfiguredFallbackModel(message.fallback_model);
     if (!fallbackModel || session.config.model === fallbackModel) return;
 

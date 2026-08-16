@@ -89,6 +89,7 @@ function shouldUseSDKSystemRenderer(message: Extract<SDKMessage, { type: 'system
     subtype === 'informational' ||
     subtype === 'worker_shutting_down' ||
     subtype === 'model_refusal_fallback' ||
+    subtype === 'model_refusal_no_fallback' ||
     subtype === 'permission_denied' ||
     subtype === 'task_notification' ||
     subtype === 'memory_recall' ||
