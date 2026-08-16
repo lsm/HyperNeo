@@ -495,43 +495,56 @@ function advanceCursor(
 
 /**
  * Whether a single evidence row can be empty or purely process-level.
- * A manual note is thin only when every clause of it carries status/pending
- * language (or it is empty) — a note that mixes a status clause with a
- * qualitative clause (a diagnosis, lesson, or decision) is substantive. A
- * session row is thin only when it is an auto-generated trace diagnostic
+ * A manual note is thin only when every clause of its summary carries
+ * status/pending language (or it is empty) — a note that mixes a status
+ * clause with a qualitative clause (a diagnosis, lesson, or decision) is
+ * substantive. Only the summary is scanned: metadata values are arbitrary
+ * (provenance, identifiers like `{"source": "agent"}`) and are not note
+ * content, so they must not keep a process-only note substantive. A session
+ * row is thin only when it is an auto-generated trace diagnostic
  * (`metadata.traceDiagnostic === true`).
  */
 function isThinEvidence(item: EvidenceRef): boolean {
-  if (item.kind === 'manual_note') {
-    const texts = [item.summary ?? ''];
-    for (const value of Object.values(item.metadata ?? {})) {
-      if (typeof value === 'string' && value.trim()) texts.push(value);
-    }
-    return isThinManualNote(texts);
-  }
+  if (item.kind === 'manual_note') return isThinManualNote(item.summary ?? '');
   if (item.kind === 'session') return item.metadata?.traceDiagnostic === true;
   return false;
 }
 
 /**
  * Clause separator for manual notes. Sentence-level punctuation starts a new
- * clause; a colon does not — it only introduces an elaboration of the same
- * utterance ("Progress: waiting on CI" is one status clause). A period only
- * separates when sentence-final (followed by whitespace or end of text), so
- * version numbers and decimals ("v2.4.1", "3.5%") stay inside their clause.
+ * clause. A period only separates when sentence-final (followed by
+ * whitespace or end of text), so version numbers and decimals ("v2.4.1",
+ * "3.5%") stay inside their clause.
  */
 const MANUAL_NOTE_CLAUSE_RE = /(?:[;!?\n]|\.(?=\s|$))+/;
 
 /**
- * Whether a manual note is purely process status. Every clause (across the
- * summary and string-valued metadata) must carry status/pending language for
- * the note to be thin — one status token does not discard a substantive
- * clause in the same note ("Root cause was lock contention; rollout is
- * blocked pending a cache fix" keeps its retrospective for the diagnosis).
+ * Splits a status-prefix form at its colon. A colon usually introduces an
+ * elaboration of the same utterance ("Progress: waiting on CI" is one status
+ * clause), but when the label before it is itself status language
+ * ("Blocked: root cause was lock contention"), the colon delimits a status
+ * preamble from the content that follows — and that content keeps the note
+ * substantive.
  */
-function isThinManualNote(texts: string[]): boolean {
-  const clauses = texts
-    .flatMap((text) => text.split(MANUAL_NOTE_CLAUSE_RE))
+function splitStatusPrefixClause(clause: string): string[] {
+  const colonIndex = clause.indexOf(':');
+  if (colonIndex < 0) return [clause];
+  const label = clause.slice(0, colonIndex);
+  if (!STATUS_LANGUAGE_RE.test(label)) return [clause];
+  return [label, clause.slice(colonIndex + 1)];
+}
+
+/**
+ * Whether a manual note is purely process status. Every clause of the
+ * summary must carry status/pending language for the note to be thin — one
+ * status token does not discard a substantive clause in the same note
+ * ("Root cause was lock contention; rollout is blocked pending a cache fix"
+ * keeps its retrospective for the diagnosis).
+ */
+function isThinManualNote(summary: string): boolean {
+  const clauses = summary
+    .split(MANUAL_NOTE_CLAUSE_RE)
+    .flatMap(splitStatusPrefixClause)
     .map((clause) => clause.trim())
     .filter(Boolean);
   if (clauses.length === 0) return true;
