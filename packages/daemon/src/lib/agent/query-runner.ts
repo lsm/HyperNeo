@@ -1085,6 +1085,22 @@ export class QueryRunner {
           return;
         }
 
+        // The timeout escape returns the iterator NORMALLY (non-blocking
+        // cleanup), so the post-loop code already ran messageQueue.stop()
+        // before this throw reached the catch. Restart it — the retry's
+        // messageGenerator exits immediately while the queue is stopped, so
+        // the preserved prompt would never feed the retry and it would time
+        // out again. A stop by interrupt/shutdown is excluded by the checks
+        // above (generation, isCleaningUp) and the status guard below.
+        // (Codex P1, PR #2499.)
+        if (
+          !messageQueue.isRunning() &&
+          !this.ctx.isCleaningUp() &&
+          stateManager.getState().status !== 'interrupted'
+        ) {
+          messageQueue.start();
+        }
+
         // Use `return await` so this call's finally{} runs only after the retry
         // completes. Otherwise finally{} would race the retry and can tear down
         // shared state (queue/controller/queryObject) while it is still running.

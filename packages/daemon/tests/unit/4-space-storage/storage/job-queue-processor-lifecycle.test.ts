@@ -258,7 +258,10 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
       const delivery = new JobQueueProcessor(repo, {
         pollIntervalMs: 5000,
         // Large threshold keeps the heartbeat lease (threshold/3) far outside
-        // the test's wall-clock so only the forced stale check runs.
+        // the test's wall-clock so only the forced stale check runs. Two
+        // slots so the reclaim tick has a SPARE slot — proving the replacement
+        // claim is deferred by the settling exclusion, not by slot pressure.
+        maxConcurrent: 2,
         staleThresholdMs: 60_000,
       });
       delivery.register('message_delivery', (job, context) => {
@@ -321,10 +324,13 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
       (delivery as unknown as { lastStaleCheck: number }).lastStaleCheck = 0;
       await delivery.tick();
       expect(abortedClaims).toEqual([job.id]);
-      // The reclaimed row goes pending; the old handler still holds the capped
-      // slot until its settle path runs, so the re-claim lands on a LATER tick
-      // (production: the poll timer / post-release requestTick). This test
-      // never start()s the processor, so drive that tick explicitly.
+      // The aborting handler has NOT settled yet — the just-reclaimed row must
+      // stay pending through this tick's dequeue pass even though a spare slot
+      // exists (maxConcurrent 2), so the replacement never overlaps it.
+      expect(repo.getJob(job.id)?.status).toBe('pending');
+
+      // Once the aborted handler settles, the exclusion lifts and the next
+      // tick claims the row under a NEW claim token.
       await flush();
       await delivery.tick();
       const after = repo.getJob(job.id);

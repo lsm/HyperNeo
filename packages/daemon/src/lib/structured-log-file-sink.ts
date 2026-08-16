@@ -162,6 +162,13 @@ function redactString(value: string): string {
       // also rejects a bare space so `\s*` cannot backtrack to zero-width and
       // swallow quoted values (those keep the quoted rule's quoted output).
       .replace(/((?:cookie|set-cookie)\s*:\s*)(?![\s"'])[^\r\n]+/gi, '$1[REDACTED]')
+      // Plain colon-form values for the other sensitive keys (`token: abc`,
+      // `api-key: sk-…`) — same boundaries as the authorization rule. Quoted
+      // values keep the quoted rule's output via the lookahead.
+      .replace(
+        /((?:api[-_]?key|token|secret|password)\s*:\s*)(?![\s"'])([^,}\r\n]+)/gi,
+        '$1[REDACTED]'
+      )
       .replace(
         /(["']?(?:api[-_]?key|token|secret|password|authorization|cookie|set-cookie)["']?\s*[:=]\s*)(["'])(.*?)\2/gi,
         '$1$2[REDACTED]$2'

@@ -144,6 +144,13 @@ export class JobQueueProcessor {
   private inFlightExempt = 0;
   private running = false;
   private inFlightClaims = new Map<string, Map<string, InFlightClaimRecord>>();
+  // Job IDs whose stale-reclaimed predecessor handler was aborted but has not
+  // settled yet. Their rows are already back to `pending`, but claiming them
+  // now (spare slots exist under a large budget) would overlap the aborting
+  // attempt — the predecessor may have fed the SDK before observing the abort.
+  // Cleared from processJob's finally, so the replacement claim lands only
+  // after cancellation has settled.
+  private settlingReclaimedJobIds = new Set<string>();
   private tickRequested = false;
   private changeNotifier: ((table: string, scope?: TableChangeScope) => void) | null = null;
   private readonly pollIntervalMs: number;
@@ -212,6 +219,9 @@ export class JobQueueProcessor {
     this.checkStaleJobs();
 
     let claimed = 0;
+    // Exclude just-reclaimed jobs whose aborting handler hasn't settled.
+    const excludeIds =
+      this.settlingReclaimedJobIds.size > 0 ? [...this.settlingReclaimedJobIds] : undefined;
 
     // Capped pass: subject to maxConcurrent. For lanes with an exempt spec,
     // exclude exempt jobs (steers) so they're left for the exempt pass below and
@@ -220,7 +230,7 @@ export class JobQueueProcessor {
     if (cappedSlots > 0) {
       for (const [queue, reg] of this.handlers) {
         if (cappedSlots <= 0) break;
-        const jobs = this.repo.dequeue(queue, cappedSlots, reg.exemptJobs);
+        const jobs = this.repo.dequeue(queue, cappedSlots, reg.exemptJobs, excludeIds);
         for (const job of jobs) {
           this.emitLifecycle('claim', job, 'capped');
           void this.processJob(job, false);
@@ -239,7 +249,7 @@ export class JobQueueProcessor {
       for (const [queue, reg] of this.handlers) {
         if (exemptSlots <= 0) break;
         if (!reg.exemptJobs) continue;
-        const jobs = this.repo.dequeueExempt(queue, reg.exemptJobs, exemptSlots);
+        const jobs = this.repo.dequeueExempt(queue, reg.exemptJobs, exemptSlots, excludeIds);
         for (const job of jobs) {
           this.emitLifecycle('claim', job, 'exempt');
           void this.processJob(job, true);
@@ -363,6 +373,9 @@ export class JobQueueProcessor {
     } finally {
       clearInterval(heartbeat);
       this.untrackInFlightClaim(job, record);
+      // The handler settled — any replacement claim for this job (deferred by
+      // the settling exclusion after a stale reclaim) may proceed.
+      this.settlingReclaimedJobIds.delete(job.id);
       if (exempt) this.inFlightExempt--;
       else this.inFlightCapped--;
       this.emitLifecycle('slot_released', job, record.slotClass, {
@@ -433,6 +446,10 @@ export class JobQueueProcessor {
         reason: 'stale_reclaim',
       });
       record.controller.abort();
+      // Aborting is asynchronous — the handler settles on a later microtask.
+      // Defer this job's replacement claim until then (see tick()'s dequeue
+      // exclusion) so the two attempts never overlap.
+      this.settlingReclaimedJobIds.add(claim.jobId);
     }
   }
 

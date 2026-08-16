@@ -98,7 +98,7 @@ export class JobQueueRepository {
     })();
   }
 
-  dequeue(queue: string, limit: number = 1, exclude?: PayloadMatch): Job[] {
+  dequeue(queue: string, limit: number = 1, exclude?: PayloadMatch, excludeIds?: string[]): Job[] {
     const claimed: Job[] = [];
 
     const txn = this.db.transaction(() => {
@@ -110,6 +110,12 @@ export class JobQueueRepository {
         // keeps path-less rows claimable (NULL → '' ≠ equals). See #2587.
         sql += ` AND COALESCE(json_extract(payload, ?), '') != ?`;
         params.push(exclude.path, exclude.equals);
+      }
+      if (excludeIds && excludeIds.length > 0) {
+        // Leave just-reclaimed jobs whose aborting handler has not settled yet —
+        // claiming them now would overlap the predecessor attempt.
+        sql += ` AND id NOT IN (${excludeIds.map(() => '?').join(',')})`;
+        params.push(...excludeIds);
       }
       sql += ` ORDER BY priority DESC, run_at ASC, created_at ASC, rowid ASC LIMIT ?`;
       params.push(limit);
@@ -130,18 +136,27 @@ export class JobQueueRepository {
    * what lets a mid-turn steer reach the live turn instead of being promoted to
    * a later turn under slot pressure. See message-delivery-v2.md + Codex (#2587).
    */
-  dequeueExempt(queue: string, spec: PayloadMatch, limit: number = 1): Job[] {
+  dequeueExempt(
+    queue: string,
+    spec: PayloadMatch,
+    limit: number = 1,
+    excludeIds?: string[]
+  ): Job[] {
     const claimed: Job[] = [];
 
     const txn = this.db.transaction(() => {
-      const rows = this.db
-        .prepare(
-          `SELECT * FROM job_queue
+      let sql = `SELECT * FROM job_queue
              WHERE queue = ? AND status = 'pending' AND run_at <= ?
-               AND json_extract(payload, ?) = ?
-           ORDER BY priority DESC, run_at ASC, created_at ASC, rowid ASC LIMIT ?`
-        )
-        .all(queue, Date.now(), spec.path, spec.equals, limit) as Record<string, unknown>[];
+               AND json_extract(payload, ?) = ?`;
+      const params: (string | number)[] = [queue, Date.now(), spec.path, spec.equals];
+      if (excludeIds && excludeIds.length > 0) {
+        // Same settling-predecessor exclusion as dequeue().
+        sql += ` AND id NOT IN (${excludeIds.map(() => '?').join(',')})`;
+        params.push(...excludeIds);
+      }
+      sql += ` ORDER BY priority DESC, run_at ASC, created_at ASC, rowid ASC LIMIT ?`;
+      params.push(limit);
+      const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
       this.claimRows(rows, claimed);
     });
 

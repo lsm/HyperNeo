@@ -1579,6 +1579,42 @@ describe('QueryRunner', () => {
       expect(ctx.processExitedPromise).toBeNull();
     });
 
+    it('restarts a stopped message queue before the startup-timeout retry', async () => {
+      // Codex P1 (PR #2499): the timeout escape returns the iterator normally,
+      // so the post-loop code stops the queue BEFORE the timeout throw reaches
+      // the catch. The recursive retry must restart it — messageGenerator exits
+      // immediately while the queue is stopped, so the preserved prompt would
+      // never feed the retry and it would time out again. Simulate the
+      // timeout-path stop at the top of the retry block (setIdle hook).
+      setIdleSpy.mockImplementation(async () => {
+        stopSpy();
+      });
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      // start() once + the retry's restart.
+      expect(startSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('does not restart the message queue for a startup-timeout retry when interrupted', async () => {
+      // A stop by interrupt is not the timeout path's own stop — restarting
+      // would re-arm a queue the user cancelled.
+      setIdleSpy.mockImplementation(async () => {
+        stopSpy();
+        getStateSpy.mockReturnValue({ status: 'interrupted' } as never);
+      });
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(startSpy.mock.calls.length).toBe(1);
+    });
+
     it('should abandon the retry when a replacement query took ownership during the exit wait', async () => {
       // Codex P1 (PR #2491): the retry's recursive runQuery() bypasses
       // start()'s queue-running guard. If a replacement query started while

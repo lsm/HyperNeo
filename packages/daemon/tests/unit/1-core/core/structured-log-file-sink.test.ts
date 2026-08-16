@@ -81,6 +81,32 @@ describe('StructuredLogFileSink', () => {
     });
   });
 
+  it('redacts unquoted colon-form values for every sensitive key', () => {
+    // `token: abc` (no quotes, no `=`) previously passed through every rule —
+    // only authorization and cookies had colon-form handling. Like the
+    // authorization rule, the value runs to the `,`/`}`/EOL boundary.
+    const redacted = redactStructuredLogEvent(
+      event('token: abc', {
+        plain1: 'api-key: sk-secret',
+        plain2: 'password: hunter2',
+        plain3: 'secret: shh-plain',
+        quoted: 'token: "quoted-ok"',
+      })
+    );
+
+    expect(redacted.message).toBe('token: [REDACTED]');
+    expect(redacted.metadata).toEqual({
+      plain1: 'api-key: [REDACTED]',
+      plain2: 'password: [REDACTED]',
+      plain3: 'secret: [REDACTED]',
+      quoted: 'token: "[REDACTED]"',
+    });
+    expect(JSON.stringify(redacted)).not.toContain('abc');
+    expect(JSON.stringify(redacted)).not.toContain('sk-secret');
+    expect(JSON.stringify(redacted)).not.toContain('hunter2');
+    expect(JSON.stringify(redacted)).not.toContain('shh-plain');
+  });
+
   it('redacts unquoted header-form cookie values including semicolon tails', () => {
     // Colon-form cookie values (quoted-value pattern needs a quote after the
     // colon; the `=`-form needs `cookie=`) previously leaked verbatim.
