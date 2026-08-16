@@ -134,6 +134,11 @@ interface Registration {
   onDead?: (job: Job) => void;
 }
 
+/** Grace for a stale-reclaimed handler to settle after its abort before its
+ * replacement claim may proceed. Aborting handlers settle within microtasks;
+ * the bound exists for wedged handlers that never observe the signal. */
+const SETTLEMENT_GRACE_MS = 10_000;
+
 export class JobQueueProcessor {
   private handlers = new Map<string, Registration>();
   private pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -145,12 +150,14 @@ export class JobQueueProcessor {
   private running = false;
   private inFlightClaims = new Map<string, Map<string, InFlightClaimRecord>>();
   // Job IDs whose stale-reclaimed predecessor handler was aborted but has not
-  // settled yet. Their rows are already back to `pending`, but claiming them
-  // now (spare slots exist under a large budget) would overlap the aborting
-  // attempt — the predecessor may have fed the SDK before observing the abort.
-  // Cleared from processJob's finally, so the replacement claim lands only
-  // after cancellation has settled.
-  private settlingReclaimedJobIds = new Set<string>();
+  // settled yet, mapped to the moment the deferral expires. Their rows are
+  // already back to `pending`, but claiming them now (spare slots exist under
+  // a large budget) would overlap the aborting attempt — the predecessor may
+  // have fed the SDK before observing the abort. Cleared from processJob's
+  // finally, so the replacement claim lands once cancellation has settled.
+  // The expiry bounds the wait: a handler that never observes its abort signal
+  // would otherwise suppress its replacement forever.
+  private settlingReclaimedJobIds = new Map<string, number>();
   private tickRequested = false;
   private changeNotifier: ((table: string, scope?: TableChangeScope) => void) | null = null;
   private readonly pollIntervalMs: number;
@@ -219,9 +226,19 @@ export class JobQueueProcessor {
     this.checkStaleJobs();
 
     let claimed = 0;
-    // Exclude just-reclaimed jobs whose aborting handler hasn't settled.
-    const excludeIds =
-      this.settlingReclaimedJobIds.size > 0 ? [...this.settlingReclaimedJobIds] : undefined;
+    // Exclude just-reclaimed jobs whose aborting handler hasn't settled, minus
+    // any whose deferral grace expired (a wedged non-cancellable handler would
+    // otherwise starve its replacement forever).
+    let excludeIds: string[] | undefined;
+    if (this.settlingReclaimedJobIds.size > 0) {
+      const now = Date.now();
+      for (const [jobId, expireAt] of this.settlingReclaimedJobIds) {
+        if (expireAt <= now) this.settlingReclaimedJobIds.delete(jobId);
+      }
+      if (this.settlingReclaimedJobIds.size > 0) {
+        excludeIds = [...this.settlingReclaimedJobIds.keys()];
+      }
+    }
 
     // Capped pass: subject to maxConcurrent. For lanes with an exempt spec,
     // exclude exempt jobs (steers) so they're left for the exempt pass below and
@@ -448,8 +465,9 @@ export class JobQueueProcessor {
       record.controller.abort();
       // Aborting is asynchronous — the handler settles on a later microtask.
       // Defer this job's replacement claim until then (see tick()'s dequeue
-      // exclusion) so the two attempts never overlap.
-      this.settlingReclaimedJobIds.add(claim.jobId);
+      // exclusion) so the two attempts never overlap, bounded by a grace
+      // window for handlers that never observe the abort signal.
+      this.settlingReclaimedJobIds.set(claim.jobId, Date.now() + SETTLEMENT_GRACE_MS);
     }
   }
 

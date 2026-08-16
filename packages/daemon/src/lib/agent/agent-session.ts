@@ -2337,8 +2337,15 @@ export class AgentSession
     this.outstandingToolUseIds.clear();
     // Stall watchdog placeholder; armed once we begin awaiting the turn (below).
     let stallPromise: Promise<void> = new Promise<void>(() => {});
-    let responseObserver: { generation: number; observer: MessageDeliveryAttemptObserver } | null =
-      null;
+    // Response observability applies to EVERY driving attempt — including an
+    // alreadyConsumed reclaim, whose `acknowledgment` is null (no fresh feed
+    // below) but which still starts a query whose first SDK response the
+    // lifecycle log must see. Cleared by identity in the finally.
+    const responseObserver: {
+      generation: number;
+      observer: MessageDeliveryAttemptObserver;
+    } | null = observer ? { generation: started.generation, observer } : null;
+    if (responseObserver) this.deliveryResponseObserver = responseObserver;
     try {
       // An alreadyConsumed reclaim skips the feed (admitWithId not called), so
       // `started.acknowledgment` is null — `await null` resolves immediately.
@@ -2378,8 +2385,6 @@ export class AgentSession
         // NOT a handoff and must not be counted as one. (Codex review.)
         deliveryMetrics.recordFeed(messageUuid);
         observer?.reportStage('sdk_admitted', { generation: started.generation });
-        responseObserver = observer ? { generation: started.generation, observer } : null;
-        if (responseObserver) this.deliveryResponseObserver = responseObserver;
         // For the Claude SDK, onSent is the consume signal — flip send_status →
         // 'consumed' SYNCHRONOUSLY (item 12) so reclaimStale almost always sees
         // 'consumed' and skips the re-feed, and signal delivery waiters (LTA /

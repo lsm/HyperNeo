@@ -164,6 +164,24 @@ describe('StructuredLogFileSink', () => {
     expect(await readFile(path, 'utf8').catch(() => '')).toBe('');
   });
 
+  it('drops only an unserializable record instead of disabling the sink', async () => {
+    // A bigint (or circular value) in metadata must not permanently disable
+    // the sink — later records, including fatals, still persist.
+    const path = await tempPath('daemon.jsonl');
+    const sink = createSink(path);
+    sink.capture(event('good-before'));
+    sink.capture({
+      ...event('bad'),
+      metadata: { unserializable: 123n },
+    } as unknown as StructuredLogEvent);
+    sink.capture(event('good-after'));
+    await sink.close();
+
+    const messages = (await records(path)).map((record) => record.message);
+    expect(messages).toEqual(['good-before', 'good-after']);
+    expect(sink.getDroppedCount()).toBe(1);
+  });
+
   it('fails open for an unwritable target', async () => {
     const directory = await tempPath('occupied');
     await writeFile(directory, 'not a directory');

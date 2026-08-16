@@ -1509,7 +1509,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // A startup failure returns no cleanup function, so stop any in-flight
     // embedding-model prefetch here so it cannot outlive the failed process.
     abortAgentMemoryEmbeddingModelPrefetch();
-    await closeFileLogCapture();
+    // Restore the console capture, but KEEP the file sink subscribed: the
+    // caller's fatal handler (main.ts unhandledRejection) emits its record
+    // only after this rethrow, and unsubscribing/closing here would drop the
+    // startup failure from the persistent log. The daemon exits right after
+    // the fatal flush, so the sink needs no explicit close on this path.
+    // (Codex P2, PR #2499.)
+    restoreConsoleCapture();
+    fileLogCaptureClosed = true;
     throw error;
   }
 }

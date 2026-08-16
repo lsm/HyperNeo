@@ -345,6 +345,53 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
     });
   });
 
+  describe('settling deferral is bounded for non-cancellable handlers', () => {
+    it('lifts the replacement exclusion once the settlement grace expires', async () => {
+      // A handler that never observes its abort signal (e.g. a lane handler
+      // registered without consuming JobHandlerContext.signal) never settles,
+      // so its finally never lifts the exclusion. The grace expiry must let
+      // the replacement proceed anyway — no starvation until daemon restart.
+      const delivery = new JobQueueProcessor(repo, {
+        pollIntervalMs: 5000,
+        maxConcurrent: 2,
+        staleThresholdMs: 60_000,
+      });
+      // Never settles and ignores the abort signal entirely.
+      delivery.register('message_delivery', () => new Promise(() => {}));
+
+      const job = repo.enqueue({
+        queue: 'message_delivery',
+        payload: { sessionId: 'session-1', messageUuid: 'message-1', role: 'turn' },
+      });
+      await delivery.tick();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const firstClaim = repo.getJob(job.id)?.claimToken;
+      expect(firstClaim).toBeTruthy();
+
+      const staleLease = Date.now() - 120_000;
+      db.prepare(`UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?`).run(
+        staleLease,
+        staleLease,
+        job.id
+      );
+      (delivery as unknown as { lastStaleCheck: number }).lastStaleCheck = 0;
+      await delivery.tick();
+      // Reclaimed → pending, and the never-settling predecessor holds the
+      // exclusion; no re-claim in this tick.
+      expect(repo.getJob(job.id)?.status).toBe('pending');
+
+      // Simulate the grace elapsing without waiting 10s of wall-clock.
+      const map = (delivery as unknown as { settlingReclaimedJobIds: Map<string, number> })
+        .settlingReclaimedJobIds;
+      map.set(job.id, Date.now() - 1);
+      await delivery.tick();
+      const after = repo.getJob(job.id);
+      expect(after?.status).toBe('processing');
+      expect(after?.claimToken).toBeTruthy();
+      expect(after?.claimToken).not.toBe(firstClaim);
+    });
+  });
+
   describe('stale job reclamation — ordering contract', () => {
     it('reclaimStale() resets the job to pending before the handler picks it up', async () => {
       // The contract: reclaimStale transitions the job pending, THEN the next dequeue

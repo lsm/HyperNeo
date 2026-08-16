@@ -32,7 +32,14 @@ export class StructuredLogFileSink {
     try {
       line = `${JSON.stringify(redactStructuredLogEvent(event))}\n`;
     } catch (error) {
-      this.disable(error);
+      // One unserializable record (bigint / circular metadata) must not kill
+      // the sink for the rest of the process — drop just this record.
+      this.dropped++;
+      this.warnOnce(
+        `unserializable log record dropped: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
       return;
     }
 
