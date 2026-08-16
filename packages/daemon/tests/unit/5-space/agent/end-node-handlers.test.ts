@@ -3224,6 +3224,82 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     }
   });
 
+  test('a dependency_incomplete block is unblockable once the prerequisite completes', async () => {
+    // The recovery re-block uses a NEW reason; the cascade's unblocking
+    // predicate must include it, or the dependent is stranded forever
+    // after the prerequisite later completes.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const taskId = await createTask('in_progress');
+    const dependent = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'Dependent',
+      description: '',
+      status: 'in_progress',
+      dependsOn: [taskId],
+    });
+    await ctx.taskManager.setTaskStatus(dependent.id, 'blocked', {
+      blockReason: 'dependency_incomplete',
+    });
+    // The prerequisite later completes — the done transition's own cascade
+    // (unblockDependentTasks) must include the new reason, unblocking the
+    // dependent instead of stranding it forever.
+    await ctx.taskManager.setTaskStatus(taskId, 'done', { result: 'later completed' });
+
+    expect(ctx.taskRepo.getTask(dependent.id)?.status).toBe('open');
+  });
+
+  test('goal-terminal handling is suppressed while the reopened run is unstable', async () => {
+    // The tick can commit the done task while a message-driven reopen
+    // reopens the run during the awaited cascade — completionConfirmed
+    // stays true (task done, association unchanged) but the run lifecycle
+    // moved. Clearing the goal's active-task pointer then would
+    // auto-trigger the goal's next task against a lifecycle still running
+    // replacement work. Goal-terminal handling is gated on the SAME
+    // stable-lifecycle predicate as the worker sweep.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-goal',
+      agentName: 'Review',
+      agentId: ctx.agentId,
+      status: 'idle',
+    });
+    const goalsHandled: string[] = [];
+    const originalSetStatus = ctx.taskManager.setTaskStatus.bind(ctx.taskManager);
+    const setStatusSpy = spyOn(ctx.taskManager, 'setTaskStatus').mockImplementation(
+      async (...callArgs: Parameters<typeof originalSetStatus>) => {
+        const result = await originalSetStatus(...callArgs);
+        // Tick #1 finalizes; an activation reopens (lifecycle churn), task
+        // stays done throughout.
+        ctx.workflowRunRepo.transitionStatus(task.workflowRunId!, 'done');
+        ctx.workflowRunRepo.transitionStatus(task.workflowRunId!, 'in_progress');
+        return result;
+      }
+    );
+
+    try {
+      const result = await makeValidationTool({
+        goalService: {
+          handleTaskTerminal: (taskIdNow: string) => {
+            goalsHandled.push(taskIdNow);
+          },
+        } as unknown as CompleteValidationTaskHandlerDeps['goalService'],
+      }).complete_validation_task({
+        task_id: task.id,
+        validation_outcome: 'committed; unstable lifecycle must not finalize goals',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.success).toBe(true);
+      // The task is done, but goal terminal handling is suppressed: the
+      // run's lifecycle churned (flip→reopen) during the cascade.
+      expect(ctx.taskRepo.getTask(task.id)?.status).toBe('done');
+      expect(goalsHandled).toEqual([]);
+    } finally {
+      setStatusSpy.mockRestore();
+    }
+  });
+
   test('the sweep quiesces a worker activated during the post-commit cascade', async () => {
     // A message-driven lazy activation or tick spawn can race the awaited
     // post-commit cascade. Mid-cascade "reopened-run work" cannot exist —

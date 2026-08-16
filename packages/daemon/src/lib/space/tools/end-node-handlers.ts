@@ -1246,9 +1246,23 @@ export function createCompleteValidationTaskHandler(
       }
 
       // Best-effort goal terminal handling — must not block completion, and
-      // only applies when the completion actually stuck (a task recovered
-      // mid-cascade is no longer terminal).
-      if (completionConfirmed) {
+      // only applies when the completion actually stuck AND the run's
+      // lifecycle is stable: a reopened run (message-driven, task still
+      // done) is executing replacement work, and clearing the goal's
+      // active-task pointer would auto-trigger its next task against a
+      // prerequisite lifecycle that is still running.
+      const runLifecycleStableForGoal =
+        completionConfirmed &&
+        (() => {
+          if (!currentTaskRow?.workflowRunId) return true; // standalone
+          const runRow = workflowRunRepo.getRun(currentTaskRow.workflowRunId);
+          return (
+            runRow != null &&
+            (runRow.status === 'done' ||
+              (run != null && runRow.status === run.status && runRow.startedAt === run.startedAt))
+          );
+        })();
+      if (runLifecycleStableForGoal) {
         try {
           goalService?.handleTaskTerminal(updated.id);
         } catch (err) {
@@ -1302,10 +1316,32 @@ export function createCompleteValidationTaskHandler(
       try {
         for (const dependent of cascadedDependents) {
           const dependentRow = taskRepo.getTask(dependent.id);
-          if (dependentRow?.status !== 'open') continue;
+          if (dependentRow?.status !== 'open' && dependentRow?.status !== 'in_progress') {
+            continue;
+          }
+          // A dependent already in_progress (a runtime tick advanced it
+          // during the awaited cascade) is stopped, not just parked: its
+          // prerequisite is incomplete again. in_progress → blocked keeps
+          // the row recoverable by the same unblocking predicate.
           const reblocked = await taskManager.setTaskStatus(dependent.id, 'blocked', {
             blockReason: 'dependency_incomplete',
           });
+          if (dependentRow?.status === 'in_progress' && interruptBySessionId) {
+            // Best-effort: stop any live worker session the dependent had.
+            for (const execution of nodeExecutionRepo.listByWorkflowRun(
+              dependentRow.workflowRunId ?? ''
+            )) {
+              if (execution.status === 'in_progress' && execution.agentSessionId) {
+                try {
+                  if (await interruptBySessionId(execution.agentSessionId)) {
+                    nodeExecutionRepo.updateStatus(execution.id, 'idle');
+                  }
+                } catch {
+                  // Best-effort stop.
+                }
+              }
+            }
+          }
           emitTaskUpdated(reblocked);
           log.warn(
             `complete_validation_task: re-blocked dependent ${dependent.id} — its prerequisite ${args.task_id} was reopened during the completion cascade`

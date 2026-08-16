@@ -998,7 +998,12 @@ export class SpaceTaskManager {
     const allTasks = await this.listTasks(false /* includeArchived */);
     for (const t of allTasks) {
       if (t.status !== 'blocked') continue;
-      if (t.blockReason !== 'dependency_failed' && t.blockReason !== 'dependency_added') continue;
+      if (
+        t.blockReason !== 'dependency_failed' &&
+        t.blockReason !== 'dependency_added' &&
+        t.blockReason !== 'dependency_incomplete'
+      )
+        continue;
       if (!t.dependsOn?.includes(taskId)) continue;
       // Re-check ALL deps for this task
       const depsMet = await this.areDependenciesMet(t);
