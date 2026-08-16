@@ -2988,14 +2988,14 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     }
   });
 
-  test('the sweep spares executions activated after the completion write began', async () => {
-    // ChannelRouter.reopenRun flips the RUN back to in_progress while
-    // leaving its completed task `done`, then activates a replacement
-    // worker — all able to land during setTaskStatus' awaited dependency
-    // cascade. The task-only sweep gate cannot see it (task still done,
-    // run association unchanged), so the sweep discriminates by activation
-    // time: executions started AFTER the terminal write began are
-    // reopened-run work and must survive; pre-existing ones are quiesced.
+  test('the sweep quiesces a worker activated during the post-commit cascade', async () => {
+    // A message-driven lazy activation or tick spawn can race the awaited
+    // post-commit cascade. Mid-cascade "reopened-run work" cannot exist —
+    // reopenRun targets a done run, and this handler's guards require the
+    // run to be in_progress at entry AND at the write — so the late
+    // activation is same-run work the completion supersedes, and the sweep
+    // quiesces it: the next tick's reconciliation excludes the entire
+    // source node, so nothing else would.
     await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
     const task = createWorkflowTask(5, { status: 'in_progress' });
     // Pre-existing peer (startedAt well before the completion write).
@@ -3015,24 +3015,16 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     const setStatusSpy = spyOn(ctx.taskManager, 'setTaskStatus').mockImplementation(
       async (...callArgs: Parameters<typeof originalSetStatus>) => {
         const result = await originalSetStatus(...callArgs);
-        // reopenRun shape inside the cascade: task stays done, run stays
-        // in_progress, and a replacement worker activates NOW. The tick
-        // guarantees the activation timestamp lands strictly after the
-        // completion-write cutoff even on a same-millisecond machine.
-        await new Promise((resolve) => setTimeout(resolve, 3));
+        // A late activation lands inside the cascade: task stays done, run
+        // stays in_progress (never done — nothing was reopened).
         ctx.nodeExecutionRepo.create({
           workflowRunId: task.workflowRunId!,
           workflowNodeId: 'node-sweep',
-          agentName: 'Replacement',
+          agentName: 'LateWorker',
           agentId: ctx.agentId,
           status: 'in_progress',
-          agentSessionId: 'replacement-worker-session',
+          agentSessionId: 'late-worker-session',
         });
-        // Activation stamps startedAt (as spawnWorkflowNodeAgentForExecution
-        // does) — now, i.e. AFTER the completion write began.
-        ctx.db
-          .prepare('UPDATE node_executions SET started_at = ? WHERE agent_session_id = ?')
-          .run(Date.now(), 'replacement-worker-session');
         return result;
       }
     );
@@ -3044,7 +3036,7 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
         },
       }).complete_validation_task({
         task_id: task.id,
-        validation_outcome: 'completed; replacement must survive',
+        validation_outcome: 'completed; late racer must not linger',
       });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.success).toBe(true);
@@ -3053,13 +3045,9 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     }
 
     const executions = ctx.nodeExecutionRepo.listByWorkflowRun(task.workflowRunId!);
-    // The pre-existing peer is quiesced...
     expect(executions.find((e) => e.agentSessionId === 'old-peer-session')?.status).toBe('idle');
-    expect(interrupted).toEqual(['old-peer-session']);
-    // ...the freshly activated replacement survives untouched.
-    expect(executions.find((e) => e.agentSessionId === 'replacement-worker-session')?.status).toBe(
-      'in_progress'
-    );
+    expect(executions.find((e) => e.agentSessionId === 'late-worker-session')?.status).toBe('idle');
+    expect(interrupted.sort()).toEqual(['late-worker-session', 'old-peer-session']);
   });
 
   test('terminal precondition refuses when the task loses canonical ownership mid-flight', async () => {

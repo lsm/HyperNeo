@@ -864,15 +864,6 @@ export function createCompleteValidationTaskHandler(
       // close a task whose post-approval work is still running. setTaskStatus
       // rereads the task right before the UPDATE, so the condition binds to
       // the persisted state the write lands on.
-      // Timestamp captured BEFORE the terminal write: the post-commit sweep
-      // must not quiesce executions activated AFTER this point. A peer
-      // `send_message` can reopen the run (ChannelRouter.reopenRun flips the
-      // run back to `in_progress` while leaving its completed task `done`)
-      // and activate a replacement worker during setTaskStatus' awaited
-      // dependency cascade — that fresh execution carries a `startedAt`
-      // newer than this cutoff and belongs to the reopened run's work, not
-      // to the completion being finalized here.
-      const completionWriteStartedAt = Date.now();
       const updated = await taskManager.setTaskStatus(args.task_id, 'done', {
         result: outcome,
         approvalSource: 'agent',
@@ -1048,16 +1039,19 @@ export function createCompleteValidationTaskHandler(
               });
             }
           };
+          // Every active execution of the run is swept, INCLUDING ones
+          // activated during the awaited post-commit cascade (a message-
+          // driven lazy activation or a tick spawn racing this completion).
+          // Mid-cascade "reopened-run work" cannot exist: reopenRun targets
+          // a `done` run, and this handler's guards require the run to be
+          // `in_progress` at entry AND at the terminal write — so any
+          // post-commit activation is same-run late work the completion
+          // supersedes, and leaving it `in_progress` would strand it: the
+          // next tick's reconciliation excludes the entire source node, so
+          // nothing else would quiesce it either.
           const activeExecutions = nodeExecutionRepo
             .listByWorkflowRun(currentTaskRow.workflowRunId)
-            .filter(
-              (execution) =>
-                execution.status === 'in_progress' &&
-                // Executions activated after the terminal write began are
-                // reopened-run work (see completionWriteStartedAt above);
-                // rows with no startedAt are pre-existing and eligible.
-                (execution.startedAt == null || execution.startedAt <= completionWriteStartedAt)
-            );
+            .filter((execution) => execution.status === 'in_progress');
           if (completionSourceNodeId) {
             for (const peer of activeExecutions.filter(
               (execution) =>
