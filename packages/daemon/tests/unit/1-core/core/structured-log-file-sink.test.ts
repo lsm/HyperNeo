@@ -81,6 +81,17 @@ describe('StructuredLogFileSink', () => {
     });
   });
 
+  it('redacts comma-delimited Authorization schemes through end of line', () => {
+    // Digest/AWS-style values carry structural commas; a `,` boundary would
+    // persist the nonce/response/signature verbatim.
+    const redacted = redactStructuredLogEvent(
+      event(
+        'Authorization: Digest username="u", nonce="secret-nonce", response="hash", algorithm=SHA-256'
+      )
+    );
+    expect(redacted.message).toBe('Authorization: [REDACTED]');
+  });
+
   it('redacts unquoted colon-form values for every sensitive key', () => {
     // `token: abc` (no quotes, no `=`) previously passed through every rule —
     // only authorization and cookies had colon-form handling. Like the

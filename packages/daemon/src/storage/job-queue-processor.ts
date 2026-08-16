@@ -61,6 +61,12 @@ interface InFlightClaimRecord {
   generation?: number;
   lastLeaseLogAt: number;
   settlement?: string;
+  /**
+   * Set when the settling-grace expiry evicted this (wedged, non-settling)
+   * reclaimed handler's slot so its replacement could claim capacity. The
+   * handler's own finally then skips the second decrement. (Codex P2.)
+   */
+  slotEvicted?: boolean;
 }
 
 export type JobHandler = (
@@ -254,7 +260,16 @@ export class JobQueueProcessor {
     if (this.settlingReclaimedJobIds.size > 0) {
       const now = Date.now();
       for (const [jobId, entry] of this.settlingReclaimedJobIds) {
-        if (entry.expireAt <= now) this.settlingReclaimedJobIds.delete(jobId);
+        if (entry.expireAt <= now) {
+          // Grace expiry alone does not free capacity: the wedged predecessor
+          // still counts toward maxConcurrent, so a saturated processor
+          // (e.g. maxConcurrent=1 held by a handler that never observes the
+          // abort) could never claim the replacement. Evict its slot too —
+          // its much-later finally skips the second decrement via slotEvicted.
+          // (Codex P2, PR #2499.)
+          this.evictWedgedClaimSlot(jobId, entry.claimToken);
+          this.settlingReclaimedJobIds.delete(jobId);
+        }
       }
       if (this.settlingReclaimedJobIds.size > 0) {
         excludeIds = [...this.settlingReclaimedJobIds.keys()];
@@ -421,8 +436,11 @@ export class JobQueueProcessor {
       if (settlingEntry?.claimToken === job.claimToken) {
         this.settlingReclaimedJobIds.delete(job.id);
       }
-      if (exempt) this.inFlightExempt--;
-      else this.inFlightCapped--;
+      if (exempt) {
+        if (!record.slotEvicted) this.inFlightExempt--;
+      } else {
+        if (!record.slotEvicted) this.inFlightCapped--;
+      }
       this.emitLifecycle('slot_released', job, record.slotClass, {
         stage: record.stage,
         outcome: record.settlement,
@@ -461,6 +479,20 @@ export class JobQueueProcessor {
   private getInFlightClaim(job: Job): InFlightClaimRecord | undefined {
     if (!job.claimToken) return undefined;
     return this.inFlightClaims.get(job.id)?.get(job.claimToken);
+  }
+
+  /**
+   * Stop counting a wedged reclaimed handler toward its slot budget once the
+   * settlement grace expires (see tick). The record stays tracked for its
+   * identity checks — only the capacity accounting is released, once.
+   */
+  private evictWedgedClaimSlot(jobId: string, claimToken: string | null): void {
+    if (!claimToken) return;
+    const record = this.inFlightClaims.get(jobId)?.get(claimToken);
+    if (!record || record.slotEvicted) return;
+    record.slotEvicted = true;
+    if (record.slotClass === 'exempt') this.inFlightExempt--;
+    else this.inFlightCapped--;
   }
 
   private untrackInFlightClaim(job: Job, record: InFlightClaimRecord): void {

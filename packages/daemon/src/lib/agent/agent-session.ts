@@ -388,9 +388,13 @@ export class AgentSession
    */
   private deliveryTurnStall: DeliveryTurnStallWatchdog | null = null;
   private deliveryTurnStalled = false;
+  // `pendingStart` marks an observer armed before its driving attempt's query
+  // started; the generation bump that starts that query retags it (see
+  // incrementQueryGeneration) so the new query's first frame fences clean.
   private deliveryResponseObserver: {
     generation: number;
     observer: MessageDeliveryAttemptObserver;
+    pendingStart?: boolean;
   } | null = null;
 
   /**
@@ -1983,7 +1987,15 @@ export class AgentSession
   }
 
   incrementQueryGeneration(): number {
-    return ++this._queryGeneration;
+    const next = ++this._queryGeneration;
+    // A delivery observer armed with `pendingStart` belongs to the query THIS
+    // bump is starting — retag it so the new query's first frame passes the
+    // generation fence instead of being dropped against the stale pre-start
+    // generation. Cleared once the driving attempt's startup returns.
+    if (this.deliveryResponseObserver?.pendingStart) {
+      this.deliveryResponseObserver.generation = next;
+    }
+    return next;
   }
 
   getQueryGeneration(): number {
@@ -2178,6 +2190,25 @@ export class AgentSession
         if (alreadyConsumed && this.reclaimTurnAlreadySucceeded(messageUuid)) {
           return { kind: 'turn_terminated' as const };
         }
+        // Arm first-response observability BEFORE ensureQueryStarted: the
+        // startup path launches the streaming query before its await resolves,
+        // so an init/history/model frame can reach SDKMessageHandler while this
+        // critical section is still settling. `pendingStart` lets
+        // incrementQueryGeneration retag this record with the new query's
+        // generation at the bump, so the first frame of OUR query fences clean
+        // instead of being dropped by the stale pre-start generation. Cleared
+        // once startup returns (a resume of an already-running query never
+        // bumps); disarmed on the in-lock abort exits below; the driving path
+        // owns it until the outer finally clears it by identity. (Codex P2.)
+        const armedObserver = observer
+          ? { generation: this.getQueryGeneration(), observer, pendingStart: true }
+          : null;
+        if (armedObserver) this.deliveryResponseObserver = armedObserver;
+        const disarmObserver = (): void => {
+          if (armedObserver && this.deliveryResponseObserver === armedObserver) {
+            this.deliveryResponseObserver = null;
+          }
+        };
         const ensureStartedAt = Date.now();
         const queryStartResult = await this.lifecycleManager.ensureQueryStarted(signal);
         this.logger.debug(
@@ -2185,28 +2216,17 @@ export class AgentSession
             `(${Date.now() - ensureStartedAt}ms, uuid=${messageUuid})`
         );
         if (queryStartResult === 'blocked') {
+          disarmObserver();
           return { kind: 'blocked' as const };
         }
         const queryPromise = this.queryPromise;
         if (!queryPromise) {
+          disarmObserver();
           throw new Error('message_delivery: query did not start; cannot drive turn');
         }
-        const generation = this.getQueryGeneration();
+        if (armedObserver) armedObserver.pendingStart = false;
+        const generation = armedObserver?.generation ?? this.getQueryGeneration();
         observer?.reportStage('query_ready', { generation });
-        // Arm first-response observability as soon as this attempt's
-        // (post-start) generation is known — BEFORE any further await (admission,
-        // batch rebuild) can let the SDK emit. SDKMessageHandler reads the field
-        // on every message; arming only after the session lock settles would miss
-        // the first response of a fast fresh start or a resumed (alreadyConsumed)
-        // turn. Disarmed on the in-lock abort exits below; the driving path owns
-        // it until the outer finally clears it by identity. (Codex P2, PR #2499.)
-        const armedObserver = observer ? { generation, observer } : null;
-        if (armedObserver) this.deliveryResponseObserver = armedObserver;
-        const disarmObserver = (): void => {
-          if (armedObserver && this.deliveryResponseObserver === armedObserver) {
-            this.deliveryResponseObserver = null;
-          }
-        };
         // Re-check termination AFTER startup, immediately before arming the
         // turn-end waiter — the two statements are adjacent (no await between), so
         // a turn that terminates in the check→arm window cannot be missed: if it
@@ -2216,6 +2236,7 @@ export class AgentSession
         // ensureQueryStarted's await would leak a query waiting for input and hold
         // the active-turn slot forever. See Codex (PR #2463, P2) + task #946.
         if (alreadyConsumed && this.reclaimTurnAlreadySucceeded(messageUuid)) {
+          disarmObserver();
           return { kind: 'turn_terminated' as const };
         }
         // Arm the turn-end wait AFTER ensureQueryStarted: ensureQueryStarted awaits

@@ -171,10 +171,14 @@ function redactString(value: string): string {
   return (
     value
       .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
-      .replace(/(authorization\s*:\s*)(?!["'])([^,}\r\n]+)/gi, '$1[REDACTED]')
+      // Authorization values legitimately contain structural commas (Digest
+      // `username="u", nonce="…", response="…"`, AWS `…, Signature=…`), so —
+      // like cookies — redact through end of line; a `,`/`}` boundary would
+      // persist the nonce/response/signature verbatim. (Codex P2, PR #2499.)
+      .replace(/(authorization\s*:\s*)(?![\s"'])[^\r\n]+/gi, '$1[REDACTED]')
       // Header-form cookie values carry session credentials and legitimately
       // contain `;` and `,` (e.g. Expires dates), so redact to end of line rather
-      // than the `,`/`}` boundaries the authorization rule uses. The lookahead
+      // than the `,`/`}` boundaries the other rules use. The lookahead
       // also rejects a bare space so `\s*` cannot backtrack to zero-width and
       // swallow quoted values (those keep the quoted rule's quoted output).
       .replace(/((?:cookie|set-cookie)\s*:\s*)(?![\s"'])[^\r\n]+/gi, '$1[REDACTED]')

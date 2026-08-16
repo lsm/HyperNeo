@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { DEFAULT_MAX_SUBSCRIPTIONS_PER_CLIENT } from '@hyperneo/shared';
 import { getDataDir } from './lib/data-dir';
 
@@ -92,8 +92,21 @@ export function getConfig(overrides?: ConfigOverrides): Config {
   const defaultDbPath = join(getDataDir(), 'data', 'daemon.db');
   const configuredLogPath = hyperneoEnv('LOG_FILE');
   const normalizedLogPath = configuredLogPath?.trim();
+  // Isolated daemons (concurrent worktrees run with a custom DB_PATH per
+  // CLAUDE.md) must not share one rotating log file: independent sinks
+  // rotate/drop generations under each other. The shared default stays put
+  // for the default instance; a custom DB derives its default log directory
+  // next to its own database. (Codex P2, PR #2499.)
+  const resolvedDbPath = overrides?.dbPath ?? process.env.DB_PATH ?? defaultDbPath;
+  // A pathless DB (`:memory:`) has no directory to anchor an isolated log to —
+  // fall back to the shared default rather than a cwd-relative path.
+  const customDbIsolatable = resolvedDbPath !== defaultDbPath && dirname(resolvedDbPath) !== '.';
   const defaultLogPath =
-    nodeEnv === 'test' ? undefined : join(getDataDir(), 'logs', 'daemon.jsonl');
+    nodeEnv === 'test'
+      ? undefined
+      : customDbIsolatable
+        ? join(dirname(resolvedDbPath), 'logs', 'daemon.jsonl')
+        : join(getDataDir(), 'logs', 'daemon.jsonl');
   const structuredLogFilePath =
     overrides?.structuredLogFilePath === null
       ? undefined

@@ -387,9 +387,11 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
       // registered without consuming JobHandlerContext.signal) never settles,
       // so its finally never lifts the exclusion. The grace expiry must let
       // the replacement proceed anyway — no starvation until daemon restart.
+      // maxConcurrent 1 (fully saturated by the wedged handler) also proves the
+      // expiry evicts the wedged claim's SLOT, not just the dequeue exclusion.
       const delivery = new JobQueueProcessor(repo, {
         pollIntervalMs: 5000,
-        maxConcurrent: 2,
+        maxConcurrent: 1,
         staleThresholdMs: 60_000,
       });
       // Never settles and ignores the abort signal entirely.
