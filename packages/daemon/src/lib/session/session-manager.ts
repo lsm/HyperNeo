@@ -387,8 +387,23 @@ export class SessionManager {
 
           // STEP 2: Clear draft if it matches the sent message content
           if (hasDraftToClear) {
+            const beforeClear = this.getSessionFromDB(sessionId);
+            // Bump inputDraftVersion like every other draft mutation: another
+            // tab's debounced save still holds the PRE-send version, and the
+            // stale-vs-current equality check in session.update would otherwise
+            // treat that write as current and resurrect the sent content.
+            // A staged voice sequence re-anchors its baseline to the CLEARED
+            // draft (same as session.clearInputDraftIf): the pending merges
+            // onto the now-empty draft at the next get, and a baseline naming
+            // the sent non-empty draft would make later reconciliation
+            // extract no transcript.
+            const staged = (beforeClear?.metadata?.inputDraftVoicePending ?? '').trim() !== '';
             await this.sessionLifecycle.update(sessionId, {
-              metadata: { inputDraft: null },
+              metadata: {
+                inputDraft: null,
+                ...(staged ? { inputDraftVoiceBaseline: '' } : {}),
+                inputDraftVersion: (beforeClear?.metadata?.inputDraftVersion ?? 0) + 1,
+              },
             } as Partial<Session>);
           }
         } catch (error) {
