@@ -29,6 +29,8 @@ import {
   getLandingTranscript,
   peekExpiredDraftBackup,
   markVoiceTranscriptLanded,
+  readTabId,
+  removeDraftBackupKey,
   resetVoiceTranscriptOutbox,
   startVoiceTranscriptOutboxFlush,
   stopVoiceTranscriptOutboxFlush,
@@ -628,6 +630,7 @@ describe('voice transcript outbox', () => {
     expect(getLandingTranscript('s1')).toBeNull();
   });
   it('retires the backup for the consumed landing generation, not a newer one', () => {
+    // Backups live under TAB-OWNED keys — locate this tab's through the API.
     const claimOf = () => peekExpiredDraftBackup('s1');
     // A NEWER-generation backup survives a stale (mismatched-generation) consume.
     markVoiceTranscriptLanded('s1'); // generation N
@@ -662,5 +665,68 @@ describe('voice transcript outbox', () => {
     );
     enqueueTranscript('s1', 'fresh'); // triggers prune, which scans backups too
     expect(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.draft.s1')).toBeNull();
+  });
+  it("does not retire ANOTHER tab's backup when consuming a landing", () => {
+    // Two tabs defer edits for the same landing; this (idle) tab consumes the
+    // shared generation. Consumption is LOCAL — it must retire only this
+    // tab's backup key, or the editing tab's only durable copy is deleted
+    // while it still suppresses server saves (a reload before its next edit
+    // would then lose the post-landing text permanently).
+    markVoiceTranscriptLanded('s1', 'voice', 'e1');
+    const generation = voiceTranscriptLandedSignal.value.get('s1') ?? 1;
+    // The OTHER tab's backup under its own tab-owned key.
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.draft.s1.foreign-tab',
+      JSON.stringify({ content: 'other tab edits', ts: Date.now(), generation })
+    );
+    saveDraftBackup('s1', 'my edits', generation);
+    consumeVoiceTranscriptLanded('s1', generation);
+    expect(
+      localStorage.getItem('hyperneo_voice_transcript_outbox_v1.draft.s1.foreign-tab')
+    ).not.toBeNull();
+    // This tab's own backup was retired by its own consumption.
+    expect(peekExpiredDraftBackup('s1')?.content).toBe('other tab edits');
+  });
+
+  it('rehydrates the GENERATION from the marker so backup retirement survives reloads', () => {
+    // A previous page life saw TWO landings (generation 2) and saved a
+    // generation-2 draft backup under ITS tab-owned key. The reload hydrates
+    // the single retained marker — the generation must come from the marker's
+    // counter, or the consumption would clear with a restarted counter and
+    // orphan the backup. (The previous tab is gone, so its key is seeded
+    // directly and claimed by key through the peek API.)
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+      JSON.stringify({ v: 1, ts: Date.now(), n: 2, text: 'agg' })
+    );
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.draft.s1.dead-tab',
+      JSON.stringify({ content: 'edits', ts: Date.now(), generation: 2 })
+    );
+    startVoiceTranscriptOutboxFlush();
+    expect(voiceTranscriptLandedSignal.value.get('s1')).toBe(2);
+    // A reload folds the claimed backup into the composer and retires it by
+    // its exact key (clearDraftBackup is own-tab scoped and cannot reach a
+    // dead tab's key).
+    const claim = peekExpiredDraftBackup('s1');
+    expect(claim?.content).toBe('edits');
+    removeDraftBackupKey(claim?.key ?? '', 2);
+    expect(
+      localStorage.getItem('hyperneo_voice_transcript_outbox_v1.draft.s1.dead-tab')
+    ).toBeNull();
+    stopVoiceTranscriptOutboxFlush();
+  });
+
+  it('mints a fresh tab id when the stored id has a live heartbeat (cloned tab)', () => {
+    // Duplicating a tab copies sessionStorage, so the clone would inherit the
+    // source's tab id and "tab-owned" keys would collide. A fresh heartbeat
+    // at startup means the id's owner is still running — this context is a
+    // clone and must mint its own id.
+    sessionStorage.setItem('hyperneo_tab_id', 'source-tab-id');
+    localStorage.setItem('hyperneo_tab_heartbeat.source-tab-id', String(Date.now()));
+    const cloneId = readTabId();
+    expect(cloneId).not.toBe('source-tab-id');
+    // The clone's id is persisted for ITS reloads.
+    expect(sessionStorage.getItem('hyperneo_tab_id')).not.toBe('source-tab-id');
   });
 });
