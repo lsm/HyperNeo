@@ -984,6 +984,109 @@ describe('HandoffExecutor: cyclic maxCycles', () => {
     expect(ctx.handoffCycleRepo.get(ctx.runId, key)?.count).toBe(1);
   });
 
+  test('does not run the hook when the cycle cap is already reached', async () => {
+    // The atomic reservation runs BEFORE the hook: at the cap the handoff is
+    // rejected without the hook's (possibly side-effecting) validator running
+    // on a guaranteed-to-fail attempt.
+    const workflow = makeWorkflow({
+      nodes: [
+        node('n-coding', 'coding', 'coder', [{ id: 'to-review', target: 'review' }]),
+        node('n-review', 'review', 'reviewer', [
+          { id: 'to-coding', target: 'coding', maxCycles: 1, hookId: 'hook-back' },
+        ]),
+      ],
+      hooks: [
+        {
+          id: 'hook-back',
+          enabled: true,
+          sourceNode: 'review',
+          method: 'send_message',
+          validator: { kind: 'built_in', id: 'pr_ready' },
+          authorizedCallers: [{ sourceNode: 'review' }],
+        },
+      ],
+    });
+    seedPeer(ctx.db, ctx.runId, 'n-coding', 'coder', 'session-coder');
+    let hookCalls = 0;
+    const executor = makeExecutor(ctx, workflow, {
+      hookExecutor: {
+        execute: async () => {
+          hookCalls += 1;
+          return { result: { type: 'allow' } as WorkflowHookResult };
+        },
+      } as unknown as HookExecutor,
+    });
+
+    const first = await executor.execute({
+      fromAgentName: 'reviewer',
+      fromSessionId: 'session-reviewer',
+      workflowNodeId: 'n-review',
+      operation: { target: 'coding', summary: 'go' },
+    });
+    expect(first.status).toBe('delivered');
+    expect(first.hook?.result.type).toBe('allow');
+    expect(hookCalls).toBe(1);
+
+    const second = await executor.execute({
+      fromAgentName: 'reviewer',
+      fromSessionId: 'session-reviewer',
+      workflowNodeId: 'n-review',
+      operation: { target: 'coding', summary: 'again' },
+    });
+    expect(second.status).toBe('blocked');
+    expect(second.stage).toBe('cycle_limit');
+    expect(second.hook).toBeUndefined(); // hook never ran for the capped attempt
+    expect(hookCalls).toBe(1);
+  });
+
+  test('a blocked hook refunds its cycle reservation', async () => {
+    // The reservation precedes the hook; when the hook blocks, the handoff is
+    // not taken and the cycle must be given back — otherwise a validator
+    // flapping between block/allow would silently burn cyclic capacity.
+    const workflow = makeWorkflow({
+      nodes: [
+        node('n-coding', 'coding', 'coder', [{ id: 'to-review', target: 'review' }]),
+        node('n-review', 'review', 'reviewer', [
+          { id: 'to-coding', target: 'coding', maxCycles: 1, hookId: 'hook-back' },
+        ]),
+      ],
+      hooks: [
+        {
+          id: 'hook-back',
+          enabled: true,
+          sourceNode: 'review',
+          method: 'send_message',
+          validator: { kind: 'built_in', id: 'pr_ready' },
+          authorizedCallers: [{ sourceNode: 'review' }],
+        },
+      ],
+    });
+    seedPeer(ctx.db, ctx.runId, 'n-coding', 'coder', 'session-coder');
+    let hookResult: WorkflowHookResult = { type: 'block', reason: 'not ready' };
+    const executor = makeExecutor(ctx, workflow, {
+      hookExecutor: {
+        execute: async () => ({ result: hookResult }),
+      } as unknown as HookExecutor,
+    });
+    const key = 'n-review/to-coding';
+    const op = {
+      fromAgentName: 'reviewer',
+      fromSessionId: 'session-reviewer',
+      workflowNodeId: 'n-review',
+      operation: { target: 'coding', summary: 'go' },
+    };
+
+    const blocked = await executor.execute(op);
+    expect(blocked.status).toBe('blocked');
+    expect(blocked.stage).toBe('hook');
+    expect(ctx.handoffCycleRepo.get(ctx.runId, key)?.count ?? 0).toBe(0);
+
+    hookResult = { type: 'allow' };
+    const ok = await executor.execute(op);
+    expect(ok.status).toBe('delivered');
+    expect(ctx.handoffCycleRepo.get(ctx.runId, key)?.count).toBe(1);
+  });
+
   test('a deduped enqueue does not charge a second cycle', async () => {
     const workflow = makeWorkflow({
       nodes: [
@@ -1522,6 +1625,61 @@ describe('HandoffExecutor: sender validation', () => {
 
     expect(result.status).toBe('blocked');
     expect(result.stage).toBe('resolve_source');
+  });
+
+  test('blocks an idle sender execution (round already complete)', async () => {
+    // `idle` is a TERMINAL per-execution status (TERMINAL_NODE_EXECUTION_STATUSES):
+    // the sender's round finished and the retained session is only kept for
+    // reactivation. A late tool call from that completed round must not
+    // authorize another ownership transfer on the node's behalf.
+    const repo = new NodeExecutionRepository(ctx.db);
+    const idle = repo.createOrIgnore({
+      workflowRunId: ctx.runId,
+      workflowNodeId: 'n-coding',
+      agentName: 'coder',
+      agentSessionId: 'session-coder',
+      status: 'in_progress',
+    });
+    repo.update(idle.id, { agentSessionId: 'session-coder', status: 'idle' });
+    const executor = bareExecutor(senderWorkflow());
+
+    const result = await executor.execute({
+      fromAgentName: 'coder',
+      fromSessionId: 'session-coder',
+      workflowNodeId: 'n-coding',
+      operation: { target: 'review', summary: 'go' },
+    });
+
+    expect(result.status).toBe('blocked');
+    expect(result.stage).toBe('resolve_source');
+  });
+
+  test('authorizes paused-but-alive senders (blocked, waiting_rebind)', async () => {
+    // `blocked` (paused mid-round, retryable) and `waiting_rebind` (orphaned
+    // tool-result recovery — the handoff call may be the result being
+    // recovered) keep the round OPEN; both must still authorize. One execution
+    // row, transitioned between the two statuses (the slot is unique per run).
+    const repo = new NodeExecutionRepository(ctx.db);
+    const row = repo.createOrIgnore({
+      workflowRunId: ctx.runId,
+      workflowNodeId: 'n-coding',
+      agentName: 'coder',
+      agentSessionId: 'session-coder',
+      status: 'in_progress',
+    });
+    seedPeer(ctx.db, ctx.runId, 'n-review', 'reviewer', 'session-reviewer');
+    const executor = bareExecutor(senderWorkflow());
+
+    for (const status of ['blocked', 'waiting_rebind'] as const) {
+      repo.update(row.id, { agentSessionId: 'session-coder', status });
+      const result = await executor.execute({
+        fromAgentName: 'coder',
+        fromSessionId: 'session-coder',
+        workflowNodeId: 'n-coding',
+        operation: { target: 'review', summary: 'go' },
+      });
+      expect(result.status).toBe('delivered');
+    }
   });
 
   test('blocks a mismatched (agent, session, node) triple even when the row exists', async () => {

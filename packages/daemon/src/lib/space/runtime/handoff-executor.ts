@@ -18,9 +18,10 @@
  *   4. Authorize the declared channel topology (`ChannelResolver`) — when channels
  *      are declared, the source→target delivery must be permitted, mirroring
  *      `send_message`. Open topology (no channels) permits all handoffs.
- *   5. Enforce cyclic transition `maxCycles` (`HandoffCycleRepository`): a
- *      read-only cap check before the hook, then an atomic reservation before
- *      delivery that is refunded if the handoff isn't taken.
+ *   5. Enforce cyclic transition `maxCycles` (`HandoffCycleRepository`): an
+ *      atomic reservation BEFORE the hook, so hook side effects never run on a
+ *      guaranteed-to-fail attempt; the reservation is refunded whenever the
+ *      handoff isn't taken (hook block/failure or no delivery).
  *   6. Execute the transition's hook validator (`HookExecutor`) — the sole
  *      authorization primitive now that the legacy gate subsystem is gone.
  *   7. Activate or reuse the target worker session (`activateTargetSession`) and
@@ -43,6 +44,7 @@
 import type {
   HandoffOperation,
   HandoffTransition,
+  NodeExecutionStatus,
   SpaceWorkflow,
   WorkflowHook,
   WorkflowHookResult,
@@ -85,6 +87,23 @@ const HANDOFF_QUEUE_TTL_MS = 24 * 60 * 60 * 1000;
  * oversized envelope into a target session.
  */
 const HANDOFF_PAYLOAD_MAX_CHARS = 100_000;
+
+/**
+ * Sender-side execution statuses that authorize a handoff — the sender's
+ * CURRENT round must still be open: `in_progress` (actively running),
+ * `blocked` (paused mid-round, retryable), or `waiting_rebind` (orphaned
+ * tool-result recovery — the handoff call may itself be the result being
+ * recovered). Excluded: `idle`/`done` mark a FINISHED round
+ * (`TERMINAL_NODE_EXECUTION_STATUSES` classifies `idle` as ended; a late tool
+ * call from the completed round must not transfer ownership again —
+ * reactivation starts a NEW round), `pending` is a spawn-retry row that can
+ * retain the previous (dead) session id, and `cancelled` is gone.
+ */
+const SENDER_ACTIVE_STATUSES: ReadonlySet<NodeExecutionStatus> = new Set([
+  'in_progress',
+  'blocked',
+  'waiting_rebind',
+]);
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -287,18 +306,17 @@ export class HandoffExecutor {
 
     // 2b. Bind the sender identity to an ACTIVE node execution before any
     //     transition or hook is resolved/authorized. A stale session that
-    //     finishes a tool call after its execution was cancelled — or a caller
-    //     supplying a mismatched (node, agent, session) triple — must not
-    //     transfer ownership under that node's transition/hook declarations.
-    //     `pending` is excluded like `cancelled`: a spawn-retry row can retain
-    //     the previous (dead) session id.
+    //     finishes a tool call after its execution ended — cancelled, or idle
+    //     because its round already completed — or a caller supplying a
+    //     mismatched (node, agent, session) triple must not transfer ownership
+    //     under that node's transition/hook declarations. Only
+    //     SENDER_ACTIVE_STATUSES authorize (see its doc).
     const senderExecutionLive = this.readLiveExecutions().some(
       (e) =>
         e.workflowNodeId === workflowNodeId &&
         e.agentName === fromAgentName &&
         e.agentSessionId === fromSessionId &&
-        e.status !== 'cancelled' &&
-        e.status !== 'pending'
+        SENDER_ACTIVE_STATUSES.has(e.status as NodeExecutionStatus)
     );
     if (!senderExecutionLive) {
       return this.blocked(
@@ -388,68 +406,15 @@ export class HandoffExecutor {
     // reservation (a human-touch reset bumps the epoch, invalidating older ones).
     let reservedEpoch = 0;
 
-    // 4b. Read-only cycle cap check BEFORE the hook side effect. A cyclic
-    //     transition already at its cap must not run its hook validator on a
-    //     guaranteed-to-fail retry. The atomic reservation still happens right
-    //     before delivery (step 6) to close the TOCTOU.
-    if (
-      cycleLimited &&
-      this.config.handoffCycleRepo.isCapReached(workflowRunId, transitionKey, maxCycles!)
-    ) {
-      return {
-        status: 'blocked',
-        stage: 'cycle_limit',
-        transition,
-        targetNodes: targets.nodes,
-        targetSlots: targets.slots,
-        delivered: [],
-        queued: [],
-        reason: `Cyclic handoff "${transition.id}" from "${fromNodeName}" has reached its maxCycles cap (${maxCycles}).`,
-      };
-    }
-
-    // 5. Execute the transition's hook validator (the sole authorization
-    //    primitive now that the legacy gate subsystem is gone). A hook may
-    //    block, retryable-block, or allow the handoff.
-    let hookOutcome: HandoffHookOutcome | undefined;
-    if (transition.hookId) {
-      hookOutcome = await this.runHook({
-        sourceNode,
-        fromNodeName,
-        fromAgentName,
-        fromSessionId,
-        hookId: transition.hookId,
-        targetNodeNames: targets.nodes,
-        operation,
-      });
-      if (hookOutcome.blocks) {
-        return {
-          status: 'blocked',
-          stage: 'hook',
-          transition,
-          targetNodes: targets.nodes,
-          targetSlots: targets.slots,
-          delivered: [],
-          queued: [],
-          reason:
-            ('reason' in hookOutcome.result ? hookOutcome.result.reason : undefined) ??
-            `Hook "${transition.hookId}" blocked the handoff.`,
-          hook: hookOutcome,
-          retryAfterMs:
-            hookOutcome.result.type === 'retryable_block'
-              ? hookOutcome.result.retryAfterMs
-              : undefined,
-        };
-      }
-    }
-
-    // 6. Reserve a cycle for cyclic transitions BEFORE delivery. The atomic
-    //    UPSERT both checks the cap and reserves in one step, closing the
-    //    check-then-increment race two concurrent handoffs would otherwise have.
-    //    If delivery ultimately reaches no live or queueable target, the
-    //    reservation is refunded (step 9) so a failed attempt does not consume a
-    //    cycle — leaving the cap for the attempt that succeeds once the target
-    //    wakes up.
+    // 5. Reserve a cycle for cyclic transitions BEFORE the hook runs. The
+    //    atomic UPSERT both checks the cap and reserves in one step, so two
+    //    concurrent handoffs cannot both pass a read-only check and then run
+    //    their hook side effects when only one cycle remains — a
+    //    side-effect-classified hook script may mutate external state, and it
+    //    must never run for a handoff that is guaranteed to be rejected. The
+    //    reservation is refunded whenever the handoff isn't taken (hook
+    //    block/failure, terminal run recheck, or no delivery), so a blocked or
+    //    failed attempt does not consume a cycle.
     if (cycleLimited) {
       let reservation: { reserved: boolean; epoch: number };
       try {
@@ -474,11 +439,48 @@ export class HandoffExecutor {
           delivered: [],
           queued: [],
           reason: `Cyclic handoff "${transition.id}" from "${fromNodeName}" has reached its maxCycles cap (${maxCycles}).`,
-          hook: hookOutcome,
         };
       }
       reservedEpoch = reservation.epoch;
       trackReservation(true, transitionKey, reservedEpoch);
+    }
+
+    // 6. Execute the transition's hook validator (the sole authorization
+    //    primitive now that the legacy gate subsystem is gone). A hook may
+    //    block, retryable-block, or allow the handoff; a blocking hook is not
+    //    taken, so its cycle reservation is refunded.
+    let hookOutcome: HandoffHookOutcome | undefined;
+    if (transition.hookId) {
+      hookOutcome = await this.runHook({
+        sourceNode,
+        fromNodeName,
+        fromAgentName,
+        fromSessionId,
+        hookId: transition.hookId,
+        targetNodeNames: targets.nodes,
+        operation,
+      });
+      if (hookOutcome.blocks) {
+        if (cycleLimited) this.refundCycle(workflowRunId, transitionKey, reservedEpoch);
+        trackReservation(false, '', 0);
+        return {
+          status: 'blocked',
+          stage: 'hook',
+          transition,
+          targetNodes: targets.nodes,
+          targetSlots: targets.slots,
+          delivered: [],
+          queued: [],
+          reason:
+            ('reason' in hookOutcome.result ? hookOutcome.result.reason : undefined) ??
+            `Hook "${transition.hookId}" blocked the handoff.`,
+          hook: hookOutcome,
+          retryAfterMs:
+            hookOutcome.result.type === 'retryable_block'
+              ? hookOutcome.result.retryAfterMs
+              : undefined,
+        };
+      }
     }
 
     // 7. Activate or reuse the target worker session(s) + deliver the peer message.
