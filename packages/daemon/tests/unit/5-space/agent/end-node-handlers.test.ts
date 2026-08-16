@@ -3016,7 +3016,10 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
       async (...callArgs: Parameters<typeof originalSetStatus>) => {
         const result = await originalSetStatus(...callArgs);
         // reopenRun shape inside the cascade: task stays done, run stays
-        // in_progress, and a replacement worker activates NOW.
+        // in_progress, and a replacement worker activates NOW. The tick
+        // guarantees the activation timestamp lands strictly after the
+        // completion-write cutoff even on a same-millisecond machine.
+        await new Promise((resolve) => setTimeout(resolve, 3));
         ctx.nodeExecutionRepo.create({
           workflowRunId: task.workflowRunId!,
           workflowNodeId: 'node-sweep',
@@ -3057,5 +3060,58 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     expect(executions.find((e) => e.agentSessionId === 'replacement-worker-session')?.status).toBe(
       'in_progress'
     );
+  });
+
+  test('terminal precondition refuses when the task loses canonical ownership mid-flight', async () => {
+    // spaceTask.update can attach a legacy duplicate to the run while this
+    // handler awaits — the task that was canonical at the early guard no
+    // longer is (the duplicate holds the lower task number, and neither
+    // title matches the run title so the whole pool is number-ordered).
+    // The tick archives non-canonical duplicates, so committing here would
+    // be discarded while the completion's side effects persisted.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const legacyDup = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'Legacy per-node task',
+      description: '',
+      status: 'in_progress',
+    });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    expect(task.taskNumber).toBeGreaterThan(legacyDup.taskNumber);
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-review',
+      agentName: 'Review',
+      agentId: ctx.agentId,
+      status: 'idle',
+    });
+    const originalGetTask = ctx.taskManager.getTask.bind(ctx.taskManager);
+    let attached = false;
+    const getTaskSpy = spyOn(ctx.taskManager, 'getTask').mockImplementation(
+      async (taskId: string) => {
+        if (taskId === task.id && !attached) {
+          attached = true;
+          // The duplicate attaches inside setTaskStatus' reread, before the
+          // precondition runs — status and run ID of THIS task unchanged.
+          ctx.taskRepo.updateTask(legacyDup.id, { workflowRunId: task.workflowRunId });
+        }
+        return originalGetTask(taskId);
+      }
+    );
+
+    try {
+      const result = await makeValidationTool().complete_validation_task({
+        task_id: task.id,
+        validation_outcome: 'should be refused',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+
+      expect(parsed.success).toBe(false);
+      expect(parsed.error).toContain('lost canonical ownership');
+      expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
+      expect(ctx.taskRepo.getTask(task.id)?.result).toBeNull();
+    } finally {
+      getTaskSpy.mockRestore();
+    }
   });
 });

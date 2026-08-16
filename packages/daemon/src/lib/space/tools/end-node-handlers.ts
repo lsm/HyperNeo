@@ -958,6 +958,22 @@ export function createCompleteValidationTaskHandler(
               `Task ${args.task_id} belongs to a ${runNow.status} workflow run (rechecked at the terminal write); validation-only completion is not applicable. Reconcile or retry the task instead.`
             );
           }
+          // Canonical-ownership recheck: `spaceTask.update` can attach a
+          // legacy duplicate to the run (or retitle one into the title-match
+          // pool) while this handler awaits, so the task that was canonical
+          // at the early guard may no longer be. The tick archives
+          // non-canonical duplicates — committing here would be discarded by
+          // that archive while the completion's side effects (evidence
+          // capture, dependent unblocking) persisted. Re-run the tick's
+          // exact selection against the current run-task rows.
+          const canonicalNow = runNow
+            ? pickCanonicalRunTask(runNow, taskRepo.listByWorkflowRun(actualRunId))
+            : null;
+          if (canonicalNow && canonicalNow.id !== args.task_id) {
+            throw new Error(
+              `Task ${args.task_id} lost canonical ownership of its workflow run during completion (task ${canonicalNow.taskNumber} now holds it); refusing so the completion is not discarded by the tick's duplicate archive. Complete or reconcile the canonical task instead.`
+            );
+          }
           // Caller-execution recheck: an execution can stop representing
           // this caller WITHOUT the run association changing — the runtime's
           // alive-stuck restart path clears the row's agentSessionId and
