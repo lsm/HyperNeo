@@ -168,6 +168,15 @@ export function markVoiceTranscriptLanded(
   try {
     rawMarker = localStorage.getItem(`${LANDED_PREFIX}${sessionId}`);
     existing = parseLandedMarker(rawMarker);
+    // An EXPIRED marker is DEAD: a long-lived tab can age a marker past the
+    // TTL after the startup prune already ran, and treating its stale epoch
+    // as active would continue its generation counter and skip the
+    // fresh-epoch supersede cleanup — leaving the dead epoch's records
+    // suppressing the new epoch's backups. Only a live marker establishes
+    // the epoch; the expired raw is simply overwritten below.
+    if (existing && Date.now() - existing.ts >= MAX_AGE_MS) {
+      existing = null;
+    }
     if (existing) {
       markerExisted = true;
       // The COUNTER path carries the per-tab offset too: when a large prior
@@ -195,14 +204,21 @@ export function markVoiceTranscriptLanded(
       // committed a reconciliation whose supersede records already exist)
       // while this tab paused after its stale no-marker read — deleting now
       // would strip the fresh epoch's records and let a ruled-out backup
-      // restore over the committed combined draft.
+      // restore over the committed combined draft. An EXPIRED marker is not
+      // an epoch owner either: a long-lived tab can age a marker past the
+      // TTL after the startup prune, and its dead epoch's records must not
+      // survive into the new epoch.
       let epochOwnerRaw: string | null = null;
       try {
         epochOwnerRaw = localStorage.getItem(`${LANDED_PREFIX}${sessionId}`);
       } catch {
         epochOwnerRaw = null;
       }
-      if (epochOwnerRaw === null) {
+      const epochOwnerLIVE = (() => {
+        const marker = parseLandedMarker(epochOwnerRaw);
+        return marker !== null && Date.now() - marker.ts < MAX_AGE_MS;
+      })();
+      if (!epochOwnerLIVE) {
         const epochPrefix = `${SUPERSEDED_PREFIX}${sessionId}`;
         const epochRecordKeys: string[] = [];
         for (let i = 0; i < localStorage.length; i++) {
@@ -216,15 +232,19 @@ export function markVoiceTranscriptLanded(
           // epoch (its marker first, then its reconciliation's records) after
           // the pre-scan check — a record collected by the scan may already
           // belong to that new epoch. Landing markers are always written
-          // BEFORE any record of their epoch, so observing a marker here
-          // means the remaining records are not ours to delete.
+          // BEFORE any record of their epoch, so observing a LIVE marker
+          // here means the remaining records are not ours to delete.
           let epochOwnerNow: string | null = null;
           try {
             epochOwnerNow = localStorage.getItem(`${LANDED_PREFIX}${sessionId}`);
           } catch {
             epochOwnerNow = null;
           }
-          if (epochOwnerNow !== null) break;
+          const stillLIVE = (() => {
+            const marker = parseLandedMarker(epochOwnerNow);
+            return marker !== null && Date.now() - marker.ts < MAX_AGE_MS;
+          })();
+          if (stillLIVE) break;
           localStorage.removeItem(key);
         }
       }
@@ -631,11 +651,17 @@ export function getLandingTranscript(sessionId: string): string | null {
  */
 export function getAnnouncedEntryIds(sessionId: string): string[] {
   const local = landingIds.get(sessionId);
-  if (local !== undefined) return local;
+  // UNION the local cache with the PERSISTED marker: the local set is this
+  // tab's memory of an earlier (possibly consumed) landing, and SHADOWING
+  // the marker with it would skip ids another tab announced before this
+  // tab's `storage` event is delivered — a shared outbox entry both tabs
+  // flush would then be re-announced here, minting a false landing.
   try {
-    return parseLandedMarker(localStorage.getItem(`${LANDED_PREFIX}${sessionId}`))?.ids ?? [];
+    const persisted =
+      parseLandedMarker(localStorage.getItem(`${LANDED_PREFIX}${sessionId}`))?.ids ?? [];
+    return [...new Set([...(local ?? []), ...persisted])];
   } catch {
-    return [];
+    return local ?? [];
   }
 }
 

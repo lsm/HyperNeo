@@ -1219,6 +1219,62 @@ describe('voice transcript outbox — review-hardening round', () => {
     expect(peekExpiredDraftBackup('s1')).toBeNull();
   });
 
+  it('unions the persisted marker ids with the local announced set', () => {
+    vi.useRealTimers();
+    // The local id set is THIS tab's memory of an earlier landing; another
+    // tab can have announced a shared outbox entry in the persisted marker
+    // before this tab's storage event is delivered. Shadowing the marker
+    // with the local cache would re-announce the entry here, minting a
+    // false landing whose reconciliation appends the aggregate again.
+    markVoiceTranscriptLanded('s1', 'local voice', 'e-local', 1);
+    const gen = voiceTranscriptLandedSignal.value.get('s1') ?? 0;
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+      JSON.stringify({
+        v: 1,
+        ts: Date.now(),
+        n: gen + 500,
+        text: null,
+        ids: ['e-other-tab'],
+        entries: [{ id: 'e-other-tab', text: 'other tab voice', seq: 2 }],
+      })
+    );
+    const ids = getAnnouncedEntryIds('s1');
+    expect(ids).toContain('e-local');
+    expect(ids).toContain('e-other-tab');
+  });
+
+  it('starts a fresh epoch when the persisted marker has expired', () => {
+    vi.useRealTimers();
+    // A long-lived tab can age a marker past the TTL after the startup
+    // prune already ran: treating the dead epoch as active would continue
+    // its generation counter and skip the fresh-epoch supersede cleanup,
+    // leaving the dead epoch's records suppressing the new epoch's
+    // backups.
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+      JSON.stringify({
+        v: 1,
+        ts: Date.now() - 25 * 60 * 60 * 1000,
+        n: 500,
+        text: 'dead epoch voice',
+        ids: ['e-dead'],
+        entries: [{ id: 'e-dead', text: 'dead epoch voice', seq: 1 }],
+      })
+    );
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.superseded.s1.500.1',
+      JSON.stringify({ generation: 500, beforeTs: Date.now() })
+    );
+    markVoiceTranscriptLanded('s1', 'new epoch voice', 'e-new');
+    // The fresh-epoch cleanup removed the dead epoch's supersede record…
+    expect(
+      localStorage.getItem('hyperneo_voice_transcript_outbox_v1.superseded.s1.500.1')
+    ).toBeNull();
+    // …and the dead aggregate did not prefix the new landing's text.
+    expect(getLandingTranscript('s1')).toBe('new epoch voice');
+  });
+
   it('hydrates the newer marker aggregate when advancing the local generation', () => {
     // Advancing the signal to a newer persisted marker must carry the SAME
     // marker's aggregate: the local landingTexts/Ids/Entries otherwise stay
