@@ -1330,7 +1330,7 @@ describe('QueryRunner', () => {
   describe('startup timeout error surfacing', () => {
     // Integration tests: exercise the runQuery() catch block when a startup-timeout
     // error is thrown.  buildSpy throws 'SDK startup timeout - query aborted' so the
-    // test never waits for the real 15-second timer.
+    // test never waits on the real startup timer.
     // ANTHROPIC_API_KEY is set to a dummy value so the pre-query auth check passes.
 
     let savedApiKey: string | undefined;
