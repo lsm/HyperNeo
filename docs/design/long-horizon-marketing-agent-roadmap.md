@@ -309,7 +309,7 @@ This is the required behavior currently absent from `mark_complete.goal_update`;
 - Activate/rehydrate the owner session.
 - Deliver through the LH V2 adapter.
 - Use explicit coordinator fallback when the owner is absent or unavailable.
-- Tie route generation to an ownership and availability version. `replacePrimaryGoalOwner` must invalidate or supersede routes for unresolved reports and enqueue a fresh deterministic route to the new owner; owner pause/disable/archive transitions must do the same, routing visibly to the coordinator fallback. Those availability mutations themselves require target-agent, coordinator, or human authority inside the MCP handlers so an ordinary member cannot disable an owner to divert pending reports. A routed former or unavailable owner must not leave the report stranded even though it cannot decide it.
+- Tie route generation to an ownership and availability version. `replacePrimaryGoalOwner` must invalidate or supersede routes for unresolved reports and enqueue a fresh deterministic route to the new owner; owner pause/disable/archive transitions must do the same, routing visibly to the coordinator fallback. Those availability mutations themselves require target-agent, coordinator, or human authority inside the MCP handlers so an ordinary member cannot disable an owner to divert pending reports. The same authority gate must cover the entire owner-agent update handler—including custom prompt, tools, setting sources, model/provider, and name—not only availability fields. A routed former or unavailable owner must not leave the report stranded even though it cannot decide it.
 - Atomically persist durable routing work with report creation or require the dispatcher to scan every unrouted/superseded report. Delivery identity must be deterministic from report ID plus route generation so restart recovery is idempotent.
 - Persist routing outcome without blocking task completion; a committed report must not be lost because the daemon exits before the asynchronous route call starts.
 - Consume terminal V2 `failed`/`rejected` status for report notifications. Such a failure creates a new route-attempt generation or visible retryable/degraded routing state; the existing deterministic identity must not collide with the failed V2 job, and recovery must cover routed-but-terminal-failed reports as well as unrouted/superseded reports.
@@ -318,18 +318,19 @@ This is the required behavior currently absent from `mark_complete.goal_update`;
 
 **Estimate:** 170–250 lines.
 
-#### G8. Owner decision and atomic apply
+#### G8. Owner decision MCP/RPC and atomic apply
 
+- Expose report list/read/decide through `space-agent-tools` as well as RPC/UI. The routed primary owner is an LH-agent session and cannot autonomously integrate a notification if only repository/UI operations exist.
 - List/read reports for the primary owner.
 - Define coordinator and human read/list/decision authorization in this same PR so a report routed through fallback cannot remain undiscoverable.
 - Accept as proposed, apply edited, acknowledge without mutation, or reject.
 - Atomically transition disposition and update the goal.
 - Validate current ownership inside the same transaction that claims the report and updates the goal: a checked-but-since-reassigned owner must lose the claim. Coordinator and human override remain explicit exceptions.
-- Capture a base goal revision with each report and validate it inside the decision transaction. If the goal has changed since the report, reject the stale proposal and require explicit merge or edited apply; a full replacement apply must never overwrite newer goal state.
+- Capture a base goal revision with each report and validate it inside the decision transaction. Terminal goal bookkeeping (active/last task pointer updates) and report creation must share one transaction, with the base revision sampled after that bookkeeping, or the revision semantics must explicitly exclude those automatic changes. If an independent goal change has occurred since the report, reject the stale proposal and require explicit merge or edited apply; a full replacement apply must never overwrite newer goal state.
 - Reference the report in the goal event.
 - Apply recurring-goal progress rules.
 
-**Estimate:** 170–250 lines.
+**Estimate:** 190–270 lines; split MCP parity from repository/transaction work if it exceeds 250.
 
 #### G9. Authorization and compatibility migration
 
