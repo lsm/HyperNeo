@@ -7179,6 +7179,49 @@ describe('SpaceRuntime external event retry bounds', () => {
     expect(eventStore.getById(event.id)?.state).toBe('failed');
   });
 
+  test('a burst of sibling events cannot bypass one delivery retry backoff', async () => {
+    // Inject always fails recoverably. Without the cooling-down guard, each
+    // new sibling event's delivery path flushes the target's queued older
+    // deliveries and force-dispatches them, burning the whole retry budget in
+    // milliseconds; the guard leaves an unelapsed backoff on its timer.
+    const commandBus = createInternalCommandBus();
+    const injectionTimes = new Map<string, number[]>();
+    commandBus.register('agent.message.inject', async (command) => {
+      const eventId = (JSON.parse(command.message) as { eventId?: string }).eventId ?? 'unknown';
+      const times = injectionTimes.get(eventId) ?? [];
+      times.push(Date.now());
+      injectionTimes.set(eventId, times);
+      injected.push({ sessionId: command.sessionId, deliveryMode: command.deliveryMode });
+      return { ok: false, error: 'recoverable failure' };
+    });
+    await startRunWithLiveSession(commandBus);
+
+    const first = makeEvent({ id: 'evt-burst-1', dedupeKey: 'dedupe-burst-1' });
+    await eventService.publish(first);
+    // Let the first delivery fail and arm its initial (20ms) retry backoff.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    // A burst of siblings arrives while the first is still cooling down.
+    for (let i = 2; i <= 4; i++) {
+      await eventService.publish(
+        makeEvent({ id: `evt-burst-${i}`, dedupeKey: `dedupe-burst-${i}` })
+      );
+    }
+
+    // Give every sibling flush (and the first delivery's own scheduled retry)
+    // time to run, then assert the invariant that matters: the gap between
+    // the first delivery's attempts is at least the scheduled backoff, i.e.
+    // the siblings' flushes never force-dispatched it early.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const firstEventTimes = injectionTimes.get(first.id) ?? [];
+    expect(firstEventTimes.length).toBeGreaterThanOrEqual(2);
+    for (let i = 1; i < firstEventTimes.length; i++) {
+      expect(firstEventTimes[i]! - firstEventTimes[i - 1]!).toBeGreaterThanOrEqual(
+        RETRY_BASE_DELAY_MS - 5
+      );
+    }
+  });
+
   test('retry-exhausted and ttl-expired drops are surfaced as drop signals', async () => {
     // (a) retry exhaustion emits the drop observation.
     const commandBus = createInternalCommandBus();

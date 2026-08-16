@@ -1060,6 +1060,16 @@ export class SpaceRuntime {
   private readonly pendingExternalEventQueue = new Map<string, PendingExternalEvent[]>();
   private readonly externalEventRetryTimers = new Map<string, Timer>();
   private readonly externalEventRetryCounts = new Map<string, number>();
+  /**
+   * Epoch ms at which the armed retry timer for a deliveryKey is due — the
+   * backoff deadline. Consulted by the event-delivery flush path
+   * ({@link flushPendingNodeQueueAsync}) so a burst of sibling events cannot
+   * force-dispatch a delivery whose exponential backoff has not elapsed
+   * (burning the whole retry budget in milliseconds); activation/spawn flushes
+   * ({@link flushPendingNodeQueue}) intentionally ignore it — a just-activated
+   * target is a recovery boundary that may dispatch immediately.
+   */
+  private readonly externalEventRetryDueAt = new Map<string, number>();
   private readonly externalEventDeliveriesInFlight = new Set<string>();
   /**
    * Tracks in-flight task reactivation promises (check_failed recovery) so
@@ -2109,6 +2119,22 @@ export class SpaceRuntime {
         this.clearExternalEventRetry(item.deliveryKey);
         continue;
       }
+      // This flush runs on the event-delivery path (a sibling event's dispatch
+      // reached a live target). A queued delivery whose armed retry backoff has
+      // NOT elapsed stays on its timer — force-dispatching it here would let a
+      // burst of sibling events burn the whole retry budget in milliseconds,
+      // defeating the exponential backoff for exactly the transient failures it
+      // exists to out-wait. Requeue for the timer's own dispatch.
+      if (item !== includeCurrent && this.isExternalEventRetryCoolingDown(item.deliveryKey)) {
+        this.queueForPendingNode(
+          target,
+          item.event,
+          item.deliveryKey,
+          item.deliveryMode,
+          item.createdAt
+        );
+        continue;
+      }
       // The flush takes over dispatch from any scheduled retry — cancel the
       // timer only (see flushPendingNodeQueue for the cap-preservation rationale).
       this.cancelExternalEventRetryTimer(item.deliveryKey);
@@ -2847,8 +2873,10 @@ export class SpaceRuntime {
       this.clearExternalEventRetry(deliveryKey);
       return;
     }
+    const delayMs = this.externalEventRetryDelayMs(attempts);
     const timer = setTimeout(() => {
       this.externalEventRetryTimers.delete(deliveryKey);
+      this.externalEventRetryDueAt.delete(deliveryKey);
       if (this.config.externalEventStore?.isDeliveryTerminal(event.eventId, deliveryKey)) {
         this.clearExternalEventRetry(deliveryKey);
         return;
@@ -2859,8 +2887,10 @@ export class SpaceRuntime {
         return;
       }
       void this.deliverToLongHorizonAgent(target, event, deliveryKey);
-    }, this.externalEventRetryDelayMs(attempts));
+    }, delayMs);
     this.externalEventRetryTimers.set(deliveryKey, timer);
+    // No backoff deadline recorded: long-horizon deliveries never traverse the
+    // workflow-node flush path that consults them.
   }
 
   private async enqueueDeliverableExternalEvent(
@@ -3442,8 +3472,10 @@ export class SpaceRuntime {
         reason: failureReason,
       });
     }
+    const delayMs = this.externalEventRetryDelayMs(attempts);
     const timer = setTimeout(() => {
       this.externalEventRetryTimers.delete(deliveryKey);
+      this.externalEventRetryDueAt.delete(deliveryKey);
       if (this.config.externalEventStore?.isDeliveryTerminal(event.eventId, deliveryKey)) {
         this.clearExternalEventRetry(deliveryKey);
         return;
@@ -3467,8 +3499,14 @@ export class SpaceRuntime {
         return;
       }
       void this.deliverExternalEventToWorkflowTarget(target, event, deliveryKey);
-    }, this.externalEventRetryDelayMs(attempts));
+    }, delayMs);
     this.externalEventRetryTimers.set(deliveryKey, timer);
+    // Deliberately NOT recording a backoff deadline here: this is the
+    // ACTIVATION retry path. An activation-success flush (worker spawn /
+    // session recovery) is a recovery boundary that may dispatch immediately —
+    // gating it on the activation backoff would strand queued deliveries
+    // behind a timer even though their target just became live. Only the
+    // delivery-retry path (scheduleExternalEventRetry) records a deadline.
   }
 
   private queueForRetry(
@@ -3516,8 +3554,10 @@ export class SpaceRuntime {
       return;
     }
 
+    const delayMs = this.externalEventRetryDelayMs(attempts);
     const timer = setTimeout(() => {
       this.externalEventRetryTimers.delete(deliveryKey);
+      this.externalEventRetryDueAt.delete(deliveryKey);
       if (this.config.externalEventStore?.isDeliveryTerminal(event.eventId, deliveryKey)) {
         this.clearExternalEventRetry(deliveryKey);
         return;
@@ -3549,8 +3589,9 @@ export class SpaceRuntime {
         return;
       }
       void this.deliverExternalEventToWorkflowTarget(target, event, deliveryKey);
-    }, this.externalEventRetryDelayMs(attempts));
+    }, delayMs);
     this.externalEventRetryTimers.set(deliveryKey, timer);
+    this.externalEventRetryDueAt.set(deliveryKey, Date.now() + delayMs);
   }
 
   private rescheduleQueuedExternalEventRetries(): void {
@@ -3583,6 +3624,7 @@ export class SpaceRuntime {
     if (timer) clearTimeout(timer);
     this.externalEventRetryTimers.delete(deliveryKey);
     this.externalEventRetryCounts.delete(deliveryKey);
+    this.externalEventRetryDueAt.delete(deliveryKey);
   }
 
   /**
@@ -3602,6 +3644,20 @@ export class SpaceRuntime {
     const timer = this.externalEventRetryTimers.get(deliveryKey);
     if (timer) clearTimeout(timer);
     this.externalEventRetryTimers.delete(deliveryKey);
+    this.externalEventRetryDueAt.delete(deliveryKey);
+  }
+
+  /**
+   * Whether the delivery's armed retry backoff has elapsed (or no retry is
+   * armed). An event-delivery flush uses this to leave a still-cooling-down
+   * retry scheduled instead of force-dispatching it — without the check, a
+   * burst of sibling events each triggering a flush could burn the entire
+   * retry budget in milliseconds, defeating the exponential backoff for
+   * exactly the transient failures it exists to out-wait.
+   */
+  private isExternalEventRetryCoolingDown(deliveryKey: string, now = Date.now()): boolean {
+    const dueAt = this.externalEventRetryDueAt.get(deliveryKey);
+    return dueAt !== undefined && now < dueAt;
   }
 
   /**
@@ -5364,6 +5420,7 @@ export class SpaceRuntime {
     }
     this.externalEventRetryTimers.clear();
     this.externalEventRetryCounts.clear();
+    this.externalEventRetryDueAt.clear();
     for (const state of this.externalEventRateLimits.values()) {
       if (state.digestTimer) clearTimeout(state.digestTimer);
       if (state.cleanupTimer) clearTimeout(state.cleanupTimer);

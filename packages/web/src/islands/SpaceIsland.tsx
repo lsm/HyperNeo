@@ -241,6 +241,7 @@ export default function SpaceIsland({
       void (async () => {
         const hub = await connectionManager.getHub();
         if (cancelled) return;
+        unsubscribe?.();
         unsubscribe = hub.onEvent<{
           spaceId: string;
           eventId: string;
@@ -269,20 +270,20 @@ export default function SpaceIsland({
           );
         });
       })().catch(() => {
-        // Hub unavailable (daemon offline) — the connectionState subscription
+        // Hub unavailable (daemon offline) — the connection-state subscription
         // below retries once the connection recovers. Never surface as an
         // unhandled rejection.
       });
     };
 
-    subscribe();
-    // Re-subscribe after a disconnect → reconnect: the previous hub died with
-    // the socket, so drops arriving on the new connection would otherwise stay
-    // invisible for the remainder of this mount.
-    const unsubscribeConnection = connectionState.subscribe(() => {
-      if (connectionState.value !== 'connected') return;
-      unsubscribe?.();
-      unsubscribe = undefined;
+    // Signal subscriptions invoke the callback immediately on registration, so
+    // this one call covers BOTH the initial mount (already connected →
+    // subscribes right away; offline → no-op until recovery) and every later
+    // disconnect → reconnect (the previous hub's handlers die with the socket).
+    // A separate unconditional subscribe() here would register a second
+    // listener and overwrite the cleanup handle.
+    const unsubscribeConnection = connectionState.subscribe((state) => {
+      if (state !== 'connected') return;
       subscribe();
     });
 

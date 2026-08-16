@@ -1095,6 +1095,12 @@ describe('SpaceIsland — externalEvent.dropped surfacing', () => {
 
   it('toasts a retry-exhausted drop for the open space', async () => {
     render(<SpaceIsland spaceId="space-1" viewMode="overview" />);
+    await waitFor(() => {
+      // Signal subscriptions invoke their callback immediately, so a connected
+      // mount registers exactly ONE listener — not one from an unconditional
+      // subscribe() plus another from the immediate signal callback.
+      expect(hubEventHandlers.get('externalEvent.dropped')?.length).toBe(1);
+    });
     await emitDrop({
       spaceId: 'space-1',
       eventId: 'evt-1',
@@ -1213,7 +1219,12 @@ describe('SpaceIsland — externalEvent.dropped surfacing', () => {
 
   it('re-subscribes after the connection recovers from a daemon-offline mount', async () => {
     // Mount while the daemon is unreachable: getHub rejects, no subscription.
-    setGetHubResult(Promise.reject(new Error('WebSocket closed before open')));
+    // The stored promise carries a no-op .catch of its own so vitest never
+    // sees it as unhandled; the DERIVED promise returned to the component
+    // still rejects into the component's own .catch.
+    const offlineHub = Promise.reject(new Error('daemon offline'));
+    offlineHub.catch(() => {});
+    setGetHubResult(offlineHub);
     connectionState.value = 'disconnected';
     render(<SpaceIsland spaceId="space-1" viewMode="overview" />);
     await new Promise((resolve) => setTimeout(resolve, 10));
