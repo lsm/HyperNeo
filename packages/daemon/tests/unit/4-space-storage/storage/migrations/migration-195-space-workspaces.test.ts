@@ -57,7 +57,8 @@ function seedSpaces(db: BunDatabase): void {
     INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES
       ('sp-1', '/work/dev/repo-alpha', 'Space One', 1000, 1000),
       ('sp-2', '/work/dev/repo-beta', 'Space Two', 1000, 1000),
-      ('sp-3', '/work/dev/repo-gamma/', 'Space Three', 1000, 1000)
+      ('sp-3', '/work/dev/repo-gamma/', 'Space Three', 1000, 1000),
+      ('sp-4', 'C:\\work\\dev\\repo-delta', 'Space Four', 1000, 1000)
   `);
 }
 
@@ -118,12 +119,17 @@ describe('Migration 195: space_workspaces table + primary backfill', () => {
       runMigration195(db);
 
       const rows = workspaceRows(db);
-      expect(rows).toHaveLength(3);
+      expect(rows).toHaveLength(4);
       for (const row of rows) {
         expect(row.is_primary).toBe(1);
       }
       // One row per space, keyed by the spaces table.
-      expect([...new Set(rows.map((r) => r.space_id))].sort()).toEqual(['sp-1', 'sp-2', 'sp-3']);
+      expect([...new Set(rows.map((r) => r.space_id))].sort()).toEqual([
+        'sp-1',
+        'sp-2',
+        'sp-3',
+        'sp-4',
+      ]);
     });
 
     test('row path mirrors spaces.workspace_path and label is the repo basename', () => {
@@ -137,6 +143,9 @@ describe('Migration 195: space_workspaces table + primary backfill', () => {
       // Trailing slash collapses — the label is still the final segment.
       expect(bySpace.get('sp-3')?.path).toBe('/work/dev/repo-gamma/');
       expect(bySpace.get('sp-3')?.label).toBe('repo-gamma');
+      // Windows-native paths (path.resolve on win32) split on the backslash.
+      expect(bySpace.get('sp-4')?.path).toBe('C:\\work\\dev\\repo-delta');
+      expect(bySpace.get('sp-4')?.label).toBe('repo-delta');
     });
 
     test('does not modify spaces.workspace_path', () => {
@@ -149,7 +158,7 @@ describe('Migration 195: space_workspaces table + primary backfill', () => {
     test('re-run is a no-op — no duplicate rows, no throw', () => {
       runMigration195(db);
       expect(() => runMigration195(db)).not.toThrow();
-      expect(workspaceRows(db)).toHaveLength(3);
+      expect(workspaceRows(db)).toHaveLength(4);
     });
 
     test('partial application converges to one primary row per space', () => {
@@ -161,8 +170,8 @@ describe('Migration 195: space_workspaces table + primary backfill', () => {
       runMigration195(db);
 
       const rows = workspaceRows(db);
-      expect(rows).toHaveLength(3);
-      expect(rows.map((r) => r.space_id).sort()).toEqual(['sp-1', 'sp-2', 'sp-3']);
+      expect(rows).toHaveLength(4);
+      expect(rows.map((r) => r.space_id).sort()).toEqual(['sp-1', 'sp-2', 'sp-3', 'sp-4']);
       for (const row of rows) {
         expect(row.is_primary).toBe(1);
       }
@@ -182,7 +191,7 @@ describe('Migration 195: space_workspaces table + primary backfill', () => {
       runMigration195(db);
       db.prepare(`DELETE FROM spaces WHERE id = 'sp-1'`).run();
       expect(workspaceRows(db, 'sp-1')).toHaveLength(0);
-      expect(workspaceRows(db)).toHaveLength(2);
+      expect(workspaceRows(db)).toHaveLength(3);
     });
 
     test('spaces table absent — table is still created, backfill skipped, no throw', () => {

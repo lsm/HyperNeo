@@ -12507,10 +12507,13 @@ interface SpaceWorkspaceBackfillRow {
 
 /**
  * Repo basename for a workspace path — the backfill label. Trailing slashes
- * collapse; a path with no non-empty segment (e.g. '/') yields ''.
+ * collapse; a path with no non-empty segment (e.g. '/') yields ''. Splits on
+ * both separators: on Windows the daemon stores native paths
+ * (normalizeWorkspacePath → path.resolve → 'C:\work\repo'), and a '/'-only
+ * split would keep the entire absolute path as the label.
  */
 function workspaceLabelFromPath(path: string): string {
-  return path.split('/').filter(Boolean).pop() ?? '';
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? '';
 }
 
 /**
