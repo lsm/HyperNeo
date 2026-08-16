@@ -2632,7 +2632,7 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     const parsed = JSON.parse(result.content[0].text);
 
     expect(parsed.success).toBe(false);
-    expect(parsed.error).toContain('re-attached to a different workflow run');
+    expect(parsed.error).toContain("no longer carries this worker's execution");
     expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
     // Neither run's workers were swept.
     const currentExec = ctx.nodeExecutionRepo
@@ -3361,6 +3361,120 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     } finally {
       setStatusSpy.mockRestore();
     }
+  });
+
+  test('rejects a PR-shaped workflow even without a post-approval route', async () => {
+    // A custom workflow can require a PR via a pr_ready-family built-in
+    // validator while defining no post-approval route. Before the required
+    // handoff the run records no PR, so the no-PR check passes — without
+    // this guard a worker could mark the coding run done without ever
+    // creating a PR, bypassing the pr_ready gate (which only runs on
+    // send_message).
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const nodeId = `node-prshaped-${Math.random().toString(36).slice(2, 8)}`;
+    const workflow = ctx.workflowManager.createWorkflow({
+      spaceId: ctx.spaceId,
+      name: `PR-shaped workflow ${nodeId.slice(-6)}`,
+      description: '',
+      nodes: [{ id: nodeId, name: 'Coding', agentId: ctx.agentId }],
+      transitions: [],
+      startNodeId: nodeId,
+      endNodeId: nodeId,
+      rules: [],
+      completionAutonomyLevel: 5,
+      hooks: [
+        {
+          id: 'gate-pr-ready',
+          enabled: true,
+          sourceNode: 'Coding',
+          method: 'send_message',
+          validator: { kind: 'built_in', id: 'pr_ready' },
+          authorizedCallers: [{ sourceNode: 'Coding' }],
+        } as WorkflowHook,
+      ],
+    });
+    const run = ctx.workflowRunRepo.createRun({
+      spaceId: ctx.spaceId,
+      workflowId: workflow.id,
+      title: 'PR-shaped run',
+      description: '',
+    });
+    ctx.workflowRunRepo.updateRun(run.id, { status: 'in_progress' });
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'PR-shaped task',
+      description: '',
+      status: 'in_progress',
+      workflowRunId: run.id,
+    });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: run.id,
+      workflowNodeId: nodeId,
+      agentName: 'Coding',
+      agentId: ctx.agentId,
+      status: 'idle',
+    });
+
+    const result = await makeValidationTool().complete_validation_task({
+      task_id: task.id,
+      validation_outcome: 'should be refused',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('requires a PR');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
+  });
+
+  test('rejects an in-flight call whose session was rebound to another node', async () => {
+    // createSubSession can rebind a reused session to a newly activated
+    // node (same run, same session id) while an in-flight tool call from
+    // the old node is still executing. The completing-worker lookup binds
+    // to the server's spawn-time node, so the old-node call loses its
+    // execution match and refuses instead of completing under the old
+    // node's authorization.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    // Execution for the caller's session — but on a DIFFERENT node than
+    // the one this handler's server was built for.
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-other-node',
+      agentName: 'Rebound',
+      agentId: ctx.agentId,
+      status: 'in_progress',
+      agentSessionId: 'rebound-worker-session',
+    });
+    ctx.db
+      .prepare(
+        `INSERT INTO sessions (
+            id, title, workspace_path, created_at, last_active_at, status, config, metadata,
+            is_worktree, git_branch, processing_state, type, session_context
+          ) VALUES (?, ?, '/tmp/ws', ?, ?, 'active', '{}', '{}', 0, NULL, ?, 'worker', ?)`
+      )
+      .run(
+        'rebound-worker-session',
+        'Rebound worker',
+        new Date(0).toISOString(),
+        new Date().toISOString(),
+        JSON.stringify({ status: 'idle' }),
+        JSON.stringify({ spaceId: ctx.spaceId, taskId: task.id })
+      );
+
+    const result = await makeValidationTool({
+      callerSessionId: 'rebound-worker-session',
+      // The server this handler was built for sits on node-original — the
+      // session has since been rebound to node-other-node.
+      callerWorkflowNodeId: 'node-original',
+    }).complete_validation_task({
+      task_id: task.id,
+      validation_outcome: 'should be refused',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('rebound to a different node');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
   });
 
   test('terminal precondition refuses when the task loses canonical ownership mid-flight', async () => {

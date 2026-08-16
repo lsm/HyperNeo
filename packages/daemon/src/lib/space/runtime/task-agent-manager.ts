@@ -5356,6 +5356,10 @@ export class TaskAgentManager {
     const onCompleteValidationTask = createCompleteValidationTaskHandler({
       spaceId,
       callerSessionId: subSessionId,
+      // Bind completion authority to THIS server's node: createSubSession
+      // can rebind a reused session to another node mid-flight, and an
+      // in-flight old-node call must not complete under stale authorization.
+      callerWorkflowNodeId: workflowNodeId,
       db: this.config.db.getDatabase(),
       taskRepo: this.config.taskRepo,
       taskManager: boundTaskManager,

@@ -371,6 +371,16 @@ export interface CompleteValidationTaskHandlerDeps {
    */
   callerSessionId?: string;
   /**
+   * The node this handler's MCP server was built for (the session's
+   * spawn-time node). When set, the completing-worker lookup and its
+   * terminal-write recheck require the caller's execution to still sit on
+   * THIS node — `createSubSession` can rebind a reused session to another
+   * node mid-flight (same run, same session id), and an in-flight call
+   * from the old node must not complete under authorization that no
+   * longer matches the session's current node.
+   */
+  callerWorkflowNodeId?: string;
+  /**
    * Raw db handle for the two synchronous terminal-write revalidations: the
    * `spaces.autonomy_level` reread and the caller-binding session-context read.
    * Without it the autonomy reread falls back to the entry-gate snapshot, and
@@ -563,6 +573,7 @@ export function createCompleteValidationTaskHandler(
   const {
     spaceId,
     callerSessionId,
+    callerWorkflowNodeId,
     db,
     taskRepo,
     taskManager,
@@ -831,6 +842,27 @@ export function createCompleteValidationTaskHandler(
             error: `Task ${args.task_id} belongs to a workflow with a post-approval route; validation-only completion would skip it. Use submit_for_approval (then approval) so the route fires.`,
           });
         }
+        // PR-shaped workflow guard: a workflow whose hooks declare a
+        // pr_ready-family built-in validator is a PR workflow even without
+        // a post-approval route — before the required handoff its run
+        // records no PR, so the no-PR check above passes and a worker
+        // could mark the coding run done without creating or validating a
+        // PR, bypassing the pr_ready gate (that validator only runs on
+        // send_message). Fail closed: PR-shaped workflows close through
+        // the PR path, not the validation-only one.
+        const PR_VALIDATOR_IDS = new Set(['pr_open', 'pr_mergeable', 'pr_ready', 'pr_merged']);
+        const isPrShapedWorkflow = (routeWorkflow?.hooks ?? []).some(
+          (hook) =>
+            hook.enabled &&
+            hook.validator.kind === 'built_in' &&
+            PR_VALIDATOR_IDS.has(hook.validator.id)
+        );
+        if (isPrShapedWorkflow) {
+          return jsonResult({
+            success: false,
+            error: `Task ${args.task_id} belongs to a workflow that requires a PR (pr_ready-family validators are declared); validation-only completion is not available for it. Use the normal PR creation/review/merge path instead.`,
+          });
+        }
       }
 
       // Snapshots the terminal precondition revalidates against (autonomy
@@ -851,9 +883,14 @@ export function createCompleteValidationTaskHandler(
       let completionSourceNodeId: string | undefined;
       let completionSourceExecutionId: string | undefined;
       if (callerSessionId && task.workflowRunId) {
-        const callerExecution = nodeExecutionRepo
-          .listByAgentSessionId(callerSessionId)
-          .find((e) => e.workflowRunId === task.workflowRunId);
+        const callerExecution = nodeExecutionRepo.listByAgentSessionId(callerSessionId).find(
+          (e) =>
+            e.workflowRunId === task.workflowRunId &&
+            // The execution must sit on the server's own node: a session
+            // rebinding to another node (createSubSession reuse) leaves
+            // this in-flight call authorized for a node it no longer is.
+            (callerWorkflowNodeId === undefined || e.workflowNodeId === callerWorkflowNodeId)
+        );
         completionSourceNodeId = callerExecution?.workflowNodeId;
         completionSourceExecutionId = callerExecution?.id;
         // Stale-worker guard: the caller is task-BOUND (the binding guard
@@ -869,7 +906,7 @@ export function createCompleteValidationTaskHandler(
         if (!callerExecution) {
           return jsonResult({
             success: false,
-            error: `Task ${args.task_id} was re-attached to a different workflow run after this worker spawned; this session has no node execution in the current run. Validation completion belongs to the current run's workers — escalate to the coordinator if it still needs closing.`,
+            error: `Task ${args.task_id} no longer carries this worker's execution on this node (the task was re-attached to another run, or the session was rebound to a different node); this call's completion authority has lapsed. Validation completion belongs to the current run's workers on their own node — escalate to the coordinator if it still needs closing.`,
           });
         }
       }
@@ -1012,7 +1049,9 @@ export function createCompleteValidationTaskHandler(
             if (
               !executionNow ||
               executionNow.status !== 'in_progress' ||
-              executionNow.agentSessionId !== callerSessionId
+              executionNow.agentSessionId !== callerSessionId ||
+              (callerWorkflowNodeId !== undefined &&
+                executionNow.workflowNodeId !== callerWorkflowNodeId)
             ) {
               throw new Error(
                 `Task ${args.task_id}'s completing worker execution was recycled during completion (restarted for a replacement session); refusing so the replacement worker's lifecycle owns the task. Re-check and retry if still appropriate.`
