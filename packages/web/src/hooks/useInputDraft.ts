@@ -26,14 +26,15 @@
  * ```
  */
 
-import { useEffect, useRef, useCallback, useMemo } from 'preact/hooks';
-import { useSignal, useSignalEffect } from '@preact/signals';
 import { appendDraftText, generateUUID } from '@hyperneo/shared';
+import { useSignal, useSignalEffect } from '@preact/signals';
+import { useCallback, useEffect, useMemo, useRef } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager';
 import { connectionState } from '../lib/state';
 import {
   clearDraftBackup,
   consumeVoiceTranscriptLanded,
+  type DraftBackupClaim,
   getClearTombstone,
   getDraftBackup,
   getLandingGeneration,
@@ -47,7 +48,6 @@ import {
   saveClearTombstone,
   saveDraftBackup,
   voiceTranscriptLandedSignal,
-  type DraftBackupClaim,
 } from '../lib/voice/voice-transcript-outbox';
 
 /**
@@ -67,6 +67,11 @@ function transcriptsFromMerge(
   if (draft.startsWith(baseline)) return draft.slice(baseline.length);
   return null;
 }
+
+// Sessions whose expired-marker owed-clear reconciliation is currently in
+// flight (module scope — shared by every hook instance): see the IN-FLIGHT
+// GUARD in reconcileOwedClear.
+const owedClearReconcileInFlight = new Set<string>();
 
 export interface UseInputDraftResult {
   /** Current content value */
@@ -308,9 +313,16 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             if (transcript) {
               contentSignal.value = appendDraftText(contentSignal.peek(), transcript);
               adopted = true;
-            }
-            if (requestedGeneration !== undefined) {
-              foldedLandingRef.current.set(targetSessionId, requestedGeneration);
+              // Stamp FOLDED only when transcript text was actually appended:
+              // with no structural snapshot AND an untrusted aggregate this
+              // path folded nothing, and a stamped-but-unfolded generation
+              // would make the refresh callback skip its own guarded
+              // extraction (alreadyFolded), consume the landing, and re-enable
+              // saves over the daemon baseline it just lost — the typed draft
+              // would overwrite the merged transcript.
+              if (requestedGeneration !== undefined) {
+                foldedLandingRef.current.set(targetSessionId, requestedGeneration);
+              }
             }
           }
           if (typeof draftVersion === 'number' && adopted) {
@@ -343,6 +355,17 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     (targetSessionId: string): void => {
       const hub = connectionManager.getHubIfConnected();
       if (!hub) return;
+      // IN-FLIGHT GUARD: the initial settlement and the connection/backup-flush
+      // retry can invoke this for the same session before either folds. Both
+      // capture the same lost-ack tombstone, both receive the transcript-only
+      // draft, and the second fold — reading the ALREADY-COMBINED content
+      // against its stale capture — appends the same transcripts again; the
+      // next save then persists duplicated voice text. The whole chain settles
+      // through one invocation; a failure re-arms the bounded retry AFTER the
+      // release below, and a success retires the tombstone outright.
+
+      if (owedClearReconcileInFlight.has(targetSessionId)) return;
+      owedClearReconcileInFlight.add(targetSessionId);
       const tombstone = getClearTombstone(targetSessionId);
       hub
         .request<{
@@ -456,10 +479,8 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                       // Only over an idle composer or unchanged observed text:
                       // typing that began mid-reconcile is newer user state.
                       const mergedDraft = merged.session?.metadata?.inputDraft ?? '';
-                      if (
-                        contentSignal.peek().trim() === '' ||
-                        contentSignal.peek() === observedDraft
-                      ) {
+                      const localContent = contentSignal.peek();
+                      if (localContent.trim() === '' || localContent === observedDraft) {
                         contentSignal.value = mergedDraft;
                         // The clear re-anchored the baseline to '' and THIS
                         // get merged the retained pending onto it, so the
@@ -472,6 +493,29 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                         // carries the transcript — duplicating the voice text
                         // (the transcript sits at the FRONT here, so the
                         // daemon's suffix guard cannot catch it).
+                        advanceDraftVersion(
+                          targetSessionId,
+                          merged.session?.metadata?.inputDraftVersion
+                        );
+                      } else if (mergedDraft.trim() !== '') {
+                        // NEWER content (post-clear typing, or a restored
+                        // post-clear backup): the daemon holds ONLY the
+                        // transcripts — the clear re-anchored the baseline
+                        // to '' and this get merged the retained pending onto
+                        // it. Retiring the tombstone without folding would let
+                        // the next ordinary save overwrite the daemon's only
+                        // transcript copy with this content. Fold them in
+                        // (fits-checked), mirroring the strip paths; keep the
+                        // clear owed when the combination cannot fit whole.
+                        const combined = appendDraftText(localContent, mergedDraft);
+                        const fits =
+                          combined === `${localContent}${mergedDraft}` ||
+                          combined === `${localContent} ${mergedDraft}`;
+                        if (!fits) {
+                          flushKickRef.current(); // stays owed — retry when room appears
+                          return;
+                        }
+                        contentSignal.value = combined;
                         advanceDraftVersion(
                           targetSessionId,
                           merged.session?.metadata?.inputDraftVersion
@@ -575,6 +619,9 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         .catch(() => {
           /* stays owed — the reconnect subscription or bounded retry re-runs this */
           flushKickRef.current();
+        })
+        .finally(() => {
+          owedClearReconcileInFlight.delete(targetSessionId);
         });
     },
     [contentSignal]
@@ -675,6 +722,16 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           // could clobber an unknown merged transcript — leave it to the
           // departed-session flush, whose daemon-side merge folds-or-declines.
           if (backup !== null && landingLive) contentSignal.value = backup;
+          if (landingLive) {
+            // The failed load still marked itself settled without touching a
+            // single reactive value — the replay effect already exited at its
+            // settled guard and NOTHING re-runs it (neither the connection
+            // signal nor the landing generation changed). Re-trigger it so its
+            // refresh retries the get that merges the staged transcript;
+            // a backup-less restore left the composer empty, and the effect's
+            // own deferral governs a restored one.
+            voiceTranscriptLandedSignal.value = new Map(voiceTranscriptLandedSignal.value);
+          }
           return;
         }
         if (pendingRetained) {
@@ -805,9 +862,13 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         // flush (from an earlier switch away) still carries the
         // transcript-free backup: its active-content merge would push the
         // already-combined text and the daemon's baseline-identified
-        // transcript would be appended a second time. The save path owns
-        // persisting the combination; drop the queued claim.
-        dropQueuedBackupFlush(sessionId);
+        // transcript would be appended a second time. PURGE the queued retry
+        // only — the save path owns persisting the combination, and the
+        // claim's retirement is deferred to that save's acknowledgement
+        // (consumeLanding/deferredBackupRetires below), so retiring here would
+        // delete the only durable copy of the user's edits before the
+        // combined text is itself durable.
+        purgeQueuedBackupFlush(sessionId);
         if (landingLive) {
           // The combined text is durable only in the composer signal until
           // the debounced save commits — DEFER the backup retirement to that
@@ -1183,6 +1244,12 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         // backup: an idle composer at retry time then means the user SENT or
         // deleted that text, and adopting it back would resurrect it.
         fromActive?: boolean;
+        // The daemon version a stale DECLINE acknowledged for this claim: the
+        // next retry echoes it instead of the (still-stale) plain-save cache.
+        // Kept OFF draftVersionsRef deliberately — this composer's content
+        // never READ the draft at that version, and a fresh plain-save echo
+        // would let a post-expiry save apply as-is over transcripts it lacks.
+        rebasedVersion?: number;
       }
     >
   >(new Map());
@@ -1202,6 +1269,15 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         ts: queuedClaim.ts,
       });
     }
+  }, []);
+  // Drop ONLY the queued retry, leaving the durable claim untouched: a caller
+  // that folds the backup's content into the composer (the load fold below)
+  // defers the claim's retirement to the first ACKNOWLEDGED save of the
+  // combined text — retiring here would delete the only durable copy of the
+  // user's edits inside the window where the daemon still holds the
+  // pre-backup draft plus transcript.
+  const purgeQueuedBackupFlush = useCallback((sid: string): void => {
+    pendingBackupFlushRef.current.delete(sid);
   }, []);
   // Retry retained backup flushes once the connection is restored. A flush
   // whose session is active again is ADOPTED into an idle composer (its edits
@@ -1258,6 +1334,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           claimId: string;
           ts: number;
           fromActive?: boolean;
+          rebasedVersion?: number;
         }
       ) => {
         const newer = pendingBackupFlushRef.current.get(flushSessionId);
@@ -1273,7 +1350,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       };
       for (const [
         flushSessionId,
-        { content, generation, key, claimId, ts, fromActive },
+        { content, generation, key, claimId, ts, fromActive, rebasedVersion },
       ] of queued) {
         if (flushSessionId === currentSessionIdRef.current) {
           if (contentSignal.peek().trim() === '') {
@@ -1304,20 +1381,24 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             // under the SAME claim id, so a merge that committed with a lost
             // ack is recognized idempotently on the retry.
             hub
-              .request<{ merged?: boolean; stale?: boolean; value?: string }>(
-                'session.mergeVoiceDraftBackup',
-                {
-                  sessionId: flushSessionId,
-                  content,
-                  claimId,
-                  // Echo the draft version this tab last read: a mismatch
-                  // means a NEWER write or merge already committed, and this
-                  // (older) claim lost the last-writer-wins race — pushing it
-                  // over the newer draft would discard both the newer edits
-                  // and any merged transcript.
-                  expectedDraftVersion: draftVersionsRef.current.get(flushSessionId),
-                }
-              )
+              .request<{
+                merged?: boolean;
+                stale?: boolean;
+                value?: string;
+                draftVersion?: number;
+              }>('session.mergeVoiceDraftBackup', {
+                sessionId: flushSessionId,
+                content,
+                claimId,
+                // Echo the draft version this tab last read (or the one a
+                // stale decline acknowledged — see rebasedVersion): a
+                // mismatch means a NEWER write or merge already committed,
+                // and this (older) claim lost the last-writer-wins race —
+                // pushing it over the newer draft would discard both the
+                // newer edits and any merged transcript.
+                expectedDraftVersion:
+                  rebasedVersion ?? draftVersionsRef.current.get(flushSessionId),
+              })
               .then((result) => {
                 if (!result.merged) {
                   if (result.stale) {
@@ -1327,7 +1408,14 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                     if (key) retireDraftBackupClaim({ key, generation, ts });
                     return;
                   }
-                  requeueClaim(flushSessionId, { content, generation, key, claimId, ts });
+                  requeueClaim(flushSessionId, {
+                    content,
+                    generation,
+                    key,
+                    claimId,
+                    ts,
+                    rebasedVersion,
+                  });
                   return;
                 }
                 if (currentSessionIdRef.current === flushSessionId) {
@@ -1335,12 +1423,28 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                   // since supersedes the adoption — its saves are newer).
                   if (contentSignal.peek().trim() === '') {
                     contentSignal.value = result.value ?? content;
+                    // SETTLE the landing this backup was deferred under: the
+                    // acknowledged merge adopted the daemon value (backup +
+                    // transcripts), and a landing left live would defer the
+                    // replay effect on this now-non-empty composer forever —
+                    // every later edit routed into localStorage instead of
+                    // the daemon until a clear, switch, or marker expiry.
+                    // consumeLanding no-ops when a NEWER landing owns the
+                    // session.
+                    consumeLanding(flushSessionId, generation);
                   }
                 }
                 if (key) retireDraftBackupClaim({ key, generation, ts });
               })
               .catch(() => {
-                requeueClaim(flushSessionId, { content, generation, key, claimId, ts });
+                requeueClaim(flushSessionId, {
+                  content,
+                  generation,
+                  key,
+                  claimId,
+                  ts,
+                  rebasedVersion,
+                });
               });
           } else {
             // Active content supersedes the backup: the user returned to a
@@ -1353,6 +1457,15 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             // and retire the backup only once that write is acknowledged; a
             // failure requeues the backup claim itself.
             const active = contentSignal.peek().trim();
+            // The retirement boundary must describe the moment THIS merge
+            // captured the content — not its acknowledgement: a user typing
+            // under the live landing rewrites the backup key while the request
+            // is in flight, and an ack-time boundary would suppress that newer
+            // backup (the key's timestamp guard keeps it on disk, invisible to
+            // every restore). Capture-time marks exactly the edits the
+            // committed merge contains; anything written later survives.
+            const mergeSentAt = Date.now();
+            const mergeSentGeneration = getLandingGeneration(flushSessionId) ?? generation;
             // One claim id per session's active-merge sequence, reused across
             // retries (the daemon's idempotent replay acknowledges a committed
             // merge instead of rewriting); retired once the merge commits.
@@ -1364,15 +1477,18 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
               content: active,
             });
             hub
-              .request<{ merged?: boolean; stale?: boolean; value?: string }>(
-                'session.mergeVoiceDraftBackup',
-                {
-                  sessionId: flushSessionId,
-                  content: active,
-                  claimId: activeClaimId,
-                  expectedDraftVersion: draftVersionsRef.current.get(flushSessionId),
-                }
-              )
+              .request<{
+                merged?: boolean;
+                stale?: boolean;
+                value?: string;
+                draftVersion?: number;
+              }>('session.mergeVoiceDraftBackup', {
+                sessionId: flushSessionId,
+                content: active,
+                claimId: activeClaimId,
+                expectedDraftVersion:
+                  rebasedVersion ?? draftVersionsRef.current.get(flushSessionId),
+              })
               .then((result) => {
                 if (result.stale && !result.merged) {
                   // STALE only means a newer committed write superseded this
@@ -1381,7 +1497,12 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                   // Retiring the durable backup now would delete the tab's
                   // only copy of those edits before ANY acknowledged save;
                   // keep it and requeue the active content under the SAME id
-                  // (the retry merge folds transcripts and retires then).
+                  // (the retry merge folds transcripts and retires then). The
+                  // decline's acknowledged version REBASES the retry's echo —
+                  // under a live landing the plain-save cache can never
+                  // advance (saves are suppressed), so an unrebased retry
+                  // would be re-declined forever and the user's edits would
+                  // never reach the server.
                   requeueClaim(flushSessionId, {
                     content: active,
                     generation,
@@ -1389,6 +1510,9 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                     claimId: activeClaimId,
                     ts,
                     fromActive: true,
+                    ...(typeof result.draftVersion === 'number'
+                      ? { rebasedVersion: result.draftVersion }
+                      : {}),
                   });
                   return;
                 }
@@ -1407,18 +1531,17 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                   // Retire through the claim path so the SUPERSEDE boundary
                   // is recorded: other tabs' older same-generation backups
                   // must become unrestorable over this committed draft. The
-                  // boundary must describe the ACTIVE reconciliation that
-                  // just committed — not the queued claim's older
-                  // generation/timestamp: a same-generation sibling written
-                  // after the claim was queued, or a newer landing's backup
-                  // captured before this acknowledgement, must become
-                  // unrestorable over the acknowledged draft too, or a later
-                  // reload could merge the obsolete backup over it.
+                  // boundary describes the moment THIS merge captured the
+                  // active content (mergeSentAt/mergeSentGeneration above) —
+                  // a same-generation sibling written after the claim was
+                  // queued but before the capture must become unrestorable
+                  // over the acknowledged draft too, or a later reload could
+                  // merge the obsolete backup over it.
                   if (key) {
                     retireDraftBackupClaim({
                       key,
-                      generation: getLandingGeneration(flushSessionId) ?? generation,
-                      ts: Date.now(),
+                      generation: mergeSentGeneration,
+                      ts: mergeSentAt,
                     });
                   }
                   // ADOPT the daemon's value while the composer still shows
@@ -1431,6 +1554,12 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                     contentSignal.peek().trim() === active
                   ) {
                     contentSignal.value = result.value ?? active;
+                    // SETTLE the landing the same way the idle adoption does:
+                    // the acknowledged merge adopted backup + transcripts, and
+                    // a landing left live would defer the replay effect on
+                    // this now-non-empty composer forever (edits routed into
+                    // localStorage until a clear, switch, or expiry).
+                    consumeLanding(flushSessionId, generation);
                   }
                   return;
                 }
@@ -1444,6 +1573,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                   claimId: activeClaimId,
                   ts,
                   fromActive: true,
+                  ...(rebasedVersion !== undefined ? { rebasedVersion } : {}),
                 });
               })
               .catch(() => {
@@ -1454,6 +1584,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
                   claimId: activeClaimId,
                   ts,
                   fromActive: true,
+                  ...(rebasedVersion !== undefined ? { rebasedVersion } : {}),
                 });
               });
           }
@@ -1464,7 +1595,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             sessionId: flushSessionId,
             content,
             claimId,
-            expectedDraftVersion: draftVersionsRef.current.get(flushSessionId),
+            expectedDraftVersion: rebasedVersion ?? draftVersionsRef.current.get(flushSessionId),
           })
           .then((result) => {
             if (result.merged) {
@@ -1481,10 +1612,10 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
             // Declined (a newer sequence is unresolved — the draft diverged
             // from its baseline): requeue with backoff, or the backup would
             // never retry and could expire without reaching the daemon.
-            requeueClaim(flushSessionId, { content, generation, key, claimId, ts });
+            requeueClaim(flushSessionId, { content, generation, key, claimId, ts, rebasedVersion });
           })
           .catch(() => {
-            requeueClaim(flushSessionId, { content, generation, key, claimId, ts });
+            requeueClaim(flushSessionId, { content, generation, key, claimId, ts, rebasedVersion });
           });
       }
     };
@@ -1497,7 +1628,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       flushKickRef.current = () => {};
       if (flushRetryTimerRef.current) clearTimeout(flushRetryTimerRef.current);
     };
-  }, [contentSignal, reconcileOwedClear]);
+  }, [contentSignal, reconcileOwedClear, consumeLanding]);
   useSignalEffect(() => {
     const content = contentSignal.value;
 
@@ -1808,14 +1939,19 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           // ack carries that state's version. Adopt both when the composer
           // still shows EXACTLY the refused text; newer typing is fresher
           // user state to keep (its own next save re-attempts, and the
-          // daemon re-refuses rather than resurrecting).
+          // daemon re-refuses rather than resurrecting). The version is
+          // adopted EITHER WAY: leaving it stale for kept typing would have
+          // that typing's next save re-refused against the still-empty draft
+          // forever — and once a request catches up with the displayed text,
+          // the branch above would clear it, losing every keystroke typed
+          // since the refusal instead of ever persisting them.
           if (
             currentSessionIdRef.current === sessionId &&
             contentSignal.peek() === trimmedContent
           ) {
             contentSignal.value = '';
-            advanceDraftVersion(sessionId, ack?.draftVersion);
           }
+          advanceDraftVersion(sessionId, ack?.draftVersion);
           return;
         }
         // Advance the cache to the APPLIED version: without it, a concurrent

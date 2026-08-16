@@ -8,6 +8,8 @@
  */
 
 import type {
+  CreateSessionRequest,
+  HyperNeoActionMessage,
   ImageContent,
   ListRuntimeMcpServersRequest,
   ListRuntimeMcpServersResponse,
@@ -16,33 +18,31 @@ import type {
   MessageHub,
   MessageImage,
   ModelInfo,
+  RuntimeMcpServerEntry,
   Session,
   SessionMetadata,
-  HyperNeoActionMessage,
-  RuntimeMcpServerEntry,
+  UpdateSessionRequest,
 } from '@hyperneo/shared';
-import { normalizeThinkingLevel } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import { appendDraftText, generateUUID } from '@hyperneo/shared';
-import type { SessionManager } from '../session-manager';
-import type { CreateSessionRequest, UpdateSessionRequest } from '@hyperneo/shared';
+import { appendDraftText, generateUUID, normalizeThinkingLevel } from '@hyperneo/shared';
 import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
+import { deliverAndMarkQueued, isMessageDeliveryV2Enabled } from '../agent/message-delivery';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
+import { Logger } from '../logger';
 import {
   clearModelsCache,
   hasRefreshBeenAttemptedFor,
   markRefreshAttemptedFor,
 } from '../model-service.js';
 import { getProviderRegistry } from '../providers/registry.js';
-import { deliverAndMarkQueued, isMessageDeliveryV2Enabled } from '../agent/message-delivery';
 import {
   archiveSDKSessionFiles,
   deleteSDKSessionFiles,
-  scanSDKSessionFiles,
   identifyOrphanedSDKFiles,
+  scanSDKSessionFiles,
 } from '../sdk-session-file-manager';
+import type { SessionManager } from '../session-manager';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service';
-import { Logger } from '../logger';
 
 const log = new Logger('session-handlers');
 
@@ -467,6 +467,12 @@ export function setupSessionHandlers(
     // itself lives in a separate field this update never touches, so a plain
     // metadata write here only re-anchors the merge point.
     const draftWrite = (updates.metadata as Partial<SessionMetadata> | undefined)?.inputDraft;
+    // An ABSENT expected version means the writer never read one — the initial
+    // version (0), not "unconditionally current": a session the version field
+    // has not reached (or a tab whose load never settled) must not bypass the
+    // stale refusals below, or its first concurrent version transition lets an
+    // already-sent/cleared draft resurrect.
+    const expectedVersion = expectedDraftVersion ?? 0;
     // Whether this write took the transcript-folding branch (its ack carries
     // the applied value so the client can adopt it).
     let didFold = false;
@@ -487,9 +493,28 @@ export function setupSessionHandlers(
       const existing = sessionManager.getSessionFromDB(targetSessionId);
       const meta = existing?.metadata;
       if ((meta?.inputDraftVoicePending ?? '').trim() !== '') {
-        (updates.metadata as Partial<SessionMetadata>).inputDraftVoiceBaseline = draftWrite ?? '';
-        (updates.metadata as Partial<SessionMetadata>).inputDraftVersion =
-          (meta?.inputDraftVersion ?? 0) + 1;
+        // The staged branch re-anchors the sequence's merge point, which the
+        // pending later merges onto — the same resurrection exposure the plain
+        // branch refuses: a send/clear emptied the draft and advanced the
+        // version past this writer's knowledge, and re-anchoring its older
+        // non-empty text would bring back what the user already sent before
+        // the pending even merges. Refuse exactly like the plain branch.
+        const written = draftWrite ?? '';
+        const stagedCurrentVersion = meta?.inputDraftVersion ?? 0;
+        const staleOverClear =
+          expectedVersion !== stagedCurrentVersion &&
+          (meta?.inputDraft ?? '').trim() === '' &&
+          written.trim() !== '';
+        if (staleOverClear) {
+          delete (updates.metadata as Partial<SessionMetadata>).inputDraft;
+          staleRefused = true;
+          retainedFoldValue = meta?.inputDraft ?? '';
+          retainedFoldVersion = stagedCurrentVersion;
+        } else {
+          (updates.metadata as Partial<SessionMetadata>).inputDraftVoiceBaseline = draftWrite ?? '';
+          (updates.metadata as Partial<SessionMetadata>).inputDraftVersion =
+            stagedCurrentVersion + 1;
+        }
       } else if (typeof meta?.inputDraftVoiceBaseline === 'string') {
         // MERGED but still unreconciled (the baseline snapshot lingers after
         // the pending cleared): the draft holds baseline + transcripts, and a
@@ -514,16 +539,20 @@ export function setupSessionHandlers(
         // ALREADY carries the transcripts would get them appended a second
         // time ("A edits voice" -> "A edits voice voice"). A write that ends
         // with the exact transcripts carries them — apply as-is, exactly like
-        // a version-current writer. (The coincidental-typing case is
-        // textually identical to the genuine one — the phrase is present
-        // exactly once either way — so the suffix check strictly dominates
-        // the blind append.)
+        // a version-current writer. The boundary must be the EXACT one
+        // appendDraftText produces, not any string suffix: a write that merely
+        // shares the trailing characters ("invoice" for the transcript
+        // "voice") never resulted from appending the transcript, and treating
+        // it as already-included would clear the baseline and permanently drop
+        // the dictated occurrence. Re-joining the putative prefix reproduces
+        // the fold bit-for-bit (spacing, CJK joins, closing quotes) — equal
+        // output proves the write is a fold of exactly these transcripts.
         const written = draftWrite ?? '';
         const endsWithTranscripts =
           transcripts.length > 0 &&
-          (written === transcripts ||
-            written.endsWith(transcripts) ||
-            written.endsWith(` ${transcripts}`));
+          written.endsWith(transcripts) &&
+          appendDraftText(written.slice(0, written.length - transcripts.length), transcripts) ===
+            written;
         const alreadyIncluded =
           (expectedDraftVersion !== undefined && expectedDraftVersion === currentVersion) ||
           endsWithTranscripts;
@@ -589,8 +618,7 @@ export function setupSessionHandlers(
         // would deadlock both composers' saves.
         const written = draftWrite ?? '';
         const staleOverClear =
-          typeof expectedDraftVersion === 'number' &&
-          expectedDraftVersion !== currentVersion &&
+          expectedVersion !== currentVersion &&
           (meta?.inputDraft ?? '').trim() === '' &&
           written.trim() !== '';
         if (staleOverClear) {
@@ -914,12 +942,19 @@ export function setupSessionHandlers(
       typeof metadata.inputDraftVersion === 'number' &&
       metadata.inputDraftVersion !== mergeStamp;
     if (
-      expectedDraftVersion !== undefined &&
       typeof metadata.inputDraftVersion === 'number' &&
-      expectedDraftVersion !== metadata.inputDraftVersion &&
+      (expectedDraftVersion ?? 0) !== metadata.inputDraftVersion &&
       (typeof baseline !== 'string' || pendingStaged || postMergeWrite)
     ) {
-      return { merged: false, stale: true };
+      // The decline carries the CURRENT version: a stale-declined RETRY can
+      // rebase its next echo onto it (the plain-save cache must stay stale —
+      // the composer's content never read this draft), so a genuinely newest
+      // push converges instead of being re-declined on every retry.
+      return {
+        merged: false,
+        stale: true,
+        draftVersion: metadata.inputDraftVersion,
+      };
     }
     const draft = metadata.inputDraft ?? '';
     const trimmed = content.trim();
@@ -948,12 +983,14 @@ export function setupSessionHandlers(
       // (the client's load fold can combine the backup with the landed
       // transcript before this merge retries): appending again would
       // duplicate the voice occurrence, so it applies as-is — the same
-      // suffix discipline session.update's fold uses.
+      // EXACT-boundary discipline session.update's fold uses (re-joining the
+      // putative prefix must reproduce the push; a mere shared suffix like
+      // "invoice" for "voice" never was an append of the transcript).
       const carriesTranscripts =
         transcripts !== '' &&
-        (trimmed === transcripts ||
-          trimmed.endsWith(transcripts) ||
-          trimmed.endsWith(` ${transcripts}`));
+        trimmed.endsWith(transcripts) &&
+        appendDraftText(trimmed.slice(0, trimmed.length - transcripts.length), transcripts) ===
+          trimmed;
       const value = carriesTranscripts ? trimmed : appendDraftText(trimmed, transcripts);
       const fits =
         transcripts === '' ||

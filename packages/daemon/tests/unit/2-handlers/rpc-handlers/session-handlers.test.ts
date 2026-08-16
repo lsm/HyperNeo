@@ -993,6 +993,136 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
     });
   });
 
+  it('refuses a stale save over a cleared draft even without an expected version', async () => {
+    // A writer that never read a version (a session the version field has not
+    // reached, or a tab whose load never settled) omits expectedDraftVersion —
+    // treating that as "unconditionally current" bypasses the resurrection
+    // refusal: another tab's send cleared the draft and advanced the version
+    // from the implicit 0, and the older non-empty write would bring back
+    // text the user already sent. An absent echo is version ZERO.
+    existingPending = null;
+    existingDraft = null;
+    existingBaseline = null;
+    existingDraftVersion = 1;
+    const handler = messageHubData.handlers.get('session.update');
+    const result = (await handler!(
+      {
+        sessionId: 's1',
+        metadata: { inputDraft: 'pre-upgrade tab text' },
+      },
+      {}
+    )) as { success: boolean; draftVersion?: number; staleRefused?: boolean };
+    expect(result).toEqual({ success: true, draftVersion: 1, staleRefused: true });
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', { metadata: {} });
+  });
+
+  it('refuses a stale save that would re-anchor a staged sequence over a cleared draft', async () => {
+    // The staged branch re-anchors the pending's merge point to the written
+    // text; a send cleared the draft and advanced the version past this
+    // writer, and re-anchoring its older non-empty text would resurrect it
+    // before the pending even merges — the same refusal the plain branch
+    // applies, extended to the sequence case.
+    existingPending = 'voice';
+    existingDraft = null;
+    existingBaseline = 'sent text';
+    existingDraftVersion = 3;
+    const handler = messageHubData.handlers.get('session.update');
+    const result = (await handler!(
+      {
+        sessionId: 's1',
+        expectedDraftVersion: 2,
+        metadata: { inputDraft: 'sent text' },
+      },
+      {}
+    )) as { success: boolean; draftVersion?: number; staleRefused?: boolean };
+    expect(result).toEqual({ success: true, draftVersion: 3, staleRefused: true });
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', { metadata: {} });
+  });
+
+  it('still re-anchors a version-current write while a pending is staged', async () => {
+    // The new staged-branch refusal catches only stale echoes over an EMPTY
+    // draft — a version-current writer remains the legitimate author of the
+    // baseline the pending will merge onto.
+    existingPending = 'voice';
+    existingDraft = null;
+    existingBaseline = null;
+    existingDraftVersion = 3;
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!(
+      {
+        sessionId: 's1',
+        expectedDraftVersion: 3,
+        metadata: { inputDraft: 'fresh typing' },
+      },
+      {}
+    );
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: {
+        inputDraft: 'fresh typing',
+        inputDraftVoiceBaseline: 'fresh typing',
+        inputDraftVersion: 4,
+      },
+    });
+  });
+
+  it('does not treat a write that merely shares the transcript suffix as carrying it', async () => {
+    // The inclusion check must respect the EXACT boundary appendDraftText
+    // produces: a stale write ending with the transcript's characters
+    // ("invoice" for the transcript "voice") never resulted from appending
+    // the transcript, and treating it as already-included would clear the
+    // baseline and permanently drop the dictated occurrence. The write is
+    // folded instead, preserving both.
+    existingPending = null;
+    existingDraft = 'A edits voice';
+    existingBaseline = 'A edits';
+    existingDraftVersion = 2;
+    const handler = messageHubData.handlers.get('session.update');
+    const result = (await handler!(
+      {
+        sessionId: 's1',
+        expectedDraftVersion: 1,
+        metadata: { inputDraft: 'invoice' },
+      },
+      {}
+    )) as { draftVersion?: number; draftValue?: string };
+    expect(result.draftValue).toBe('invoice voice');
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: {
+        inputDraft: 'invoice voice',
+        inputDraftVoiceBaseline: 'invoice',
+        inputDraftVersion: 3,
+      },
+    });
+  });
+
+  it('still applies a write whose CJK join carries the transcripts', async () => {
+    // Boundary fidelity cuts both ways: appendDraftText suppresses the
+    // separating space at a CJK boundary, so a write whose transcripts sit
+    // directly against CJK text IS a fold of them — the exact-boundary check
+    // (re-joining the putative prefix) accepts it, where a naive "space or
+    // nothing" rule would wrongly append a second occurrence.
+    existingPending = null;
+    existingDraft = '旧 语音';
+    existingBaseline = '旧';
+    existingDraftVersion = 2;
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!(
+      {
+        sessionId: 's1',
+        expectedDraftVersion: 1,
+        metadata: { inputDraft: '新语音' },
+      },
+      {}
+    );
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: {
+        inputDraft: '新语音',
+        inputDraftVoiceBaseline: null,
+        inputDraftVersion: 3,
+      },
+    });
+  });
+
   it('refuses a truncating fold and marks the ack so the client keeps its text', async () => {
     // appendDraftText silently slices at the character limit: persisting the
     // truncated fold would irrecoverably drop the transcript's tail while the
@@ -1626,7 +1756,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
       { sessionId: 's1', content: 'older edits', claimId: 'claim-old', expectedDraftVersion: 6 },
       {}
     )) as { merged: boolean; stale?: boolean };
-    expect(result).toEqual({ merged: false, stale: true });
+    expect(result).toEqual({ merged: false, stale: true, draftVersion: 7 });
     expect(sessionManager.updateSession).not.toHaveBeenCalled();
   });
 
@@ -1698,7 +1828,7 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
       { sessionId: 's1', content: 'older edits', claimId: 'claim-old', expectedDraftVersion: 5 },
       {}
     )) as { merged: boolean; stale?: boolean };
-    expect(result).toEqual({ merged: false, stale: true });
+    expect(result).toEqual({ merged: false, stale: true, draftVersion: 7 });
     expect(sessionManager.updateSession).not.toHaveBeenCalled();
   });
 
@@ -1757,7 +1887,28 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
       { sessionId: 's1', content: 'older edits', claimId: 'claim-old', expectedDraftVersion: 6 },
       {}
     )) as { merged: boolean; stale?: boolean };
-    expect(result).toEqual({ merged: false, stale: true });
+    expect(result).toEqual({ merged: false, stale: true, draftVersion: 7 });
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('declines a stale merge that omits the expected version and reports the current one', async () => {
+    // A version-less writer (pre-upgrade session, or a tab whose load never
+    // settled) omits expectedDraftVersion — that is version ZERO, not
+    // "unconditionally current": another tab's write bumped the version while
+    // the pending stayed staged, and the staged branch would replace that
+    // newer draft with the older backup. The decline also carries the
+    // CURRENT version so a retry can rebase its echo onto it (under a live
+    // landing the plain-save cache can never advance to provide one).
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    existingPending = 'voice';
+    existingBaseline = 'newer typed text';
+    existingDraft = 'newer typed text';
+    existingDraftVersion = 1;
+    const result = (await handler!(
+      { sessionId: 's1', content: 'older edits', claimId: 'claim-old' },
+      {}
+    )) as { merged: boolean; stale?: boolean; draftVersion?: number };
+    expect(result).toEqual({ merged: false, stale: true, draftVersion: 1 });
     expect(sessionManager.updateSession).not.toHaveBeenCalled();
   });
 });

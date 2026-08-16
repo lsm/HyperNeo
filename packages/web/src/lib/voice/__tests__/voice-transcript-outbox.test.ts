@@ -470,10 +470,15 @@ describe('voice transcript outbox', () => {
     startVoiceTranscriptOutboxFlush();
     // Another tab (which already consumed the earlier landing) lands a fresh
     // transcript — its marker aggregate supersedes this tab's stale local one.
+    // The write precedes the event, as a real cross-tab delivery does.
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+      JSON.stringify({ v: 1, ts: Date.now(), n: 9, text: 'authoritative' })
+    );
     window.dispatchEvent(
       new StorageEvent('storage', {
         key: 'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
-        newValue: JSON.stringify({ v: 1, ts: Date.now(), n: 9, text: 'authoritative' }),
+        newValue: localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1'),
       })
     );
     expect(getLandingTranscript('s1')).toBe('authoritative');
@@ -694,10 +699,16 @@ describe('voice transcript outbox', () => {
 
   it('adds a landing to the signal when another tab writes a landed marker', () => {
     startVoiceTranscriptOutboxFlush();
+    // A REAL cross-tab event follows the writing tab's setItem — the handler
+    // revalidates the event against the stored value, so the test writes too.
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.s3',
+      JSON.stringify({ v: 1, ts: Date.now(), n: 1, text: 'cross-tab' })
+    );
     window.dispatchEvent(
       new StorageEvent('storage', {
         key: 'hyperneo_voice_transcript_outbox_v1.entry.landed.s3',
-        newValue: JSON.stringify({ v: 1, ts: Date.now(), n: 1, text: 'cross-tab' }),
+        newValue: localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s3'),
       })
     );
     expect(voiceTranscriptLandedSignal.value.has('s3')).toBe(true);
@@ -1625,5 +1636,103 @@ describe('voice transcript outbox — review-hardening round', () => {
     // epoch's second record.
     expect(localStorage.getItem(recordA)).toBeNull();
     expect(localStorage.getItem(recordB)).not.toBeNull();
+  });
+
+  it('does not duplicate an entry the local aggregate still holds when repairing', async () => {
+    // The clobbering tab's storage event is still QUEUED when verification
+    // runs: the persisted marker lacks an announced id while the local
+    // records still hold that same entry. The repair's re-mark must REPLACE
+    // the record, not append alongside it — the aggregate text would carry
+    // the transcript twice, and a later fallback fold persists the duplicate.
+    markVoiceTranscriptLanded('s1', 'mine', 'e-mine', 1);
+    const clobber = JSON.stringify({
+      v: 1,
+      ts: Date.now(),
+      n: 999_999,
+      text: 'theirs',
+      ids: ['e-theirs'],
+      entries: [{ id: 'e-theirs', text: 'theirs' }],
+    });
+    localStorage.setItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1', clobber);
+    // No storage event dispatched — the local aggregate still holds e-mine.
+    await vi.advanceTimersByTimeAsync(3_000);
+    const repaired = JSON.parse(
+      localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1') ?? '{}'
+    );
+    expect(repaired.entries.filter((e: { id: string }) => e.id === 'e-mine')).toHaveLength(1);
+    expect(getLandingTranscript('s1').match(/mine/g)?.length).toBe(1);
+  });
+
+  it('ignores a queued storage event describing a superseded marker', () => {
+    vi.useRealTimers();
+    startVoiceTranscriptOutboxFlush();
+    markVoiceTranscriptLanded('s1', 'newer voice', 'e-new');
+    // A queued event for the OLDER marker another tab wrote BEFORE ours
+    // published: the stored value is ours now, so the event is historical —
+    // replaceAggregate would otherwise roll the local aggregate (which
+    // getLandingTranscript prefers) back to the stale text.
+    const staleMarker = JSON.stringify({
+      v: 1,
+      ts: Date.now() - 1000,
+      n: 1,
+      text: 'older voice',
+      ids: ['e-old'],
+      entries: [{ id: 'e-old', text: 'older voice' }],
+    });
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key: 'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+        newValue: staleMarker,
+      })
+    );
+    expect(getLandingTranscript('s1')).toBe('newer voice');
+    stopVoiceTranscriptOutboxFlush();
+  });
+
+  it('treats a multi-entry unsequenced aggregate as order-untrusted', () => {
+    vi.useRealTimers();
+    // One unsequenced entry is trivially ordered; TWO have no order evidence
+    // at all (stale pre-upgrade bundles append without `seq`, and acks can
+    // publish in the opposite order from daemon commits).
+    markVoiceTranscriptLanded('s1', 'only one');
+    expect(isLandingAggregateOrdered('s1')).toBe(true);
+    markVoiceTranscriptLanded('s1', 'a second');
+    expect(isLandingAggregateOrdered('s1')).toBe(false);
+  });
+
+  it('preserves a legacy marker aggregate through later landings', () => {
+    vi.useRealTimers();
+    // A pre-entries marker carries text/ids but no records: without an
+    // explicit legacy record, the next landing's rebuild derives text solely
+    // from entries and silently drops the legacy transcript while its id
+    // stays announced.
+    localStorage.setItem(
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
+      JSON.stringify({ v: 1, ts: Date.now(), n: 3, text: 'legacy voice', ids: ['e1'] })
+    );
+    markVoiceTranscriptLanded('s1', 'fresh voice', 'e2', 1);
+    markVoiceTranscriptLanded('s1', 'more voice', 'e3', 2);
+    const text = getLandingTranscript('s1') ?? '';
+    expect(text).toContain('legacy voice');
+    expect(text).toContain('fresh voice');
+    expect(text).toContain('more voice');
+  });
+
+  it('marks a capped aggregate untrusted, persists the eviction, and re-trusts after settlement', () => {
+    vi.useRealTimers();
+    // More than MAX_ENTRIES transcripts in one sequence: the retained
+    // all-sequenced tail is still a TRUNCATED sequence — fallback restoration
+    // would fold only the last 20 transcripts. The distrust is persisted in
+    // the marker (a hydrating reload reads the same flag), and consuming the
+    // sequence wipes the slate so the next landing starts trusted.
+    for (let i = 0; i < 25; i++) markVoiceTranscriptLanded('s1', `t${i}`, `e${i}`, i + 1);
+    expect(isLandingAggregateOrdered('s1')).toBe(false);
+    const marker = JSON.parse(
+      localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1') ?? '{}'
+    );
+    expect(marker.evicted).toBe(true);
+    consumeVoiceTranscriptLanded('s1', voiceTranscriptLandedSignal.value.get('s1') ?? 0);
+    markVoiceTranscriptLanded('s1', 'fresh', 'e-new', 26);
+    expect(isLandingAggregateOrdered('s1')).toBe(true);
   });
 });

@@ -23,8 +23,8 @@
  * Mirrors the outbound-queue reconnect-flush pattern.
  */
 
-import { effect, signal } from '@preact/signals';
 import { appendDraftText, generateUUID } from '@hyperneo/shared';
+import { effect, signal } from '@preact/signals';
 import { connectionManager } from '../connection-manager';
 import { connectionState } from '../state';
 
@@ -304,7 +304,7 @@ export function markVoiceTranscriptLanded(
         recordEntryEvictions(sessionId, merged);
         const mergedEntries = merged.slice(-MAX_ENTRIES);
         landingEntries.set(sessionId, mergedEntries);
-        landingOrdered.set(sessionId, !hasMixedSequencing(mergedEntries));
+        setLandingOrdered(sessionId, mergedEntries, marker.evicted);
         landingTexts.set(
           sessionId,
           mergedEntries.reduce((acc, entry) => appendDraftText(acc, entry.text), '')
@@ -325,6 +325,26 @@ export function markVoiceTranscriptLanded(
     }
     if (marker.text && marker.ids.some((id) => !ours.has(id))) {
       landingTexts.set(sessionId, appendDraftText(landingTexts.get(sessionId) ?? '', marker.text));
+      // REPRESENT the legacy aggregate (a pre-entries marker carrying only
+      // text/ids) as an explicit record: the next landing's rebuild derives
+      // landingTexts solely from the recorded entries, and an unrepresented
+      // legacy aggregate would be silently dropped while its ids stay
+      // announced — reconciliation would then trust a truncated aggregate
+      // whose missing occurrence is invisible to hasMixedSequencing. The
+      // pseudo-id derives from the announced id set, so re-consuming the same
+      // legacy marker cannot duplicate the record.
+      const legacyId = `legacy:${[...marker.ids].sort().join('|')}`;
+      const knownEntries = landingEntries.get(sessionId) ?? [];
+      if (marker.ids.length > 0 && !knownEntries.some((e) => e.id === legacyId)) {
+        const withLegacy = orderLandingEntries([
+          ...knownEntries,
+          { id: legacyId, text: marker.text },
+        ]);
+        recordEntryEvictions(sessionId, withLegacy);
+        const boundedLegacy = withLegacy.slice(-MAX_ENTRIES);
+        landingEntries.set(sessionId, boundedLegacy);
+        setLandingOrdered(sessionId, boundedLegacy);
+      }
     }
     if (marker.ids.length) {
       const mergedIds = new Set(landingIds.get(sessionId) ?? []);
@@ -371,6 +391,10 @@ export function markVoiceTranscriptLanded(
         text: landingTexts.get(sessionId) ?? null,
         ids: landingIds.get(sessionId) ?? [],
         entries: landingEntries.get(sessionId) ?? [],
+        // Whether this aggregate already evicted entries at the cap: a
+        // hydrating tab must not trust the bounded tail as the complete
+        // sequence for fallback restoration (see setLandingOrdered).
+        evicted: (evictedEntryIds.get(sessionId)?.size ?? 0) > 0,
       });
       localStorage.setItem(key, written);
       markerRaw = localStorage.getItem(key);
@@ -461,9 +485,38 @@ const landingOrdered = new Map<string, boolean>();
 let syntheticEntryCounter = 0;
 
 function hasMixedSequencing(entries: LandingEntry[]): boolean {
+  if (entries.length < 2) return false;
   const anySequenced = entries.some((e) => typeof e.seq === 'number');
+  // A MULTI-ENTRY aggregate with NO sequence metadata at all (two stale
+  // pre-upgrade web bundles against the upgraded daemon) has no order
+  // evidence either: acknowledgements can publish in the opposite order from
+  // daemon commits, and trusting the arrival order would tail-match or
+  // restore a reversed aggregate over the correctly ordered daemon draft.
+  if (!anySequenced) return true;
   const anyUnsequenced = entries.some((e) => typeof e.seq !== 'number');
   return anySequenced && anyUnsequenced;
+}
+
+/**
+ * Set the session's aggregate ORDER-trust from every reason it can be lost:
+ * mixed (or all-absent) sequence metadata, LOCAL cap evictions (the retained
+ * tail is a prefix-truncated sequence — fallback restoration would fold only
+ * the last MAX_ENTRIES transcripts and a later save could overwrite the
+ * evicted occurrences), and an eviction the PERSISTED marker itself declares
+ * (a hydrated tail from a writing tab that evicted).
+ */
+function setLandingOrdered(
+  sessionId: string,
+  entries: LandingEntry[],
+  persistedEvicted?: boolean
+): void {
+  const evicted = evictedEntryIds.get(sessionId);
+  landingOrdered.set(
+    sessionId,
+    !hasMixedSequencing(entries) &&
+      !(evicted !== undefined && evicted.size > 0) &&
+      persistedEvicted !== true
+  );
 }
 
 /** Whether `sessionId`'s landing aggregate may be trusted for order (tail-match/restore). */
@@ -500,7 +553,8 @@ function markVoiceTranscriptLandedLocal(
   markerIds?: string[],
   markerEntries?: LandingEntry[],
   markedAt?: number,
-  entrySeq?: number
+  entrySeq?: number,
+  markerEvicted?: boolean
 ): void {
   const current = voiceTranscriptLandedSignal.value;
   const hadLiveLanding = current.has(sessionId);
@@ -531,11 +585,16 @@ function markVoiceTranscriptLandedLocal(
     };
     const fresh = hadLiveLanding && !replaceAggregate;
     const prevEntries = fresh ? (landingEntries.get(sessionId) ?? []) : [];
-    const ordered = orderLandingEntries([...prevEntries, record]);
+    // REPLACE any record the same ENTRY ID already covers — a repair re-marks
+    // an id the local aggregate can still hold while the clobbering tab's
+    // storage event sits queued, and appending alongside the existing record
+    // duplicates the entry's text in landingTexts (a later fallback fold then
+    // persists the transcript twice).
+    const ordered = orderLandingEntries([...prevEntries.filter((e) => e.id !== record.id), record]);
     recordEntryEvictions(sessionId, ordered);
     const bounded = ordered.slice(-MAX_ENTRIES);
     landingEntries.set(sessionId, bounded);
-    landingOrdered.set(sessionId, !hasMixedSequencing(bounded));
+    setLandingOrdered(sessionId, bounded);
     // The entries are the authoritative aggregate granularity — derive the
     // text and the announced-id set from the RETAINED entries (older ids fill
     // the remaining slots), so the marker's bounded fields always describe
@@ -567,7 +626,7 @@ function markVoiceTranscriptLandedLocal(
     if (markerEntries) {
       const boundedHydration = orderLandingEntries(markerEntries).slice(-MAX_ENTRIES);
       landingEntries.set(sessionId, boundedHydration);
-      landingOrdered.set(sessionId, !hasMixedSequencing(boundedHydration));
+      setLandingOrdered(sessionId, boundedHydration, markerEvicted);
     }
   }
 }
@@ -614,7 +673,9 @@ export function getLandingGeneration(sessionId: string): number | undefined {
           undefined,
           marker?.ids,
           marker?.entries,
-          marker?.ts
+          marker?.ts,
+          undefined,
+          marker?.evicted
         );
         return persisted;
       }
@@ -677,6 +738,8 @@ function parseLandedMarker(raw: string | null): {
   text: string | null;
   ids: string[];
   entries: LandingEntry[];
+  /** Whether the WRITING tab's aggregate already evicted entries at the cap. */
+  evicted: boolean;
 } | null {
   if (!raw) return null;
   try {
@@ -686,6 +749,7 @@ function parseLandedMarker(raw: string | null): {
       text?: unknown;
       ids?: unknown;
       entries?: unknown;
+      evicted?: unknown;
     };
     if (typeof parsed.ts !== 'number') return null;
     const entries: LandingEntry[] = Array.isArray(parsed.entries)
@@ -717,6 +781,7 @@ function parseLandedMarker(raw: string | null): {
       text,
       ids,
       entries,
+      evicted: parsed.evicted === true,
     };
   } catch {
     return null;
@@ -739,6 +804,9 @@ function dropLocalLanding(sessionId: string): void {
   landingIds.delete(sessionId);
   landingEntries.delete(sessionId);
   landingOrdered.delete(sessionId);
+  // The sequence is dead — its cap evictions must not mark the NEXT
+  // sequence's fresh aggregate untrusted (see setLandingOrdered).
+  evictedEntryIds.delete(sessionId);
 }
 
 /**
@@ -760,6 +828,10 @@ export function consumeVoiceTranscriptLanded(
   const next = new Map(current);
   next.delete(sessionId);
   voiceTranscriptLandedSignal.value = next;
+  // The sequence settled — wipe its cap-eviction slate so the session's next
+  // landing sequence starts with trustworthy order (see setLandingOrdered);
+  // the evicted ids only ever excused THIS sequence's repair passes.
+  evictedEntryIds.delete(sessionId);
   // Per-tab acknowledgement of the shared marker we consumed (see
   // isLandingLive): the marker is deliberately KEPT for other tabs, but THIS
   // tab must not treat the very marker it consumed as a live landing again.
@@ -1679,6 +1751,22 @@ function handleStorageEvent(event: StorageEvent): void {
     const sessionId = key.slice(LANDED_PREFIX.length);
     const marker = parseLandedMarker(event.newValue);
     if (marker) {
+      // REVALIDATE against the CURRENT stored value: storage events are
+      // queued tasks, and one describing an OLDER marker can run after this
+      // tab (or another) published or consumed a newer one. The generation is
+      // protected by Math.max, but replaceAggregate would roll the local
+      // text/ids/entries back to the stale aggregate — and getLandingTranscript
+      // prefers that local state, so a fallback reconciliation could omit the
+      // newer transcript and later overwrite it. A mismatch means a newer
+      // write superseded this event; that write's own event (or the
+      // verification repair) carries the truth.
+      let currentRaw: string | null = null;
+      try {
+        currentRaw = localStorage.getItem(key);
+      } catch {
+        currentRaw = null;
+      }
+      if (currentRaw !== event.newValue) return;
       // The marker is the AUTHORITATIVE aggregate from the writing tab —
       // replace, don't append onto this tab's stale local aggregate. Its own
       // `ts` becomes the local mark time so both expiry clocks agree.
@@ -1690,7 +1778,9 @@ function handleStorageEvent(event: StorageEvent): void {
         undefined,
         marker.ids,
         marker.entries,
-        marker.ts
+        marker.ts,
+        undefined,
+        marker.evicted
       );
     } else if (event.newValue === null && localStorage.getItem(key) === null) {
       // Another tab pruned the marker (TTL expired) and no fresh marker was
@@ -1724,7 +1814,9 @@ function hydrateLandedMarkers(): void {
           undefined,
           marker.ids,
           marker.entries,
-          marker.ts
+          marker.ts,
+          undefined,
+          marker.evicted
         );
       }
     }
