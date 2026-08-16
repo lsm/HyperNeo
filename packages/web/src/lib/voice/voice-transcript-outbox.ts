@@ -523,20 +523,45 @@ export function getDraftBackup(sessionId: string): string | null {
  * Retire the exact backup key a caller claimed (any tab's — the caller
  * persisted or folded that content, so the durable copy is superseded). When
  * `generation` is given, the stored generation must still match: a NEWER
- * landing can have rewritten the backup while the claim was in flight.
+ * landing can have rewritten the backup while the claim was in flight. When
+ * `expectedTs` is also given, the stored timestamp must match too — the same
+ * tab can have RESUMED editing during the claim and rewritten this key with
+ * newer content under the SAME generation; deleting that copy would lose
+ * still-suppressed edits that never reached the daemon.
  */
-export function removeDraftBackupKey(key: string, generation?: number): void {
+export function removeDraftBackupKey(key: string, generation?: number, expectedTs?: number): void {
   try {
-    if (generation !== undefined) {
+    if (generation !== undefined || expectedTs !== undefined) {
       const parsed = JSON.parse(localStorage.getItem(key) ?? 'null') as {
         generation?: number;
+        ts?: number;
       } | null;
-      if (parsed?.generation !== generation) return;
+      if (generation !== undefined && parsed?.generation !== generation) return;
+      if (expectedTs !== undefined && parsed?.ts !== expectedTs) return;
     }
     localStorage.removeItem(key);
   } catch {
     /* backup best-effort */
   }
+}
+
+/**
+ * Retire a claimed backup whose content just became durable (persisted to the
+ * server draft, or folded into a composer with saves enabled) and record the
+ * SUPERSEDE point: same-generation backups written at or before the claim's
+ * timestamp are older edits of the same deferral window and must never be
+ * restored over the committed content. The superseded keys themselves are NOT
+ * deleted — equal generations do not mean identical content (both tabs can
+ * edit independently), and deleting another still-active tab's only durable
+ * copy while it suppresses server saves would lose that tab's draft on a
+ * crash. Instead they are skipped by future claim scans; the TTL prunes them.
+ */
+export function retireDraftBackupClaim(claim: {
+  key: string;
+  generation: number;
+  ts: number;
+}): void {
+  removeDraftBackupKey(claim.key, claim.generation, claim.ts);
 }
 
 export function clearDraftBackup(sessionId: string, generation?: number): void {
