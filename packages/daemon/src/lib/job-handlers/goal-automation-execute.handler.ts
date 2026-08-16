@@ -767,12 +767,13 @@ const SUFFIX_QUALIFIER_RE =
 
 /**
  * A coordinating conjunction followed by its own (possibly multiword) subject
- * + linking verb ("and deployment is", "and the build pipeline is", "but the
- * build was") — the start of a new independent clause whose qualifiers must
- * not attach to a preceding outcome match.
+ * + linking verb or modal auxiliary ("and deployment is", "and the build
+ * pipeline is", "but the build was", "and deployment will start") — the
+ * start of a new independent clause whose qualifiers must not attach to a
+ * preceding outcome match.
  */
 const NEW_CLAUSE_CONJUNCTION_RE =
-  /\b(?:and|but|while|whereas|although|though)\s+(?:the\s+|a\s+|an\s+)?(?:\w+\s+){0,3}(?:is|are|was|were|has|have|had|remains?|stays?|seems?)\b/i;
+  /\b(?:and|but|while|whereas|although|though)\s+(?:the\s+|a\s+|an\s+)?(?:\w+\s+){0,3}(?:is|are|was|were|has|have|had|remains?|stays?|seems?|will|would|should|could|might|must|can|may)\b/i;
 
 /**
  * The same new-clause pattern in status shorthand, where the linking verb is
