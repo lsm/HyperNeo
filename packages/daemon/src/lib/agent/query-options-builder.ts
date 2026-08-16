@@ -25,6 +25,7 @@ import type {
   HookCallback,
   Options,
   PreToolUseHookInput,
+  Settings,
 } from '@anthropic-ai/claude-agent-sdk';
 import type {
   AgentDefinition,
@@ -71,6 +72,7 @@ import {
 import { getCoordinatorAgents } from './coordinator-agents';
 import { createLoopDetectorHooks } from './loop-detector-hook';
 import { isMessageDeliveryV2Enabled } from './message-delivery';
+import { withSdkTranscriptRetention } from './sdk-transcript-retention';
 import {
   createOutputLimiterPostHook,
   createOutputLimiterPreHook,
@@ -326,7 +328,7 @@ export function buildProviderSettings(
   providerId: string,
   contextWindow?: number | null,
   modelId?: string | null
-): Options['settings'] {
+): Settings | undefined {
   if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) {
     return undefined;
   }
@@ -623,10 +625,13 @@ export class QueryOptionsBuilder {
       // output style, CLAUDE.md content, etc.).
       settingSources:
         config.settingSources ?? this.ctx.settingsManager.getGlobalSettings().settingSources,
-      settings: buildProviderSettings(
-        providerId,
-        modelInfo?.contextWindow,
-        this.ctx.session.config.model
+      // Inline `settings` is the SDK's flag-settings layer — it takes precedence
+      // over the on-disk user/project settings, so the daemon's transcript
+      // retention cannot be narrowed by ~/.claude/settings.json. Retention is
+      // set for every provider (provider overrides still apply to their own
+      // keys, but nothing overrides retention).
+      settings: withSdkTranscriptRetention(
+        buildProviderSettings(providerId, modelInfo?.contextWindow, this.ctx.session.config.model)
       ),
 
       // ============ Streaming ============

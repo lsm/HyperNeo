@@ -15,6 +15,7 @@ import type { SecurityClassification } from './prompts/security-prompt';
 import { SECURITY_AGENT_SYSTEM_PROMPT } from './prompts/security-prompt';
 import { Logger } from '../logger';
 import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver';
+import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention';
 
 const logger = new Logger('security-agent');
 
@@ -246,6 +247,7 @@ export class SecurityAgent {
           // NO tools array - truly sandboxed
           pathToClaudeCodeExecutable: resolveSDKCliPath(),
           executable: isRunningUnderBun() ? 'bun' : undefined,
+          settings: withSdkTranscriptRetention(),
         },
       });
     } finally {

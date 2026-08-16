@@ -20,6 +20,7 @@ import type { ToolsConfigManager } from './tools-config';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service';
 import { archiveSDKSessionFiles, deleteSDKSessionFiles } from '../sdk-session-file-manager';
 import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.js';
+import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention';
 import { KimiProvider } from '../providers/kimi-provider.js';
 import { findInModels } from '../model-service';
 
@@ -1264,6 +1265,7 @@ ${messageText.slice(0, 2000)}`;
           tools: [],
           pathToClaudeCodeExecutable: cliPath,
           executable: isRunningUnderBun() ? 'bun' : undefined,
+          settings: withSdkTranscriptRetention(),
           env: mergedEnv,
           // Kimi K3 rejects `thinking.type` entirely, so omit the field for K3.
           // Kimi K2.7 models require thinking to be explicitly enabled. For all

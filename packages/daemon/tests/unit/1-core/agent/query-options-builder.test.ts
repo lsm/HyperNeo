@@ -16,6 +16,10 @@ import {
   QueryOptionsBuilder,
   type QueryOptionsBuilderContext,
 } from '../../../../src/lib/agent/query-options-builder';
+import {
+  SDK_TRANSCRIPT_RETENTION_DAYS,
+  withSdkTranscriptRetention,
+} from '../../../../src/lib/agent/sdk-transcript-retention';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../../../../src/lib/space/agents/long-horizon-agent-tools';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
@@ -316,9 +320,31 @@ describe('QueryOptionsBuilder', () => {
     );
 
     it('should not override SDK auto-compaction settings for native anthropic provider', async () => {
-      // Default provider is anthropic — SDK already knows correct context window
+      // Default provider is anthropic — SDK already knows correct context window.
+      // Transcript retention is the only settings key the daemon still sets.
       const options = await builder.build();
-      expect(options.settings).toBeUndefined();
+      expect(options.settings).toEqual({ cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS });
+    });
+
+    it('should pin SDK transcript retention for every session', async () => {
+      // The SDK subprocess purges transcripts idle > cleanupPeriodDays (default
+      // 30) on startup, wedging long-idle resumable sessions. Retention must be
+      // pinned regardless of provider settings.
+      const options = await builder.build();
+      expect(options.settings?.cleanupPeriodDays).toBe(SDK_TRANSCRIPT_RETENTION_DAYS);
+    });
+
+    it('withSdkTranscriptRetention merges over caller settings without dropping them', () => {
+      // Direct query() launches (title generation, workflow selection, model
+      // discovery, GitHub agents, evolution services) pass their own settings
+      // through this helper; existing keys must survive.
+      expect(withSdkTranscriptRetention()).toEqual({
+        cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS,
+      });
+      expect(withSdkTranscriptRetention({ autoCompactWindow: 1000 })).toEqual({
+        autoCompactWindow: 1000,
+        cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS,
+      });
     });
 
     it('should remove undefined values from options', async () => {
@@ -481,6 +507,7 @@ describe('QueryOptionsBuilder', () => {
       expect(options.settings).toEqual({
         autoCompactEnabled: true,
         autoCompactWindow: 1_000_000,
+        cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS,
       });
     });
 
@@ -491,15 +518,17 @@ describe('QueryOptionsBuilder', () => {
       mockSession.config.provider = 'openrouter';
       mockSession.config.model = 'unknown-model';
       const options = await builder.build();
-      // Returning undefined lets the SDK use its built-in auto-compact instead
-      // of creating a dead zone (no SDK compact, no HyperNeo fallback).
-      expect(options.settings).toBeUndefined();
+      // No provider settings lets the SDK use its built-in auto-compact instead
+      // of creating a dead zone (no SDK compact, no HyperNeo fallback). Only the
+      // daemon-owned retention key remains.
+      expect(options.settings).toEqual({ cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS });
     });
 
-    it('should leave settings undefined for native anthropic provider', async () => {
-      // Default mockSession uses anthropic provider
+    it('should leave provider settings empty for native anthropic provider', async () => {
+      // Default mockSession uses anthropic provider — only the daemon-owned
+      // retention key is present.
       const options = await builder.build();
-      expect(options.settings).toBeUndefined();
+      expect(options.settings).toEqual({ cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS });
     });
   });
 
