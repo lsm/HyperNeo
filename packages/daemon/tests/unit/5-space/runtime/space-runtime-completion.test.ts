@@ -947,6 +947,52 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
       expect(taskRepo.getTask(task.id)?.workflowRunId).toBe(otherRun.id);
     });
+
+    test('does not finalize the run when the done task is detached mid-tick', async () => {
+      // spaceTask.update can clear workflowRunId entirely while the tick is
+      // between its completion decision and the run→done transition. A
+      // detached task retaining reportedStatus must not finalize the old
+      // run — its outcome and post-approval routing would then be applied
+      // to a task that no longer belongs to any run.
+      const rt = makeRuntimeWithTam();
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: 'node-detach', name: 'Coding', agentId: AGENT_A },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Detach run');
+      const task = tasks[0];
+      taskRepo.updateTask(task.id, { status: 'done', result: 'external validation outcome' });
+      seedNodeExec(db, run.id, 'node-detach', 'agent', 'in_progress');
+
+      const rtInternal = rt as unknown as {
+        completionDetector: { isComplete: (query: unknown) => boolean };
+      };
+      const originalIsComplete = rtInternal.completionDetector.isComplete.bind(
+        rtInternal.completionDetector
+      );
+      let detached = false;
+      rtInternal.completionDetector.isComplete = (query: unknown) => {
+        const result = originalIsComplete(query);
+        if (result && !detached) {
+          detached = true;
+          taskRepo.updateTask(task.id, { workflowRunId: null });
+        }
+        return result;
+      };
+
+      try {
+        await rt.executeTick();
+      } finally {
+        rtInternal.completionDetector.isComplete = originalIsComplete;
+      }
+
+      expect(detached).toBe(true);
+      // The run was never finalized on the detached task's signal. (The
+      // task's own final shape is the recovery machinery's business — a
+      // stalled-run recovery may legitimately reattach and reset it — what
+      // must NOT happen is the run→done flip on a signal the task no longer
+      // carries for this run.)
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+    });
   });
 
   // -------------------------------------------------------------------------

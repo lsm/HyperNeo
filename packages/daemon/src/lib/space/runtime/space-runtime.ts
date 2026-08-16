@@ -8245,9 +8245,11 @@ export class SpaceRuntime {
         const preTransitionRun = this.config.workflowRunRepo.getRun(runId);
         const preTransitionHolds =
           (preTransitionRun == null || preTransitionRun.status === 'in_progress') &&
-          (preTransitionTask == null ||
-            preTransitionTask.workflowRunId === runId ||
-            preTransitionTask.workflowRunId == null) &&
+          // The refreshed task must remain attached to THIS run — a mid-tick
+          // `spaceTask.update` can reattach it elsewhere OR detach it
+          // entirely (workflowRunId → null); either way this run's
+          // finalization must not apply to it.
+          (preTransitionTask == null || preTransitionTask.workflowRunId === runId) &&
           (preTransitionTask == null ||
             preTransitionTask.status === 'done' ||
             preTransitionTask.status === 'cancelled' ||
@@ -8284,11 +8286,13 @@ export class SpaceRuntime {
         const completionStillHolds =
           runAfterTransition?.status === 'done' &&
           // The refreshed task must still belong to THIS run: a mid-tick
-          // `spaceTask.update` can move a done task to another run while
-          // retaining its completion signal — finalizing this run would
-          // then apply its outcome and post-approval routing to a task the
-          // new run owns, prematurely completing that workflow.
-          (canonicalTask.workflowRunId == null || canonicalTask.workflowRunId === runId) &&
+          // `spaceTask.update` can move a done task to another run OR
+          // detach it entirely while retaining its completion signal —
+          // finalizing this run would then apply its outcome and
+          // post-approval routing to a task another owner (or none) holds.
+          // Detached (null) counts as moved: a task `spaceTask.update`
+          // detached mid-tick must not have this run's outcome applied.
+          canonicalTask.workflowRunId === runId &&
           (canonicalTask.status === 'done' ||
             canonicalTask.status === 'cancelled' ||
             canonicalTask.reportedStatus !== null);
