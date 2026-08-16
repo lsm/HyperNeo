@@ -2222,8 +2222,15 @@ describe('useInputDraft', () => {
       });
 
       expect(result.current.content).toBe('user edits voice text');
-      // The durable backup retired once its edits (plus transcripts) reached
-      // the composer — the enabled saves now own them.
+      // The retirement defers to the ACKNOWLEDGED save of the combined draft
+      // (a reload-crash window before it must keep the durable copy): drive
+      // the debounced save — its timer arms at act exit, so a second act
+      // flushes it.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(400);
+      });
+      const saves = mockHub.request.mock.calls.filter(([m]) => m === 'session.update');
+      expect(saves.length).toBeGreaterThan(0);
       expect(peekExpiredDraftBackup('session-1')).toBeNull();
       expect(backupClaim).not.toBeNull();
     });
