@@ -5356,8 +5356,16 @@ export class TaskAgentManager {
       workflowRunRepo: this.config.workflowRunRepo,
       getWorkflowForRun: (run) => this.config.spaceWorkflowManager.getWorkflowForRun(run),
       nodeExecutionRepo: this.config.nodeExecutionRepo,
-      resolvePrimaryLinkUrl: (runId) =>
-        this.config.artifactProfile?.resolvePrimaryLinkUrl(runId) ?? '',
+      resolvePrimaryLinkUrl: (runId) => {
+        const profile = this.config.artifactProfile;
+        // Fail closed: with no domain profile there is no way to check for a
+        // PR, and the lenient '' fallback would read as "no PR exists".
+        if (!profile) return null;
+        const strict = profile.resolvePrimaryLinkUrlStrict?.(runId);
+        if (strict) return strict.readable ? strict.url : null;
+        // A profile without the strict resolver owns its lenient result.
+        return profile.resolvePrimaryLinkUrl(runId);
+      },
       spaceManager: this.config.spaceManager,
       goalService: this.config.goalService,
       interruptBySessionId: (sessionId) => this.interruptBySessionId(sessionId),

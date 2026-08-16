@@ -24,6 +24,17 @@ export interface WorkflowArtifactProfile {
   resolvePrimaryLinkUrl(runId: string): string;
 
   /**
+   * Strict variant of {@link resolvePrimaryLinkUrl} for completion gates that
+   * must NOT treat a read failure as "no PR exists": the lenient method logs
+   * and returns '' when hook state or artifacts cannot be read, which would
+   * let a PR-bound task slip past a no-PR gate. Returns `{ url, readable }`
+   * where `readable: false` means the sources could not be fully checked and
+   * NO url was found (an indeterminate result); a found url is always
+   * `readable: true` regardless of other source failures.
+   */
+  resolvePrimaryLinkUrlStrict?(runId: string): { url: string; readable: boolean };
+
+  /**
    * Resolve the first primary link identity established for a run. Completion
    * safety checks use this immutable identity so a later artifact cannot swap
    * the reviewed PR for a different already-merged PR.

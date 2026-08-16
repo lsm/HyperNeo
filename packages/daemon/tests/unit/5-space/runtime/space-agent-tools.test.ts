@@ -45,6 +45,7 @@ import {
   createCompleteValidationTaskHandler,
   type CompleteValidationTaskHandlerDeps,
 } from '../../../../src/lib/space/tools/end-node-handlers.ts';
+import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile.ts';
 import { getLongHorizonAgentTemplate } from '../../../../src/lib/space/agents/long-horizon-agent-templates.ts';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store.ts';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
@@ -5770,6 +5771,9 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
         workflowRunRepo: ctx.workflowRunRepo,
         getWorkflowForRun: (run) => ctx.workflowManager.getWorkflowForRun(run),
         nodeExecutionRepo: ctx.nodeExecutionRepo,
+        // The runtime's lenient resolver returns null for "no PR" — map to
+        // the dep's '' (definitively none). null is reserved for
+        // "could not check", covered by explicit tests below.
         resolvePrimaryLinkUrl: (runId) => ctx.runtime.getApprovedPrUrlForRun(runId) ?? '',
         spaceManager: ctx.spaceManager,
         goalService: ctx.goalService,
@@ -6941,6 +6945,94 @@ describe('createCompleteValidationTaskHandler — complete_validation_task', () 
     expect(malformed.error).toContain('task binding cannot be resolved');
     // The task was never touched by any of the three attempts.
     expect(ctx.taskRepo.getTask(task)?.status).toBe('in_progress');
+  });
+
+  test('rejects when the run PR state cannot be checked (indeterminate read)', async () => {
+    // The no-PR gate is three-state: '' = definitively no PR, url = PR-bound,
+    // null = could not check (transient hook-state/artifact read failure, or
+    // no domain profile wired). null must fail closed — treating it as "no
+    // PR" would let a PR-bound run bypass the review/merge path.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-review',
+      agentName: 'Review',
+      agentId: ctx.agentId,
+      status: 'idle',
+    });
+
+    const result = await makeValidationTool({
+      resolvePrimaryLinkUrl: () => null,
+    }).complete_validation_task({
+      task_id: task.id,
+      validation_outcome: 'should be refused',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('could not be checked for a PR');
+    expect(parsed.error).toContain('refusing validation-only completion');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
+  });
+
+  test('terminal precondition refuses an indeterminate PR recheck', async () => {
+    // The early guard read the run as PR-less, but the reread at the
+    // terminal write cannot check — the write must refuse rather than
+    // commit a validation-only done against an unverifiable PR state.
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const task = createWorkflowTask(5, { status: 'in_progress' });
+    ctx.nodeExecutionRepo.create({
+      workflowRunId: task.workflowRunId!,
+      workflowNodeId: 'node-review',
+      agentName: 'Review',
+      agentId: ctx.agentId,
+      status: 'idle',
+    });
+    let reads = 0;
+    const result = await makeValidationTool({
+      resolvePrimaryLinkUrl: () => {
+        reads += 1;
+        // First read: the early guard sees a definitive no-PR. Second read:
+        // the terminal precondition's reread fails to check.
+        return reads === 1 ? '' : null;
+      },
+    }).complete_validation_task({
+      task_id: task.id,
+      validation_outcome: 'should be refused at the write',
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('could not be rechecked for a PR');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
+    expect(ctx.taskRepo.getTask(task.id)?.result).toBeNull();
+  });
+
+  test('the strict profile resolver distinguishes unreadable from no-PR', async () => {
+    // CodingArtifactProfile.resolvePrimaryLinkUrlStrict backs the production
+    // wiring: a failed artifact read with no url found must report
+    // readable:false (the handler rejects), while the same failure with a PR
+    // already found still reports the url — "PR-bound" is certain regardless
+    // of the other source's failure.
+    const throwingRepo = {
+      listByRun: () => {
+        throw new Error('artifact read failed');
+      },
+    } as unknown as WorkflowRunArtifactRepository;
+    const profile = new CodingArtifactProfile({ db: ctx.db, artifactRepo: throwingRepo });
+
+    const unreadable = profile.resolvePrimaryLinkUrlStrict('run-unreadable');
+    expect(unreadable).toEqual({ url: '', readable: false });
+    // The lenient method keeps its infra contract: degrade to ''.
+    expect(profile.resolvePrimaryLinkUrl('run-unreadable')).toBe('');
+
+    const okRepo = new WorkflowRunArtifactRepository(ctx.db);
+    const readableProfile = new CodingArtifactProfile({ db: ctx.db, artifactRepo: okRepo });
+    expect(readableProfile.resolvePrimaryLinkUrlStrict('run-none')).toEqual({
+      url: '',
+      readable: true,
+    });
   });
 
   test('rejects a task-bound worker whose executions live on a previous run attachment', async () => {

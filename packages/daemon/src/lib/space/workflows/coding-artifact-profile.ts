@@ -71,14 +71,34 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
   }
 
   resolvePrimaryLinkUrl(runId: string): string {
-    // The primary link is the FRESHEST eligible PR URL across hook state and
-    // artifacts, compared by updatedAt — so a newer `link kind:'pr'` artifact
-    // supersedes a stale hook-state `pr_url` (and vice versa). A generic `url`
-    // on a non-pr artifact never qualifies. Legacy `pr_url`/`prUrl` on artifacts
-    // is load-bearing for post-approval routing (which records the PR on a
-    // `decision` artifact) and for migrated runs.
+    // Lenient contract for infra control flow: a read failure degrades to the
+    // safe default ('') rather than throwing. Completion gates that must NOT
+    // treat a read failure as "no PR exists" use resolvePrimaryLinkUrlStrict.
+    return this.collectPrimaryLink(runId).url;
+  }
+
+  resolvePrimaryLinkUrlStrict(runId: string): { url: string; readable: boolean } {
+    const { url, fullyReadable } = this.collectPrimaryLink(runId);
+    // A FOUND url answers "PR-bound" with certainty even when another source
+    // failed to read; only a url-less scan with a failed source is
+    // indeterminate.
+    return { url, readable: fullyReadable || url !== '' };
+  }
+
+  /**
+   * Shared core for both resolvePrimaryLinkUrl variants. The primary link is
+   * the FRESHEST eligible PR URL across hook state and artifacts, compared by
+   * updatedAt — so a newer `link kind:'pr'` artifact supersedes a stale
+   * hook-state `pr_url` (and vice versa). A generic `url` on a non-pr
+   * artifact never qualifies. Legacy `pr_url`/`prUrl` on artifacts is
+   * load-bearing for post-approval routing (which records the PR on a
+   * `decision` artifact) and for migrated runs. `fullyReadable` records
+   * whether every source actually answered; the lenient path ignores it.
+   */
+  private collectPrimaryLink(runId: string): { url: string; fullyReadable: boolean } {
     type Candidate = { url: string; updatedAt: number };
     let best: Candidate | null = null;
+    let fullyReadable = true;
     // Pure fresher (no closure mutation) so TS control-flow tracks `best`.
     const fresher = (prev: Candidate | null, url: string, updatedAt: number): Candidate | null => {
       if (!url) return prev;
@@ -94,14 +114,15 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
         best = fresher(best, legacyPrUrl(snapshot.localState), snapshot.updatedAt ?? 0);
       }
     } catch (err) {
+      fullyReadable = false;
       log.warn(
         `resolvePrUrl: failed to read hook state for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
       );
     }
 
     // 2. Artifacts — a `link kind:'pr'` (data.url) or a legacy row carrying
-    //    pr_url/prUrl. Legacy artifact pr_url is load-bearing for post-approval
-    //    routing (decision artifacts) and migrated runs.
+    // pr_url/prUrl. Legacy artifact pr_url is load-bearing for post-approval
+    // routing (decision artifacts) and migrated runs.
     if (this.artifactRepo) {
       try {
         for (const a of this.artifactRepo.listByRun(runId)) {
@@ -114,13 +135,14 @@ export class CodingArtifactProfile implements WorkflowArtifactProfile {
           best = fresher(best, url, a.updatedAt);
         }
       } catch (err) {
+        fullyReadable = false;
         log.warn(
           `resolvePrUrl: failed to read artifacts for run ${runId}: ${err instanceof Error ? err.message : String(err)}`
         );
       }
     }
 
-    return best?.url ?? '';
+    return { url: best?.url ?? '', fullyReadable };
   }
 
   resolveInitialPrimaryLinkUrl(runId: string): string {

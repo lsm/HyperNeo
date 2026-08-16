@@ -384,10 +384,14 @@ export interface CompleteValidationTaskHandlerDeps {
     'listByWorkflowRun' | 'listByAgentSessionId' | 'updateStatus'
   >;
   /**
-   * Resolves a run's primary-link (PR) URL; '' when none. Wired from the
-   * domain artifact profile exactly as `SpaceRuntime.resolvePrUrlForRun` does.
+   * Resolves a run's primary-link (PR) URL for the no-PR gate. Three-state:
+   * a non-empty string is the PR (PR-bound → reject), '' means definitively
+   * no PR, and null means the PR state could NOT be checked (hook-state or
+   * artifact read failure, or no domain profile wired) — the handler fails
+   * closed on null rather than treating an unreadable state as "no PR".
+   * Wired from the domain artifact profile's strict resolver.
    */
-  resolvePrimaryLinkUrl: (workflowRunId: string) => string;
+  resolvePrimaryLinkUrl: (workflowRunId: string) => string | null;
   /** Space manager — autonomy level source for the entry gate. */
   spaceManager?: Pick<SpaceManager, 'getSpace'>;
   /** Async space-autonomy fallback when the space manager has no level. */
@@ -694,6 +698,16 @@ export function createCompleteValidationTaskHandler(
     // this is the common Forge self_nag/review shape.
     if (task.workflowRunId) {
       const prUrl = resolvePrimaryLinkUrl(task.workflowRunId);
+      // Fail closed on an indeterminate read: the strict resolver returns
+      // null when hook state or artifacts could not be checked (or no domain
+      // profile is wired). Treating that as "no PR" would let a PR-bound run
+      // bypass the normal review/merge path on a transient read failure.
+      if (prUrl === null) {
+        return jsonResult({
+          success: false,
+          error: `Task ${args.task_id}'s workflow run could not be checked for a PR (PR state could not be read); refusing validation-only completion rather than bypassing the review/merge path. Retry, or use the normal PR path if a PR exists.`,
+        });
+      }
       if (prUrl) {
         return jsonResult({
           success: false,
@@ -906,6 +920,11 @@ export function createCompleteValidationTaskHandler(
           }
           if (!actualRunId) return;
           const prUrl = resolvePrimaryLinkUrl(actualRunId);
+          if (prUrl === null) {
+            throw new Error(
+              `Task ${args.task_id}'s workflow run could not be rechecked for a PR at the terminal write (PR state could not be read); refusing so a PR-bound run cannot bypass the review/merge path on a transient read failure. Retry.`
+            );
+          }
           if (prUrl) {
             throw new Error(
               `Task ${args.task_id} acquired a PR (${prUrl}) during completion; validation-only completion is for no-PR tasks. Use the normal approve/merge path instead.`

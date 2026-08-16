@@ -1,6 +1,0 @@
-error TS5083: Cannot read file '/Users/lsm/.hyperneo/projects/dev-neokai-ec0a1deb/worktrees/learner-proposal-expose-validation-only-no-pr-task/packages/tsconfig.json'.
-TSC_DONE
-  - packages/daemon/tests/unit/5-space/workflow/workflow-hook-validation.test.ts
-  
-
-No files found to lint. Please check your paths and ignore patterns.
