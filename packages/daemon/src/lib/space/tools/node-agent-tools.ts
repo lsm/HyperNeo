@@ -832,6 +832,27 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       try {
         const artifactKey = deriveArtifactKey(shape, normalized, keyArg);
 
+        // BACKFILL before any overwriting write: a run whose PR-bearing
+        // artifact predates the record-time memory has no reserved identity,
+        // and this upsert may replace the only row carrying the PR. Resolve
+        // the CURRENT PR first and remember it, so the overwrite cannot make
+        // a previously PR-bound run read as no-PR (task #918).
+        if (config.artifactProfile) {
+          try {
+            const existing = config.artifactProfile.resolvePrimaryLinkUrlStrict?.(workflowRunId);
+            if (existing?.url) {
+              config.artifactProfile.rememberPrimaryLinkUrl?.(workflowRunId, existing.url);
+            } else {
+              const lenient = config.artifactProfile.resolvePrimaryLinkUrl(workflowRunId);
+              if (lenient) {
+                config.artifactProfile.rememberPrimaryLinkUrl?.(workflowRunId, lenient);
+              }
+            }
+          } catch {
+            // Best-effort backfill; the record-time memory is additive.
+          }
+        }
+
         const record = artifactRepo.upsert({
           id: crypto.randomUUID(),
           runId: workflowRunId,

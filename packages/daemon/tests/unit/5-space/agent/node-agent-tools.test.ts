@@ -3812,7 +3812,12 @@ describe('node-agent-tools: complete_validation_task', () => {
       workflowRunRepo,
       getWorkflowForRun: (run: SpaceWorkflowRun) => workflowManager.getWorkflowForRun(run),
       nodeExecutionRepo: ctx.nodeExecutionRepo,
-      resolvePrimaryLinkUrl: () => '',
+      resolvePrimaryLinkUrl: (runId: string) => {
+        const strict = ctx.artifactProfile.resolvePrimaryLinkUrlStrict(runId);
+        return strict.readable ? strict.url : null;
+      },
+      resolveInitialPrimaryLinkUrl: (runId: string) =>
+        ctx.artifactProfile.resolveInitialPrimaryLinkUrl(runId),
       spaceManager,
       ...overrides,
     } satisfies CompleteValidationTaskHandlerDeps;
@@ -4005,6 +4010,56 @@ describe('node-agent-tools: complete_validation_task', () => {
     expect(parsed.task.status).toBe('done');
     expect(ctx.taskRepo.getTask(fixture.task.id)?.status).toBe('done');
   });
+  test('an overwriting save_artifact backfills a legacy PR identity before replacing it', async () => {
+    // Legacy shape: a run whose PR-bearing decision/current artifact
+    // predates the record-time memory (no reserved identity). A later
+    // same-key save WITHOUT pr_url would replace the only row carrying
+    // the PR — the backfill resolves the current PR before the upsert and
+    // remembers it, so the no-PR completion gate still refuses.
+    const fixture = await seedValidationRun();
+    // Legacy artifact: PR recorded only on the row, no reserved stamp.
+    ctx.artifactRepo.upsert({
+      id: 'artifact-legacy-pr',
+      runId: fixture.runId,
+      nodeId: 'Validation',
+      artifactType: 'decision',
+      artifactKey: 'current',
+      data: { pr_url: 'https://github.com/owner/repo/pull/legacy' },
+    });
+    // The overwriting save through the REAL handler (backfill fires inside).
+    const handlers = createNodeAgentToolHandlers(
+      makeConfig(ctx, {
+        mySessionId: fixture.workerSessionId,
+        workflowRunId: fixture.runId,
+        workflowNodeId: 'Validation',
+        workflow: fixture.workflow,
+        artifactProfile: ctx.artifactProfile,
+      })
+    );
+    const result = await handlers.save_artifact({
+      shape: 'decision',
+      data: { summary: 'rewritten without the PR link', recommendation: 'approve' },
+    });
+    expect(JSON.parse(result.content[0].text).success).toBe(true);
+    // The row no longer carries the PR, but the backfilled write-once
+    // memory does — the reserved state feeds both resolvers from here on.
+    expect(ctx.artifactProfile.resolvePrimaryLinkUrl(fixture.runId)).toBe(
+      'https://github.com/owner/repo/pull/legacy'
+    );
+
+    const server = buildServer(fixture);
+    const tool = getTool(server)!;
+    const completion = await tool({
+      task_id: fixture.task.id,
+      validation_outcome: 'should be refused',
+    });
+    const parsed = JSON.parse(completion.content[0].text);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('https://github.com/owner/repo/pull/legacy');
+    expect(ctx.taskRepo.getTask(fixture.task.id)?.status).toBe('in_progress');
+  });
+
   test('fails closed when a declared completion hook does not authorize this caller', async () => {
     // A workflow can scope its complete_validation_task validator to a
     // designated reviewer slot. executeAction treats an empty matching hook
