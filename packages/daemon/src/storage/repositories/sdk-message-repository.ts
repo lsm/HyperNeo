@@ -2548,7 +2548,13 @@ export class SDKMessageRepository {
            LIMIT 1`
       )
       .get(sessionId, action);
-    return row !== undefined;
+    // bun:sqlite `.get()` returns null (not undefined) for no rows, so a
+    // `!== undefined` check inverts the polarity: no card ⇒ true. That made
+    // emitSdkResumeChoiceMessage's dedupe believe an unresolved card existed
+    // and skip emitting it entirely — sessions with a purged SDK transcript
+    // parked on sdk_resume_choice forever with no card to answer. Match the
+    // null-safe form used by isHandleTaken/isNameTaken.
+    return row !== null && row !== undefined;
   }
 
   /**

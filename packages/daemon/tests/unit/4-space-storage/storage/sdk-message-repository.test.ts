@@ -192,6 +192,39 @@ describe('SDKMessageRepository', () => {
     );
   }
 
+  describe('hasUnresolvedHyperNeoAction', () => {
+    function insertActionCard(sessionId: string, resolved: boolean): void {
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp)
+         VALUES (?, ?, 'hyperneo_action', 'sdk_resume_choice', ?, ?)`
+      ).run(
+        `row-${sessionId}-${resolved}`,
+        sessionId,
+        JSON.stringify({ type: 'hyperneo_action', action: 'sdk_resume_choice', resolved }),
+        new Date().toISOString()
+      );
+    }
+
+    it('returns false when no card exists (bun:sqlite .get() yields null, not undefined)', () => {
+      // Regression: `row !== undefined` inverted the polarity under
+      // bun:sqlite — an empty table read as "an unresolved card exists", so
+      // emitSdkResumeChoiceMessage's dedupe suppressed the card entirely and
+      // sessions with a purged SDK transcript parked on sdk_resume_choice
+      // forever with nothing to answer.
+      expect(repository.hasUnresolvedHyperNeoAction('s1', 'sdk_resume_choice')).toBe(false);
+    });
+
+    it('returns true only while an unresolved card exists', () => {
+      insertActionCard('s1', false);
+      expect(repository.hasUnresolvedHyperNeoAction('s1', 'sdk_resume_choice')).toBe(true);
+      // A resolved card does not count.
+      insertActionCard('s2', true);
+      expect(repository.hasUnresolvedHyperNeoAction('s2', 'sdk_resume_choice')).toBe(false);
+      // Another session's unresolved card does not leak across sessions.
+      expect(repository.hasUnresolvedHyperNeoAction('s3', 'sdk_resume_choice')).toBe(false);
+    });
+  });
+
   describe('saveSDKMessage', () => {
     it('should save a user message and return true', () => {
       const message = createUserMessage('Hello world');
