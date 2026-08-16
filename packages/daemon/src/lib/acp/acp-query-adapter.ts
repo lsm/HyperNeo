@@ -11,6 +11,7 @@
 
 import type {
   SDKControlGetContextUsageResponse,
+  SDKControlInterruptResponse,
   SDKMessage,
   McpSetServersResult,
   RewindFilesResult,
@@ -103,10 +104,11 @@ export class AcpQueryAdapter implements QueryLike {
   /**
    * Interrupt the current query turn.
    */
-  async interrupt(): Promise<void> {
-    if (this.closed || this.interrupted) return;
+  async interrupt(): Promise<SDKControlInterruptResponse | undefined> {
+    if (this.closed || this.interrupted) return undefined;
     this.interrupted = true;
     this.client.cancel();
+    return undefined;
   }
 
   /**

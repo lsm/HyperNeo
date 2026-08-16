@@ -20,13 +20,18 @@ export type ToolInputSchemas =
   | GrepInput
   | TaskStopInput
   | ListMcpResourcesInput
+  | RefreshMcpToolsInput
   | McpInput
   | NotebookEditInput
+  | ReadMcpResourceDirInput
   | ReadMcpResourceInput
+  | ReportFindingsInput
   | TodoWriteInput
   | WebFetchInput
   | WebSearchInput
   | AskUserQuestionInput
+  | SendFeedbackInput
+  | ClaudeDesignInput
   | ProjectsInput
   | EnterPlanModeInput
   | TaskCreateInput
@@ -41,7 +46,10 @@ export type ToolInputSchemas =
   | ScheduleWakeupInput
   | RemoteTriggerInput
   | ShowOnboardingRolePickerInput
+  | ReadNotificationsInput
   | MonitorInput
+  | ProposeSkillsInput
+  | ProposeGoalInput
   | ArtifactInput
   | PushNotificationInput
   | EnterWorktreeInput
@@ -58,13 +66,17 @@ export type ToolOutputSchemas =
   | GrepOutput
   | TaskStopOutput
   | ListMcpResourcesOutput
+  | RefreshMcpToolsOutput
   | McpOutput
   | NotebookEditOutput
+  | ReadMcpResourceDirOutput
   | ReadMcpResourceOutput
+  | ReportFindingsOutput
   | TodoWriteOutput
   | WebFetchOutput
   | WebSearchOutput
   | AskUserQuestionOutput
+  | SendFeedbackOutput
   | EnterWorktreeOutput
   | ExitWorktreeOutput
   | TaskCreateOutput
@@ -74,8 +86,11 @@ export type ToolOutputSchemas =
   | ArtifactOutput
   | RemoteTriggerOutput
   | ShowOnboardingRolePickerOutput
+  | ReadNotificationsOutput
   | ScheduleWakeupOutput
   | MonitorOutput
+  | ProposeSkillsOutput
+  | ProposeGoalOutput
   | EnterPlanModeOutput
   | REPLOutput
   | WorkflowOutput
@@ -83,6 +98,7 @@ export type ToolOutputSchemas =
   | CronDeleteOutput
   | CronListOutput
   | PushNotificationOutput
+  | ClaudeDesignOutput
   | ProjectsOutput;
 export type AgentOutput =
   | {
@@ -91,8 +107,10 @@ export type AgentOutput =
       content: {
         type: "text";
         text: string;
+        citations?: unknown[] | null;
       }[];
       resolvedModel?: string;
+      modelsUsed?: string[];
       totalToolUseCount: number;
       totalDurationMs: number;
       totalTokens: number;
@@ -105,10 +123,16 @@ export type AgentOutput =
           web_search_requests: number;
           web_fetch_requests: number;
         } | null;
-        service_tier: ("standard" | "priority" | "batch") | null;
+        service_tier: string | null;
         cache_creation: {
           ephemeral_1h_input_tokens: number;
           ephemeral_5m_input_tokens: number;
+        } | null;
+        inference_geo?: string | null;
+        speed?: string | null;
+        iterations?: unknown;
+        output_tokens_details?: {
+          thinking_tokens?: number | null;
         } | null;
       };
       toolStats?: {
@@ -119,12 +143,16 @@ export type AgentOutput =
         linesAdded: number;
         linesRemoved: number;
         otherToolCount: number;
+        frameCount?: number;
       };
       status: "completed";
       prompt: string;
+      worktreePath?: string;
+      worktreeBranch?: string;
     }
   | {
       status: "async_launched";
+      isAsync?: true;
       /**
        * The ID of the async agent
        */
@@ -134,9 +162,13 @@ export type AgentOutput =
        */
       description: string;
       /**
-       * Model the spawn resolved (may differ from the requested one)
+       * Model in use at the backgrounding transition (a pre-background swap is reflected here)
        */
       resolvedModel?: string;
+      /**
+       * Ordered distinct models used before backgrounding (length > 1 means a mid-run swap)
+       */
+      modelsUsed?: string[];
       /**
        * The prompt for the agent
        */
@@ -300,6 +332,10 @@ export type FileReadOutput =
          */
         filePath: string;
       };
+      /**
+       * Set when the dedup matched a startup-seeded entry (CLAUDE.md / nested memory) rather than a prior Read tool_result
+       */
+      source?: "seeded";
     };
 export type ListMcpResourcesOutput = {
   /**
@@ -323,6 +359,32 @@ export type ListMcpResourcesOutput = {
    */
   server: string;
 }[];
+export type RefreshMcpToolsOutput = {
+  /**
+   * Server name
+   */
+  server: string;
+  /**
+   * refreshed: tool list re-queried and applied. error: the re-query failed and the previous tool set was kept. not_connected: the server has no live connection to query (this tool never dials).
+   */
+  status: "refreshed" | "error" | "not_connected";
+  /**
+   * Number of tools now available from this server
+   */
+  toolCount?: number;
+  /**
+   * Tool names this refresh added
+   */
+  added?: string[];
+  /**
+   * Tool names this refresh removed
+   */
+  removed?: string[];
+  /**
+   * Why the refresh failed or the server was unavailable
+   */
+  error?: string;
+}[];
 /**
  * MCP tool execution result
  */
@@ -334,6 +396,34 @@ export type McpOutput =
     }[]
   | {
       [k: string]: unknown;
+    };
+export type ArtifactOutput =
+  | {
+      url: string;
+      path: string;
+      title?: string;
+      version?: string;
+      capabilities?: unknown;
+      stored?: {
+        contract: string;
+        capabilities?: {
+          [k: string]: unknown;
+        };
+      };
+      warnings?: string[];
+      contract?: string;
+      updated?: boolean;
+      liveSubscription?: string;
+    }
+  | {
+      artifacts: {
+        title: string;
+        url: string;
+        updatedAt?: string;
+        rel?: "mine" | "shared";
+      }[];
+      truncated?: boolean;
+      scope?: "shared" | "all";
     };
 export type ProjectsOutput =
   | {
@@ -360,9 +450,6 @@ export type ProjectsOutput =
       knowledge: {
         knowledge_size: number;
         max_knowledge_size: number;
-        search_threshold: number | null;
-        rag_active: boolean;
-        remaining_budget: number | null;
       };
     }
   | {
@@ -391,13 +478,8 @@ export type ProjectsOutput =
       path: string;
       doc_uuid: string;
       replaced: boolean;
-      knowledge: {
-        knowledge_size: number;
-        max_knowledge_size: number;
-        search_threshold: number | null;
-        rag_active: boolean;
-        remaining_budget: number | null;
-      };
+      present_to_user?: boolean;
+      local_path?: string;
     }
   | {
       method: "project_delete";
@@ -424,7 +506,7 @@ export interface AgentInput {
    */
   model?: "sonnet" | "opus" | "haiku" | "fable";
   /**
-   * Set to true to run this agent in the background. You will be notified when it completes.
+   * Agents run in the background by default; you will be notified when one completes. Set to false only when your very next action depends on this agent's result and nothing else could usefully happen while it runs — otherwise leave it in the background so the user can hand you other work.
    */
   run_in_background?: boolean;
   /**
@@ -436,9 +518,9 @@ export interface AgentInput {
    */
   team_name?: string;
   /**
-   * Permission mode for spawned teammate (e.g., "plan" to require plan approval).
+   * Deprecated; ignored. Subagents inherit the parent session's permission mode; agent-definition frontmatter may override it.
    */
-  mode?: "acceptEdits" | "auto" | "bypassPermissions" | "default" | "dontAsk" | "plan" | "bubble";
+  mode?: "acceptEdits" | "auto" | "bypassPermissions" | "default" | "dontAsk" | "plan";
   /**
    * Isolation mode. "worktree" creates a temporary git worktree so the agent works on an isolated copy of the repo. "remote" launches the agent in a remote cloud environment (always runs in background; availability is gated).
    */
@@ -492,7 +574,7 @@ export interface TaskOutputInput {
 }
 export interface ExitPlanModeInput {
   /**
-   * Prompt-based permissions needed to implement the plan. These describe categories of actions rather than specific commands.
+   * Deprecated: no longer used.
    */
   allowedPrompts?: {
     /**
@@ -626,7 +708,7 @@ export interface GrepInput {
 }
 export interface TaskStopInput {
   /**
-   * The ID of the background task to stop
+   * The ID of the background task to stop. Agent-team teammates and named background agents are also accepted by agent ID or name.
    */
   task_id?: string;
   /**
@@ -637,6 +719,12 @@ export interface TaskStopInput {
 export interface ListMcpResourcesInput {
   /**
    * Optional server name to filter resources by
+   */
+  server?: string;
+}
+export interface RefreshMcpToolsInput {
+  /**
+   * Optional server name: refresh only this server. Omit to refresh all connected servers.
    */
   server?: string;
 }
@@ -665,6 +753,16 @@ export interface NotebookEditInput {
    */
   edit_mode?: "replace" | "insert" | "delete";
 }
+export interface ReadMcpResourceDirInput {
+  /**
+   * The MCP server name
+   */
+  server: string;
+  /**
+   * The directory resource URI to list
+   */
+  uri: string;
+}
 export interface ReadMcpResourceInput {
   /**
    * The MCP server name
@@ -674,6 +772,51 @@ export interface ReadMcpResourceInput {
    * The resource URI to read
    */
   uri: string;
+}
+export interface ReportFindingsInput {
+  /**
+   * Effort level the review ran at
+   */
+  level?: "low" | "medium" | "high" | "xhigh" | "max";
+  /**
+   * Verified findings, most-severe first; empty if none survived
+   *
+   * @maxItems 32
+   */
+  findings: {
+    /**
+     * Repo-relative path of the file the finding is in
+     */
+    file: string;
+    /**
+     * 1-indexed line the finding anchors to
+     */
+    line?: number;
+    /**
+     * One-sentence statement of the defect
+     */
+    summary: string;
+    /**
+     * Compressed label for compact UI (≤60 chars): the claim alone, no rationale or consequence clause
+     */
+    short_summary?: string;
+    /**
+     * Concrete inputs/state → wrong output/crash
+     */
+    failure_scenario: string;
+    /**
+     * Short kebab-case slug of the finding type, e.g. "correctness", "simplification", "efficiency", "test-coverage"
+     */
+    category?: string;
+    /**
+     * Set when a verify pass ran; absent on inline-only reviews
+     */
+    verdict?: "CONFIRMED" | "PLAUSIBLE";
+    /**
+     * Set ONLY when re-reporting after applying fixes: what happened to this finding
+     */
+    outcome?: "fixed" | "skipped" | "no_change_needed";
+  }[];
 }
 export interface TodoWriteInput {
   /**
@@ -2286,6 +2429,60 @@ export interface AskUserQuestionInput {
     source?: string;
   };
 }
+export interface SendFeedbackInput {
+  /**
+   * What kind of feedback this is.
+   */
+  type: "bug" | "idea" | "missing_capability";
+  /**
+   * Short, specific one-line summary of the issue.
+   */
+  title: string;
+  /**
+   * Labeled bullets, in order: **What happened:** (observed vs. expected, exact error text if short); **What the user said:** (quoted, or "User didn't comment; observed by the model."); **Repro:** (minimal steps); **Evidence:** (request IDs, timestamps, paths, versions — omit if none); optionally a final **Cause:** only if verified in-session. One to three lines per bullet. No narrative paragraphs, no speculation, no secrets.
+   */
+  details: string;
+  /**
+   * Optional short tag naming the part of Claude Code this is about (e.g. "hooks config", "/help", "file editing"). Leave blank if unclear.
+   */
+  area?: string;
+  /**
+   * When the report is about MODEL BEHAVIOR (not a product bug), the closest failure mode — or `other` when it is a model-behavior issue that fits no listed value. Omit only when the report is a product/tool bug with no model-behavior component.
+   */
+  failure_mode?:
+    | "instruction_following"
+    | "destructive_actions"
+    | "code_quality"
+    | "repetition_and_looping"
+    | "model_regression"
+    | "overconfidence_and_hallucination"
+    | "context_and_memory"
+    | "overeager"
+    | "over_correction"
+    | "stopping_short"
+    | "dispute_or_decline"
+    | "subagent_overspawn"
+    | "tone_or_preachiness"
+    | "excessive_questions"
+    | "unwanted_scope"
+    | "other";
+  /**
+   * What kind of task the session was doing when the issue occurred — or `other` when it is a clear task that fits no listed value. Omit only if genuinely unclear.
+   */
+  task_category?: "code_edit" | "debug" | "explain" | "plan" | "shell" | "search" | "review" | "other";
+}
+export interface ClaudeDesignInput {
+  /**
+   * Claude Design action to perform. Call with "list" first to discover the available operations and their argument schemas.
+   */
+  operation: string;
+  /**
+   * Action input object (server-validated). Pass {} for operations that take no input.
+   */
+  arguments: {
+    [k: string]: unknown;
+  };
+}
 export interface ProjectsInput {
   method: "project_info" | "project_read" | "project_search" | "project_write" | "project_delete";
   /**
@@ -2301,9 +2498,9 @@ export interface ProjectsInput {
    */
   local_path?: string;
   /**
-   * project_write: bypass the chat-injection budget guard. Set only when the write is genuinely worth degrading chat to retrieval mode for everyone in the project.
+   * project_write: true marks this doc as the file the user needs to see — the deliverable they asked for or must act on. Defaults to false; leave it unset for routine saves, notes, and bulk writes.
    */
-  force?: boolean;
+  present_to_user?: boolean;
   /**
    * project_search: knowledge-base query
    */
@@ -2454,24 +2651,36 @@ export interface CronDeleteInput {
 export interface CronListInput {}
 export interface ScheduleWakeupInput {
   /**
-   * Seconds from now to wake up. Clamped to [60, 3600] by the runtime.
+   * Seconds from now to wake up. Clamped to [60, 3600] by the runtime. Required unless `stop` is true.
    */
-  delaySeconds: number;
+  delaySeconds?: number;
   /**
-   * One short sentence explaining the chosen delay. Goes to telemetry and is shown to the user. Be specific.
+   * One short sentence explaining the chosen delay. Goes to telemetry and is shown to the user. Be specific. Required unless `stop` is true.
    */
-  reason: string;
+  reason?: string;
   /**
-   * The /loop input to fire on wake-up. Pass the same /loop input verbatim each turn so the next firing re-enters the skill and continues the loop. For autonomous /loop (no user prompt), pass the literal sentinel `<<autonomous-loop-dynamic>>` instead (the dynamic-pacing variant, not the CronCreate-mode `<<autonomous-loop>>`).
+   * The /loop input to fire on wake-up. Pass the same /loop input verbatim each turn so the next firing re-enters the skill and continues the loop. For autonomous /loop (no user prompt), pass the literal sentinel `<<autonomous-loop-dynamic>>` instead (the dynamic-pacing variant, not the CronCreate-mode `<<autonomous-loop>>`). Required unless `stop` is true.
    */
-  prompt: string;
+  prompt?: string;
+  /**
+   * Set to true to end the dynamic loop immediately instead of scheduling another wakeup. When true, all other fields are ignored and no further wakeups fire.
+   */
+  stop?: boolean;
 }
 export interface RemoteTriggerInput {
-  action: "list" | "get" | "create" | "update" | "run";
+  action: "list" | "get" | "create" | "update" | "run" | "create_webhook_trigger" | "list_runs" | "get_run_log";
   /**
-   * Required for get, update, and run
+   * Required for get, update, run, and list_runs
    */
   trigger_id?: string;
+  /**
+   * Required for get_run_log: a run session id (cse_… or session_…, from list_runs)
+   */
+  session_id?: string;
+  /**
+   * next_cursor from a previous list_runs or get_run_log page
+   */
+  cursor?: string;
   /**
    * Required for create and update; optional for run
    */
@@ -2480,6 +2689,7 @@ export interface RemoteTriggerInput {
   };
 }
 export interface ShowOnboardingRolePickerInput {}
+export interface ReadNotificationsInput {}
 export interface MonitorInput {
   /**
    * Short human-readable description of what you are monitoring (shown in notifications).
@@ -2496,25 +2706,217 @@ export interface MonitorInput {
   /**
    * Shell command or script. Each stdout line is an event; exit ends the watch.
    */
-  command: string;
+  command?: string;
+  /**
+   * WebSocket to open. Each text frame is an event; binary frames are reported as a placeholder line. Socket close ends the watch. Cannot be combined with command.
+   */
+  ws?: {
+    url: string;
+    protocols?: string[];
+  };
+}
+export interface ProposeSkillsInput {
+  /**
+   * @minItems 1
+   * @maxItems 3
+   */
+  proposals:
+    | [
+        {
+          /**
+           * kebab-case skill slug
+           */
+          name: string;
+          kind: "new" | "improvement";
+          /**
+           * Existing skill name to amend. Required when kind is 'improvement'; omit for 'new'.
+           */
+          target?: string;
+          /**
+           * one line shown on the card
+           */
+          description: string;
+          /**
+           * memory file paths where this procedure was observed
+           */
+          evidence?: string[];
+          /**
+           * complete SKILL.md draft (frontmatter + Trigger/Steps/Verification body)
+           */
+          skillMd: string;
+        }
+      ]
+    | [
+        {
+          /**
+           * kebab-case skill slug
+           */
+          name: string;
+          kind: "new" | "improvement";
+          /**
+           * Existing skill name to amend. Required when kind is 'improvement'; omit for 'new'.
+           */
+          target?: string;
+          /**
+           * one line shown on the card
+           */
+          description: string;
+          /**
+           * memory file paths where this procedure was observed
+           */
+          evidence?: string[];
+          /**
+           * complete SKILL.md draft (frontmatter + Trigger/Steps/Verification body)
+           */
+          skillMd: string;
+        },
+        {
+          /**
+           * kebab-case skill slug
+           */
+          name: string;
+          kind: "new" | "improvement";
+          /**
+           * Existing skill name to amend. Required when kind is 'improvement'; omit for 'new'.
+           */
+          target?: string;
+          /**
+           * one line shown on the card
+           */
+          description: string;
+          /**
+           * memory file paths where this procedure was observed
+           */
+          evidence?: string[];
+          /**
+           * complete SKILL.md draft (frontmatter + Trigger/Steps/Verification body)
+           */
+          skillMd: string;
+        }
+      ]
+    | [
+        {
+          /**
+           * kebab-case skill slug
+           */
+          name: string;
+          kind: "new" | "improvement";
+          /**
+           * Existing skill name to amend. Required when kind is 'improvement'; omit for 'new'.
+           */
+          target?: string;
+          /**
+           * one line shown on the card
+           */
+          description: string;
+          /**
+           * memory file paths where this procedure was observed
+           */
+          evidence?: string[];
+          /**
+           * complete SKILL.md draft (frontmatter + Trigger/Steps/Verification body)
+           */
+          skillMd: string;
+        },
+        {
+          /**
+           * kebab-case skill slug
+           */
+          name: string;
+          kind: "new" | "improvement";
+          /**
+           * Existing skill name to amend. Required when kind is 'improvement'; omit for 'new'.
+           */
+          target?: string;
+          /**
+           * one line shown on the card
+           */
+          description: string;
+          /**
+           * memory file paths where this procedure was observed
+           */
+          evidence?: string[];
+          /**
+           * complete SKILL.md draft (frontmatter + Trigger/Steps/Verification body)
+           */
+          skillMd: string;
+        },
+        {
+          /**
+           * kebab-case skill slug
+           */
+          name: string;
+          kind: "new" | "improvement";
+          /**
+           * Existing skill name to amend. Required when kind is 'improvement'; omit for 'new'.
+           */
+          target?: string;
+          /**
+           * one line shown on the card
+           */
+          description: string;
+          /**
+           * memory file paths where this procedure was observed
+           */
+          evidence?: string[];
+          /**
+           * complete SKILL.md draft (frontmatter + Trigger/Steps/Verification body)
+           */
+          skillMd: string;
+        }
+      ];
+}
+export interface ProposeGoalInput {
+  /**
+   * The completion condition to propose, written so a separate evaluator can verify it from the conversation (e.g. "all tests in test/auth pass (bun test exits 0)"). At most 500 characters — the user must be able to read the whole condition in the approval dialog.
+   */
+  condition: string;
+  /**
+   * Whether to ask the user for approval before the goal is set. Defaults to true — an approval dialog is shown. Set false ONLY when the user's own words in this conversation stated this outcome as what they want; the goal is then set directly, with a visible notice in the transcript, and the user can clear it with /goal clear.
+   */
+  ask_user?: boolean;
 }
 export interface ArtifactInput {
   /**
-   * Path to an .html or .md file to render. Use a short, distinctive basename — it is the fallback title if the HTML has no <title>.
+   * Omit (or 'publish') to publish file_path. 'list' enumerates artifacts — the user's own by default, see `scope`; only `limit` and `scope` may accompany it.
    */
-  file_path: string;
+  action?: "publish" | "list";
   /**
-   * Browser-tab icon: one or two emoji (e.g. "📊"). No markup. Keep stable across redeploys; change only on a hard topic pivot.
+   * Path to an .html or .md file to render. Required to publish (the default action). Use a short, distinctive basename — it is the last-resort title when the HTML has no <title> and no `title` parameter is given.
    */
-  favicon: string;
+  file_path?: string;
   /**
-   * Short human-readable name for this version (e.g. "fixed-background"). Shown in the version picker instead of the raw version id.
+   * Browser-tab icon: one or two emoji (e.g. "📊"). No markup. Required to publish. Keep stable across redeploys; change only on a hard topic pivot.
+   */
+  favicon?: string;
+  /**
+   * list only: maximum artifacts to return (default 25).
+   */
+  limit?: number;
+  /**
+   * list only: 'mine' (default) lists artifacts the user owns — the only ones the update flow can target; 'shared' lists artifacts other people shared with the user (read-only); 'all' lists both. Rows are labeled (mine)/(shared) whenever scope is not 'mine'.
+   */
+  scope?: "mine" | "shared" | "all";
+  /**
+   * Title for the artifact — the name shown in the browser tab and gallery. A short, distinctive noun-phrase name — not a generic label, a summary, or a name with an appended explainer. Prefer a <title> tag at the top of the HTML itself; this parameter fills in only when the file lacks one in the first 8KB of the file, and never overrides the tag. HTML publishes only — Markdown pages keep their filename identity. Content always comes from file_path — there is no inline content parameter.
+   */
+  title?: string;
+  /**
+   * One-sentence subtitle shown on the gallery card. Say what the page is or does.
+   */
+  description?: string;
+  /**
+   * Short human-readable name for this version, max 60 chars (e.g. "fixed-background"). Shown in the version picker. Not a description — keep it to a few words.
    */
   label?: string;
   /**
-   * Existing artifact URL to redeploy to. Pass when the user gives you a URL for an artifact not published in this session; omit for new artifacts or same-session redeploys. Must be an artifact the user owns.
+   * Existing artifact URL to update in place. Pass whenever the user wants to update an artifact this conversation did not publish — "update my artifact", "keep the same link", a pasted artifact URL — and find the URL with action: "list" or ask the user for the link if you don't have it; without this, the publish creates a separate artifact instead of updating the existing one. Omit for new artifacts and same-conversation redeploys. Must be an artifact the user owns.
    */
   url?: string;
+  /**
+   * Last-resort overwrite that DISCARDS another session's published version. On a 409 conflict the normal fix is to re-read the artifact, merge your edits on top of the newer content, and publish again — not force. Pass force:true only when the user explicitly wants to replace the other session's version. The tracked baseVersion is still sent; with force:true the server treats it as informational and overwrites. Omit (or false) so a concurrent write 409s instead of being silently clobbered.
+   */
+  force?: boolean;
 }
 export interface PushNotificationInput {
   /**
@@ -2529,7 +2931,7 @@ export interface EnterWorktreeInput {
    */
   name?: string;
   /**
-   * Path to an existing worktree of the current repository to switch into instead of creating a new one. Must appear in `git worktree list` for the current repo. Mutually exclusive with `name`.
+   * Path to an existing worktree to switch into instead of creating a new one. Must appear in `git worktree list` for the current repo — or, on first entry from the launch directory, for a repo nested inside it (multi-repo workspace). Mutually exclusive with `name`.
    */
   path?: string;
 }
@@ -2573,9 +2975,17 @@ export interface BashOutput {
    */
   backgroundedByUser?: boolean;
   /**
-   * True if assistant-mode auto-backgrounded a long-running blocking command
+   * Set when the command hit its timeout and was auto-backgrounded; the timeout value in ms
    */
-  assistantAutoBackgrounded?: boolean;
+  timedOutAfterMs?: number;
+  /**
+   * Model-facing note that the session cwd was not changed by a backgrounded command containing a directory-change builtin (cd/pushd/popd/chdir)
+   */
+  backgroundCwdHint?: string;
+  /**
+   * True when this backgrounded command is owned by a synchronous subagent and is therefore terminated when that agent gives its final response; absent when the command survives (main loop, async subagents)
+   */
+  backgroundEndsWithFinalResponse?: true;
   /**
    * Flag to indicate if sandbox mode was overridden
    */
@@ -2615,6 +3025,7 @@ export interface BashOutput {
     commit?: {
       sha: string;
       kind: "committed" | "amended" | "cherry-picked";
+      branch?: string;
     };
     push?: {
       branch: string;
@@ -2764,7 +3175,7 @@ export interface GlobOutput {
    */
   durationMs: number;
   /**
-   * Total number of files found
+   * Number of file paths returned (after any truncation)
    */
   numFiles: number;
   /**
@@ -2775,6 +3186,14 @@ export interface GlobOutput {
    * Whether results were truncated (limited to 100 files)
    */
   truncated: boolean;
+  /**
+   * Total number of matching files before truncation. A lower bound when countIsComplete is false. Absent on results persisted by CLI versions predating this field.
+   */
+  totalMatches?: number;
+  /**
+   * Whether totalMatches is the exact total (true) or a floor because the underlying search truncated its own output (false). Absent on results persisted by CLI versions predating this field.
+   */
+  countIsComplete?: boolean;
 }
 export interface GrepOutput {
   mode?: "content" | "files_with_matches" | "count";
@@ -2783,6 +3202,8 @@ export interface GrepOutput {
   content?: string;
   numLines?: number;
   numMatches?: number;
+  totalFiles?: number;
+  totalLines?: number;
   appliedLimit?: number;
   appliedOffset?: number;
 }
@@ -2809,6 +3230,10 @@ export interface NotebookEditOutput {
    * The new source code that was written to the cell
    */
   new_source: string;
+  /**
+   * The previous cell source (replace/delete only). Enables cell-relative diff rendering without re-reading the notebook.
+   */
+  old_source?: string;
   /**
    * The ID of the cell that was edited
    */
@@ -2842,6 +3267,29 @@ export interface NotebookEditOutput {
    */
   updated_file: string;
 }
+export interface ReadMcpResourceDirOutput {
+  /**
+   * Direct children of the directory resource. Subdirectories appear with mimeType "inode/directory".
+   */
+  resources: {
+    /**
+     * Child resource URI
+     */
+    uri: string;
+    /**
+     * Child resource name
+     */
+    name: string;
+    /**
+     * Child MIME type
+     */
+    mimeType?: string;
+  }[];
+  /**
+   * Human-readable error when the server could not list the directory
+   */
+  error?: string;
+}
 export interface ReadMcpResourceOutput {
   contents: {
     /**
@@ -2865,6 +3313,53 @@ export interface ReadMcpResourceOutput {
    * Human-readable error when the server could not read the resource
    */
   error?: string;
+}
+export interface ReportFindingsOutput {
+  /**
+   * Number of findings reported
+   */
+  count: number;
+  /**
+   * Effort level the review ran at
+   */
+  level?: "low" | "medium" | "high" | "xhigh" | "max";
+  /**
+   * Echoed for the result body
+   */
+  findings: {
+    /**
+     * Repo-relative path of the file the finding is in
+     */
+    file: string;
+    /**
+     * 1-indexed line the finding anchors to
+     */
+    line?: number;
+    /**
+     * One-sentence statement of the defect
+     */
+    summary: string;
+    /**
+     * Compressed label for compact UI (≤60 chars): the claim alone, no rationale or consequence clause
+     */
+    short_summary?: string;
+    /**
+     * Concrete inputs/state → wrong output/crash
+     */
+    failure_scenario: string;
+    /**
+     * Short kebab-case slug of the finding type, e.g. "correctness", "simplification", "efficiency", "test-coverage"
+     */
+    category?: string;
+    /**
+     * Set when a verify pass ran; absent on inline-only reviews
+     */
+    verdict?: "CONFIRMED" | "PLAUSIBLE";
+    /**
+     * Set ONLY when re-reporting after applying fixes: what happened to this finding
+     */
+    outcome?: "fixed" | "skipped" | "no_change_needed";
+  }[];
 }
 export interface TodoWriteOutput {
   /**
@@ -2911,7 +3406,7 @@ export interface WebFetchOutput {
   url: string;
   artifactRead?: {
     slug: string;
-    ver: string;
+    ver?: string;
   };
 }
 export interface WebSearchOutput {
@@ -3135,6 +3630,14 @@ export interface AskUserQuestionOutput {
       notes?: string;
     };
   };
+  /**
+   * Set when the dialog auto-resolved after this many milliseconds of idle (user away from keyboard). Absent on every human-resolved path.
+   */
+  afkTimeoutMs?: number;
+}
+export interface SendFeedbackOutput {
+  success: boolean;
+  message: string;
 }
 export interface EnterWorktreeOutput {
   worktreePath: string;
@@ -3186,13 +3689,6 @@ export interface TaskListOutput {
     blockedBy: string[];
   }[];
 }
-export interface ArtifactOutput {
-  url: string;
-  path: string;
-  title?: string;
-  version?: string;
-  mcpDropped?: string;
-}
 export interface RemoteTriggerOutput {
   status: number;
   json: string;
@@ -3201,6 +3697,30 @@ export interface RemoteTriggerOutput {
 export interface ShowOnboardingRolePickerOutput {
   role?: string;
   dismissed?: boolean;
+}
+export interface ReadNotificationsOutput {
+  notifications: {
+    /**
+     * Server-assigned stable id — the dedup key across redeliveries.
+     */
+    notification_id: string;
+    /**
+     * Server-attested source token: "github_webhook" | "trigger_fire" | "mcp_send_message" (open set; unknown well-formed tokens pass through verbatim, off-grammar values coerce to "unknown").
+     */
+    origin: string;
+    /**
+     * RFC3339 timestamp of when the backend queued it.
+     */
+    queued_at: string;
+    /**
+     * Verbatim notification body.
+     */
+    content: string;
+  }[];
+  /**
+   * Notifications still queued after this drain (drains are size-budgeted); call the tool again to read them.
+   */
+  remaining: number;
 }
 export interface ScheduleWakeupOutput {
   /**
@@ -3215,6 +3735,14 @@ export interface ScheduleWakeupOutput {
    * True if the requested delaySeconds was outside [60, 3600]
    */
   wasClamped: boolean;
+  /**
+   * True when the model ended the loop via `stop: true`
+   */
+  stopped?: boolean;
+  /**
+   * How many pending dynamic-loop wakeups stop:true cancelled. 0 means nothing was pending — a recurring /loop cron is not cancelled by stop:true.
+   */
+  cancelledWakeups?: number;
 }
 export interface MonitorOutput {
   /**
@@ -3229,6 +3757,22 @@ export interface MonitorOutput {
    * No timeout — runs until TaskStop or session end.
    */
   persistent?: boolean;
+}
+export interface ProposeSkillsOutput {
+  /**
+   * Number of proposals shown on the review card
+   */
+  proposalCount: number;
+}
+export interface ProposeGoalOutput {
+  /**
+   * The condition shown to the user for approval, or set directly when ask_user was false
+   */
+  condition: string;
+  /**
+   * Whether the user was asked for approval (true) or the goal was set directly (false)
+   */
+  askUser: boolean;
 }
 export interface EnterPlanModeOutput {
   /**
@@ -3338,10 +3882,15 @@ export interface PushNotificationOutput {
   pushSent?: boolean;
   localSent?: boolean;
   disabledReason?: "config_off" | "user_present" | "no_transport";
-  idleSec?: number;
-  hasFocus?: boolean;
   /**
    * ISO timestamp captured at tool execution on the emitting process. Optional — resumed sessions replay pre-sentAt outputs verbatim.
    */
   sentAt?: string;
+}
+export interface ClaudeDesignOutput {
+  operation: string;
+  content: {
+    [k: string]: unknown;
+  }[];
+  isError?: boolean;
 }

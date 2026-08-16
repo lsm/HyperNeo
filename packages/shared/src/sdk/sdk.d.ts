@@ -10,7 +10,7 @@ import type { Readable } from 'stream';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import type { UUID } from 'crypto';
 import type { Writable } from 'stream';
-import { z } from 'zod/v4';
+import * as z from 'zod/v4';
 import type { ZodRawShape } from 'zod';
 import type { ZodRawShape as ZodRawShape_2 } from 'zod/v4';
 
@@ -29,7 +29,7 @@ export declare type AccountInfo = {
     /**
      * Active API backend. Anthropic OAuth login only applies when "firstParty"; for 3P providers the other fields are absent and auth is external (AWS creds, gcloud ADC, etc.). "gateway" means the CLI is authenticated against an enterprise gateway.
      */
-    apiProvider?: 'firstParty' | 'bedrock' | 'vertex' | 'foundry' | 'anthropicAws' | 'mantle' | 'gateway';
+    apiProvider?: 'firstParty' | 'bedrock' | 'vertex' | 'foundry' | 'anthropicAws' | 'anthropicGoogleCloud' | 'mantle' | 'gateway';
 };
 
 /**
@@ -89,6 +89,14 @@ export declare type AgentDefinition = {
      * Permission mode controlling how tool executions are handled
      */
     permissionMode?: PermissionMode;
+    /**
+     * Agent type auto-spawned as a background observer whenever this agent runs. The observer receives read-only activity digests and reports via the ObserverReport tool; it never participates in the task.
+     */
+    observer?: string;
+    /**
+     * Supplemental postamble appended (after the harness-owned default) to each activity digest sent to the observer. Blank values are ignored.
+     */
+    observerMessage?: string;
 };
 
 /**
@@ -157,6 +165,10 @@ export declare type BaseHookInput = {
     session_id: string;
     transcript_path: string;
     cwd: string;
+    /**
+     * UUID correlating a user prompt with all subsequent events until the next prompt. Same value emitted on OpenTelemetry events as the `prompt.id` attribute, so hook output can be joined to OTel events at prompt grain. Absent until the first user input of the process lifetime.
+     */
+    prompt_id?: string;
     permission_mode?: string;
     /**
      * Subagent identifier. Present only when the hook fires from within a subagent (e.g., a tool called by an AgentTool worker). Absent for the main thread, even in --agent sessions. Use this field (not agent_type) to distinguish subagent calls from main-thread calls.
@@ -184,6 +196,12 @@ export declare type BaseOutputFormat = {
 /**
  * Permission callback function for controlling tool usage.
  * Called before each tool execution to determine if it should be allowed.
+ *
+ * Return `null` ONLY after the consumer has already sent the
+ * control_response out-of-band (e.g. a signed HTTP POST echoing
+ * `requestId`); the SDK will skip its own transport write. Fail-closed: an
+ * accidental null means no control_response is sent and the tool stays
+ * blocked indefinitely — permission prompts have no park deadline.
  */
 export declare type CanUseTool = (toolName: string, input: Record<string, unknown>, options: {
     /** Signaled if the operation should be aborted. */
@@ -227,7 +245,25 @@ export declare type CanUseTool = (toolName: string, input: Record<string, unknow
     toolUseID: string;
     /** If running within the context of a sub-agent, the sub-agent's ID. */
     agentID?: string;
-}) => Promise<PermissionResult>;
+    /**
+     * The control_request envelope's `request_id`. A control_response sent
+     * out-of-band (e.g. a signed HTTP POST instead of the SDK's WS write)
+     * must echo this value for the worker to match it.
+     */
+    requestId: string;
+    /**
+     * Set when a user-configured ask RULE (permissions.ask) forced this
+     * prompt while the ask carries the tool's own decisionReason. Hosts
+     * making policy on the reason (e.g. auto-deny a safetyCheck) or
+     * running host-side auto-approval should treat asks carrying this
+     * field as rule-forced: the user's stated intent is a human prompt.
+     */
+    matchedAskRule?: {
+        source: string;
+        toolName: string;
+        ruleContent?: string;
+    };
+}) => Promise<PermissionResult | null>;
 
 export declare type ConfigChangeHookInput = BaseHookInput & {
     hook_event_name: 'ConfigChange';
@@ -239,56 +275,6 @@ export declare type ConfigChangeHookInput = BaseHookInput & {
  * Config scope for settings.
  */
 export declare type ConfigScope = 'local' | 'user' | 'project';
-
-/**
- * Structured failure from connectRemoteControl.
- * @alpha
- */
-export declare type ConnectRemoteControlError = {
-    kind: 'conflict' | 'auth' | 'network' | 'unknown';
-    detail: string;
-};
-
-/**
- * Options for connectRemoteControl.
- * @alpha
- */
-export declare type ConnectRemoteControlOptions = {
-    dir: string;
-    /** Override directory sent to backend for env registration. */
-    registrationDir?: string;
-    name?: string;
-    workerType?: string;
-    branch?: string;
-    gitRepoUrl?: string | null;
-    getAccessToken: () => string | undefined;
-    baseUrl: string;
-    orgUUID: string;
-    model: string;
-    /** Reuse env+session across restarts (reads bridge-pointer.json). */
-    perpetual?: boolean;
-    /** SSE high-water mark so reconnect sends from_sequence_num. */
-    initialSSESequenceNum?: number;
-    /** Called on 401; return true after refreshing token to retry. */
-    onAuth401?: (staleAccessToken: string) => Promise<boolean>;
-    /** Called on 409 conflict; return 'takeover' to deregister + retry. */
-    onConflict?: (detail: {
-        machineName: string;
-        message: string;
-    }) => Promise<'takeover' | 'abort'>;
-};
-
-/**
- * Discriminated result from connectRemoteControl.
- * @alpha
- */
-export declare type ConnectRemoteControlResult = {
-    ok: true;
-    handle: RemoteControlHandle;
-} | {
-    ok: false;
-    error: ConnectRemoteControlError;
-};
 
 declare type ControlErrorResponse = {
     subtype: 'error';
@@ -320,6 +306,7 @@ declare type ControlResponse = {
 
 declare namespace coreTypes {
     export {
+        SandboxCredentialsConfig,
         SandboxFilesystemConfig,
         SandboxIgnoreViolations,
         SandboxNetworkConfig,
@@ -341,11 +328,13 @@ declare namespace coreTypes {
         ConfigScope,
         CwdChangedHookInput,
         CwdChangedHookSpecificOutput,
+        DirectoryAddedHookInput,
         ElicitationHookInput,
         ElicitationHookSpecificOutput,
         ElicitationResultHookInput,
         ElicitationResultHookSpecificOutput,
         ExitReason,
+        FastModeDisabledReason,
         FastModeState,
         FileChangedHookInput,
         FileChangedHookSpecificOutput,
@@ -397,11 +386,17 @@ declare namespace coreTypes {
         PreToolUseHookSpecificOutput,
         RewindFilesResult,
         SDKAPIRetryMessage,
+        SDKActiveGoalMessage,
         SDKAssistantMessageError,
         SDKAssistantMessage,
         SDKAuthStatusMessage,
+        SDKBackgroundTasksChangedMessage,
         SDKCommandsChangedMessage,
         SDKCompactBoundaryMessage,
+        SDKContextUsageCategory,
+        SDKContextUsage,
+        SDKControlRequestProgressMessage,
+        SDKConversationResetMessage,
         SDKDeferredToolUse,
         SDKElicitationCompleteMessage,
         SDKFilesPersistedEvent,
@@ -415,6 +410,7 @@ declare namespace coreTypes {
         SDKMessage,
         SDKMirrorErrorMessage,
         SDKModelRefusalFallbackMessage,
+        SDKModelRefusalNoFallbackMessage,
         SDKNotificationMessage,
         SDKPartialAssistantMessage,
         SDKPermissionDenial,
@@ -482,7 +478,8 @@ declare namespace coreTypes {
  * Creates an MCP server instance that can be used with the SDK transport.
  * This allows SDK users to define custom tools that run in the same process.
  *
- * If your SDK MCP calls will run longer than 60s, override CLAUDE_CODE_STREAM_CLOSE_TIMEOUT
+ * Tool calls are bounded by the MCP tool-call timeout — the MCP_TOOL_TIMEOUT
+ * env var (ms), effectively unbounded by default.
  */
 export declare function createSdkMcpServer(_options: CreateSdkMcpServerOptions): McpSdkServerConfigWithInstance;
 
@@ -534,13 +531,25 @@ export declare type CwdChangedHookSpecificOutput = {
  */
 export declare function deleteSession(_sessionId: string, _options?: SessionMutationOptions): Promise<void>;
 
+export declare type DirectoryAddedHookInput = BaseHookInput & {
+    hook_event_name: 'DirectoryAdded';
+    /**
+     * Absolute path of the directory that was added.
+     */
+    directory: string;
+    /**
+     * How the directory was added: "slash_command" for /add-dir, "register_repo_root" for the SDK control_request.
+     */
+    source: 'slash_command' | 'register_repo_root';
+};
+
 /**
  * Effort level for controlling how much thinking/reasoning Claude applies.
  *
  * - `'low'` — Minimal thinking, fastest responses
  * - `'medium'` — Moderate thinking
  * - `'high'` — Deep reasoning (default)
- * - `'xhigh'` — Deeper than high (Fable 5, Opus 4.7+; falls back to `'high'` elsewhere)
+ * - `'xhigh'` — Deeper than high (Fable 5, Opus 4.7+, Sonnet 5; falls back to `'high'` elsewhere)
  * - `'max'` — Maximum effort (select models only)
  */
 export declare type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -618,9 +627,14 @@ export declare type ElicitationResultHookSpecificOutput = {
     content?: Record<string, unknown>;
 };
 
-export declare const EXIT_REASONS: readonly ["clear", "resume", "logout", "prompt_input_exit", "other", "bypass_permissions_disabled"];
+export declare const EXIT_REASONS: readonly ['clear', 'resume', 'logout', 'prompt_input_exit', 'other', 'bypass_permissions_disabled'];
 
 export declare type ExitReason = 'clear' | 'resume' | 'logout' | 'prompt_input_exit' | 'other' | 'bypass_permissions_disabled';
+
+/**
+ * Why fast mode can't serve right now. Absent when nothing blocks it (a request may still choose standard speed). A paused-after-rate-limit run is not here; it rides fast_mode_state as 'cooldown'.
+ */
+export declare type FastModeDisabledReason = 'free' | 'preference' | 'extra_usage_disabled' | 'network_error' | 'unknown' | 'not_first_party' | 'disabled_by_env' | 'model_not_allowed' | 'sdk_opt_in_required' | 'pending';
 
 /**
  * Fast mode state: off, in cooldown after rate limit, or actively enabled.
@@ -801,7 +815,7 @@ export declare type GetSubagentMessagesOptions = {
     sessionStore?: SessionStore;
 };
 
-export declare const HOOK_EVENTS: readonly ["PreToolUse", "PostToolUse", "PostToolUseFailure", "PostToolBatch", "Notification", "UserPromptSubmit", "UserPromptExpansion", "SessionStart", "SessionEnd", "Stop", "StopFailure", "SubagentStart", "SubagentStop", "PreCompact", "PostCompact", "PermissionRequest", "PermissionDenied", "Setup", "TeammateIdle", "TaskCreated", "TaskCompleted", "Elicitation", "ElicitationResult", "ConfigChange", "WorktreeCreate", "WorktreeRemove", "InstructionsLoaded", "CwdChanged", "FileChanged", "MessageDisplay"];
+export declare const HOOK_EVENTS: readonly ['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PostToolBatch', 'Notification', 'UserPromptSubmit', 'UserPromptExpansion', 'SessionStart', 'SessionEnd', 'Stop', 'StopFailure', 'SubagentStart', 'SubagentStop', 'PreCompact', 'PostCompact', 'PermissionRequest', 'PermissionDenied', 'Setup', 'TeammateIdle', 'TaskCreated', 'TaskCompleted', 'Elicitation', 'ElicitationResult', 'ConfigChange', 'WorktreeCreate', 'WorktreeRemove', 'InstructionsLoaded', 'CwdChanged', 'FileChanged', 'DirectoryAdded', 'MessageDisplay'];
 
 /**
  * Hook callback function for responding to events during execution.
@@ -820,9 +834,9 @@ export declare interface HookCallbackMatcher {
     timeout?: number;
 }
 
-export declare type HookEvent = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'PostToolBatch' | 'Notification' | 'UserPromptSubmit' | 'UserPromptExpansion' | 'SessionStart' | 'SessionEnd' | 'Stop' | 'StopFailure' | 'SubagentStart' | 'SubagentStop' | 'PreCompact' | 'PostCompact' | 'PermissionRequest' | 'PermissionDenied' | 'Setup' | 'TeammateIdle' | 'TaskCreated' | 'TaskCompleted' | 'Elicitation' | 'ElicitationResult' | 'ConfigChange' | 'WorktreeCreate' | 'WorktreeRemove' | 'InstructionsLoaded' | 'CwdChanged' | 'FileChanged' | 'MessageDisplay';
+export declare type HookEvent = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'PostToolBatch' | 'Notification' | 'UserPromptSubmit' | 'UserPromptExpansion' | 'SessionStart' | 'SessionEnd' | 'Stop' | 'StopFailure' | 'SubagentStart' | 'SubagentStop' | 'PreCompact' | 'PostCompact' | 'PermissionRequest' | 'PermissionDenied' | 'Setup' | 'TeammateIdle' | 'TaskCreated' | 'TaskCompleted' | 'Elicitation' | 'ElicitationResult' | 'ConfigChange' | 'WorktreeCreate' | 'WorktreeRemove' | 'InstructionsLoaded' | 'CwdChanged' | 'FileChanged' | 'DirectoryAdded' | 'MessageDisplay';
 
-export declare type HookInput = PreToolUseHookInput | PostToolUseHookInput | PostToolUseFailureHookInput | PostToolBatchHookInput | PermissionDeniedHookInput | NotificationHookInput | UserPromptSubmitHookInput | UserPromptExpansionHookInput | SessionStartHookInput | SessionEndHookInput | StopHookInput | StopFailureHookInput | SubagentStartHookInput | SubagentStopHookInput | PreCompactHookInput | PostCompactHookInput | PermissionRequestHookInput | SetupHookInput | TeammateIdleHookInput | TaskCreatedHookInput | TaskCompletedHookInput | ElicitationHookInput | ElicitationResultHookInput | ConfigChangeHookInput | InstructionsLoadedHookInput | WorktreeCreateHookInput | WorktreeRemoveHookInput | CwdChangedHookInput | FileChangedHookInput | MessageDisplayHookInput;
+export declare type HookInput = PreToolUseHookInput | PostToolUseHookInput | PostToolUseFailureHookInput | PostToolBatchHookInput | PermissionDeniedHookInput | NotificationHookInput | UserPromptSubmitHookInput | UserPromptExpansionHookInput | SessionStartHookInput | SessionEndHookInput | StopHookInput | StopFailureHookInput | SubagentStartHookInput | SubagentStopHookInput | PreCompactHookInput | PostCompactHookInput | PermissionRequestHookInput | SetupHookInput | TeammateIdleHookInput | TaskCreatedHookInput | TaskCompletedHookInput | ElicitationHookInput | ElicitationResultHookInput | ConfigChangeHookInput | InstructionsLoadedHookInput | WorktreeCreateHookInput | WorktreeRemoveHookInput | CwdChangedHookInput | FileChangedHookInput | DirectoryAddedHookInput | MessageDisplayHookInput;
 
 export declare type HookJSONOutput = AsyncHookJSONOutput | SyncHookJSONOutput;
 
@@ -865,15 +879,6 @@ export declare type ImportSessionToStoreOptions = {
      * `append()` is called multiple times per session. Default: 500.
      */
     batchSize?: number;
-};
-
-/**
- * A user message typed on claude.ai, extracted from the bridge WS.
- * @alpha
- */
-export declare type InboundPrompt = {
-    content: string | unknown[];
-    uuid?: string;
 };
 
 export declare type InferShape<T extends AnyZodRawShape> = {
@@ -975,6 +980,17 @@ export declare type ListSessionsOptions = {
      */
     includeWorktrees?: boolean;
     /**
+     * Include programmatic/headless sessions (SDK entrypoints `sdk-cli`,
+     * `sdk-ts`, `sdk-py`) and daemon/daemon-worker sessions. Defaults to
+     * `true` for backward compatibility — SDK consumers enumerating their
+     * own sessions see them. IDE session pickers pass `false` for parity
+     * with terminal `/resume`.
+     *
+     * Only applies when reading from the local filesystem; ignored when
+     * `sessionStore` is provided.
+     */
+    includeProgrammatic?: boolean;
+    /**
      * When provided, list sessions from this store instead of the local
      * filesystem. Requires `store.listSessions` to be defined.
      * @alpha
@@ -1027,6 +1043,7 @@ export declare type McpHttpServerConfig = {
      * Per-server tool-call timeout in milliseconds. Overrides the MCP_TOOL_TIMEOUT environment variable for this server. Hard wall-clock limit per call; progress notifications do not extend it. Values below 1000ms are ignored (falls through to MCP_TOOL_TIMEOUT or the default).
      */
     timeout?: number;
+
     /**
      * When true, all tools from this server are always included in the prompt and never deferred behind tool search. Equivalent to setting defer_loading: false on the API. Default: tools are deferred when tool search is enabled. As a side effect this also blocks startup until the server is connected (capped at the standard 5s connect timeout) even though MCP startup is otherwise non-blocking by default, since the tools must be present when the turn-1 prompt is built.
      */
@@ -1141,6 +1158,7 @@ export declare type McpSSEServerConfig = {
      * Per-server tool-call timeout in milliseconds. Overrides the MCP_TOOL_TIMEOUT environment variable for this server. Hard wall-clock limit per call; progress notifications do not extend it. Values below 1000ms are ignored (falls through to MCP_TOOL_TIMEOUT or the default).
      */
     timeout?: number;
+
     /**
      * When true, all tools from this server are always included in the prompt and never deferred behind tool search. Equivalent to setting defer_loading: false on the API. Default: tools are deferred when tool search is enabled. As a side effect this also blocks startup until the server is connected (capped at the standard 5s connect timeout) even though MCP startup is otherwise non-blocking by default, since the tools must be present when the turn-1 prompt is built.
      */
@@ -1211,6 +1229,10 @@ export declare type ModelInfo = {
      */
     value: string;
     /**
+     * Canonical wire model id this row's `value` resolves to (e.g. 'sonnet' → 'claude-sonnet-5'). Lets hosts match a persisted explicit id against the alias row that covers it.
+     */
+    resolvedModel?: string;
+    /**
      * Human-readable display name
      */
     displayName: string;
@@ -1239,6 +1261,7 @@ export declare type ModelInfo = {
      */
     supportsAutoMode?: boolean;
 
+
 };
 
 export declare type ModelUsage = {
@@ -1250,6 +1273,14 @@ export declare type ModelUsage = {
     costUSD: number;
     contextWindow: number;
     maxOutputTokens: number;
+    /**
+     * Canonical model id used for the pricing lookup (e.g. 'claude-opus-4-7'). May differ from the raw model string this entry is keyed by (provider-specific ids, aliases).
+     */
+    canonicalModel?: string;
+    /**
+     * API provider that served this model ('firstParty', 'bedrock', 'vertex', 'foundry', 'anthropicAws', 'anthropicGoogleCloud', 'mantle', 'gateway').
+     */
+    provider?: string;
 };
 
 export declare type NonNullableUsage = {
@@ -1271,20 +1302,44 @@ export declare type NotificationHookSpecificOutput = {
 /**
  * Callback for handling MCP elicitation requests.
  * Called when an MCP server requests user input and no hook handles it.
+ *
+ * Return `null` ONLY after the consumer has already sent the
+ * control_response out-of-band (e.g. a signed HTTP POST echoing
+ * `requestId`); the SDK will skip its own transport write. Same contract as
+ * {@link CanUseTool}. Fail-closed: an accidental null means no response is
+ * sent and the elicitation stays pending until the server times it out.
  */
 export declare type OnElicitation = (request: ElicitationRequest, options: {
     signal: AbortSignal;
-}) => Promise<ElicitationResult>;
+    /**
+     * The control_request envelope's `request_id`. A control_response sent
+     * out-of-band (e.g. a signed HTTP POST instead of the SDK's WS write)
+     * must echo this value for the worker to match it.
+     */
+    requestId: string;
+}) => Promise<ElicitationResult | null>;
 
 /**
  * Callback for handling `request_user_dialog` control requests.
  * Called when the CLI asks the host to render a blocking dialog.
- * If not provided, dialogs are answered as cancelled and the CLI applies
- * each dialog's default behavior.
+ * If not provided, the dialog is left unanswered so a renderer-bearing
+ * client (or the worker's park deadline) can settle it.
+ *
+ * Return `null` ONLY after the consumer has already sent the
+ * control_response out-of-band (e.g. a signed HTTP POST echoing
+ * `requestId`); the SDK will skip its own transport write. Same contract as
+ * {@link CanUseTool}. Fail-closed: an accidental null means no response is
+ * sent and the dialog stays parked until the worker's deadline.
  */
 export declare type OnUserDialog = (request: UserDialogRequest, options: {
     signal: AbortSignal;
-}) => Promise<UserDialogResult>;
+    /**
+     * The control_request envelope's `request_id`. A control_response sent
+     * out-of-band (e.g. a signed HTTP POST instead of the SDK's WS write)
+     * must echo this value for the worker to match it.
+     */
+    requestId: string;
+}) => Promise<UserDialogResult | null>;
 
 /**
  * Options for the query function.
@@ -1473,7 +1528,7 @@ export declare type Options = {
      * Enable beta features. Currently supported:
      * - `'context-1m-2025-08-07'` - Enable 1M token context window (Sonnet 4/4.5 only)
      *
-     * @see https://docs.anthropic.com/en/api/beta-headers
+     * @see https://platform.claude.com/docs/en/api/beta-headers
      */
     betas?: SdkBeta[];
     /**
@@ -1617,7 +1672,7 @@ export declare type Options = {
      *
      * When set, takes precedence over the deprecated `maxThinkingTokens`.
      *
-     * @see https://docs.anthropic.com/en/docs/build-with-claude/adaptive-thinking
+     * @see https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking
      */
     thinking?: ThinkingConfig;
     /**
@@ -1627,10 +1682,10 @@ export declare type Options = {
      * - `'low'` — Minimal thinking, fastest responses
      * - `'medium'` — Moderate thinking
      * - `'high'` — Deep reasoning (default)
-     * - `'xhigh'` — Deeper than high (Fable 5, Opus 4.7+)
-     * - `'max'` — Maximum effort (Fable 5, Opus 4.6+, Sonnet 4.6)
+     * - `'xhigh'` — Deeper than high (Fable 5, Opus 4.7+, Sonnet 5)
+     * - `'max'` — Maximum effort (Fable 5, Opus 4.6+, Sonnet 4.6+)
      *
-     * @see https://docs.anthropic.com/en/docs/build-with-claude/effort
+     * @see https://platform.claude.com/docs/en/build-with-claude/effort
      */
     effort?: EffortLevel;
     /**
@@ -1679,7 +1734,7 @@ export declare type Options = {
     mcpServers?: Record<string, McpServerConfig>;
     /**
      * Claude model to use. Defaults to the CLI default model.
-     * Examples: 'claude-sonnet-4-6', 'claude-opus-4-8', 'claude-fable-5'
+     * Examples: 'claude-sonnet-5', 'claude-opus-4-8', 'claude-fable-5'
      */
     model?: string;
     /**
@@ -1744,7 +1799,6 @@ export declare type Options = {
 
 
 
-
     /**
      * Enable prompt suggestions. When true, the agent emits a `prompt_suggestion`
      * message after each turn with a predicted next user prompt.
@@ -1782,9 +1836,62 @@ export declare type Options = {
     /**
      * When resuming, only resume messages up to and including the message with this UUID.
      * Use with `resume`. This allows you to resume from a specific point in the conversation.
-     * The message ID should be from `SDKAssistantMessage.uuid`.
+     * Accepts any chain-entry UUID — typically `SDKAssistantMessage.uuid`, but
+     * end-turn tool sessions and transcript-only appends need a later entry's
+     * UUID (see `resumeDropsTurn` for the fork-point guidance).
      */
     resumeSessionAt?: string;
+    /**
+     * With `resumeSessionAt`: declares the prompt UUID of the turn this
+     * truncating resume intends to discard. The CLI validates at fork time
+     * that every entry past the `resumeSessionAt` point is attributable to
+     * that turn, and refuses the resume (an `error_during_execution` result
+     * whose message starts with `Resume rejected by --resume-drops-turn:`)
+     * when the discarded range contains anything else — e.g. a queued user
+     * message or task notification the session absorbed mid-turn that the
+     * caller's view of the conversation had not yet observed. Omit to keep
+     * the unvalidated truncation behavior.
+     *
+     * Consumers MUST map a refusal (match on the message prefix above) to
+     * their rewind-recovery path — clear the pending fork target and resume
+     * plainly, keeping the evidence — not retry: the refusal is
+     * deterministic, so re-sending the same fork request fails forever.
+     *
+     * End-turn tool sessions (`outputFormat: {type: 'json_schema'}`, or any
+     * MCP tool using `_meta['claude/endTurn']`): a completed turn there ends
+     * on a successful tool_result carrier — with no trailing assistant
+     * message — followed by a `structured_output` attachment holding the
+     * turn's actual output (the carrier's data is a placeholder). Fork at
+     * the LAST entry of the turn being kept — the `structured_output`
+     * attachment when present, else the carrier — not the last assistant
+     * UUID; `resumeSessionAt` accepts any chain UUID. Forking earlier
+     * leaves the carrier or attachment in the discarded range, and the
+     * validator deliberately refuses: both are the kept turn's own payload,
+     * and dropping either would discard kept-turn output (the attachment is
+     * its sole persisted copy) or leave its tool_use dangling.
+     *
+     * The same fork-past-your-appends rule applies to plain (non-synthetic)
+     * `shouldQuery: false` transcript appends (e.g. CCD bash mode): they
+     * persist as bare user entries, so a fork point that leaves one in the
+     * discarded range refuses. Fork at or after your own last append.
+     *
+     * PRINT/HEADLESS LANE ONLY: the pair is consumed exclusively by the
+     * headless boot path (print-mode CLI, Agent SDK, ProcessTransport). An
+     * interactive `claude --resume` boot and background-job worker boots
+     * ignore both options — the resume loads the full chain with no
+     * truncation, no guard, and no error — so callers must not pass the
+     * pair outside print mode and expect an armed guard (rejecting it on
+     * those lanes is tracked follow-up work).
+     *
+     * General rule subsuming all of the above: fork at the KEPT turn's last
+     * chain entry, whatever it is — `resumeSessionAt` accepts any chain
+     * UUID. This also covers interrupted turns that completed one or more
+     * tools before Esc: the completed (non-error) tool_result in the tail
+     * is kept-turn payload and deliberately refuses at an assistant-UUID
+     * fork point, while the marker / cancel-batch entries after it are
+     * skippable — so fork at the last entry and the refusal never fires.
+     */
+    resumeDropsTurn?: string;
     /**
      * Sandbox settings for command execution isolation.
      *
@@ -1824,7 +1931,7 @@ export declare type Options = {
      * }
      * ```
      *
-     * @see https://docs.anthropic.com/en/docs/claude-code/settings#sandbox-settings
+     * @see https://code.claude.com/docs/en/settings#sandbox-settings
      */
     sandbox?: SandboxSettings;
     /**
@@ -1836,7 +1943,7 @@ export declare type Options = {
      *
      * @example Inline settings object
      * ```typescript
-     * settings: { model: 'claude-sonnet-4-6', permissions: { allow: ['Bash(*)'] } }
+     * settings: { model: 'claude-sonnet-5', permissions: { allow: ['Bash(*)'] } }
      * ```
      *
      * @example Path to settings file
@@ -2024,6 +2131,15 @@ export declare type Options = {
      */
     spawnClaudeCodeProcess?: (options: SpawnOptions) => SpawnedProcess;
 };
+
+/**
+ * Emitted on the same severity:'error' path as the usage-limit bucket, but
+ * the condition is an org policy, not an exhausted limit — consumers route
+ * these to org-disabled presentation, never the usage-limit card.
+ *
+ * @alpha
+ */
+export declare const ORG_POLICY_LIMIT_PREFIXES: readonly ['This service is disabled for your org'];
 
 export declare type OutputFormat = JsonSchemaOutputFormat;
 
@@ -2247,9 +2363,13 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
      */
     /**
      * Interrupt the current query execution. The query will stop processing
-     * and return control to the caller.
+     * and return control to the caller. On CLIs advertising the
+     * `interrupt_receipt_v1` capability (system/init `capabilities`) the
+     * resolved value is the interrupt receipt — `still_queued` uuids of async
+     * user messages that WILL still run unless cancelled first. Older CLIs
+     * resolve to `undefined`.
      */
-    interrupt(): Promise<void>;
+    interrupt(): Promise<SDKControlInterruptResponse | undefined>;
     /**
      * Change the permission mode for the current session.
      * Only available in streaming input mode.
@@ -2257,6 +2377,26 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
      * @param mode - The new permission mode to set
      */
     setPermissionMode(mode: PermissionMode): Promise<void>;
+    /**
+     * Pin (or clear, with mode:null) a per-MCP-server permission-mode
+     * override. Tighten-only: only 'default' | 'auto' | null are accepted;
+     * the override applies only when the session mode would already
+     * auto-allow (bypassPermissions/auto), so it can never widen privilege.
+     * Only available in streaming input mode.
+     *
+     * @param serverName - The MCP server name (must match the name the server
+     *   was registered under)
+     * @param mode - 'default' to force per-action prompts, 'auto' to route
+     *   through the auto-mode classifier, or null to clear the override
+     * @returns An object with an optional `warning` — set when `serverName`
+     *   does not match any currently known MCP server. For a set, the
+     *   override is stored regardless and applies once a server with that
+     *   exact name connects; the warning is informational (typo detection).
+     */
+    setMcpPermissionModeOverride(serverName: string, mode: 'default' | 'auto' | null): Promise<{
+        warning?: string;
+    }>;
+
     /**
      * Change the model used for subsequent responses.
      * Only available in streaming input mode.
@@ -2304,9 +2444,13 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
      *
      * @param settings - A partial settings object to merge into the flag settings.
      * Each top-level key also accepts `null` to clear it from the flag layer.
+     * `effortLevel` additionally accepts `'max'`, which is session-scoped: it
+     * applies for the rest of the session on models that support it and is
+     * never persisted to settings files (the persisted
+     * {@link Settings.effortLevel} excludes it for that reason).
      */
     applyFlagSettings(settings: {
-        [K in keyof Settings]?: Settings[K] | null;
+        [K in keyof Settings]?: K extends 'effortLevel' ? EffortLevel | null : Settings[K] | null;
     }): Promise<void>;
     /**
      * Get the full initialization result, including supported commands, models,
@@ -2315,6 +2459,23 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
      * @returns The complete initialization response
      */
     initializationResult(): Promise<SDKControlInitializeResponse>;
+    /**
+     * Re-send the `initialize` control request to an already-running CLI.
+     *
+     * Use this after a transport gap (e.g. reattaching to a daemon whose
+     * ring buffer evicted frames during a disconnect): the CLI's response
+     * carries any `can_use_tool` / `request_user_dialog` control requests
+     * the loop is still blocked on, and the SDK redelivers them to
+     * `canUseTool` / `onUserDialog`. In-flight request_ids are deduped
+     * SDK-side, but callbacks should be idempotent per request_id since a
+     * request whose response was lost in the gap will be dispatched again.
+     *
+     * Unlike {@link Query.initializationResult}, this always sends a fresh request
+     * rather than returning the cached first-connect result.
+     *
+     * @returns A fresh initialization response
+     */
+    reinitialize(): Promise<SDKControlInitializeResponse>;
     /**
      * Get the list of available skills for the current session.
      *
@@ -2421,6 +2582,7 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
 
 
 
+
     /**
      * Reconnect an MCP server by name.
      * Throws on failure.
@@ -2452,9 +2614,16 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
      * are managed by the CLI subprocess.
      *
      * Note: This only affects servers added dynamically via this method or the SDK.
-     * Servers configured via settings files are not affected.
+     * Servers configured via settings files are not affected. Servers introduced
+     * by plugins are also exempt: they are managed by the plugin system, so
+     * omitting them from the payload does NOT remove them — they keep running
+     * (unless enterprise policy denies the server) and are simply absent from
+     * the result's `removed` list. In particular, `setMcpServers({})` no longer
+     * guarantees a session has zero dynamic MCP surface when plugins are
+     * loaded. Naming a plugin server explicitly in the payload still replaces
+     * it (ownership is preserved CLI-side).
      *
-     * @param servers - Record of server name to configuration. Pass an empty object to remove all dynamic servers.
+     * @param servers - Record of server name to configuration. Pass an empty object to remove all dynamic servers (except plugin-owned ones, which are retained).
      * @returns Information about which servers were added, removed, and any connection errors
      */
     setMcpServers(servers: Record<string, McpServerConfig>): Promise<McpSetServersResult>;
@@ -2606,7 +2775,73 @@ export declare type RewindFilesResult = {
     filesChanged?: string[];
     insertions?: number;
     deletions?: number;
+    /**
+     * Count of tracked files NOT restored or deleted because a symlink, hard link, or other non-regular file was detected at the tracked path, its parent directory no longer resolves to where it pointed when the checkpoint was taken, or its backup could not be safely read. Only populated by a real (non-dryRun) rewind — on a dryRun response the field is never set and the preview counts do not reflect link-safety refusals. Absent or 0 on a real rewind means no link-safety refusals occurred; other per-file failures (for example a missing backup file) are logged and reported in telemetry but are not counted here.
+     */
+    skippedLinks?: number;
 };
+
+export declare type SandboxCredentialsConfig = NonNullable<z.infer<ReturnType<typeof SandboxCredentialsConfigSchema>>>;
+
+declare const SandboxCredentialsConfigSchema: () => z.ZodOptional<z.ZodObject<{
+    files: z.ZodOptional<z.ZodArray<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
+        path: z.ZodString;
+        mode: z.ZodEnum<{
+            deny: "deny";
+            mask: "mask";
+        }>;
+        extract: z.ZodOptional<z.ZodString>;
+        onExtractNoMatch: z.ZodOptional<z.ZodEnum<{
+            deny: "deny";
+            error: "error";
+            warn: "warn";
+        }>>;
+        decode: z.ZodOptional<z.ZodEnum<{
+            jwt: "jwt";
+        }>>;
+        maskClaims: z.ZodOptional<z.ZodArray<z.ZodString>>;
+        maskDuplicates: z.ZodOptional<z.ZodBoolean>;
+        injectHosts: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    }, z.core.$strip>>>>;
+    envVars: z.ZodOptional<z.ZodArray<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
+        name: z.ZodString;
+        mode: z.ZodEnum<{
+            deny: "deny";
+            mask: "mask";
+        }>;
+        extract: z.ZodOptional<z.ZodString>;
+        onExtractNoMatch: z.ZodOptional<z.ZodEnum<{
+            deny: "deny";
+            error: "error";
+            warn: "warn";
+        }>>;
+        decode: z.ZodOptional<z.ZodEnum<{
+            jwt: "jwt";
+        }>>;
+        maskClaims: z.ZodOptional<z.ZodArray<z.ZodString>>;
+        injectHosts: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    }, z.core.$strip>>>>;
+    allowPlaintextInject: z.ZodOptional<z.ZodBoolean>;
+    awsPairs: z.ZodOptional<z.ZodArray<z.ZodObject<{
+        accessKeyIdVar: z.ZodString;
+        secretAccessKeyVar: z.ZodString;
+        sessionTokenVar: z.ZodOptional<z.ZodString>;
+    }, z.core.$strip>>>;
+    sigv4: z.ZodOptional<z.ZodObject<{
+        streaming: z.ZodOptional<z.ZodEnum<{
+            deny: "deny";
+            passthrough: "passthrough";
+        }>>;
+        presigned: z.ZodOptional<z.ZodEnum<{
+            deny: "deny";
+            passthrough: "passthrough";
+        }>>;
+        sigv4a: z.ZodOptional<z.ZodEnum<{
+            deny: "deny";
+            passthrough: "passthrough";
+        }>>;
+    }, z.core.$strip>>;
+}, z.core.$strip>>;
 
 export declare type SandboxFilesystemConfig = NonNullable<z.infer<ReturnType<typeof SandboxFilesystemConfigSchema>>>;
 
@@ -2619,6 +2854,7 @@ declare const SandboxFilesystemConfigSchema: () => z.ZodOptional<z.ZodObject<{
     denyRead: z.ZodOptional<z.ZodArray<z.ZodString>>;
     allowRead: z.ZodOptional<z.ZodArray<z.ZodString>>;
     allowManagedReadPathsOnly: z.ZodOptional<z.ZodBoolean>;
+    disabled: z.ZodOptional<z.ZodBoolean>;
 }, z.core.$strip>>;
 
 export declare type SandboxIgnoreViolations = NonNullable<SandboxSettings['ignoreViolations']>;
@@ -2631,6 +2867,7 @@ export declare type SandboxNetworkConfig = NonNullable<z.infer<ReturnType<typeof
 declare const SandboxNetworkConfigSchema: () => z.ZodOptional<z.ZodObject<{
     allowedDomains: z.ZodOptional<z.ZodArray<z.ZodString>>;
     deniedDomains: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    strictAllowlist: z.ZodOptional<z.ZodBoolean>;
     allowManagedDomainsOnly: z.ZodOptional<z.ZodBoolean>;
     allowUnixSockets: z.ZodOptional<z.ZodArray<z.ZodString>>;
     allowAllUnixSockets: z.ZodOptional<z.ZodBoolean>;
@@ -2657,6 +2894,7 @@ declare const SandboxSettingsSchema: () => z.ZodObject<{
     network: z.ZodOptional<z.ZodObject<{
         allowedDomains: z.ZodOptional<z.ZodArray<z.ZodString>>;
         deniedDomains: z.ZodOptional<z.ZodArray<z.ZodString>>;
+        strictAllowlist: z.ZodOptional<z.ZodBoolean>;
         allowManagedDomainsOnly: z.ZodOptional<z.ZodBoolean>;
         allowUnixSockets: z.ZodOptional<z.ZodArray<z.ZodString>>;
         allowAllUnixSockets: z.ZodOptional<z.ZodBoolean>;
@@ -2675,18 +2913,95 @@ declare const SandboxSettingsSchema: () => z.ZodObject<{
         denyRead: z.ZodOptional<z.ZodArray<z.ZodString>>;
         allowRead: z.ZodOptional<z.ZodArray<z.ZodString>>;
         allowManagedReadPathsOnly: z.ZodOptional<z.ZodBoolean>;
+        disabled: z.ZodOptional<z.ZodBoolean>;
+    }, z.core.$strip>>;
+    credentials: z.ZodOptional<z.ZodObject<{
+        files: z.ZodOptional<z.ZodArray<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
+            path: z.ZodString;
+            mode: z.ZodEnum<{
+                deny: "deny";
+                mask: "mask";
+            }>;
+            extract: z.ZodOptional<z.ZodString>;
+            onExtractNoMatch: z.ZodOptional<z.ZodEnum<{
+                deny: "deny";
+                error: "error";
+                warn: "warn";
+            }>>;
+            decode: z.ZodOptional<z.ZodEnum<{
+                jwt: "jwt";
+            }>>;
+            maskClaims: z.ZodOptional<z.ZodArray<z.ZodString>>;
+            maskDuplicates: z.ZodOptional<z.ZodBoolean>;
+            injectHosts: z.ZodOptional<z.ZodArray<z.ZodString>>;
+        }, z.core.$strip>>>>;
+        envVars: z.ZodOptional<z.ZodArray<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
+            name: z.ZodString;
+            mode: z.ZodEnum<{
+                deny: "deny";
+                mask: "mask";
+            }>;
+            extract: z.ZodOptional<z.ZodString>;
+            onExtractNoMatch: z.ZodOptional<z.ZodEnum<{
+                deny: "deny";
+                error: "error";
+                warn: "warn";
+            }>>;
+            decode: z.ZodOptional<z.ZodEnum<{
+                jwt: "jwt";
+            }>>;
+            maskClaims: z.ZodOptional<z.ZodArray<z.ZodString>>;
+            injectHosts: z.ZodOptional<z.ZodArray<z.ZodString>>;
+        }, z.core.$strip>>>>;
+        allowPlaintextInject: z.ZodOptional<z.ZodBoolean>;
+        awsPairs: z.ZodOptional<z.ZodArray<z.ZodObject<{
+            accessKeyIdVar: z.ZodString;
+            secretAccessKeyVar: z.ZodString;
+            sessionTokenVar: z.ZodOptional<z.ZodString>;
+        }, z.core.$strip>>>;
+        sigv4: z.ZodOptional<z.ZodObject<{
+            streaming: z.ZodOptional<z.ZodEnum<{
+                deny: "deny";
+                passthrough: "passthrough";
+            }>>;
+            presigned: z.ZodOptional<z.ZodEnum<{
+                deny: "deny";
+                passthrough: "passthrough";
+            }>>;
+            sigv4a: z.ZodOptional<z.ZodEnum<{
+                deny: "deny";
+                passthrough: "passthrough";
+            }>>;
+        }, z.core.$strip>>;
     }, z.core.$strip>>;
     ignoreViolations: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodArray<z.ZodString>>>;
     enableWeakerNestedSandbox: z.ZodOptional<z.ZodBoolean>;
     enableWeakerNetworkIsolation: z.ZodOptional<z.ZodBoolean>;
+    allowAppleEvents: z.ZodOptional<z.ZodBoolean>;
     excludedCommands: z.ZodOptional<z.ZodArray<z.ZodString>>;
     ripgrep: z.ZodOptional<z.ZodObject<{
         command: z.ZodString;
         args: z.ZodOptional<z.ZodArray<z.ZodString>>;
     }, z.core.$strip>>;
-    bwrapPath: z.ZodCatch<z.ZodOptional<z.ZodPipe<z.ZodTransform<string, unknown>, z.ZodString>>>;
-    socatPath: z.ZodCatch<z.ZodOptional<z.ZodPipe<z.ZodTransform<string, unknown>, z.ZodString>>>;
+    bwrapPath: z.ZodCatch<z.ZodOptional<z.ZodPipe<z.ZodTransform<string | undefined, unknown>, z.ZodString>>>;
+    socatPath: z.ZodCatch<z.ZodOptional<z.ZodPipe<z.ZodTransform<string | undefined, unknown>, z.ZodString>>>;
 }, z.core.$loose>;
+
+/**
+ * Emitted when the user's /goal Stop hook reports met (clears) or not-yet-met (bumps iterations + last_reason). Any surface with a goal indicator re-renders from this. value is null when the goal is cleared. From internal QueryEvent 'active_goal'.
+ */
+export declare type SDKActiveGoalMessage = {
+    type: 'active_goal';
+    value: {
+        condition: string;
+        iterations: number;
+        set_at: number;
+        tokens_at_start: number;
+        last_reason?: string;
+    } | null;
+    uuid: UUID;
+    session_id: string;
+};
 
 /**
  * Emitted when an API request fails with a retryable error and will be retried after a delay. error_status is null for connection errors (e.g. timeouts) that had no HTTP response.
@@ -2712,9 +3027,17 @@ export declare type SDKAssistantMessage = {
     session_id: string;
     request_id?: string;
     /**
+     * This turn continued the preceding truncated assistant turn inside its trailing signed thinking block (max-output-tokens recovery). Its thinking signatures are cumulative over that preceding thinking-only turn, so a history replayed through the bridge must carry this flag back for the normalizer to keep the run's prefix on the wire. Wrapper-level sibling — never inside `message.content` — so it is not replayed to the model.
+     */
+    resumed_from_incomplete_thinking?: true;
+    /**
      * Wire uuids of previously-delivered messages that this message replaces (refusal-fallback supersede). The list can include tombstoned tool_result frames from the refused leg, not only assistant frames. Evict the named messages on arrival and treat this frame as their canonical replacement. Idempotent with the end-of-turn model_refusal_fallback notice, whose retracted_message_uuids remains the complete audit record for the turn.
      */
     supersedes?: UUID[];
+    /**
+     * True when this assistant message was truncated by an interrupt/abort before the stream completed: stop_reason was never received and the content may end mid-word. Absent on normally completed messages.
+     */
+    aborted?: true;
     /**
      * Subagent type that produced this message.
      */
@@ -2724,8 +3047,15 @@ export declare type SDKAssistantMessage = {
      */
     task_description?: string;
 
+    /**
+     * ISO timestamp of when this content block finished on the originating process. One API assistant turn may produce several assistant messages sharing a message.id, each with its own timestamp. Uses the originating host's clock, so it's for display only; do not order messages by this field. Older emitters omit it; consumers should fall back to receive time.
+     */
+    timestamp?: string;
 
-
+    /**
+     * Structured twin of the /context report, carried on the synthetic assistant message that delivers the markdown table. Present only on /context results from CLIs new enough to attach it; the markdown in message.content remains the canonical fallback. Wrapper-level sibling — never inside `message.content` — so it is not replayed to the model.
+     */
+    context_usage?: SDKContextUsage;
 
 
 
@@ -2750,10 +3080,28 @@ export declare type SDKAuthStatusMessage = {
     session_id: string;
 };
 
+/**
+ * The full set of live background tasks, emitted whenever membership changes (start, completion, kill, a foreground agent being backgrounded). A level signal, unlike the task_started/task_notification edge bookends: consumers that only need 'is background work running' should replace their set with each payload rather than pairing edges, so a missed bookend cannot wedge a stale running indicator. Ordering relative to the bookends for the same transition is unspecified (in practice the level precedes them) and the payload carries ids only, so do not correlate it with the edge stream. The level is per-process: nothing is emitted at startup, so consumers must reset to the empty set whenever the session's CLI process (re)starts and let the next membership change repopulate it.
+ */
+export declare type SDKBackgroundTasksChangedMessage = {
+    type: 'system';
+    subtype: 'background_tasks_changed';
+    /**
+     * Every live background task after the change. REPLACE semantics: swap your set for this payload.
+     */
+    tasks: {
+        task_id: string;
+        task_type: string;
+        description: string;
+    }[];
+    uuid: UUID;
+    session_id: string;
+};
+
 export declare type SdkBeta = 'context-1m-2025-08-07';
 
 /**
- * Fire-and-forget push of the full slash-command list after a mid-session change (e.g. skills discovered dynamically as the agent works in a subdirectory). Clients should REPLACE their cached command list with this payload: supportedCommands() is captured once at initialize and never reflects mid-session changes, so a client re-fetch would return the stale init list.
+ * Fire-and-forget push of the full slash-command list after a mid-session change (e.g. skills discovered dynamically as the agent works in a subdirectory). Clients should REPLACE their cached command list with this payload; supportedCommands() tracks the latest push, so a re-fetch returns the same fresh list.
  */
 export declare type SDKCommandsChangedMessage = {
     type: 'system';
@@ -2770,6 +3118,7 @@ export declare type SDKCompactBoundaryMessage = {
         trigger: 'manual' | 'auto';
         pre_tokens: number;
         post_tokens?: number;
+
         duration_ms?: number;
 
 
@@ -2795,6 +3144,87 @@ export declare type SDKCompactBoundaryMessage = {
 
     uuid: UUID;
     session_id: string;
+};
+
+/**
+ * Structured twin of the /context report — the data a client needs to render the context-usage card without parsing the markdown table. Evolves additively (new optional fields); a breaking reshape would ship as a sibling field, so consumers can trust the fields they know.
+ */
+export declare type SDKContextUsage = {
+    /**
+     * Main-loop model the usage was computed for.
+     */
+    model: string;
+    /**
+     * Estimated tokens in use, unclamped — may exceed raw_max_tokens when over limit.
+     */
+    total_tokens: number;
+    /**
+     * The window usage is measured against: the resolved autocompact window — the model's believed limit, or a smaller compaction-policy window (a configured value, or e.g. the 200K boundary on 1M-window models).
+     */
+    raw_max_tokens: number;
+    /**
+     * Rounded total_tokens / raw_max_tokens, 0-100+.
+     */
+    percentage: number;
+    /**
+     * Present when total_tokens exceeds raw_max_tokens. kind says how the window was resolved, not whether the API will accept the next request: 'hard_limit' means the window is the model's believed limit (the API will refuse past it); 'compaction_window' means a compaction-policy window, which may or may not coincide with the model's hard limit.
+     */
+    over_limit?: {
+        tokens_over: number;
+        kind: 'hard_limit' | 'compaction_window';
+    };
+    categories: SDKContextUsageCategory[];
+    mcp_tools: {
+        /**
+         * Wire name, e.g. "mcp__linear__create_issue".
+         */
+        name: string;
+        server_name: string;
+        tokens: number;
+    }[];
+    memory_files: {
+        path: string;
+        /**
+         * Display label of the memory-file source, e.g. "Project" or "User".
+         */
+        type: string;
+        tokens: number;
+    }[];
+    agents: {
+        agent_type: string;
+        /**
+         * Raw source identifier, e.g. 'projectSettings', 'userSettings', 'plugin'. Built-in agents are excluded by the producer. Display labels are the renderer's concern.
+         */
+        source: string;
+        tokens: number;
+    }[];
+    /**
+     * Omitted when no skills contribute tokens.
+     */
+    skills?: {
+        name: string;
+        /**
+         * Raw source identifier, e.g. 'userSettings', 'plugin', 'syncedSkills'.
+         */
+        source: string;
+        plugin_name?: string;
+        tokens: number;
+    }[];
+};
+
+/**
+ * One row of the /context usage-by-category breakdown. Rows may carry zero tokens; renderers typically hide those.
+ */
+export declare type SDKContextUsageCategory = {
+    /**
+     * Display name of the row as the CLI renders it, e.g. "Messages" or "MCP tools (deferred)". Use `kind` (not this name) to classify the row.
+     */
+    name: string;
+    tokens: number;
+    /**
+     * What the row is: 'used' content occupies the window; 'free' is the remaining window; 'buffer' is the compaction reserve (autocompact or manual); 'deferred' rows are out-of-window tool schemas — listed for awareness, excluded from usage math.
+     */
+    kind: 'used' | 'free' | 'buffer' | 'deferred';
 };
 
 /**
@@ -2975,6 +3405,13 @@ export declare type SDKControlGetContextUsageResponse = {
 };
 
 /**
+ * Read the session's current plan-mode plan. Unlike read_file, the caller does not need to know the plan file's path — the worker resolves its own plan slug. Never creates a plan slug or file.
+ */
+declare type SDKControlGetPlanRequest = {
+    subtype: 'get_plan';
+};
+
+/**
  * Requests the formatted session cost summary (the same text /usage prints in non-interactive mode). Used by the thin-client /usage dialog to show the remote container cost instead of the local $0.00.
  */
 declare type SDKControlGetSessionCostRequest = {
@@ -3072,6 +3509,17 @@ export declare type SDKControlGetUsageResponse = {
              */
             resets_at: string | null;
         } | null;
+        /**
+         * Per-model weekly windows from the server limits[] array, filtered by the overage-included-models allowlist. Additive — present only when the server emits them.
+         */
+        model_scoped?: {
+            /**
+             * Server-supplied label for the model bucket (e.g. 'Fable').
+             */
+            display_name: string;
+            utilization: number | null;
+            resets_at: string | null;
+        }[];
         extra_usage?: {
             is_enabled: boolean;
             monthly_limit: number | null;
@@ -3198,6 +3646,13 @@ export declare type SDKControlGetUsageResponse = {
 };
 
 /**
+ * Requests the workspace git diff for the thin-client /diff dialog. The worker resolves one base ref for both stats and hunks (working tree vs HEAD, falling back to branch-vs-default-merge-base when the tree is clean) and applies the standard caps (5s git timeout, 50 files, 1MB/file).
+ */
+declare type SDKControlGetWorkspaceDiffRequest = {
+    subtype: 'get_workspace_diff';
+};
+
+/**
  * Initializes the SDK session with hooks, MCP servers, and agent configuration.
  */
 declare type SDKControlInitializeRequest = {
@@ -3226,7 +3681,7 @@ declare type SDKControlInitializeRequest = {
      */
     title?: string;
     /**
-     * When provided, only skills whose names match an entry are loaded into the main session system prompt, using the same rules as AgentDefinition.skills: exact name, plugin-qualified name, or ":name" suffix. Omit to load every discovered skill. Applies to the main session only; subagents use AgentDefinition.skills.
+     * When provided, only skills whose names match an entry are loaded into the main session system prompt, matching the exact canonical name (e.g. "my-plugin:my-skill") or a ":name" suffix of it. Display names and aliases do not match. Omit to load every discovered skill. Applies to the main session only; subagents use AgentDefinition.skills, which additionally resolves display names and aliases.
      */
     skills?: string[];
 
@@ -3256,7 +3711,13 @@ export declare type SDKControlInitializeResponse = {
 
 
 
+
+
     fast_mode_state?: coreTypes.FastModeState;
+    fast_mode_disabled_reason?: coreTypes.FastModeDisabledReason;
+
+
+
 
 };
 
@@ -3266,18 +3727,81 @@ export declare type SDKControlInitializeResponse = {
 declare type SDKControlInterruptRequest = {
     subtype: 'interrupt';
 
+    /**
+     * When true, the interrupt also cancels every uuid-stamped main-thread command still in the queue or already dequeued for the imminent turn but not yet reachable by the abort (the first-command prewait window) — the same set the response would otherwise list under `still_queued`. Each is closed with a terminal 'cancelled' lifecycle and listed on the response's `cancelled` field. `still_queued` is always empty. (The isFoldInFlight guard cancel_async_message uses does not apply here: this request also aborts the running turn, so a fold-in-flight uuid is never delivered and is swept with the rest. A fold-in-flight uuid's queued_command attachment may already appear in the aborted turn's transcript if the abort landed after the fold's attachment yield — pre-existing leave-queued semantics; it never runs as its own turn.) Uuid-less commands (task notifications) still in the queue are also dequeued but cannot be listed; a uuid-less command already in the prewait window is unreachable by either leg and still runs. When false or absent, queued commands survive the interrupt and are listed under `still_queued` — the interrupt_receipt_v1 contract is unchanged. A Stop-means-stop-everything client (a remote UI's Stop button) sets this true so one round-trip halts the session; a wrapper that wants per-uuid control leaves it false and follows up with cancel_async_message. Advertised by the `interrupt_cancel_queued_v1` capability on system/init; older CLIs ignore the field and behave as if false.
+     */
+    cancel_queued?: boolean;
 };
 
 /**
- * Invokes an MCP tool via the subprocess MCP client without a model turn. No permission check (control channel is trusted, same as other subtypes). SDK-type MCP servers (config.type === "sdk") are rejected — they are caller-provided, so the caller can invoke them directly without the subprocess round-trip. Result content passes through the same processing as model-turn MCP calls. Session expiry is not retried automatically; callers can mcp_reconnect and retry. UrlElicitationRequired (-32042) tries Elicitation hooks; if no hook resolves, the call errors with the URL in the message — open it out-of-band, then retry mcp_call.
+ * Result of an interrupt operation. Advertised by the interrupt_receipt_v1 capability on system/init; older CLIs send an empty success response with no still_queued field.
+ */
+export declare type SDKControlInterruptResponse = {
+    /**
+     * Uuids of async user messages that survive this interrupt: commands still in the queue, plus any batch already dequeued for the imminent turn but not yet reachable by the abort. These WILL run unless cancelled first (or unless the request set cancel_queued:true, in which case this list is always empty — every uuid-stamped survivor is removed, emitted a terminal `cancelled` synchronously, and listed under `cancelled` instead). Cancellation granularity: uuids still in the queue are individually cancellable via cancel_async_message; once a batch is dequeued and coalesced into one turn, cancelling a NON-representative member uuid is a no-op (its content still runs), while cancelling the batch-representative uuid drops the WHOLE coalesced batch — in both cases the cancel response reports cancelled:false because the message was no longer in the queue. Coverage caveats: only uuid-STAMPED messages appear (a message enqueued without a uuid still runs but is never listed, so [] does not mean "nothing will run"); only main-thread messages are listed (subagent-addressed messages are out of scope); and the list may include internally-enqueued uuids the client never sent (cron triggers, auto-resume continuations) — ignore unknown uuids rather than treating them as an error. Ordering: on a clean interrupt this receipt is written before the interrupted turn result; a turn that crashes during interrupt handling emits its error result on a direct-write path that may precede the receipt. Snapshot is taken synchronously with abort processing — probing the queue after the interrupted result instead always loses the race against the drain loop, which starts the next queued turn immediately.
+     */
+    still_queued: string[];
+    /**
+     * Present only when the request set cancel_queued:true — uuids of main-thread commands cancelled by this interrupt: every survivor that would otherwise have appeared under `still_queued`, including any uuid that was mid-fold at the interrupt instant (this request also aborts, so the fold never delivers it). Each listed uuid has been removed (queue-resident) or marked cancel-pending (the first-command prewait window, closed by the drain loop's backstop) and emits a terminal 'cancelled' lifecycle synchronously at the first such interrupt (a repeat interrupt over the same parked batch re-lists the uuid idempotently without re-emitting); none will run. Same coverage caveats as `still_queued` (uuid-stamped main-thread only; internally-enqueued uuids may appear). Advertised by the `interrupt_cancel_queued_v1` capability.
+     */
+    cancelled?: string[];
+};
+
+/**
+ * Requests the worker's selectable model catalog. Fulfills the caps.modelCatalog capability: in a remote thin-client session the worker's provider, settings cascade, and enforcement policy decide which models the session can run, so the thin client must ask rather than read its own getModelOptions().
+ */
+declare type SDKControlListModelsRequest = {
+    subtype: 'list_models';
+};
+
+/**
+ * Invokes an MCP tool via the subprocess MCP client without a model turn. No permission check (control channel is trusted, same as other subtypes). SDK-type MCP servers (config.type === "sdk") are rejected — they are caller-provided, so the caller can invoke them directly without the subprocess round-trip. Result content passes through the same processing as model-turn MCP calls. Session expiry is not retried automatically; callers can mcp_reconnect and retry. UrlElicitationRequired (-32042) tries Elicitation hooks; if no hook resolves, the call errors with the URL in the message — open it out-of-band, then retry mcp_call. STAGED calls (input_files/output_files declared) additionally stage lane rows in/out around the call — see the input_files describe. Staged failures come back as a success-subtype response whose staging field carries a typed error_code; subtype:error is emitted only when the call could not be attempted at all (server not connected, kill switch, dispatch failure) and means nothing ran. A target server that is not yet connected is brought up on demand: dispatch runs the deferred plugin/MCP startup resolution (the work a first model turn would have done) and waits up to 30s — shortened by expires_at when that is sooner — for the server to connect before answering "MCP server not connected", so a dispatch that races plugin startup (e.g. after an idle-wake reattach) succeeds instead of failing until a turn runs. Standard RPC semantics: a redelivered request_id supersedes the in-flight run (it is aborted and its response suppressed — exactly one response per request_id); conversion is idempotent, so re-running is safe. Cancellable via control_cancel_request.
  */
 declare type SDKControlMcpCallRequest = {
     subtype: 'mcp_call';
     /**
-     * Fully-qualified MCP tool name, e.g. mcp__server__tool_name.
+     * Fully-qualified MCP tool name, e.g. mcp__server__tool_name. Plugin-hosted servers are ordinary MCP servers here — e.g. mcp__plugin_documents_docs__doc_export (server names are normalized: non-[a-zA-Z0-9_-] becomes _).
      */
     tool: string;
+    /**
+     * Tool arguments. When input_files/output_files are declared, any string VALUE that exactly equals "{{in:NAME}}" or "{{out:NAME}}" (whole string, not a substring) is replaced with the worker-chosen absolute path of that named staged file before the call; a token naming no declared file fails the request with staging error_code=tool_error, and every declared output's "{{out:NAME}}" token must appear in arguments (the substituted path is the only way the tool learns where to write, so an unreferenced output fails the request before the tool runs). With no files declared — including expires_at/timeout_ms-only staged calls — passed through unchanged.
+     */
     arguments?: Record<string, unknown>;
+    /**
+     * RFC3339 deadline, REQUIRED when output_files are declared (a stale buffered drain must not overwrite rows written since). Sending expires_at routes the call through the staging engine, same as timeout_ms — the response gains a staging result. UNDELIVERED requests buffer durably and drain after reattach; a drain past this instant is dropped with staging error_code=expired instead of executing stale. Once delivered to a live worker the request is acked immediately and never redelivered — a worker killed mid-run surfaces as a missing response (apply your own deadline), not a later drain. An unparseable value is treated as already expired (fail closed).
+     */
+    expires_at?: string;
+    /**
+     * Tool-execution timeout (staging and collection have their own transport timeouts). Clamped to [1000, 600000]; default 120000. Sending timeout_ms routes the call through the staging engine — so it is always enforced when present and the response carries a staging result; omit it for a plain call. Staged calls are POSIX-worker-only: on a Windows worker any staged-field call fails with a typed staging refusal.
+     */
+    timeout_ms?: number;
+    /**
+     * Declaring input_files or output_files makes this a STAGED call: rows are fetched from the synced-file lane into a private per-request temp dir the WORKER chooses (random, per-UID — the caller never sees or computes paths; it references files via tokens in arguments), the tool runs, and declared outputs are written back as lane rows (durable-at-ack PUT). The response then carries a `staging` result the caller switches on.
+     */
+    input_files?: {
+        /**
+         * Handle referenced from arguments as "{{in:NAME}}". Unique within the request.
+         */
+        name: string;
+        /**
+         * Synced-file lane row to stage, e.g. /working/.cowork/originals/a.docx. A missing row fails with staging error_code=input_missing; the etag actually staged is echoed back in staging.inputs_used.
+         */
+        lane_path: string;
+    }[];
+    output_files?: {
+        /**
+         * Handle referenced from arguments as "{{out:NAME}}" — the tool is told (via the substituted path) where to write; the worker collects from exactly that path. Unique within the request.
+         */
+        name: string;
+        /**
+         * Synced-file lane row to write, e.g. /working/report.cd. Unique within the request (two outputs on one row would self-conflict under CAS). Outputs over the 25 MiB lane cap fail with staging error_code=output_too_large.
+         */
+        lane_path: string;
+        /**
+         * Opaque lane etag the output row must still carry for the write to land (CAS). Omitted = unconditional last-writer-wins (an empty string is rejected, not treated as unconditional). A row that moved since fails that output with staging error_code=output_conflict and the requested bytes are not written. Redelivery of a completed CAS write re-runs and conflicts with its own prior write — treat output_conflict on a retry as possible-prior-success and reconcile by etag.
+         */
+        if_match?: string;
+    }[];
 };
 
 /**
@@ -3330,20 +3854,39 @@ declare type SDKControlPermissionRequest = {
     input: Record<string, unknown>;
     permission_suggestions?: coreTypes.PermissionUpdate[];
     blocked_path?: string;
+    /**
+     * Human-readable reason the ask escalated, for the consent line of the host's dialog. For decision_reason_type "subcommandResults" (compound bash), this is the NESTED safety check's warning text — the wrapper itself has no text — preferring a check that requires manual approval (classifier_approvable false); treat it with the same display/policy care as a "safetyCheck" reason. May carry ANSI escapes; sanitize before rendering.
+     */
     decision_reason?: string;
     /**
-     * Structured discriminator for why auto-mode escalated. Lets SDK hosts make policy (e.g. auto-deny safetyCheck) without parsing decision_reason text. For compound bash commands this is "subcommandResults" even when a safetyCheck is nested inside — check classifier_approvable for that case.
+     * Structured discriminator for why auto-mode escalated. Lets SDK hosts make policy (e.g. auto-deny safetyCheck) without parsing decision_reason text. For compound bash commands this is "subcommandResults" even when a safetyCheck is nested inside — check classifier_approvable for that case, and see decision_reason: for this variant it carries the nested safety check's warning text.
      */
     decision_reason_type?: 'rule' | 'mode' | 'subcommandResults' | 'permissionPromptTool' | 'hook' | 'asyncAgent' | 'sandboxOverride' | 'workingDir' | 'safetyCheck' | 'classifier' | 'other';
     /**
      * Set when a safetyCheck is present anywhere in the decision reason (including nested inside subcommandResults for compound bash). false = at least one safety check requires manual approval (e.g. Windows path bypass, dangerous rm); true = all safety checks MAY be classifier-approved (e.g. sensitive-file paths). Absent when no safetyCheck is involved.
      */
     classifier_approvable?: boolean;
+    /**
+     * True when the dialog must not offer the persistent "don't ask again" row for this ask: accepting it would write a whole-tool allow rule broader than the ask's own verb (PermissionAskDecision.suppressAlwaysAllowRule). Hosts rendering approve options should omit any persistent-rule affordance when set.
+     */
+    suppress_always_allow_rule?: boolean;
+    /**
+     * Set when a user-configured ask RULE (permissions.ask) forced this prompt but the ask carries the tool's own decision_reason — the ask-rule substitution keeps the richer tool-minted ask, so the rule rides here instead of decision_reason_type 'rule'. Hosts making policy on decision_reason_type (e.g. auto-deny safetyCheck) or running host-side auto-approval should treat asks carrying this field as rule-forced: the user's stated intent is a human prompt. Values are producer-authored but render-unsafe like decision_reason; sanitize before display.
+     */
+    matched_ask_rule?: {
+        source: string;
+        tool_name: string;
+        rule_content?: string;
+    };
     title?: string;
     display_name?: string;
     tool_use_id: string;
     agent_id?: string;
     description?: string;
+    /**
+     * True when one-tap Approve/Deny must not be offered: the tool's approval card IS the user-interaction surface (Tool.requiresUserInteraction() — the user responds on the card itself), OR the pending ask is localDisplayOnly (its consent disclosure cannot ride this wire and only the local dialog renders it). Either way the user has to open the session to answer.
+     */
+    requires_user_interaction?: boolean;
 };
 
 /**
@@ -3373,7 +3916,7 @@ export declare type SDKControlReadFileResponse = {
 };
 
 /**
- * Add a directory as a working-directory root and optionally reload CLAUDE.md, skills, and plugins. The directory must resolve to a subdirectory of cwd.
+ * Add a directory as a working-directory root and optionally reload CLAUDE.md, skills, and plugins. The directory must resolve to a strict subdirectory of cwd, or of a directory passed at launch via --add-dir / the SDK additionalDirectories option. A directory that is already a registered working directory (including a duplicate of an earlier request) is denied with an error; the registration pipeline and DirectoryAdded hooks do not re-run.
  */
 declare type SDKControlRegisterRepoRootRequest = {
     subtype: 'register_repo_root';
@@ -3400,6 +3943,10 @@ export declare type SDKControlReloadPluginsResponse = {
         name: string;
         path: string;
         source?: string;
+        /**
+         * The plugin's version as declared in its plugin.json manifest, emitted verbatim (plugin-author-controlled — validate before trusting). Omitted when the manifest declares no version.
+         */
+        version?: string;
     }[];
     mcpServers: coreTypes.McpServerStatus[];
     error_count: number;
@@ -3433,7 +3980,26 @@ export declare type SDKControlRequest = {
     request: SDKControlRequestInner;
 };
 
-declare type SDKControlRequestInner = SDKControlInterruptRequest | SDKControlPermissionRequest | SDKControlInitializeRequest | SDKControlSetPermissionModeRequest | SDKControlSetModelRequest | SDKControlSetMaxThinkingTokensRequest | SDKControlRenameSessionRequest | SDKControlSetColorRequest | SDKControlMcpStatusRequest | SDKControlGetContextUsageRequest | SDKControlGetSessionCostRequest | SDKControlGetUsageRequest | SDKControlGetBinaryVersionRequest | SDKControlMcpCallRequest | SDKControlFileSuggestionsRequest | SDKHookCallbackRequest | SDKControlMcpMessageRequest | SDKControlRewindFilesRequest | SDKControlCancelAsyncMessageRequest | SDKControlReadFileRequest | SDKControlSeedReadStateRequest | SDKControlMcpSetServersRequest | SDKControlRegisterRepoRootRequest | SDKControlReloadPluginsRequest | SDKControlReloadSkillsRequest | SDKControlMcpReconnectRequest | SDKControlMcpToggleRequest | SDKControlChannelEnableRequest | SDKControlEndSessionRequest | SDKControlMcpAuthenticateRequest | SDKControlMcpClearAuthRequest | SDKControlMcpOAuthCallbackUrlRequest | SDKControlClaudeAuthenticateRequest | SDKControlClaudeOAuthCallbackRequest | SDKControlClaudeOAuthWaitForCompletionRequest | SDKControlRemoteControlRequest | SDKControlGenerateSessionTitleRequest | SDKControlSideQuestionRequest | SDKControlUltrareviewLaunchRequest | SDKControlStageFileRequest | SDKControlMessageRatedRequest | SDKControlOAuthTokenRefreshRequest | SDKControlHostAuthTokenRefreshRequest | SDKControlStopTaskRequest | SDKControlBackgroundTasksRequest | SDKControlApplyFlagSettingsRequest | SDKControlGetSettingsRequest | SDKControlElicitationRequest | SDKControlRequestUserDialogRequest | SDKControlSubmitFeedbackRequest;
+declare type SDKControlRequestInner = SDKControlInterruptRequest | SDKControlPermissionRequest | SDKControlInitializeRequest | SDKControlSetPermissionModeRequest | SDKControlSetModelRequest | SDKControlSetMaxThinkingTokensRequest | SDKControlRenameSessionRequest | SDKControlSetColorRequest | SDKControlMcpStatusRequest | SDKControlGetContextUsageRequest | SDKControlGetSessionCostRequest | SDKControlListModelsRequest | SDKControlGetUsageRequest | SDKControlGetBinaryVersionRequest | SDKControlMcpCallRequest | SDKControlFileSuggestionsRequest | SDKHookCallbackRequest | SDKControlMcpMessageRequest | SDKControlRewindFilesRequest | SDKControlCancelAsyncMessageRequest | SDKControlReadFileRequest | SDKControlGetWorkspaceDiffRequest | SDKControlGetPlanRequest | SDKControlSeedReadStateRequest | SDKControlMcpSetServersRequest | SDKControlRegisterRepoRootRequest | SDKControlReloadPluginsRequest | SDKControlReloadSkillsRequest | SDKControlMcpReconnectRequest | SDKControlMcpToggleRequest | SDKControlStopTaskRequest | SDKControlBackgroundTasksRequest | SDKControlApplyFlagSettingsRequest | SDKControlGetSettingsRequest | SDKControlElicitationRequest | SDKControlRequestUserDialogRequest;
+
+/**
+ * Progress for a long-running client-originated control_request (currently only side_question), correlated by request_id. status 'started' means the worker accepted the request and launched the work; 'api_retry' carries the same retry counters as SDKAPIRetryMessage and is present only for that status.
+ */
+export declare type SDKControlRequestProgressMessage = {
+    type: 'system';
+    subtype: 'control_request_progress';
+    /**
+     * request_id of the in-flight control_request this progress belongs to.
+     */
+    request_id: string;
+    status: 'started' | 'api_retry';
+    attempt?: number;
+    max_retries?: number;
+    retry_delay_ms?: number;
+    error_status?: number | null;
+    uuid: UUID;
+    session_id: string;
+};
 
 /**
  * Requests the SDK consumer to render a tool-driven blocking dialog and return the user choice. Used by tools that previously rendered Ink JSX via setToolJSX with an onDone callback.
@@ -3483,11 +4049,11 @@ declare type SDKControlSetColorRequest = {
 };
 
 /**
- * Sets the maximum number of thinking tokens for extended thinking. thinking_display optionally sets the thinking display mode for the rest of the session: a value replaces the session display mode, null clears it back to the API default, and when omitted the display mode from session start (--thinking-display) is kept.
+ * Sets the maximum number of thinking tokens for extended thinking. When max_thinking_tokens is omitted or null, thinking resets to the session default: any mid-session budget override is cleared (back to the spawn-time budget, if one was set), and thinking stays off for sessions that have it disabled. thinking_display optionally sets the thinking display mode for the rest of the session: a value replaces the session display mode, null clears it back to the API default, and when omitted the display mode from session start (--thinking-display) is kept.
  */
 declare type SDKControlSetMaxThinkingTokensRequest = {
     subtype: 'set_max_thinking_tokens';
-    max_thinking_tokens: number | null;
+    max_thinking_tokens?: number | null;
     thinking_display?: ('summarized' | 'omitted') | null;
 };
 
@@ -3496,7 +4062,11 @@ declare type SDKControlSetMaxThinkingTokensRequest = {
  */
 declare type SDKControlSetModelRequest = {
     subtype: 'set_model';
-    model?: string;
+    /**
+     * Model to switch to. Omitted, null, or 'default' resets to the session default model.
+     */
+    model?: string | null;
+
 };
 
 /**
@@ -3517,6 +4087,16 @@ declare type SDKControlSetPermissionModeRequest = {
 declare type SDKControlStopTaskRequest = {
     subtype: 'stop_task';
     task_id: string;
+};
+
+/**
+ * Emitted by /clear, plan-mode exit, and fresh-session flows. The surface should mount a fresh transcript under new_conversation_id and reset any cached session title. From internal QueryEvent 'conversation_reset'.
+ */
+export declare type SDKConversationResetMessage = {
+    type: 'conversation_reset';
+    new_conversation_id: UUID;
+    uuid: UUID;
+    session_id: string;
 };
 
 export declare type SDKDeferredToolUse = {
@@ -3690,10 +4270,10 @@ export declare type SDKMemoryRecallMessage = {
     session_id: string;
 };
 
-export declare type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKAPIRetryMessage | SDKModelRefusalFallbackMessage | SDKLocalCommandOutputMessage | SDKHookStartedMessage | SDKHookProgressMessage | SDKHookResponseMessage | SDKPluginInstallMessage | SDKToolProgressMessage | SDKAuthStatusMessage | SDKTaskNotificationMessage | SDKTaskStartedMessage | SDKTaskUpdatedMessage | SDKTaskProgressMessage | SDKThinkingTokensMessage | SDKSessionStateChangedMessage | SDKWorkerShuttingDownMessage | SDKCommandsChangedMessage | SDKNotificationMessage | SDKFilesPersistedEvent | SDKToolUseSummaryMessage | SDKMemoryRecallMessage | SDKRateLimitEvent | SDKElicitationCompleteMessage | SDKPermissionDeniedMessage | SDKPromptSuggestionMessage | SDKMirrorErrorMessage | SDKInformationalMessage;
+export declare type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKAPIRetryMessage | SDKControlRequestProgressMessage | SDKModelRefusalFallbackMessage | SDKModelRefusalNoFallbackMessage | SDKLocalCommandOutputMessage | SDKHookStartedMessage | SDKHookProgressMessage | SDKHookResponseMessage | SDKPluginInstallMessage | SDKToolProgressMessage | SDKAuthStatusMessage | SDKTaskNotificationMessage | SDKTaskStartedMessage | SDKTaskUpdatedMessage | SDKTaskProgressMessage | SDKBackgroundTasksChangedMessage | SDKThinkingTokensMessage | SDKSessionStateChangedMessage | SDKWorkerShuttingDownMessage | SDKCommandsChangedMessage | SDKNotificationMessage | SDKFilesPersistedEvent | SDKToolUseSummaryMessage | SDKMemoryRecallMessage | SDKRateLimitEvent | SDKElicitationCompleteMessage | SDKPermissionDeniedMessage | SDKPromptSuggestionMessage | SDKMirrorErrorMessage | SDKInformationalMessage | SDKConversationResetMessage;
 
 /**
- * Provenance of a user-role message (peer session, team lead, channel). Absent or `human` means keyboard input from the user.
+ * Provenance of a user-role message (peer session, team lead, channel). A host wrapping keyboard input must stamp {kind:'human'} explicitly — absent origin is treated as unattributed and fails closed at strict isHuman() trust gates.
  */
 export declare type SDKMessageOrigin = {
     kind: 'human';
@@ -3703,18 +4283,45 @@ export declare type SDKMessageOrigin = {
 } | {
     kind: 'peer';
     from: string;
+    /**
+     * Sender display name, normalized by the harness: Unicode control, format, surrogate, and line/paragraph-separator code points stripped (categories Cc/Cf/Cs/Zl/Zp — covers bidi controls, zero-width characters, and tag characters), trimmed, at most 64 code points (+ ellipsis, never splitting a surrogate pair). Sender-asserted display text (the addressable identity is `from`) — render it as reported speech, but no client-side character sanitization is needed. Absent when the wire is not exactly one harness-formed envelope and on messages from older senders.
+     */
     name?: string;
+    /**
+     * The sender's host-openable session id (the envelope's `from-session` attribute — e.g. a desktop `local_<uuid>` or a CCR `session_`/`ses_` id), set by the sender's host so a receiving UI can link this message back to the sending session. Sender-asserted like `from`: a navigation target only, never authority. Absent when the sender's host provides none and on messages from older senders.
+     */
+    fromSession?: string;
 
     /**
      * Task id of the in-process background subagent that sent this message, stamped by the harness from the sending loop (never from tool input). Absent for cross-session peers.
      */
     senderTaskId?: string;
+    /**
+     * Decoded message body with the peer envelope stripped — byte-exact with what the model sees. Present only when the turn is exactly one harness-formed envelope (or an in-process agent message); render this instead of re-parsing the message text.
+     */
+    body?: string;
+    /**
+     * Kernel-verified pid of the process that connected to this session's cross-session messaging socket, read from the connection (SO_PEERCRED / LOCAL_PEERPID) — never from the payload. This identifies the CONNECTING process, which for relayed traffic (e.g. a daemon forwarding on another session's behalf) is the relay, not the message's author. Key sender identity on this, never on `from`: `from` is sender-authored and kept only for reply routing, so it is forgeable by any same-user process. Absent when unverifiable (Windows, non-UDS ingress) — never a wrong value. Pids are recyclable: provenance, not an authentication token.
+     */
+    verifiedPeerPid?: number;
 } | {
     kind: 'task-notification';
+    /**
+     * Present when the delivery is the fired stored prompt of a scheduled task/routine ('scheduled-trigger', stamped from server-asserted provenance; the schedule attests storage, not authorship), or a coordinator co-member SendMessage delivery ('peer-send-message': model-authored text from another of the same user's sessions, verified by the server-stamped receiver co-membership — task-notification for prompt authority, but distinguishable so the receive-side crossSessionInbound setting can apply to it). The harness frames a scheduled-trigger delivery as the session's assigned task instead of the generic background-notification frame. Absent on webhook, PR-steward, plugin, and background-event deliveries.
+     */
+    subkind?: 'scheduled-trigger' | 'peer-send-message';
 } | {
     kind: 'coordinator';
 } | {
+    kind: 'unclassified';
+} | {
+    kind: 'observer';
+    from: string;
+    senderTaskId: string;
+} | {
     kind: 'auto-continuation';
+} | {
+    kind: 'observer-activity';
 };
 
 /**
@@ -3734,28 +4341,52 @@ export declare type SDKMirrorErrorMessage = {
 };
 
 /**
- * Emitted when the primary model ends the stream with stop_reason "refusal" and the turn is retried once on a fallback model with the swap made persistent for the session (direction: "retry"). "revert" and "sticky" are retained in the enum for SDK-consumer compat and are no longer emitted.
+ * Emitted when the primary model ends the stream with stop_reason "refusal" and the turn is retried once on a fallback model (direction: "retry"). When `scope` is "session" (or absent — older CLIs), the swap is made persistent for the session; when `scope` is "local", only that subagent/side-question response came from the fallback model and the session model is unchanged. "revert" and "sticky" are retained in the enum for SDK-consumer compat and are no longer emitted.
  */
 export declare type SDKModelRefusalFallbackMessage = {
     type: 'system';
     subtype: 'model_refusal_fallback';
     trigger: 'refusal';
     direction: 'retry' | 'revert' | 'sticky';
+    /**
+     * 'session': the main thread fell back and the session model is swapped. 'local': a subagent / side-question (/btw) / background fork fell back — only that response came from the fallback model and the session model is unchanged. Absent from older CLIs (treat as 'session').
+     */
+    scope?: 'session' | 'local';
     original_model: string;
     fallback_model: string;
     request_id: string | null;
     /**
-     * stop_details.category from the refused API response ("cyber", "bio", …). Open string — new categories ship on the wire ahead of schema updates. null when the response carried no category (normal, not an error). Absent when emitted by an older CLI.
+     * The refusal category ('cyber', 'bio', …): stop_details.category from the refused API response (client lane), or the fallback block's server-gated trigger.category (server lane). Open string — new categories ship on the wire ahead of schema updates. null when neither source carried a category (normal, not an error). Absent when emitted by an older CLI.
      */
     api_refusal_category?: string | null;
     /**
-     * stop_details.explanation from the refused API response. Unstable human prose — display only, never parse. null/absent under the same rules as api_refusal_category.
+     * stop_details.explanation from the refused API response (client lane only — the server-lane trigger carries no explanation). Unstable human prose — display only, never parse. null/absent when the response carried none, and always null on server-lane banners.
      */
     api_refusal_explanation?: string | null;
     /**
      * Wire uuids of the messages this fallback retracted — the refused partial as the consumer received it (one uuid per normalized SDK message; multi-block messages carry per-block derived uuids) plus any tombstoned tool_results. Emitted AFTER the retraction, so this is a resolution-time eviction signal: remove these messages from transcript state on receipt. Eviction is idempotent — unknown or already-removed uuids are a no-op. Absent when emitted by an older CLI.
      */
     retracted_message_uuids?: string[];
+    /**
+     * UUID of the user message the refused request was for — the rewind target and composer prefill for edit-and-retry. This is the message's own uuid as delivered on the replay ack (not a per-block normalized uuid). null when the refused turn was not human-authored (e.g. a background task notification or auto-continuation — nothing to edit-and-retry) or otherwise cannot be identified; absent from older CLIs.
+     */
+    refused_user_message_uuid?: string | null;
+    content: string;
+    uuid: UUID;
+    session_id: string;
+};
+
+/**
+ * Emitted when the model ends the stream with stop_reason "refusal" and no retry runs: no fallback model is configured, or per-category routing declined the retry (the mapped fallback target is unresolvable, or CLAUDE_CODE_REFUSAL_FALLBACK_CATCH_ALL is explicitly disabled and the refusal category has no fallback map entry). The structured counterpart to detecting stop_reason "refusal" on the assistant error frame. Not emitted when the retry ran or the user declined the retry dialog (model_refusal_fallback covers the retry case). Absent from older CLIs.
+ */
+export declare type SDKModelRefusalNoFallbackMessage = {
+    type: 'system';
+    subtype: 'model_refusal_no_fallback';
+    original_model: string;
+    request_id: string | null;
+    api_refusal_category?: string | null;
+    api_refusal_explanation?: string | null;
+    refused_user_message_uuid?: string | null;
     content: string;
     uuid: UUID;
     session_id: string;
@@ -3792,7 +4423,7 @@ export declare type SDKPermissionDenial = {
 };
 
 /**
- * Emitted when a tool call is auto-denied without an interactive permission prompt (e.g. auto-mode classifier, dontAsk mode, headless-agent auto-deny, or a deny rule). The 'ask' path surfaces via a can_use_tool control_request; this event covers the 'deny' short-circuit in canUseTool so SDK hosts can render the denial instead of only seeing an is_error tool_result. PreToolUse hook denies bypass canUseTool and are not covered here.
+ * Emitted when a tool call is auto-denied without an interactive permission prompt (e.g. auto-mode classifier, dontAsk mode, headless-agent auto-deny, or a deny rule). With a permission prompt surface (stdio/SDK canUseTool), the 'ask' path surfaces via a can_use_tool control_request and this event covers the 'deny' short-circuit. Without one (bare -p / SDK query() with no canUseTool), 'ask' decisions are terminal, so this event also covers those implicit denials. Best-effort advisory: in rare races a denial can book without a frame or a frame can lack a booking twin — result.permission_denials is the authoritative record. Denials that resolve before canUseTool runs — PreToolUse hook denies, and deny-rule overrides of hook allow/ask decisions — are not covered here, and neither is the MCP --permission-prompt-tool surface (the prompt tool is the host there).
  */
 export declare type SDKPermissionDeniedMessage = {
     type: 'system';
@@ -3879,7 +4510,7 @@ export declare type SDKRateLimitEvent = {
 export declare type SDKRateLimitInfo = {
     status: 'allowed' | 'allowed_warning' | 'rejected';
     resetsAt?: number;
-    rateLimitType?: 'five_hour' | 'seven_day' | 'seven_day_opus' | 'seven_day_sonnet' | 'overage';
+    rateLimitType?: 'five_hour' | 'seven_day' | 'seven_day_opus' | 'seven_day_sonnet' | 'seven_day_overage_included' | 'overage';
     utilization?: number;
     overageStatus?: 'allowed' | 'allowed_warning' | 'rejected';
     overageResetsAt?: number;
@@ -3887,6 +4518,12 @@ export declare type SDKRateLimitInfo = {
     isUsingOverage?: boolean;
     overageInUse?: boolean;
     surpassedThreshold?: number;
+
+
+
+    errorCode?: 'credits_required';
+    canUserPurchaseCredits?: boolean;
+    hasChargeableSavedPaymentMethod?: boolean;
 };
 
 export declare type SDKResultError = {
@@ -3897,13 +4534,23 @@ export declare type SDKResultError = {
     is_error: boolean;
     num_turns: number;
     stop_reason: string | null;
+    /**
+     * Cumulative estimated cost in USD for this query() call, covering the same query-pipeline calls as modelUsage and sharing its lifecycle: cumulative across turns in streaming-input sessions — each result carries the running total so far, so read the latest result rather than summing across results. Crash/startup-error results may carry zeroed values, resumed sessions start fresh, and a mid-session /clear resets the running total. An estimate, not a billing statement.
+     */
     total_cost_usd: number;
+    /**
+     * MAIN AGENT LOOP ONLY — excludes Task subagent, sidechain, and auxiliary model calls, and is per-turn in streaming-input sessions. Prefer modelUsage for token/cost accounting.
+     */
     usage: NonNullableUsage;
+    /**
+     * Per-model totals for every model call made through the query pipeline during this query() call — main loop, Task subagents, sidechains, and internal calls such as compaction and Workflow agents. Cumulative across turns in streaming-input sessions: each result carries the running total so far, so read the latest result rather than summing across results. Internal helper calls outside the query pipeline (e.g. the permission classifier, token-count probes) are excluded; crash/startup-error results may carry zeroed usage, resumed sessions start fresh, and a mid-session /clear resets the running total. The correct field for token/cost accounting; treat it as an estimate, not a billing statement.
+     */
     modelUsage: Record<string, ModelUsage>;
     permission_denials: SDKPermissionDenial[];
     errors: string[];
     terminal_reason?: TerminalReason;
     fast_mode_state?: FastModeState;
+    fast_mode_disabled_reason?: FastModeDisabledReason;
     origin?: SDKMessageOrigin;
     uuid: UUID;
     session_id: string;
@@ -3919,21 +4566,34 @@ export declare type SDKResultSuccess = {
     ttft_ms?: number;
     ttft_stream_ms?: number;
     time_to_request_ms?: number;
+    user_message_uuid?: string;
+    request_sent_wall_ms?: number;
     time_to_request_from_spawn_ms?: number;
     warm_spare_claimed?: boolean;
+    time_origin_ms?: number;
     is_error: boolean;
     api_error_status?: number | null;
     num_turns: number;
     result: string;
     stop_reason: string | null;
+    /**
+     * Cumulative estimated cost in USD for this query() call, covering the same query-pipeline calls as modelUsage and sharing its lifecycle: cumulative across turns in streaming-input sessions — each result carries the running total so far, so read the latest result rather than summing across results. Crash/startup-error results may carry zeroed values, resumed sessions start fresh, and a mid-session /clear resets the running total. An estimate, not a billing statement.
+     */
     total_cost_usd: number;
+    /**
+     * MAIN AGENT LOOP ONLY — excludes Task subagent, sidechain, and auxiliary model calls, and is per-turn in streaming-input sessions. Prefer modelUsage for token/cost accounting.
+     */
     usage: NonNullableUsage;
+    /**
+     * Per-model totals for every model call made through the query pipeline during this query() call — main loop, Task subagents, sidechains, and internal calls such as compaction and Workflow agents. Cumulative across turns in streaming-input sessions: each result carries the running total so far, so read the latest result rather than summing across results. Internal helper calls outside the query pipeline (e.g. the permission classifier, token-count probes) are excluded; crash/startup-error results may carry zeroed usage, resumed sessions start fresh, and a mid-session /clear resets the running total. The correct field for token/cost accounting; treat it as an estimate, not a billing statement.
+     */
     modelUsage: Record<string, ModelUsage>;
     permission_denials: SDKPermissionDenial[];
     structured_output?: unknown;
     deferred_tool_use?: SDKDeferredToolUse;
     terminal_reason?: TerminalReason;
     fast_mode_state?: FastModeState;
+    fast_mode_disabled_reason?: FastModeDisabledReason;
     origin?: SDKMessageOrigin;
     uuid: UUID;
     session_id: string;
@@ -3952,7 +4612,7 @@ export declare type SDKSessionInfo = {
      */
     summary: string;
     /**
-     * Last modified time in milliseconds since epoch.
+     * Last modified time in integer milliseconds since epoch.
      */
     lastModified: number;
     /**
@@ -3980,7 +4640,7 @@ export declare type SDKSessionInfo = {
      */
     tag?: string;
     /**
-     * Creation time in milliseconds since epoch, extracted from the first entry's timestamp.
+     * Creation time in integer milliseconds since epoch, extracted from the first entry's timestamp.
      */
     createdAt?: number;
 };
@@ -4046,16 +4706,30 @@ export declare type SDKSystemMessage = {
      */
     permissionMode: PermissionMode;
     slash_commands: string[];
+    /**
+     * Subset of slash_commands whose UX is bound to the local terminal (e.g. exit, statusline). Phone/remote UIs should hide these from command menus; desktop surfaces may keep them. Present only when non-empty; absent on CLIs that predate the field, and on sessions where no advertised command carries the tag.
+     */
+    terminal_slash_commands?: string[];
     output_style: string;
     skills: string[];
     plugins: {
         name: string;
         path: string;
 
+        /**
+         * The plugin's version as declared in its plugin.json manifest, emitted verbatim (plugin-author-controlled — validate before trusting). Omitted when the manifest declares no version.
+         */
+        version?: string;
     }[];
 
 
+
     fast_mode_state?: FastModeState;
+    fast_mode_disabled_reason?: FastModeDisabledReason;
+    /**
+     * Protocol capabilities this CLI supports, so SDK consumers can feature-detect instead of version-sniffing. Open set — ignore unknown values; check each capability for exactly the behavior you use. 'interrupt_receipt_v1' = the interrupt control_response success payload carries still_queued (uuids of async user messages that survive the interrupt). 'interrupt_cancel_queued_v1' = the interrupt control_request honors cancel_queued:true (queued and pending-dispatch commands are cancelled alongside the abort, listed on the response's cancelled field; still_queued is always empty — including any uuid that was mid-fold at the interrupt instant, since this request also aborts and the fold never delivers it). 'queued_notifications' = the CLI accepts inbound queued_notification stream messages and drains them via ReadNotifications (the CCR backend reads this from the persisted init event to decide whether it may send them). Absent on older CLIs.
+     */
+    capabilities?: string[];
 
 
 
@@ -4167,6 +4841,16 @@ export declare type SDKToolProgressMessage = {
     task_id?: string;
     uuid: UUID;
     session_id: string;
+    heartbeat?: boolean;
+    subagent_type?: string;
+    subagent_retry?: {
+        agent_id: string;
+        attempt: number;
+        max_retries: number;
+        retry_delay_ms: number;
+        error_status: number | null;
+        error_category: string;
+    };
 };
 
 export declare type SDKToolUseSummaryMessage = {
@@ -4183,6 +4867,9 @@ export declare type SDKUserMessage = {
     message: MessageParam;
     parent_tool_use_id: string | null;
     isSynthetic?: boolean;
+    /**
+     * Structured tool output — the tool's full Output object, not the string content sent to the model. The shape is per-tool, keyed by the matching tool_use block's name (see the *Output types in toolTypes); MCP and dynamic tools carry their own shapes, so the field stays unknown-typed. For the Agent/Task tool the completed shape is the subagent's final report without the model-directed agentId/usage trailer, plus run totals — render from it instead of parsing the tool_result text.
+     */
     tool_use_result?: unknown;
     priority?: 'now' | 'next' | 'later';
     origin?: SDKMessageOrigin;
@@ -4196,6 +4883,7 @@ export declare type SDKUserMessage = {
      * ISO timestamp when the message was created on the originating process. Older emitters omit it; consumers should fall back to receive time.
      */
     timestamp?: string;
+
 
 
 
@@ -4225,6 +4913,9 @@ export declare type SDKUserMessageReplay = {
     message: MessageParam;
     parent_tool_use_id: string | null;
     isSynthetic?: boolean;
+    /**
+     * Structured tool output — the tool's full Output object, not the string content sent to the model. The shape is per-tool, keyed by the matching tool_use block's name (see the *Output types in toolTypes); MCP and dynamic tools carry their own shapes, so the field stays unknown-typed. For the Agent/Task tool the completed shape is the subagent's final report without the model-directed agentId/usage trailer, plus run totals — render from it instead of parsing the tool_result text.
+     */
     tool_use_result?: unknown;
     priority?: 'now' | 'next' | 'later';
     origin?: SDKMessageOrigin;
@@ -4238,6 +4929,7 @@ export declare type SDKUserMessageReplay = {
      * ISO timestamp when the message was created on the originating process. Older emitters omit it; consumers should fall back to receive time.
      */
     timestamp?: string;
+
 
 
 
@@ -4320,6 +5012,13 @@ export declare type SessionMessage = {
     session_id: string;
     message: unknown;
     parent_tool_use_id: string | null;
+    /**
+     * agentId of the subagent that spawned this subagent, or null when this
+     * message belongs to a depth-1 subagent (spawned by the main loop) or to
+     * the main session itself. Sessions whose metadata lacks the field report
+     * null.
+     */
+    parent_agent_id: string | null;
 };
 
 /**
@@ -4342,7 +5041,7 @@ export declare type SessionMutationOptions = {
 
 export declare type SessionStartHookInput = BaseHookInput & {
     hook_event_name: 'SessionStart';
-    source: 'startup' | 'resume' | 'clear' | 'compact';
+    source: 'startup' | 'resume' | 'clear' | 'compact' | 'fork';
     agent_type?: string;
     model?: string;
     session_title?: string;
@@ -4411,7 +5110,8 @@ export declare type SessionStore = {
     load(key: SessionKey): Promise<SessionStoreEntry[] | null>;
     /**
      * List sessions for a projectKey. Returns IDs + modification times.
-     * `mtime` is Unix epoch milliseconds; adapters without native modification
+     * `mtime` is integer Unix epoch milliseconds (floor fractional sources);
+     * adapters without native modification
      * time (e.g. Redis) must maintain their own index. Result order is
      * unspecified — the SDK sorts by mtime descending.
      * Optional — if undefined, listSessions() with a sessionStore throws.
@@ -4545,6 +5245,10 @@ export declare interface Settings {
      */
     gcpAuthRefresh?: string;
     /**
+     * Corporate launcher argv prefix for the background-agent supervisor, the sessions and workers it hosts, and the other covered background processes listed in the Claude Code corporate-launcher documentation. Equivalent to the CLAUDE_CODE_PROCESS_WRAPPER environment variable, which takes precedence when set. Honored from managed settings, a --settings/SDK-supplied settings file, and user settings, in that precedence order; project and local settings are ignored.
+     */
+    processWrapper?: string;
+    /**
      * Executable that computes managed settings at startup. Honored only from admin-controlled policy sources.
      */
     policyHelper?: {
@@ -4555,6 +5259,7 @@ export declare interface Settings {
         timeoutMs?: number;
         refreshIntervalMs?: 0 | number;
     };
+
     /**
      * Custom file suggestion configuration for \@ mentions
      */
@@ -4602,6 +5307,11 @@ export declare interface Settings {
          * Attribution text for pull request descriptions. Empty string hides attribution.
          */
         pr?: string;
+        /**
+         * Whether to append the claude.ai session link to commits and PRs created from web or Remote Control sessions (default: true). Set to false to omit the Claude-Session trailer and PR-body link.
+         */
+        sessionUrl?: boolean;
+        [k: string]: unknown;
     };
     /**
      * Deprecated: Use attribution instead. Whether to include Claude's co-authored by attribution in commits and PRs (defaults to true)
@@ -4628,7 +5338,7 @@ export declare interface Settings {
          */
         ask?: string[];
         /**
-         * Default permission mode when Claude Code needs access
+         * Default permission mode when Claude Code needs access ('manual' is accepted as an alias for 'default')
          */
         defaultMode?: 'acceptEdits' | 'auto' | 'bypassPermissions' | 'default' | 'dontAsk' | 'plan';
         /**
@@ -4675,6 +5385,10 @@ export declare interface Settings {
      * List of rejected MCP servers from .mcp.json
      */
     disabledMcpjsonServers?: string[];
+    /**
+     * When true in any settings source, claude.ai MCP cloud connectors are not auto-fetched or connected. Only gates auto-fetched connectors — a claudeai-proxy server passed explicitly (e.g. via --mcp-config or the SDK mcpServers option) still follows the normal MCP config trust flow. Any-source-true wins: a project can opt out, but a project-level false cannot override a user-level true.
+     */
+    disableClaudeAiConnectors?: boolean;
     /**
      * Per-skill listing overrides keyed by skill name. "name-only" lists the skill without its description; "user-invocable-only" hides it from the model but keeps /name; "off" hides it from both. Absent = on.
      */
@@ -4796,7 +5510,7 @@ export declare interface Settings {
                  */
                 timeout?: number;
                 /**
-                 * Model to use for this prompt hook (e.g., "claude-sonnet-4-6"). If not specified, uses the default small fast model.
+                 * Model to use for this prompt hook (e.g., "claude-sonnet-5"). If not specified, uses the default small fast model.
                  */
                 model?: string;
                 /**
@@ -4829,7 +5543,7 @@ export declare interface Settings {
                  */
                 timeout?: number;
                 /**
-                 * Model to use for this agent hook (e.g., "claude-sonnet-4-6"). If not specified, uses Haiku.
+                 * Model to use for this agent hook (e.g., "claude-sonnet-5"). If not specified, uses Haiku.
                  */
                 model?: string;
                 /**
@@ -4955,9 +5669,17 @@ export declare interface Settings {
      */
     disableArtifact?: boolean;
     /**
+     * Enable or disable the Artifact tool for this user. Unset defaults to enabled once the feature is available.
+     */
+    enableArtifact?: boolean;
+    /**
      * Enable or disable the Workflows feature for this user. Unset = default by plan once the feature is available.
      */
     enableWorkflows?: boolean;
+    /**
+     * Advisory size guideline for the dynamic workflows Claude writes: "small" aims for fewer than 5 agents, "medium" (the default) fewer than 15, "large" fewer than 50, and "unrestricted" sends no guideline. A value here — including from managed settings — takes precedence over the "Dynamic workflow size" choice in /config, and that /config row is hidden while a settings file provides the key. This is a guideline, not an enforced limit.
+     */
+    workflowSizeGuideline?: 'unrestricted' | 'small' | 'medium' | 'large';
     /**
      * Enable the "ultracode" keyword trigger: including the keyword in a prompt opts that turn into the Workflow tool. Set to false to disable the trigger. Default: true.
      */
@@ -4970,6 +5692,10 @@ export declare interface Settings {
      * Default shell for input-box ! commands. Defaults to 'bash' on all platforms (no Windows auto-flip).
      */
     defaultShell?: 'bash' | 'powershell';
+    /**
+     * Whether Claude responds after an input-box ! bash command runs. Set to false to add the command output to context without a response. Default: true.
+     */
+    respondToBashCommands?: boolean;
     /**
      * When true (and set in managed settings), only hooks from managed settings run. User, project, and local hooks are ignored.
      */
@@ -5084,7 +5810,7 @@ export declare interface Settings {
             } | {
                 source: 'github';
                 /**
-                 * GitHub repository in owner/repo format
+                 * GitHub repository in owner/repo format. ONLY in the managed-settings policy lists (strictKnownMarketplaces / blockedMarketplaces) the owner-wildcard form "owner/*" matches every repository under exactly that owner. Everywhere else (marketplace add, extraKnownMarketplaces, known_marketplaces.json) the value must name a single repository — a wildcard is taken literally and fails to clone.
                  */
                 repo: string;
                 /**
@@ -5148,7 +5874,7 @@ export declare interface Settings {
             } | {
                 source: 'hostPattern';
                 /**
-                 * Regex pattern to match the host/domain extracted from any marketplace source type. For github sources, matches against "github.com". For git sources (SSH or HTTPS), extracts the hostname from the URL. Use in strictKnownMarketplaces to allow all marketplaces from a specific host (e.g., "^github\.mycompany\.com$").
+                 * Regex pattern to match the host/domain extracted from any marketplace source type. For github sources, matches against github.com. For git sources (SSH or HTTPS), extracts the hostname from the URL. Use in strictKnownMarketplaces to allow all marketplaces from a specific host (e.g., "^github\.mycompany\.com$").
                  */
                 hostPattern: string;
             } | {
@@ -5235,7 +5961,32 @@ export declare interface Settings {
                          */
                         sha?: string;
                     } | {
+                        source: 'archive';
+                        /**
+                         * HTTPS URL of a zip archive containing the plugin. The plugin root (the directory holding .claude-plugin/) may be at the top of the archive or nested one directory deep — a single wrapping directory is stripped.
+                         */
+                        url: string;
+                        /**
+                         * SHA-256 digest of the archive. When set, every download is verified against it and the install is refused on mismatch. It also serves as the version identity when neither plugin.json nor the marketplace entry declares a `version`. Recommended. Note the update signal is the version string (plugin.json version, else the entry version, else this digest) — changing only the digest while a version is declared does not trigger an update.
+                         */
+                        sha256?: string;
+                    } | {
+                        source: 'command';
+                        /**
+                         * Shell command that prints the absolute path of the plugin directory on stdout (exactly one line) and exits 0. It must leave a complete plugin in that directory before exiting; the directory is copied into the plugin cache, so the printed path may change between runs (it is re-resolved on every install and update, and once per session in the background). Runs through the platform shell (sh on macOS/Linux, cmd.exe on Windows) from the user's home directory with Claude Code's subprocess environment.
+                         */
+                        command: string;
+                        /**
+                         * Seconds to wait for the command before giving up (default: 60)
+                         */
+                        timeout?: number;
+                        /**
+                         * copy (default): the printed directory is copied into the plugin cache and content-hashed, so it may be deleted afterwards. link: the cache entry links to the printed directory in place (no copy, no size limit; macOS/Linux) — for large exports; the directory must then stay valid while Claude Code runs, and a different printed path is what signals new content.
+                         */
+                        mode?: 'copy' | 'link';
+                    } | {
                         source: 'unsupported';
+                        error?: string;
                     };
                     description?: string;
                     version?: string;
@@ -5267,7 +6018,237 @@ export declare interface Settings {
         };
     };
     /**
-     * Enterprise strict list of allowed marketplace sources. When set in managed settings, ONLY these exact sources can be added as marketplaces. The check happens BEFORE downloading, so blocked sources never touch the filesystem. Note: this is a policy gate only — it does NOT register marketplaces. To pre-register allowed marketplaces for users, also set extraKnownMarketplaces.
+     * Alias for extraKnownMarketplaces: this key is read exactly as if it were spelled extraKnownMarketplaces. Do not set both in one file — if both appear, this key is ignored with a warning. Claude Code may rewrite this key as extraKnownMarketplaces when it updates the file. Clients older than this alias ignore it (and their settings sync would upload a file that uses only this spelling as if it declared no marketplaces), so prefer extraKnownMarketplaces while older Claude Code versions still share the same settings.
+     */
+    additionalMarketplaces?: {
+        [k: string]: {
+            /**
+             * Where to fetch the marketplace from
+             */
+            source: {
+                source: 'url';
+                /**
+                 * Direct URL to marketplace.json file
+                 */
+                url: string;
+                /**
+                 * Custom HTTP headers (e.g., for authentication)
+                 */
+                headers?: {
+                    [k: string]: string;
+                };
+            } | {
+                source: 'github';
+                /**
+                 * GitHub repository in owner/repo format. ONLY in the managed-settings policy lists (strictKnownMarketplaces / blockedMarketplaces) the owner-wildcard form "owner/*" matches every repository under exactly that owner. Everywhere else (marketplace add, extraKnownMarketplaces, known_marketplaces.json) the value must name a single repository — a wildcard is taken literally and fails to clone.
+                 */
+                repo: string;
+                /**
+                 * Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.
+                 */
+                ref?: string;
+                /**
+                 * Path to marketplace.json within repo (defaults to .claude-plugin/marketplace.json)
+                 */
+                path?: string;
+                /**
+                 * Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [".claude-plugin", "plugins"]. If omitted, the full repository is cloned.
+                 */
+                sparsePaths?: string[];
+                /**
+                 * Skip Git LFS smudge during clone and update (sets GIT_LFS_SKIP_SMUDGE=1) so LFS pointer files stay as pointers instead of downloading their content. Use for marketplaces hosted in repos with large LFS objects.
+                 */
+                skipLfs?: boolean;
+            } | {
+                source: 'git';
+                /**
+                 * Full git repository URL
+                 */
+                url: string;
+                /**
+                 * Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.
+                 */
+                ref?: string;
+                /**
+                 * Path to marketplace.json within repo (defaults to .claude-plugin/marketplace.json)
+                 */
+                path?: string;
+                /**
+                 * Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [".claude-plugin", "plugins"]. If omitted, the full repository is cloned.
+                 */
+                sparsePaths?: string[];
+                /**
+                 * Skip Git LFS smudge during clone and update (sets GIT_LFS_SKIP_SMUDGE=1) so LFS pointer files stay as pointers instead of downloading their content. Use for marketplaces hosted in repos with large LFS objects.
+                 */
+                skipLfs?: boolean;
+            } | {
+                source: 'npm';
+                /**
+                 * NPM package containing marketplace.json
+                 */
+                package: string;
+            } | {
+                source: 'file';
+                /**
+                 * Local file path to marketplace.json
+                 */
+                path: string;
+            } | {
+                source: 'directory';
+                /**
+                 * Local directory containing .claude-plugin/marketplace.json
+                 */
+                path: string;
+            } | {
+                source: 'skills-dir';
+            } | {
+                source: 'hostPattern';
+                /**
+                 * Regex pattern to match the host/domain extracted from any marketplace source type. For github sources, matches against github.com. For git sources (SSH or HTTPS), extracts the hostname from the URL. Use in strictKnownMarketplaces to allow all marketplaces from a specific host (e.g., "^github\.mycompany\.com$").
+                 */
+                hostPattern: string;
+            } | {
+                source: 'pathPattern';
+                /**
+                 * Regex pattern matched against the .path field of file and directory sources. Use in strictKnownMarketplaces to allow filesystem-based marketplaces alongside hostPattern restrictions for network sources. Use ".*" to allow all filesystem paths, or a narrower pattern (e.g., "^/opt/approved/") to restrict to specific directories.
+                 */
+                pathPattern: string;
+            } | {
+                source: 'settings';
+                /**
+                 * Marketplace name. Must match the extraKnownMarketplaces key (enforced); the synthetic manifest is written under this name. Same validation as PluginMarketplaceSchema plus reserved-name rejection — validateOfficialNameSource runs after the disk write, too late to clean up.
+                 */
+                name: string;
+                /**
+                 * Plugin entries declared inline in settings.json
+                 */
+                plugins: {
+                    /**
+                     * Plugin name as it appears in the target repository
+                     */
+                    name: string;
+                    /**
+                     * Where to fetch the plugin from. Must be a remote source — relative paths have no marketplace repository to resolve against.
+                     */
+                    source: string | {
+                        source: 'npm';
+                        /**
+                         * Package name (or url, or local path, or anything else that can be passed to `npm` as a package)
+                         */
+                        package: string;
+                        /**
+                         * Specific version or version range (e.g., ^1.0.0, ~2.1.0)
+                         */
+                        version?: string;
+                        /**
+                         * Custom NPM registry URL (defaults to using system default, likely npmjs.org)
+                         */
+                        registry?: string;
+                    } | {
+                        source: 'url';
+                        /**
+                         * Full git repository URL (https:// or git\@)
+                         */
+                        url: string;
+                        /**
+                         * Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.
+                         */
+                        ref?: string;
+                        /**
+                         * Specific commit SHA to use
+                         */
+                        sha?: string;
+                    } | {
+                        source: 'github';
+                        /**
+                         * GitHub repository in owner/repo format
+                         */
+                        repo: string;
+                        /**
+                         * Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.
+                         */
+                        ref?: string;
+                        /**
+                         * Specific commit SHA to use
+                         */
+                        sha?: string;
+                    } | {
+                        source: 'git-subdir';
+                        /**
+                         * Git repository: GitHub owner/repo shorthand, https://, or git\@ URL
+                         */
+                        url: string;
+                        /**
+                         * Subdirectory within the repo containing the plugin (e.g., "tools/claude-plugin"). Cloned sparsely using partial clone (--filter=tree:0) to minimize bandwidth for monorepos.
+                         */
+                        path: string;
+                        /**
+                         * Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.
+                         */
+                        ref?: string;
+                        /**
+                         * Specific commit SHA to use
+                         */
+                        sha?: string;
+                    } | {
+                        source: 'archive';
+                        /**
+                         * HTTPS URL of a zip archive containing the plugin. The plugin root (the directory holding .claude-plugin/) may be at the top of the archive or nested one directory deep — a single wrapping directory is stripped.
+                         */
+                        url: string;
+                        /**
+                         * SHA-256 digest of the archive. When set, every download is verified against it and the install is refused on mismatch. It also serves as the version identity when neither plugin.json nor the marketplace entry declares a `version`. Recommended. Note the update signal is the version string (plugin.json version, else the entry version, else this digest) — changing only the digest while a version is declared does not trigger an update.
+                         */
+                        sha256?: string;
+                    } | {
+                        source: 'command';
+                        /**
+                         * Shell command that prints the absolute path of the plugin directory on stdout (exactly one line) and exits 0. It must leave a complete plugin in that directory before exiting; the directory is copied into the plugin cache, so the printed path may change between runs (it is re-resolved on every install and update, and once per session in the background). Runs through the platform shell (sh on macOS/Linux, cmd.exe on Windows) from the user's home directory with Claude Code's subprocess environment.
+                         */
+                        command: string;
+                        /**
+                         * Seconds to wait for the command before giving up (default: 60)
+                         */
+                        timeout?: number;
+                        /**
+                         * copy (default): the printed directory is copied into the plugin cache and content-hashed, so it may be deleted afterwards. link: the cache entry links to the printed directory in place (no copy, no size limit; macOS/Linux) — for large exports; the directory must then stay valid while Claude Code runs, and a different printed path is what signals new content.
+                         */
+                        mode?: 'copy' | 'link';
+                    } | {
+                        source: 'unsupported';
+                        error?: string;
+                    };
+                    description?: string;
+                    version?: string;
+                    strict?: boolean;
+                }[];
+                owner?: {
+                    /**
+                     * Display name of the plugin author or organization
+                     */
+                    name: string;
+                    /**
+                     * Contact email for support or feedback
+                     */
+                    email?: string;
+                    /**
+                     * Website, GitHub profile, or organization URL
+                     */
+                    url?: string;
+                };
+            };
+            /**
+             * Local cache path where marketplace manifest is stored (auto-generated if not provided)
+             */
+            installLocation?: string;
+            /**
+             * Whether to automatically update this marketplace and its installed plugins on startup
+             */
+            autoUpdate?: boolean;
+        };
+    };
+    /**
+     * Enterprise strict list of allowed marketplace sources. When set in managed settings, ONLY these sources can be added as marketplaces. Entries match exactly, except that a github entry may use the owner-wildcard form {"source":"github","repo":"owner/*"} to allow every repository under that owner. The check happens BEFORE downloading, so blocked sources never touch the filesystem. Note: this is a policy gate only — it does NOT register marketplaces. To pre-register allowed marketplaces for users, also set extraKnownMarketplaces.
      */
     strictKnownMarketplaces?: ({
         source: 'url';
@@ -5284,7 +6265,7 @@ export declare interface Settings {
     } | {
         source: 'github';
         /**
-         * GitHub repository in owner/repo format
+         * GitHub repository in owner/repo format. ONLY in the managed-settings policy lists (strictKnownMarketplaces / blockedMarketplaces) the owner-wildcard form "owner/*" matches every repository under exactly that owner. Everywhere else (marketplace add, extraKnownMarketplaces, known_marketplaces.json) the value must name a single repository — a wildcard is taken literally and fails to clone.
          */
         repo: string;
         /**
@@ -5348,7 +6329,7 @@ export declare interface Settings {
     } | {
         source: 'hostPattern';
         /**
-         * Regex pattern to match the host/domain extracted from any marketplace source type. For github sources, matches against "github.com". For git sources (SSH or HTTPS), extracts the hostname from the URL. Use in strictKnownMarketplaces to allow all marketplaces from a specific host (e.g., "^github\.mycompany\.com$").
+         * Regex pattern to match the host/domain extracted from any marketplace source type. For github sources, matches against github.com. For git sources (SSH or HTTPS), extracts the hostname from the URL. Use in strictKnownMarketplaces to allow all marketplaces from a specific host (e.g., "^github\.mycompany\.com$").
          */
         hostPattern: string;
     } | {
@@ -5435,7 +6416,32 @@ export declare interface Settings {
                  */
                 sha?: string;
             } | {
+                source: 'archive';
+                /**
+                 * HTTPS URL of a zip archive containing the plugin. The plugin root (the directory holding .claude-plugin/) may be at the top of the archive or nested one directory deep — a single wrapping directory is stripped.
+                 */
+                url: string;
+                /**
+                 * SHA-256 digest of the archive. When set, every download is verified against it and the install is refused on mismatch. It also serves as the version identity when neither plugin.json nor the marketplace entry declares a `version`. Recommended. Note the update signal is the version string (plugin.json version, else the entry version, else this digest) — changing only the digest while a version is declared does not trigger an update.
+                 */
+                sha256?: string;
+            } | {
+                source: 'command';
+                /**
+                 * Shell command that prints the absolute path of the plugin directory on stdout (exactly one line) and exits 0. It must leave a complete plugin in that directory before exiting; the directory is copied into the plugin cache, so the printed path may change between runs (it is re-resolved on every install and update, and once per session in the background). Runs through the platform shell (sh on macOS/Linux, cmd.exe on Windows) from the user's home directory with Claude Code's subprocess environment.
+                 */
+                command: string;
+                /**
+                 * Seconds to wait for the command before giving up (default: 60)
+                 */
+                timeout?: number;
+                /**
+                 * copy (default): the printed directory is copied into the plugin cache and content-hashed, so it may be deleted afterwards. link: the cache entry links to the printed directory in place (no copy, no size limit; macOS/Linux) — for large exports; the directory must then stay valid while Claude Code runs, and a different printed path is what signals new content.
+                 */
+                mode?: 'copy' | 'link';
+            } | {
                 source: 'unsupported';
+                error?: string;
             };
             description?: string;
             version?: string;
@@ -5457,7 +6463,222 @@ export declare interface Settings {
         };
     })[];
     /**
-     * Enterprise blocklist of marketplace sources. When set in managed settings, these exact sources are blocked from being added as marketplaces. The check happens BEFORE downloading, so blocked sources never touch the filesystem.
+     * Alias for strictKnownMarketplaces (managed settings only): this key is read exactly as if it were spelled strictKnownMarketplaces. Do not set both in one file — if both appear, this key is ignored with a warning. Clients older than this alias ignore it, so keep using strictKnownMarketplaces when the allowlist must also bind older Claude Code versions.
+     */
+    allowedMarketplaces?: ({
+        source: 'url';
+        /**
+         * Direct URL to marketplace.json file
+         */
+        url: string;
+        /**
+         * Custom HTTP headers (e.g., for authentication)
+         */
+        headers?: {
+            [k: string]: string;
+        };
+    } | {
+        source: 'github';
+        /**
+         * GitHub repository in owner/repo format. ONLY in the managed-settings policy lists (strictKnownMarketplaces / blockedMarketplaces) the owner-wildcard form "owner/*" matches every repository under exactly that owner. Everywhere else (marketplace add, extraKnownMarketplaces, known_marketplaces.json) the value must name a single repository — a wildcard is taken literally and fails to clone.
+         */
+        repo: string;
+        /**
+         * Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.
+         */
+        ref?: string;
+        /**
+         * Path to marketplace.json within repo (defaults to .claude-plugin/marketplace.json)
+         */
+        path?: string;
+        /**
+         * Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [".claude-plugin", "plugins"]. If omitted, the full repository is cloned.
+         */
+        sparsePaths?: string[];
+        /**
+         * Skip Git LFS smudge during clone and update (sets GIT_LFS_SKIP_SMUDGE=1) so LFS pointer files stay as pointers instead of downloading their content. Use for marketplaces hosted in repos with large LFS objects.
+         */
+        skipLfs?: boolean;
+    } | {
+        source: 'git';
+        /**
+         * Full git repository URL
+         */
+        url: string;
+        /**
+         * Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.
+         */
+        ref?: string;
+        /**
+         * Path to marketplace.json within repo (defaults to .claude-plugin/marketplace.json)
+         */
+        path?: string;
+        /**
+         * Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [".claude-plugin", "plugins"]. If omitted, the full repository is cloned.
+         */
+        sparsePaths?: string[];
+        /**
+         * Skip Git LFS smudge during clone and update (sets GIT_LFS_SKIP_SMUDGE=1) so LFS pointer files stay as pointers instead of downloading their content. Use for marketplaces hosted in repos with large LFS objects.
+         */
+        skipLfs?: boolean;
+    } | {
+        source: 'npm';
+        /**
+         * NPM package containing marketplace.json
+         */
+        package: string;
+    } | {
+        source: 'file';
+        /**
+         * Local file path to marketplace.json
+         */
+        path: string;
+    } | {
+        source: 'directory';
+        /**
+         * Local directory containing .claude-plugin/marketplace.json
+         */
+        path: string;
+    } | {
+        source: 'skills-dir';
+    } | {
+        source: 'hostPattern';
+        /**
+         * Regex pattern to match the host/domain extracted from any marketplace source type. For github sources, matches against github.com. For git sources (SSH or HTTPS), extracts the hostname from the URL. Use in strictKnownMarketplaces to allow all marketplaces from a specific host (e.g., "^github\.mycompany\.com$").
+         */
+        hostPattern: string;
+    } | {
+        source: 'pathPattern';
+        /**
+         * Regex pattern matched against the .path field of file and directory sources. Use in strictKnownMarketplaces to allow filesystem-based marketplaces alongside hostPattern restrictions for network sources. Use ".*" to allow all filesystem paths, or a narrower pattern (e.g., "^/opt/approved/") to restrict to specific directories.
+         */
+        pathPattern: string;
+    } | {
+        source: 'settings';
+        /**
+         * Marketplace name. Must match the extraKnownMarketplaces key (enforced); the synthetic manifest is written under this name. Same validation as PluginMarketplaceSchema plus reserved-name rejection — validateOfficialNameSource runs after the disk write, too late to clean up.
+         */
+        name: string;
+        /**
+         * Plugin entries declared inline in settings.json
+         */
+        plugins: {
+            /**
+             * Plugin name as it appears in the target repository
+             */
+            name: string;
+            /**
+             * Where to fetch the plugin from. Must be a remote source — relative paths have no marketplace repository to resolve against.
+             */
+            source: string | {
+                source: 'npm';
+                /**
+                 * Package name (or url, or local path, or anything else that can be passed to `npm` as a package)
+                 */
+                package: string;
+                /**
+                 * Specific version or version range (e.g., ^1.0.0, ~2.1.0)
+                 */
+                version?: string;
+                /**
+                 * Custom NPM registry URL (defaults to using system default, likely npmjs.org)
+                 */
+                registry?: string;
+            } | {
+                source: 'url';
+                /**
+                 * Full git repository URL (https:// or git\@)
+                 */
+                url: string;
+                /**
+                 * Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.
+                 */
+                ref?: string;
+                /**
+                 * Specific commit SHA to use
+                 */
+                sha?: string;
+            } | {
+                source: 'github';
+                /**
+                 * GitHub repository in owner/repo format
+                 */
+                repo: string;
+                /**
+                 * Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.
+                 */
+                ref?: string;
+                /**
+                 * Specific commit SHA to use
+                 */
+                sha?: string;
+            } | {
+                source: 'git-subdir';
+                /**
+                 * Git repository: GitHub owner/repo shorthand, https://, or git\@ URL
+                 */
+                url: string;
+                /**
+                 * Subdirectory within the repo containing the plugin (e.g., "tools/claude-plugin"). Cloned sparsely using partial clone (--filter=tree:0) to minimize bandwidth for monorepos.
+                 */
+                path: string;
+                /**
+                 * Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.
+                 */
+                ref?: string;
+                /**
+                 * Specific commit SHA to use
+                 */
+                sha?: string;
+            } | {
+                source: 'archive';
+                /**
+                 * HTTPS URL of a zip archive containing the plugin. The plugin root (the directory holding .claude-plugin/) may be at the top of the archive or nested one directory deep — a single wrapping directory is stripped.
+                 */
+                url: string;
+                /**
+                 * SHA-256 digest of the archive. When set, every download is verified against it and the install is refused on mismatch. It also serves as the version identity when neither plugin.json nor the marketplace entry declares a `version`. Recommended. Note the update signal is the version string (plugin.json version, else the entry version, else this digest) — changing only the digest while a version is declared does not trigger an update.
+                 */
+                sha256?: string;
+            } | {
+                source: 'command';
+                /**
+                 * Shell command that prints the absolute path of the plugin directory on stdout (exactly one line) and exits 0. It must leave a complete plugin in that directory before exiting; the directory is copied into the plugin cache, so the printed path may change between runs (it is re-resolved on every install and update, and once per session in the background). Runs through the platform shell (sh on macOS/Linux, cmd.exe on Windows) from the user's home directory with Claude Code's subprocess environment.
+                 */
+                command: string;
+                /**
+                 * Seconds to wait for the command before giving up (default: 60)
+                 */
+                timeout?: number;
+                /**
+                 * copy (default): the printed directory is copied into the plugin cache and content-hashed, so it may be deleted afterwards. link: the cache entry links to the printed directory in place (no copy, no size limit; macOS/Linux) — for large exports; the directory must then stay valid while Claude Code runs, and a different printed path is what signals new content.
+                 */
+                mode?: 'copy' | 'link';
+            } | {
+                source: 'unsupported';
+                error?: string;
+            };
+            description?: string;
+            version?: string;
+            strict?: boolean;
+        }[];
+        owner?: {
+            /**
+             * Display name of the plugin author or organization
+             */
+            name: string;
+            /**
+             * Contact email for support or feedback
+             */
+            email?: string;
+            /**
+             * Website, GitHub profile, or organization URL
+             */
+            url?: string;
+        };
+    })[];
+    /**
+     * Enterprise blocklist of marketplace sources. When set in managed settings, these sources are blocked from being added as marketplaces. Entries match exactly, except that a github entry may use the owner-wildcard form {"source":"github","repo":"owner/*"} to block every repository under that owner. The check happens BEFORE downloading, so blocked sources never touch the filesystem.
      */
     blockedMarketplaces?: ({
         source: 'url';
@@ -5474,7 +6695,7 @@ export declare interface Settings {
     } | {
         source: 'github';
         /**
-         * GitHub repository in owner/repo format
+         * GitHub repository in owner/repo format. ONLY in the managed-settings policy lists (strictKnownMarketplaces / blockedMarketplaces) the owner-wildcard form "owner/*" matches every repository under exactly that owner. Everywhere else (marketplace add, extraKnownMarketplaces, known_marketplaces.json) the value must name a single repository — a wildcard is taken literally and fails to clone.
          */
         repo: string;
         /**
@@ -5538,7 +6759,7 @@ export declare interface Settings {
     } | {
         source: 'hostPattern';
         /**
-         * Regex pattern to match the host/domain extracted from any marketplace source type. For github sources, matches against "github.com". For git sources (SSH or HTTPS), extracts the hostname from the URL. Use in strictKnownMarketplaces to allow all marketplaces from a specific host (e.g., "^github\.mycompany\.com$").
+         * Regex pattern to match the host/domain extracted from any marketplace source type. For github sources, matches against github.com. For git sources (SSH or HTTPS), extracts the hostname from the URL. Use in strictKnownMarketplaces to allow all marketplaces from a specific host (e.g., "^github\.mycompany\.com$").
          */
         hostPattern: string;
     } | {
@@ -5625,7 +6846,32 @@ export declare interface Settings {
                  */
                 sha?: string;
             } | {
+                source: 'archive';
+                /**
+                 * HTTPS URL of a zip archive containing the plugin. The plugin root (the directory holding .claude-plugin/) may be at the top of the archive or nested one directory deep — a single wrapping directory is stripped.
+                 */
+                url: string;
+                /**
+                 * SHA-256 digest of the archive. When set, every download is verified against it and the install is refused on mismatch. It also serves as the version identity when neither plugin.json nor the marketplace entry declares a `version`. Recommended. Note the update signal is the version string (plugin.json version, else the entry version, else this digest) — changing only the digest while a version is declared does not trigger an update.
+                 */
+                sha256?: string;
+            } | {
+                source: 'command';
+                /**
+                 * Shell command that prints the absolute path of the plugin directory on stdout (exactly one line) and exits 0. It must leave a complete plugin in that directory before exiting; the directory is copied into the plugin cache, so the printed path may change between runs (it is re-resolved on every install and update, and once per session in the background). Runs through the platform shell (sh on macOS/Linux, cmd.exe on Windows) from the user's home directory with Claude Code's subprocess environment.
+                 */
+                command: string;
+                /**
+                 * Seconds to wait for the command before giving up (default: 60)
+                 */
+                timeout?: number;
+                /**
+                 * copy (default): the printed directory is copied into the plugin cache and content-hashed, so it may be deleted afterwards. link: the cache entry links to the printed directory in place (no copy, no size limit; macOS/Linux) — for large exports; the directory must then stay valid while Claude Code runs, and a different printed path is what signals new content.
+                 */
+                mode?: 'copy' | 'link';
+            } | {
                 source: 'unsupported';
+                error?: string;
             };
             description?: string;
             version?: string;
@@ -5647,6 +6893,14 @@ export declare interface Settings {
         };
     })[];
     /**
+     * Controls the `command` plugin source, whose plugin directory is produced by running a marketplace-declared command on this machine. true: command-sourced plugins are never installed, updated, or re-resolved (the command never runs). false: explicitly allowed. Unset: follows allowManagedHooksOnly — an org that restricts hook execution to managed settings gets command sources disabled too. Only honored from managed settings.
+     */
+    disableCommandPluginSources?: boolean;
+    /**
+     * When true (and set in managed settings), rejects the --plugin-dir, --plugin-url, --agents, and non-sdk --mcp-config CLI flags at startup. Closes the CLI-flag bypass of strictKnownMarketplaces. Pair with allowedMcpServers for per-server MCP control; this setting does not gate other MCP entry points (SDK setMcpServers, claude mcp add, .mcp.json). Also blocks surfaces that spawn the CLI with these flags internally (see settings documentation). Only honored from managed settings; ignored in user/project/local settings.
+     */
+    disableSideloadFlags?: boolean;
+    /**
      * Marketplace names whose plugins may surface as contextual install suggestions (relevance-based tips). No marketplace-declared suggestions surface without this allowlist; the built-in first-party frontend-design tip is unaffected. Only honored when set in managed settings (policy scope); the key is ignored in user, project, and local settings. A name only takes effect when the marketplace is registered on the machine AND its registered source is also declared in managed settings, either as the extraKnownMarketplaces entry for that name or as an entry of strictKnownMarketplaces. A marketplace registered from a different source under an allowlisted name is ignored. The official marketplace is exempt from the source requirement: allowlisting its name alone suffices, since that name can only register from the official Anthropic source.
      */
     pluginSuggestionMarketplaces?: string[];
@@ -5654,7 +6908,10 @@ export declare interface Settings {
      * Force a specific login method: "claudeai" for Claude Pro/Max, "console" for Console billing, "gateway" for the Cloud gateway OIDC device flow
      */
     forceLoginMethod?: 'claudeai' | 'console' | 'gateway';
-
+    /**
+     * Cloud gateway URL to pre-fill and auto-connect to during login, alongside forceLoginMethod: "gateway". Honored only from admin-controlled managed settings (MDM / managed-settings.json / policy helper); ignored in user, project, and remote-delivered settings.
+     */
+    forceLoginGatewayUrl?: string;
     /**
      * Controls whether the SDK parent tier (Options.managedSettings / --managed-settings) layers under this admin tier. "first-wins" (default): parent is dropped — admin tiers are the only policy source. "merge": parent's restrictive-only-filtered settings union under the admin winner. Has no effect when no admin tier exists (parent applies as the sole policy tier, still filtered restrictive-only).
      */
@@ -5705,6 +6962,10 @@ export declare interface Settings {
              */
             deniedDomains?: string[];
             /**
+             * When true, the sandbox runtime deterministically denies hosts not in allowedDomains instead of prompting. Enforced for sandboxed commands only — in-process tools such as WebFetch are not gated by this setting. Only honored from user, managed/policy, or CLI (--settings) settings — project settings (.claude/settings.json and .claude/settings.local.json) are ignored.
+             */
+            strictAllowlist?: boolean;
+            /**
              * When true (and set in managed settings), only allowedDomains and WebFetch(domain:...) allow rules from managed settings are respected. User, project, local, and flag settings domains are ignored. Denied domains are still respected from all sources.
              */
             allowManagedDomainsOnly?: boolean;
@@ -5724,7 +6985,7 @@ export declare interface Settings {
             httpProxyPort?: number;
             socksProxyPort?: number;
             /**
-             * [EXPERIMENTAL] Enable in-process TLS termination so the per-request filter can see HTTPS request bodies. Provide a CA cert+key, or omit both to have sandbox-runtime generate an ephemeral one for the session.
+             * [EXPERIMENTAL] Enable in-process TLS termination so the per-request filter can see HTTPS request bodies. Provide a CA cert+key, or omit both to have sandbox-runtime generate an ephemeral one for the session. On native Windows an ephemeral CA cannot pass the sandbox trust check, so omitting the paths uses a persistent CA managed by the sandbox runtime (set up and trusted via /sandbox install); configured paths are passed to the sandbox runtime verbatim, which rejects a bad or incomplete pair at sandbox initialization. Only honored from user, managed/policy, or CLI (`--settings`) settings — project settings (.claude/settings.json and .claude/settings.local.json) are ignored.
              */
             tlsTerminate?: {
                 caCertPath?: string;
@@ -5752,6 +7013,120 @@ export declare interface Settings {
              * When true (set in managed settings), only allowRead paths from policySettings are used.
              */
             allowManagedReadPathsOnly?: boolean;
+            /**
+             * macOS and Linux/WSL only: skip filesystem isolation entirely while keeping network and seccomp isolation. Ignored on native Windows, where the sandboxed process runs as a separate user with no inherent rights, so skipping the filesystem rules would withhold every access grant rather than loosen them — filesystem isolation stays on there. Sandboxed commands get unrestricted read/write access to the host filesystem; network egress is still confined to network.allowedDomains. Intended for deployments whose goal is egress control rather than filesystem containment. Does not change Bash prompting: sandbox.autoAllowBashIfSandboxed is independent and still defaults to true, so set it to false to keep prompting for sandboxed commands. Drops the read protection from filesystem.denyRead and credentials.files deny entries for sandboxed commands, since both are enforced by the filesystem layer this turns off; credentials.files mask entries (sentinel binds) and credentials.envVars deny/mask are unaffected. Only honored from user, managed/policy, or CLI (`--settings`) settings — project settings (.claude/settings.json and .claude/settings.local.json) are ignored. If managed settings configure sandbox.filesystem at all, or list any sandbox.credentials.files deny entry, only managed settings can set this: an admin who deployed filesystem restrictions must not have them switched off by a user-writable file. (sandbox.credentials.envVars and credentials.files mask entries do not pin it — env scrubbing and sentinel binds are independent of the filesystem layer and survive this setting.) When unset, filesystem isolation stays on.
+             */
+            disabled?: boolean;
+        };
+        credentials?: {
+            /**
+             * Credential files or directories to protect. `deny` blocks reads inside the sandbox; `mask` substitutes a sentinel inside the sandbox (whole-file, or per-`extract` capture) and injects the real value at the proxy. On macOS and Windows `mask` degrades to `deny`.
+             */
+            files?: {
+                /**
+                 * Path to a credential file or directory. Same resolution as sandbox.filesystem.* paths: absolute, ~ expanded, or relative to the settings file root (project root for project settings, ~/.claude for user settings).
+                 */
+                path: string;
+                /**
+                 * Access mode for this path. `deny` blocks reads inside the sandbox; `mask` shows sandboxed commands a sentinel-substituted copy (whole-file, or only the spans captured by `extract`) and the host proxy swaps sentinel→real on egress to `injectHosts`. On macOS and Windows `mask` currently degrades to `deny`.
+                 */
+                mode: 'deny' | 'mask';
+                /**
+                 * Optional regex for structured masking when mode is `mask`. Applied globally to the file; capture group 1 of each match is a credential value, and only those captured spans are replaced with sentinels — the rest of the file is preserved so a tool that parses it (.netrc, JSON, YAML) still succeeds. Without `extract`, the entire file content is replaced with one sentinel (whole-file masking, suited to single-secret files). If the regex matches nothing, behavior is governed by `onExtractNoMatch` (default `warn`). Accepted but ignored for `deny`.
+                 */
+                extract?: string;
+                /**
+                 * What to do when `extract` matches nothing in the file — or, with `decode`, when no candidate survives verification. `warn` (default) emits a stderr warning and leaves the file readable as-is inside the sandbox (fail-open, for credentials that may be legitimately absent); `deny` degrades the entry to mode `deny` so the file is unreadable (fail-closed) — under `sandbox.filesystem.disabled` it is treated as `error`, since read-denies are dropped in that mode; `error` aborts at sandbox setup so nothing runs until the config is fixed. Only meaningful when mode is `mask` and `extract` or `decode` is set; accepted but ignored otherwise.
+                 */
+                onExtractNoMatch?: 'warn' | 'deny' | 'error';
+                /**
+                 * Optional encoded-credential format for `mask` mode. `jwt`: candidates are located with a built-in JWT regex (or the explicit `extract` pattern, if set), verified to actually be JWTs before masking, and replaced with a structurally valid fake JWT so client-side token parsing inside the sandbox keeps working. If no candidate verifies, behavior is governed by `onExtractNoMatch` (default `warn`). Accepted but ignored for `deny`.
+                 */
+                decode?: 'jwt';
+                /**
+                 * Names of top-level payload claims to mask inside each decoded value, instead of replacing the whole token. Each named claim present with a string value gets its own sentinel and the token is rebuilt around the modified payload; all other claims are preserved so a tool that decodes the token and reads a non-secret claim keeps working. Requires `decode`. If no named claim matches in any verified token, behavior is governed by `onExtractNoMatch` (default `warn`). Only meaningful when mode is `mask`; accepted but ignored for `deny`.
+                 */
+                maskClaims?: string[];
+                /**
+                 * If true, verbatim occurrences of each captured credential value outside the regex-matched spans are also replaced with the corresponding sentinel — for a secret repeated where the regex does not reach (e.g. pasted into a comment). Matches raw substrings, so short or common values may corrupt unrelated content; intended for long, high-entropy secrets. Defaults to false. Only meaningful when mode is `mask` and `extract` or `decode` is set; accepted but ignored otherwise.
+                 */
+                maskDuplicates?: boolean;
+                /**
+                 * Optional narrowing of where the proxy substitutes this credential. Only meaningful when mode is `mask`; accepted but ignored for `deny`. If unset, defaults to `network.allowedDomains` — the credential is injected at every reachable host. Each entry must be reachable via `network.allowedDomains` (sandbox-runtime validates this).
+                 */
+                injectHosts?: string[];
+            }[];
+            /**
+             * Environment variables to protect. `deny` unsets the variable for sandboxed commands; `mask` substitutes a sentinel inside the sandbox and injects the real value at the proxy.
+             */
+            envVars?: {
+                /**
+                 * Environment variable name.
+                 */
+                name: string;
+                /**
+                 * Access mode for this environment variable. `deny` unsets the variable for sandboxed commands; `mask` shows sandboxed commands a sentinel value and the host proxy swaps sentinel→real on egress to `injectHosts`.
+                 */
+                mode: 'deny' | 'mask';
+                /**
+                 * Optional regex for structured masking when mode is `mask`. Applied globally to the value; capture group 1 of each match is a credential value, and only those captured spans are replaced with sentinels — the rest of the value is preserved so a tool that parses it (a `DATABASE_URL` connection string, a composite `KEY:SECRET` pair) still succeeds inside the sandbox. Without `extract`, the entire value is replaced with one sentinel (whole-value masking, suited to bare tokens). If the regex matches nothing, behavior is governed by `onExtractNoMatch` (default `warn`). Cannot be combined with `decode` (the decode path never consults it). Accepted but ignored for `deny`.
+                 */
+                extract?: string;
+                /**
+                 * What to do when `extract` matches nothing in the value. `warn` (default) emits a stderr warning and lets the variable pass through unmasked (fail-open, for credentials that may be legitimately absent); `deny` unsets the variable inside the sandbox (fail-closed); `error` aborts at sandbox setup so nothing runs until the config is fixed. Only meaningful when mode is `mask` and `extract` is set without `decode`. On a mask entry with `decode`, the runtime takes the decode path and never consults this field, so a fail-closed setting cannot be honored — `deny` and `error` are rejected there; only `warn` is accepted. In all other shapes the field is accepted but ignored.
+                 */
+                onExtractNoMatch?: 'warn' | 'deny' | 'error';
+                /**
+                 * Optional encoded-credential format for `mask` mode. `jwt`: the variable's whole value is verified to actually be a JWT and replaced with a structurally valid fake JWT so client-side token parsing inside the sandbox keeps working; the proxy swaps the whole fake token on egress. If the value does not verify, the variable is left unmasked with a stderr warning (fail-open). Cannot be combined with `extract` — the decode path never consults it. Accepted but ignored for `deny`.
+                 */
+                decode?: 'jwt';
+                /**
+                 * Names of top-level payload claims to mask inside the decoded value, instead of replacing the whole token. Each named claim present with a string value gets its own sentinel and the token is rebuilt around the modified payload; all other claims are preserved so claim-reading clients keep working. Requires `decode`. If no named claim matches, the variable is left unmasked with a stderr warning (fail-open). Only meaningful when mode is `mask`; accepted but ignored for `deny`.
+                 */
+                maskClaims?: string[];
+                /**
+                 * Optional narrowing of where the proxy substitutes this credential. Only meaningful when mode is `mask`; accepted but ignored for `deny`. If unset, defaults to `network.allowedDomains` — the credential is injected at every reachable host. Each entry must be reachable via `network.allowedDomains` (sandbox-runtime validates this).
+                 */
+                injectHosts?: string[];
+            }[];
+            /**
+             * Allow sentinel→real substitution on the plain-HTTP proxy path. Defaults to false: without TLS termination the upstream identity is unverified and the credential travels in cleartext. Set only for trusted-network test fixtures. Only honored from user, managed/policy, or CLI (`--settings`) settings — project settings (.claude/settings.json and .claude/settings.local.json) are ignored.
+             */
+            allowPlaintextInject?: boolean;
+            /**
+             * Explicit groupings of masked env vars into AWS credential pairs for SigV4 re-signing, for non-standard variable names. The conventional AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN trio is paired automatically when masked. Only honored from user, managed/policy, or CLI (`--settings`) settings — project settings (.claude/settings.json and .claude/settings.local.json) are ignored. A member is only usable when its env var is forwarded as a whole-value `mask` entry (an entry carrying `extract` or `decode` does not qualify — re-signing needs the whole real value). A pair whose key id or secret member is unusable never re-signs: it is dropped, unless it names a conventional AWS variable, in which case it is forwarded as an inert suppressor so implicit auto-pairing stays overridden. A pair whose ONLY unusable member is the session token still re-signs, without an x-amz-security-token (temporary-credential requests fail upstream until the entry is fixed).
+             */
+            awsPairs?: {
+                /**
+                 * Name of the masked env var holding the AWS access key id.
+                 */
+                accessKeyIdVar: string;
+                /**
+                 * Name of the masked env var holding the AWS secret access key.
+                 */
+                secretAccessKeyVar: string;
+                /**
+                 * Optional name of the masked env var holding the AWS session token (temporary credentials). When set, the proxy sends the real token as x-amz-security-token on re-signed requests and adds it to the signed header set if the client did not.
+                 */
+                sessionTokenVar?: string;
+            }[];
+            /**
+             * Policies for AWS SigV4 request shapes the proxy cannot re-sign (streaming, presigned, sigv4a) when they reference a masked credential pair: `deny` (default) or `passthrough`. Only honored from user, managed/policy, or CLI (`--settings`) settings — project settings (.claude/settings.json and .claude/settings.local.json) are ignored.
+             */
+            sigv4?: {
+                /**
+                 * Policy for aws-chunked streaming uploads (x-amz-content-sha256: STREAMING-*): per-chunk signatures chain off the seed signature, so re-signing would require rewriting the body. `deny` (default) fails closed with a 403; `passthrough` forwards the request unre-signed (the upstream will reject its signature).
+                 */
+                streaming?: 'deny' | 'passthrough';
+                /**
+                 * Policy for presigned URLs (X-Amz-Algorithm/X-Amz-Signature in the query, no Authorization header): the signature lives in the URL itself. `deny` (default) or `passthrough`.
+                 */
+                presigned?: 'deny' | 'passthrough';
+                /**
+                 * Policy for SigV4A (AWS4-ECDSA-P256-SHA256) asymmetric signatures: there is no shared-key HMAC to recompute. `deny` (default) or `passthrough`.
+                 */
+                sigv4a?: 'deny' | 'passthrough';
+            };
         };
         ignoreViolations?: {
             [k: string]: string[];
@@ -5761,9 +7136,13 @@ export declare interface Settings {
          * macOS only: Allow access to com.apple.trustd.agent in the sandbox. Needed for Go-based CLI tools (gh, gcloud, terraform, etc.) to verify TLS certificates when using httpProxyPort with a MITM proxy and custom CA. **Reduces security** — opens a potential data exfiltration vector through the trustd service. Default: false
          */
         enableWeakerNetworkIsolation?: boolean;
+        /**
+         * macOS only: Allow sandboxed commands to send Apple Events (and look up the appleeventsd Mach service). Needed for `open`, `osascript`, and browser-based auth flows that open URLs. **Removes code-execution isolation** — sandboxed commands can launch other applications unsandboxed with no user prompt, and can script running apps (e.g. Terminal) subject to the user's per-app TCC automation consent. Only honored from user, managed/policy, or CLI (--settings) settings — project settings (.claude/settings.json and .claude/settings.local.json) are ignored. Default: false
+         */
+        allowAppleEvents?: boolean;
         excludedCommands?: string[];
         /**
-         * Custom ripgrep configuration for bundled ripgrep support
+         * Custom ripgrep configuration for bundled ripgrep support. Only honored from user, managed/policy, or CLI (--settings) settings — project settings (.claude/settings.json and .claude/settings.local.json) are ignored.
          */
         ripgrep?: {
             command: string;
@@ -5783,6 +7162,10 @@ export declare interface Settings {
      * Probability (0–1) that the session quality survey appears when eligible. 0.05 is a reasonable starting point.
      */
     feedbackSurveyRate?: number;
+    /**
+     * Model-drafted feedback (the SendFeedback tool). "notify" (default) shows a one-line notice when a draft is queued; "quiet" shows only the footer counter; "off" disables the tool entirely so drafts are never queued.
+     */
+    feedbackDrafts?: 'notify' | 'quiet' | 'off';
     /**
      * Whether to show tips in the spinner
      */
@@ -5841,15 +7224,28 @@ export declare interface Settings {
      * When false, prompt suggestions are disabled. When absent or true, prompt suggestions are enabled.
      */
     promptSuggestionEnabled?: boolean;
+    /**
+     * When false, the :emoji: shortcode typeahead (the suggestion popup and the :name: inline replacement) is disabled. When absent or true, it is enabled.
+     */
+    emojiCompletionEnabled?: boolean;
 
     /**
      * When true, the plan-approval dialog offers a "clear context" option. Defaults to false.
      */
     showClearContextOnPlanAccept?: boolean;
     /**
+     * Idle time before Claude's questions auto-continue with any answers selected so far. Defaults to never — auto-continue only runs when explicitly set to 60s/5m/10m.
+     */
+    askUserQuestionTimeout?: '60s' | '5m' | '10m' | 'never';
+    /**
+     * Max time a permission/user dialog forwarded to a remote client stays parked awaiting an answer, and how long a HELD cross-session message awaits approval, before either resolves to its safe no-action default (cancelled / dropped-with-denial). Defaults to 5m to match the long-standing remote-dialog deadline; "never" disables the deadline. Local-only permission prompts (no remote client) are unaffected. The CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS env var, when set, overrides this. Read from trusted sources only (never a checked-in repo settings file).
+     */
+    dialogExpiry?: '60s' | '5m' | '10m' | 'never';
+    /**
      * Name of an agent (built-in or custom) to use for the main thread. Applies the agent's system prompt, tool restrictions, and model.
      */
     agent?: string;
+
     /**
      * Company announcements to display at startup (one will be randomly selected if multiple are provided)
      */
@@ -5873,6 +7269,8 @@ export declare interface Settings {
             options?: {
                 [k: string]: string | number | boolean | string[];
             };
+        } | {
+            [k: string]: unknown;
         };
     };
     /**
@@ -5937,6 +7335,8 @@ export declare interface Settings {
      * Reduce or disable animations for accessibility (spinner shimmer, flash effects, etc.)
      */
     prefersReducedMotion?: boolean;
+
+
 
 
     /**
@@ -6014,20 +7414,29 @@ export declare interface Settings {
      */
     editorMode?: 'normal' | 'vim';
     /**
+     * Vim INSERT-mode key-sequence remaps, e.g. {"jj": "<Esc>"}. Each key is exactly two printable characters typed in sequence; "<Esc>" (return to NORMAL mode) is the only supported target. Applies when editorMode is "vim".
+     */
+    vimInsertModeRemaps?: {
+        [k: string]: unknown;
+    };
+    /**
      * Show full tool output instead of truncated summaries
      */
     verbose?: boolean;
     /**
      * Preferred OS notification channel
      */
-    preferredNotifChannel?: 'auto' | 'iterm2' | 'iterm2_with_bell' | 'terminal_bell' | 'kitty' | 'ghostty' | 'notifications_disabled';
+    preferredNotifChannel?: 'auto' | 'iterm2' | 'terminal_bell' | 'iterm2_with_bell' | 'kitty' | 'ghostty' | 'notifications_disabled';
     /**
      * Automatically compact conversation when context fills
      */
     autoCompactEnabled?: boolean;
-
     /**
-     * When safety measures flag a message, automatically switch to a different model to keep chatting. When off, your session will pause instead.
+     * Precompute the compaction summary in the background before it is needed. Only applies when auto-compact is on.
+     */
+    precomputeCompactionEnabled?: boolean;
+    /**
+     * When safeguards flag a message, automatically switch to a different model to keep chatting. When off, your session will pause instead.
      */
     switchModelsOnFlag?: boolean;
     /**
@@ -6047,7 +7456,7 @@ export declare interface Settings {
      */
     showTurnDuration?: boolean;
     /**
-     * Stamp each assistant message with its arrival time
+     * Stamp each message with its arrival time
      */
     showMessageTimestamps?: boolean;
     /**
@@ -6059,9 +7468,9 @@ export declare interface Settings {
      */
     todoFeatureEnabled?: boolean;
     /**
-     * How spawned teammates execute (tmux, in-process, auto)
+     * How spawned teammates execute (tmux, iterm2, in-process, auto)
      */
-    teammateMode?: 'auto' | 'tmux' | 'in-process';
+    teammateMode?: 'auto' | 'tmux' | 'iterm2' | 'in-process';
     /**
      * Start Remote Control bridge automatically each session
      */
@@ -6074,6 +7483,10 @@ export declare interface Settings {
      * When no background service is running: 'transient' spawns one for this login session; 'ask' offers to install it persistently
      */
     daemonColdStart?: 'transient' | 'ask';
+    /**
+     * Inbound cross-session peer messages (SendMessage from your other sessions): 'accept' delivers them, 'hold' parks them for your review without letting Claude act, 'refuse' opts this session out. An explicit value always wins. Unset (mode parity): a message auto-delivers only when the sending session's permission-mode class matches yours (bypass↔bypass or prompting↔prompting); a mismatched sender's message is held for your approval; a sender that asserts no class is held only while this session bypasses permission prompts.
+     */
+    crossSessionInbound?: 'accept' | 'hold' | 'refuse';
     /**
      * Mirror local sessions to claude.ai as view-only (no remote control)
      */
@@ -6090,6 +7503,10 @@ export declare interface Settings {
      * Prevent claude-cli:// protocol handler registration with the OS
      */
     disableDeepLinkRegistration?: 'disable';
+    /**
+     * Enable voice mode (hold-to-talk dictation)
+     */
+    voiceEnabled?: boolean;
     /**
      * Default transcript view: chat (SendUserMessage checkpoints only) or transcript (full)
      */
@@ -6149,6 +7566,12 @@ export declare interface SpawnedProcess {
     /** Exit code if the process has exited, null otherwise */
     readonly exitCode: number | null;
     /**
+     * Signal that terminated the process, if any. Optional: ChildProcess
+     * provides it; custom spawners may omit it (signal exits then read as
+     * still-running until their 'exit' event delivers the signal).
+     */
+    readonly signalCode?: NodeJS.Signals | null;
+    /**
      * Kill the process with the given signal
      * @param signal - The signal to send (e.g., 'SIGTERM', 'SIGKILL')
      */
@@ -6157,6 +7580,11 @@ export declare interface SpawnedProcess {
      * Register a callback for when the process exits
      * @param event - Must be 'exit'
      * @param listener - Callback receiving exit code and signal
+     *
+     * ProcessTransport's built-in local spawn delivers this only after the
+     * child's stderr has also closed (bounded by a short grace), so exit
+     * consumers see a complete stderr tail in exit errors. Custom
+     * `spawnClaudeCodeProcess` implementations emit plain process exit.
      */
     on(event: 'exit', listener: (code: number | null, signal: NodeJS.Signals | null) => void): void;
     /**
@@ -6225,7 +7653,7 @@ export declare function startup(_params?: {
     initializeTimeoutMs?: number;
 }): Promise<WarmQuery>;
 
-declare type StdoutMessage = coreTypes.SDKMessage | coreTypes.SDKPostTurnSummaryMessage | coreTypes.SDKTaskSummaryMessage | coreTypes.SDKTranscriptMirrorMessage | SDKControlResponse | SDKControlRequest | SDKControlCancelRequest | SDKKeepAliveMessage;
+declare type StdoutMessage = coreTypes.SDKMessage | coreTypes.SDKActiveGoalMessage | SDKControlResponse | SDKControlRequest | SDKControlCancelRequest | SDKKeepAliveMessage;
 
 export declare type StopFailureHookInput = BaseHookInput & {
     hook_event_name: 'StopFailure';
@@ -6370,9 +7798,9 @@ export declare type TeammateIdleHookInput = BaseHookInput & {
 };
 
 /**
- * Why the query loop terminated. Unset when the loop was bypassed (local slash command) or interrupted externally (budget/retry limits checked between yields).
+ * Why the query loop terminated. Unset when the loop was bypassed (local slash command).
  */
-export declare type TerminalReason = 'blocking_limit' | 'rapid_refill_breaker' | 'prompt_too_long' | 'image_error' | 'model_error' | 'aborted_streaming' | 'aborted_tools' | 'stop_hook_prevented' | 'hook_stopped' | 'tool_deferred' | 'max_turns' | 'completed';
+export declare type TerminalReason = 'blocking_limit' | 'rapid_refill_breaker' | 'prompt_too_long' | 'image_error' | 'model_error' | 'api_error' | 'malformed_tool_use_exhausted' | 'aborted_streaming' | 'aborted_tools' | 'stop_hook_prevented' | 'hook_stopped' | 'tool_deferred' | 'max_turns' | 'background_requested' | 'completed' | 'budget_exhausted' | 'structured_output_retry_exhausted' | 'tool_deferred_unavailable' | 'turn_setup_failed';
 
 /**
  * Claude decides when and how much to think (Opus 4.6+).
@@ -6454,9 +7882,24 @@ export declare interface Transport {
      */
     readMessages(): AsyncGenerator<StdoutMessage, void, unknown>;
     /**
+     * Register a request_id whose control_response the caller will await
+     * out-of-band via Query.awaitControlResponse. Transports that see
+     * per-frame source (multi-client fan-out) SHOULD drop non-worker
+     * control_responses matching this id — only the worker may answer.
+     */
+    expectControlResponse?(requestId: string): void;
+    /**
      * End the input stream
      */
     endInput(): void;
+    /**
+     * Await the underlying subprocess's exit. Only meaningful for
+     * subprocess-backed transports (ProcessTransport); WebSocket / SSE /
+     * in-process transports leave this undefined. Query.performCleanup()
+     * awaits it (bounded) so .return() / asyncDispose don't resolve while
+     * the child is still draining the stdin EOF that close() just sent.
+     */
+    waitForExit?(): Promise<void>;
     /**
      * Optional Disposable support. All built-in transports implement this
      * (delegating to close()), so `using transport = new ProcessTransport(...)`
@@ -6465,6 +7908,33 @@ export declare interface Transport {
      */
     [Symbol.dispose]?(): void;
 }
+
+/**
+ * Messages meaning "a usage limit was genuinely reached" — the error-path
+ * outputs of getLimitReachedText (rateLimitMessages.ts) and
+ * getFableCreditsRequiredContent (api/errors.ts).
+ *
+ * @alpha
+ */
+export declare const USAGE_LIMIT_ERROR_PREFIXES: readonly ["You've hit your", "You've reached your", "You're out of usage credits", 'Your org is out of usage · add funds to continue', 'Your org is out of usage · contact your admin', "Your seat type doesn't include usage credits", "Your seat type doesn't include usage", 'Your usage allocation has been disabled by your admin', "Your group's usage limit is set to $0", 'Fable 5 requires usage credits', "You're out of extra usage", "Your seat type doesn't include extra usage"];
+
+/**
+ * Overage-transition notifications ("now drawing from credits"). Toast only;
+ * these never arrive as API errors.
+ *
+ * @alpha
+ */
+export declare const USAGE_TRANSITION_PREFIXES: readonly ["You're now using usage credits", "You're now using your usage allocation", 'Now using your usage allocation', 'Now using usage credits', "You're now using extra usage", 'Now using extra usage'];
+
+/**
+ * Approaching-limit warnings (severity:'warning'). Footer/toast only; these
+ * never arrive as API errors. ("Approaching …" early warnings are
+ * deliberately unregistered — they render in the footer without
+ * <RateLimitMessage> styling; see the generator-coverage tests.)
+ *
+ * @alpha
+ */
+export declare const USAGE_WARNING_PREFIXES: readonly ["You've used", "You're close to"];
 
 /**
  * A `request_user_dialog` control request from the CLI, asking the SDK
@@ -6516,6 +7986,10 @@ export declare type UserPromptExpansionHookSpecificOutput = {
 export declare type UserPromptSubmitHookInput = BaseHookInput & {
     hook_event_name: 'UserPromptSubmit';
     prompt: string;
+    /**
+     * Who authored/injected the prompt: `user` = submitted from the interactive composer, `sdk` = non-interactive entrypoint (`-p` / Agent SDK), `loop_wakeup` = dynamic /loop wakeup, `schedule_wakeup` = scheduled-task fire (CronCreate/routine), `system` = other machine-injected turns (peer/channel messages, task notifications, auto-continuation). Currently only set for Anthropic-internal sessions while the field is trialed; external payloads omit it.
+     */
+    source?: 'user' | 'sdk' | 'system' | 'loop_wakeup' | 'schedule_wakeup';
     session_title?: string;
 };
 

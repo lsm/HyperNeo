@@ -27,8 +27,11 @@ import {
   isSDKAPIRetryMessage,
   isSDKAssistantMessage,
   flattenSDKSlashCommands,
+  isSDKCommandLifecycleMessage,
   isSDKCommandsChangedMessage,
   isSDKCompactBoundary,
+  isSDKConversationResetMessage,
+  isSDKActiveGoalMessage,
   isSDKModelRefusalFallbackMessage,
   isSDKResultMessage,
   isSDKResultSuccess,
@@ -792,6 +795,20 @@ export class SDKMessageHandler {
     // and handled normally below, so persistence/rendering are unaffected.
     if (isSDKStreamEvent(message)) {
       await stateManager.detectPhaseFromMessage(message);
+      return;
+    }
+
+    // Command lifecycle events (slash-command queue tracking) are internal
+    // progress signals emitted by the native CLI, not user-facing content.
+    // Never persist or broadcast them — same treatment as stream_event above.
+    if (isSDKCommandLifecycleMessage(message)) {
+      return;
+    }
+
+    // Conversation reset (session boundary) and active-goal (goal state) are
+    // fire-and-forget lifecycle/state signals from the native CLI, not chat
+    // content. Skip persistence/broadcast for the same reason as above.
+    if (isSDKConversationResetMessage(message) || isSDKActiveGoalMessage(message)) {
       return;
     }
 
