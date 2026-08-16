@@ -1,5 +1,5 @@
 import { ComponentChildren } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
 import { borderColors } from '../../lib/design-tokens.ts';
 
@@ -142,6 +142,26 @@ export function Dropdown({
     }
   }, [isOpen, position]);
 
+  // Escape closes the menu whenever it is open. The listener registers in a
+  // layout effect so it is attached in the same commit that exposes the menu —
+  // a keydown arriving between commit and a deferred effect cannot be missed.
+  // (An Escape keydown can never be the interaction that opened the menu, so
+  // unlike the click-outside listener below it needs no deferred attach.)
+  useLayoutEffect(() => {
+    if (!isOpen) return;
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [isOpen]);
+
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       // Don't close if clicking inside the menu (which uses position:fixed)
@@ -156,18 +176,7 @@ export function Dropdown({
       setIsOpen(false);
     };
 
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setIsOpen(false);
-      }
-    };
-
     if (isOpen) {
-      // The Escape keydown can never be the interaction that opened the menu,
-      // so its listener attaches synchronously — no race where a keydown
-      // arrives before a deferred listener is registered.
-      document.addEventListener('keydown', handleEscape);
-
       // Delay adding the click listener to avoid closing immediately from the same click that opened it
       const timeoutId = setTimeout(() => {
         document.addEventListener('click', handleClickOutside);
@@ -176,13 +185,11 @@ export function Dropdown({
       return () => {
         clearTimeout(timeoutId);
         document.removeEventListener('click', handleClickOutside);
-        document.removeEventListener('keydown', handleEscape);
       };
     }
 
     return () => {
       document.removeEventListener('click', handleClickOutside);
-      document.removeEventListener('keydown', handleEscape);
     };
   }, [isOpen]);
 
