@@ -442,7 +442,8 @@ describe('Session RPC Handlers — models.list', () => {
           status TEXT NOT NULL DEFAULT 'pending', payload TEXT NOT NULL DEFAULT '{}',
           result TEXT, error TEXT, priority INTEGER NOT NULL DEFAULT 0,
           max_retries INTEGER NOT NULL DEFAULT 3, retry_count INTEGER NOT NULL DEFAULT 0,
-          run_at INTEGER NOT NULL, created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER
+          run_at INTEGER NOT NULL, created_at INTEGER NOT NULL, started_at INTEGER,
+          heartbeat_at INTEGER, completed_at INTEGER
         );
         CREATE UNIQUE INDEX uq_message_delivery_active_turn
           ON job_queue (queue, json_extract(payload, '$.sessionId'))
@@ -571,7 +572,8 @@ describe('Session RPC Handlers — models.list', () => {
           status TEXT NOT NULL DEFAULT 'pending', payload TEXT NOT NULL DEFAULT '{}',
           result TEXT, error TEXT, priority INTEGER NOT NULL DEFAULT 0,
           max_retries INTEGER NOT NULL DEFAULT 3, retry_count INTEGER NOT NULL DEFAULT 0,
-          run_at INTEGER NOT NULL, created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER
+          run_at INTEGER NOT NULL, created_at INTEGER NOT NULL, started_at INTEGER,
+          heartbeat_at INTEGER, completed_at INTEGER
         );
         CREATE UNIQUE INDEX uq_message_delivery_active_turn
           ON job_queue (queue, json_extract(payload, '$.sessionId'))

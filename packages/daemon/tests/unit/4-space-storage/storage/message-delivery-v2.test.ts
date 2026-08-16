@@ -11,19 +11,18 @@
  * See docs/features/message-delivery-v2.md §13.
  */
 
-import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, mock } from 'bun:test';
-import { Database } from '../../../../src/storage/sqlite-compat';
-import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
-import { runMigration182 } from '../../../../src/storage/schema/migrations';
-import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 import {
   ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
   awaitDeliveryConsumption,
   buildBatchedDeliveryContent,
+  type DriveTurnOutcome,
   deliverAndMarkQueued,
   deliverBatchAndMarkQueued,
   deliverMessage,
   drainDeliveryWaitersOnTerminalSDKMessage,
+  type FeedSteerOutcome,
   flattenDeliveryText,
   isRetryableErrorResultSubtype,
   isTerminalTurnError,
@@ -31,17 +30,18 @@ import {
   MAX_ACP_STEER_PARKS,
   MAX_STEER_PARKS,
   MESSAGE_DELIVERY_PARK_MS,
+  type MessageDeliverySession,
   signalDeliveryConsumed,
   waitForDeliveryConsumption,
-  type MessageDeliverySession,
-  type DriveTurnOutcome,
-  type FeedSteerOutcome,
 } from '../../../../src/lib/agent/message-delivery';
-import { createMessageDeliveryHandler } from '../../../../src/lib/job-handlers/message-delivery.handler';
 import { DeliveryMetrics } from '../../../../src/lib/agent/message-delivery-metrics';
+import { createMessageDeliveryHandler } from '../../../../src/lib/job-handlers/message-delivery.handler';
+import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
 import { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
-import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { runMigration182 } from '../../../../src/storage/schema/migrations';
+import { Database } from '../../../../src/storage/sqlite-compat';
 
 const SESSION = 'sess-conformance';
 
@@ -62,6 +62,7 @@ function setupRepo(): { db: Database; repo: JobQueueRepository } {
       run_at INTEGER NOT NULL,
       created_at INTEGER NOT NULL,
       started_at INTEGER,
+      heartbeat_at INTEGER,
       completed_at INTEGER
     );
     CREATE INDEX idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC);
@@ -271,9 +272,13 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       const [job] = repo.dequeue(MESSAGE_DELIVERY, 1);
       // Simulate a daemon crash: the job is `processing` with a stale started_at.
       const staleStartedAt = Date.now() - 10 * 60 * 1000;
-      db.prepare(`UPDATE job_queue SET started_at = ? WHERE id = ?`).run(staleStartedAt, job.id);
+      db.prepare(`UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?`).run(
+        staleStartedAt,
+        staleStartedAt,
+        job.id
+      );
       const reclaimed = repo.reclaimStale(Date.now() - 5 * 60 * 1000);
-      expect(reclaimed).toBe(1);
+      expect(reclaimed).toHaveLength(1);
       const after = repo.getJob(job.id);
       expect(after?.status).toBe('pending');
       expect(after?.startedAt).toBeNull();
@@ -283,7 +288,7 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       expect(repo.isClaimCurrent(job.id, job.claimToken)).toBe(false);
       expect(repo.isClaimCurrent(reclaimedJob.id, reclaimedJob.claimToken)).toBe(true);
       // The predecessor cannot heartbeat or requeue the replacement attempt.
-      expect(repo.touchStartedAt(job.id, job.claimToken)).toBe(false);
+      expect(repo.heartbeat(job.id, job.claimToken)).toBe(false);
       expect(repo.requeue(job.id, Date.now(), job.claimToken)).toBeNull();
     });
   });
@@ -334,16 +339,30 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
     });
   });
 
-  describe('touchStartedAt — lease heartbeat (live turn not reclaimed)', () => {
-    it('refreshes started_at without changing status (fends off reclaimStale)', () => {
+  describe('heartbeat — processing claim lease', () => {
+    it('advances heartbeat_at without changing started_at and fends off reclaimStale', () => {
       deliverMessage(repo, SESSION, 'live-turn', { origin: 'chat' });
       const [job] = repo.dequeue(MESSAGE_DELIVERY, 1);
       const stale = Date.now() - 10 * 60 * 1000;
-      db.prepare(`UPDATE job_queue SET started_at = ? WHERE id = ?`).run(stale, job.id);
-      repo.touchStartedAt(job.id);
-      // After the heartbeat, the job is NOT reclaimed (started_at is fresh)...
-      expect(repo.reclaimStale(Date.now() - 5 * 60 * 1000)).toBe(0);
+      db.prepare(`UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?`).run(
+        stale,
+        stale,
+        job.id
+      );
+
+      expect(repo.heartbeat(job.id, job.claimToken)).toBe(true);
+      const afterHeartbeat = repo.getJob(job.id);
+      expect(afterHeartbeat?.startedAt).toBe(stale);
+      expect(afterHeartbeat?.heartbeatAt).toBeGreaterThan(stale);
+      expect(repo.reclaimStale(Date.now() - 5 * 60 * 1000)).toHaveLength(0);
       expect(repo.getJob(job.id)?.status).toBe('processing');
+    });
+
+    it('is fenced by claim token and clears on ownership exit', () => {
+      deliverMessage(repo, SESSION, 'fenced-turn', { origin: 'chat' });
+      const [job] = repo.dequeue(MESSAGE_DELIVERY, 1);
+      expect(repo.heartbeat(job.id, 'wrong-token')).toBe(false);
+      expect(repo.complete(job.id, { ok: true }, job.claimToken)?.heartbeatAt).toBeNull();
     });
   });
 
@@ -854,8 +873,10 @@ describe('handler — status-aware delivery (§8)', () => {
     // 1) A turn was delivered + consumed, but its job went stale.
     deliverMessage(repo, SESSION, 'zombie-turn', { origin: 'chat' }); // role turn
     const [zombie] = repo.dequeue(MESSAGE_DELIVERY, 1); // claimed → processing
-    db.prepare(`UPDATE job_queue SET started_at = ? WHERE id = ?`).run(
-      Date.now() - 10 * 60 * 1000,
+    const staleLease = Date.now() - 10 * 60 * 1000;
+    db.prepare(`UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?`).run(
+      staleLease,
+      staleLease,
       zombie.id
     );
 
@@ -867,7 +888,7 @@ describe('handler — status-aware delivery (§8)', () => {
     expect((steerRow?.payload as { role: string }).role).toBe('steer');
 
     // 3) reclaimStale resets the zombie to pending (the durable redelivery seam).
-    expect(repo.reclaimStale(Date.now() - 5 * 60 * 1000)).toBe(1);
+    expect(repo.reclaimStale(Date.now() - 5 * 60 * 1000)).toHaveLength(1);
 
     // 4) Re-claim + handle the zombie: turn_terminated → completed, no re-drive.
     const [reclaimed] = repo.dequeue(MESSAGE_DELIVERY, 1);

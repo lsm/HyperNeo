@@ -27,6 +27,7 @@ import { ErrorCategory } from '../error-manager';
 import { Logger } from '../logger';
 import { existsSync, copyFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { throwIfDeliveryAborted, waitForDeliveryAbort } from './message-delivery';
 import {
   validateAndRepairSDKSession,
   findSDKSessionFileGlobally,
@@ -649,16 +650,22 @@ export class QueryLifecycleManager {
    * query ended (race between SDK query completion and finally block cleanup).
    * In this case, force-stop the queue and restart.
    */
-  async ensureQueryStarted(): Promise<EnsureQueryStartedResult> {
+  async ensureQueryStarted(signal?: AbortSignal): Promise<EnsureQueryStartedResult> {
     const { session, messageQueue, interruptHandler } = this.ctx;
+    throwIfDeliveryAborted(signal);
 
     // Wait for any pending interrupt
     const interruptPromise = interruptHandler.getInterruptPromise();
     if (interruptPromise) {
+      const aborted = waitForDeliveryAbort(signal);
       try {
-        await Promise.race([interruptPromise, new Promise((r) => setTimeout(r, 5000))]);
-      } catch {
-        // Ignore interrupt errors
+        await Promise.race([
+          interruptPromise.catch(() => {}),
+          new Promise((r) => setTimeout(r, 5000)),
+          aborted.promise,
+        ]);
+      } finally {
+        aborted.cancel();
       }
     }
 
@@ -711,10 +718,16 @@ export class QueryLifecycleManager {
         this.ctx.refreshProcessExitedPromise?.();
         const orphanExit = this.ctx.processExitedPromise;
         if (orphanExit) {
-          await Promise.race([
-            orphanExit,
-            new Promise((resolve) => setTimeout(resolve, DEFAULT_TERMINATION_TIMEOUT_MS)),
-          ]);
+          const aborted = waitForDeliveryAbort(signal);
+          try {
+            await Promise.race([
+              orphanExit,
+              new Promise((resolve) => setTimeout(resolve, DEFAULT_TERMINATION_TIMEOUT_MS)),
+              aborted.promise,
+            ]);
+          } finally {
+            aborted.cancel();
+          }
           // Clear the exit tracking ONLY if it still belongs to the orphan. A
           // concurrent ensureQueryStarted() that saw the queue stopped during
           // our await may have already started the replacement query, whose
@@ -735,6 +748,8 @@ export class QueryLifecycleManager {
     } else {
       this.logger.debug(`ensureQueryStarted: session ${session.id} not running, starting query`);
     }
+
+    throwIfDeliveryAborted(signal);
 
     // Validate SDK session file, migrating it to the current workspace path if needed.
     if (session.config.provider !== 'acp' && session.sdkSessionId) {
@@ -761,8 +776,10 @@ export class QueryLifecycleManager {
     // Clear models cache to ensure fresh model info is fetched from DB
     // This handles the edge case where model was changed in DB directly
     await this.ctx.clearModelsCache();
+    throwIfDeliveryAborted(signal);
 
     await this.ctx.startStreamingQuery();
+    throwIfDeliveryAborted(signal);
     return 'started';
   }
 

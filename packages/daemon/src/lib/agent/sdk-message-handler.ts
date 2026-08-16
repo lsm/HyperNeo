@@ -98,6 +98,7 @@ export interface SDKMessageHandlerContext {
    * AgentSession.bumpDeliveryTurnActivity.
    */
   bumpDeliveryTurnActivity?(): void;
+  reportFirstDeliverySDKResponse?(responseType: string): void;
 }
 
 type PersistedUserMessage = SDKMessage & { dbId: string; timestamp: number };
@@ -779,6 +780,7 @@ export class SDKMessageHandler {
     // progress stall watchdog so an actively-streaming turn (even a multi-hour
     // one) is never mistaken for a stall. No-op when no delivery turn is active.
     this.ctx.bumpDeliveryTurnActivity?.();
+    this.ctx.reportFirstDeliverySDKResponse?.(message.type);
 
     // Partial/streaming token deltas (`stream_event`) are a LIVENESS heartbeat
     // only. They prove the model is actively generating or extended-thinking

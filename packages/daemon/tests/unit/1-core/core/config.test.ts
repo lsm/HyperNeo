@@ -4,10 +4,10 @@
  * Tests for the configuration module.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { getConfig } from '../../../../src/config';
-import { homedir } from 'os';
-import { join } from 'path';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { getConfig, parsePositiveInt } from '../../../../src/config';
 
 describe('getConfig', () => {
   let originalEnv: NodeJS.ProcessEnv;
@@ -31,6 +31,10 @@ describe('getConfig', () => {
     delete process.env.TEMPERATURE;
     delete process.env.MAX_SESSIONS;
     delete process.env.HYPERNEO_MAX_SUBSCRIPTIONS_PER_CLIENT;
+    delete process.env.HYPERNEO_LOG_FILE;
+    delete process.env.HYPERNEO_LOG_MAX_BYTES;
+    delete process.env.HYPERNEO_LOG_RETAINED_FILES;
+    delete process.env.HYPERNEO_LOG_MAX_PENDING_BYTES;
     process.env.NODE_ENV = 'production';
 
     const config = getConfig();
@@ -46,6 +50,10 @@ describe('getConfig', () => {
     // Ingress fan-out guardrail default (task #899)
     expect(config.maxSubscriptionsPerClient).toBe(128);
     expect(config.nodeEnv).toBe('production');
+    expect(config.structuredLogFilePath).toBe(join(homedir(), '.hyperneo', 'logs', 'daemon.jsonl'));
+    expect(config.structuredLogMaxBytes).toBe(10 * 1024 * 1024);
+    expect(config.structuredLogRetainedFiles).toBe(5);
+    expect(config.structuredLogMaxPendingBytes).toBe(2 * 1024 * 1024);
   });
 
   test('uses environment variables when set', () => {
@@ -93,6 +101,61 @@ describe('getConfig', () => {
 
     process.env.HYPERNEO_MAX_SUBSCRIPTIONS_PER_CLIENT = '12.5';
     expect(getConfig().maxSubscriptionsPerClient).toBe(128);
+  });
+
+  test('configures and disables structured file logging', () => {
+    process.env.NODE_ENV = 'test';
+    delete process.env.HYPERNEO_LOG_FILE;
+    expect(getConfig().structuredLogFilePath).toBeUndefined();
+
+    process.env.HYPERNEO_LOG_FILE = '/tmp/hyperneo-daemon.jsonl';
+    process.env.HYPERNEO_LOG_MAX_BYTES = '1234';
+    process.env.HYPERNEO_LOG_RETAINED_FILES = '3';
+    process.env.HYPERNEO_LOG_MAX_PENDING_BYTES = '5678';
+    expect(getConfig()).toMatchObject({
+      structuredLogFilePath: '/tmp/hyperneo-daemon.jsonl',
+      structuredLogMaxBytes: 1234,
+      structuredLogRetainedFiles: 3,
+      structuredLogMaxPendingBytes: 5678,
+    });
+
+    process.env.HYPERNEO_LOG_FILE = 'OFF';
+    expect(getConfig().structuredLogFilePath).toBeUndefined();
+  });
+
+  test('structured log overrides take precedence and invalid bounds fail closed', () => {
+    process.env.HYPERNEO_LOG_FILE = '/env/log.jsonl';
+    process.env.HYPERNEO_LOG_MAX_BYTES = 'invalid';
+    process.env.HYPERNEO_LOG_RETAINED_FILES = '0';
+    process.env.HYPERNEO_LOG_MAX_PENDING_BYTES = '-1';
+
+    expect(
+      getConfig({
+        structuredLogFilePath: '/override/log.jsonl',
+        structuredLogMaxBytes: 2048,
+        structuredLogRetainedFiles: 2,
+        structuredLogMaxPendingBytes: 4096,
+      })
+    ).toMatchObject({
+      structuredLogFilePath: '/override/log.jsonl',
+      structuredLogMaxBytes: 2048,
+      structuredLogRetainedFiles: 2,
+      structuredLogMaxPendingBytes: 4096,
+    });
+
+    expect(
+      getConfig({
+        structuredLogFilePath: null,
+        structuredLogMaxBytes: 0,
+        structuredLogRetainedFiles: -1,
+        structuredLogMaxPendingBytes: Number.NaN,
+      })
+    ).toMatchObject({
+      structuredLogFilePath: undefined,
+      structuredLogMaxBytes: 10 * 1024 * 1024,
+      structuredLogRetainedFiles: 5,
+      structuredLogMaxPendingBytes: 2 * 1024 * 1024,
+    });
   });
 
   test('HYPERNEO_PORT sets the port', () => {
@@ -151,6 +214,84 @@ describe('getConfig', () => {
     const config = getConfig();
 
     expect(config.dbPath).toBe('/custom/database.db');
+  });
+
+  test('isolated DB files derive distinct per-database log paths', () => {
+    // Codex P2 (PR #2499): distinct DB files in the SAME directory (the
+    // documented worktree command's /tmp/hyperneo-worktree-a.db vs -b.db) must
+    // not share one rotating log file — dirname alone maps both to
+    // <dir>/logs/daemon.jsonl. Fold the DB basename into the filename.
+    process.env.NODE_ENV = 'production';
+
+    process.env.DB_PATH = '/tmp/hyperneo-worktree-a.db';
+    const a = getConfig().structuredLogFilePath;
+    process.env.DB_PATH = '/tmp/hyperneo-worktree-b.db';
+    const b = getConfig().structuredLogFilePath;
+
+    expect(a).toBe('/tmp/logs/hyperneo-worktree-a.db.jsonl');
+    expect(b).toBe('/tmp/logs/hyperneo-worktree-b.db.jsonl');
+    expect(a).not.toBe(b);
+  });
+
+  test('same-stem DBs with different extensions derive distinct log paths', () => {
+    // Codex P2 (PR #2499): stripping the extension maps /tmp/hyperneo.db and
+    // /tmp/hyperneo.sqlite to the same log identity; keep the extension so the
+    // two independent sinks cannot rotate/drop each other's files.
+    process.env.NODE_ENV = 'production';
+
+    process.env.DB_PATH = '/tmp/hyperneo.db';
+    const a = getConfig().structuredLogFilePath;
+    process.env.DB_PATH = '/tmp/hyperneo.sqlite';
+    const b = getConfig().structuredLogFilePath;
+
+    expect(a).toBe('/tmp/logs/hyperneo.db.jsonl');
+    expect(b).toBe('/tmp/logs/hyperneo.sqlite.jsonl');
+    expect(a).not.toBe(b);
+  });
+
+  test('relative custom DB paths derive distinct per-database log paths', () => {
+    // Codex P2 (PR #2499): `dirname('worktree-a.db')` is '.', which the
+    // previous gate treated as non-isolatable — both relative DBs fell back to
+    // the shared log. Resolve the relative path before deriving the identity.
+    process.env.NODE_ENV = 'production';
+
+    process.env.DB_PATH = 'worktree-a.db';
+    const a = getConfig().structuredLogFilePath;
+    process.env.DB_PATH = 'worktree-b.db';
+    const b = getConfig().structuredLogFilePath;
+
+    expect(a).toBe(join(process.cwd(), 'logs', 'worktree-a.db.jsonl'));
+    expect(b).toBe(join(process.cwd(), 'logs', 'worktree-b.db.jsonl'));
+    expect(a).not.toBe(b);
+  });
+
+  test('structured log retained-file overrides are capped like the env fallback', () => {
+    // Codex P2 (PR #2499): the 1,000-file cap previously applied only to the env
+    // fallback; an embedder override of Number.MAX_SAFE_INTEGER would wedge
+    // rotate()'s decrementing loop.
+    process.env.NODE_ENV = 'production';
+
+    const config = getConfig({ structuredLogRetainedFiles: Number.MAX_SAFE_INTEGER });
+
+    expect(config.structuredLogRetainedFiles).toBe(1_000);
+  });
+
+  test('parsePositiveInt rejects negative, fractional, and partial-numeric values', () => {
+    // Codex P2 (PR #2499): `Number(value) || fallback` accepts negatives and
+    // fractions; parsePositiveInt requires a pure positive digit string.
+    expect(parsePositiveInt('-5', 64)).toBe(64);
+    expect(parsePositiveInt('1.5', 64)).toBe(64);
+    expect(parsePositiveInt('0', 64)).toBe(64);
+    expect(parsePositiveInt('abc', 64)).toBe(64);
+    expect(parsePositiveInt('1000000oops', 64)).toBe(64);
+    expect(parsePositiveInt(undefined, 64)).toBe(64);
+    expect(parsePositiveInt('64', 64)).toBe(64);
+    expect(parsePositiveInt(' 8 ', 8)).toBe(8);
+    // A very long digit string parses to Infinity, which must fall back rather
+    // than disable a guardrail (e.g. maxBytes: Infinity → rotation never runs).
+    expect(parsePositiveInt('9'.repeat(400), 64)).toBe(64);
+    // A finite but out-of-safe-integer-range value would exceed SQLite's LIMIT.
+    expect(parsePositiveInt('100000000000000000000', 64)).toBe(64);
   });
 
   test('default database path is ~/.hyperneo/data/daemon.db', () => {

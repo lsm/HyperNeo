@@ -443,6 +443,20 @@ export class QueryRunner {
   } | null = null;
 
   /**
+   * Ordered list, per query generation, of every non-internal user message
+   * consumed by that generation's generator, for the startup-timeout retry to
+   * replay. The single `_lastConsumedUserMessage` slot is enough for the
+   * transient/rate-limit retries (only the in-flight message needs replay), but
+   * a silent SDK can pull the kickoff AND trailing steers before the startup
+   * timer fires — those all need re-feeding, in order. Keyed by generation so a
+   * superseded query cannot clear (or inherit) a replacement's history.
+   */
+  private _consumedUserMessages = new Map<
+    number,
+    Array<{ uuid: string; content: string | MessageContent[] }>
+  >();
+
+  /**
    * Public accessor for the last consumed user message.
    * Used by RateLimitWatchdog to re-enqueue on auto-retry.
    */
@@ -792,7 +806,7 @@ export class QueryRunner {
 
       // Create query with AsyncGenerator
       const queryObject = query({
-        prompt: this.createMessageGeneratorWrapper(),
+        prompt: this.createMessageGeneratorWrapper(queryGeneration),
         options: queryOptions,
       });
       this.ctx.queryObject = queryObject;
@@ -813,6 +827,12 @@ export class QueryRunner {
           );
         });
       }
+
+      // Publish this attempt's abort controller before arming its timer. The
+      // timer closes over this exact controller so it cannot miss the narrow
+      // setup window or abort a replacement query through mutable shared state.
+      const abortController = new AbortController();
+      this.ctx.queryAbortController = abortController;
 
       // Set up startup timeout
       const queryStartTime = Date.now();
@@ -846,10 +866,9 @@ export class QueryRunner {
                 .join(',')}] sdkSessionId=${session.sdkSessionId ?? 'none'}`
           );
 
-          // Actively abort a stuck startup so finally{} cleanup runs and the
-          // session can recover without requiring manual reset.
-          const abortController = this.ctx.queryAbortController;
-          if (abortController && !abortController.signal.aborted) {
+          // Actively abort this exact attempt so iterator cleanup and retry can
+          // proceed without touching a replacement query's controller.
+          if (!abortController.signal.aborted) {
             abortController.abort();
           }
         }
@@ -868,10 +887,6 @@ export class QueryRunner {
         throw new Error('Query object is null after initialization');
       }
 
-      // Create abort controller for this query
-      const abortController = new AbortController();
-      this.ctx.queryAbortController = abortController;
-
       let messageCount = 0;
 
       for await (const message of this.createAbortableQuery(queryObject, abortController.signal)) {
@@ -889,6 +904,13 @@ export class QueryRunner {
         }
 
         this.ctx.firstMessageReceived = true;
+        if (messageCount === 1) {
+          // Startup succeeded (timer cleared above): the replay history can no
+          // longer be used for startup recovery and would otherwise retain every
+          // message's full content for the session's lifetime. `_lastConsumedUserMessage`
+          // stays for the transient/rate-limit retries. (Codex P2, PR #2499.)
+          this._consumedUserMessages.delete(queryGeneration);
+        }
 
         try {
           await this.handleSDKMessage(message as SDKMessage);
@@ -924,7 +946,15 @@ export class QueryRunner {
       // execution reaches here — but the RewindHandler may have already set a
       // new pendingResumeSessionAt for the restarted query. Without this guard
       // the stale old query consumes the value the new query needs.
-      if (this.ctx.getQueryGeneration() === queryGeneration) {
+      // The startup-timeout escape below ALSO reaches this block "normally"
+      // (the abort-driven iterator shutdown breaks the for-await, not throws)
+      // — a timeout is not a success, so its retry must keep the requested
+      // resume-at cutoff instead of silently running against latest history.
+      // (Codex P2, PR #2499.)
+      if (
+        this.ctx.getQueryGeneration() === queryGeneration &&
+        !(startupTimeoutReached && messageCount === 0)
+      ) {
         this.ctx.consumePendingResumeSessionAt?.();
       }
 
@@ -1084,6 +1114,50 @@ export class QueryRunner {
           return;
         }
 
+        // The timeout escape returns the iterator NORMALLY (non-blocking
+        // cleanup), so the post-loop code already ran messageQueue.stop()
+        // before this throw reached the catch. Restart it — the retry's
+        // messageGenerator exits immediately while the queue is stopped, so
+        // the preserved prompt would never feed the retry and it would time
+        // out again. A stop by interrupt/shutdown is excluded by the checks
+        // above (generation, isCleaningUp) and the status guard below.
+        // (Codex P1, PR #2499.)
+        if (
+          !messageQueue.isRunning() &&
+          !this.ctx.isCleaningUp() &&
+          stateManager.getState().status !== 'interrupted'
+        ) {
+          messageQueue.start();
+        }
+
+        // The old SDK may have pulled prompts out of the queue via
+        // messageGenerator() before going silent; restarting the queue above
+        // alone leaves the retry with no input, so it times out again at zero
+        // messages. Re-enqueue every recorded consumed message IN ORDER (a silent
+        // iterator can pull the kickoff AND trailing steers — replaying only the
+        // last would silently drop the earlier prompts whose durable rows are
+        // already consumed). Mirror the transient-connection retry's feed.
+        // (Codex P1, PR #2499.)
+        const consumed = this._consumedUserMessages.get(queryGeneration) ?? [];
+        if (consumed.length > 0) {
+          logger.warn(
+            `Re-enqueueing ${consumed.length} consumed user message(s) for startup-timeout retry.`
+          );
+          // Prepend in reverse order so the consumed prefix lands AHEAD of any
+          // still-queued tail: the SDK may have pulled only a prefix (kickoff +
+          // a steer) before going silent, leaving later messages untouched. A
+          // plain enqueue would append the replay behind that tail and change
+          // prompt order. (Codex P1, PR #2499.)
+          for (let i = consumed.length - 1; i >= 0; i--) {
+            const message = consumed[i];
+            messageQueue
+              .enqueueWithId(message.uuid, message.content, false, { prepend: true })
+              .catch(() => {});
+          }
+          this._consumedUserMessages.delete(queryGeneration);
+          this._lastConsumedUserMessage = null;
+        }
+
         // Use `return await` so this call's finally{} runs only after the retry
         // completes. Otherwise finally{} would race the retry and can tear down
         // shared state (queue/controller/queryObject) while it is still running.
@@ -1162,6 +1236,7 @@ export class QueryRunner {
           // consumes the message, or rejects on timeout/interrupt (harmless).
           messageQueue.enqueueWithId(lastMsg.uuid, lastMsg.content).catch(() => {});
           this._lastConsumedUserMessage = null;
+          this._consumedUserMessages.delete(queryGeneration);
         }
 
         // Display a sanitized retry message so the user knows what's happening,
@@ -1267,6 +1342,7 @@ export class QueryRunner {
         // turn.
         const retryMsg = this._lastConsumedUserMessage;
         this._lastConsumedUserMessage = null;
+        this._consumedUserMessages.delete(queryGeneration);
 
         // Display a sanitized retry message so the user knows what's happening,
         // but never show the raw provider error string.
@@ -1358,6 +1434,7 @@ export class QueryRunner {
           );
           messageQueue.enqueueWithId(retryMsg.uuid, retryMsg.content).catch(() => {});
           this._lastConsumedUserMessage = null;
+          this._consumedUserMessages.delete(queryGeneration);
         }
 
         return await this.runQuery(queryGeneration, retryAttempt + 1, recoveryState);
@@ -1595,6 +1672,7 @@ export class QueryRunner {
         // that fires before the next turn's generator yields would re-enqueue
         // the previous turn's already-completed message.
         this._lastConsumedUserMessage = null;
+        this._consumedUserMessages.delete(queryGeneration);
 
         // Null queryPromise last so callers awaiting it see queryObject=null.
         this.ctx.queryPromise = null;
@@ -1747,6 +1825,11 @@ export class QueryRunner {
   private retrySupersededByReplacement(queryGeneration: number): boolean {
     if (this.ctx.getQueryGeneration() === queryGeneration) return false;
     this.ctx.logger.warn('Auto-retry abandoned: a replacement query owns the session.');
+    // The superseded generation's startup-replay history must not be inherited
+    // by the replacement: if it also times out, replaying the superseded query's
+    // prompts would duplicate an earlier request / rerun its tools.
+    // (Codex P2, PR #2499.)
+    this._consumedUserMessages.delete(queryGeneration);
     return true;
   }
 
@@ -1754,7 +1837,7 @@ export class QueryRunner {
    * Create wrapper for MessageQueue's AsyncGenerator
    * Public for testing
    */
-  async *createMessageGeneratorWrapper() {
+  async *createMessageGeneratorWrapper(queryGeneration: number) {
     const { session, messageQueue, stateManager, logger } = this.ctx;
 
     for await (const { message, onSent } of messageQueue.messageGenerator(session.id)) {
@@ -1772,6 +1855,21 @@ export class QueryRunner {
           uuid: message.uuid ?? '',
           content: (message.message?.content ?? '') as unknown as string | MessageContent[],
         };
+        // Accumulate the full ordered set of consumed messages for THIS
+        // generation's startup-timeout replay (see _consumedUserMessages). Stop
+        // collecting once the generation has produced its first SDK frame — the
+        // startup timer is then disabled and later messages are a healthy turn's
+        // inputs, not something a startup retry would need to replay. Without
+        // this, a long-lived session rebuilds the list on every prompt/steer and
+        // re-introduces unbounded full-content retention. (Codex P2, PR #2499.)
+        if (!this.ctx.firstMessageReceived) {
+          const generationMessages = this._consumedUserMessages.get(queryGeneration) ?? [];
+          generationMessages.push({
+            uuid: message.uuid ?? '',
+            content: (message.message?.content ?? '') as unknown as string | MessageContent[],
+          });
+          this._consumedUserMessages.set(queryGeneration, generationMessages);
+        }
       }
 
       // Delivery observability: this yield is the moment the kickoff actually
@@ -1815,8 +1913,10 @@ export class QueryRunner {
     });
     const onAbort = () => resolveAbort(abortResult);
 
+    let abortWonPendingNext = false;
     try {
       if (signal.aborted) {
+        abortWonPendingNext = true;
         return;
       }
 
@@ -1824,10 +1924,10 @@ export class QueryRunner {
 
       while (!signal.aborted) {
         const nextPromise = iterator.next();
-
         const result = await Promise.race([nextPromise, abortPromise]);
 
         if ('aborted' in result || signal.aborted) {
+          abortWonPendingNext = true;
           break;
         }
 
@@ -1840,7 +1940,16 @@ export class QueryRunner {
     } finally {
       signal.removeEventListener('abort', onAbort);
       try {
-        await iterator.return?.();
+        const cleanup = iterator.return?.();
+        if (cleanup) {
+          if (abortWonPendingNext) {
+            // Async iterators may serialize return() behind the unresolved next().
+            // Cleanup is still requested, but startup recovery must not await it.
+            void cleanup.catch(() => {});
+          } else {
+            await cleanup;
+          }
+        }
       } catch {
         // Ignore cleanup errors
       }

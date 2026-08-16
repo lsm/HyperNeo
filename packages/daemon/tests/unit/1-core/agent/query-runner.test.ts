@@ -810,7 +810,7 @@ describe('QueryRunner', () => {
         messageQueue: mockQueue as unknown as MessageQueue,
       });
 
-      const generator = runner.createMessageGeneratorWrapper();
+      const generator = runner.createMessageGeneratorWrapper(0);
       const results: unknown[] = [];
 
       for await (const msg of generator) {
@@ -838,7 +838,7 @@ describe('QueryRunner', () => {
         messageQueue: mockQueue as unknown as MessageQueue,
       });
 
-      const generator = runner.createMessageGeneratorWrapper();
+      const generator = runner.createMessageGeneratorWrapper(0);
 
       for await (const _msg of generator) {
         // Consume the generator
@@ -864,7 +864,7 @@ describe('QueryRunner', () => {
         messageQueue: mockQueue as unknown as MessageQueue,
       });
 
-      const generator = runner.createMessageGeneratorWrapper();
+      const generator = runner.createMessageGeneratorWrapper(0);
       for await (const _msg of generator) {
         // Consume generator
       }
@@ -890,7 +890,7 @@ describe('QueryRunner', () => {
         messageQueue: mockQueue as unknown as MessageQueue,
       });
 
-      const generator = runner.createMessageGeneratorWrapper();
+      const generator = runner.createMessageGeneratorWrapper(0);
 
       for await (const _msg of generator) {
         // Consume the generator
@@ -924,7 +924,7 @@ describe('QueryRunner', () => {
         messageQueue: mockQueue as unknown as MessageQueue,
       });
 
-      const generator = runner.createMessageGeneratorWrapper();
+      const generator = runner.createMessageGeneratorWrapper(0);
       for await (const _msg of generator) {
         // Consume the generator
       }
@@ -964,7 +964,7 @@ describe('QueryRunner', () => {
         messageQueue: mockQueue as unknown as MessageQueue,
       });
 
-      const generator = runner.createMessageGeneratorWrapper();
+      const generator = runner.createMessageGeneratorWrapper(0);
       for await (const _msg of generator) {
         // Consume the generator
       }
@@ -976,6 +976,49 @@ describe('QueryRunner', () => {
         }
       ).lastConsumedUserMessage;
       expect(tracked).toBeNull();
+    });
+
+    it('does not accumulate startup replay after the first SDK frame', async () => {
+      // Codex P2 (PR #2499): once the generation has produced its first frame,
+      // the startup timer is disabled and later prompts/steers must not rebuild
+      // the replay list (unbounded full-content retention in long sessions).
+      async function* mockMessageGenerator() {
+        yield {
+          message: {
+            uuid: 'msg-1',
+            session_id: 'test-session-id',
+            parent_tool_use_id: null,
+            message: { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
+            internal: false,
+          },
+          onSent: () => {},
+        };
+      }
+
+      const mockQueue = {
+        ...mockMessageQueue,
+        messageGenerator: mock(() => mockMessageGenerator()),
+      } as unknown as MessageQueue;
+
+      runner = createRunner({
+        messageQueue: mockQueue as unknown as MessageQueue,
+        firstMessageReceived: true,
+      });
+
+      const generator = runner.createMessageGeneratorWrapper(0);
+      for await (const _msg of generator) {
+        // Consume the generator
+      }
+
+      // `_lastConsumedUserMessage` is still tracked for the transient/rate-limit
+      // retries (mid-stream drops), but the startup-replay list stays empty.
+      expect(
+        (runner as unknown as { lastConsumedUserMessage: unknown }).lastConsumedUserMessage
+      ).not.toBeNull();
+      expect(
+        (runner as unknown as { _consumedUserMessages: Map<number, unknown[]> })
+          ._consumedUserMessages.size
+      ).toBe(0);
     });
   });
 
@@ -1119,6 +1162,43 @@ describe('QueryRunner', () => {
       }
 
       expect(results.length).toBeLessThanOrEqual(2);
+    });
+
+    it('does not wait for iterator cleanup when abort wins a pending next', async () => {
+      runner = createRunner();
+
+      let returnCalled = false;
+      const never = new Promise<IteratorResult<unknown>>(() => {});
+      const mockQuery = {
+        [Symbol.asyncIterator]: () => ({
+          next: () => never,
+          return: () => {
+            returnCalled = true;
+            return never;
+          },
+        }),
+      };
+      const abortController = new AbortController();
+      const generator = runner.createAbortableQuery(
+        mockQuery as unknown as Query,
+        abortController.signal
+      );
+      const completion = (async () => {
+        for await (const _message of generator) {
+          // No message should be yielded.
+        }
+      })();
+
+      await Promise.resolve();
+      abortController.abort();
+
+      await Promise.race([
+        completion,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('abortable query remained blocked')), 100)
+        ),
+      ]);
+      expect(returnCalled).toBe(true);
     });
 
     it('should cleanup iterator on completion', async () => {
@@ -1542,6 +1622,74 @@ describe('QueryRunner', () => {
       expect(ctx.processExitedPromise).toBeNull();
     });
 
+    it('restarts a stopped message queue before the startup-timeout retry', async () => {
+      // Codex P1 (PR #2499): the timeout escape returns the iterator normally,
+      // so the post-loop code stops the queue BEFORE the timeout throw reaches
+      // the catch. The recursive retry must restart it — messageGenerator exits
+      // immediately while the queue is stopped, so the preserved prompt would
+      // never feed the retry and it would time out again. Simulate the
+      // timeout-path stop at the top of the retry block (setIdle hook).
+      setIdleSpy.mockImplementation(async () => {
+        stopSpy();
+      });
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      // start() once + the retry's restart.
+      expect(startSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('does not restart the message queue for a startup-timeout retry when interrupted', async () => {
+      // A stop by interrupt is not the timeout path's own stop — restarting
+      // would re-arm a queue the user cancelled.
+      setIdleSpy.mockImplementation(async () => {
+        stopSpy();
+        getStateSpy.mockReturnValue({ status: 'interrupted' } as never);
+      });
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(startSpy.mock.calls.length).toBe(1);
+    });
+
+    it('re-enqueues every consumed prompt before the startup-timeout retry', async () => {
+      // Codex P1 (PR #2499): if the old SDK pulled prompts out of the queue via
+      // messageGenerator() before going silent, restarting the queue leaves the
+      // retry with no input and it times out again at zero messages. A silent
+      // iterator can pull the kickoff AND trailing steers, so replay the full
+      // ordered set — not just the last message.
+      const kickoff = { uuid: 'kickoff-uuid', content: [{ type: 'text' as const, text: 'K' }] };
+      const steer = { uuid: 'steer-uuid', content: [{ type: 'text' as const, text: 'S' }] };
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      // start() bumps the generation to 1, so the replay list lives under key 1.
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages = new Map([[1, [kickoff, steer]]]);
+
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith(kickoff.uuid, kickoff.content, false, {
+        prepend: true,
+      });
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith(steer.uuid, steer.content, false, {
+        prepend: true,
+      });
+      // Prepend in reverse so the consumed prefix lands ahead of any untouched
+      // queue tail: the calls fire steer-then-kickoff, leaving the queue in
+      // kickoff-then-steer order. (Codex P1, PR #2499.)
+      const calls = enqueueWithIdSpy.mock.calls as unknown as Array<[string, unknown]>;
+      expect(calls.map(([uuid]) => uuid)).toEqual([steer.uuid, kickoff.uuid]);
+    });
+
     it('should abandon the retry when a replacement query took ownership during the exit wait', async () => {
       // Codex P1 (PR #2491): the retry's recursive runQuery() bypasses
       // start()'s queue-running guard. If a replacement query started while
@@ -1561,6 +1709,13 @@ describe('QueryRunner', () => {
         processExitedPromise: exitPromise,
       });
       runner = new QueryRunner(ctx);
+      // start() bumps the generation to 1; the superseded generation's entry
+      // (key 1) must be cleared when the replacement takes ownership.
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages = new Map([
+        [1, [{ uuid: 'stale-uuid', content: [{ type: 'text' as const, text: 'stale' }] }]],
+      ]);
 
       runner.start();
       // Let the first attempt reach the catch block (build rejects with the
@@ -1574,6 +1729,13 @@ describe('QueryRunner', () => {
       // The retry was abandoned — runQuery must not have been re-entered
       // (options build runs exactly once, for the first attempt only).
       expect(buildSpy).toHaveBeenCalledTimes(1);
+      // The superseded generation's replay history is cleared so the
+      // replacement does not inherit (and duplicate) it. (Codex P2, PR #2499.)
+      expect(
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages.get(1)
+      ).toBeUndefined();
     });
   });
 

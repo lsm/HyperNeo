@@ -7,7 +7,7 @@ import { getDataDir } from '@hyperneo/daemon/lib/data-dir';
 import { createDaemonApp } from '@hyperneo/daemon/app';
 import { warmupSDKCliBinary } from '@hyperneo/daemon/lib/agent/sdk-cli-resolver';
 import type { Config } from '@hyperneo/daemon/config';
-import { createLogger } from '@hyperneo/shared';
+import { createLogger, emitStructuredLogEvent } from '@hyperneo/shared';
 import { mkdir, writeFile, access } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import {
@@ -94,16 +94,35 @@ export async function startProdServer(config: Config) {
     log.info(`Extracted ${embeddedBuiltinSkills.size} built-in skill files to ${neoSkillsDir}`);
   }
 
-  // Create daemon app (returns Bun server)
+  // Create daemon app (returns Bun server). The sink-ready callback wires the
+  // real flush before the factory's long-running init so a startup failure is
+  // still persisted to the structured log file. (Codex P2, PR #2499.)
+  let flushStructuredLogs: () => Promise<void> = () => Promise.resolve();
   try {
     daemonContext = await createDaemonApp({
       config,
       verbose: true,
       standalone: false,
+      onStructuredLogSinkReady: (flush) => {
+        flushStructuredLogs = flush;
+      },
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     log.error(`[Server] Fatal: Failed to initialize daemon: ${message}`, error);
+    // Persist the startup failure and drain the sink before this process
+    // exits — nothing else will flush it on this path.
+    emitStructuredLogEvent({
+      level: 'fatal',
+      args: ['[cli] Daemon startup failed:', error],
+      source: 'process',
+      module: 'cli:prod-server',
+      metadata: { processEvent: 'startup' },
+    });
+    await Promise.race([
+      flushStructuredLogs(),
+      new Promise<void>((resolve) => setTimeout(resolve, 1000)),
+    ]).catch(() => {});
     throw error;
   }
 

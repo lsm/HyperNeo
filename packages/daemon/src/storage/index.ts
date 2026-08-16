@@ -62,7 +62,11 @@ export type {
 export { getEffectiveMaxPlanningAttempts } from './repositories/goal-repository';
 export type { Job, EnqueueParams } from './repositories/job-queue-repository';
 export { JobQueueProcessor } from './job-queue-processor';
-export type { JobHandler, JobQueueProcessorOptions } from './job-queue-processor';
+export type {
+  JobHandler,
+  JobHandlerContext,
+  JobQueueProcessorOptions,
+} from './job-queue-processor';
 
 // @public - Library export
 // Re-export repository classes for direct use

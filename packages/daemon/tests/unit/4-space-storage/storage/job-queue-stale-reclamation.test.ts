@@ -10,10 +10,10 @@
  * This covers the restart scenario more clearly than the general processor tests in
  * job-queue-processor.test.ts (which test the same processor before and after start()).
  */
-import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import { Database } from '../../../../src/storage/sqlite-compat';
-import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { Database } from '../../../../src/storage/sqlite-compat';
 
 const DB_SCHEMA = `
 	CREATE TABLE IF NOT EXISTS job_queue (
@@ -30,6 +30,7 @@ const DB_SCHEMA = `
 		run_at INTEGER NOT NULL,
 		created_at INTEGER NOT NULL,
 		started_at INTEGER,
+			heartbeat_at INTEGER,
 		completed_at INTEGER
 	);
 	CREATE INDEX IF NOT EXISTS idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC);
@@ -68,7 +69,11 @@ describe('Stale job reclamation on restart (eager reclaim)', () => {
     expect(repo.getJob(job.id)?.status).toBe('processing');
 
     // Backdate started_at so the job is beyond the stale threshold (started 10 s ago)
-    db.prepare('UPDATE job_queue SET started_at = ? WHERE id = ?').run(Date.now() - 10_000, job.id);
+    db.prepare('UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?').run(
+      Date.now() - 10_000,
+      Date.now() - 10_000,
+      job.id
+    );
 
     // Daemon restarts — creates a fresh processor on the same DB
     const processed: string[] = [];
@@ -119,7 +124,11 @@ describe('Stale job reclamation on restart (eager reclaim)', () => {
     // Simulate crash: leave a stale processing job in the DB
     const job = repo.enqueue({ queue: 'crash-queue', payload: { value: 42 } });
     repo.dequeue('crash-queue', 1);
-    db.prepare('UPDATE job_queue SET started_at = ? WHERE id = ?').run(Date.now() - 30_000, job.id);
+    db.prepare('UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?').run(
+      Date.now() - 30_000,
+      Date.now() - 30_000,
+      job.id
+    );
     expect(repo.getJob(job.id)?.status).toBe('processing');
 
     // Restart: new processor registers a handler that records the received job
@@ -172,7 +181,8 @@ describe('Stale job reclamation on restart (eager reclaim)', () => {
     repo.dequeue('queue-b', 1);
 
     const pastTime = Date.now() - 20_000;
-    db.prepare('UPDATE job_queue SET started_at = ? WHERE id IN (?, ?)').run(
+    db.prepare('UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id IN (?, ?)').run(
+      pastTime,
       pastTime,
       jobA.id,
       jobB.id
@@ -204,7 +214,8 @@ describe('Stale job reclamation on restart (eager reclaim)', () => {
     // Enqueue the stale job first so dequeue picks it up (dequeue orders by run_at ASC)
     const stale = repo.enqueue({ queue: 'mixed-queue', payload: { type: 'stale' } });
     repo.dequeue('mixed-queue', 1); // marks stale job as processing
-    db.prepare('UPDATE job_queue SET started_at = ? WHERE id = ?').run(
+    db.prepare('UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?').run(
+      Date.now() - 15_000,
       Date.now() - 15_000,
       stale.id
     );
@@ -236,8 +247,8 @@ describe('Stale job reclamation on restart (eager reclaim)', () => {
 
   // Task #861 item 5 — a slow-but-alive turn (long MCP startup / provider
   // request) must NOT be falsely reclaimed. The message-delivery handler
-  // heartbeats `started_at` (touchStartedAt) throughout the turn await; a job
-  // whose lease was refreshed inside the stale window is NOT reclaimed, while
+  // heartbeats `heartbeat_at` throughout every handler; a job whose lease was
+  // refreshed inside the stale window is NOT reclaimed, while
   // one whose handler stopped heartbeating (crash) IS.
   it('does NOT reclaim a processing job whose lease was heartbeated inside the window (item 5)', () => {
     const alive = repo.enqueue({ queue: 'message_delivery', payload: {}, runAt: 0 });
@@ -250,20 +261,21 @@ describe('Stale job reclamation on restart (eager reclaim)', () => {
     const staleThresholdMs = 5_000;
     // Backdate both past the window as if their handlers died long ago.
     const longAgo = Date.now() - (staleThresholdMs + 5_000);
-    db.prepare(`UPDATE job_queue SET started_at = ? WHERE id IN (?, ?)`).run(
+    db.prepare(`UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id IN (?, ?)`).run(
+      longAgo,
       longAgo,
       alive.id,
       dead.id
     );
 
-    // The alive job's handler is STILL running and heartbeats (refreshes
-    // started_at to now); the dead one's is not.
-    expect(repo.touchStartedAt(alive.id)).toBe(true);
+    // The alive job's handler is STILL running and renews the exact claim;
+    // the dead one's is not.
+    expect(repo.heartbeat(alive.id, repo.getJob(alive.id)!.claimToken)).toBe(true);
 
     // reclaimStale (as the processor runs eagerly on start + every 60s) only
     // reclaims jobs still past the window — the heartbeated one stays processing.
     const reclaimed = repo.reclaimStale(Date.now() - staleThresholdMs);
-    expect(reclaimed).toBe(1);
+    expect(reclaimed).toHaveLength(1);
     expect(repo.getJob(alive.id)?.status).toBe('processing'); // alive — NOT reclaimed
     expect(repo.getJob(dead.id)?.status).toBe('pending'); // dead — reclaimed, re-drives
   });

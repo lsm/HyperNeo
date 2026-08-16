@@ -40,6 +40,7 @@ describe('ScheduleService', () => {
 				run_at INTEGER NOT NULL,
 				created_at INTEGER NOT NULL,
 				started_at INTEGER,
+				heartbeat_at INTEGER,
 				completed_at INTEGER
 			);
 			CREATE INDEX IF NOT EXISTS idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC);

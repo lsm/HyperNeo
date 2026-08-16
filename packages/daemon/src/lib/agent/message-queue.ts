@@ -115,7 +115,7 @@ export class MessageQueue {
     messageId: string,
     content: string | MessageContent[],
     internal: boolean = false,
-    options?: { durable?: boolean }
+    options?: { durable?: boolean; prepend?: boolean }
   ): Promise<void> {
     return this.admitWithId(messageId, content, internal, options);
   }
@@ -127,7 +127,7 @@ export class MessageQueue {
     messageId: string,
     content: string | MessageContent[],
     internal: boolean = false,
-    options?: { durable?: boolean }
+    options?: { durable?: boolean; prepend?: boolean }
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       const queuedMessage: QueuedMessage = {
@@ -184,7 +184,11 @@ export class MessageQueue {
         }
       }, this.timeoutMs);
 
-      this.queue.push(queuedMessage);
+      if (options?.prepend) {
+        this.queue.unshift(queuedMessage);
+      } else {
+        this.queue.push(queuedMessage);
+      }
       this.onMessageEnqueued?.(queuedMessage.id, queuedMessage.queuedAt);
 
       // Wake up any waiting message generators

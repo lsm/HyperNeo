@@ -22,6 +22,7 @@ function createTestDb(): Database {
 			run_at INTEGER NOT NULL,
 			created_at INTEGER NOT NULL,
 			started_at INTEGER,
+			heartbeat_at INTEGER,
 			completed_at INTEGER
 		);
 

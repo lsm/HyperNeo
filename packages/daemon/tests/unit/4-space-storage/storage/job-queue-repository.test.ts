@@ -23,6 +23,7 @@ describe('JobQueueRepository', () => {
 				run_at INTEGER NOT NULL,
 				created_at INTEGER NOT NULL,
 				started_at INTEGER,
+				heartbeat_at INTEGER,
 				completed_at INTEGER
 			);
 
@@ -629,7 +630,7 @@ describe('JobQueueRepository', () => {
       const threshold = Date.now() + 1000;
       const reclaimed = repository.reclaimStale(threshold);
 
-      expect(reclaimed).toBe(1);
+      expect(reclaimed).toHaveLength(1);
       const updated = repository.getJob(job.id);
       expect(updated!.status).toBe('pending');
     });
@@ -643,7 +644,7 @@ describe('JobQueueRepository', () => {
       const threshold = Date.now() + 1000;
       const reclaimed = repository.reclaimStale(threshold);
 
-      expect(reclaimed).toBe(0);
+      expect(reclaimed).toHaveLength(0);
     });
 
     it('sets status back to pending and clears startedAt', () => {
@@ -668,7 +669,27 @@ describe('JobQueueRepository', () => {
       const threshold = Date.now() + 1000;
       const reclaimed = repository.reclaimStale(threshold);
 
-      expect(reclaimed).toBe(4);
+      expect(reclaimed).toHaveLength(4);
+    });
+
+    it('scopes reclamation to the requested queues only', () => {
+      // Two processors share one repository; each must only sweep its own
+      // lanes so the owner's exact-claim cancellation still applies.
+      repository.enqueue({ queue: 'owned-q', payload: {} });
+      repository.enqueue({ queue: 'other-q', payload: {} });
+      repository.dequeue('owned-q', 1);
+      repository.dequeue('other-q', 1);
+
+      const threshold = Date.now() + 1000;
+      const reclaimed = repository.reclaimStale(threshold, ['owned-q']);
+
+      expect(reclaimed).toHaveLength(1);
+      expect(reclaimed[0].queue).toBe('owned-q');
+      expect(repository.getJob(reclaimed[0].jobId)?.status).toBe('pending');
+      // The other processor's lane stays untouched — still processing with its
+      // original claim, so its owner (and only its owner) can still abort it.
+      const other = repository.listJobs({ queue: 'other-q', status: 'processing' })[0];
+      expect(other).toBeDefined();
     });
   });
 

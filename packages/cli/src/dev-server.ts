@@ -5,7 +5,7 @@ import type { Config } from '@hyperneo/daemon/config';
 import { createServer as createViteServer } from 'vite';
 import { resolve } from 'path';
 import { join } from 'node:path';
-import { createLogger } from '@hyperneo/shared';
+import { createLogger, emitStructuredLogEvent } from '@hyperneo/shared';
 import {
   findAvailablePort,
   createCorsPreflightResponse,
@@ -155,12 +155,35 @@ export async function startDevServer(config: Config) {
   const skillsDestDir = join(getDataDir(), 'skills');
   await ensureBuiltinSkills(skillsSourceDir, skillsDestDir);
 
-  // Create daemon app in embedded mode (no root route)
-  daemonContext = await createDaemonApp({
-    config,
-    verbose: true,
-    standalone: false, // Skip root info route in embedded mode
-  });
+  // Create daemon app in embedded mode (no root route). The sink-ready
+  // callback wires the real flush before the factory's long-running init so a
+  // startup failure is still persisted to the structured log file, and the
+  // catch drains that sink before the rejection exits the process.
+  // (Codex P2, PR #2499.)
+  let flushStructuredLogs: () => Promise<void> = () => Promise.resolve();
+  try {
+    daemonContext = await createDaemonApp({
+      config,
+      verbose: true,
+      standalone: false, // Skip root info route in embedded mode
+      onStructuredLogSinkReady: (flush) => {
+        flushStructuredLogs = flush;
+      },
+    });
+  } catch (error) {
+    emitStructuredLogEvent({
+      level: 'fatal',
+      args: ['[cli] Daemon startup failed:', error],
+      source: 'process',
+      module: 'cli:dev-server',
+      metadata: { processEvent: 'startup' },
+    });
+    await Promise.race([
+      flushStructuredLogs(),
+      new Promise<void>((resolve) => setTimeout(resolve, 1000)),
+    ]).catch(() => {});
+    throw error;
+  }
 
   log.info('Room orchestration is handled by RoomAgentService');
 

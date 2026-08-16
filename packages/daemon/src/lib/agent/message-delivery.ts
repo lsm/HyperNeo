@@ -625,10 +625,23 @@ export type FeedSteerOutcome =
   | { outcome: 'park' }
   | { outcome: 'aborted' };
 
+/** Safe, delivery-attempt-local lifecycle reporting owned by the job processor. */
+export interface MessageDeliveryAttemptObserver {
+  reportStage(
+    stage: 'query_ready' | 'sdk_admitted' | 'first_sdk_response',
+    details?: { generation?: number; responseType?: string }
+  ): void;
+}
+
 /**
  * The live transport owner for a session (AgentSession implements this). Kept as
  * an interface so the job handler + tests depend on the shape, not the class.
  */
+export interface DeliveryClaimContext {
+  claimGuard?: () => boolean;
+  signal?: AbortSignal;
+}
+
 export interface MessageDeliverySession {
   /**
    * Drive a delivery turn. When `alreadyConsumed` is true, the kickoff was
@@ -646,13 +659,17 @@ export interface MessageDeliverySession {
      * Batched queue flush: UUIDs whose content was folded into `content`;
      * the bridge flips them to `consumed` together with the kickoff.
      */
-    batchUuids?: string[]
+    batchUuids?: string[],
+    signal?: AbortSignal,
+    observer?: MessageDeliveryAttemptObserver
   ): Promise<DriveTurnOutcome>;
   feedDeliverySteer(
     messageUuid: string,
     content: DeliveryContent,
     parentToolUseId?: string | null,
-    claimGuard?: () => boolean
+    claimGuard?: () => boolean,
+    signal?: AbortSignal,
+    observer?: MessageDeliveryAttemptObserver
   ): Promise<FeedSteerOutcome>;
   /**
    * True while the session's human gate is open (an unanswered
@@ -825,19 +842,54 @@ export async function awaitDeliveryConsumption(args: {
  */
 const sessionLocks = new Map<string, Promise<unknown>>();
 
-export async function withSessionLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+export function throwIfDeliveryAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError');
+}
+
+export function waitForDeliveryAbort(signal?: AbortSignal): {
+  promise: Promise<never>;
+  cancel: () => void;
+} {
+  let rejectAbort!: (reason: unknown) => void;
+  const promise = new Promise<never>((_, reject) => {
+    rejectAbort = reject;
+  });
+  const onAbort = () => rejectAbort(signal?.reason ?? new DOMException('Aborted', 'AbortError'));
+  if (signal?.aborted) onAbort();
+  else signal?.addEventListener('abort', onAbort, { once: true });
+  return {
+    promise,
+    cancel: () => signal?.removeEventListener('abort', onAbort),
+  };
+}
+
+export async function withSessionLock<T>(
+  sessionId: string,
+  fn: () => Promise<T>,
+  signal?: AbortSignal
+): Promise<T> {
+  throwIfDeliveryAborted(signal);
   const prev = sessionLocks.get(sessionId) ?? Promise.resolve();
   let release!: () => void;
   const next = new Promise<void>((resolve) => {
     release = resolve;
   });
   sessionLocks.set(sessionId, next);
+  const aborted = waitForDeliveryAbort(signal);
+  let acquired = false;
   try {
-    await prev;
+    await Promise.race([prev, aborted.promise]);
+    throwIfDeliveryAborted(signal);
+    acquired = true;
     return await fn();
   } finally {
-    release();
-    if (sessionLocks.get(sessionId) === next) sessionLocks.delete(sessionId);
+    aborted.cancel();
+    const releaseLock = () => {
+      release();
+      if (sessionLocks.get(sessionId) === next) sessionLocks.delete(sessionId);
+    };
+    if (acquired) releaseLock();
+    else void prev.finally(releaseLock);
   }
 }
 

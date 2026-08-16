@@ -271,10 +271,13 @@ import {
   isRetryableErrorResultSubtype,
   isTerminalTurnError,
   MESSAGE_DELIVERY_PARK_MS,
+  type MessageDeliveryAttemptObserver,
   MessageDeliveryRecoverableTurnError,
   MessageDeliveryTerminalTurnError,
   reconcileStrandedDeliveries as reconcileStrandedDeliveriesCore,
   signalDeliveryConsumed,
+  throwIfDeliveryAborted,
+  waitForDeliveryAbort,
   withSessionLock,
 } from './message-delivery';
 import { deliveryMetrics } from './message-delivery-metrics';
@@ -284,6 +287,7 @@ import { ModelSwitchHandler, type ModelSwitchHandlerContext } from './model-swit
 import { ProcessingStateManager } from './processing-state-manager';
 import {
   QueryLifecycleManager,
+  type EnsureQueryStartedResult,
   type QueryLifecycleManagerContext,
 } from './query-lifecycle-manager';
 import type { QueryLike } from './query-like';
@@ -385,6 +389,14 @@ export class AgentSession
    */
   private deliveryTurnStall: DeliveryTurnStallWatchdog | null = null;
   private deliveryTurnStalled = false;
+  // `pendingStart` marks an observer armed before its driving attempt's query
+  // started; the generation bump that starts that query retags it (see
+  // incrementQueryGeneration) so the new query's first frame fences clean.
+  private deliveryResponseObserver: {
+    generation: number;
+    observer: MessageDeliveryAttemptObserver;
+    pendingStart?: boolean;
+  } | null = null;
 
   /**
    * Outstanding `tool_use` IDs for this session (added on `sdk.toolUse.created`,
@@ -1976,7 +1988,17 @@ export class AgentSession
   }
 
   incrementQueryGeneration(): number {
-    return ++this._queryGeneration;
+    const next = ++this._queryGeneration;
+    // A delivery observer armed with `pendingStart` belongs to the query THIS
+    // bump is starting — retag it AND claim it (clear pendingStart) so the new
+    // query's first frame fences clean while a predecessor's earlier frame
+    // (before this bump) stays inactive. The driving attempt's startup clears
+    // pendingStart on the already-running path instead. (Codex P2, PR #2499.)
+    if (this.deliveryResponseObserver?.pendingStart) {
+      this.deliveryResponseObserver.generation = next;
+      this.deliveryResponseObserver.pendingStart = false;
+    }
+    return next;
   }
 
   getQueryGeneration(): number {
@@ -2093,7 +2115,9 @@ export class AgentSession
      * with the kickoff. `messageUuid` (the kickoff) may be a member itself —
      * it is skipped in the member loop.
      */
-    batchUuids?: string[]
+    batchUuids?: string[],
+    signal?: AbortSignal,
+    observer?: MessageDeliveryAttemptObserver
   ): Promise<DriveTurnOutcome> {
     // Timestamp gates the terminal-error read to "fired during THIS turn" — a
     // stale error from a prior turn must not turn a clean turn into a retry.
@@ -2114,184 +2138,232 @@ export class AgentSession
     // against a concurrent steer's state-check. Released BEFORE the long turn
     // await below — holding it across the turn would serialize mid-turn steering
     // (the feature's whole point). See message-delivery-v2.md §8 + Codex review.
-    const started = await withSessionLock(this.session.id, async () => {
-      // Validate the persisted lifecycle barrier BEFORE starting/restarting the
-      // provider. Archive may flip after the handler's initial guard; checking
-      // only after ensureQueryStarted races teardown. Reclaimed consumed turns
-      // must validate too, while accepting their consumed ownership state.
-      if (!this.messageDeliveryValid(messageUuid, alreadyConsumed)) {
-        return { kind: 'aborted' as const };
+    // Waiter-owned turn-end marker: fire on ANY release path (terminal idle
+    // drain, direct releaseIdleWaiters from restart/reset/answer-reinjection
+    // failures, or the waiter's cancel) — the kickoff UUID is the durable
+    // turn owner, so it isn't corrupted by a steer overwriting the processing
+    // messageId or waiting_for_input dropping it. Gated on the message having
+    // been CONSUMED and the job still being `processing` (a graceful-shutdown
+    // requeue, or a pre-consumption transient idle, records nothing). See
+    // Codex (PR #2463, P2). Hoisted so the grace re-arm below (outside the
+    // lock) can re-arm the waiter with the identical callback.
+    const recordTurnEndMarker = (): void => {
+      try {
+        // Scope completion to the durable delivery UUID, not this transient
+        // claim. A lease handoff can invalidate the predecessor claim before a
+        // result-less terminal idle fires; that genuine completion still belongs
+        // to the same consumed message and must survive until the replacement
+        // handler observes it. The processing+UUID+consumed checks below prevent
+        // an old waiter from marking a different or already-settled turn.
+        const repo = this.db.getSDKMessageRepo();
+        const jobQueue = this.db.getJobQueueRepo?.();
+        if (!repo || !jobQueue) return;
+        if (!jobQueue.isProcessingDelivery(this.session.id, messageUuid)) return;
+        const loaded = repo.getDeliveryContent(this.session.id, messageUuid);
+        if (!loaded || loaded.sendStatus !== 'consumed') return;
+        this.recordDeliveryTurnEnd(messageUuid);
+      } catch (error) {
+        this.logger.warn('Failed to record delivery turn-end marker at turn end:', error);
       }
-      // Re-fence the lease before the (async) provider startup so a reclaim
-      // during the lock wait can't waste a subprocess start. See Codex
-      // (#3744886834).
-      if (claimGuard && !claimGuard()) {
-        return { kind: 'aborted' as const };
-      }
-      // A re-claimed consumed turn whose turn already ended has nothing to
-      // resume — but only an ended-and-SUCCEEDED turn is safe to complete
-      // silently (see reclaimTurnAlreadySucceeded). A bare delivery_turn_end
-      // marker (the turn ended via a result-less path) is cleared and re-driven
-      // so the producedResult/stall-retry path decides; this check still runs
-      // BEFORE provider startup so a SUCCESS-terminated reclaim does not start a
-      // fresh query that would idle waiting for input forever. See Codex
-      // (PR #2463, P1/P2) + task #946 (PR #2471 review r3772035811).
-      if (alreadyConsumed && this.reclaimTurnAlreadySucceeded(messageUuid)) {
-        return { kind: 'turn_terminated' as const };
-      }
-      const ensureStartedAt = Date.now();
-      const queryStartResult = await this.lifecycleManager.ensureQueryStarted();
-      this.logger.debug(
-        `delivery-turn: ensureQueryStarted → ${queryStartResult} ` +
-          `(${Date.now() - ensureStartedAt}ms, uuid=${messageUuid})`
-      );
-      if (queryStartResult === 'blocked') {
-        return { kind: 'blocked' as const };
-      }
-      const queryPromise = this.queryPromise;
-      if (!queryPromise) {
-        throw new Error('message_delivery: query did not start; cannot drive turn');
-      }
-      // Re-check termination AFTER startup, immediately before arming the
-      // turn-end waiter — the two statements are adjacent (no await between), so
-      // a turn that terminates in the check→arm window cannot be missed: if it
-      // ended before the check, we abort here (on success) or clear+re-drive
-      // (bare marker); if it ends after the waiter is armed, the waiter resolves
-      // it. Without this, a live-but-stale consumed turn that finishes during
-      // ensureQueryStarted's await would leak a query waiting for input and hold
-      // the active-turn slot forever. See Codex (PR #2463, P2) + task #946.
-      if (alreadyConsumed && this.reclaimTurnAlreadySucceeded(messageUuid)) {
-        return { kind: 'turn_terminated' as const };
-      }
-      // Arm the turn-end wait AFTER ensureQueryStarted: ensureQueryStarted awaits
-      // a preceding interrupt's completion, and that interrupt's terminal
-      // setIdle() fires BEFORE the await resolves — arming earlier would let it
-      // resolve this turn's waiter for a turn that hasn't started yet. Don't
-      // short-circuit on a current isIdle(): a reclaimed consumed turn is
-      // restored as idle and the streaming query doesn't leave idle until input
-      // is observed, so treating that pre-input idle as terminal would complete
-      // the durable job while history replay is still running.
-      // Tag the waiter with the current rate-limit episode generation so a
-      // narrowly-scoped release (a superseded rate-limit retry calling
-      // releaseIdleWaiters(episodeGeneration)) resolves only this turn's waiter
-      // — not a newer turn's waiter armed after a cancel()/reset() bumped the
-      // generation. The generation here equals the one scheduleRetry later
-      // captures as episodeGeneration (its own supersession guard keeps the
-      // generation stable at this value through the 429'd turn's life).
-      const turnEnd = this.stateManager.waitForIdleTransition(
-        this.rateLimitWatchdog.getGeneration(),
-        // Waiter-owned turn-end marker: fire on ANY release path (terminal idle
-        // drain, direct releaseIdleWaiters from restart/reset/answer-reinjection
-        // failures, or this waiter's cancel) — the kickoff UUID is the durable
-        // turn owner, so it isn't corrupted by a steer overwriting the
-        // processing messageId or waiting_for_input dropping it. Gated on the
-        // message having been CONSUMED and the job still being `processing`
-        // (a graceful-shutdown requeue, or a pre-consumption transient idle,
-        // records nothing). See Codex (PR #2463, P2).
-        () => {
-          try {
-            // Scope completion to the durable delivery UUID, not this transient
-            // claim. A lease handoff can invalidate the predecessor claim before a
-            // result-less terminal idle fires; that genuine completion still belongs
-            // to the same consumed message and must survive until the replacement
-            // handler observes it. The processing+UUID+consumed checks below prevent
-            // an old waiter from marking a different or already-settled turn.
-            const repo = this.db.getSDKMessageRepo();
-            const jobQueue = this.db.getJobQueueRepo?.();
-            if (!repo || !jobQueue) return;
-            if (!jobQueue.isProcessingDelivery(this.session.id, messageUuid)) return;
-            const loaded = repo.getDeliveryContent(this.session.id, messageUuid);
-            if (!loaded || loaded.sendStatus !== 'consumed') return;
-            this.recordDeliveryTurnEnd(messageUuid);
-          } catch (error) {
-            this.logger.warn('Failed to record delivery turn-end marker at turn end:', error);
-          }
-        }
-      );
-      // Feed the kickoff (resolves on onSent = the SDK consumed it) UNLESS a
-      // prior attempt already did (alreadyConsumed = reclaim after a crash): the
-      // SDK resume-from-history already holds a consumed kickoff, so re-feeding
-      // would duplicate the prompt. History drives the turn; we only ensure the
-      // query is running. See Codex (#2592). Durable so a yielded-but-unresumed
-      // kickoff does not TTL-out into a duplicate re-feed (#3742616720).
-      let acknowledgment: Promise<void> | null = null;
-      let admittedBatchUuids: string[] | undefined;
-      let feedContent: string | MessageContent[] = content;
-      if (!alreadyConsumed) {
-        // Re-fence the lease AGAIN right before admission: ensureQueryStarted
-        // awaits provider startup, so the event loop can suspend past the stale
-        // threshold and a resumed processor can reclaim the row with a new token.
-        // Without this recheck both attempts would admit the same kickoff. See
-        // Codex (#3744971818).
-        if (claimGuard && !claimGuard()) {
-          turnEnd.cancel();
+    };
+    const started = await withSessionLock(
+      this.session.id,
+      async () => {
+        // Validate the persisted lifecycle barrier BEFORE starting/restarting the
+        // provider. Archive may flip after the handler's initial guard; checking
+        // only after ensureQueryStarted races teardown. Reclaimed consumed turns
+        // must validate too, while accepting their consumed ownership state.
+        if (!this.messageDeliveryValid(messageUuid, alreadyConsumed)) {
           return { kind: 'aborted' as const };
         }
-        // Batched queue flush: revalidate every member + rebuild the prompt
-        // from the durable rows UNDER THIS LOCK — a member deleted or
-        // user-deferred between the handler's snapshot and the feed must not
-        // reach the provider, and the combined prompt must respect the
-        // BATCH_DELIVERY_MAX_CHARS budget. See rebuildBatchDeliveryContent.
-        if (batchUuids && batchUuids.length > 1) {
-          const rebuilt = this.rebuildBatchDeliveryContent(messageUuid, content, batchUuids);
-          feedContent = rebuilt.content;
-          admittedBatchUuids = rebuilt.admittedUuids;
-          // Persist the ADMITTED set back into the job payload: every payload
-          // consumer (ACP acceptance consume, dead-letter settlement,
-          // batch-aware active lookups) must see exactly what was fed, so
-          // dropped tails are neither marked consumed, nor failed on
-          // dead-letter, nor shielded from reconciler redelivery. Narrowing
-          // is REQUIRED before feeding — never admit a reduced prompt against
-          // a superset payload (ACP acceptance / dead-letter would then
-          // settle rows that were never sent). A transient persistence
-          // failure throws recoverable so the job retries the narrowing+feed;
-          // a row that no longer matches (cancelled claim) aborts.
-          if (admittedBatchUuids && admittedBatchUuids.length !== batchUuids.length) {
-            let narrowed = false;
-            try {
-              narrowed =
-                this.db
-                  .getJobQueueRepo()
-                  ?.narrowActiveDeliveryBatchUuids(
-                    this.session.id,
-                    messageUuid,
-                    admittedBatchUuids
-                  ) ?? false;
-            } catch (error) {
-              turnEnd.cancel();
-              throw new MessageDeliveryRecoverableTurnError(
-                `batch narrowing failed: ${error instanceof Error ? error.message : String(error)}`
-              );
-            }
-            if (!narrowed) {
-              turnEnd.cancel();
-              return { kind: 'aborted' as const };
-            }
-          }
-          // Freeze the admitted members as in-flight (enqueued → submitted)
-          // BEFORE the admission places their text inside the kickoff-keyed
-          // combined prompt. Revoke/defer only mutate enqueued/deferred rows,
-          // so past this point a member's text can no longer be deleted from
-          // a prompt the transport is about to receive — without this, the
-          // admission→provider window lets the queue UI "remove" text that
-          // still executes. Serialized with revoke by this session lock.
-          const memberUuids = (admittedBatchUuids ?? []).filter((uuid) => uuid !== messageUuid);
-          if (memberUuids.length > 0) {
-            this.markDeliveryBatchSubmitted(memberUuids);
-          }
+        // Re-fence the lease before the (async) provider startup so a reclaim
+        // during the lock wait can't waste a subprocess start. See Codex
+        // (#3744886834).
+        if (claimGuard && !claimGuard()) {
+          return { kind: 'aborted' as const };
         }
-        acknowledgment = this.messageQueue.admitWithId(messageUuid, feedContent, false, {
-          durable: true,
-        });
-      }
-      return {
-        kind: 'driving' as const,
-        queryPromise,
-        turnEnd,
-        acknowledgment,
-        admittedBatchUuids,
-      };
-    });
+        // A re-claimed consumed turn whose turn already ended has nothing to
+        // resume — but only an ended-and-SUCCEEDED turn is safe to complete
+        // silently (see reclaimTurnAlreadySucceeded). A bare delivery_turn_end
+        // marker (the turn ended via a result-less path) is cleared and re-driven
+        // so the producedResult/stall-retry path decides; this check still runs
+        // BEFORE provider startup so a SUCCESS-terminated reclaim does not start a
+        // fresh query that would idle waiting for input forever. See Codex
+        // (PR #2463, P1/P2) + task #946 (PR #2471 review r3772035811).
+        if (alreadyConsumed && this.reclaimTurnAlreadySucceeded(messageUuid)) {
+          return { kind: 'turn_terminated' as const };
+        }
+        // Arm first-response observability BEFORE ensureQueryStarted: the
+        // startup path launches the streaming query before its await resolves,
+        // so an init/history/model frame can reach SDKMessageHandler while this
+        // critical section is still settling. `pendingStart` lets
+        // incrementQueryGeneration retag this record with the new query's
+        // generation at the bump, so the first frame of OUR query fences clean
+        // instead of being dropped by the stale pre-start generation. Cleared
+        // once startup returns (a resume of an already-running query never
+        // bumps); disarmed on the in-lock abort exits below; the driving path
+        // owns it until the outer finally clears it by identity. (Codex P2.)
+        const armedObserver = observer
+          ? { generation: this.getQueryGeneration(), observer, pendingStart: true }
+          : null;
+        if (armedObserver) this.deliveryResponseObserver = armedObserver;
+        const disarmObserver = (): void => {
+          if (armedObserver && this.deliveryResponseObserver === armedObserver) {
+            this.deliveryResponseObserver = null;
+          }
+        };
+        const ensureStartedAt = Date.now();
+        let queryStartResult: EnsureQueryStartedResult;
+        try {
+          queryStartResult = await this.lifecycleManager.ensureQueryStarted(signal);
+        } catch (error) {
+          // ensureQueryStarted can reject (e.g. stale reclamation aborts the
+          // signal and throwIfDeliveryAborted throws) before any of the explicit
+          // in-lock exits below run. Disarm the observer by identity so a later
+          // generation bump cannot retag this still-pendingStart record and
+          // attribute another attempt's first frame to the aborted claim.
+          // (Codex P2, PR #2499.)
+          disarmObserver();
+          throw error;
+        }
+        this.logger.debug(
+          `delivery-turn: ensureQueryStarted → ${queryStartResult} ` +
+            `(${Date.now() - ensureStartedAt}ms, uuid=${messageUuid})`
+        );
+        if (queryStartResult === 'blocked') {
+          disarmObserver();
+          return { kind: 'blocked' as const };
+        }
+        const queryPromise = this.queryPromise;
+        if (!queryPromise) {
+          disarmObserver();
+          throw new Error('message_delivery: query did not start; cannot drive turn');
+        }
+        if (armedObserver) armedObserver.pendingStart = false;
+        const generation = armedObserver?.generation ?? this.getQueryGeneration();
+        observer?.reportStage('query_ready', { generation });
+        // Re-check termination AFTER startup, immediately before arming the
+        // turn-end waiter — the two statements are adjacent (no await between), so
+        // a turn that terminates in the check→arm window cannot be missed: if it
+        // ended before the check, we abort here (on success) or clear+re-drive
+        // (bare marker); if it ends after the waiter is armed, the waiter resolves
+        // it. Without this, a live-but-stale consumed turn that finishes during
+        // ensureQueryStarted's await would leak a query waiting for input and hold
+        // the active-turn slot forever. See Codex (PR #2463, P2) + task #946.
+        if (alreadyConsumed && this.reclaimTurnAlreadySucceeded(messageUuid)) {
+          disarmObserver();
+          return { kind: 'turn_terminated' as const };
+        }
+        // Arm the turn-end wait AFTER ensureQueryStarted: ensureQueryStarted awaits
+        // a preceding interrupt's completion, and that interrupt's terminal
+        // setIdle() fires BEFORE the await resolves — arming earlier would let it
+        // resolve this turn's waiter for a turn that hasn't started yet. Don't
+        // short-circuit on a current isIdle(): a reclaimed consumed turn is
+        // restored as idle and the streaming query doesn't leave idle until input
+        // is observed, so treating that pre-input idle as terminal would complete
+        // the durable job while history replay is still running.
+        // Tag the waiter with the current rate-limit episode generation so a
+        // narrowly-scoped release (a superseded rate-limit retry calling
+        // releaseIdleWaiters(episodeGeneration)) resolves only this turn's waiter
+        // — not a newer turn's waiter armed after a cancel()/reset() bumped the
+        // generation. The generation here equals the one scheduleRetry later
+        // captures as episodeGeneration (its own supersession guard keeps the
+        // generation stable at this value through the 429'd turn's life).
+        const turnEnd = this.stateManager.waitForIdleTransition(
+          this.rateLimitWatchdog.getGeneration(),
+          recordTurnEndMarker
+        );
+        // Feed the kickoff (resolves on onSent = the SDK consumed it) UNLESS a
+        // prior attempt already did (alreadyConsumed = reclaim after a crash): the
+        // SDK resume-from-history already holds a consumed kickoff, so re-feeding
+        // would duplicate the prompt. History drives the turn; we only ensure the
+        // query is running. See Codex (#2592). Durable so a yielded-but-unresumed
+        // kickoff does not TTL-out into a duplicate re-feed (#3742616720).
+        let acknowledgment: Promise<void> | null = null;
+        let admittedBatchUuids: string[] | undefined;
+        let feedContent: string | MessageContent[] = content;
+        if (!alreadyConsumed) {
+          // Re-fence the lease AGAIN right before admission: ensureQueryStarted
+          // awaits provider startup, so the event loop can suspend past the stale
+          // threshold and a resumed processor can reclaim the row with a new token.
+          // Without this recheck both attempts would admit the same kickoff. See
+          // Codex (#3744971818).
+          if (claimGuard && !claimGuard()) {
+            turnEnd.cancel();
+            disarmObserver();
+            return { kind: 'aborted' as const };
+          }
+          // Batched queue flush: revalidate every member + rebuild the prompt
+          // from the durable rows UNDER THIS LOCK — a member deleted or
+          // user-deferred between the handler's snapshot and the feed must not
+          // reach the provider, and the combined prompt must respect the
+          // BATCH_DELIVERY_MAX_CHARS budget. See rebuildBatchDeliveryContent.
+          if (batchUuids && batchUuids.length > 1) {
+            const rebuilt = this.rebuildBatchDeliveryContent(messageUuid, content, batchUuids);
+            feedContent = rebuilt.content;
+            admittedBatchUuids = rebuilt.admittedUuids;
+            // Persist the ADMITTED set back into the job payload: every payload
+            // consumer (ACP acceptance consume, dead-letter settlement,
+            // batch-aware active lookups) must see exactly what was fed, so
+            // dropped tails are neither marked consumed, nor failed on
+            // dead-letter, nor shielded from reconciler redelivery. Narrowing
+            // is REQUIRED before feeding — never admit a reduced prompt against
+            // a superset payload (ACP acceptance / dead-letter would then
+            // settle rows that were never sent). A transient persistence
+            // failure throws recoverable so the job retries the narrowing+feed;
+            // a row that no longer matches (cancelled claim) aborts.
+            if (admittedBatchUuids && admittedBatchUuids.length !== batchUuids.length) {
+              let narrowed = false;
+              try {
+                narrowed =
+                  this.db
+                    .getJobQueueRepo()
+                    ?.narrowActiveDeliveryBatchUuids(
+                      this.session.id,
+                      messageUuid,
+                      admittedBatchUuids
+                    ) ?? false;
+              } catch (error) {
+                turnEnd.cancel();
+                disarmObserver();
+                throw new MessageDeliveryRecoverableTurnError(
+                  `batch narrowing failed: ${error instanceof Error ? error.message : String(error)}`
+                );
+              }
+              if (!narrowed) {
+                turnEnd.cancel();
+                disarmObserver();
+                return { kind: 'aborted' as const };
+              }
+            }
+            // Freeze the admitted members as in-flight (enqueued → submitted)
+            // BEFORE the admission places their text inside the kickoff-keyed
+            // combined prompt. Revoke/defer only mutate enqueued/deferred rows,
+            // so past this point a member's text can no longer be deleted from
+            // a prompt the transport is about to receive — without this, the
+            // admission→provider window lets the queue UI "remove" text that
+            // still executes. Serialized with revoke by this session lock.
+            const memberUuids = (admittedBatchUuids ?? []).filter((uuid) => uuid !== messageUuid);
+            if (memberUuids.length > 0) {
+              this.markDeliveryBatchSubmitted(memberUuids);
+            }
+          }
+          acknowledgment = this.messageQueue.admitWithId(messageUuid, feedContent, false, {
+            durable: true,
+          });
+        }
+        return {
+          kind: 'driving' as const,
+          queryPromise,
+          turnEnd,
+          acknowledgment,
+          admittedBatchUuids,
+          generation,
+          responseObserver: armedObserver,
+        };
+      },
+      signal
+    );
     if (started.kind === 'blocked') {
       // Mirror the legacy startQueryAndEnqueue path: report the session as
       // queued while it waits on sdk_resume_choice, so later explicit deferrals
@@ -2321,6 +2393,19 @@ export class AgentSession
     this.outstandingToolUseIds.clear();
     // Stall watchdog placeholder; armed once we begin awaiting the turn (below).
     let stallPromise: Promise<void> = new Promise<void>(() => {});
+    // The watchdog instance THIS attempt armed, for identity-fenced cleanup: a
+    // slot-evicted predecessor that settles later must not cancel a replacement's
+    // watchdog via the shared `deliveryTurnStall` field. (Codex P1, PR #2499.)
+    let stallWatchdog: DeliveryTurnStallWatchdog | null = null;
+    // The turn-end waiter the turn await races (possibly re-armed by the
+    // spurious-fire grace below); cancelled in the finally.
+    let activeTurnEnd = started.turnEnd;
+    // Response observability applies to EVERY driving attempt — including an
+    // alreadyConsumed reclaim, whose `acknowledgment` is null (no fresh feed
+    // below) but which still starts a query whose first SDK response the
+    // lifecycle log must see. Armed inside the session lock (see above); this
+    // local reference backs the identity-checked clear in the finally.
+    const responseObserver = started.responseObserver;
     try {
       // An alreadyConsumed reclaim skips the feed (admitWithId not called), so
       // `started.acknowledgment` is null — `await null` resolves immediately.
@@ -2330,7 +2415,22 @@ export class AgentSession
       // as a ground-truth duplicate, and record a residual sample for a handoff
       // that never occurred). (Codex review.)
       if (started.acknowledgment) {
-        await started.acknowledgment;
+        const aborted = waitForDeliveryAbort(signal);
+        try {
+          await Promise.race([started.acknowledgment, aborted.promise]);
+        } catch (error) {
+          if (signal?.aborted) {
+            // Revocation wins only before provider yield. Once remove() returns
+            // false, the provider owns the admission; finish its bookkeeping so
+            // a replacement observes consumed/submitted and never re-feeds it.
+            if (this.messageQueue.remove(messageUuid)) throw error;
+            await started.acknowledgment;
+          } else {
+            throw error;
+          }
+        } finally {
+          aborted.cancel();
+        }
         // Delivery observability: onSent elapsed measures spawn → kickoff-write.
         // A long window here (approaching STARTUP_TIMEOUT_MS) is the feed
         // starvation that produces 0-message startup timeouts.
@@ -2344,6 +2444,7 @@ export class AgentSession
         // queue interrupt, or admission timeout before the generator yields is
         // NOT a handoff and must not be counted as one. (Codex review.)
         deliveryMetrics.recordFeed(messageUuid);
+        observer?.reportStage('sdk_admitted', { generation: started.generation });
         // For the Claude SDK, onSent is the consume signal — flip send_status →
         // 'consumed' SYNCHRONOUSLY (item 12) so reclaimStale almost always sees
         // 'consumed' and skips the re-feed, and signal delivery waiters (LTA /
@@ -2372,17 +2473,89 @@ export class AgentSession
       // consumed reclaim): a live-but-silent turn (no result, no error) would
       // otherwise pin the job via the lease heartbeat forever. Raced against the
       // turn-end await; cleared in `finally`.
-      stallPromise = this.armDeliveryTurnStall();
-      await Promise.race([
-        started.turnEnd.promise,
-        started.queryPromise.catch(() => {}),
-        stallPromise,
-      ]);
+      throwIfDeliveryAborted(signal);
+      stallPromise = this.armDeliveryTurnStall(signal, claimGuard);
+      stallWatchdog = this.deliveryTurnStall;
+      // Spurious-fire grace: a turn-end transition landing within milliseconds
+      // of a FRESH kickoff admission cannot be THIS turn's end — a provider
+      // roundtrip takes longer than that — it is the PREVIOUS turn's teardown
+      // (its terminal idle release / deferred waiter drain) arriving just after
+      // this attempt armed its waiter. Failing there reopens the row and
+      // re-feeds a prompt the still-live query is already answering; the
+      // duplicate feed then sits dead until the stall watchdog (observed as the
+      // deterministic steer-after-turn-end hang in the features-b online suite).
+      // Discriminators: this attempt fed the kickoff (alreadyConsumed reclaims
+      // resolve their ended turns via the pre-arm turn_terminated check), no
+      // terminal result for THIS message yet, and the query promise still
+      // pending (a genuinely-ended turn's query has closed, or a legitimately
+      // fast turn already has its result row). Re-arm and keep waiting;
+      // bounded to two re-arms. (PR #2499 CI trace.)
+      const SPURIOUS_TURN_END_GRACE_MS = 250;
+      const freshFeed = !!started.acknowledgment;
+      let raceArmedAt = Date.now();
+      let graceRearms = 0;
+      let turnEndFired = false;
+      let queryEnded = false;
+      void activeTurnEnd.promise.then(() => {
+        turnEndFired = true;
+      });
+      void started.queryPromise
+        .catch(() => {})
+        .then(() => {
+          queryEnded = true;
+        });
+      while (true) {
+        const aborted = waitForDeliveryAbort(signal);
+        try {
+          await Promise.race([
+            activeTurnEnd.promise,
+            started.queryPromise.catch(() => {}),
+            stallPromise,
+            aborted.promise,
+          ]);
+        } finally {
+          aborted.cancel();
+        }
+        // A success OR error terminal result for this message means the turn
+        // genuinely ended (fast) — hasTerminalResultAfter only matches success,
+        // and an error-result turn must fall through to the post-race terminal
+        // classification, not wait out the stall watchdog. (Codex P2.)
+        const turnResultRepo = this.db.getSDKMessageRepo();
+        const hasAnyTerminalResult =
+          !!turnResultRepo?.hasTerminalResultAfter(this.session.id, messageUuid) ||
+          !!turnResultRepo?.getErrorTerminalResultSubtypeAfter(this.session.id, messageUuid);
+        const spuriousFire =
+          freshFeed &&
+          turnEndFired &&
+          !queryEnded &&
+          Date.now() - raceArmedAt <= SPURIOUS_TURN_END_GRACE_MS &&
+          graceRearms < 2 &&
+          !hasAnyTerminalResult;
+        if (!spuriousFire) break;
+        graceRearms++;
+        activeTurnEnd.cancel();
+        activeTurnEnd = this.stateManager.waitForIdleTransition(
+          this.rateLimitWatchdog.getGeneration(),
+          recordTurnEndMarker
+        );
+        raceArmedAt = Date.now();
+        turnEndFired = false;
+        void activeTurnEnd.promise.then(() => {
+          turnEndFired = true;
+        });
+      }
     } finally {
       // Cancel the waiter if it didn't win the race (e.g. queryPromise resolved
       // on query-close, or acknowledgment rejected) so it isn't left in the map.
-      started.turnEnd.cancel();
-      this.clearDeliveryTurnStall();
+      activeTurnEnd.cancel();
+      // Identity-fenced: a slot-evicted predecessor that settles later must not
+      // cancel a replacement's watchdog (the field is session-shared).
+      if (this.deliveryTurnStall === stallWatchdog) {
+        this.clearDeliveryTurnStall();
+      }
+      if (responseObserver && this.deliveryResponseObserver === responseObserver) {
+        this.deliveryResponseObserver = null;
+      }
     }
     // The turn ended (or the stall watchdog fired). Determine whether it
     // actually produced output: a terminal `result` row after consumption is the
@@ -2468,13 +2641,14 @@ export class AgentSession
    * a clean query. The reset publishes the idle transition, which also resolves
    * the turn-end waiter raced in {@link driveDeliveryTurn}. (Codex P1.)
    */
-  private armDeliveryTurnStall(): Promise<void> {
+  private armDeliveryTurnStall(signal?: AbortSignal, claimGuard?: () => boolean): Promise<void> {
     this.clearDeliveryTurnStall();
     this.deliveryTurnStalled = false;
     this.deliveryTurnStall = new DeliveryTurnStallWatchdog(
       DELIVERY_TURN_NO_ACTIVITY_MS,
       () => this.outstandingToolUseIds.size > 0,
       async () => {
+        if (signal?.aborted || (claimGuard && !claimGuard())) return;
         this.deliveryTurnStalled = true;
         try {
           await this.resetQuery({ restartQuery: false });
@@ -2496,6 +2670,22 @@ export class AgentSession
    */
   bumpDeliveryTurnActivity(): void {
     this.deliveryTurnStall?.bump();
+  }
+
+  reportFirstDeliverySDKResponse(responseType: string): void {
+    const active = this.deliveryResponseObserver;
+    // A `pendingStart` observer is armed but not yet claimed by a query — the
+    // driving attempt's generation bump in incrementQueryGeneration is what
+    // claims it. Until then, any frame (e.g. a predecessor query's late
+    // terminal frame landing while ensureQueryStarted awaits an interrupt) must
+    // not be consumed as THIS delivery's first response, or the replacement's
+    // real first frame is omitted. (Codex P2, PR #2499.)
+    if (!active || active.pendingStart || active.generation !== this.getQueryGeneration()) return;
+    this.deliveryResponseObserver = null;
+    active.observer.reportStage('first_sdk_response', {
+      generation: active.generation,
+      responseType,
+    });
   }
 
   /** Cancel the in-flight stall watchdog (no-op if none armed). */
@@ -2530,39 +2720,48 @@ export class AgentSession
     messageUuid: string,
     content: string | MessageContent[],
     _parentToolUseId?: string | null,
-    claimGuard?: () => boolean
+    claimGuard?: () => boolean,
+    signal?: AbortSignal,
+    observer?: MessageDeliveryAttemptObserver
   ): Promise<FeedSteerOutcome> {
-    const action = await withSessionLock(this.session.id, async () => {
-      // Re-fence the lease at the TOP of the locked section, before branching on
-      // status. The handler's pre-lock check can pass, then a reclaim can win the
-      // row during the lock wait. A stale attempt must not feed, park, OR promote
-      // (promote calls requeueAs, which is token-fenced, but aborting here avoids
-      // the superseded/requeue churn). See Codex (#3744886834, #3744971820).
-      if (claimGuard && !claimGuard()) return { kind: 'aborted' as const };
-      const status = this.stateManager.getState().status;
-      // 'processing' → validate + synchronously admit while remove/defer are
-      // excluded by this same lock. 'queued' → parked owner, so park this steer.
-      if (status === 'processing') {
-        if (!this.messageDeliveryValid(messageUuid)) return { kind: 'aborted' as const };
-        // ACP: if this steer was already admitted and is still pending subprocess
-        // acceptance (a parked re-run), do NOT re-admit — admitWithId is not
-        // idempotent, so a second push would duplicate the prompt. Keep awaiting
-        // acceptance (the handler parks again). The non-ACP path never reaches a
-        // re-admit: a consumed steer short-circuits via alreadyConsumed upstream.
-        if (
-          this.session.config.provider === 'acp' &&
-          this.messageQueue.hasPendingOrInFlight(messageUuid)
-        ) {
-          return { kind: 'awaiting_acceptance' as const };
+    const action = await withSessionLock(
+      this.session.id,
+      async () => {
+        // Re-fence the lease at the TOP of the locked section, before branching on
+        // status. The handler's pre-lock check can pass, then a reclaim can win the
+        // row during the lock wait. A stale attempt must not feed, park, OR promote
+        // (promote calls requeueAs, which is token-fenced, but aborting here avoids
+        // the superseded/requeue churn). See Codex (#3744886834, #3744971820).
+        if (claimGuard && !claimGuard()) return { kind: 'aborted' as const };
+        const status = this.stateManager.getState().status;
+        // 'processing' → validate + synchronously admit while remove/defer are
+        // excluded by this same lock. 'queued' → parked owner, so park this steer.
+        if (status === 'processing') {
+          if (!this.messageDeliveryValid(messageUuid)) return { kind: 'aborted' as const };
+          if (!this.queryPromise) return { kind: 'promote' as const };
+          const generation = this.getQueryGeneration();
+          observer?.reportStage('query_ready', { generation });
+          // ACP: if this steer was already admitted and is still pending subprocess
+          // acceptance (a parked re-run), do NOT re-admit — admitWithId is not
+          // idempotent, so a second push would duplicate the prompt. Keep awaiting
+          // acceptance (the handler parks again). The non-ACP path never reaches a
+          // re-admit: a consumed steer short-circuits via alreadyConsumed upstream.
+          if (
+            this.session.config.provider === 'acp' &&
+            this.messageQueue.hasPendingOrInFlight(messageUuid)
+          ) {
+            return { kind: 'awaiting_acceptance' as const };
+          }
+          const acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
+            durable: true,
+          });
+          return { kind: 'feed' as const, acknowledgment, generation };
         }
-        const acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
-          durable: true,
-        });
-        return { kind: 'feed' as const, acknowledgment };
-      }
-      if (status === 'queued') return { kind: 'park' as const };
-      return { kind: 'promote' as const };
-    });
+        if (status === 'queued') return { kind: 'park' as const };
+        return { kind: 'promote' as const };
+      },
+      signal
+    );
     if (action.kind === 'promote') {
       // The active turn ended (or never started) — promote to a turn candidate.
       return { outcome: 'promote' };
@@ -2579,10 +2778,23 @@ export class AgentSession
     }
     // Admission happened atomically under the lock; only the provider
     // acknowledgment is awaited here.
-    await action.acknowledgment;
+    const aborted = waitForDeliveryAbort(signal);
+    try {
+      await Promise.race([action.acknowledgment, aborted.promise]);
+    } catch (error) {
+      if (signal?.aborted) {
+        if (this.messageQueue.remove(messageUuid)) throw error;
+        await action.acknowledgment;
+      } else {
+        throw error;
+      }
+    } finally {
+      aborted.cancel();
+    }
     // onSent fired → the steer reached the SDK (actual handoff). Record here,
     // not at admission (see driveDeliveryTurn).
     deliveryMetrics.recordFeed(messageUuid);
+    observer?.reportStage('sdk_admitted', { generation: action.generation });
     // Claude SDK: onSent is the consume signal — flip synchronously (item 12)
     // and signal delivery waiters. ACP is excluded (consume boundary is
     // acceptance, not onSent); see driveDeliveryTurn for the full rationale.

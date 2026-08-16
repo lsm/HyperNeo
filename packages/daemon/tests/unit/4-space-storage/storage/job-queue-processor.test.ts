@@ -1,10 +1,10 @@
-import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import { Database } from '../../../../src/storage/sqlite-compat';
-import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   DeadLetterImmediatelyError,
   JobQueueProcessor,
 } from '../../../../src/storage/job-queue-processor';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { Database } from '../../../../src/storage/sqlite-compat';
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 50));
 
@@ -30,6 +30,7 @@ describe('JobQueueProcessor', () => {
 				run_at INTEGER NOT NULL,
 				created_at INTEGER NOT NULL,
 				started_at INTEGER,
+			heartbeat_at INTEGER,
 				completed_at INTEGER
 			);
 			CREATE INDEX IF NOT EXISTS idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC);
@@ -460,7 +461,8 @@ describe('JobQueueProcessor', () => {
       expect(processing?.status).toBe('processing');
 
       // Manually set started_at far in the past so it's considered stale
-      db.prepare(`UPDATE job_queue SET started_at = ? WHERE id = ?`).run(
+      db.prepare(`UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?`).run(
+        Date.now() - 10_000,
         Date.now() - 10_000,
         job.id
       );
@@ -472,6 +474,108 @@ describe('JobQueueProcessor', () => {
       // The stale job should have been reclaimed to 'pending' and then processed
       const after = repo.getJob(job.id);
       expect(after?.status).toBe('completed');
+    });
+
+    it('aborts a reclaimed predecessor and releases its capped slot', async () => {
+      const staleProcessor = new JobQueueProcessor(repo, {
+        staleThresholdMs: 100,
+        maxConcurrent: 1,
+      });
+      const signals: AbortSignal[] = [];
+      let calls = 0;
+      staleProcessor.register('claim-loss', async (_job, context) => {
+        calls++;
+        signals.push(context!.signal);
+        if (calls === 1) {
+          await new Promise<void>((_, reject) => {
+            context!.signal.addEventListener(
+              'abort',
+              () => reject(context!.signal.reason ?? new Error('claim lost')),
+              { once: true }
+            );
+          });
+        }
+      });
+
+      const job = repo.enqueue({ queue: 'claim-loss', payload: {}, maxRetries: 0 });
+      await staleProcessor.tick();
+      await flush();
+      db.prepare(`UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?`).run(
+        Date.now() - 10_000,
+        Date.now() - 10_000,
+        job.id
+      );
+      (
+        staleProcessor as unknown as { reclaimStaleClaims(staleBefore: number): void }
+      ).reclaimStaleClaims(Date.now() - 100);
+      await flush();
+      await staleProcessor.tick();
+      await flush();
+
+      expect(signals[0]?.aborted).toBe(true);
+      expect(calls).toBe(2);
+      expect(repo.getJob(job.id)?.status).toBe('completed');
+      expect(repo.getJob(job.id)?.retryCount).toBe(0);
+      await staleProcessor.stop();
+    });
+
+    it('heartbeats a generic long-running handler so it is not reclaimed', async () => {
+      const heartbeatProcessor = new JobQueueProcessor(repo, {
+        staleThresholdMs: 90,
+        maxConcurrent: 1,
+      });
+      let resolveHandler!: () => void;
+      let calls = 0;
+      heartbeatProcessor.register('heartbeat-queue', async () => {
+        calls++;
+        await new Promise<void>((resolve) => {
+          resolveHandler = resolve;
+        });
+      });
+
+      const job = repo.enqueue({ queue: 'heartbeat-queue', payload: {} });
+      await heartbeatProcessor.tick();
+      const startedAt = repo.getJob(job.id)?.startedAt;
+      await new Promise((resolve) => setTimeout(resolve, 160));
+
+      expect(repo.getJob(job.id)?.heartbeatAt).toBeGreaterThan(startedAt ?? 0);
+      (heartbeatProcessor as unknown as { lastStaleCheck: number }).lastStaleCheck = 0;
+      await heartbeatProcessor.tick();
+      expect(calls).toBe(1);
+      expect(repo.getJob(job.id)?.status).toBe('processing');
+
+      resolveHandler();
+      await flush();
+      expect(repo.getJob(job.id)?.status).toBe('completed');
+      expect(repo.getJob(job.id)?.heartbeatAt).toBeNull();
+      await heartbeatProcessor.stop();
+    });
+
+    it('aborts the exact handler when heartbeat renewal loses ownership', async () => {
+      const heartbeatProcessor = new JobQueueProcessor(repo, {
+        staleThresholdMs: 90,
+        maxConcurrent: 1,
+      });
+      let signal!: AbortSignal;
+      heartbeatProcessor.register('lost-heartbeat', async (_job, context) => {
+        signal = context!.signal;
+        await new Promise<void>((resolve) => {
+          context!.signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+      });
+
+      const job = repo.enqueue({ queue: 'lost-heartbeat', payload: {} });
+      await heartbeatProcessor.tick();
+      db.prepare(
+        `UPDATE job_queue
+            SET status = 'pending', started_at = NULL, heartbeat_at = NULL
+          WHERE id = ?`
+      ).run(job.id);
+      await new Promise((resolve) => setTimeout(resolve, 60));
+
+      expect(signal.aborted).toBe(true);
+      expect(repo.getJob(job.id)?.retryCount).toBe(0);
+      await heartbeatProcessor.stop();
     });
 
     it('does not reclaim jobs that are not old enough', async () => {
@@ -502,7 +606,8 @@ describe('JobQueueProcessor', () => {
       repo.dequeue('throttle-queue', 1);
 
       // Make it stale
-      db.prepare(`UPDATE job_queue SET started_at = ? WHERE id = ?`).run(
+      db.prepare(`UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?`).run(
+        Date.now() - 10_000,
         Date.now() - 10_000,
         job.id
       );
@@ -517,7 +622,8 @@ describe('JobQueueProcessor', () => {
       // Create another stale job
       const job2 = repo.enqueue({ queue: 'throttle-queue', payload: {} });
       repo.dequeue('throttle-queue', 1);
-      db.prepare(`UPDATE job_queue SET started_at = ? WHERE id = ?`).run(
+      db.prepare(`UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?`).run(
+        Date.now() - 10_000,
         Date.now() - 10_000,
         job2.id
       );

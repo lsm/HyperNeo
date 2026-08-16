@@ -28,6 +28,26 @@ import {
 // Test the AgentSession class indirectly through its components
 // since direct testing with mock.module() causes global mock pollution
 
+type DeliveryResponseObserver = {
+  generation: number;
+  observer: { reportStage: (stage: string, details?: Record<string, unknown>) => void };
+  pendingStart?: boolean;
+};
+
+function getDeliveryResponseObserver(agentSession: AgentSession): DeliveryResponseObserver | null {
+  return (agentSession as unknown as { deliveryResponseObserver: DeliveryResponseObserver | null })
+    .deliveryResponseObserver;
+}
+
+function setDeliveryResponseObserver(
+  agentSession: AgentSession,
+  observer: DeliveryResponseObserver
+): void {
+  (
+    agentSession as unknown as { deliveryResponseObserver: DeliveryResponseObserver | null }
+  ).deliveryResponseObserver = observer;
+}
+
 describe('AgentSession', () => {
   describe('session data structure', () => {
     it('should have required session fields', () => {
@@ -1067,6 +1087,65 @@ describe('AgentSession', () => {
       expect(retrySpy).toHaveBeenCalledTimes(1); // no additional reopen
     });
 
+    it('driveDeliveryTurn re-arms through a spurious turn-end fired right after a fresh admission', async () => {
+      // The previous turn's teardown can release idle waiters a few ms AFTER a
+      // promoted kickoff was admitted — before this turn's result can possibly
+      // exist. Failing there reopened the row and re-fed a prompt the
+      // still-live query was already answering (duplicate feed → dead air →
+      // stall watchdog). The drive must re-arm its waiter and wait for the
+      // turn's REAL end instead. (PR #2499 CI trace.)
+      let resultLanded = false;
+      let sendStatus = 'enqueued';
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content: 'x', sendStatus })),
+        hasTerminalResultAfter: mock(() => resultLanded),
+        hasDeliveryTurnEnd: mock(() => false),
+        clearDeliveryTurnEnd: mock(() => {}),
+        getErrorTerminalResultSubtypeAfter: mock(() => null),
+        recordDeliveryTurnEnd: mock(() => {}),
+        markDeliveryConsumedByUuids: mock(() => {
+          sendStatus = 'consumed';
+          return [];
+        }),
+        markDeliveryRetryableByUuid: mock(() => 'db-1'),
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        isProcessingDelivery: mock(() => true),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      // A query that never settles on its own — only the idle waiter can end
+      // the turn, so a premature failure cannot hide behind queryPromise.
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: mock(() => Promise.resolve()),
+        isRunning: mock(() => false),
+        size: mock(() => 0),
+      };
+
+      await agentSession.stateManager.setProcessing('uuid-spurious');
+      const drive = agentSession.driveDeliveryTurn(
+        'uuid-spurious',
+        'hello',
+        null,
+        false,
+        () => true
+      );
+      // Admission resolves; the PREVIOUS turn's teardown then fires an idle
+      // transition almost immediately — before any result exists.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await agentSession.stateManager.setIdle();
+      // The drive must NOT fail on the spurious fire (query alive, no result):
+      // give it a beat to prove it is still waiting rather than thrown.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      // The turn's REAL end: the result lands, then the terminal idle.
+      resultLanded = true;
+      await agentSession.stateManager.setProcessing('uuid-spurious');
+      await agentSession.stateManager.setIdle();
+      await expect(drive).resolves.toEqual({ outcome: 'completed' });
+    });
+
     it('driveDeliveryTurn narrows the batch payload even when only the kickoff is admitted', async () => {
       // Singleton admission (e.g. the budget fits only the kickoff, or every
       // other member was deferred/removed since enqueue) must STILL persist the
@@ -1662,6 +1741,45 @@ describe('AgentSession', () => {
       const gen2 = agentSession.incrementQueryGeneration();
       expect(gen2).toBe(2);
       expect(agentSession.getQueryGeneration()).toBe(2);
+    });
+
+    it('incrementQueryGeneration claims a pending delivery observer', () => {
+      // Codex P2 (PR #2499): the bump that starts the delivery's query must
+      // retag AND claim (clear pendingStart) the armed observer, so the new
+      // query's first frame fences clean while a predecessor's earlier frame
+      // (before this bump) stays inactive.
+      const reportStage = mock(() => {});
+      setDeliveryResponseObserver(agentSession, {
+        generation: 0,
+        observer: { reportStage },
+        pendingStart: true,
+      });
+
+      const next = agentSession.incrementQueryGeneration();
+
+      const observer = getDeliveryResponseObserver(agentSession);
+      expect(next).toBe(1);
+      expect(observer?.generation).toBe(1);
+      expect(observer?.pendingStart).toBe(false);
+    });
+
+    it('reportFirstDeliverySDKResponse ignores a pending (unclaimed) observer', () => {
+      // Codex P2 (PR #2499): a predecessor query's late terminal frame landing
+      // while ensureQueryStarted awaits an interrupt must not be consumed as
+      // THIS delivery's first response — it carries the pre-bump generation and
+      // would clear the observer before the replacement query claims it.
+      const reportStage = mock(() => {});
+      setDeliveryResponseObserver(agentSession, {
+        generation: 0,
+        observer: { reportStage },
+        pendingStart: true,
+      });
+
+      agentSession.reportFirstDeliverySDKResponse('assistant');
+
+      const observer = getDeliveryResponseObserver(agentSession);
+      expect(observer).not.toBeNull();
+      expect(reportStage).not.toHaveBeenCalled();
     });
 
     it('setCleaningUp should update cleaning up state', () => {

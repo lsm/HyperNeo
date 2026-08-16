@@ -1,5 +1,5 @@
 import { homedir } from 'os';
-import type { Config } from './config';
+import { parsePositiveInt, type Config } from './config';
 import type { WebSocketData } from './types/websocket';
 import { createHttpWsServer, type ServerHandle } from './lib/runtime-server';
 import { Database } from './storage/database';
@@ -102,6 +102,7 @@ import { SpaceGoalRepository } from './storage/repositories/space-goal-repositor
 import { AppMcpLifecycleManager, McpImportService, seedDefaultMcpEntries } from './lib/mcp';
 import { FileIndex } from './lib/file-index';
 import { installConsoleLogCapture, subscribeToStructuredLogs } from './lib/logger';
+import { StructuredLogFileSink } from './lib/structured-log-file-sink';
 import { EvolutionLogEvidenceService } from './lib/space/evolution-log-evidence-service';
 import { SkillsManager } from './lib/skills-manager';
 import {
@@ -163,6 +164,24 @@ export async function syncGitHubPollingCapability(
   });
 }
 
+/**
+ * File-log capture stranded by a failed createDaemonApp, if any. A failed
+ * startup deliberately keeps the sink subscribed so the caller's fatal handler
+ * can persist the startup error to disk — this stash makes that capture
+ * reclaimable: the next createDaemonApp attempt reclaims it automatically, and
+ * nonfatal embedders can release it via {@link releaseStartupFileLogCapture}.
+ * Without the handoff, every in-process startup retry would strand another
+ * global structured-log subscriber and an open sink forever. (Codex P2, PR #2499.)
+ */
+let strandedStartupFileLogCapture: (() => Promise<void>) | null = null;
+
+/** Reclaim the file-log capture a failed createDaemonApp left behind. */
+export async function releaseStartupFileLogCapture(): Promise<void> {
+  const release = strandedStartupFileLogCapture;
+  strandedStartupFileLogCapture = null;
+  await release?.();
+}
+
 export interface CreateDaemonAppOptions {
   config: Config;
   /**
@@ -177,6 +196,12 @@ export interface CreateDaemonAppOptions {
    * Default: false
    */
   standalone?: boolean;
+  /**
+   * Invoked as soon as the structured-log file sink exists and is subscribed —
+   * before the factory's long-running initialization — so embedders (main.ts)
+   * can flush fatal records even when a startup-phase crash fires first.
+   */
+  onStructuredLogSinkReady?: (flush: () => Promise<void>) => void;
 }
 
 export interface DaemonAppContext {
@@ -235,6 +260,8 @@ export interface DaemonAppContext {
   skillsManager: SkillsManager;
   /** Workspace file index for fast fuzzy file/folder search */
   fileIndex: FileIndex;
+  /** Best-effort drain of pending structured file-log writes. */
+  flushStructuredLogs: () => Promise<void>;
   /**
    * Cleanup function for graceful shutdown.
    * Closes all connections, stops sessions, and closes database.
@@ -259,6 +286,33 @@ export interface DaemonAppContext {
 export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<DaemonAppContext> {
   const { config, verbose = true, standalone = false } = options;
   let startupLogCaptureCleanup: (() => void) | null = null;
+  // Reclaim any capture stranded by a previous FAILED attempt BEFORE
+  // constructing the new sink — the replacement's constructor stats the shared
+  // path immediately, so an old sink still appending/rotating would leave its
+  // currentBytes inconsistent with the file it writes (misaligned rotations).
+  // Awaited so the old sink fully drains and releases its file handle first.
+  // (Codex P2, PR #2499.)
+  await releaseStartupFileLogCapture().catch(() => {});
+  const structuredLogSink = config.structuredLogFilePath
+    ? new StructuredLogFileSink({
+        path: config.structuredLogFilePath,
+        maxBytes: config.structuredLogMaxBytes,
+        retainedFiles: config.structuredLogRetainedFiles,
+        maxPendingBytes: config.structuredLogMaxPendingBytes,
+      })
+    : null;
+  const unsubscribeFileLogs = structuredLogSink
+    ? subscribeToStructuredLogs((event) => structuredLogSink.capture(event))
+    : () => {};
+  const restoreConsoleCapture = installConsoleLogCapture();
+  let fileLogCaptureClosed = false;
+  const closeFileLogCapture = async (): Promise<void> => {
+    if (fileLogCaptureClosed) return;
+    fileLogCaptureClosed = true;
+    unsubscribeFileLogs();
+    restoreConsoleCapture();
+    await structuredLogSink?.close();
+  };
   // Startup phase fences. Each heavy init step logs `[startup N] <name>` with
   // elapsed-since-previous (+ms = duration of the prior phase) and cumulative
   // total, so a slow/hanging phase is obvious. verbose-gated to mirror logInfo.
@@ -281,6 +335,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
   };
 
   try {
+    // Invoked inside the try so a THROWING embedder callback still lands in
+    // the catch below — the sink is already subscribed at this point, so the
+    // failure must route through the stranded-capture handoff (next attempt /
+    // releaseStartupFileLogCapture) rather than leaking the subscription.
+    // Still fires before any long-running init. (Codex P2, PR #2499.)
+    options.onStructuredLogSinkReady?.(() => structuredLogSink?.flush() ?? Promise.resolve());
+
     // Clear CLAUDECODE env var so SDK subprocesses don't refuse to start.
     // The daemon may run inside a Claude Code session (e.g., during development),
     // but its spawned agent sessions are independent and must not be blocked.
@@ -311,7 +372,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       evolutionRepo: db.evolution,
       spaceRepo: earlySpaceRepo,
     });
-    const restoreEarlyConsoleCapture = installConsoleLogCapture();
     const unsubscribeEarlyStructuredLogs = subscribeToStructuredLogs((event) => {
       earlyLogEvidenceService.capture(event);
       if (event.level === 'warn' || event.level === 'error' || event.level === 'fatal') {
@@ -321,7 +381,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     startupLogCaptureCleanup = () => {
       earlyLogEvidenceService.flush();
       unsubscribeEarlyStructuredLogs();
-      restoreEarlyConsoleCapture();
     };
 
     // Bind shared loggers after console capture is installed so all subsequent
@@ -333,7 +392,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const jobQueue = new JobQueueRepository(db.getDatabase());
     const workflowHookStateRepository = new WorkflowHookStateRepository(db.getDatabase());
     const workflowHookRuntimeService = new WorkflowHookRuntimeService();
-    const maxConcurrent = Number(process.env.HYPERNEO_JOB_QUEUE_MAX_CONCURRENT) || 5;
+    const maxConcurrent = parsePositiveInt(process.env.HYPERNEO_JOB_QUEUE_MAX_CONCURRENT, 5);
     const jobProcessor = new JobQueueProcessor(jobQueue, {
       pollIntervalMs: 1000,
       maxConcurrent,
@@ -347,12 +406,24 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // active. A separate budget gives zero cross-lane contention without any
     // shared-processor surgery. Steers still exempt-bypass THIS budget. See
     // message-delivery-v2.md + Codex (#3742774839).
-    const messageDeliveryMaxConcurrent =
-      Number(process.env.HYPERNEO_MESSAGE_DELIVERY_MAX_CONCURRENT) || 8;
+    // Parse as a finite positive integer: `Number(value) || 64` accepts a
+    // negative (non-positive slot budget → the dedicated processor never claims)
+    // or fractional value (passed as SQLite LIMIT → datatype mismatch per tick).
+    // (Codex P2, PR #2499.)
+    const messageDeliveryMaxConcurrent = parsePositiveInt(
+      process.env.HYPERNEO_MESSAGE_DELIVERY_MAX_CONCURRENT,
+      64
+    );
     const messageDeliveryProcessor = new JobQueueProcessor(jobQueue, {
       pollIntervalMs: 1000,
       maxConcurrent: messageDeliveryMaxConcurrent,
       staleThresholdMs: 5 * 60 * 1000,
+      // A delivery abort whose admission is already provider-owned awaits the
+      // queue's 30s acknowledgment timeout before settling; the replacement
+      // deferral must outlive that bound (default 10s) so an expired deferral
+      // can never overlap the still-settling handoff — while staying bounded
+      // for a genuinely wedged handler. (Codex P1, PR #2499.)
+      settlementGraceMs: 35_000,
     });
     // --- setInterval inventory (out-of-scope for job-queue migration) ---
     // The following subsystems intentionally retain their own setInterval timers.
@@ -551,7 +622,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const internalEventBus = createDaemonInternalEventBus();
     const logEvidenceService = earlyLogEvidenceService;
     const unsubscribeStructuredLogs = unsubscribeEarlyStructuredLogs;
-    const restoreConsoleCapture = restoreEarlyConsoleCapture;
 
     // Initialize InternalCommandBus for daemon action dispatch.
     const commandBus = createInternalCommandBus<DaemonCommandMap>();
@@ -841,6 +911,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       spaceAgentManager,
       jobQueue,
       jobProcessor,
+      messageDeliveryProcessor,
       reactiveDb,
       liveQueries,
       appMcpManager,
@@ -1428,7 +1499,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
         logEvidenceService.flush();
         unsubscribeStructuredLogs();
-        restoreConsoleCapture();
 
         // Close database
         db.close();
@@ -1438,8 +1508,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         logError('Error during cleanup:', error);
         logEvidenceService.flush();
         unsubscribeStructuredLogs();
-        restoreConsoleCapture();
         throw error;
+      } finally {
+        await closeFileLogCapture();
       }
     };
 
@@ -1473,6 +1544,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       appMcpManager,
       skillsManager,
       fileIndex,
+      flushStructuredLogs: () => structuredLogSink?.flush() ?? Promise.resolve(),
       cleanup,
     };
   } catch (error) {
@@ -1480,6 +1552,17 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // A startup failure returns no cleanup function, so stop any in-flight
     // embedding-model prefetch here so it cannot outlive the failed process.
     abortAgentMemoryEmbeddingModelPrefetch();
+    // Restore the console capture, but KEEP the file sink subscribed: the
+    // caller's fatal handler (main.ts unhandledRejection) emits its record
+    // only after this rethrow, and unsubscribing/closing here would drop the
+    // startup failure from the persistent log. Stash the capture for the
+    // ownership handoff instead of marking it closed: the next createDaemonApp
+    // attempt reclaims it (and nonfatal embedders can call
+    // releaseStartupFileLogCapture), so the subscription and sink are never
+    // leaked. The daemon exits right after the fatal flush, so nothing needs
+    // to close the sink on this path. (Codex P2, PR #2499.)
+    restoreConsoleCapture();
+    strandedStartupFileLogCapture = closeFileLogCapture;
     throw error;
   }
 }

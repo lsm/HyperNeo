@@ -1,7 +1,78 @@
-import type { Job, JobQueueRepository, PayloadMatch } from './repositories/job-queue-repository';
+import {
+  emitMessageDeliveryLifecycleEvent,
+  fingerprintDeliveryClaim,
+  type MessageDeliveryLifecycleFields,
+} from '../lib/agent/message-delivery-metrics';
 import type { TableChangeScope } from './reactive-database';
+import type {
+  Job,
+  JobQueueRepository,
+  PayloadMatch,
+  ReclaimedJobClaim,
+} from './repositories/job-queue-repository';
 
-export type JobHandler = (job: Job) => Promise<Record<string, unknown> | void>;
+export interface JobHandlerStageDetails {
+  generation?: number;
+  outcome?: string;
+  reason?: string;
+  responseType?: string;
+}
+
+export interface JobHandlerContext {
+  signal: AbortSignal;
+  reportStage?: (stage: string, details?: JobHandlerStageDetails) => void;
+}
+
+export interface InFlightJobSnapshot {
+  jobId: string;
+  queue: string;
+  claimFingerprint: string | null;
+  slotClass: 'capped' | 'exempt';
+  sessionId?: string;
+  messageUuid?: string;
+  role?: string;
+  generation?: number;
+  stage: string;
+  ageMs: number;
+  stageAgeMs: number;
+  aborted: boolean;
+}
+
+export interface JobQueueProcessorSnapshot {
+  running: boolean;
+  maxConcurrent: number;
+  inFlightCapped: number;
+  inFlightExempt: number;
+  inFlightTotal: number;
+  activeControllers: number;
+  oldestInFlightAgeMs: number | null;
+  stageCounts: Record<string, number>;
+  handlers: InFlightJobSnapshot[];
+}
+
+interface InFlightClaimRecord {
+  job: Job;
+  controller: AbortController;
+  claimFingerprint: string | null;
+  slotClass: 'capped' | 'exempt';
+  startedAt: number;
+  stage: string;
+  stageChangedAt: number;
+  generation?: number;
+  lastLeaseLogAt: number;
+  settlement?: string;
+  /**
+   * Set when the settling-grace expiry evicted this (wedged, non-settling)
+   * reclaimed handler's slot so its replacement could claim capacity. The
+   * handler's own finally then skips the second decrement. (Codex P2.)
+   */
+  slotEvicted?: boolean;
+}
+
+export type JobHandler = (
+  job: Job,
+  context?: JobHandlerContext
+) => Promise<Record<string, unknown> | void>;
 
 /**
  * Throw from a handler to force a job straight to `dead` (bypassing the retry
@@ -32,6 +103,17 @@ export interface JobQueueProcessorOptions {
   pollIntervalMs?: number;
   maxConcurrent?: number;
   staleThresholdMs?: number;
+  /**
+   * Grace for a stale-reclaimed handler to settle after its abort before its
+   * replacement claim may proceed. Default {@link SETTLEMENT_GRACE_MS}. Lanes
+   * whose abort path awaits a bounded-but-slow settlement — message_delivery
+   * waits out the queue's 30s provider-owned acknowledgment when the admission
+   * can no longer be revoked — must set this BEYOND that bound so an expired
+   * deferral can never let a replacement claim overlap the still-settling
+   * attempt's handoff. Still bounded, so a wedged non-cancellable handler
+   * cannot suppress its replacement until restart. (Codex P1, PR #2499.)
+   */
+  settlementGraceMs?: number;
 }
 
 /**
@@ -69,19 +151,51 @@ interface Registration {
   onDead?: (job: Job) => void;
 }
 
+/** Default grace for a stale-reclaimed handler to settle after its abort
+ * before its replacement claim may proceed. Aborting handlers settle within
+ * microtasks; the bound exists for wedged handlers that never observe the
+ * signal. See {@link JobQueueProcessorOptions.settlementGraceMs} for lanes
+ * needing a longer, still-bounded window. */
+const SETTLEMENT_GRACE_MS = 10_000;
+
 export class JobQueueProcessor {
   private handlers = new Map<string, Registration>();
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   // Capped jobs count toward `maxConcurrent` (turns, and all non-exempt lanes).
   private inFlightCapped = 0;
   // Exempt jobs (message_delivery steers) run on a separate budget so they can't
-  // be starved by — nor starve — capped jobs. Both count toward `stop()` drain.
+  // be starved by — nor starve — capped jobs.
   private inFlightExempt = 0;
+  // Live handler count, independent of the admission budgets above: `stop()`
+  // drains on this, so slot eviction (evictWedgedClaimSlot, which releases an
+  // abort-ignoring reclaimed handler's ADMISSION slot while its handler is still
+  // running) can never make a still-live handler look quiescent during teardown.
+  // (Codex P2, PR #2499.)
+  private activeHandlers = 0;
   private running = false;
+  private inFlightClaims = new Map<string, Map<string, InFlightClaimRecord>>();
+  // Job IDs whose stale-reclaimed predecessor handler was aborted but has not
+  // settled yet, mapped to the reclaimed attempt's claim token and the moment
+  // the deferral expires. Their rows are already back to `pending`, but
+  // claiming them now (spare slots exist under a large budget) would overlap
+  // the aborting attempt — the predecessor may have fed the SDK before
+  // observing the abort. Cleared from processJob's finally when the settling
+  // attempt's claim token matches, so the replacement claim lands once
+  // cancellation has settled without a still-wedged earlier attempt (whose own
+  // deferral already expired) lifting a newer attempt's deferral. The expiry
+  // bounds the wait: a handler that never observes its abort signal would
+  // otherwise suppress its replacement forever.
+  private settlingReclaimedJobIds = new Map<
+    string,
+    { claimToken: string | null; expireAt: number }
+  >();
+  private tickRequested = false;
   private changeNotifier: ((table: string, scope?: TableChangeScope) => void) | null = null;
   private readonly pollIntervalMs: number;
   private readonly maxConcurrent: number;
   private readonly staleThresholdMs: number;
+  private readonly settlementGraceMs: number;
+  private readonly heartbeatIntervalMs: number;
   private lastStaleCheck = 0;
   private static readonly STALE_CHECK_INTERVAL = 60_000;
 
@@ -92,6 +206,8 @@ export class JobQueueProcessor {
     this.pollIntervalMs = options?.pollIntervalMs ?? 1000;
     this.maxConcurrent = options?.maxConcurrent ?? 1;
     this.staleThresholdMs = options?.staleThresholdMs ?? 5 * 60 * 1000;
+    this.settlementGraceMs = options?.settlementGraceMs ?? SETTLEMENT_GRACE_MS;
+    this.heartbeatIntervalMs = Math.max(10, Math.floor(this.staleThresholdMs / 3));
   }
 
   register(queue: string, handler: JobHandler, options?: RegisterOptions): void {
@@ -106,7 +222,7 @@ export class JobQueueProcessor {
     this.running = true;
     // Eagerly reclaim stale jobs from a previous crash before the first poll tick,
     // so crash-recovery is instant rather than delayed by up to STALE_CHECK_INTERVAL.
-    this.repo.reclaimStale(Date.now() - this.staleThresholdMs);
+    this.reclaimStaleClaims(Date.now() - this.staleThresholdMs);
     this.lastStaleCheck = Date.now();
     this.pollTimer = setInterval(() => {
       this.tick();
@@ -126,12 +242,12 @@ export class JobQueueProcessor {
   stop(): Promise<void> {
     this.stopPolling();
     return new Promise<void>((resolve) => {
-      if (this.inFlightCapped === 0 && this.inFlightExempt === 0) {
+      if (this.activeHandlers === 0) {
         resolve();
         return;
       }
       const check = setInterval(() => {
-        if (this.inFlightCapped === 0 && this.inFlightExempt === 0) {
+        if (this.activeHandlers === 0) {
           clearInterval(check);
           resolve();
         }
@@ -143,6 +259,28 @@ export class JobQueueProcessor {
     this.checkStaleJobs();
 
     let claimed = 0;
+    // Exclude just-reclaimed jobs whose aborting handler hasn't settled, minus
+    // any whose deferral grace expired (a wedged non-cancellable handler would
+    // otherwise starve its replacement forever).
+    let excludeIds: string[] | undefined;
+    if (this.settlingReclaimedJobIds.size > 0) {
+      const now = Date.now();
+      for (const [jobId, entry] of this.settlingReclaimedJobIds) {
+        if (entry.expireAt <= now) {
+          // Grace expiry alone does not free capacity: the wedged predecessor
+          // still counts toward maxConcurrent, so a saturated processor
+          // (e.g. maxConcurrent=1 held by a handler that never observes the
+          // abort) could never claim the replacement. Evict its slot too —
+          // its much-later finally skips the second decrement via slotEvicted.
+          // (Codex P2, PR #2499.)
+          this.evictWedgedClaimSlot(jobId, entry.claimToken);
+          this.settlingReclaimedJobIds.delete(jobId);
+        }
+      }
+      if (this.settlingReclaimedJobIds.size > 0) {
+        excludeIds = [...this.settlingReclaimedJobIds.keys()];
+      }
+    }
 
     // Capped pass: subject to maxConcurrent. For lanes with an exempt spec,
     // exclude exempt jobs (steers) so they're left for the exempt pass below and
@@ -151,8 +289,9 @@ export class JobQueueProcessor {
     if (cappedSlots > 0) {
       for (const [queue, reg] of this.handlers) {
         if (cappedSlots <= 0) break;
-        const jobs = this.repo.dequeue(queue, cappedSlots, reg.exemptJobs);
+        const jobs = this.repo.dequeue(queue, cappedSlots, reg.exemptJobs, excludeIds);
         for (const job of jobs) {
+          this.emitLifecycle('claim', job, 'capped');
           void this.processJob(job, false);
         }
         claimed += jobs.length;
@@ -169,8 +308,9 @@ export class JobQueueProcessor {
       for (const [queue, reg] of this.handlers) {
         if (exemptSlots <= 0) break;
         if (!reg.exemptJobs) continue;
-        const jobs = this.repo.dequeueExempt(queue, reg.exemptJobs, exemptSlots);
+        const jobs = this.repo.dequeueExempt(queue, reg.exemptJobs, exemptSlots, excludeIds);
         for (const job of jobs) {
+          this.emitLifecycle('claim', job, 'exempt');
           void this.processJob(job, true);
         }
         claimed += jobs.length;
@@ -184,20 +324,105 @@ export class JobQueueProcessor {
   private async processJob(job: Job, exempt: boolean): Promise<void> {
     if (exempt) this.inFlightExempt++;
     else this.inFlightCapped++;
+    this.activeHandlers++;
     const reg = this.handlers.get(job.queue);
     const scope = scopeFromJob(job);
+    const controller = new AbortController();
+    const record = this.trackInFlightClaim(job, controller, exempt ? 'exempt' : 'capped');
+    this.emitLifecycle('slot_acquired', job, record.slotClass, { stage: record.stage });
+    const heartbeat = setInterval(() => {
+      // A stale reclaim already aborted this handler and emitted its
+      // old_handler_aborted event; stop heartbeating rather than emitting a
+      // duplicate heartbeat_rejected against the now-replaced row. (Codex P2.)
+      if (controller.signal.aborted) {
+        clearInterval(heartbeat);
+        return;
+      }
+      if (!this.repo.heartbeat(job.id, job.claimToken)) {
+        this.emitLifecycle('old_handler_aborted', job, record.slotClass, {
+          stage: record.stage,
+          reason: 'heartbeat_rejected',
+        });
+        controller.abort();
+        // Ownership loss is terminal: stop renewing so a wedged handler that
+        // ignores the abort does not emit a duplicate old_handler_aborted (and
+        // corrupt event counts) on every subsequent heartbeat. (Codex P2.)
+        clearInterval(heartbeat);
+        return;
+      }
+      const now = Date.now();
+      if (now - record.lastLeaseLogAt >= 60_000 || record.lastLeaseLogAt === 0) {
+        record.lastLeaseLogAt = now;
+        this.emitLifecycle('lease_renewed', job, record.slotClass, {
+          stage: record.stage,
+          elapsedMs: now - record.startedAt,
+        });
+      }
+    }, this.heartbeatIntervalMs);
+    if (typeof (heartbeat as { unref?: () => void }).unref === 'function') {
+      (heartbeat as { unref: () => void }).unref();
+    }
     try {
       if (!reg) {
         this.repo.fail(job.id, `No handler registered for queue: ${job.queue}`);
+        record.settlement = 'failed';
         this.notifyChange(scope);
         return;
       }
-      const result = await reg.handler(job);
+      const reportStage = (stage: string, details?: JobHandlerStageDetails): void => {
+        if (this.getInFlightClaim(job) !== record) return;
+        // Monotonic lifecycle guard: the observable stages form a strict
+        // progression (query_ready → sdk_admitted → first_sdk_response). A fast
+        // cold-start init/history frame can record first_sdk_response before the
+        // driving attempt reports query_ready; the later report must not regress
+        // the tracked stage or emit the lifecycle events out of order.
+        // (Codex P2, PR #2499.)
+        if (isLifecycleEventName(stage) && isLifecycleEventName(record.stage)) {
+          if (LIFECYCLE_STAGE_ORDER[record.stage] >= LIFECYCLE_STAGE_ORDER[stage]) {
+            return;
+          }
+        }
+        record.stage = stage;
+        record.stageChangedAt = Date.now();
+        if (details?.generation !== undefined) record.generation = details.generation;
+        if (isLifecycleEventName(stage)) {
+          this.emitLifecycle(stage, job, record.slotClass, {
+            stage,
+            generation: record.generation,
+            outcome: details?.outcome,
+            reason: details?.reason,
+            responseType: details?.responseType,
+            elapsedMs: Date.now() - record.startedAt,
+          });
+        }
+      };
+      const result = await reg.handler(job, { signal: controller.signal, reportStage });
       // message_delivery parks/promotes by requeueing the job itself; the
       // auto-complete here is then a no-op (row no longer 'processing').
-      this.repo.complete(job.id, result ?? undefined, job.claimToken);
+      const completed = this.repo.complete(job.id, result ?? undefined, job.claimToken);
+      if (completed) {
+        record.settlement = 'completed';
+        this.emitLifecycle('settled', job, record.slotClass, {
+          stage: record.stage,
+          outcome: safeHandlerOutcome(result),
+        });
+      } else {
+        record.settlement = classifyNonterminalSettlement(result);
+        if (this.repo.isClaimOwnedByAnother(job.id, job.claimToken)) {
+          this.emitLifecycle('fenced_completion_rejected', job, record.slotClass, {
+            stage: record.stage,
+            reason: 'claim_replaced',
+          });
+        }
+      }
       this.notifyChange(scope);
     } catch (err) {
+      // A reclaimed predecessor lost ownership; cancellation is not a job
+      // failure and must not burn retries or invoke the dead-letter hook.
+      if (controller.signal.aborted) {
+        record.settlement = 'aborted';
+        return;
+      }
       const message = err instanceof Error ? err.message : String(err);
       // A handler throws `DeadLetterImmediatelyError` to terminalize without
       // burning the retry budget (e.g. a delivery turn that ended in a
@@ -207,6 +432,18 @@ export class JobQueueProcessor {
         err instanceof DeadLetterImmediatelyError
           ? this.repo.markDead(job.id, message, job.claimToken)
           : this.repo.fail(job.id, message, job.claimToken);
+      record.settlement = updated?.status ?? 'fenced';
+      if (updated) {
+        this.emitLifecycle('settled', job, record.slotClass, {
+          stage: record.stage,
+          outcome: updated.status,
+        });
+      } else if (this.repo.isClaimOwnedByAnother(job.id, job.claimToken)) {
+        this.emitLifecycle('fenced_completion_rejected', job, record.slotClass, {
+          stage: record.stage,
+          reason: 'claim_replaced',
+        });
+      }
       if (updated && updated.status === 'dead' && reg?.onDead) {
         try {
           reg.onDead(updated);
@@ -216,9 +453,207 @@ export class JobQueueProcessor {
       }
       this.notifyChange(scope);
     } finally {
-      if (exempt) this.inFlightExempt--;
-      else this.inFlightCapped--;
+      clearInterval(heartbeat);
+      this.untrackInFlightClaim(job, record);
+      // The handler settled — any replacement claim for this job (deferred by
+      // the settling exclusion after a stale reclaim) may proceed. Match on
+      // claim token: this finally may belong to an earlier attempt whose own
+      // deferral already expired and was superseded — deleting unconditionally
+      // would drop the CURRENT attempt's deferral and let a third claim
+      // overlap the still-settling replacement.
+      const settlingEntry = this.settlingReclaimedJobIds.get(job.id);
+      if (settlingEntry?.claimToken === job.claimToken) {
+        this.settlingReclaimedJobIds.delete(job.id);
+      }
+      if (exempt) {
+        if (!record.slotEvicted) this.inFlightExempt--;
+      } else {
+        if (!record.slotEvicted) this.inFlightCapped--;
+      }
+      // Always release the live-handler count, even for an evicted-slot record:
+      // the handler is genuinely done now, so stop() must observe it drain.
+      this.activeHandlers--;
+      this.emitLifecycle('slot_released', job, record.slotClass, {
+        stage: record.stage,
+        outcome: record.settlement,
+        elapsedMs: Date.now() - record.startedAt,
+      });
+      this.requestTick();
     }
+  }
+
+  private trackInFlightClaim(
+    job: Job,
+    controller: AbortController,
+    slotClass: 'capped' | 'exempt'
+  ): InFlightClaimRecord {
+    const now = Date.now();
+    const record: InFlightClaimRecord = {
+      job,
+      controller,
+      claimFingerprint: fingerprintDeliveryClaim(job.claimToken),
+      slotClass,
+      startedAt: now,
+      stage: 'slot_acquired',
+      stageChangedAt: now,
+      lastLeaseLogAt: 0,
+    };
+    if (!job.claimToken) return record;
+    let claims = this.inFlightClaims.get(job.id);
+    if (!claims) {
+      claims = new Map();
+      this.inFlightClaims.set(job.id, claims);
+    }
+    claims.set(job.claimToken, record);
+    return record;
+  }
+
+  private getInFlightClaim(job: Job): InFlightClaimRecord | undefined {
+    if (!job.claimToken) return undefined;
+    return this.inFlightClaims.get(job.id)?.get(job.claimToken);
+  }
+
+  /**
+   * Stop counting a wedged reclaimed handler toward its slot budget once the
+   * settlement grace expires (see tick). The record stays tracked for its
+   * identity checks — only the capacity accounting is released, once.
+   */
+  private evictWedgedClaimSlot(jobId: string, claimToken: string | null): void {
+    if (!claimToken) return;
+    const record = this.inFlightClaims.get(jobId)?.get(claimToken);
+    if (!record || record.slotEvicted) return;
+    record.slotEvicted = true;
+    if (record.slotClass === 'exempt') this.inFlightExempt--;
+    else this.inFlightCapped--;
+    // Record the admission-slot release NOW — the handler's own `slot_released`
+    // fires only when it eventually settles (possibly much later or never), so
+    // without this the lifecycle trace shows a replacement acquiring an
+    // apparently-occupied slot. (Codex P2, PR #2499.)
+    this.emitLifecycle('slot_released', record.job, record.slotClass, {
+      stage: record.stage,
+      reason: 'slot_evicted',
+      elapsedMs: Date.now() - record.startedAt,
+    });
+  }
+
+  private untrackInFlightClaim(job: Job, record: InFlightClaimRecord): void {
+    if (!job.claimToken) return;
+    const claims = this.inFlightClaims.get(job.id);
+    if (claims?.get(job.claimToken) !== record) return;
+    claims.delete(job.claimToken);
+    if (claims.size === 0) this.inFlightClaims.delete(job.id);
+  }
+
+  private reclaimStaleClaims(staleBefore: number): void {
+    // Scoped to this processor's registered lanes: only the owner of a queue's
+    // in-flight claims can abort their handlers, so a processor must not sweep
+    // another processor's shared-repository lanes (its reclaim would flip the
+    // row to pending while the owner's handler keeps running until its next
+    // heartbeat, overlapping a replacement claim).
+    for (const claim of this.repo.reclaimStale(staleBefore, [...this.handlers.keys()])) {
+      const record = claim.claimToken
+        ? this.inFlightClaims.get(claim.jobId)?.get(claim.claimToken)
+        : undefined;
+      const reclaimedJob = record?.job ?? jobFromReclaimedClaim(claim);
+      this.emitLifecycle('stale_reclaimed', reclaimedJob, record?.slotClass, {
+        stage: record?.stage,
+      });
+      if (!record) continue;
+      this.emitLifecycle('old_handler_aborted', record.job, record.slotClass, {
+        stage: record.stage,
+        reason: 'stale_reclaim',
+      });
+      record.controller.abort();
+      // Aborting is asynchronous — the handler settles on a later microtask.
+      // Defer this job's replacement claim until then (see tick()'s dequeue
+      // exclusion) so the two attempts never overlap, bounded by a grace
+      // window for handlers that never observe the abort signal. Keyed to the
+      // aborted attempt's claim token so only THAT attempt's settlement lifts
+      // the deferral (processJob's finally matches on it).
+      this.settlingReclaimedJobIds.set(claim.jobId, {
+        claimToken: claim.claimToken,
+        expireAt: Date.now() + this.settlementGraceMs,
+      });
+    }
+  }
+
+  snapshot(queue?: string): JobQueueProcessorSnapshot {
+    const now = Date.now();
+    const handlers: InFlightJobSnapshot[] = [];
+    // Admission counts exclude slot-evicted records: their slot was already
+    // released to a replacement, so they must not inflate the capacity the
+    // diagnostics RPC reports against tick()'s budget. The handler list and
+    // inFlightTotal still include them (they are genuinely live handlers).
+    // (Codex P2, PR #2499.)
+    let cappedAdmitted = 0;
+    let exemptAdmitted = 0;
+    for (const claims of this.inFlightClaims.values()) {
+      for (const record of claims.values()) {
+        if (queue && record.job.queue !== queue) continue;
+        handlers.push({
+          jobId: record.job.id,
+          queue: record.job.queue,
+          claimFingerprint: record.claimFingerprint,
+          slotClass: record.slotClass,
+          sessionId: stringPayload(record.job, 'sessionId'),
+          messageUuid: stringPayload(record.job, 'messageUuid'),
+          role: stringPayload(record.job, 'role'),
+          generation: record.generation,
+          stage: record.stage,
+          ageMs: Math.max(0, now - record.startedAt),
+          stageAgeMs: Math.max(0, now - record.stageChangedAt),
+          aborted: record.controller.signal.aborted,
+        });
+        if (!record.slotEvicted) {
+          if (record.slotClass === 'capped') cappedAdmitted++;
+          else exemptAdmitted++;
+        }
+      }
+    }
+    const stageCounts: Record<string, number> = {};
+    for (const handler of handlers) {
+      stageCounts[handler.stage] = (stageCounts[handler.stage] ?? 0) + 1;
+    }
+    return {
+      running: this.running,
+      maxConcurrent: this.maxConcurrent,
+      inFlightCapped: queue ? cappedAdmitted : this.inFlightCapped,
+      inFlightExempt: queue ? exemptAdmitted : this.inFlightExempt,
+      inFlightTotal: handlers.length,
+      activeControllers: handlers.length,
+      oldestInFlightAgeMs:
+        handlers.length > 0 ? Math.max(...handlers.map((handler) => handler.ageMs)) : null,
+      stageCounts,
+      handlers,
+    };
+  }
+
+  private emitLifecycle(
+    event: Parameters<typeof emitMessageDeliveryLifecycleEvent>[0],
+    job: Job,
+    slotClass?: 'capped' | 'exempt',
+    details: Partial<MessageDeliveryLifecycleFields> = {}
+  ): void {
+    if (job.queue !== 'message_delivery') return;
+    emitMessageDeliveryLifecycleEvent(event, {
+      jobId: job.id,
+      queue: job.queue,
+      claimFingerprint: fingerprintDeliveryClaim(job.claimToken),
+      slotClass,
+      sessionId: stringPayload(job, 'sessionId'),
+      messageUuid: stringPayload(job, 'messageUuid'),
+      role: stringPayload(job, 'role'),
+      ...details,
+    });
+  }
+
+  private requestTick(): void {
+    if (!this.running || this.tickRequested) return;
+    this.tickRequested = true;
+    queueMicrotask(() => {
+      this.tickRequested = false;
+      if (this.running) void this.tick();
+    });
   }
 
   setChangeNotifier(notifier: (table: string, scope?: TableChangeScope) => void): void {
@@ -234,7 +669,63 @@ export class JobQueueProcessor {
   private checkStaleJobs(): void {
     const now = Date.now();
     if (now - this.lastStaleCheck < JobQueueProcessor.STALE_CHECK_INTERVAL) return;
-    this.repo.reclaimStale(now - this.staleThresholdMs);
+    this.reclaimStaleClaims(now - this.staleThresholdMs);
     this.lastStaleCheck = now;
   }
+}
+
+function jobFromReclaimedClaim(claim: ReclaimedJobClaim): Job {
+  return {
+    id: claim.jobId,
+    queue: claim.queue,
+    status: 'pending',
+    payload: {
+      ...(claim.sessionId ? { sessionId: claim.sessionId } : {}),
+      ...(claim.messageUuid ? { messageUuid: claim.messageUuid } : {}),
+      ...(claim.role ? { role: claim.role } : {}),
+    },
+    result: null,
+    error: null,
+    priority: 0,
+    maxRetries: 0,
+    retryCount: 0,
+    runAt: 0,
+    createdAt: 0,
+    startedAt: null,
+    heartbeatAt: null,
+    completedAt: null,
+    claimToken: claim.claimToken,
+  };
+}
+
+function stringPayload(job: Job, key: string): string | undefined {
+  return typeof job.payload[key] === 'string' ? job.payload[key] : undefined;
+}
+
+type ObservableLifecycleStage = 'query_ready' | 'sdk_admitted' | 'first_sdk_response';
+
+function isLifecycleEventName(stage: string): stage is ObservableLifecycleStage {
+  return stage === 'query_ready' || stage === 'sdk_admitted' || stage === 'first_sdk_response';
+}
+
+/** Strict progression of the observable delivery lifecycle stages. */
+const LIFECYCLE_STAGE_ORDER: Record<ObservableLifecycleStage, number> = {
+  query_ready: 0,
+  sdk_admitted: 1,
+  first_sdk_response: 2,
+};
+
+function safeHandlerOutcome(result: Record<string, unknown> | void): string {
+  if (!result) return 'completed';
+  if (typeof result.outcome === 'string') return result.outcome;
+  if (typeof result.parked === 'string') return 'parked';
+  return 'completed';
+}
+
+function classifyNonterminalSettlement(result: Record<string, unknown> | void): string {
+  if (!result) return 'not_completed';
+  if (typeof result.parked === 'string') return 'parked';
+  if (result.promoted !== undefined) return 'promoted';
+  if (result.outcome === 'superseded') return 'superseded';
+  return 'not_completed';
 }

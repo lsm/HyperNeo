@@ -16,11 +16,6 @@
  * (turn promise, enqueueWithId-onSent) run unlocked. See message-delivery-v2.md
  * §8 + Codex review (lock-across-await).
  *
- * Lease heartbeat: a live SDK turn can exceed the generic reclaimStale window
- * (default 5min). The handler refreshes `started_at` (touchStartedAt) throughout
- * the turn await so a long-but-live turn is not reclaimed + re-delivered; a
- * crashed handler stops heartbeating, so reclaimStale still recovers it.
- *
  * Status-aware delivery (Codex #2592/#2597): the handler loads the message's
  * `send_status` and only feeds messages still pending (`enqueued`). A `consumed`
  * kickoff was already handed to the SDK by a prior attempt — re-feeding would
@@ -78,13 +73,6 @@ export interface MessageDeliveryHandlerDeps {
 }
 
 /**
- * How often to refresh a live turn job's `started_at` so the generic
- * reclaimStale sweep (5min) does not reclaim + re-deliver a long turn. Well
- * inside the stale window; cheap (one UPDATE).
- */
-const LEASE_HEARTBEAT_MS = 60_000;
-
-/**
  * Build the job_queue handler for the `message_delivery` lane. Registered in
  * app.ts next to the other `jobProcessor.register(...)` calls.
  */
@@ -93,7 +81,9 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
   // Inject for tests; the singleton in production.
   const metrics: DeliveryMetrics = deps.metrics ?? deliveryMetrics;
 
-  return async (job: Job): Promise<Record<string, unknown>> => {
+  return async (job: Job, context): Promise<Record<string, unknown>> => {
+    const signal = context?.signal;
+    const reportStage = context?.reportStage;
     const payload = asMessageDeliveryPayload(job.payload);
     if (!payload) {
       // Malformed payload — dead-letter rather than spin.
@@ -215,7 +205,6 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     if (payload.role === 'turn') {
       // The bridge holds the per-session lock only for ensureQueryStarted +
       // kickoff feed; the turn await runs unlocked (so steering proceeds). The
-      // lease heartbeat keeps the job from being reclaimed as stale mid-turn.
       // When alreadyConsumed, the bridge skips the feed (no duplicate).
       if (!claimCurrent()) return { outcome: 'stale_attempt' };
       const turn = session.driveDeliveryTurn(
@@ -224,48 +213,39 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
         payload.parentToolUseId,
         alreadyConsumed,
         claimCurrent,
-        payload.batchUuids
+        payload.batchUuids,
+        signal,
+        reportStage ? { reportStage } : undefined
       );
-      const heartbeat = setInterval(
-        () => deps.jobQueue.touchStartedAt(job.id, job.claimToken),
-        LEASE_HEARTBEAT_MS
-      );
-      if (typeof (heartbeat as { unref?: () => void }).unref === 'function') {
-        (heartbeat as { unref: () => void }).unref();
+      const result = await turn;
+      if (result.outcome === 'blocked') {
+        // Park: return to pending with runAt, no retry bump. The processor's
+        // auto-complete() is a no-op (row is no longer 'processing').
+        deps.jobQueue.requeue(job.id, result.retryAt, job.claimToken);
+        return { parked: 'sdk_resume_choice', retryAt: result.retryAt };
       }
-      try {
-        const result = await turn;
-        if (result.outcome === 'blocked') {
-          // Park: return to pending with runAt, no retry bump. The processor's
-          // auto-complete() is a no-op (row is no longer 'processing').
-          deps.jobQueue.requeue(job.id, result.retryAt, job.claimToken);
-          return { parked: 'sdk_resume_choice', retryAt: result.retryAt };
-        }
-        if (result.outcome === 'aborted') {
-          // Bridge revalidation found the session archived or the message removed
-          // between load and feed — complete without feeding. See #3742774841/#3696.
-          await session.settleSkippedDelivery?.(payload.messageUuid);
-          return { outcome: 'aborted' };
-        }
-        if (result.outcome === 'turn_terminated') {
-          // A re-claimed consumed turn whose turn already ended: nothing to
-          // resume. Completing frees the active-turn slot so the next steer
-          // promotes into a real turn instead of parking forever behind a zombie
-          // re-drive. The bridge checked this under the per-session lock,
-          // coordinated with waiter registration (Codex P2).
-          metrics.recordReclaimSkip('turn_terminated');
-          await session.settleSkippedDelivery?.(payload.messageUuid);
-          return { outcome: 'completed', skipped: 'turn_terminated' };
-        }
-        // A durable delivery-turn completion marker for this consumed message is
-        // persisted by the session's terminal-idle hook (before the delivery
-        // waiter resolves), not here — see ProcessingStateManager's
-        // onBeforeIdleWaiterDrain + AgentSession. That covers result-less
-        // terminal paths (query error / interrupt) across a crash.
-        return { outcome: 'completed' };
-      } finally {
-        clearInterval(heartbeat);
+      if (result.outcome === 'aborted') {
+        // Bridge revalidation found the session archived or the message removed
+        // between load and feed — complete without feeding. See #3742774841/#3696.
+        await session.settleSkippedDelivery?.(payload.messageUuid);
+        return { outcome: 'aborted' };
       }
+      if (result.outcome === 'turn_terminated') {
+        // A re-claimed consumed turn whose turn already ended: nothing to
+        // resume. Completing frees the active-turn slot so the next steer
+        // promotes into a real turn instead of parking forever behind a zombie
+        // re-drive. The bridge checked this under the per-session lock,
+        // coordinated with waiter registration (Codex P2).
+        metrics.recordReclaimSkip('turn_terminated');
+        await session.settleSkippedDelivery?.(payload.messageUuid);
+        return { outcome: 'completed', skipped: 'turn_terminated' };
+      }
+      // A durable delivery-turn completion marker for this consumed message is
+      // persisted by the session's terminal-idle hook (before the delivery
+      // waiter resolves), not here — see ProcessingStateManager's
+      // onBeforeIdleWaiterDrain + AgentSession. That covers result-less
+      // terminal paths (query error / interrupt) across a crash.
+      return { outcome: 'completed' };
     }
 
     // role === 'steer'. A consumed steer was already fed by a prior attempt —
@@ -282,7 +262,9 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       payload.messageUuid,
       content,
       payload.parentToolUseId,
-      claimCurrent
+      claimCurrent,
+      signal,
+      reportStage ? { reportStage } : undefined
     );
     if (result.outcome === 'aborted') {
       // Bridge revalidation found the session archived or the message removed

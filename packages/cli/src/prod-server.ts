@@ -4,7 +4,7 @@ import { createDaemonApp } from '@hyperneo/daemon/app';
 import type { Config } from '@hyperneo/daemon/config';
 import { warmupSDKCliBinary } from '@hyperneo/daemon/lib/agent/sdk-cli-resolver';
 import { resolve } from 'path';
-import { createLogger } from '@hyperneo/shared';
+import { createLogger, emitStructuredLogEvent } from '@hyperneo/shared';
 import {
   createCorsPreflightResponse,
   isWebSocketPath,
@@ -73,11 +73,33 @@ export async function startProdServer(config: Config) {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 
   // Create daemon app (returns Bun server)
-  daemonContext = await createDaemonApp({
-    config,
-    verbose: true,
-    standalone: false, // Skip root info route in embedded mode
-  });
+  // Sink-ready wiring + startup-failure flush mirror packages/daemon/main.ts
+  // and prod-server-embedded.ts so a CLI startup rejection persists to the
+  // structured log file before the process exits. (Codex P2, PR #2499.)
+  let flushStructuredLogs: () => Promise<void> = () => Promise.resolve();
+  try {
+    daemonContext = await createDaemonApp({
+      config,
+      verbose: true,
+      standalone: false, // Skip root info route in embedded mode
+      onStructuredLogSinkReady: (flush) => {
+        flushStructuredLogs = flush;
+      },
+    });
+  } catch (error) {
+    emitStructuredLogEvent({
+      level: 'fatal',
+      args: ['[cli] Daemon startup failed:', error],
+      source: 'process',
+      module: 'cli:prod-server',
+      metadata: { processEvent: 'startup' },
+    });
+    await Promise.race([
+      flushStructuredLogs(),
+      new Promise<void>((resolve) => setTimeout(resolve, 1000)),
+    ]).catch(() => {});
+    throw error;
+  }
 
   // Stop the daemon's internal server (we'll create a unified one)
   daemonContext.server.stop();

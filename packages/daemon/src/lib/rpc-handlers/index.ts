@@ -207,6 +207,8 @@ export interface RPCHandlerDependencies {
    * TODO: consumed by Milestones 2–5 handlers for registering queue handlers.
    */
   jobProcessor: JobQueueProcessor;
+  /** Dedicated processor for long-running message delivery handlers. */
+  messageDeliveryProcessor: JobQueueProcessor;
   /** Reactive database wrapper for change event emission */
   reactiveDb: ReactiveDatabase;
   /** Live query engine for reactive SQL subscriptions */
@@ -878,6 +880,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         // failed = dead (exhausted retries → onDead → message 'failed').
         staleProcessing,
         activeProcessing: Math.max(0, counts.processing - staleProcessing),
+        oldestProcessingLeaseAgeMs: deps.jobQueue.oldestProcessingLeaseAgeMs(MESSAGE_DELIVERY),
+        processor: deps.messageDeliveryProcessor.snapshot(MESSAGE_DELIVERY),
         metrics: deliveryMetrics.snapshot(),
       };
     }

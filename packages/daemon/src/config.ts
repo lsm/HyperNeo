@@ -1,4 +1,4 @@
-import { join } from 'path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { DEFAULT_MAX_SUBSCRIPTIONS_PER_CLIENT } from '@hyperneo/shared';
 import { getDataDir } from './lib/data-dir';
 
@@ -39,6 +39,10 @@ export interface Config {
   // GitHub integration
   githubWebhookSecret?: string; // Secret for verifying webhook signatures
   githubDefaultFilter?: string; // Default filter config as JSON string
+  structuredLogFilePath?: string;
+  structuredLogMaxBytes: number;
+  structuredLogRetainedFiles: number;
+  structuredLogMaxPendingBytes: number;
 }
 
 export interface ConfigOverrides {
@@ -46,6 +50,10 @@ export interface ConfigOverrides {
   host?: string;
   dbPath?: string;
   workspaceRoot?: string;
+  structuredLogFilePath?: string | null;
+  structuredLogMaxBytes?: number;
+  structuredLogRetainedFiles?: number;
+  structuredLogMaxPendingBytes?: number;
 }
 
 /**
@@ -63,12 +71,20 @@ function hyperneoEnv(name: string): string | undefined {
  * `parseInt` would accept `"1000000oops"` (→ 1000000, silently disabling a
  * guardrail) and `"1e3"` (→ 1, breaking clients after one subscribe).
  */
-function parsePositiveInt(raw: string | undefined, fallback: number): number {
+export function parsePositiveInt(raw: string | undefined, fallback: number): number {
   if (raw === undefined) return fallback;
   // Require a pure digit string (no prefix, no exponent, no decimals, no sign).
   if (!/^[0-9]+$/.test(raw.trim())) return fallback;
   const parsed = parseInt(raw, 10);
-  return parsed > 0 ? parsed : fallback;
+  // A very long digit string parses to Infinity (or an out-of-range float),
+  // which `parsed > 0` would accept and then disable a guardrail (e.g.
+  // maxBytes: Infinity → rotation never runs) or exceed SQLite's LIMIT range
+  // (`datatype mismatch`). Require a finite safe integer.
+  return parsed > 0 && Number.isSafeInteger(parsed) ? parsed : fallback;
+}
+
+function positiveOverride(value: number | undefined, fallback: number): number {
+  return value !== undefined && Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
 
 export function getConfig(overrides?: ConfigOverrides): Config {
@@ -78,9 +94,49 @@ export function getConfig(overrides?: ConfigOverrides): Config {
   // Use --db-path / DB_PATH env var to point to a different database
   // (e.g. per-project isolation or Docker volume mounts).
   const defaultDbPath = join(getDataDir(), 'data', 'daemon.db');
+  const configuredLogPath = hyperneoEnv('LOG_FILE');
+  const normalizedLogPath = configuredLogPath?.trim();
+  // Isolated daemons (concurrent worktrees run with a custom DB_PATH per
+  // CLAUDE.md) must not share one rotating log file: independent sinks
+  // rotate/drop generations under each other. The shared default stays put
+  // for the default instance; a custom DB derives its default log directory
+  // next to its own database. (Codex P2, PR #2499.)
+  const resolvedDbPath = overrides?.dbPath ?? process.env.DB_PATH ?? defaultDbPath;
+  // Resolve a relative custom DB path to an absolute one so its derived log
+  // identity is stable and distinct from other relative DBs in the same cwd.
+  // `:memory:` has no filesystem location — keep the shared default. (Codex P2.)
+  const isMemoryDb = resolvedDbPath === ':memory:';
+  const absoluteDbPath = isMemoryDb ? resolvedDbPath : resolve(resolvedDbPath);
+  // A pathless DB (`:memory:`) has no directory to anchor an isolated log to —
+  // fall back to the shared default rather than a cwd-relative path.
+  const customDbIsolatable = absoluteDbPath !== defaultDbPath && dirname(absoluteDbPath) !== '.';
+  // Distinct isolated DB files in the SAME directory (e.g. the documented
+  // worktree command's /tmp/hyperneo-worktree-a.db vs -b.db) must derive
+  // distinct log files: dirname alone maps both to <dir>/logs/daemon.jsonl, so
+  // their independent sinks rotate/drop each other's files. Fold the COMPLETE
+  // DB basename (extension included) into the filename — stripping the
+  // extension would still collide same-stem/different-extension DBs (foo.db vs
+  // foo.sqlite). (Codex P2, PR #2499.)
+  const dbLogComponent = (customDbIsolatable && basename(absoluteDbPath)) || 'daemon';
+  const defaultLogPath =
+    nodeEnv === 'test'
+      ? undefined
+      : customDbIsolatable
+        ? join(dirname(absoluteDbPath), 'logs', `${dbLogComponent}.jsonl`)
+        : join(getDataDir(), 'logs', 'daemon.jsonl');
+  const structuredLogFilePath =
+    overrides?.structuredLogFilePath === null
+      ? undefined
+      : (overrides?.structuredLogFilePath ??
+        (normalizedLogPath === '0' || normalizedLogPath?.toLowerCase() === 'off'
+          ? undefined
+          : normalizedLogPath || defaultLogPath));
+  const defaultLogMaxBytes = 10 * 1024 * 1024;
+  const defaultLogRetainedFiles = 5;
+  const defaultLogMaxPendingBytes = 2 * 1024 * 1024;
 
   return {
-    port: overrides?.port ?? parseInt(hyperneoEnv('PORT') || '9283'),
+    port: overrides?.port ?? parseInt(hyperneoEnv('PORT') || '9283', 10),
     host: overrides?.host ?? (process.env.HOST || '0.0.0.0'),
     dbPath: overrides?.dbPath ?? (process.env.DB_PATH || defaultDbPath),
     anthropicApiKey: process.env.ANTHROPIC_API_KEY,
@@ -89,9 +145,9 @@ export function getConfig(overrides?: ConfigOverrides): Config {
     // Use 'default' which maps to Sonnet 4.5 in the SDK
     // This matches the SDK's supportedModels() response
     defaultModel: process.env.DEFAULT_MODEL || 'default',
-    maxTokens: parseInt(process.env.MAX_TOKENS || '8192'),
+    maxTokens: parseInt(process.env.MAX_TOKENS || '8192', 10),
     temperature: parseFloat(process.env.TEMPERATURE || '1.0'),
-    maxSessions: parseInt(process.env.MAX_SESSIONS || '10'),
+    maxSessions: parseInt(process.env.MAX_SESSIONS || '10', 10),
     maxSubscriptionsPerClient: parsePositiveInt(
       hyperneoEnv('MAX_SUBSCRIPTIONS_PER_CLIENT'),
       DEFAULT_MAX_SUBSCRIPTIONS_PER_CLIENT
@@ -103,5 +159,26 @@ export function getConfig(overrides?: ConfigOverrides): Config {
     // GitHub integration
     githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET,
     githubDefaultFilter: process.env.GITHUB_DEFAULT_FILTER,
+    structuredLogFilePath,
+    structuredLogMaxBytes: positiveOverride(
+      overrides?.structuredLogMaxBytes,
+      parsePositiveInt(hyperneoEnv('LOG_MAX_BYTES'), defaultLogMaxBytes)
+    ),
+    structuredLogRetainedFiles: Math.min(
+      positiveOverride(
+        overrides?.structuredLogRetainedFiles,
+        parsePositiveInt(hyperneoEnv('LOG_RETAINED_FILES'), defaultLogRetainedFiles)
+      ),
+      // Capped on BOTH paths (override and env fallback): a digit-only value
+      // beyond 2^53 parses to a float where rotate()'s `generation--` no longer
+      // changes the value, wedging the rotation loop forever. Anything above a
+      // practical retention depth is nonsense anyway — clamp rather than loop.
+      // (Codex P2, PR #2499.)
+      1_000
+    ),
+    structuredLogMaxPendingBytes: positiveOverride(
+      overrides?.structuredLogMaxPendingBytes,
+      parsePositiveInt(hyperneoEnv('LOG_MAX_PENDING_BYTES'), defaultLogMaxPendingBytes)
+    ),
   };
 }
