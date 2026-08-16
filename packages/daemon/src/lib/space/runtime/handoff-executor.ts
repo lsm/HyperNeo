@@ -213,9 +213,17 @@ export interface HandoffExecutorConfig {
   /** node id → node name (peer nodeName hydration after activation). */
   workflowNodeNameById?: Record<string, string>;
 
-  /** Existing target-activation callback (the SAME primitive send_message uses). */
+  /**
+   * Existing target-activation callback (the SAME primitive send_message uses;
+   * production wires `TaskAgentManager.activateTargetSessionsForMessage`, whose
+   * `options.workflowNodeId` scopes session lookup/spawn to ONE node). Always
+   * pass the pair's resolved node id: a valid workflow may reuse a slot name
+   * across nodes, and activation by agent name alone could select (and spawn
+   * into) the sibling node's identically named slot.
+   */
   activateTargetSession?: (
-    agentName: string
+    agentName: string,
+    workflowNodeId?: string
   ) => Promise<Array<{ agentName: string; sessionId: string }>>;
   /** Injects the peer-message envelope into a live target session. */
   messageInjector: (sessionId: string, message: string) => Promise<void>;
@@ -903,21 +911,39 @@ export class HandoffExecutor {
     for (const { slot, node } of targets) {
       // Activate the target worker session (reuse if already live). This is the
       // SAME activation primitive send_message uses; it is intentionally
-      // separate from hook validation.
+      // separate from hook validation. The resolved node id scopes activation:
+      // a valid workflow may reuse a slot name across nodes, and activation by
+      // agent name alone could select the sibling node's identically named slot.
+      const nodeId = nodeNameToId.get(node);
       let sessions = sessionsFor(slot, node).map((e) => ({ sessionId: e.agentSessionId! }));
       if (sessions.length === 0 && this.config.activateTargetSession) {
         try {
-          const activated = await this.config.activateTargetSession(slot);
+          const activated = await this.config.activateTargetSession(slot, nodeId);
           executions = this.readLiveExecutions();
           sessions = sessionsFor(slot, node).map((e) => ({ sessionId: e.agentSessionId! }));
           // send_message parity: merge sessions the callback reports as live
           // even when their node_executions row is not yet observable — a
           // just-activated target must be injected, not needlessly queued or
           // reported failed. Dedupe against the reread so a row that IS
-          // observable isn't injected twice.
+          // observable isn't injected twice, and REJECT a reported session
+          // whose observable row belongs to a different node: activation is
+          // scoped to `nodeId` above, so a sibling-node row means the callback
+          // resolved by agent name and must not receive this node's handoff.
           const seen = new Set(sessions.map((s) => s.sessionId));
+          const nodeBySession = new Map(
+            executions
+              .filter((e) => e.agentSessionId)
+              .map((e) => [e.agentSessionId!, e.workflowNodeId] as const)
+          );
           for (const s of activated) {
             if (!s.sessionId || s.agentName !== slot || s.sessionId === fromSessionId) continue;
+            const observedNode = nodeBySession.get(s.sessionId);
+            if (nodeId !== undefined && observedNode !== undefined && observedNode !== nodeId) {
+              log.warn(
+                `[HandoffExecutor] activation returned session ${s.sessionId} for "${slot}" on node ${observedNode}; expected node ${nodeId} — skipping.`
+              );
+              continue;
+            }
             if (!seen.has(s.sessionId)) {
               seen.add(s.sessionId);
               sessions.push({ sessionId: s.sessionId });

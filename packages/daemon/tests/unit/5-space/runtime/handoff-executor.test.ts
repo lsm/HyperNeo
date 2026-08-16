@@ -1332,6 +1332,52 @@ describe('HandoffExecutor: queued activation', () => {
     expect(ctx.injected[0].sessionId).toBe('session-just-activated');
   });
 
+  test('scopes activation to the resolved node and skips sibling-node results', async () => {
+    // A valid workflow may reuse a slot name across nodes. The transition
+    // targets review-b BY NODE NAME, so activation must be scoped to n-review-b
+    // — and a callback result whose observable row belongs to the sibling node
+    // (review-a) must not receive review-b's handoff.
+    const reviewB: WorkflowNode = {
+      id: 'n-review-b',
+      name: 'review-b',
+      agents: [{ agentId: 'b-agent', name: 'reviewer' }],
+    };
+    const workflow = makeWorkflow({
+      nodes: [
+        node('n-coding', 'coding', 'coder', [{ id: 'to-review-b', target: 'review-b' }]),
+        node('n-review-a', 'review-a', 'reviewer'), // same slot name, sibling node
+        reviewB,
+      ],
+      channels: [{ id: 'ch', from: 'coding', to: 'review-b' }],
+    });
+    // Sibling reviewer on review-a is LIVE with session-sibling.
+    seedPeer(ctx.db, ctx.runId, 'n-review-a', 'reviewer', 'session-sibling');
+    const activationCalls: Array<{ agentName: string; nodeId?: string }> = [];
+    const executor = makeExecutor(ctx, workflow, {
+      // Callback resolves by agent name (ignores the node id) and returns the
+      // sibling node's session — the executor must detect and skip it.
+      activateTargetSession: async (agentName, nodeId) => {
+        activationCalls.push({ agentName, nodeId });
+        return [{ agentName, sessionId: 'session-sibling' }];
+      },
+    });
+
+    const result = await executor.execute({
+      fromAgentName: 'coder',
+      fromSessionId: 'session-coder',
+      workflowNodeId: 'n-coding',
+      operation: { target: 'review-b', summary: 'go' },
+    });
+
+    // Activation was asked for the RESOLVED node, not just the slot name.
+    expect(activationCalls).toEqual([{ agentName: 'reviewer', nodeId: 'n-review-b' }]);
+    // The sibling session was observable under n-review-a → rejected; with no
+    // queue configured the handoff fails rather than reaching the wrong node.
+    expect(result.status).toBe('failed');
+    expect(result.stage).toBe('deliver');
+    expect(ctx.injected).toHaveLength(0);
+  });
+
   test('queues when the target session is not yet active', async () => {
     const workflow = makeWorkflow({
       nodes: [
