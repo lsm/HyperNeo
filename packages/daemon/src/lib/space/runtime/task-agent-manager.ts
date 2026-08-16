@@ -613,6 +613,18 @@ export class TaskAgentManager {
   private spawningExecutionIds = new Set<string>();
 
   /**
+   * Node_execution IDs whose activation has stamped its kickoff uuid but not
+   * yet enqueued the delivery (the spawn is still awaiting setup or goal/
+   * memory construction). The delivery-settle reconciliation declines while
+   * the id is present — no delivery or message row can exist yet, and the
+   * construction awaits can legitimately outlast the reconcile delay (e.g. a
+   * cold embedding-model load). In-memory only: a daemon death mid-
+   * construction leaves it empty on restart, so the reconcile correctly
+   * classifies the kickoff as lost and blocks for re-spawn. (Task #944.)
+   */
+  private preInjectKickoffExecutions = new Set<string>();
+
+  /**
    * Completion callbacks registered via onComplete().
    * Key: session ID (of the sub-session).
    * Value: list of callbacks to fire when the session goes idle.
@@ -1248,20 +1260,30 @@ export class TaskAgentManager {
         },
       };
 
-      // A re-activation must not resolve on the PREVIOUS activation's kickoff
-      // evidence: the fresh completion callback registers inside
-      // createSubSession's session-reuse branch — before this activation's
-      // kickoff uuid is stamped below — and a peer-turn settle arriving in
-      // that window would correlate the OLD stamp's durable outcome and
-      // false-complete the new activation. Clear the stamp synchronously
-      // before the activation's first await. (Task #944 review.)
-      if (
-        (execution.data as { kickoffMessageUuid?: unknown } | null | undefined)
-          ?.kickoffMessageUuid !== undefined
-      ) {
-        const clearedData = { ...(execution.data ?? {}) } as Record<string, unknown>;
-        delete clearedData.kickoffMessageUuid;
-        this.config.nodeExecutionRepo.update(execution.id, { data: clearedData });
+      // Clear any stale prior-activation stamp and stamp THIS activation's
+      // kickoff id in one write, BEFORE the activation's first await (the
+      // createSubSession call below — its session-reuse branch registers the
+      // fresh completion callback, and its setup plus the later goal/memory
+      // construction all await). This closes three windows: (1) a daemon exit
+      // during those awaits rehydrates an execution whose reconcile can
+      // correlate this stamp; (2) a peer-turn settle arriving after the
+      // callback registration could otherwise resolve the PREVIOUS
+      // activation's stamp; (3) a kickoff:false re-activation keeps the stamp
+      // cleared instead of leaking the old activation's evidence. The
+      // pre-inject marker keeps the reconcile's missing-row classification
+      // from firing while construction is still running (removed in the
+      // finally below). (Task #944 review.)
+      let stampedKickoffMessageUuid: string | null = null;
+      const stampBase = this.config.nodeExecutionRepo.getById(execution.id);
+      if (stampBase) {
+        const nextData = { ...(stampBase.data ?? {}) } as Record<string, unknown>;
+        delete nextData.kickoffMessageUuid;
+        if (shouldKickoff) {
+          stampedKickoffMessageUuid = generateUUID();
+          nextData.kickoffMessageUuid = stampedKickoffMessageUuid;
+          this.preInjectKickoffExecutions.add(execution.id);
+        }
+        this.config.nodeExecutionRepo.update(execution.id, { data: nextData });
       }
 
       const actualSessionId = await this.createSubSession(taskId, sessionId, init, {
@@ -1337,21 +1359,6 @@ export class TaskAgentManager {
       });
 
       if (shouldKickoff) {
-        // Stamp the kickoff id BEFORE the awaited goal/memory construction
-        // below: a daemon exit during those awaits would otherwise rehydrate
-        // an unstamped in_progress execution that neither the live settle nor
-        // the reconciliation can ever resolve. (Task #944 review.)
-        const stampedKickoffMessageUuid = generateUUID();
-        const stampedExecution = this.config.nodeExecutionRepo.getByAgentSessionId(actualSessionId);
-        if (stampedExecution) {
-          this.config.nodeExecutionRepo.update(stampedExecution.id, {
-            data: {
-              ...(stampedExecution.data ?? {}),
-              kickoffMessageUuid: stampedKickoffMessageUuid,
-            },
-          });
-        }
-
         const goal = task.goalId ? this.config.goalService?.getGoal(task.goalId) : null;
         const linkedGoal = goal?.spaceId === task.spaceId ? goal : null;
 
@@ -1388,11 +1395,11 @@ export class TaskAgentManager {
         const kickoffMessage = runtimeContract
           ? `${initialMessage}\n\n${runtimeContract}`
           : initialMessage;
-        // The kickoff id was already generated and stamped before the awaited
-        // construction above (stampedKickoffMessageUuid) — reuse it for the
-        // inject's explicit message id. injectMessageIntoSession awaits SDK
-        // consumption, so a per-inject generation would leave a window where
-        // the durable stamp lags the delivery. (Task #944 review.)
+        // The kickoff id was already generated and stamped before the
+        // activation's first await (stampedKickoffMessageUuid) — reuse it for
+        // the inject's explicit message id. injectMessageIntoSession awaits
+        // SDK consumption, so a per-inject generation would leave a window
+        // where the durable stamp lags the delivery. (Task #944 review.)
         await this.injectMessageIntoSession(
           spawned,
           kickoffMessage,
@@ -1401,7 +1408,7 @@ export class TaskAgentManager {
           true,
           undefined,
           'task',
-          stampedKickoffMessageUuid
+          stampedKickoffMessageUuid ?? undefined
         );
       }
       return actualSessionId;
@@ -1413,6 +1420,10 @@ export class TaskAgentManager {
       throw err;
     } finally {
       this.spawningExecutionIds.delete(execution.id);
+      // Post-inject (rows exist — normal classification takes over) or spawn
+      // failure (no rows will ever appear — the next reconcile shot correctly
+      // classifies the kickoff as lost and blocks for re-spawn).
+      this.preInjectKickoffExecutions.delete(execution.id);
     }
   }
 
@@ -3909,97 +3920,118 @@ export class TaskAgentManager {
     // Bounds the catch-side re-arm below: one retry per consecutive-throw
     // chain, so a persistently throwing reconcile cannot spin, while a
     // transient throw (e.g. SQLITE_BUSY) does not surrender the crash repair.
+    // Reset after EVERY non-throwing shot (declines included) — see the
+    // try/catch in scheduleReconcile.
     let reconcileCatchRearmed = false;
+    // One reconciliation shot, isolated so any of its early-return declines
+    // still counts as a NON-throwing outcome for the retry budget.
+    const runReconcileShot = (): void => {
+      if (fired) return;
+      // Deliberately NOT gated on the current v2 flag: the decision reads
+      // durable rows written while v2 WAS enabled. An operator restarting
+      // with the rollback switch after a crash still needs the repair —
+      // the settled job row is never re-claimed and no new idle is
+      // published. (Task #944 review.)
+      const session = this.getSubSession(subSessionId);
+      if (!session) return;
+      if (session.getProcessingState().status !== 'idle') {
+        scheduleReconcile();
+        return;
+      }
+      const execution = this.config.nodeExecutionRepo.getByAgentSessionId(subSessionId);
+      // Only the settlement of THIS activation's expected kickoff qualifies
+      // — stamped on the execution BEFORE the activation's first await (and
+      // cleared at the start of each re-activation, so a prior activation's
+      // stamp cannot leak in). Without it (older rows, or a crash before the
+      // kickoff was enqueued) the reconciliation declines: a pending-message
+      // flush can run a peer handoff as a turn job in the window before
+      // the kickoff exists, and that is not the node's work.
+      const kickoffMessageUuid = (
+        execution?.data as { kickoffMessageUuid?: unknown } | null | undefined
+      )?.kickoffMessageUuid;
+      if (typeof kickoffMessageUuid !== 'string') return;
+      const outcome = this.config.db
+        .getJobQueueRepo()
+        .deliveryTurnOutcomeSince(subSessionId, kickoffMessageUuid);
+      if (outcome === 'dead') {
+        fireTerminalError(DEAD_LETTER_SESSION_ERROR);
+        return;
+      }
+      if (outcome !== 'completed') {
+        // No durable settlement yet — delivery may still be in flight.
+        if (this.hasActiveDeliveryJob(subSessionId)) {
+          scheduleReconcile();
+          return;
+        }
+        // Pre-inject construction: this activation's spawn is still awaiting
+        // between the stamp and the enqueue (setup + goal/memory construction
+        // can outlast the reconcile delay on a cold embedder load). No
+        // delivery or message row can exist yet — decline and re-arm instead
+        // of classifying the kickoff as lost. A daemon death mid-construction
+        // empties the in-memory guard on restart, so the next shot still
+        // blocks for re-spawn. (Task #944 review.)
+        if (execution && this.preInjectKickoffExecutions.has(execution.id)) {
+          scheduleReconcile();
+          return;
+        }
+        // Stamped kickoff, no settlement row, nothing in flight. Consult
+        // the kickoff's PERSISTED MESSAGE ROW (it survives job-queue
+        // cleanup) to classify: 'failed' → the delivery terminalized as
+        // failed (the dead-letter settlement flipped it; its job row aged
+        // out before this reconcile could read it) → block. 'consumed'
+        // alone proves only that the SDK ACKNOWLEDGED the prompt — the
+        // consumed-flip is stamped before the turn runs — so it completes
+        // only with transcript evidence that the turn ran to a successful
+        // result (hasTerminalResultAfter). That covers the job row aging
+        // out of the 7-day retention window and the legacy inline path
+        // (no job row at all) without re-spawning finished work. Anything
+        // else — still 'enqueued' or a gone row (the daemon exited
+        // between the stamp and the inject's enqueue) or a turn that
+        // crashed mid-run (consumed, no terminal result) — blocks for the
+        // runtime's re-spawn machinery. (Task #944 review.)
+        const sdkMessageRepo = this.config.db.getSDKMessageRepo();
+        const persisted = sdkMessageRepo.getDeliveryContent(subSessionId, kickoffMessageUuid);
+        if (persisted?.sendStatus === 'deferred') {
+          // A kickoff deferred by a rate-limit cooldown / parent-task
+          // limit is persisted 'deferred' with NO delivery job — the node
+          // is healthy but paused. Decline and re-arm: the cooldown's
+          // re-kickoff (or the deferral replay) enqueues the delivery and
+          // its settle completes the node through the live path.
+          // (Task #944 review.)
+          scheduleReconcile();
+          return;
+        }
+        if (persisted?.sendStatus === 'failed') {
+          fireTerminalError(
+            'Task-agent kickoff delivery was terminalized as failed; execution blocked for re-spawn.'
+          );
+          return;
+        }
+        if (
+          persisted?.sendStatus === 'consumed' &&
+          sdkMessageRepo.hasTerminalResultAfter(subSessionId, kickoffMessageUuid)
+        ) {
+          completeFromDeliveryState();
+          return;
+        }
+        fireTerminalError(
+          'Task-agent kickoff delivery was lost before enqueue or never reached a successful result; execution blocked for re-spawn.'
+        );
+        return;
+      }
+      completeFromDeliveryState();
+      if (!fired && this.hasActiveDeliveryJob(subSessionId)) scheduleReconcile();
+    };
     const scheduleReconcile = (): void => {
       reconcileTimer = setTimeout(() => {
         reconcileTimer = null;
         // Best-effort by nature (the event-driven paths are primary); a throw
         // here must never surface as an unhandled timer exception.
         try {
-          if (fired) return;
-          // Deliberately NOT gated on the current v2 flag: the decision reads
-          // durable rows written while v2 WAS enabled. An operator restarting
-          // with the rollback switch after a crash still needs the repair —
-          // the settled job row is never re-claimed and no new idle is
-          // published. (Task #944 review.)
-          const session = this.getSubSession(subSessionId);
-          if (!session) return;
-          if (session.getProcessingState().status !== 'idle') {
-            scheduleReconcile();
-            return;
-          }
-          const execution = this.config.nodeExecutionRepo.getByAgentSessionId(subSessionId);
-          // Only the settlement of THIS activation's expected kickoff qualifies
-          // — stamped on the execution BEFORE the inject (and cleared at the
-          // start of each re-activation, so a prior activation's stamp cannot
-          // leak in). Without it (older rows, or a crash before the kickoff
-          // was enqueued) the reconciliation declines: a pending-message
-          // flush can run a peer handoff as a turn job in the window before
-          // the kickoff exists, and that is not the node's work.
-          const kickoffMessageUuid = (
-            execution?.data as { kickoffMessageUuid?: unknown } | null | undefined
-          )?.kickoffMessageUuid;
-          if (typeof kickoffMessageUuid !== 'string') return;
-          const outcome = this.config.db
-            .getJobQueueRepo()
-            .deliveryTurnOutcomeSince(subSessionId, kickoffMessageUuid);
-          if (outcome === 'dead') {
-            fireTerminalError(DEAD_LETTER_SESSION_ERROR);
-            return;
-          }
-          if (outcome !== 'completed') {
-            // No durable settlement yet — delivery may still be in flight.
-            if (this.hasActiveDeliveryJob(subSessionId)) {
-              scheduleReconcile();
-              return;
-            }
-            // Stamped kickoff, no settlement row, nothing in flight. Consult
-            // the kickoff's PERSISTED MESSAGE ROW (it survives job-queue
-            // cleanup) to classify: 'failed' → the delivery terminalized as
-            // failed (the dead-letter settlement flipped it; its job row aged
-            // out before this reconcile could read it) → block. 'consumed'
-            // alone proves only that the SDK ACKNOWLEDGED the prompt — the
-            // consumed-flip is stamped before the turn runs — so it completes
-            // only with transcript evidence that the turn ran to a successful
-            // result (hasTerminalResultAfter). That covers the job row aging
-            // out of the 7-day retention window and the legacy inline path
-            // (no job row at all) without re-spawning finished work. Anything
-            // else — still 'enqueued' or a gone row (the daemon exited
-            // between the stamp and the inject's enqueue) or a turn that
-            // crashed mid-run (consumed, no terminal result) — blocks for the
-            // runtime's re-spawn machinery. (Task #944 review.)
-            const sdkMessageRepo = this.config.db.getSDKMessageRepo();
-            const persisted = sdkMessageRepo.getDeliveryContent(subSessionId, kickoffMessageUuid);
-            if (persisted?.sendStatus === 'deferred') {
-              // A kickoff deferred by a rate-limit cooldown / parent-task
-              // limit is persisted 'deferred' with NO delivery job — the node
-              // is healthy but paused. Decline and re-arm: the cooldown's
-              // re-kickoff (or the deferral replay) enqueues the delivery and
-              // its settle completes the node through the live path.
-              // (Task #944 review.)
-              scheduleReconcile();
-              return;
-            }
-            if (persisted?.sendStatus === 'failed') {
-              fireTerminalError(
-                'Task-agent kickoff delivery was terminalized as failed; execution blocked for re-spawn.'
-              );
-              return;
-            }
-            if (
-              persisted?.sendStatus === 'consumed' &&
-              sdkMessageRepo.hasTerminalResultAfter(subSessionId, kickoffMessageUuid)
-            ) {
-              completeFromDeliveryState();
-              return;
-            }
-            fireTerminalError(
-              'Task-agent kickoff delivery was lost before enqueue or never reached a successful result; execution blocked for re-spawn.'
-            );
-            return;
-          }
-          completeFromDeliveryState();
-          if (!fired && this.hasActiveDeliveryJob(subSessionId)) scheduleReconcile();
+          runReconcileShot();
+          // Any non-throwing outcome — including the declines that re-arm
+          // above — proves the query path is healthy: restore the catch-side
+          // retry budget so a later transient failure is still retried.
           reconcileCatchRearmed = false;
         } catch (err) {
           log.debug(
@@ -4007,8 +4039,8 @@ export class TaskAgentManager {
             err
           );
           // A transient throw must not lose the crash-window repair forever:
-          // re-arm once; a second consecutive throw gives up. Any fully
-          // successful shot resets the budget above. (Task #944 review.)
+          // re-arm once per consecutive-throw chain; a second consecutive
+          // throw gives up. (Task #944 review.)
           if (!fired && !reconcileCatchRearmed) {
             reconcileCatchRearmed = true;
             scheduleReconcile();
@@ -4022,23 +4054,38 @@ export class TaskAgentManager {
     scheduleReconcile();
 
     // Block the node on a terminal failure exactly once and tear down the
-    // listeners. Shared by the `session.error` and `session.delivery_failed`
-    // handlers below.
+    // listeners — but only once the blocked status has actually PERSISTED.
+    // Shared by the `session.error` and `session.delivery_failed` handlers
+    // below.
     const fireTerminalError = (error: string): void => {
       fired = true;
 
       // Push an explicit failure event back to the Task Agent so orchestration
       // stays event-driven (no polling loop required to discover crashes).
-      void this.handleSubSessionError(subSessionId, error).catch((err) => {
-        log.warn(`TaskAgentManager: failed to handle sub-session error for ${subSessionId}:`, err);
-      });
-
-      // Tear down the listeners now that the error terminal state is handled.
-      const unsub = this.sessionListeners.get(subSessionId);
-      if (unsub) {
-        unsub();
-        this.sessionListeners.delete(subSessionId);
-      }
+      // A transient failure inside handleSubSessionError (e.g. SQLITE_BUSY on
+      // the execution update) must not consume the one terminal decision:
+      // the node would stay in_progress with every listener torn down and no
+      // event ever re-published. On rejection, un-consume the decision, keep
+      // the listeners, and re-arm the reconciliation to retry from the
+      // durable rows. (Task #944 review.)
+      void this.handleSubSessionError(subSessionId, error)
+        .then(() => {
+          // Tear down the listeners now that the error terminal state is
+          // durably handled.
+          const unsub = this.sessionListeners.get(subSessionId);
+          if (unsub) {
+            unsub();
+            this.sessionListeners.delete(subSessionId);
+          }
+        })
+        .catch((err) => {
+          log.warn(
+            `TaskAgentManager: failed to handle sub-session error for ${subSessionId}:`,
+            err
+          );
+          fired = false;
+          scheduleReconcile();
+        });
     };
 
     // A message_delivery TURN job dead-lettered. This is the authoritative

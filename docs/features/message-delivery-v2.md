@@ -637,21 +637,27 @@ The contract (`TaskAgentManager.registerCompletionCallback`):
   that is not the node's work. A kickoff that lost the turn arbiter to such a
   flush is persisted as a `steer`; its consumption counts only when its
   OWNING turn — the earliest turn terminal at/after the steer's consumption,
-  not any later turn — also terminated (completed → success, dead → block). The stamp
-  is written BEFORE the awaited goal/memory construction that precedes the
-  inject, and the same pre-generated id is passed as the injection's explicit
-  message id (the inject awaits SDK consumption, so a post-inject stamp would
-  leave a crash window with an unstamped execution under way — and a
-  post-await stamp would leave one during the construction awaits). Any stamp
-  left by a PREVIOUS activation is cleared synchronously before the
-  activation's first await: the fresh completion callback registers inside
-  the session-reuse branch before the new stamp lands, and a peer-turn
-  settle in that window must not correlate the OLD activation's evidence.
+  not any later turn — also terminated (completed → success, dead → block).
+  The stamp is written — in one write that also clears any stamp left by a
+  PREVIOUS activation — BEFORE the activation's first await (the
+  createSubSession call whose session-reuse branch registers the fresh
+  completion callback; a post-await stamp would leave crash windows with an
+  unstamped or stale-stamped execution under way, and a kickoff:false
+  re-activation keeps the stamp cleared). The same pre-generated id becomes
+  the injection's explicit message id. While the activation is still
+  constructing (an in-memory pre-inject guard, released when the spawn
+  finishes or fails), the reconcile DECLINES — no delivery or message row
+  can exist before the inject, and the construction awaits can outlast the
+  reconcile delay (a cold embedding-model load); a daemon death empties the
+  guard so the restart shot still classifies the lost kickoff.
   The timer RE-ARMS while a delivery is in flight or the session is not
   idle, so a turn longer than the delay is still repaired after it ends —
-  and a THROWN shot re-arms once (bounded: two consecutive throws give up;
-  any successful shot resets the budget), so a transient SQLITE_BUSY cannot
-  surrender the repair permanently. A
+  and a THROWN shot re-arms once per consecutive-throw chain (two
+  consecutive throws give up; any NON-throwing shot, declines included,
+  resets the budget), so a transient SQLITE_BUSY cannot surrender the
+  repair permanently. The terminal BLOCK is likewise not consumed until the
+  blocked status has actually persisted: a rejecting settlement handler
+  un-consumes the decision, keeps the listeners, and re-arms. A
   stamped kickoff with NO delivery row and nothing in flight consults the
   kickoff's PERSISTED MESSAGE ROW (it survives job-queue cleanup):
   `send_status='failed'` BLOCKS (the dead-letter settlement terminalized the

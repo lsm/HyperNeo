@@ -72,6 +72,8 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
   let kickoffTerminalResult: boolean;
   /** Makes the durable-outcome lookup throw N times (catch-path tests). */
   let outcomeThrowBudget: number;
+  /** Throw on every ODD lookup instead of consuming a budget. */
+  let throwOnOddOutcomeCalls: boolean;
   /** Count of durable-outcome lookups the reconcile performed. */
   let outcomeCalls: number;
   let executionId: string;
@@ -141,6 +143,7 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     kickoffSendStatus = null;
     kickoffTerminalResult = false;
     outcomeThrowBudget = 0;
+    throwOnOddOutcomeCalls = false;
     outcomeCalls = 0;
     const config = {
       db: {
@@ -163,6 +166,9 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
             outcomeCalls++;
             if (outcomeThrowBudget > 0) {
               outcomeThrowBudget--;
+              throw new Error('database is locked');
+            }
+            if (throwOnOddOutcomeCalls && outcomeCalls % 2 === 1) {
               throw new Error('database is locked');
             }
             return uuid === 'kickoff-uuid' ? turnOutcome : null;
@@ -769,6 +775,70 @@ describe('TaskAgentManager delivery-retry error deferral (task #944)', () => {
     expect(outcomeCalls).toBe(2);
     expect(completed).toBe(false);
     expect(nodeStatus()).toBe('in_progress');
+  });
+
+  it('a NON-THROWING decline resets the retry budget (alternating throws keep repairing)', async () => {
+    // Round-18 P2: the reset must follow every non-throwing shot, declines
+    // included — otherwise one transient failure permanently consumes the
+    // allowance even after many healthy in-flight checks. Odd calls throw,
+    // even calls decline-and-re-arm (deferred): the chain must keep going.
+    throwOnOddOutcomeCalls = true;
+    kickoffSendStatus = 'deferred';
+    turnOutcome = null;
+    await publishIdle();
+    activeJobs.clear();
+    processingTurnJobs.clear();
+    await new Promise<void>((resolve) => setTimeout(resolve, 120));
+    expect(outcomeCalls).toBeGreaterThanOrEqual(5);
+    expect(nodeStatus()).toBe('in_progress');
+  });
+
+  it('a mid-construction activation declines instead of classifying a lost kickoff', async () => {
+    // Round-18 P2: the spawn stamps the kickoff BEFORE its setup/memory
+    // construction awaits, so no delivery or message row can exist yet —
+    // the reconcile must not fire the lost-kickoff block while the in-memory
+    // pre-inject guard is held. Once construction ends (guard released), the
+    // next re-armed shot classifies normally.
+    const preInject = (manager as unknown as { preInjectKickoffExecutions: Set<string> })
+      .preInjectKickoffExecutions;
+    preInject.add(executionId);
+    turnOutcome = null;
+    kickoffSendStatus = null; // no rows yet
+    await publishIdle();
+    activeJobs.clear();
+    processingTurnJobs.clear();
+    await new Promise<void>((resolve) => setTimeout(resolve, 60));
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('in_progress'); // declined, re-armed
+
+    preInject.delete(executionId); // construction finished/failed
+    await new Promise<void>((resolve) => setTimeout(resolve, 60));
+    expect(nodeStatus()).toBe('blocked'); // now classified as lost
+  });
+
+  it('a FAILED terminal-decision persist keeps the listeners and retries the block', async () => {
+    // Round-18 P2: if handleSubSessionError rejects (transient SQLite on the
+    // blocked-status update), the decision must not be consumed — listeners
+    // stay armed and the re-armed reconcile retries the block from the
+    // durable dead row.
+    const managerInternals = manager as unknown as {
+      handleSubSessionError: (sid: string, error: string) => Promise<void>;
+    };
+    const original = managerInternals.handleSubSessionError.bind(manager);
+    let persistAttempts = 0;
+    managerInternals.handleSubSessionError = (sid: string, error: string) => {
+      persistAttempts++;
+      if (persistAttempts === 1) return Promise.reject(new Error('database is locked'));
+      return original(sid, error);
+    };
+    turnOutcome = 'dead';
+    await publishIdle();
+    activeJobs.clear();
+    processingTurnJobs.clear();
+    await new Promise<void>((resolve) => setTimeout(resolve, 80));
+    expect(persistAttempts).toBeGreaterThanOrEqual(2); // retried after the rejection
+    expect(completed).toBe(false);
+    expect(nodeStatus()).toBe('blocked');
   });
 
   it('a settled STEER that was the last job repays the suppressed idle (ACP shape)', async () => {
