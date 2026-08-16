@@ -290,6 +290,89 @@ describe('HandoffExecutor: success', () => {
     expect(result.delivered).toEqual([]);
     expect(result.reason).toContain('0/2');
   });
+
+  test('a multi-slot node target requires every slot (partial delivery rejected)', async () => {
+    // A transition targeting a MULTI-AGENT node by name is also a multi-
+    // recipient ownership transfer: every resolved slot must be reached, or the
+    // handoff fails — one delivered slot must not let the sender complete its
+    // round while a co-owner never received the handoff.
+    const reviewNode: WorkflowNode = {
+      id: 'n-review',
+      name: 'review',
+      agents: [
+        { agentId: 'a-agent', name: 'reviewer' },
+        { agentId: 'b-agent', name: 'auditor' },
+      ],
+    };
+    const workflow = makeWorkflow({
+      nodes: [
+        node('n-coding', 'coding', 'coder', [{ id: 'to-review', target: 'review' }]),
+        reviewNode,
+      ],
+      channels: [{ id: 'ch', from: 'coding', to: 'review' }],
+    });
+    seedPeer(ctx.db, ctx.runId, 'n-review', 'reviewer', 'session-reviewer'); // auditor NOT live
+    const executor = makeExecutor(ctx, workflow, {
+      activateTargetSession: undefined, // no activator: auditor is truly unreachable
+    });
+
+    const partial = await executor.execute({
+      fromAgentName: 'coder',
+      fromSessionId: 'session-coder',
+      workflowNodeId: 'n-coding',
+      operation: { target: 'review', summary: 'go' },
+    });
+
+    expect(partial.status).toBe('failed');
+    expect(partial.reason).toContain('auditor');
+    // Atomicity: the reachable reviewer is not exposed to a handoff the
+    // executor will reject (auditor detected in the pre-delivery preflight).
+    expect(partial.delivered).toEqual([]);
+    expect(ctx.injected).toHaveLength(0);
+
+    // With every slot reachable the same handoff delivers to both.
+    seedPeer(ctx.db, ctx.runId, 'n-review', 'auditor', 'session-auditor');
+    const all = await executor.execute({
+      fromAgentName: 'coder',
+      fromSessionId: 'session-coder',
+      workflowNodeId: 'n-coding',
+      operation: { target: 'review', summary: 'go' },
+    });
+    expect(all.status).toBe('delivered');
+    expect(all.delivered).toHaveLength(2);
+  });
+
+  test('a broadcast preflight activates targets before declaring them unreachable', async () => {
+    // With an activator configured, an inactive target is not "unreachable" —
+    // the preflight attempts activation (mirroring the single-target path)
+    // instead of failing the broadcast before the activator ever runs.
+    const workflow = makeWorkflow({
+      nodes: [
+        node('n-coding', 'coding', 'coder', [{ id: 'broadcast', target: '*' }]),
+        node('n-review', 'review', 'reviewer'),
+        node('n-qa', 'qa', 'tester'),
+      ],
+      channels: [{ id: 'ch-broadcast', from: 'coding', to: ['review', 'qa'] }],
+    });
+    // No live sessions and no queue — only activation can produce recipients.
+    const executor = makeExecutor(ctx, workflow, {
+      activateTargetSession: async (agentName) => {
+        ctx.activations.push(agentName);
+        return [{ agentName, sessionId: `session-${agentName}` }];
+      },
+    });
+
+    const result = await executor.execute({
+      fromAgentName: 'coder',
+      fromSessionId: 'session-coder',
+      workflowNodeId: 'n-coding',
+      operation: { target: '*', summary: 'all' },
+    });
+
+    expect(result.status).toBe('delivered');
+    expect(ctx.activations.sort()).toEqual(['reviewer', 'tester']);
+    expect(result.delivered).toHaveLength(2);
+  });
 });
 
 describe('HandoffExecutor: transition resolution', () => {

@@ -506,11 +506,15 @@ export class HandoffExecutor {
       );
     }
 
+    // A handoff that resolves to MULTIPLE recipient slots — a `'*'` broadcast
+    // OR a node-name target on a multi-agent node — transfers ownership to
+    // every resolved slot, so all of them must be reached.
+    const allRecipients = targets.pairs.length > 1;
     const delivery = await this.deliver({
       fromAgentName,
       fromSessionId,
       targets: targets.pairs,
-      broadcast: operation.target === HANDOFF_TARGET_WILDCARD,
+      allRecipients,
       summary: operation.summary,
       data: operation.data,
     });
@@ -518,14 +522,14 @@ export class HandoffExecutor {
     // 8. Refund the reservation when the handoff was NOT taken. "Taken" means a
     //    NEW delivery or a NEW enqueue this call — a DEDUPED enqueue (same
     //    message already pending from a prior attempt) does not charge a cycle;
-    //    the prior attempt already accounted for it. An INCOMPLETE BROADCAST is
-    //    not accepted (it fails below), so it is not taken and its reservation
-    //    is refunded even though some recipients received a message.
+    //    the prior attempt already accounted for it. An INCOMPLETE multi-
+    //    recipient handoff is not accepted (it fails below), so it is not taken
+    //    and its reservation is refunded even though some recipients received a
+    //    message.
     const reached = delivery.delivered.length + delivery.queued.length + delivery.dedupedCount;
-    const broadcastIncomplete =
-      operation.target === HANDOFF_TARGET_WILDCARD && reached < targets.slots.length;
+    const multiRecipientIncomplete = allRecipients && reached < targets.slots.length;
     const taken =
-      !broadcastIncomplete && (delivery.delivered.length > 0 || delivery.queued.length > 0);
+      !multiRecipientIncomplete && (delivery.delivered.length > 0 || delivery.queued.length > 0);
     if (cycleLimited && !taken) {
       this.refundCycle(workflowRunId, transitionKey, reservedEpoch);
     }
@@ -558,10 +562,11 @@ export class HandoffExecutor {
     // Aggregate the delivery outcome into the handoff status. A delivered
     // handoff (≥1 live session received it) wins over a queued one; queued (new
     // or already-pending deduped) wins over a total delivery failure.
-    // A BROADCAST handoff transfers ownership to every other node, so it is
-    // only accepted when ALL recipients are reached — a partial broadcast
-    // (some recipients unreachable) is a failure even if some delivered.
-    if (broadcastIncomplete) {
+    // A MULTI-RECIPIENT handoff (broadcast or multi-slot node target)
+    // transfers ownership to every resolved slot, so it is only accepted when
+    // ALL recipients are reached — a partial transfer (some recipients
+    // unreachable) is a failure even if some delivered.
+    if (multiRecipientIncomplete) {
       return {
         status: 'failed',
         stage: 'deliver',
@@ -570,7 +575,9 @@ export class HandoffExecutor {
         targetSlots: targets.slots,
         delivered: delivery.delivered,
         queued: delivery.queued,
-        reason: `Broadcast handoff reached ${reached}/${targets.slots.length} recipient slot(s); a broadcast requires all recipients to be reachable.`,
+        reason:
+          `Handoff reached ${reached}/${targets.slots.length} recipient slot(s); a multi-recipient ` +
+          `handoff requires all recipients to be reachable.${delivery.reason ? ` ${delivery.reason}` : ''}`,
         hook: hookOutcome,
       };
     }
@@ -812,7 +819,7 @@ export class HandoffExecutor {
         fromAgentName,
         fromSessionId,
         targets: authorized,
-        broadcast: false,
+        allRecipients: false,
         summary: message,
       });
       const reached = outcome.delivered.length + outcome.queued.length;
@@ -832,7 +839,7 @@ export class HandoffExecutor {
     fromAgentName: string;
     fromSessionId: string;
     targets: HandoffTargetSlot[];
-    broadcast: boolean;
+    allRecipients: boolean;
     summary: string;
     data?: Record<string, unknown>;
   }): Promise<{
@@ -841,7 +848,7 @@ export class HandoffExecutor {
     dedupedCount: number;
     reason?: string;
   }> {
-    const { fromAgentName, fromSessionId, targets, broadcast, summary, data } = args;
+    const { fromAgentName, fromSessionId, targets, allRecipients, summary, data } = args;
     const { workflowRunId, spaceId, taskId, taskNumber } = this.config;
     const dataAppendix =
       data && Object.keys(data).length > 0
@@ -885,20 +892,68 @@ export class HandoffExecutor {
     const repo = this.config.pendingMessageRepo;
     const queueable = !!(repo && spaceId);
 
-    // Broadcast atomicity: every recipient must have a durable delivery path
-    // (a live session OR a queue) BEFORE any recipient is exposed to the
-    // handoff. Otherwise a reachable recipient could start acting as owner
-    // while the sender sees a failure and retries, producing duplicate work.
-    if (broadcast) {
-      const unreachable = targets.filter(
-        ({ slot, node }) => sessionsFor(slot, node).length === 0 && !queueable
+    /**
+     * Sessions an activation callback reported for `slot`, validated against
+     * the sender (excluded) and the pair's node: a reported session whose
+     * observable execution row belongs to a DIFFERENT node means the callback
+     * resolved by agent name alone and must not receive this node's handoff.
+     */
+    const validatedActivationSessions = (
+      activated: Array<{ agentName: string; sessionId: string }>,
+      slot: string,
+      nodeId: string | undefined
+    ): string[] => {
+      const nodeBySession = new Map(
+        executions
+          .filter((e) => e.agentSessionId)
+          .map((e) => [e.agentSessionId!, e.workflowNodeId] as const)
       );
+      return activated
+        .filter((s) => s.sessionId && s.agentName === slot && s.sessionId !== fromSessionId)
+        .map((s) => s.sessionId)
+        .filter((sessionId) => {
+          const observedNode = nodeBySession.get(sessionId);
+          return !(nodeId !== undefined && observedNode !== undefined && observedNode !== nodeId);
+        });
+    };
+
+    // Multi-recipient atomicity: every recipient must have a durable delivery
+    // path (a live session, an ACTIVATABLE session, or a queue) BEFORE any
+    // recipient is exposed to the handoff. Otherwise a reachable recipient
+    // could start acting as owner while the sender sees a failure and retries,
+    // producing duplicate work. Activation is attempted during this preflight
+    // (not just in the delivery loop) so an inactive-but-activatable target is
+    // not declared unreachable; sessions discovered here are reused by the
+    // loop so activation side effects run at most once per slot.
+    const prefetchedSessions = new Map<string, string[]>();
+    if (allRecipients) {
+      const unreachable: string[] = [];
+      for (const { slot, node } of targets) {
+        const nodeId = nodeNameToId.get(node);
+        if (sessionsFor(slot, node).length > 0) continue; // already live
+        let activatedSessions: string[] = [];
+        if (this.config.activateTargetSession) {
+          try {
+            const activated = await this.config.activateTargetSession(slot, nodeId);
+            executions = this.readLiveExecutions();
+            activatedSessions = validatedActivationSessions(activated, slot, nodeId);
+            prefetchedSessions.set(`${node}/${slot}`, activatedSessions);
+          } catch (err) {
+            log.warn(
+              `[HandoffExecutor] failed to activate target "${slot}": ${err instanceof Error ? err.message : String(err)}`
+            );
+          }
+        }
+        if (sessionsFor(slot, node).length === 0 && activatedSessions.length === 0 && !queueable) {
+          unreachable.push(`${node}/${slot}`);
+        }
+      }
       if (unreachable.length > 0) {
         return {
           delivered: [],
           queued: [],
           dedupedCount: 0,
-          reason: `Broadcast requires all ${targets.length} recipient(s) reachable; not reachable: ${unreachable.map((p) => `${p.node}/${p.slot}`).join(', ')}.`,
+          reason: `Multi-recipient handoff requires all ${targets.length} recipient(s) reachable; not reachable: ${unreachable.join(', ')}.`,
         };
       }
     }
@@ -916,7 +971,13 @@ export class HandoffExecutor {
       // agent name alone could select the sibling node's identically named slot.
       const nodeId = nodeNameToId.get(node);
       let sessions = sessionsFor(slot, node).map((e) => ({ sessionId: e.agentSessionId! }));
-      if (sessions.length === 0 && this.config.activateTargetSession) {
+      const prefetched = prefetchedSessions.get(`${node}/${slot}`);
+      if (prefetched) {
+        // The multi-recipient preflight already activated this slot (its
+        // session ids are node-validated); reuse them instead of activating
+        // again — activation side effects must run at most once per slot.
+        sessions = [...new Set(prefetched)].map((sessionId) => ({ sessionId }));
+      } else if (sessions.length === 0 && this.config.activateTargetSession) {
         try {
           const activated = await this.config.activateTargetSession(slot, nodeId);
           executions = this.readLiveExecutions();
@@ -925,28 +986,13 @@ export class HandoffExecutor {
           // even when their node_executions row is not yet observable — a
           // just-activated target must be injected, not needlessly queued or
           // reported failed. Dedupe against the reread so a row that IS
-          // observable isn't injected twice, and REJECT a reported session
-          // whose observable row belongs to a different node: activation is
-          // scoped to `nodeId` above, so a sibling-node row means the callback
-          // resolved by agent name and must not receive this node's handoff.
+          // observable isn't injected twice; validation (sender exclusion +
+          // node scoping) is shared with the preflight.
           const seen = new Set(sessions.map((s) => s.sessionId));
-          const nodeBySession = new Map(
-            executions
-              .filter((e) => e.agentSessionId)
-              .map((e) => [e.agentSessionId!, e.workflowNodeId] as const)
-          );
-          for (const s of activated) {
-            if (!s.sessionId || s.agentName !== slot || s.sessionId === fromSessionId) continue;
-            const observedNode = nodeBySession.get(s.sessionId);
-            if (nodeId !== undefined && observedNode !== undefined && observedNode !== nodeId) {
-              log.warn(
-                `[HandoffExecutor] activation returned session ${s.sessionId} for "${slot}" on node ${observedNode}; expected node ${nodeId} — skipping.`
-              );
-              continue;
-            }
-            if (!seen.has(s.sessionId)) {
-              seen.add(s.sessionId);
-              sessions.push({ sessionId: s.sessionId });
+          for (const sessionId of validatedActivationSessions(activated, slot, nodeId)) {
+            if (!seen.has(sessionId)) {
+              seen.add(sessionId);
+              sessions.push({ sessionId });
             }
           }
         } catch (err) {
