@@ -123,6 +123,19 @@ describe('StructuredLogFileSink', () => {
     expect(redacted.message).toBe('installing from https://[REDACTED]@host/repo.git');
   });
 
+  it('redacts compound secret keys in serialized objects', () => {
+    // A serialized env/config object carries compound credential names
+    // (`AWS_SECRET_ACCESS_KEY`); the key matcher must recognize the sensitive
+    // COMPONENT inside the compound name, not only a bare `secret`/`token`/…
+    // key. (Codex P1, PR #2499.)
+    const redacted = redactStructuredLogEvent(
+      event('{"AWS_SECRET_ACCESS_KEY":"supersecret","DB_PASSWORD":"hunter2"}')
+    );
+    expect(redacted.message).toBe(
+      '{"AWS_SECRET_ACCESS_KEY":"[REDACTED]","DB_PASSWORD":"[REDACTED]"}'
+    );
+  });
+
   it('redacts unquoted colon-form values for every sensitive key', () => {
     // `token: abc` (no quotes, no `=`) previously passed through every rule —
     // only authorization and cookies had colon-form handling. Like the

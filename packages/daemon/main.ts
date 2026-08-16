@@ -51,15 +51,32 @@ const config = getConfig();
 
 // Create daemon app in standalone mode. The sink-ready callback wires the real
 // flush as soon as the log sink exists — before the factory's long-running init
-// completes — so a fatal during startup still persists to the file.
-const app = await createDaemonApp({
-  config,
-  verbose: true,
-  standalone: true, // Show root info route in standalone mode
-  onStructuredLogSinkReady: (flush) => {
-    flushStructuredLogs = flush;
-  },
-});
+// completes — so a fatal during startup still persists to the file. A top-level
+// await rejection does NOT emit `unhandledRejection`, so catch it explicitly,
+// emit + flush the fatal record, then exit (mirroring the CLI server entry
+// points). (Codex P2, PR #2499.)
+let app: Awaited<ReturnType<typeof createDaemonApp>>;
+try {
+  app = await createDaemonApp({
+    config,
+    verbose: true,
+    standalone: true, // Show root info route in standalone mode
+    onStructuredLogSinkReady: (flush) => {
+      flushStructuredLogs = flush;
+    },
+  });
+} catch (error) {
+  emitStructuredLogEvent({
+    level: 'fatal',
+    args: ['[Daemon] Startup failed:', error],
+    source: 'process',
+    module: 'daemon:main',
+    metadata: { processEvent: 'startup' },
+  });
+  withConsoleLogCaptureSuppressed(() => console.error('[Daemon] Startup failed:', error));
+  await flushFatalLogs();
+  process.exit(1);
+}
 const { server, cleanup } = app;
 
 // Server is already listening
