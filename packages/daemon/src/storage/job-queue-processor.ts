@@ -198,14 +198,21 @@ export function staleReclaimJitterDelays(count: number, random: () => number): n
   if (count <= 1) return Array.from({ length: count }, () => 0);
   const windowMs = Math.min(count * STALE_RECLAIM_JITTER_STEP_MS, STALE_RECLAIM_JITTER_MAX_MS);
   const slotWidth = windowMs / count;
+  // Clamp each draw to [0, 1): an injected source returning NaN would poison
+  // run_at into a NULL SQLite binding that fails `run_at <= now` forever (a
+  // silent, unerrored park), and out-of-range draws break the shuffle.
+  const draw = (): number => {
+    const value = random();
+    return Number.isFinite(value) ? Math.min(Math.max(value, 0), 0.999_999_999_999) : 0;
+  };
   // Random permutation of slot indices (Fisher–Yates over the injected random):
   // which job lands in which slot is random per pass, never index-ordered.
   const slots = Array.from({ length: count }, (_slot, i) => i);
   for (let i = slots.length - 1; i > 0; i--) {
-    const j = Math.min(i, Math.floor(random() * (i + 1)));
+    const j = Math.min(i, Math.floor(draw() * (i + 1)));
     [slots[i], slots[j]] = [slots[j], slots[i]];
   }
-  return slots.map((slot) => slot * slotWidth + random() * slotWidth);
+  return slots.map((slot) => slot * slotWidth + draw() * slotWidth);
 }
 
 export class JobQueueProcessor {
@@ -609,10 +616,22 @@ export class JobQueueProcessor {
       // claim cold-start its SDK subprocess in the same instant (see
       // staleReclaimJitterDelays). Applied synchronously, before any tick can
       // dequeue, so no reclaimed job slips through un-jittered.
-      const jitteredAt = Date.now();
-      const delays = staleReclaimJitterDelays(claims.length, this.jitterRandom);
-      for (let i = 0; i < claims.length; i++) {
-        this.repo.reschedulePending(claims[i].jobId, jitteredAt + delays[i]);
+      try {
+        const jitteredAt = Date.now();
+        const delays = staleReclaimJitterDelays(claims.length, this.jitterRandom);
+        for (let i = 0; i < claims.length; i++) {
+          this.repo.reschedulePending(claims[i].jobId, jitteredAt + delays[i]);
+        }
+      } catch {
+        // Best-effort: a failed reschedule (disk-full / I/O error) leaves the
+        // affected rows pending with their original — past — run_at, i.e.
+        // immediately claimable, the pre-jitter behavior. It must never skip
+        // the abort/deferral loop below: cancelling the stale predecessors is
+        // what prevents replacement claims from overlapping live attempts.
+        // (A throw from reclaimStale itself still propagates — that
+        // all-or-nothing transaction failed before any row flipped — and
+        // checkStaleJobs then retries on the next tick, as lastStaleCheck
+        // only advances after a non-throwing pass.)
       }
     }
     for (const claim of claims) {

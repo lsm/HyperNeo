@@ -370,8 +370,12 @@ the delivery path must handle.
   surfaces a terminal error instead of vanishing behind pagination.
 - **Shutdown requeue (#2593):** `app.cleanup()` requeues in-flight
   `message_delivery` jobs to pending before draining the processor, so they're
-  instantly reclaimable on the next boot (not stuck `processing` with a fresh
-  heartbeat for the 5-min stale window, nor misrouting new prompts as steers).
+  reclaimable on the next boot without the 5-min stale wait (not stuck
+  `processing` with a fresh heartbeat, nor misrouting new prompts as steers).
+  The requeued rows are spread with the same reclaim jitter as the crash path
+  (see "Lease + reclaim" below): a whole in-flight fleet at `run_at=now` would
+  be claimed by the next boot's first tick in one instant; a single requeued
+  job keeps zero delay, so #2593's prompt single-job recovery is unchanged.
 - **Queued state on park (#2599):** a blocked startup (sdk_resume_choice) calls
   `stateManager.setQueued` before parking, so the session reports queued (not
   idle) and later deferrals are honored.
@@ -450,6 +454,8 @@ but by hardening it.
   cold-starts (each resuming a large transcript) all blow the 15s startup
   timeout and self-sustain a retry loop, so replacement claims must roll
   rather than stampede; a single reclaimed job is re-enqueued with no delay.
+  The graceful-shutdown requeue above spreads its rows with the same
+  mechanism — the deploy-path twin of the crash herd.
 - **Backoff / cancel / terminal (item 8):** bounded exponential backoff + max
   attempts + terminal failure come from the lane (`fail()` → `2^retryCount·1s` →
   `dead` → `onDead` → `send_status='failed'`). User-cancelled messages are not

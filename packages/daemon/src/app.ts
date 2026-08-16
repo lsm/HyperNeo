@@ -69,7 +69,7 @@ import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-serv
 import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager';
 import type { SpaceWorktreeManager } from './lib/space/managers/space-worktree-manager';
 import { JobQueueRepository } from './storage/repositories/job-queue-repository';
-import { JobQueueProcessor } from './storage/job-queue-processor';
+import { JobQueueProcessor, staleReclaimJitterDelays } from './storage/job-queue-processor';
 import { createCleanupHandler } from './lib/job-handlers/cleanup.handler';
 import {
   createMemoryConsolidationHandler,
@@ -1432,12 +1432,26 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         // force-exits, leaving the rows `processing` with a fresh heartbeat. That
         // blocks next-boot reclamation for the 5-min stale window AND leaves the
         // active-turn index pointing at a turn no live handler drives (new prompts
-        // misrouted as steers). Requeueing makes them instantly reclaimable; the
-        // still-running handlers' later complete()/fail() is a no-op. See #2593.
+        // misrouted as steers). Requeueing makes them reclaimable without the
+        // 5-min stale wait; the still-running handlers' later complete()/fail()
+        // is a no-op. See #2593.
         try {
           const requeued = jobQueue.requeueAllProcessing(MESSAGE_DELIVERY, Date.now());
-          if (requeued > 0) {
-            logInfo(`[Daemon] Requeued ${requeued} in-flight message_delivery job(s) for restart`);
+          if (requeued.length > 0) {
+            // Spread the restart herd with the stale-reclaim jitter: pending
+            // rows all at run_at=now would be claimed by the next boot's
+            // FIRST tick in one instant (up to the 64-slot delivery budget) —
+            // the graceful-shutdown twin of the crash herd, with every
+            // replacement cold-starting its SDK subprocess at once. A single
+            // requeued job keeps zero delay (#2593's instant recovery).
+            const jitteredAt = Date.now();
+            const delays = staleReclaimJitterDelays(requeued.length, Math.random);
+            for (let i = 0; i < requeued.length; i++) {
+              jobQueue.reschedulePending(requeued[i], jitteredAt + delays[i]);
+            }
+            logInfo(
+              `[Daemon] Requeued ${requeued.length} in-flight message_delivery job(s) for restart`
+            );
           }
         } catch {
           /* best-effort on shutdown */

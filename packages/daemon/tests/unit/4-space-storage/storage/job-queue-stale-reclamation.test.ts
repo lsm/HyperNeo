@@ -210,10 +210,12 @@ describe('Stale job reclamation on restart (eager reclaim)', () => {
     restartedProcessor = new JobQueueProcessor(repo, {
       staleThresholdMs: 5_000,
       maxConcurrent: 10,
-      // Near the production 1 s cadence: the reclaim pass jitters the two
-      // re-enqueued jobs' run_at (a herd of two spreads over ≤ 4 s), and each
-      // is claimed by a poll tick once its run_at passes.
+      // Near the production 1 s cadence, with near-zero jitter draws: a herd
+      // of two still spans one 2 s slot boundary, so the second job claims on
+      // a later poll — but this test covers eager multi-queue reclamation,
+      // not the spread (which has its own describes below).
       pollIntervalMs: 500,
+      jitterRandom: () => 0.01,
     });
     restartedProcessor.register('queue-a', async (j) => {
       processedQueues.push(j.queue);
@@ -438,6 +440,63 @@ describe('stale-reclaim herd jitter (run_at spread)', () => {
     // out a herd window that no longer exists.
     expect(await processor.tick()).toBe(1);
   });
+
+  it('spreads a graceful-shutdown requeue herd on the next boot (deploy path)', async () => {
+    // The SIGTERM twin of the crash herd: app.cleanup() requeues in-flight
+    // rows to pending with run_at=now (the eager stale-reclaim never sees
+    // them — it only sweeps `processing`), so the next boot's FIRST tick
+    // would claim the whole fleet at once unless the shutdown requeue also
+    // jitters. Mirrors the app.ts sequence: stopPolling → requeueAllProcessing
+    // → staleReclaimJitterDelays + reschedulePending → restart.
+    const M = 6;
+    const jobIds: string[] = [];
+    for (let i = 0; i < M; i++) {
+      jobIds.push(repo.enqueue({ queue: 'shutdown-herd-queue', payload: { seq: i } }).id);
+    }
+    repo.dequeue('shutdown-herd-queue', M);
+
+    const requeued = repo.requeueAllProcessing('shutdown-herd-queue', Date.now());
+    expect(requeued).toHaveLength(M);
+    expect(new Set(requeued).size).toBe(M);
+
+    // The shutdown jitter app.ts applies (constant 0.5 → fixed permutation,
+    // offsets at each 2 s slot's midpoint; every run_at ≥ 1 s out).
+    const jitteredAt = Date.now();
+    const delays = staleReclaimJitterDelays(requeued.length, () => 0.5);
+    requeued.forEach((id, i) => {
+      expect(repo.reschedulePending(id, jitteredAt + delays[i])).toBe(true);
+    });
+
+    // Next boot: a fresh processor's eager reclaim finds nothing `processing`,
+    // and its first tick claims NONE of the herd — every run_at is future.
+    processor = new JobQueueProcessor(repo, {
+      staleThresholdMs: 5 * 60_000,
+      maxConcurrent: 64, // the production delivery budget
+      pollIntervalMs: 60_000,
+      jitterRandom: () => 0.5,
+    });
+    const processed: string[] = [];
+    processor.register('shutdown-herd-queue', async (j) => {
+      processed.push(j.id);
+    });
+    processor.start();
+    await flush();
+    expect(processed).toEqual([]);
+    for (const id of jobIds) {
+      expect(repo.getJob(id)?.status).toBe('pending');
+    }
+
+    // Once each jittered run_at passes, the herd claims and completes normally.
+    db.prepare(
+      `UPDATE job_queue SET run_at = ? WHERE id IN (${jobIds.map(() => '?').join(',')})`
+    ).run(Date.now() - 1, ...jobIds);
+    await processor.tick();
+    await flush();
+    expect(processed).toHaveLength(M);
+    for (const id of jobIds) {
+      expect(repo.getJob(id)?.status).toBe('completed');
+    }
+  });
 });
 
 describe('staleReclaimJitterDelays', () => {
@@ -490,5 +549,19 @@ describe('staleReclaimJitterDelays', () => {
       signatures.add(delays.map((delay) => Math.floor(delay / 2_000)).join(','));
     }
     expect(signatures.size).toBeGreaterThan(1);
+  });
+
+  it('clamps adversarial draws (NaN, ≥1, negative) to valid delays', () => {
+    // A NaN draw must not leak into run_at: NaN binds as NULL in SQLite and
+    // fails `run_at <= now` forever, silently parking the job.
+    const adversarial = [Number.NaN, 1.7, -0.5, 1.0, 0.5, Number.POSITIVE_INFINITY];
+    let draw = 0;
+    const delays = staleReclaimJitterDelays(6, () => adversarial[draw++ % adversarial.length]);
+    expect(delays).toHaveLength(6);
+    for (const delay of delays) {
+      expect(Number.isFinite(delay)).toBe(true);
+      expect(delay).toBeGreaterThanOrEqual(0);
+      expect(delay).toBeLessThan(Math.min(6 * 2_000, 30_000));
+    }
   });
 });
