@@ -693,6 +693,31 @@ describe('JobQueueRepository', () => {
     });
   });
 
+  describe('reschedulePending', () => {
+    it("moves a pending job's run_at (the stale-reclaim jitter seam)", () => {
+      const job = repository.enqueue({ queue: 'test', payload: {} });
+      const later = Date.now() + 5_000;
+
+      expect(repository.reschedulePending(job.id, later)).toBe(true);
+      expect(repository.getJob(job.id)?.runAt).toBe(later);
+    });
+
+    it('leaves a processing job untouched and reports false', () => {
+      repository.enqueue({ queue: 'test', payload: {} });
+      const [job] = repository.dequeue('test');
+      const originalRunAt = repository.getJob(job.id)!.runAt;
+
+      expect(repository.reschedulePending(job.id, Date.now() + 60_000)).toBe(false);
+      const after = repository.getJob(job.id)!;
+      expect(after.status).toBe('processing');
+      expect(after.runAt).toBe(originalRunAt);
+    });
+
+    it('returns false for an unknown job id', () => {
+      expect(repository.reschedulePending('non-existent-id', Date.now())).toBe(false);
+    });
+  });
+
   describe('deleteJob', () => {
     it('returns true and removes the job when it exists', () => {
       const job = repository.enqueue({ queue: 'test', payload: {} });

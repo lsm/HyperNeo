@@ -443,7 +443,13 @@ but by hardening it.
   heartbeats `started_at` (`touchStartedAt`, every 60s) throughout the turn
   await, well inside the 5-min stale window; `reclaimStale` only reclaims jobs
   whose handler stopped heartbeating (a crash). The status-aware reload then
-  prevents a duplicate feed on re-drive. Covered by a regression test.
+  prevents a duplicate feed on re-drive. Covered by a regression test. A
+  reclaim pass that unfreezes a whole crash herd also jitters each re-enqueued
+  job's `run_at` across a randomized [0, min(M·2s, 30s)] window
+  (`staleReclaimJitterDelays` in `job-queue-processor.ts`): N simultaneous SDK
+  cold-starts (each resuming a large transcript) all blow the 15s startup
+  timeout and self-sustain a retry loop, so replacement claims must roll
+  rather than stampede; a single reclaimed job is re-enqueued with no delay.
 - **Backoff / cancel / terminal (item 8):** bounded exponential backoff + max
   attempts + terminal failure come from the lane (`fail()` → `2^retryCount·1s` →
   `dead` → `onDead` → `send_status='failed'`). User-cancelled messages are not

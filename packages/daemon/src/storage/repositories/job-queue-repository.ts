@@ -281,6 +281,20 @@ export class JobQueueRepository {
     return res.changes;
   }
 
+  /**
+   * Reschedule a PENDING job's run_at. The processor's stale-reclaim pass uses
+   * this to spread a re-enqueued herd's replacement claims over time (see
+   * staleReclaimJitterDelays) so they don't all cold-start in the same
+   * instant. Pending-only by design: a row that was already re-claimed or
+   * settled between the reclaim and this write keeps its own schedule.
+   */
+  reschedulePending(jobId: string, runAt: number): boolean {
+    const res = this.db
+      .prepare(`UPDATE job_queue SET run_at = ? WHERE id = ? AND status = 'pending'`)
+      .run(runAt, jobId);
+    return res.changes > 0;
+  }
+
   /** Renew the lease for one exact processing claim without changing its start time. */
   heartbeat(jobId: string, claimToken: string | null): boolean {
     if (!claimToken) return false;

@@ -11,7 +11,10 @@
  * job-queue-processor.test.ts (which test the same processor before and after start()).
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
+import {
+  JobQueueProcessor,
+  staleReclaimJitterDelays,
+} from '../../../../src/storage/job-queue-processor';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
@@ -39,6 +42,21 @@ const DB_SCHEMA = `
 
 /** Wait for async microtasks/macrotasks to settle. */
 const flush = () => new Promise((resolve) => setTimeout(resolve, 50));
+
+/** Poll until predicate holds (bounded). Reclaimed herds re-claim on the
+ * processor's poll cadence as their jittered run_at passes, so tests that
+ * assert eventual re-processing wait instead of a single flush. */
+const waitFor = async (
+  predicate: () => boolean,
+  timeoutMs = 10_000,
+  intervalMs = 50
+): Promise<void> => {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('waitFor timed out');
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+};
 
 describe('Stale job reclamation on restart (eager reclaim)', () => {
   let db: Database;
@@ -192,7 +210,10 @@ describe('Stale job reclamation on restart (eager reclaim)', () => {
     restartedProcessor = new JobQueueProcessor(repo, {
       staleThresholdMs: 5_000,
       maxConcurrent: 10,
-      pollIntervalMs: 60_000,
+      // Near the production 1 s cadence: the reclaim pass jitters the two
+      // re-enqueued jobs' run_at (a herd of two spreads over ≤ 4 s), and each
+      // is claimed by a poll tick once its run_at passes.
+      pollIntervalMs: 500,
     });
     restartedProcessor.register('queue-a', async (j) => {
       processedQueues.push(j.queue);
@@ -202,10 +223,11 @@ describe('Stale job reclamation on restart (eager reclaim)', () => {
     });
 
     restartedProcessor.start();
-    await flush();
+    await waitFor(
+      () =>
+        repo.getJob(jobA.id)?.status === 'completed' && repo.getJob(jobB.id)?.status === 'completed'
+    );
 
-    expect(repo.getJob(jobA.id)?.status).toBe('completed');
-    expect(repo.getJob(jobB.id)?.status).toBe('completed');
     expect(processedQueues).toContain('queue-a');
     expect(processedQueues).toContain('queue-b');
   });
@@ -278,5 +300,195 @@ describe('Stale job reclamation on restart (eager reclaim)', () => {
     expect(reclaimed).toHaveLength(1);
     expect(repo.getJob(alive.id)?.status).toBe('processing'); // alive — NOT reclaimed
     expect(repo.getJob(dead.id)?.status).toBe('pending'); // dead — reclaimed, re-drives
+  });
+});
+
+describe('stale-reclaim herd jitter (run_at spread)', () => {
+  let db: Database;
+  let repo: JobQueueRepository;
+
+  let processor: JobQueueProcessor | null = null;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    db.exec(DB_SCHEMA);
+    repo = new JobQueueRepository(db as any);
+    processor = null;
+  });
+
+  afterEach(async () => {
+    if (processor !== null) {
+      await processor.stop();
+    }
+    db.close();
+  });
+
+  /** Force a stale-reclaim pass without start()'s poll timer, as the
+   * processor-lifecycle tests do — the scheduling effect on run_at is the
+   * object under test, not the claim cadence. */
+  const reclaimNow = (target: JobQueueProcessor) =>
+    (target as unknown as { reclaimStaleClaims(staleBefore: number): void }).reclaimStaleClaims(
+      Date.now() - 5_000
+    );
+
+  it('spreads a reclaimed herd so no 1-second window schedules more than 3 jobs', async () => {
+    // The 2026-08-16 delivery stall at unit scale: a daemon dying with M
+    // in-flight deliveries froze them `processing`; stale-reclaim re-enqueued
+    // all M in the same instant and every replacement claim cold-started its
+    // SDK subprocess at once (10 claims within 12 ms → a self-sustaining
+    // timeout/retry loop). The reclaim pass must spread the herd's run_at.
+    const M = 6;
+    const jobIds: string[] = [];
+    for (let i = 0; i < M; i++) {
+      jobIds.push(repo.enqueue({ queue: 'herd-queue', payload: { seq: i } }).id);
+    }
+    repo.dequeue('herd-queue', M);
+    const pastTime = Date.now() - 20_000;
+    db.prepare(
+      `UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id IN (${jobIds.map(() => '?').join(',')})`
+    ).run(pastTime, pastTime, ...jobIds);
+
+    processor = new JobQueueProcessor(repo, {
+      staleThresholdMs: 5_000,
+      maxConcurrent: 10, // spare capacity — the herd must still not be claimable at once
+      pollIntervalMs: 60_000,
+      // Constant 0.5 makes the shuffle + offsets deterministic: one fixed
+      // permutation of the 2 s slots, offsets at each slot's midpoint.
+      jitterRandom: () => 0.5,
+    });
+    processor.register('herd-queue', async () => {});
+
+    const before = Date.now();
+    reclaimNow(processor);
+    const after = Date.now();
+
+    const runAts = jobIds.map((id) => {
+      const job = repo.getJob(id);
+      expect(job?.status).toBe('pending'); // re-enqueued, not yet claimable
+      return job?.runAt ?? 0;
+    });
+
+    // Every run_at is now + jitter, within the M·2 s window (12 s for M=6).
+    const windowMs = Math.min(M * 2_000, 30_000);
+    for (const runAt of runAts) {
+      expect(runAt).toBeGreaterThanOrEqual(before);
+      expect(runAt).toBeLessThanOrEqual(after + windowMs);
+    }
+
+    // Acceptance: no 1-second bucket holds more than 3 reclaimed jobs.
+    const buckets = new Map<number, number>();
+    for (const runAt of runAts) {
+      const bucket = Math.floor((runAt - before) / 1_000);
+      buckets.set(bucket, (buckets.get(bucket) ?? 0) + 1);
+    }
+    expect(Math.max(...buckets.values())).toBeLessThanOrEqual(3);
+
+    // Distinct 2 s slots ⇒ the herd spans ≥ (M-2) slots of real spread.
+    const spread = Math.max(...runAts) - Math.min(...runAts);
+    expect(spread).toBeGreaterThanOrEqual((M - 2) * 2_000);
+
+    // With every run_at in the future, an immediate tick claims NONE of the
+    // herd — the synchronized claim is gone.
+    expect(await processor.tick()).toBe(0);
+    for (const id of jobIds) {
+      expect(repo.getJob(id)?.status).toBe('pending');
+    }
+
+    // Once each jittered run_at passes, jobs claim and complete normally —
+    // the jitter delayed them, it did not park them.
+    db.prepare(
+      `UPDATE job_queue SET run_at = ? WHERE id IN (${jobIds.map(() => '?').join(',')})`
+    ).run(Date.now() - 1, ...jobIds);
+    await processor.tick();
+    await flush();
+    for (const id of jobIds) {
+      expect(repo.getJob(id)?.status).toBe('completed');
+    }
+  });
+
+  it('re-enqueues a single stale job with no jitter delay (prompt recovery)', async () => {
+    const job = repo.enqueue({ queue: 'lone-queue', payload: {} });
+    repo.dequeue('lone-queue', 1);
+    const pastTime = Date.now() - 20_000;
+    db.prepare('UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?').run(
+      pastTime,
+      pastTime,
+      job.id
+    );
+
+    processor = new JobQueueProcessor(repo, {
+      staleThresholdMs: 5_000,
+      maxConcurrent: 10,
+      pollIntervalMs: 60_000,
+      // Adversarial: max jitter if the M=1 guard were missing.
+      jitterRandom: () => 0.999_999,
+    });
+    processor.register('lone-queue', async () => {});
+
+    const before = Date.now();
+    reclaimNow(processor);
+    const after = Date.now();
+
+    const reclaimed = repo.getJob(job.id);
+    expect(reclaimed?.status).toBe('pending');
+    expect(reclaimed?.runAt).toBeGreaterThanOrEqual(before);
+    expect(reclaimed?.runAt).toBeLessThanOrEqual(after); // delay 0 — immediately claimable
+
+    // The next tick claims it right away — a single stuck job does not wait
+    // out a herd window that no longer exists.
+    expect(await processor.tick()).toBe(1);
+  });
+});
+
+describe('staleReclaimJitterDelays', () => {
+  /** Deterministic PRNG (mulberry32) so the spread assertions are reproducible. */
+  const seededRandom = (seed: number): (() => number) => {
+    let state = seed >>> 0;
+    return () => {
+      state = (state + 0x6d2b79f5) >>> 0;
+      let t = state;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  };
+
+  it('returns no delay for herds of 0 and 1 — a single stuck job recovers immediately', () => {
+    expect(staleReclaimJitterDelays(0, Math.random)).toEqual([]);
+    expect(staleReclaimJitterDelays(1, () => 0.999_999)).toEqual([0]);
+  });
+
+  it('assigns each job a distinct slot of the spread window (deterministic random)', () => {
+    // random() = 0 ⇒ offsets 0 and a fixed permutation: the delays are exactly
+    // the slot edges 0, 2 s, 4 s, … 12 s window for M=6.
+    expect(staleReclaimJitterDelays(6, () => 0)).toEqual([2_000, 4_000, 6_000, 8_000, 10_000, 0]);
+  });
+
+  it('bounds every delay to min(M·2 s, 30 s) with no 1-second bucket above 3 jobs', () => {
+    for (const count of [2, 10, 15, 40, 60]) {
+      const windowMs = Math.min(count * 2_000, 30_000);
+      for (let pass = 0; pass < 50; pass++) {
+        const delays = staleReclaimJitterDelays(count, seededRandom(count * 1_000 + pass));
+        expect(delays).toHaveLength(count);
+        const buckets = new Map<number, number>();
+        for (const delay of delays) {
+          expect(delay).toBeGreaterThanOrEqual(0);
+          expect(delay).toBeLessThan(windowMs);
+          const bucket = Math.floor(delay / 1_000);
+          buckets.set(bucket, (buckets.get(bucket) ?? 0) + 1);
+        }
+        expect(Math.max(...buckets.values())).toBeLessThanOrEqual(3);
+      }
+    }
+  });
+
+  it('randomizes the slot order per pass — restarts never produce a deterministic stagger', () => {
+    const signatures = new Set<string>();
+    for (let pass = 0; pass < 20; pass++) {
+      const delays = staleReclaimJitterDelays(10, seededRandom(pass + 1));
+      // Each job's slot index (2 s slots for M=10), in job order.
+      signatures.add(delays.map((delay) => Math.floor(delay / 2_000)).join(','));
+    }
+    expect(signatures.size).toBeGreaterThan(1);
   });
 });
