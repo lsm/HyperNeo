@@ -814,16 +814,22 @@ export function setupSessionHandlers(
     // version) while an OLDER claim is still in flight — its late arrival
     // would take the baseline-null plain-write branch and overwrite the newer
     // draft with older transcript-free content. An echoed expectedDraftVersion
-    // that no longer matches proves a newer write intervened: decline with
-    // `stale` so the client retires the superseded claim instead of retrying.
+    // that no longer matches marks a newer committed WRITE — but only when the
+    // sequence is resolved (no live baseline snapshot): a version bump with
+    // the snapshot still lingering is the landing's OWN merge (a session.get
+    // merged the pending transcript), which is exactly the write this RPC
+    // exists to fold the backup with — declining there would make the client
+    // retire its only durable copy of the deferred edits. `stale` declines
+    // only the genuinely superseded claims.
+    const baseline = metadata.inputDraftVoiceBaseline;
     if (
       expectedDraftVersion !== undefined &&
       typeof metadata.inputDraftVersion === 'number' &&
-      expectedDraftVersion !== metadata.inputDraftVersion
+      expectedDraftVersion !== metadata.inputDraftVersion &&
+      typeof baseline !== 'string'
     ) {
       return { merged: false, stale: true };
     }
-    const baseline = metadata.inputDraftVoiceBaseline;
     const draft = metadata.inputDraft ?? '';
     const trimmed = content.trim();
     const metadataUpdate: Partial<SessionMetadata> = {};

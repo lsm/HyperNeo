@@ -1460,13 +1460,13 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
 
   it('declines with stale:true when the echoed draft version no longer matches', async () => {
     // A NEWER tab's write or merge committed after this claim's client last
-    // read the draft: its late push would overwrite the newer draft with older
-    // transcript-free content. The version mismatch proves it — decline with
+    // read the draft (the sequence is resolved — the baseline snapshot is
+    // gone): its late push would overwrite the newer draft with older
+    // transcript-free content. The version mismatch marks it — decline with
     // `stale` so the client retires the claim instead of retrying forever.
     const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
     existingPending = null;
-    existingBaseline = 'old';
-    existingBaselineSeq = 1;
+    existingBaseline = null;
     existingDraft = 'newer tab edits voice';
     existingDraftVersion = 7;
     const result = (await handler!(
@@ -1475,6 +1475,33 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     )) as { merged: boolean; stale?: boolean };
     expect(result).toEqual({ merged: false, stale: true });
     expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('merges across the landing version bump while the sequence is unresolved', async () => {
+    // The deferred tab's cached version predates the landing: its refresh was
+    // deferred (composer held text), while another tab's session.get MERGED
+    // the pending and bumped inputDraftVersion. The snapshot still lingers —
+    // the bump is the landing's own merge, the exact write this RPC folds the
+    // backup with. Declining stale here would make the client retire its only
+    // durable copy of the deferred edits.
+    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
+    existingPending = null;
+    existingBaseline = 'old';
+    existingBaselineSeq = 1;
+    existingDraft = 'old voice';
+    existingDraftVersion = 6;
+    const result = (await handler!(
+      { sessionId: 's1', content: 'typed edits', claimId: 'claim-1', expectedDraftVersion: 5 },
+      {}
+    )) as { merged: boolean; value: string };
+    expect(result.merged).toBe(true);
+    expect(result.value).toBe('typed edits voice');
+    const write = sessionManager.updateSession.mock.calls[0][1] as {
+      metadata: Record<string, unknown>;
+    };
+    // The merged branch folded the transcripts and cleared the snapshot.
+    expect(write.metadata.inputDraft).toBe('typed edits voice');
+    expect(write.metadata.inputDraftVoiceBaseline).toBeNull();
   });
 
   it('acknowledges a committed claim from the log even when its version echo is stale', async () => {
