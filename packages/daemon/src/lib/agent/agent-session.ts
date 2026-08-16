@@ -63,39 +63,37 @@
 
 import type {
   AgentProcessingState,
-  MessageContent,
-  Session,
-  SessionType,
-  SessionContext,
-  SessionFeatures,
-  SessionConfig,
-  SessionMetadata,
+  ChatMessage,
   ContextInfo,
-  QuestionDraftResponse,
-  MessageHub,
   CurrentModelInfo,
+  DeclarativeToolGuard,
+  FallbackModelEntry,
+  McpServerConfig,
+  MessageContent,
+  MessageHub,
+  MessageOrigin,
+  Provider,
+  QuestionDraftResponse,
+  RewindMode,
   RewindPreview,
   RewindResult,
-  RewindMode,
   SelectiveRewindPreview,
   SelectiveRewindResult,
-  SystemPromptConfig,
-  McpServerConfig,
-  Provider,
-  FallbackModelEntry,
-} from '@hyperneo/shared';
-import type {
-  ChatMessage,
-  MessageOrigin,
+  Session,
+  SessionConfig,
+  SessionContext,
+  SessionFeatures,
+  SessionMetadata,
+  SessionType,
   SkillEnablementOverride,
-  DeclarativeToolGuard,
+  SystemPromptConfig,
 } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import { Database } from '../../storage/database';
+import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
+import type { Database } from '../../storage/database';
 import { ErrorManager, type StructuredError } from '../error-manager';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { Logger } from '../logger';
 import { SettingsManager } from '../settings-manager';
-import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
 
 export const RECENTLY_EXITED_ROOT_PID_RETENTION_MS = 15 * 60 * 1000;
 
@@ -120,6 +118,17 @@ const DELIVERY_TURN_NO_ACTIVITY_MS = (() => {
   const env = Number(process.env.HYPERNEO_DELIVERY_NO_ACTIVITY_MS);
   return Number.isFinite(env) && env >= 30_000 ? env : 3 * 60 * 1000;
 })();
+
+/**
+ * A tracked SDK subprocess handle that does not expose a numeric PID
+ * (VM/container/remote execution spawns). Kept durably so termination can
+ * signal it via its own kill() — there is no PID to process.kill.
+ */
+interface NoPidTrackedProcess {
+  proc: TrackedAgentProcess;
+  exitPromise?: Promise<void>;
+  forceKillTimer?: ReturnType<typeof setTimeout>;
+}
 
 /**
  * AgentSessionInit - Configuration for creating a new AgentSession
@@ -234,61 +243,64 @@ export interface AgentSessionRuntimeOptions {
   ) => Promise<{ success: boolean; error?: string }>;
 }
 
-// Extracted components
-import { MessageQueue } from './message-queue';
-import {
-  MESSAGE_DELIVERY_PARK_MS,
-  MessageDeliveryRecoverableTurnError,
-  MessageDeliveryTerminalTurnError,
-  classifyReclaimTermination,
-  deliverMessage,
-  isMessageDeliveryV2Enabled,
-  isRetryableErrorResultSubtype,
-  isTerminalTurnError,
-  reconcileStrandedDeliveries as reconcileStrandedDeliveriesCore,
-  signalDeliveryConsumed,
-  withSessionLock,
-  type DriveTurnOutcome,
-  type FeedSteerOutcome,
-} from './message-delivery';
-import { deliveryMetrics } from './message-delivery-metrics';
-import { DeliveryTurnStallWatchdog } from './delivery-turn-stall-watchdog';
-import { ProcessingStateManager } from './processing-state-manager';
-import { ContextTracker } from './context-tracker';
-import { SDKMessageHandler, type SDKMessageHandlerContext } from './sdk-message-handler';
-import { QueryOptionsBuilder, type QueryOptionsBuilderContext } from './query-options-builder';
-import {
-  QueryLifecycleManager,
-  type QueryLifecycleManagerContext,
-} from './query-lifecycle-manager';
-import { ModelSwitchHandler, type ModelSwitchHandlerContext } from './model-switch-handler';
+import { isSDKResultSuccess, isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
+import { AcpQueryRunner } from '../acp/acp-query-runner';
+import { resolveModelAlias } from '../model-service';
+import { getProviderRegistry } from '../providers/factory.js';
 import {
   AskUserQuestionHandler,
   type AskUserQuestionHandlerContext,
 } from './ask-user-question-handler';
-import {
-  QueryRunner,
-  type QueryRunnerContext,
-  type OriginalEnvVars,
-  type TrackedAgentProcess,
-} from './query-runner';
-import { AcpQueryRunner } from '../acp/acp-query-runner';
-import type { QueryLike } from './query-like';
-import { InterruptHandler, type InterruptHandlerContext } from './interrupt-handler';
-import { SDKRuntimeConfig, type SDKRuntimeConfigContext } from './sdk-runtime-config';
+import { ContextTracker } from './context-tracker';
+import { DeliveryTurnStallWatchdog } from './delivery-turn-stall-watchdog';
 import {
   EventSubscriptionSetup,
   type EventSubscriptionSetupContext,
 } from './event-subscription-setup';
-import { QueryModeHandler, type QueryModeHandlerContext } from './query-mode-handler';
-import { SlashCommandManager, type SlashCommandManagerContext } from './slash-command-manager';
-import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler';
-import { SessionConfigHandler, type SessionConfigHandlerContext } from './session-config-handler';
-import { RateLimitWatchdog } from './rate-limit-watchdog';
 import { resolveFallbackChain } from './fallback-recovery';
-import { getProviderRegistry } from '../providers/factory.js';
-import { isSDKResultSuccess, isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
-import { resolveModelAlias } from '../model-service';
+import { InterruptHandler, type InterruptHandlerContext } from './interrupt-handler';
+import {
+  BATCH_DELIVERY_MAX_CHARS,
+  buildBatchedDeliveryContent,
+  classifyReclaimTermination,
+  type DriveTurnOutcome,
+  deliverMessage,
+  type FeedSteerOutcome,
+  flattenDeliveryText,
+  isMessageDeliveryV2Enabled,
+  isRetryableErrorResultSubtype,
+  isTerminalTurnError,
+  MESSAGE_DELIVERY_PARK_MS,
+  MessageDeliveryRecoverableTurnError,
+  MessageDeliveryTerminalTurnError,
+  reconcileStrandedDeliveries as reconcileStrandedDeliveriesCore,
+  signalDeliveryConsumed,
+  withSessionLock,
+} from './message-delivery';
+import { deliveryMetrics } from './message-delivery-metrics';
+// Extracted components
+import { MessageQueue } from './message-queue';
+import { ModelSwitchHandler, type ModelSwitchHandlerContext } from './model-switch-handler';
+import { ProcessingStateManager } from './processing-state-manager';
+import {
+  QueryLifecycleManager,
+  type QueryLifecycleManagerContext,
+} from './query-lifecycle-manager';
+import type { QueryLike } from './query-like';
+import { QueryModeHandler, type QueryModeHandlerContext } from './query-mode-handler';
+import { QueryOptionsBuilder, type QueryOptionsBuilderContext } from './query-options-builder';
+import {
+  type OriginalEnvVars,
+  QueryRunner,
+  type QueryRunnerContext,
+  type TrackedAgentProcess,
+} from './query-runner';
+import { RateLimitWatchdog } from './rate-limit-watchdog';
+import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler';
+import { SDKMessageHandler, type SDKMessageHandlerContext } from './sdk-message-handler';
+import { SDKRuntimeConfig, type SDKRuntimeConfigContext } from './sdk-runtime-config';
+import { SessionConfigHandler, type SessionConfigHandlerContext } from './session-config-handler';
+import { SlashCommandManager, type SlashCommandManagerContext } from './slash-command-manager';
 
 /**
  * AgentSession - Pure facade that delegates to specialized handlers
@@ -395,8 +407,15 @@ export class AgentSession
   processExitedPromise: Promise<void> | null = null;
   private trackedAgentProcesses = new Map<number, TrackedAgentProcess>();
   private trackedAgentProcessExitPromises = new Map<number, Promise<void>>();
-  /** Durable no-PID exit promises — retained until resolved so updateProcessExitedPromise() never drops them. */
-  private noPidExitPromises: Promise<void>[] = [];
+  /**
+   * Durable no-PID handles (VM/container/remote spawns) with their exit
+   * promises and force-kill timers. Single source of truth: termination
+   * signals them via their kill() (no PID to process.kill), and
+   * updateProcessExitedPromise() derives the aggregate wait from them —
+   * so an orphan retained across a reset still blocks later teardown
+   * waits until it exits. Self-clean on exit.
+   */
+  private noPidAgentProcesses: NoPidTrackedProcess[] = [];
   private recentlyExitedAgentRootPids = new Map<number, number>();
   private forceKillTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
@@ -2074,7 +2093,14 @@ export class AgentSession
     content: string | MessageContent[],
     _parentToolUseId?: string | null,
     alreadyConsumed = false,
-    claimGuard?: () => boolean
+    claimGuard?: () => boolean,
+    /**
+     * Batched queue flush: the UUIDs whose content was folded into `content`.
+     * Flipped to `consumed` (and their consumption waiters signaled) together
+     * with the kickoff. `messageUuid` (the kickoff) may be a member itself —
+     * it is skipped in the member loop.
+     */
+    batchUuids?: string[]
   ): Promise<DriveTurnOutcome> {
     // In-flight drive marker (see isDeliveryTurnDriving): distinguishes a
     // turn the delivery lane is ACTIVELY driving from a merely claimed row.
@@ -2111,6 +2137,16 @@ export class AgentSession
     // Timestamp gates the terminal-error read to "fired during THIS turn" — a
     // stale error from a prior turn must not turn a clean turn into a retry.
     const turnStartedAt = Date.now();
+    // Delivery observability: entry snapshot of the session's queue/process
+    // state. When a 0-message startup timeout is diagnosed later, this line
+    // shows whether an orphaned process or a stuck queue predated the attempt.
+    this.logger.debug(
+      `delivery-turn: driving (uuid=${messageUuid} alreadyConsumed=${alreadyConsumed} ` +
+        `queueRunning=${this.messageQueue.isRunning()} queueSize=${this.messageQueue.size()} ` +
+        `trackedPids=[${this.snapshotTrackedAgentProcesses()
+          .map(([pid]) => pid)
+          .join(',')}] sdkSessionId=${this.session.sdkSessionId ?? 'none'})`
+    );
     // Brief critical section (per-session lock): start the query + feed the
     // kickoff so it is the FIRST message the generator yields (a steer grabbing
     // the lock next can't jump ahead). The lock also serializes ensureQueryStarted
@@ -2142,7 +2178,12 @@ export class AgentSession
       if (alreadyConsumed && this.reclaimTurnAlreadySucceeded(messageUuid)) {
         return { kind: 'turn_terminated' as const };
       }
+      const ensureStartedAt = Date.now();
       const queryStartResult = await this.lifecycleManager.ensureQueryStarted();
+      this.logger.debug(
+        `delivery-turn: ensureQueryStarted → ${queryStartResult} ` +
+          `(${Date.now() - ensureStartedAt}ms, uuid=${messageUuid})`
+      );
       if (queryStartResult === 'blocked') {
         return { kind: 'blocked' as const };
       }
@@ -2213,6 +2254,8 @@ export class AgentSession
       // query is running. See Codex (#2592). Durable so a yielded-but-unresumed
       // kickoff does not TTL-out into a duplicate re-feed (#3742616720).
       let acknowledgment: Promise<void> | null = null;
+      let admittedBatchUuids: string[] | undefined;
+      let feedContent: string | MessageContent[] = content;
       if (!alreadyConsumed) {
         // Re-fence the lease AGAIN right before admission: ensureQueryStarted
         // awaits provider startup, so the event loop can suspend past the stale
@@ -2223,17 +2266,79 @@ export class AgentSession
           turnEnd.cancel();
           return { kind: 'aborted' as const };
         }
-        acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
+        // Batched queue flush: revalidate every member + rebuild the prompt
+        // from the durable rows UNDER THIS LOCK — a member deleted or
+        // user-deferred between the handler's snapshot and the feed must not
+        // reach the provider, and the combined prompt must respect the
+        // BATCH_DELIVERY_MAX_CHARS budget. See rebuildBatchDeliveryContent.
+        if (batchUuids && batchUuids.length > 1) {
+          const rebuilt = this.rebuildBatchDeliveryContent(messageUuid, content, batchUuids);
+          feedContent = rebuilt.content;
+          admittedBatchUuids = rebuilt.admittedUuids;
+          // Persist the ADMITTED set back into the job payload: every payload
+          // consumer (ACP acceptance consume, dead-letter settlement,
+          // batch-aware active lookups) must see exactly what was fed, so
+          // dropped tails are neither marked consumed, nor failed on
+          // dead-letter, nor shielded from reconciler redelivery. Narrowing
+          // is REQUIRED before feeding — never admit a reduced prompt against
+          // a superset payload (ACP acceptance / dead-letter would then
+          // settle rows that were never sent). A transient persistence
+          // failure throws recoverable so the job retries the narrowing+feed;
+          // a row that no longer matches (cancelled claim) aborts.
+          if (admittedBatchUuids && admittedBatchUuids.length !== batchUuids.length) {
+            let narrowed = false;
+            try {
+              narrowed =
+                this.db
+                  .getJobQueueRepo()
+                  ?.narrowActiveDeliveryBatchUuids(
+                    this.session.id,
+                    messageUuid,
+                    admittedBatchUuids
+                  ) ?? false;
+            } catch (error) {
+              turnEnd.cancel();
+              throw new MessageDeliveryRecoverableTurnError(
+                `batch narrowing failed: ${error instanceof Error ? error.message : String(error)}`
+              );
+            }
+            if (!narrowed) {
+              turnEnd.cancel();
+              return { kind: 'aborted' as const };
+            }
+          }
+          // Freeze the admitted members as in-flight (enqueued → submitted)
+          // BEFORE the admission places their text inside the kickoff-keyed
+          // combined prompt. Revoke/defer only mutate enqueued/deferred rows,
+          // so past this point a member's text can no longer be deleted from
+          // a prompt the transport is about to receive — without this, the
+          // admission→provider window lets the queue UI "remove" text that
+          // still executes. Serialized with revoke by this session lock.
+          const memberUuids = (admittedBatchUuids ?? []).filter((uuid) => uuid !== messageUuid);
+          if (memberUuids.length > 0) {
+            this.markDeliveryBatchSubmitted(memberUuids);
+          }
+        }
+        acknowledgment = this.messageQueue.admitWithId(messageUuid, feedContent, false, {
           durable: true,
         });
       }
-      return { kind: 'driving' as const, queryPromise, turnEnd, acknowledgment };
+      return {
+        kind: 'driving' as const,
+        queryPromise,
+        turnEnd,
+        acknowledgment,
+        admittedBatchUuids,
+      };
     });
     if (started.kind === 'blocked') {
       // Mirror the legacy startQueryAndEnqueue path: report the session as
       // queued while it waits on sdk_resume_choice, so later explicit deferrals
       // are honored (isAgentBusy) and the UI shows blocked-state controls
       // instead of idle. See Codex (#2599).
+      this.logger.warn(
+        `delivery-turn: blocked on sdk_resume_choice (uuid=${messageUuid}); parking job`
+      );
       await this.stateManager.setQueued(messageUuid);
       return { outcome: 'blocked', retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS };
     }
@@ -2265,6 +2370,13 @@ export class AgentSession
       // that never occurred). (Codex review.)
       if (started.acknowledgment) {
         await started.acknowledgment;
+        // Delivery observability: onSent elapsed measures spawn → kickoff-write.
+        // A long window here (approaching STARTUP_TIMEOUT_MS) is the feed
+        // starvation that produces 0-message startup timeouts.
+        this.logger.debug(
+          `delivery-turn: kickoff consumed by SDK ` +
+            `(${Date.now() - turnStartedAt}ms since turn start, uuid=${messageUuid})`
+        );
         // onSent fired → the prompt reached the SDK / subprocess (the ACTUAL
         // handoff). Record the feed here, not at admission: admitWithId only
         // places the row in the in-memory queue, so a provider-startup stall,
@@ -2279,9 +2391,20 @@ export class AgentSession
         // is acceptance (markMessageAccepted). (Codex.)
         if (this.session.config.provider !== 'acp') {
           const consumeSignalMs = Date.now();
-          this.markDeliveryConsumed(messageUuid);
+          // Batched queue flush: the kickoff's prompt folded the admitted
+          // members in — flip them ATOMICALLY with the kickoff (see
+          // markDeliveryBatchConsumed) so a crash between flips can't leave
+          // members `enqueued` under a consumed kickoff (the reconciler would
+          // re-deliver them individually, repeating executed prompts).
+          this.markDeliveryBatchConsumed(started.admittedBatchUuids ?? [messageUuid]);
           deliveryMetrics.recordResidualWindow(Date.now() - consumeSignalMs);
           signalDeliveryConsumed(this.session.id, messageUuid);
+          if (started.admittedBatchUuids) {
+            for (const memberUuid of started.admittedBatchUuids) {
+              if (memberUuid === messageUuid) continue;
+              signalDeliveryConsumed(this.session.id, memberUuid);
+            }
+          }
         }
       }
       // Arm the stall watchdog now that the kickoff is consumed (or this is a
@@ -2700,6 +2823,102 @@ export class AgentSession
   }
 
   /**
+   * Atomic variant of {@link markDeliveryConsumed} for batched queue flushes:
+   * the kickoff and every admitted member flip to `consumed` in ONE database
+   * transaction. A crash between two separate flips would leave the members
+   * `enqueued` while the (consumed) reclaim skips the re-feed — the reconciler
+   * would then deliver them individually, repeating already-executed prompts.
+   * One statusChanged broadcast carries every flipped row.
+   */
+  private markDeliveryBatchConsumed(uuids: string[]): void {
+    const flippedIds = this.db
+      .getSDKMessageRepo()
+      .markDeliveryConsumedByUuids(this.session.id, uuids);
+    if (flippedIds.length > 0) {
+      void this.internalEventBus
+        .publish('messages.statusChanged', {
+          sessionId: this.session.id,
+          messageIds: flippedIds,
+          status: 'consumed',
+        })
+        .catch(() => {});
+    }
+  }
+
+  /**
+   * Freeze a batched flush's admitted members as in-flight (`enqueued` →
+   * `submitted`, one transaction + one broadcast) at admission — their text is
+   * inside the combined prompt about to reach the transport, and revoke/defer
+   * (which only touch `enqueued`/`deferred` rows) must stop offering to remove
+   * it. `submitted` rows still consume normally (see
+   * markDeliveryConsumedByUuids) and settle on dead-letter.
+   */
+  private markDeliveryBatchSubmitted(uuids: string[]): void {
+    const flippedIds = this.db
+      .getSDKMessageRepo()
+      .markDeliverySubmittedByUuids(this.session.id, uuids);
+    if (flippedIds.length > 0) {
+      void this.internalEventBus
+        .publish('messages.statusChanged', {
+          sessionId: this.session.id,
+          messageIds: flippedIds,
+          status: 'submitted',
+        })
+        .catch(() => {});
+    }
+  }
+
+  /**
+   * Revalidate a batched flush's members and rebuild the combined prompt from
+   * the durable rows, under the caller's session lock (immediately before
+   * feeding). Members removed or user-deferred since the handler's snapshot
+   * are dropped — their content must not reach the provider. Admission stops
+   * at {@link BATCH_DELIVERY_MAX_CHARS} so the combined prompt can never
+   * outgrow the provider's request limit; the remainder stays `enqueued`
+   * (shielded from the reconciler by the batch-aware active-job lookups until
+   * this job completes, then delivered individually). Returns the feed content
+   * plus the admitted UUIDs (`undefined` when only the kickoff survives — its
+   * raw content feeds, no batch flip).
+   */
+  private rebuildBatchDeliveryContent(
+    kickoffUuid: string,
+    kickoffContent: string | MessageContent[],
+    batchUuids: string[]
+  ): { content: string | MessageContent[]; admittedUuids?: string[] } {
+    const repo = this.db.getSDKMessageRepo();
+    const texts: string[] = [];
+    const admitted: string[] = [];
+    let kickoffRaw: string | MessageContent[] | null = null;
+    let budget = BATCH_DELIVERY_MAX_CHARS;
+    for (const uuid of batchUuids) {
+      const row = repo.getDeliveryContent(this.session.id, uuid);
+      if (!row) continue;
+      if (row.sendStatus === 'deferred' || row.sendStatus === 'failed') continue;
+      const text = flattenDeliveryText(row.content);
+      if (text === null) continue;
+      const cost = text.length + 32; // delimiter overhead per message
+      if (texts.length > 0 && budget < cost) break; // the kickoff is always admitted
+      budget -= cost;
+      if (uuid === kickoffUuid) kickoffRaw = row.content;
+      texts.push(text);
+      admitted.push(uuid);
+    }
+    if (texts.length === 0) {
+      // No usable row (snapshot raced full removal) — the kickoff itself
+      // passed messageDeliveryValid above, so fall back to its content.
+      return { content: kickoffContent };
+    }
+    if (texts.length === 1) {
+      // Single survivor (e.g. the budget admitted only the kickoff): still
+      // return the singleton admitted set — the caller narrows the payload so
+      // the omitted tail is not consumed at ACP acceptance / failed on
+      // dead-letter as part of this batch.
+      return { content: kickoffRaw ?? kickoffContent, admittedUuids: admitted };
+    }
+    return { content: buildBatchedDeliveryContent(texts), admittedUuids: admitted };
+  }
+
+  /**
    * Reopen a delivery row whose turn was confirmed to have produced no result,
    * so the job's automatic retry re-feeds it (see
    * {@link SDKMessageRepository.markDeliveryRetryableByUuid}). Fire-and-forget
@@ -2804,18 +3023,26 @@ export class AgentSession
   trackAgentProcess(proc: TrackedAgentProcess): void {
     const pid = proc.pid;
     if (typeof pid !== 'number' || pid <= 0) {
-      // Store no-PID promises in a durable collection so
+      // Store no-PID handles + promises in a durable collection so
       // updateProcessExitedPromise() includes them on every rebuild
-      // (e.g. when a later numeric-PID process is tracked).
+      // (e.g. when a later numeric-PID process is tracked), and
+      // terminateTrackedAgentProcesses() can still signal the handle via its
+      // kill() — no-PID spawns (VM/container/remote execution) have no PID to
+      // process.kill, so the handle is the only termination path. (Codex P2.)
+      const entry: NoPidTrackedProcess = { proc };
       const noPidExitPromise = new Promise<void>((resolve) => {
         proc.once('exit', () => {
           // Self-clean from the durable collection once resolved.
-          const idx = this.noPidExitPromises.indexOf(noPidExitPromise);
-          if (idx >= 0) this.noPidExitPromises.splice(idx, 1);
+          const handleIdx = this.noPidAgentProcesses.indexOf(entry);
+          if (handleIdx >= 0) {
+            if (entry.forceKillTimer) clearTimeout(entry.forceKillTimer);
+            this.noPidAgentProcesses.splice(handleIdx, 1);
+          }
           resolve();
         });
       });
-      this.noPidExitPromises.push(noPidExitPromise);
+      entry.exitPromise = noPidExitPromise;
+      this.noPidAgentProcesses.push(entry);
       this.updateProcessExitedPromise();
       return;
     }
@@ -2870,9 +3097,29 @@ export class AgentSession
   terminateTrackedAgentProcesses(options?: {
     forceDelayMs?: number;
     processes?: Array<[number, TrackedAgentProcess]>;
+    noPidProcesses?: NoPidTrackedProcess[];
   }): void {
     const forceDelayMs = options?.forceDelayMs ?? 2000;
     const processSnapshot = options?.processes ?? [...this.trackedAgentProcesses];
+
+    // No-PID handles (VM/container/remote spawns) are not in the PID map —
+    // signal them via their own kill() with the same SIGTERM→SIGKILL cadence.
+    // Snapshot-scoped like the PID entries: a caller that captured only the
+    // old query's handles (stop() during a replacement start) must not kill
+    // the replacement's no-PID process. (Codex P2, PR #2491.)
+    const noPidSnapshot = options?.noPidProcesses ?? [...this.noPidAgentProcesses];
+    this.signalNoPidTrackedProcesses(noPidSnapshot, 'SIGTERM');
+    for (const entry of noPidSnapshot) {
+      // Ownership guard: skip entries that exited or were replaced.
+      if (!this.noPidAgentProcesses.includes(entry)) continue;
+      const timer = setTimeout(() => {
+        entry.forceKillTimer = undefined;
+        this.signalNoPidTrackedProcess(entry, 'SIGKILL');
+      }, forceDelayMs);
+      timer.unref?.();
+      entry.forceKillTimer = timer;
+    }
+
     if (processSnapshot.length === 0) return;
 
     this.signalTrackedAgentProcesses(processSnapshot, 'SIGTERM');
@@ -2880,6 +3127,34 @@ export class AgentSession
       if (this.trackedAgentProcesses.get(pid) !== proc) continue;
       this.clearForceKillTimer(pid);
       this.scheduleForceKill(pid, proc, forceDelayMs);
+    }
+  }
+
+  /** Snapshot the durable no-PID handles (for scoped termination). */
+  snapshotNoPidTrackedProcesses(): NoPidTrackedProcess[] {
+    return [...this.noPidAgentProcesses];
+  }
+
+  /** Signal the given no-PID tracked handles (best-effort via kill()). */
+  private signalNoPidTrackedProcesses(
+    entries: NoPidTrackedProcess[],
+    signal: NodeJS.Signals
+  ): void {
+    for (const entry of entries) {
+      if (!this.noPidAgentProcesses.includes(entry)) continue;
+      this.signalNoPidTrackedProcess(entry, signal);
+    }
+  }
+
+  private signalNoPidTrackedProcess(entry: NoPidTrackedProcess, signal: NodeJS.Signals): void {
+    if (entry.forceKillTimer) {
+      clearTimeout(entry.forceKillTimer);
+      entry.forceKillTimer = undefined;
+    }
+    try {
+      entry.proc.kill?.(signal);
+    } catch {
+      // Handle may have already exited.
     }
   }
 
@@ -2946,22 +3221,34 @@ export class AgentSession
   }
 
   private updateProcessExitedPromise(): void {
-    const exitPromises = [
-      ...this.trackedAgentProcessExitPromises.values(),
-      ...this.noPidExitPromises,
-    ];
+    // The durable no-PID handles are the source of truth for their exit
+    // promises: an orphan retained across resetProcessExitedPromise() (still
+    // alive, still killable) must stay in the aggregate so a later stop()
+    // waits for it — otherwise the rebuild after tracking a replacement would
+    // silently drop the orphan's wait. (Codex P2, PR #2491.)
+    const noPidPromises = this.noPidAgentProcesses.flatMap((entry) =>
+      entry.exitPromise ? [entry.exitPromise] : []
+    );
+    const exitPromises = [...this.trackedAgentProcessExitPromises.values(), ...noPidPromises];
     this.processExitedPromise =
       exitPromises.length > 0 ? Promise.all(exitPromises).then(() => {}) : null;
   }
 
+  /** Re-derive the aggregated exit-wait promise from the current tracked handles. */
+  refreshProcessExitedPromise(): void {
+    this.updateProcessExitedPromise();
+  }
+
   /**
-   * Clear processExitedPromise and any stale no-PID exit promises.
-   * Called when retry paths time out and abandon the current wait.
-   * Without this, unresolved no-PID promises accumulate and block
-   * future teardown waits for processes that were already abandoned.
+   * Clear the aggregated exit-wait promise (retry paths abandoning the
+   * current wait). The durable per-process exit promises are NOT dropped:
+   * a subsequent trackAgentProcess()/updateProcessExitedPromise() rebuild
+   * re-derives the aggregate from the still-live handles, so an abandoned
+   * but still-alive process keeps blocking later teardown waits until it
+   * actually exits (or is force-killed via its retained handle).
+   * (Codex P2, PR #2491.)
    */
   resetProcessExitedPromise(): void {
-    this.noPidExitPromises.length = 0;
     this.processExitedPromise = null;
   }
 

@@ -386,16 +386,6 @@ module_values() {
 	' "$1"
 }
 
-# Count online test_path VALUES — from the include-block maps _module_values
-# (main.yml) and _real_module_values (real-api-tests.yml), set later — that
-# EXACTLY equal $1. Scoping ownership to these parsed maps (instead of a
-# whole-file grep) means a test_path in an UNRELATED job's matrix can't pose as
-# coverage, and the match is exact (a file under a dir is not a dir-level owner).
-online_value_count() {
-	awk -F'\t' -v p="$1" '$2 == p' <<<"$_module_values
-$_real_module_values" | wc -l | tr -d ' '
-}
-
 # True (exit 0) if vitest config $1 has `    <prop>: <value>` directly under
 # test: (4-space indent) with <value> the COMPLETE property — the closing `]` of
 # the array must be followed by `,` or EOL, so a `.map()`/expression appended
@@ -1148,13 +1138,30 @@ echo "web: $web_count test file(s) in packages/web/ (${#WEB_EXEMPT[@]} exempt ou
 # ===========================================================================
 # 3. DAEMON ONLINE TESTS  (CI matrices: main.yml + real-api-tests.yml)
 # ===========================================================================
-# These arrays must stay in sync with the test_path values in
-# .github/workflows/main.yml (test-daemon-online) and
-# .github/workflows/real-api-tests.yml (daemon-real-api). Split modules use
-# explicit file lists; the rest are directory-level (auto-discover).
+# Ownership model (task #912): the mocked-online matrix (test-daemon-online in
+# main.yml) carries NO hand-listed test_path values anymore. Each matrix module
+# is resolved at run time by scripts/test-online.sh — a directory glob for
+# small dirs, or a stable-hash bucket (scripts/lib/shard-split.sh) for
+# oversized ones — so a new online test file auto-routes to a shard with no
+# YAML edit. This guard therefore sources scripts/test-online.sh (it has a
+# source-guard and exposes only its config/functions) and derives file
+# ownership from online_module_paths() the same way CI does, instead of
+# enumerating hand-listed files.
+#
+# real-api-tests.yml (daemon-real-api) is OUT of that rework: its shards are
+# real-key, manual-only, and keep explicit per-file test_path rows, so the
+# per-value checks below continue to apply to it unchanged.
 ONLINE_DIR="packages/daemon/tests/online"
 MAIN_WORKFLOW=".github/workflows/main.yml"
 REAL_API_WORKFLOW=".github/workflows/real-api-tests.yml"
+
+# Source of truth for mocked-online module→files resolution. Sourcing is safe:
+# test-online.sh returns early when sourced (guard at its bottom) and exports
+# only ONLINE_MODULES / ONLINE_HASH_SPLIT_SPECS / online_module_paths /
+# online_all_modules / ONLINE_TEST_ROOT.
+# shellcheck source=test-online.sh
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/test-online.sh"
 
 # The online runner config (vitest.online.config.ts) determines which matrix
 # paths Vitest actually executes — Vitest applies include/exclude even to
@@ -1233,25 +1240,34 @@ reject_invalid_module_values "$REAL_API_WORKFLOW" daemon-real-api
 reject_invalid_axis_items "$MAIN_WORKFLOW" test-daemon-online
 reject_invalid_axis_items "$REAL_API_WORKFLOW" daemon-real-api
 # An include row carrying an extra key adds a hidden combination (duplicate runs).
-reject_include_extra_keys "$MAIN_WORKFLOW" test-daemon-online "module test_path mock_sdk timeout"
+# test-daemon-online include rows now carry module/mock_sdk/timeout only —
+# test_path was removed with the hand-listed shards (files resolve via
+# scripts/test-online.sh); a test_path row here would silently bypass the
+# runner's resolution.
+reject_include_extra_keys "$MAIN_WORKFLOW" test-daemon-online "module mock_sdk timeout"
 reject_include_extra_keys "$REAL_API_WORKFLOW" daemon-real-api "module test_path default_provider secrets_used reason"
 # A moduleless include row is still scheduled (empty module name) → dup runs.
 reject_moduleless_include_rows "$MAIN_WORKFLOW" test-daemon-online
 reject_moduleless_include_rows "$REAL_API_WORKFLOW" daemon-real-api
 
-# Online matrix test_path values must reach an ENABLED runner that forwards
-# ${{ matrix.test_path }}. The marker picks the runner step itself
-# (vitest.online.config.ts in main.yml; `bun test` in real-api — NOT the docs
-# `echo "Tests: …"` step), so a commented/disabled (if:false) runner, or one
-# swapped for a fixed target, fails.
+# The mocked-online runner must resolve its module through scripts/test-online.sh:
+# the matrix no longer carries test_path values, so the runner forwards
+# ${{ matrix.module }} to `scripts/test-online.sh <module>` and feeds the
+# emitted paths to vitest. The marker picks the runner step itself
+# (vitest.online.config.ts in main.yml — NOT the docs `echo "Tests: …"` step),
+# so a commented/disabled (if:false) runner, or one swapped for a fixed
+# target, fails.
 _online_main=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/main.yml" 'vitest.online.config.ts' 'test-daemon-online')
 if [ "$(count_enabled_run_cmds "$REPO_ROOT/.github/workflows/main.yml" 'vitest.online.config.ts' 'test-daemon-online')" -gt 1 ]; then
-	err "test-daemon-online has more than one enabled runner step forwarding \${{ matrix.test_path }} — each runs its online shard (duplicate runs) while this guard reports each file covered once"
+	err "test-daemon-online has more than one enabled runner step — each runs its online shard (duplicate runs) while this guard reports each file covered once"
 	echo "     → keep exactly one enabled online runner step" >&2
 fi
-if [ -z "$_online_main" ] || ! printf '%s' "$_online_main" | grep -qF '${{ matrix.test_path }}'; then
-	err "main.yml online runner is missing, commented, disabled, or does not forward \${{ matrix.test_path }} — online matrix values don't reach the runner"
-	echo "     → keep an active, enabled 'vitest ... \${{ matrix.test_path }}' step" >&2
+if [ -z "$_online_main" ]; then
+	err "main.yml online runner is missing, commented, or disabled (if: false|never) — online coverage assumption broken"
+	echo "     → keep an active, enabled online runner step" >&2
+elif ! printf '%s' "$_online_main" | grep -qF 'scripts/test-online.sh ${{ matrix.module }}'; then
+	err "main.yml online runner does not resolve its module via 'scripts/test-online.sh \${{ matrix.module }}' — matrix modules would not reach the test selection (a fixed target runs one shard in every job while this guard reports all covered)"
+	echo "     → keep '\$(... scripts/test-online.sh \${{ matrix.module }} ...)' in the vitest invocation" >&2
 elif ! marker_executed "$_online_main" 'vitest.online.config.ts'; then
 	err "main.yml online runner contains the marker but does not EXECUTE it (e.g. it is echoed/quoted as data) — zero tests would run while this guard reports them covered"
 	echo "     → invoke vitest as a command, not as an argument to echo/another command" >&2
@@ -1277,30 +1293,35 @@ elif runner_shell_override "$REPO_ROOT/.github/workflows/main.yml" 'vitest.onlin
 	err "main.yml online runner step (or its job) sets a non-default shell — a no-exec shell (e.g. bash -n {0}) would make the step succeed having run ZERO online tests while this guard reports them covered"
 	echo "     → remove the shell: override (use the default shell)" >&2
 else
-	# After `vitest run`, only ${{ matrix.test_path }} (the one selector) and
-	# coverage-neutral flags (--config, --coverage*, --reporter, --outputFile.*,
-	# --color) may appear. A selection flag like --exclude=<glob> or
-	# --testNamePattern would omit files while the ownership walk reports them
-	# covered. (The config file itself is guarded separately, so --config is safe.)
+	# After `vitest run`, only the resolver-produced $paths (the one selector)
+	# and coverage-neutral flags (--config, --coverage*, --reporter,
+	# --outputFile.*, --color) may appear. A selection flag like
+	# --exclude=<glob> or --testNamePattern would omit files while the ownership
+	# walk reports them covered. (The config file itself is guarded separately,
+	# so --config is safe.)
+	#
+	# The resolver assignment (`paths=$(cd ../.. && scripts/test-online.sh
+	# <module>)`) is allowlisted with a bracket expression so no '/' delimiter
+	# collides; `[^)]*` bounds it to ONE substitution — a greedy `.*` would span
+	# first-`$(cd`-to-last-`)` and blank a `--testNamePattern` sandwiched
+	# before a trailing second substitution (the resolver body contains no `)`).
 	_oextra=$(printf '%s' "$_online_main" \
 		| sed 's/.*vitest run//' \
-		| sed -E -e 's/\$\{\{[[:space:]]*matrix\.test_path[[:space:]]*\}\}//g' \
-		         -e 's/\$\{\{[[:space:]]*matrix\.module[[:space:]]*\}\}//g' \
-		         -e 's/--config vitest\.online\.config\.ts//g' \
+		| sed -E -e 's/paths=[$][(]cd[[:space:]][^)]*[)]//g' \
+		         -e 's/[$][{][{][[:space:]]*matrix[.]module[[:space:]]*[}][}]//g' \
+		         -e 's/[$]paths//g' \
+		         -e 's/--config vitest[.]online[.]config[.]ts//g' \
 		         -e 's/--reporter[[:space:]]+[^[:space:]]+//g' \
 		         -e 's/--reporter=[^[:space:]]+//g' \
-		         -e 's/--coverage\.[[:alnum:]_.-]+(=[^[:space:]]+)?//g' \
-		         -e 's/--outputFile\.[[:alnum:]_-]+(=[^[:space:]]+)?//g' \
+		         -e 's/--coverage[.][[:alnum:]_.-]+(=[^[:space:]]+)?//g' \
+		         -e 's/--outputFile[.][[:alnum:]_-]+(=[^[:space:]]+)?//g' \
 		         -e 's/--coverage(=[[:space:]]*true)?//g' \
 		         -e 's/--color//g' -e 's/--no-color//g' \
-		| tr -d "[:space:]'")
+		| tr -d "[:space:]")
 	# Coverage disabling: --coverage.enabled=false silently produces no LCOV report,
 	# and the Coveralls upload has fail-on-error:false, so the shard disappears from
 	# coverage results without failing CI.
-	if ! printf '%s' "$_online_main" | sed 's/.*vitest run//' | grep -qF '${{ matrix.test_path }}'; then
-		err "main.yml online runner has \${{ matrix.test_path }} only BEFORE 'vitest run' (e.g. in a MATRIX_PATH= assignment) — vitest would receive no positional and run the entire online suite unfiltered while this guard reports each module covered"
-		echo "     → place \${{ matrix.test_path }} as a positional AFTER 'vitest run'" >&2
-	elif printf '%s' "$_online_main" | grep -qF 'coverage.enabled=false'; then
+	if printf '%s' "$_online_main" | grep -qF 'coverage.enabled=false'; then
 		err "main.yml online runner disables coverage (coverage.enabled=false) — no LCOV report, shard disappears from coverage results without failing CI"
 		echo "     → remove coverage.enabled=false" >&2
 	elif ! printf '%s' "$_online_main" | grep -qE -- '--coverage([[:space:]]|$)'; then
@@ -1309,9 +1330,12 @@ else
 	elif [ "$(printf '%s' "$_online_main" | grep -oF 'vitest run' | wc -l | tr -d ' ')" -gt 1 ]; then
 		err "main.yml online runner has multiple 'vitest run' invocations — the first could exit 0 (e.g. --help), so the fallback never executes"
 		echo "     → use exactly one 'vitest run' invocation" >&2
+	elif ! printf '%s' "$_online_main" | sed 's/.*vitest run//' | grep -qF '$paths'; then
+		err "main.yml online runner has the module resolution only BEFORE 'vitest run' (e.g. resolved to a variable that is then discarded) — vitest would receive no positional and run the entire online suite unfiltered while this guard reports each module covered"
+		echo "     → pass the resolved paths as the positional AFTER 'vitest run' (\$paths)" >&2
 	elif [ -n "$_oextra" ]; then
 		err "main.yml online runner has a selection flag or extra arg after 'vitest run' — e.g. --exclude=<glob>/--testNamePattern would omit files while the ownership walk reports them covered"
-		echo "     → keep only \${{ matrix.test_path }} plus --config/--coverage*/--reporter/--outputFile.* flags" >&2
+		echo "     → keep only the resolved \$paths plus --config/--coverage*/--reporter/--outputFile.* flags" >&2
 	fi
 fi
 _online_real=$(enabled_run_cmd "$REPO_ROOT/.github/workflows/real-api-tests.yml" 'bun test' 'daemon-real-api')
@@ -1372,10 +1396,14 @@ if [ "$_real_wd" != "packages/daemon" ]; then
 	echo "     → keep working-directory: packages/daemon on the bun test step" >&2
 fi
 
-# Every online `module:` axis entry must have an include record with a non-empty
-# test_path. An axis module with no include gets an EMPTY ${{ matrix.test_path }},
-# so the runner becomes an UNFILTERED vitest/bun run that executes the ENTIRE
-# online suite (duplicates tests across jobs, reaches intentionally-exempt dirs).
+# Every online `module:` axis entry must be a module scripts/test-online.sh
+# can resolve to ≥1 file. An axis module that resolves to nothing makes the
+# runner resolve zero positionals → an UNFILTERED vitest run that executes the
+# ENTIRE online suite (duplicates tests across jobs, reaches intentionally-
+# exempt dirs). Resolution is delegated to the source of truth (test-online.sh)
+# rather than re-derived here, so this guard follows split rebalances with no
+# edits. test-online.sh --verify (wired into CI separately) covers the deeper
+# config↔matrix consistency in both directions.
 _axis_modules=$(awk '
 	/^  test-daemon-online:/ { injob=1; next }
 	injob && /^  [a-z]/ { inaxis=0; injob=0; next }
@@ -1389,15 +1417,27 @@ _axis_modules=$(awk '
 		if (v ~ /^[a-z0-9][a-z0-9-]*$/) print v
 	}
 ' "$MAIN_WORKFLOW")
-# Build a module→value map (parses folded-scalar CONTENTS, not just the marker —
-# see module_values) so the orphan check can count ACTUAL values per module.
-_module_values=$(module_values "$MAIN_WORKFLOW" "test-daemon-online")
+# The mocked-online matrix no longer carries test_path values (they resolve at
+# run time), so the module→value map for main.yml is empty by design; only the
+# real-API workflow still has per-file test_path rows for the checks below.
+_module_values=""
+# Build the mocked-online file→owners map by resolving every axis module
+# through scripts/test-online.sh — the same function CI's runner step calls.
+# Each entry: "<daemon-package-relative path>\t<module>". Used by the
+# resolution-driven ownership walk and the prefix-overlap check below. A file
+# owned by two modules (overlapping globs) runs twice — flagged in the walk.
+ONLINE_COVERED_TMP="$(mktemp)"
+trap 'rm -f "$COVERED_TMP" "$UNIT_FILTERS_TMP" "$ONLINE_COVERED_TMP"' EXIT
 for _m in $_axis_modules; do
-	_count=$(printf '%s\n' "$_module_values" | awk -F'\t' -v m="$_m" '$1 == m { c++ } END { print c+0 }')
-	if [ "$_count" -eq 0 ]; then
-		err "online matrix module '$_m' has no include record with a non-empty test_path — \${{ matrix.test_path }} would be empty (or a folded >- with no values) → unfiltered run of the entire online suite"
-		echo "     → add an include: entry for '$_m' with a test_path, or drop it from the module axis" >&2
+	_paths=$(online_module_paths "$_m")
+	if [ -z "$_paths" ]; then
+		err "online matrix module '$_m' resolves to 0 files via scripts/test-online.sh — the runner would receive no positional and run the entire online suite unfiltered"
+		echo "     → fix the module (scripts/test-online.sh --verify), or drop it from the module axis" >&2
 	fi
+	while IFS= read -r _p; do
+		[ -n "$_p" ] || continue
+		printf '%s\t%s\n' "${_p#packages/daemon/}" "$_m" >> "$ONLINE_COVERED_TMP"
+	done <<< "$_paths"
 done
 
 # Symmetric check for real-api-tests.yml: its daemon-real-api job is an
@@ -1671,17 +1711,18 @@ done < <(printf '%s\n' "$_module_values" "$_real_module_values" | awk -F'\t' '$2
 # filters as substring matches, so `tests/online/sdk` also matches files under
 # `tests/online/sdk-extra`, and `rpc-agent.test.ts` matches
 # `rpc-agent.test.ts.bak` — those tests run twice. Compare ALL values (files
-# and directories).
-_dir_overlap=$(printf '%s\n' "$_module_values" "$_real_module_values" \
-	| awk -F'\t' '{print $2}' \
-	| sort -u \
+# and directories) from BOTH sources: the real-API test_path values AND the
+# mocked modules' resolved paths (both daemon-package-relative, so a mocked
+# module's resolution and a real-API row prefix-overlapping is caught too).
+_dir_overlap=$( { awk -F'\t' '{ print $1 }' "$ONLINE_COVERED_TMP" | sort -u; \
+	printf '%s\n' "$_real_module_values" | awk -F'\t' '{print $2}' | sort -u; } \
 	| awk '
 		{ vals[NR]=$0 }
 		END {
 			for (i=1;i<=NR;i++) for (j=1;j<=NR;j++) {
 				if (i==j) continue
 				a=vals[i]; b=vals[j]
-				if (index(b, a) == 1) print a " > " b
+				if (a != "" && index(b, a) == 1) print a " > " b
 			}
 		}
 	')
@@ -1693,44 +1734,14 @@ if [ -n "$_dir_overlap" ]; then
 	done <<< "$_dir_overlap"
 fi
 
-RPC_FILES=(
-	rpc-agent-handlers.test.ts
-	rpc-config-handlers.test.ts
-	rpc-draft-handlers.test.ts
-	rpc-file-handlers.test.ts
-	rpc-interrupt-handlers.test.ts
-	rpc-live-query.test.ts
-	rpc-message-handlers.test.ts
-	rpc-model-handlers.test.ts
-	rpc-model-switching.test.ts
-	rpc-remove-output.test.ts
-	rpc-rewind-handlers.test.ts
-	rpc-session-filtering.test.ts
-	rpc-session-handlers-extended.test.ts
-	rpc-session-workflow.test.ts
-	rpc-settings-handlers.test.ts
-	rpc-state-sync.test.ts
-	rpc-task-draft-handlers.test.ts
-	rpc-task-lifecycle.test.ts
-	session-handlers.test.ts
-)
-
-# room/* shards are commented out in main.yml (Room retirement, Task #186); the
-# 'room' directory no longer exists in tests/online/.
-ROOM_FILES=()
-
-FEATURES_FILES=(
-	auto-title.test.ts
-	github-poll-job.test.ts
-	message-delivery-mode-queue.test.ts
-	message-persistence.test.ts
-)
-
-# providers/* online tests are intentionally disabled (codex bridge needs
-# OPENAI_API_KEY, copilot has a credential issue — matrix entries commented out
-# in main.yml), so the directory is in EXEMPT_DIRS below rather than checked
-# here.
-
+# ── Mocked-online ownership (resolution-driven) ─────────────────────────────
+# The mocked-online matrix no longer lists files; ownership is derived by
+# resolving every axis module through scripts/test-online.sh (the same
+# function CI's runner step calls) and building a file→owners map. A real-API
+# file may not also be owned by a mocked module (duplicate shard ownership
+# across workflows); the real-API workflow keeps its explicit per-file rows
+# (checked separately below).
+#
 # Real-key cross-provider tests must be present in real-api-tests.yml.
 CROSS_PROVIDER_FILES=(
 	cross-provider-model-switch.test.ts
@@ -1738,210 +1749,88 @@ CROSS_PROVIDER_FILES=(
 	thinking-block-signatures.test.ts
 )
 
-REWIND_FILES=(
-	rewind-feature.test.ts
-	selective-rewind.test.ts
-)
-
-SPACE_FILES=(
-	space-chat-session.test.ts
-	task-agent-lifecycle.test.ts
-	task-agent-skills.test.ts
-	prompt-too-long-kimi-recovery.test.ts
-)
-
-check_workflow_references() {
-	local module_name=$1
-	local workflow=$2
-	shift 2
-	local expected=("$@")
-	local other_wf
-	if [ "$workflow" = "$MAIN_WORKFLOW" ]; then other_wf="$REAL_API_WORKFLOW"; else other_wf="$MAIN_WORKFLOW"; fi
-
-	for f in "${expected[@]}"; do
-		local test_path="tests/online/$module_name/$f"
-		# A split file must be a test_path VALUE in its DESIGNATED workflow's
-		# include block, and NOT in the other's. Count via the JOB-SCOPED maps
-		# (_module_values = test-daemon-online, _real_module_values =
-		# daemon-real-api) so a test_path in an UNRELATED job can't satisfy the
-		# designated check when the real online row is removed.
-		local designated other main_hits real_hits
-		main_hits=$(awk -F'\t' -v p="$test_path" '$2 == p' <<<"$_module_values" | wc -l | tr -d ' ')
-		real_hits=$(awk -F'\t' -v p="$test_path" '$2 == p' <<<"$_real_module_values" | wc -l | tr -d ' ')
-		if [ "$workflow" = "$MAIN_WORKFLOW" ]; then designated=$main_hits; other=$real_hits; else designated=$real_hits; other=$main_hits; fi
-		if [ "${designated:-0}" -eq 0 ]; then
-			err "$test_path is not a test_path value in its designated workflow $workflow"
-			echo "     → add it to a matrix row in $workflow" >&2
-		elif [ "${designated:-0}" -gt 1 ]; then
-			err "$test_path is a test_path value in $designated rows of $workflow — duplicate shard ownership (would run twice)"
-			echo "     → list it in exactly one matrix row" >&2
-		elif [ "${other:-0}" -gt 0 ]; then
-			err "$test_path is a test_path value in both $workflow and $other_wf — duplicate shard ownership"
-			echo "     → list it in exactly one workflow" >&2
-		fi
-	done
-}
-
-check_split_module() {
-	local module_name=$1
-	local workflow=$2
-	shift 2
-	local expected=("$@")
-
-	local dir="$ONLINE_DIR/$module_name"
-	if [ ! -d "$dir" ]; then
-		# A split module with expected files whose directory vanished means CI's
-		# test_path filters match nothing — `bun test`/`vitest` exit 0 with "filters
-		# did not match any test files", so every matrix job stays green with zero
-		# tests run. That's a coverage hole, not a warning. Only an intentionally
-		# empty module (e.g. room) stays a warning. Count non-empty expected entries
-		# (an empty ROOM_FILES=[] can arrive as one empty-string arg via ${arr[@]:-}).
-		local n=0 f
-		for f in "${expected[@]}"; do [ -n "$f" ] && n=$((n + 1)); done
-		if [ "$n" -gt 0 ]; then
-			err "split module directory $dir is missing but $workflow expects $n test_path(s) — CI would run zero tests"
-			echo "     → restore the directory, or clear the module's expected files" >&2
-		else
-			echo "WARNING: split module directory $dir does not exist (empty module)"
-		fi
-		return
+for _cpf in "${CROSS_PROVIDER_FILES[@]}"; do
+	_tp="tests/online/cross-provider/$_cpf"
+	_hits=$(awk -F'\t' -v p="$_tp" '$2 == p' <<<"$_real_module_values" | wc -l | tr -d ' ')
+	if [ "$_hits" -eq 0 ]; then
+		err "$_tp is not a test_path value in its designated workflow $REAL_API_WORKFLOW"
+		echo "     → add it to a matrix row in $REAL_API_WORKFLOW" >&2
+	elif [ "$_hits" -gt 1 ]; then
+		err "$_tp is a test_path value in $_hits rows of $REAL_API_WORKFLOW — duplicate shard ownership (would run twice, paid calls)"
+		echo "     → list it in exactly one matrix row" >&2
 	fi
+done
 
-	# Every actual test file must be in the expected list.
-	local expected_list=""
-	local f
-	for f in "${expected[@]}"; do
-		expected_list="$expected_list$f"$'\n'
-	done
-	while IFS= read -r file; do
-		# Compare the module-RELATIVE path (not basename): a nested file whose
-		# basename collides with a root-level entry (e.g. rpc/nested/x.test.ts
-		# vs rpc/x.test.ts) must not be treated as the root file.
-		local rel="${file#"$dir"/}"
-		if ! grep -qxF "$rel" <<< "$expected_list"; then
-			err "$file is not in any CI matrix shard for '$module_name'"
-			echo "     → add it to the appropriate matrix in $workflow" >&2
-		fi
-	done < <(find "$dir" \( -name "*.test.ts" -o -name "*_test.ts" \) -type f | sort)
+# (The mocked-online file→owners map ONLINE_COVERED_TMP is built earlier,
+# right after _axis_modules is parsed — the prefix-overlap check needs it.)
 
-	# No expected file may be missing from disk (stale reference).
-	for f in "${expected[@]}"; do
-		if [ ! -f "$dir/$f" ]; then
-			err "$dir/$f is listed in matrix but does not exist on disk"
-			echo "     → remove it from the matrix in $workflow" >&2
-		fi
-	done
+# A mocked module must not own a real-API file: the real workflow runs it with
+# real keys (paid calls); a mocked duplicate runs it again through Dev Proxy.
+while IFS= read -r _p; do
+	[ -n "$_p" ] || continue
+	if [ "$(awk -F'\t' -v p="$_p" '$2 == p' <<<"$_real_module_values" | wc -l | tr -d ' ')" -gt 0 ]; then
+		err "online test is owned by both a mocked module and a real-API shard (duplicate shard ownership): $_p"
+		echo "     → exclude it from the mocked module's globs in scripts/test-online.sh, or drop the real-API row" >&2
+	fi
+done < <(awk -F'\t' '{print $1}' "$ONLINE_COVERED_TMP" | sort -u)
 
-	check_workflow_references "$module_name" "$workflow" "${expected[@]}"
-}
-
-check_split_module "rpc" "$MAIN_WORKFLOW" "${RPC_FILES[@]}"
-check_split_module "room" "$MAIN_WORKFLOW" "${ROOM_FILES[@]:-}"
-check_split_module "features" "$MAIN_WORKFLOW" "${FEATURES_FILES[@]}"
-check_split_module "cross-provider" "$REAL_API_WORKFLOW" "${CROSS_PROVIDER_FILES[@]}"
-check_split_module "rewind" "$MAIN_WORKFLOW" "${REWIND_FILES[@]}"
-check_split_module "space" "$MAIN_WORKFLOW" "${SPACE_FILES[@]}"
-
-# A module directory is "covered" iff some ACTIVE (non-commented) workflow line
-# references tests/online/<dir>; otherwise it must be listed in EXEMPT_DIRS
-# (intentionally disabled). Deriving coverage from active references — instead
-# of a static KNOWN_DIRS allow-list — catches a directory whose CI shard was
-# removed or commented out (e.g. glm/providers below), which an allow-list would
-# silently keep reporting as covered.
-#
-# Each EXEMPT_DIRS entry is a directory intentionally NOT run by CI, documented
-# so the exemption is explicit rather than hidden in an allow-list:
-#   benchmark : manual-only (describe.skip by default)
-#   glm       : disabled — GLM online tests are flaky (commented out in main.yml)
-#   providers : disabled — codex bridge needs OPENAI_API_KEY, copilot has a
-#               credential issue (commented out in main.yml)
-#   sandbox   : disabled — not wired to a CI matrix shard
-EXEMPT_DIRS="benchmark glm providers sandbox"
-# Split modules are checked file-by-file above via check_split_module (explicit
-# file lists); skip them here so a directory isn't double-judged.
-SPLIT_DIRS="rpc room features cross-provider rewind space"
+# A module directory is "covered" iff some mocked module's resolution owns its
+# files; otherwise it must be exempt (intentionally disabled) or owned by a
+# real-API row (cross-provider). Deriving coverage from the resolution —
+# instead of a static allow-list — catches a directory whose CI shard was
+# removed or commented out (e.g. glm/providers below). The exempt list is
+# shared with scripts/test-online.sh (ONLINE_EXEMPT_DIRS, sourced above), so
+# this guard and test-online.sh --verify cannot drift apart. cross-provider
+# sits in that list too (real-API-only; mocked ownership of its files is
+# rejected in the per-file walk below).
+EXEMPT_DIRS="$ONLINE_EXEMPT_DIRS"
 for dir in "$ONLINE_DIR"/*/; do
 	[ -d "$dir" ] || continue
 	dirname=$(basename "$dir")
-	# Directory-level owners: online test_path VALUES (scoped to the include
-	# blocks via online_value_count) that EXACTLY equal the dir path. Scoping to
-	# the parsed maps (not a whole-file grep) means a test_path in an unrelated
-	# job's matrix can't pose as coverage here.
-	dir_refs=$(online_value_count "tests/online/$dirname")
-	if [[ " $EXEMPT_DIRS " == *" $dirname "* ]]; then
-		# Exempt dirs are intentionally not run, so NO test_path may reference
-		# them — not the directory value AND not any file beneath it. A file-level
-		# owner (e.g. tests/online/glm/glm-provider.test.ts) would re-enable a
-		# disabled module; the old code only checked the directory value.
-		file_under=$(awk -F'\t' -v p="^tests/online/$dirname/" '$2 ~ p' <<<"$_module_values
-$_real_module_values" | wc -l | tr -d ' ')
-		if [ "${dir_refs:-0}" -gt 0 ] || [ "${file_under:-0}" -gt 0 ]; then
-			err "online exempt directory 'tests/online/$dirname' is referenced by a test_path (the dir or a file under it) — that would re-enable an intentionally disabled module"
-			echo "     → remove the test_path row, or drop the dir from EXEMPT_DIRS" >&2
+	if [ "$dirname" != "cross-provider" ] && [[ " $EXEMPT_DIRS " == *" $dirname "* ]]; then
+		# Exempt dirs are intentionally not run, so NO owner may exist — neither
+		# a mocked module resolution nor a real-API test_path under it. The map
+		# ($1) and real-API values ($2) are both daemon-package-relative
+		# (tests/online/<dir>/…), so the patterns share that prefix.
+		file_under=$(awk -F'\t' -v p="^tests/online/$dirname/" '$1 ~ p' "$ONLINE_COVERED_TMP" | wc -l | tr -d ' ')
+		real_under=$(awk -F'\t' -v p="^tests/online/$dirname/" '$2 ~ p' <<<"$_real_module_values" | wc -l | tr -d ' ')
+		if [ "${file_under:-0}" -gt 0 ] || [ "${real_under:-0}" -gt 0 ]; then
+			err "online exempt directory 'tests/online/$dirname' has an owner (a mocked module resolution or a real-API test_path under it) — that would re-enable an intentionally disabled module"
+			echo "     → remove the owner, or drop the dir from ONLINE_EXEMPT_DIRS in scripts/test-online.sh" >&2
 		fi
 		continue
 	fi
-	if [[ " $SPLIT_DIRS " == *" $dirname "* ]]; then
-		# Split dirs are owned file-by-file via check_split_module (file-level
-		# owners are the explicit rows). A DIRECTORY-level owner is wrong: it runs
-		# every file under the dir AGAIN on top of the explicit rows — duplicating
-		# tests and, for real-API split modules like cross-provider, repeating
-		# paid provider calls. (File-level owners here are expected, so unchecked.)
-		if [ "${dir_refs:-0}" -gt 0 ]; then
-			err "online directory 'tests/online/$dirname' has a directory-level test_path owner but is a split module — files under it would run on top of their explicit rows"
-			echo "     → point test_path at specific files, or remove the directory-level row" >&2
-		fi
-		continue
-	fi
-	if [ "${dir_refs:-0}" -gt 1 ]; then
-		# Exactly-one-shard contract: a directory referenced by two matrix rows
-		# (or both workflows) runs every file under it twice — wasted CI and, for
-		# real-provider shards, paid calls.
-		err "online module directory '$dirname' has $dir_refs active directory-level references — duplicate shard ownership"
-		echo "     → list it in exactly one matrix row" >&2
-	fi
-	if [ "${dir_refs:-0}" -gt 0 ]; then
-		# Directory-level coverage: every file under it already runs once via the
-		# dir row, so an ADDITIONAL file-level row for any of those files would
-		# run it again — compare dir + file ownership together (can't have both).
-		while IFS= read -r f; do
-			rel="${f#"${dir%/}"/}"
-			# EXACT test_path value match, scoped to the online include blocks
-			# (online_value_count), not a substring grep — otherwise a typo'd
-			# longer value like "x.test.ts.bak" substring-matches the real file
-			# and hides the duplicate.
-			_tp="tests/online/$dirname/$rel"
-			file_refs=$(online_value_count "$_tp")
-			if [ "${file_refs:-0}" -gt 0 ]; then
-				err "tests/online/$dirname/$rel is covered by both a directory-level row and a file-level row — duplicate shard ownership"
-				echo "     → remove the file-level row (the directory-level row already covers it)" >&2
-			fi
-		done < <(find "$dir" \( -name "*.test.ts" -o -name "*_test.ts" \) -type f | sort)
-		continue
-	fi
-	# No directory-level reference: each file needs its own active reference,
-	# so a single-file module (e.g. agent) can't hide an uncovered sibling.
-	# Match the module-RELATIVE path (not basename): a nested file whose basename
-	# collides with a root-level entry (agent/nested/x.test.ts vs agent/x.test.ts)
-	# must not be treated as the root file.
+	# Per-file ownership: exactly one mocked owner per test file (cross-provider
+	# files are owned by real-API rows instead and checked above).
 	while IFS= read -r f; do
-		# $dir ends in '/' (from the */ glob) — normalize so the prefix strip
-		# yields the module-relative path (e.g. nested/x.test.ts), not the full path.
-		rel="${f#"${dir%/}"/}"
-		# EXACT test_path value match, scoped to the online include blocks
-		# (online_value_count). A whole-file/substring grep would report a disk
-		# file covered when the matrix actually points at a longer typo'd value
-		# (e.g. "agent-session-sdk.test.ts.bak"), or when an unrelated job's
-		# matrix mentions the path. (Stale values are also caught by the
-		# exact-value existence check above.)
-		_tp="tests/online/$dirname/$rel"
-		file_refs=$(online_value_count "$_tp")
-		if [ "${file_refs:-0}" -eq 0 ]; then
-			err "online test not covered by any active CI shard: tests/online/$dirname/$rel"
-			echo "     → add it to a matrix in $MAIN_WORKFLOW (or to EXEMPT_DIRS if the module is disabled)" >&2
-		elif [ "$file_refs" -gt 1 ]; then
-			err "tests/online/$dirname/$rel has $file_refs active references — duplicate shard ownership"
-			echo "     → list it in exactly one matrix row" >&2
+		# The map stores daemon-package-relative paths (tests/online/<dir>/<rel>)
+		# — what online_module_paths emits — so key the lookup on that, not the
+		# basename (a nested file whose basename collides with a root-level entry
+		# must not be conflated).
+		rel="${f#"$ONLINE_DIR"/}"
+		owners=$(awk -F'\t' -v f="tests/online/$rel" '$1 == f { print $2 }' "$ONLINE_COVERED_TMP" | sort -u)
+		owner_count=$(printf '%s\n' "$owners" | grep -c . || true)
+		real_refs=$(awk -F'\t' -v p="tests/online/$rel" '$2 == p' <<<"$_real_module_values" | wc -l | tr -d ' ')
+		if [ "$dirname" = "cross-provider" ]; then
+			# cross-provider is real-API-only: a mocked owner duplicates paid runs.
+			if [ "$owner_count" -gt 0 ]; then
+				err "tests/online/$rel is owned by mocked module(s) '$(printf '%s,' "$owners" | sed 's/,$//')' but cross-provider is real-API-only — duplicate shard ownership"
+				echo "     → remove cross-provider from the mocked module globs in scripts/test-online.sh" >&2
+			elif [ "$real_refs" -ne 1 ]; then
+				err "tests/online/$rel has $real_refs real-API test_path references (expected exactly 1)"
+				echo "     → list it in exactly one real-API matrix row, or add it to EXEMPT_DIRS" >&2
+			fi
+			continue
+		fi
+		if [ "$owner_count" -eq 0 ] && [ "$real_refs" -eq 0 ]; then
+			err "online test not covered by any active CI shard: tests/online/$rel"
+			echo "     → add its directory to a module in scripts/test-online.sh (or to EXEMPT_DIRS if the module is disabled)" >&2
+		elif [ "$owner_count" -gt 1 ]; then
+			err "tests/online/$rel has $owner_count mocked module owners ($(printf '%s,' "$owners" | sed 's/,$//')) — duplicate shard ownership (runs twice)"
+			echo "     → scope the module globs in scripts/test-online.sh so each file has exactly one owner" >&2
+		elif [ "$owner_count" -ge 1 ] && [ "$real_refs" -gt 0 ]; then
+			err "tests/online/$rel has both a mocked owner and $real_refs real-API reference(s) — duplicate shard ownership"
+			echo "     → keep it in exactly one workflow" >&2
 		fi
 	done < <(find "$dir" \( -name "*.test.ts" -o -name "*_test.ts" \) -type f | sort)
 done

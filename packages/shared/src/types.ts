@@ -608,6 +608,36 @@ export interface SessionMetadata {
    * then clears it. null/absent = nothing pending.
    */
   inputDraftVoicePending?: string | null;
+  /**
+   * Snapshot of `inputDraft` taken when the CURRENT pending voice sequence
+   * started (the first session.appendVoiceDraft onto an empty
+   * inputDraftVoicePending). The merged draft is always baseline + pending, so
+   * reconciliation can structurally separate the transcripts from the stale
+   * baseline — exactly, regardless of which tabs appended or merged. Cleared
+   * by session.stripVoiceBaseline; absent = no unstripped sequence.
+   */
+  inputDraftVoiceBaseline?: string | null;
+  /**
+   * Monotonic id of the pending sequence the baseline snapshot belongs to
+   * (incremented each time a new sequence starts). The conditional strip
+   * validates BOTH the draft text and this id: a newer sequence can replace
+   * the baseline while leaving the draft text unchanged, and stripping then
+   * would clear the merged transcript the caller meant to keep.
+   */
+  inputDraftVoiceBaselineSeq?: number | null;
+  /**
+   * Timestamped log of voice-transcript outbox entry ids merged into
+   * `inputDraftVoicePending` (see session.appendVoiceDraft). The client's
+   * durable outbox replays entries after a socket drop and uses this to skip a
+   * retry that already committed — a single last-id marker would let an
+   * out-of-order replay (two tabs flushing, or a timed-out entry retried after
+   * a later one committed) double-merge the transcript. Entries are retained
+   * for the client outbox's retry lifetime (24h), not a small count cap: an
+   * entry can stay retryable for that whole window while unrelated direct
+   * appends flow in, and evicting its id early would let the eventual replay
+   * double-append. `ts` is ms since epoch.
+   */
+  inputDraftVoiceAppendLog?: Array<{ id: string; ts: number }> | null;
   removedOutputs?: string[]; // UUIDs of messages whose tool_result outputs were removed from SDK session file
   resolvedQuestions?: Record<string, ResolvedQuestion>; // Resolved AskUserQuestion responses, keyed by toolUseId
   // Cost tracking: SDK reports cumulative cost per run, but resets on agent restart

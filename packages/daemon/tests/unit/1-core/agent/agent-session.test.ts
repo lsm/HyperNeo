@@ -302,6 +302,106 @@ describe('AgentSession', () => {
       expect([...agentSession.getTrackedAgentRootPids()]).toEqual([12345]);
     });
 
+    it('terminates no-PID tracked handles via their kill() (Codex P2, PR #2491)', async () => {
+      const agentSession = createAgentSession();
+      let fireExit: (() => void) | null = null;
+      const noPidProc = {
+        // No pid — the VM/container/remote spawn path.
+        once: mock((_event: string, handler: () => void) => {
+          if (_event === 'exit') fireExit = handler;
+          return noPidProc;
+        }),
+        kill: mock(() => true),
+      };
+
+      agentSession.trackAgentProcess(noPidProc as never);
+      agentSession.terminateTrackedAgentProcesses({ forceDelayMs: 10 });
+
+      // SIGTERM is signaled immediately via the handle's kill().
+      expect(noPidProc.kill).toHaveBeenCalledWith('SIGTERM');
+
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      // The deferred SIGKILL fired for the no-PID handle too.
+      expect(noPidProc.kill).toHaveBeenCalledWith('SIGKILL');
+
+      // Natural exit self-cleans the durable handle collection.
+      fireExit?.();
+      agentSession.terminateTrackedAgentProcesses({ forceDelayMs: 5 });
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      const sigtermCalls = (noPidProc.kill as ReturnType<typeof mock>).mock.calls.filter(
+        (args) => args[0] === 'SIGTERM'
+      ).length;
+      expect(sigtermCalls).toBe(1); // not re-signaled after exit
+    });
+
+    it('scopes no-PID termination to the supplied snapshot, sparing a replacement handle', async () => {
+      // Codex P2 follow-up: stop() captures a snapshot before awaiting so a
+      // concurrently started replacement is not killed. The no-PID path must
+      // honor the snapshot exactly like the PID path.
+      const agentSession = createAgentSession();
+      const mkProc = () => {
+        const p = {
+          once: mock((_event: string, _handler: () => void) => p),
+          kill: mock(() => true),
+        };
+        return p;
+      };
+      const oldProc = mkProc();
+      const replacementProc = mkProc();
+
+      agentSession.trackAgentProcess(oldProc as never);
+      const snapshot = agentSession.snapshotNoPidTrackedProcesses();
+      // The replacement starts AFTER the snapshot was captured.
+      agentSession.trackAgentProcess(replacementProc as never);
+
+      agentSession.terminateTrackedAgentProcesses({ forceDelayMs: 10, noPidProcesses: snapshot });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
+      expect(oldProc.kill).toHaveBeenCalledWith('SIGTERM');
+      expect(oldProc.kill).toHaveBeenCalledWith('SIGKILL');
+      expect(replacementProc.kill).not.toHaveBeenCalled();
+    });
+
+    it('keeps a retained no-PID orphan in the exit aggregate after reset (Codex P2, PR #2491)', async () => {
+      // resetProcessExitedPromise() abandons the wait but must not drop a
+      // still-live orphan's exit promise: the next updateProcessExitedPromise()
+      // rebuild derives from the retained handles, so a later stop() still
+      // waits for the orphan to exit before restarting.
+      const agentSession = createAgentSession();
+      let fireExitA: (() => void) | null = null;
+      const procA = {
+        once: mock((_event: string, handler: () => void) => {
+          if (_event === 'exit') fireExitA = handler;
+          return procA;
+        }),
+        kill: mock(() => true),
+      };
+      const procB = {
+        pid: 999,
+        once: mock((_event: string, handler: () => void) => {
+          if (_event === 'exit') setTimeout(handler, 10);
+          return procB;
+        }),
+        kill: mock(() => true),
+      };
+
+      agentSession.trackAgentProcess(procA as never); // no-PID orphan
+      agentSession.resetProcessExitedPromise(); // retry path abandons the wait
+      agentSession.trackAgentProcess(procB as never); // replacement tracked
+      const aggregate = agentSession.processExitedPromise;
+      expect(aggregate).not.toBeNull();
+
+      let resolved = false;
+      void aggregate!.then(() => {
+        resolved = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50)); // B exited, A alive
+      expect(resolved).toBe(false); // aggregate still waits on the orphan
+      fireExitA?.();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(resolved).toBe(true);
+    });
+
     it('binds deferred SIGKILL to the process snapshot being terminated', async () => {
       const agentSession = createAgentSession();
       processKillSpy = spyOn(process, 'kill').mockImplementation(() => true);
@@ -965,6 +1065,101 @@ describe('AgentSession', () => {
       await agentSession.stateManager.setIdle();
       await expect(cancelled).rejects.toThrow();
       expect(retrySpy).toHaveBeenCalledTimes(1); // no additional reopen
+    });
+
+    it('driveDeliveryTurn narrows the batch payload even when only the kickoff is admitted', async () => {
+      // Singleton admission (e.g. the budget fits only the kickoff, or every
+      // other member was deferred/removed since enqueue) must STILL persist the
+      // admitted set — otherwise the payload keeps the full batchUuids and the
+      // omitted tail is consumed at ACP acceptance / failed on dead-letter as
+      // part of a batch it was never fed into. (Codex round 3, P1.)
+      const narrowSpy = mock(() => true);
+      const contents: Record<string, { content: string; sendStatus: string }> = {
+        'kick-only': { content: 'first and only fitting message', sendStatus: 'enqueued' },
+        'tail-member': { content: 'deferred out before delivery', sendStatus: 'deferred' },
+      };
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock((_sid: string, uuid: string) => contents[uuid] ?? null),
+        hasTerminalResultAfter: mock(() => false),
+        hasDeliveryTurnEnd: mock(() => false),
+        clearDeliveryTurnEnd: mock(() => {}),
+        getErrorTerminalResultSubtypeAfter: mock(() => null),
+        recordDeliveryTurnEnd: mock(() => {}),
+        markDeliveryConsumedByUuids: mock(() => []),
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        isProcessingDelivery: mock(() => true),
+        narrowActiveDeliveryBatchUuids: narrowSpy,
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      // A never-resolving admission keeps the drive pending on the (unmocked)
+      // consume path — the narrowing happens BEFORE admission under the lock.
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: mock(() => new Promise<void>(() => {})),
+        isRunning: mock(() => false),
+        size: mock(() => 0),
+      };
+
+      await agentSession.stateManager.setProcessing('kick-only');
+      // Intentionally not awaited: the turn awaits a never-settling admission.
+      void agentSession.driveDeliveryTurn('kick-only', 'estimate', null, false, () => true, [
+        'kick-only',
+        'tail-member',
+      ]);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(narrowSpy).toHaveBeenCalledTimes(1);
+      expect(narrowSpy.mock.calls[0]).toEqual(['test-session-id', 'kick-only', ['kick-only']]);
+    });
+
+    it('driveDeliveryTurn refuses to feed a reduced batch when narrowing cannot persist', async () => {
+      // Narrowing is REQUIRED before feeding: if it returns false (claim
+      // cancelled / row gone) the drive aborts WITHOUT admitting the prompt —
+      // never feed a reduced prompt while the durable payload still holds the
+      // superset (ACP acceptance / dead-letter would settle unsent rows).
+      const admitSpy = mock(() => new Promise<void>(() => {}));
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock((_sid: string, uuid: string) =>
+          uuid === 'kick-2'
+            ? { content: 'kickoff', sendStatus: 'enqueued' }
+            : uuid === 'member-2'
+              ? { content: 'member', sendStatus: 'deferred' }
+              : null
+        ),
+        hasTerminalResultAfter: mock(() => false),
+        hasDeliveryTurnEnd: mock(() => false),
+        clearDeliveryTurnEnd: mock(() => {}),
+        getErrorTerminalResultSubtypeAfter: mock(() => null),
+        recordDeliveryTurnEnd: mock(() => {}),
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        isProcessingDelivery: mock(() => true),
+        narrowActiveDeliveryBatchUuids: mock(() => false),
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: admitSpy,
+        isRunning: mock(() => false),
+        size: mock(() => 0),
+      };
+
+      await agentSession.stateManager.setProcessing('kick-2');
+      const outcome = await agentSession.driveDeliveryTurn(
+        'kick-2',
+        'estimate',
+        null,
+        false,
+        () => true,
+        ['kick-2', 'member-2']
+      );
+      expect(outcome).toEqual({ outcome: 'aborted' });
+      expect(admitSpy).not.toHaveBeenCalled();
     });
 
     it('isWaitingForInput sees an unresolved sdk_resume_choice even while parked as queued', async () => {

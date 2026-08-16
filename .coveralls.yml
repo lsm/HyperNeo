@@ -67,9 +67,13 @@ flag_names:
     paths:
       - packages/daemon/src/
       - packages/shared/src/
-  # Online integration test coverage (matrixized by module)
-  daemon-online-agent:
-    description: Daemon online integration tests - agent module
+  # Online integration test coverage. One flag per mocked-online matrix module
+  # (the flag names must match the `flag-name: daemon-online-${{ matrix.module }}`
+  # values emitted by .github/workflows/main.yml; the module set is defined by
+  # scripts/test-online.sh — hash-split buckets are rpc-a…f, space-a…d,
+  # rewind-a/b, features-a…c).
+  daemon-online-agent-sdk:
+    description: Daemon online integration tests - agent-sdk module
     paths:
       - packages/daemon/src/
       - packages/shared/src/
@@ -88,8 +92,8 @@ flag_names:
     paths:
       - packages/daemon/src/
       - packages/shared/src/
-  daemon-online-features:
-    description: Daemon online integration tests - features module
+  daemon-online-git:
+    description: Daemon online integration tests - git module
     paths:
       - packages/daemon/src/
       - packages/shared/src/
@@ -103,23 +107,88 @@ flag_names:
     paths:
       - packages/daemon/src/
       - packages/shared/src/
-  daemon-online-providers:
-    description: Daemon online integration tests - providers module
-    paths:
-      - packages/daemon/src/
-      - packages/shared/src/
-  daemon-online-rewind:
-    description: Daemon online integration tests - rewind module
-    paths:
-      - packages/daemon/src/
-      - packages/shared/src/
-  daemon-online-rpc:
-    description: Daemon online integration tests - rpc module
-    paths:
-      - packages/daemon/src/
-      - packages/shared/src/
   daemon-online-sdk:
     description: Daemon online integration tests - sdk module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-online-websocket:
+    description: Daemon online integration tests - websocket module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-online-rpc-a:
+    description: Daemon online integration tests - rpc-a module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-online-rpc-b:
+    description: Daemon online integration tests - rpc-b module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-online-rpc-c:
+    description: Daemon online integration tests - rpc-c module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-online-rpc-d:
+    description: Daemon online integration tests - rpc-d module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-online-rpc-e:
+    description: Daemon online integration tests - rpc-e module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-online-rpc-f:
+    description: Daemon online integration tests - rpc-f module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-online-space-a:
+    description: Daemon online integration tests - space-a module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-online-space-b:
+    description: Daemon online integration tests - space-b module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-online-space-c:
+    description: Daemon online integration tests - space-c module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-online-space-d:
+    description: Daemon online integration tests - space-d module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-online-rewind-a:
+    description: Daemon online integration tests - rewind-a module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-online-rewind-b:
+    description: Daemon online integration tests - rewind-b module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-online-features-a:
+    description: Daemon online integration tests - features-a module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-online-features-b:
+    description: Daemon online integration tests - features-b module
+    paths:
+      - packages/daemon/src/
+      - packages/shared/src/
+  daemon-online-features-c:
+    description: Daemon online integration tests - features-c module
     paths:
       - packages/daemon/src/
       - packages/shared/src/

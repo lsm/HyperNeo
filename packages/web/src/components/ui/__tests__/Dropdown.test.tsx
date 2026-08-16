@@ -356,16 +356,17 @@ describe('Dropdown', () => {
         expect(menu).toBeTruthy();
       });
 
-      // Wait for the delayed event listener to be added
-      await new Promise((resolve) => setTimeout(resolve, 10));
-
-      const escapeEvent = new KeyboardEvent('keydown', {
-        key: 'Escape',
-        bubbles: true,
-      });
-      document.dispatchEvent(escapeEvent);
-
+      // Dispatch Escape inside waitFor: the listener may not be attached on
+      // the first poll (the open render is visible before Preact flushes the
+      // effect), so re-dispatch until the menu closes — no fixed sleep that
+      // flakes under load.
       await waitFor(() => {
+        document.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'Escape',
+            bubbles: true,
+          })
+        );
         const menu = document.body.querySelector('[role="menu"]');
         expect(menu).toBeNull();
       });

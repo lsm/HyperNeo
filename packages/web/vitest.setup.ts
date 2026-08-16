@@ -73,6 +73,28 @@ const localStorageMock = {
 };
 global.localStorage = localStorageMock as unknown as Storage;
 
+// Unit tests must never open real network connections. A stray WebSocket
+// construct (e.g. an unmocked component path reaching the shared
+// websocket-client-transport) surfaces as dozens of timing-dependent
+// "closed before open (code=1006)" unhandled rejections attributed to
+// whatever test happens to be running — a flaky CI failure the
+// flaky-tests registry cannot absorb (no JUnit testcase fails). Replace
+// the constructor with one that fails loudly at the call site instead.
+// The original is stashed for tests that explicitly opt into a real socket.
+type WebSocketCtor = typeof WebSocket;
+const RealWebSocket = globalThis.WebSocket as WebSocketCtor | undefined;
+(globalThis as unknown as Record<string, unknown>).__originalWebSocket = RealWebSocket;
+if (RealWebSocket) {
+  class GuardedWebSocket {
+    constructor(url: string | URL) {
+      throw new Error(
+        `unit test attempted real WebSocket connection: ${String(url)} — mock the connection layer (see packages/web/vitest.setup.ts)`
+      );
+    }
+  }
+  globalThis.WebSocket = GuardedWebSocket as unknown as WebSocketCtor;
+}
+
 beforeEach(() => {
   // Clear all mocks before each test
   vi.clearAllMocks();

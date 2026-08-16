@@ -103,7 +103,7 @@ const LIVE_QUERY_RESUBSCRIBE_RETRY_DELAY_MS = 500;
 const RECOVERY_REJOIN_MAX_ATTEMPTS = 3;
 const RECOVERY_REJOIN_RETRY_DELAY_MS = 500;
 
-const logger = new Logger('kai:web:sessionstore');
+const logger = new Logger('hyperneo:web:sessionstore');
 
 const HYPERNEO_BUILT_IN_COMMANDS = ['merge-session'];
 

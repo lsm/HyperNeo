@@ -405,7 +405,7 @@ function createEvent(overrides: Partial<StructuredLogEvent>): StructuredLogEvent
     timestamp: Date.now(),
     level: 'error',
     message: 'daemon error',
-    module: 'kai:daemon:test',
+    module: 'hyperneo:daemon:test',
     source: 'logger',
     context: { spaceId: 'space-1', sessionId: 'session-1' },
     process: {

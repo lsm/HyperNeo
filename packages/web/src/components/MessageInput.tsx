@@ -101,6 +101,15 @@ function suppressLeadingSpace(before: string): boolean {
 const COMPOSER_CHAR_LIMIT = 100000;
 
 /**
+ * Page size for queue-preview fetches. Generous — a pending queue above this
+ * is pathological (the batched flush drains it in one turn) — but if it is
+ * ever exceeded, the server also reports `total` so the tray's full-list modal
+ * flags the not-loaded remainder instead of silently presenting a truncated
+ * list as complete.
+ */
+const QUEUE_FETCH_LIMIT = 1000;
+
+/**
  * Splice `transcript` between the draft text before/after the caret (or
  * selection — a selection gets replaced), applying the spacing/CJK rules at
  * both boundaries and capping to the composer character limit. Shared by the
@@ -809,6 +818,10 @@ export default function MessageInput({
   const agentWorking = isProcessing ?? isAgentWorking.value;
   const [queuedForCurrentTurn, setQueuedForCurrentTurn] = useState<QueuePreviewMessage[]>([]);
   const [queuedForNextTurn, setQueuedForNextTurn] = useState<QueuePreviewMessage[]>([]);
+  // Server-side queue sizes — the loaded arrays are capped by the fetch limit,
+  // and the tray's full-list modal uses the totals to flag not-loaded messages.
+  const [queuedCurrentTurnTotal, setQueuedCurrentTurnTotal] = useState<number | undefined>();
+  const [queuedNextTurnTotal, setQueuedNextTurnTotal] = useState<number | undefined>();
 
   const syncMessagesContainerPadding = useCallback(() => {
     const scroller = document.querySelector<HTMLElement>('[data-messages-container]');
@@ -853,19 +866,24 @@ export default function MessageInput({
         hub.request('session.messages.byStatus', {
           sessionId: targetSessionId,
           status: 'enqueued',
-          limit: 100,
+          limit: QUEUE_FETCH_LIMIT,
         }),
         hub.request('session.messages.byStatus', {
           sessionId: targetSessionId,
           status: 'deferred',
-          limit: 100,
+          limit: QUEUE_FETCH_LIMIT,
         }),
-      ])) as [{ messages?: QueuePreviewMessage[] }, { messages?: QueuePreviewMessage[] }];
+      ])) as [
+        { messages?: QueuePreviewMessage[]; total?: number },
+        { messages?: QueuePreviewMessage[]; total?: number },
+      ];
       if (sessionIdRef.current !== targetSessionId) {
         return;
       }
       setQueuedForCurrentTurn(enqueuedResponse.messages ?? []);
       setQueuedForNextTurn(deferredResponse.messages ?? []);
+      setQueuedCurrentTurnTotal(enqueuedResponse.total);
+      setQueuedNextTurnTotal(deferredResponse.total);
     } catch {
       // Best-effort queue refresh.
     }
@@ -980,6 +998,8 @@ export default function MessageInput({
   useEffect(() => {
     setQueuedForCurrentTurn([]);
     setQueuedForNextTurn([]);
+    setQueuedCurrentTurnTotal(undefined);
+    setQueuedNextTurnTotal(undefined);
   }, [sessionId]);
 
   useEffect(() => {
@@ -1211,6 +1231,8 @@ export default function MessageInput({
             <QueuePreviewTray
               currentTurnMessages={queuedForCurrentTurn}
               nextTurnMessages={queuedForNextTurn}
+              currentTurnTotal={queuedCurrentTurnTotal}
+              nextTurnTotal={queuedNextTurnTotal}
               className="mb-2 sm:ml-[58px]"
               onDeferMessage={(queued) => {
                 void handleDeferQueuedMessage(queued);

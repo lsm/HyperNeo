@@ -12,7 +12,7 @@ import { createLogger } from '../logger.ts';
 import { generateUUID } from '../utils.ts';
 
 // Create logger for MessageHub (uses unified log levels)
-const log = createLogger('kai:messagehub');
+const log = createLogger('hyperneo:messagehub');
 
 import {
   createErrorResponseMessage,

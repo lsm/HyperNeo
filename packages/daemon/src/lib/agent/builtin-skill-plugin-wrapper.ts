@@ -50,7 +50,7 @@ import {
 import { dirname, join } from 'node:path';
 import { createLogger } from '@hyperneo/shared';
 
-const log = createLogger('kai:daemon:builtin-skill-plugin-wrapper');
+const log = createLogger('hyperneo:daemon:builtin-skill-plugin-wrapper');
 
 /**
  * Default root directory where wrapper plugin directories are materialised.

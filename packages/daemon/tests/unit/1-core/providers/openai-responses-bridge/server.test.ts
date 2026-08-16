@@ -2930,7 +2930,7 @@ describe('openai-responses-bridge server', () => {
       originalConfig = getLoggerConfig();
       configureLogger({
         level: LogLevel.WARN,
-        filter: ['kai:daemon:openai-responses-bridge-server'],
+        filter: ['hyperneo:daemon:openai-responses-bridge-server'],
       });
       logEvents = [];
       unsubscribe = subscribeToStructuredLogs((event) => {

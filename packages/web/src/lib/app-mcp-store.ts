@@ -21,7 +21,7 @@ import type {
 import { Logger } from '@hyperneo/shared';
 import { connectionManager } from './connection-manager';
 
-const logger = new Logger('kai:web:app-mcp-store');
+const logger = new Logger('hyperneo:web:app-mcp-store');
 
 const SUBSCRIPTION_ID = 'mcpServers-global';
 

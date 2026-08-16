@@ -17,6 +17,7 @@ import type {
   MessageImage,
   ModelInfo,
   Session,
+  SessionMetadata,
   HyperNeoActionMessage,
   RuntimeMcpServerEntry,
 } from '@hyperneo/shared';
@@ -52,6 +53,16 @@ const log = new Logger('session-handlers');
  * cached-response path.
  */
 const STRANDED_PROBE_TIMEOUT_MS = 3000;
+
+/**
+ * How long a voice-append dedup id stays recognizable (see
+ * session.appendVoiceDraft). The client outbox expires an entry 24h after it
+ * ENQUEUES — which happens after the staging RPC rejects — while the daemon
+ * logs the id at COMMIT time, strictly earlier. The margin covers that
+ * ambiguity window (a staging timeout plus requeue latency), so the id
+ * outlives every retry the client can still issue.
+ */
+const VOICE_APPEND_LOG_TTL_MS = 24 * 60 * 60 * 1000 + 5 * 60 * 1000;
 
 function raceWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T | 'timeout'> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -465,13 +476,42 @@ export function setupSessionHandlers(
   // DB write both run before the first `await`), so concurrent writers cannot
   // interleave. Returns success/failure so the client's toast is honest.
   messageHub.onRequest('session.appendVoiceDraft', async (data, _ctx) => {
-    const { sessionId, text } = data as { sessionId: string; text: string };
+    const { sessionId, text, dedupId } = data as {
+      sessionId: string;
+      text: string;
+      dedupId?: string;
+    };
     if (typeof text !== 'string' || text.trim().length === 0) {
       throw new Error('Text to append is required');
     }
     const session = sessionManager.getSessionFromDB(sessionId);
     if (!session) throw new Error('Session not found');
-    const existingPending = session.metadata?.inputDraftVoicePending ?? '';
+    const metadata = session.metadata ?? {};
+    // Idempotent replay guard for the client's durable outbox: the socket can
+    // drop just after a successful write but before the ack, and a retry would
+    // merge the transcript a second time. Skip when this entry's id already
+    // merged. A LOG of timestamped ids (not just the last id) is retained so an
+    // out-of-order replay — two tabs flushing the shared outbox, or an entry
+    // that timed out after committing and is retried after a later one
+    // committed — still dedups. Entries are kept for the client outbox's retry
+    // lifetime (24h), NOT a small count cap: an entry can remain retryable for
+    // that whole window while unrelated direct appends flow in, and a count
+    // bound alone would evict its id and let the eventual replay double-append.
+    // Only consulted when the client passes a dedupId; the live one-shot
+    // staging path passes none and behaves exactly as before. The read→write
+    // stays one synchronous step (no await between the check and the
+    // updateSession DB write), so concurrent writers cannot interleave.
+    const appendLogTtlCutoff = Date.now() - VOICE_APPEND_LOG_TTL_MS;
+    const processedLog = (metadata.inputDraftVoiceAppendLog ?? []).filter(
+      (entry) =>
+        typeof entry?.id === 'string' &&
+        typeof entry?.ts === 'number' &&
+        entry.ts > appendLogTtlCutoff
+    );
+    if (dedupId && processedLog.some((entry) => entry.id === dedupId)) {
+      return { success: true, deduped: true };
+    }
+    const existingPending = metadata.inputDraftVoicePending ?? '';
     const pending = appendDraftText(existingPending, text);
     // Reject (rather than silently truncate) when the staged value is at the
     // character limit and the new transcript cannot fit whole — the client
@@ -479,7 +519,29 @@ export function setupSessionHandlers(
     const fits =
       pending === `${existingPending}${text}` || pending === `${existingPending} ${text}`;
     if (!fits) throw new Error('Pending voice draft is at the character limit');
-    const updates: UpdateSessionRequest = { metadata: { inputDraftVoicePending: pending } };
+    const metadataUpdate: Partial<SessionMetadata> = { inputDraftVoicePending: pending };
+    if (!existingPending.trim()) {
+      // A NEW pending sequence starts here: snapshot the draft it will merge
+      // onto, tagged with a fresh sequence id. The daemon is the single writer
+      // of the merge, so this baseline is the EXACT pre-sequence draft —
+      // regardless of which tabs appended entries or which tab's get performs
+      // the merge. session.get responses carry it so clients can structurally
+      // separate the transcripts from the stale baseline, and
+      // session.stripVoiceBaseline removes it on request — validated against
+      // the SEQUENCE id too, since a newer sequence can replace the baseline
+      // while leaving the draft text itself unchanged.
+      metadataUpdate.inputDraftVoiceBaseline = metadata.inputDraft ?? '';
+      metadataUpdate.inputDraftVoiceBaselineSeq = (metadata.inputDraftVoiceBaselineSeq ?? 0) + 1;
+    }
+    if (dedupId) {
+      // Append after the TTL filter above prunes expired ids. NO count cap:
+      // logged ids come only from outbox flushes (each tab's outbox holds at
+      // most 20 entries), so growth within the TTL is inherently bounded —
+      // and a count cap could evict an id whose outbox entry is still
+      // retryable, letting its eventual replay double-append.
+      metadataUpdate.inputDraftVoiceAppendLog = [...processedLog, { id: dedupId, ts: Date.now() }];
+    }
+    const updates: UpdateSessionRequest = { metadata: metadataUpdate };
     await sessionManager.updateSession(sessionId, updates as Partial<Session>);
     messageHub.event(
       'session.updated',
@@ -1259,19 +1321,20 @@ export function setupSessionHandlers(
     }
 
     const db = sessionManager.getDatabase();
-    const messages = db
+    const all = db
       .getMessagesByStatus(targetSessionId, status)
-      .filter((message) => isSDKUserMessage(message))
-      .slice(0, limit)
-      .map((message) => ({
-        dbId: message.dbId,
-        uuid: message.uuid ?? '',
-        timestamp: message.timestamp,
-        status,
-        text: extractMessageText(message.message.content),
-      }));
+      .filter((message) => isSDKUserMessage(message));
+    // `total` lets the queue-preview UI distinguish "N messages" from "first N
+    // of M" when the client's limit truncates the list.
+    const messages = all.slice(0, limit).map((message) => ({
+      dbId: message.dbId,
+      uuid: message.uuid ?? '',
+      timestamp: message.timestamp,
+      status,
+      text: extractMessageText(message.message.content),
+    }));
 
-    return { messages };
+    return { messages, total: all.length };
   });
 
   // Remove a message that has not yet been consumed by the SDK.
