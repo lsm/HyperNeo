@@ -90,20 +90,20 @@ function defaultSpawn(opts: SpawnOptions): SpawnedProcess {
 // restart fanning out resumed sessions) exceeded the old 15s default across
 // the board. The timer only guards silent hangs — real spawn failures exit
 // and are detected immediately — so a generous default is cheap insurance.
-// Ordering: this window stays BELOW the delivery-turn stall watchdog's
-// no-activity window (DELIVERY_TURN_NO_ACTIVITY_MS, default 3min —
-// agent-session.ts armDeliveryTurnStall) so a silently hung startup is
-// aborted here first. The delivery lane's 35s settlementGraceMs (app.ts) is
-// ordered against the job queue's 30s acknowledgment bound, not against
-// this window.
-// Two OTHER 30s bounds sit BELOW this window and cap the effective tolerance
-// for a delivered kickoff at 30s: MESSAGE_QUEUE_TIMEOUT_MS (message-queue.ts
-// — splices + rejects a message the SDK never consumes) and
-// awaitDeliveryConsumption's 30s default (message-delivery.ts). The startup
-// retry replays only consumed messages (the _consumedUserMessages
-// re-enqueue in runQuery's catch), so a kickoff spliced at 30s yields a
-// zero-message retry. Converging herds that need >30s is the job of the
-// sibling retry-backoff / stale-reclaim work, not this timer.
+// Ordering: at default settings this window stays BELOW the delivery-turn
+// stall watchdog's no-activity window (DELIVERY_TURN_NO_ACTIVITY_MS,
+// default 3min — agent-session.ts armDeliveryTurnStall) so a silently hung
+// startup is aborted here first.
+// Two 30s bounds sit BELOW this window and cap the effective tolerance for
+// a delivered kickoff at 30s: MESSAGE_QUEUE_TIMEOUT_MS (message-queue.ts —
+// splices + rejects a message the SDK never consumes) and
+// awaitDeliveryConsumption's 30s default (message-delivery.ts — the same
+// bound the delivery lane's 35s settlementGraceMs in app.ts is ordered
+// against). The startup retry replays only consumed messages (the
+// _consumedUserMessages re-enqueue in runQuery's catch), so a kickoff
+// spliced at 30s yields a zero-message retry; extending tolerance beyond
+// 30s for delivered kickoffs needs delivery-lane work (queued-message
+// lifetime / retry pacing), not a longer startup timer.
 const DEFAULT_STARTUP_TIMEOUT_MS = 60000;
 /** Max time to wait for subprocess exit before retrying after startup timeout. */
 const RETRY_EXIT_TIMEOUT_MS = 5000;

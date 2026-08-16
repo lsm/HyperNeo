@@ -1399,10 +1399,12 @@ describe('QueryRunner', () => {
       // Should NOT contain retry count language
       const userMessage = handleErrorSpy.mock.calls[0][3] as string;
       expect(userMessage).not.toContain('attempt(s)');
-      // The hint prints the effective startup window. The unit/vitest preloads
-      // delete any ambient override, and every test that sets it restores in
-      // finally (acp-query-runner.test.ts), so the module-load snapshot here
-      // is the 60s default. Pins both the default and the effective-value hint.
+      // The hint prints the effective startup window. The vitest preload
+      // (tests/vitest.setup.ts — the only preload automated runs load) deletes
+      // ambient overrides before imports, and every test that sets the
+      // variable restores it in finally (acp-query-runner.test.ts), so the
+      // module-load snapshot here is the 60s default. Pins both the default
+      // and the effective-value hint.
       expect(userMessage).toContain('current: 60000ms');
     });
 
