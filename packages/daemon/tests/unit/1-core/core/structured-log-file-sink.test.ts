@@ -113,6 +113,16 @@ describe('StructuredLogFileSink', () => {
     expect(redacted.message).toBe('Authorization=[REDACTED]');
   });
 
+  it('redacts URL userinfo credentials', () => {
+    // A Basic-auth URL (`scheme://user:pass@host`) carries credentials without
+    // any `authorization`/`token`/`password` label; the userinfo must be
+    // redacted before the record is written. (Codex P1, PR #2499.)
+    const redacted = redactStructuredLogEvent(
+      event('installing from https://oauth2:secret@host/repo.git')
+    );
+    expect(redacted.message).toBe('installing from https://[REDACTED]@host/repo.git');
+  });
+
   it('redacts unquoted colon-form values for every sensitive key', () => {
     // `token: abc` (no quotes, no `=`) previously passed through every rule —
     // only authorization and cookies had colon-form handling. Like the

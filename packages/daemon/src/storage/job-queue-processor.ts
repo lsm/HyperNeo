@@ -331,6 +331,13 @@ export class JobQueueProcessor {
     const record = this.trackInFlightClaim(job, controller, exempt ? 'exempt' : 'capped');
     this.emitLifecycle('slot_acquired', job, record.slotClass, { stage: record.stage });
     const heartbeat = setInterval(() => {
+      // A stale reclaim already aborted this handler and emitted its
+      // old_handler_aborted event; stop heartbeating rather than emitting a
+      // duplicate heartbeat_rejected against the now-replaced row. (Codex P2.)
+      if (controller.signal.aborted) {
+        clearInterval(heartbeat);
+        return;
+      }
       if (!this.repo.heartbeat(job.id, job.claimToken)) {
         this.emitLifecycle('old_handler_aborted', job, record.slotClass, {
           stage: record.stage,

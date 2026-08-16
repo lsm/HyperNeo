@@ -1,5 +1,5 @@
 import { homedir } from 'os';
-import type { Config } from './config';
+import { parsePositiveInt, type Config } from './config';
 import type { WebSocketData } from './types/websocket';
 import { createHttpWsServer, type ServerHandle } from './lib/runtime-server';
 import { Database } from './storage/database';
@@ -392,7 +392,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const jobQueue = new JobQueueRepository(db.getDatabase());
     const workflowHookStateRepository = new WorkflowHookStateRepository(db.getDatabase());
     const workflowHookRuntimeService = new WorkflowHookRuntimeService();
-    const maxConcurrent = Number(process.env.HYPERNEO_JOB_QUEUE_MAX_CONCURRENT) || 5;
+    const maxConcurrent = parsePositiveInt(process.env.HYPERNEO_JOB_QUEUE_MAX_CONCURRENT, 5);
     const jobProcessor = new JobQueueProcessor(jobQueue, {
       pollIntervalMs: 1000,
       maxConcurrent,
@@ -406,8 +406,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     // active. A separate budget gives zero cross-lane contention without any
     // shared-processor surgery. Steers still exempt-bypass THIS budget. See
     // message-delivery-v2.md + Codex (#3742774839).
-    const messageDeliveryMaxConcurrent =
-      Number(process.env.HYPERNEO_MESSAGE_DELIVERY_MAX_CONCURRENT) || 64;
+    // Parse as a finite positive integer: `Number(value) || 64` accepts a
+    // negative (non-positive slot budget → the dedicated processor never claims)
+    // or fractional value (passed as SQLite LIMIT → datatype mismatch per tick).
+    // (Codex P2, PR #2499.)
+    const messageDeliveryMaxConcurrent = parsePositiveInt(
+      process.env.HYPERNEO_MESSAGE_DELIVERY_MAX_CONCURRENT,
+      64
+    );
     const messageDeliveryProcessor = new JobQueueProcessor(jobQueue, {
       pollIntervalMs: 1000,
       maxConcurrent: messageDeliveryMaxConcurrent,

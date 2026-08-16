@@ -71,7 +71,7 @@ function hyperneoEnv(name: string): string | undefined {
  * `parseInt` would accept `"1000000oops"` (→ 1000000, silently disabling a
  * guardrail) and `"1e3"` (→ 1, breaking clients after one subscribe).
  */
-function parsePositiveInt(raw: string | undefined, fallback: number): number {
+export function parsePositiveInt(raw: string | undefined, fallback: number): number {
   if (raw === undefined) return fallback;
   // Require a pure digit string (no prefix, no exponent, no decimals, no sign).
   if (!/^[0-9]+$/.test(raw.trim())) return fallback;

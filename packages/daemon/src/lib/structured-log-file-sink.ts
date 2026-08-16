@@ -171,6 +171,10 @@ function redactString(value: string): string {
   return (
     value
       .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
+      // URL userinfo (`scheme://user:pass@host`) can carry Basic credentials
+      // without any `authorization`/`token`/`password` label; redact the
+      // userinfo component. (Codex P1, PR #2499.)
+      .replace(/(\/\/)[^/\s@]+@/gi, '$1[REDACTED]@')
       // Authorization values legitimately contain structural commas (Digest
       // `username="u", nonce="…", response="…"`, AWS `…, Signature=…`), so —
       // like cookies — redact through end of line; a `,`/`}` boundary would

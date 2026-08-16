@@ -7,7 +7,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { getConfig } from '../../../../src/config';
+import { getConfig, parsePositiveInt } from '../../../../src/config';
 
 describe('getConfig', () => {
   let originalEnv: NodeJS.ProcessEnv;
@@ -274,6 +274,19 @@ describe('getConfig', () => {
     const config = getConfig({ structuredLogRetainedFiles: Number.MAX_SAFE_INTEGER });
 
     expect(config.structuredLogRetainedFiles).toBe(1_000);
+  });
+
+  test('parsePositiveInt rejects negative, fractional, and partial-numeric values', () => {
+    // Codex P2 (PR #2499): `Number(value) || fallback` accepts negatives and
+    // fractions; parsePositiveInt requires a pure positive digit string.
+    expect(parsePositiveInt('-5', 64)).toBe(64);
+    expect(parsePositiveInt('1.5', 64)).toBe(64);
+    expect(parsePositiveInt('0', 64)).toBe(64);
+    expect(parsePositiveInt('abc', 64)).toBe(64);
+    expect(parsePositiveInt('1000000oops', 64)).toBe(64);
+    expect(parsePositiveInt(undefined, 64)).toBe(64);
+    expect(parsePositiveInt('64', 64)).toBe(64);
+    expect(parsePositiveInt(' 8 ', 8)).toBe(8);
   });
 
   test('default database path is ~/.hyperneo/data/daemon.db', () => {

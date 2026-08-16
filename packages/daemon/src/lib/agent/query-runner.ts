@@ -1142,8 +1142,16 @@ export class QueryRunner {
           logger.warn(
             `Re-enqueueing ${consumed.length} consumed user message(s) for startup-timeout retry.`
           );
-          for (const message of consumed) {
-            messageQueue.enqueueWithId(message.uuid, message.content).catch(() => {});
+          // Prepend in reverse order so the consumed prefix lands AHEAD of any
+          // still-queued tail: the SDK may have pulled only a prefix (kickoff +
+          // a steer) before going silent, leaving later messages untouched. A
+          // plain enqueue would append the replay behind that tail and change
+          // prompt order. (Codex P1, PR #2499.)
+          for (let i = consumed.length - 1; i >= 0; i--) {
+            const message = consumed[i];
+            messageQueue
+              .enqueueWithId(message.uuid, message.content, false, { prepend: true })
+              .catch(() => {});
           }
           this._consumedUserMessages = [];
           this._lastConsumedUserMessage = null;

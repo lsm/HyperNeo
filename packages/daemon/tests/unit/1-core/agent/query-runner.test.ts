@@ -1634,11 +1634,17 @@ describe('QueryRunner', () => {
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      expect(enqueueWithIdSpy).toHaveBeenCalledWith(kickoff.uuid, kickoff.content);
-      expect(enqueueWithIdSpy).toHaveBeenCalledWith(steer.uuid, steer.content);
-      // Order matters: the kickoff must be re-fed before the steer.
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith(kickoff.uuid, kickoff.content, false, {
+        prepend: true,
+      });
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith(steer.uuid, steer.content, false, {
+        prepend: true,
+      });
+      // Prepend in reverse so the consumed prefix lands ahead of any untouched
+      // queue tail: the calls fire steer-then-kickoff, leaving the queue in
+      // kickoff-then-steer order. (Codex P1, PR #2499.)
       const calls = enqueueWithIdSpy.mock.calls as unknown as Array<[string, unknown]>;
-      expect(calls.map(([uuid]) => uuid)).toEqual([kickoff.uuid, steer.uuid]);
+      expect(calls.map(([uuid]) => uuid)).toEqual([steer.uuid, kickoff.uuid]);
     });
 
     it('should abandon the retry when a replacement query took ownership during the exit wait', async () => {
