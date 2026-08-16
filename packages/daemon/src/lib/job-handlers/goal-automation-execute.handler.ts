@@ -495,10 +495,11 @@ function advanceCursor(
 
 /**
  * Whether a single evidence row can be empty or purely process-level.
- * A manual note is thin only when it carries status/pending language or is
- * empty — a qualitative note without outcome keywords (a diagnosis, lesson,
- * or decision) is substantive. A session row is thin only when it is an
- * auto-generated trace diagnostic (`metadata.traceDiagnostic === true`).
+ * A manual note is thin only when every clause of it carries status/pending
+ * language (or it is empty) — a note that mixes a status clause with a
+ * qualitative clause (a diagnosis, lesson, or decision) is substantive. A
+ * session row is thin only when it is an auto-generated trace diagnostic
+ * (`metadata.traceDiagnostic === true`).
  */
 function isThinEvidence(item: EvidenceRef): boolean {
   if (item.kind === 'manual_note') {
@@ -506,12 +507,35 @@ function isThinEvidence(item: EvidenceRef): boolean {
     for (const value of Object.values(item.metadata ?? {})) {
       if (typeof value === 'string' && value.trim()) texts.push(value);
     }
-    return (
-      !texts.some((text) => text.trim()) || texts.some((text) => STATUS_LANGUAGE_RE.test(text))
-    );
+    return isThinManualNote(texts);
   }
   if (item.kind === 'session') return item.metadata?.traceDiagnostic === true;
   return false;
+}
+
+/**
+ * Clause separator for manual notes. Sentence-level punctuation starts a new
+ * clause; a colon does not — it only introduces an elaboration of the same
+ * utterance ("Progress: waiting on CI" is one status clause). A period only
+ * separates when sentence-final (followed by whitespace or end of text), so
+ * version numbers and decimals ("v2.4.1", "3.5%") stay inside their clause.
+ */
+const MANUAL_NOTE_CLAUSE_RE = /(?:[;!?\n]|\.(?=\s|$))+/;
+
+/**
+ * Whether a manual note is purely process status. Every clause (across the
+ * summary and string-valued metadata) must carry status/pending language for
+ * the note to be thin — one status token does not discard a substantive
+ * clause in the same note ("Root cause was lock contention; rollout is
+ * blocked pending a cache fix" keeps its retrospective for the diagnosis).
+ */
+function isThinManualNote(texts: string[]): boolean {
+  const clauses = texts
+    .flatMap((text) => text.split(MANUAL_NOTE_CLAUSE_RE))
+    .map((clause) => clause.trim())
+    .filter(Boolean);
+  if (clauses.length === 0) return true;
+  return clauses.every((clause) => STATUS_LANGUAGE_RE.test(clause));
 }
 
 /**
@@ -629,12 +653,42 @@ const COORDINATED_VERBS = new Set([
 ]);
 
 /**
+ * Temporal/manner adverbs that can sit between a coordinating conjunction
+ * and the verb it shares ("Tests will run and eventually pass"). They
+ * continue the coordinated predicate rather than starting a new clause.
+ * Negation and hedge words ("not", "never", "maybe") are deliberately absent
+ * — those change meaning and must fall through to the qualifier test.
+ */
+const INTERVENING_ADVERBS = new Set([
+  'eventually',
+  'finally',
+  'then',
+  'also',
+  'always',
+  'reliably',
+  'consistently',
+  'regularly',
+  'repeatedly',
+  'steadily',
+  'quickly',
+  'cleanly',
+  'correctly',
+  'properly',
+  'successfully',
+  'safely',
+  'surely',
+  'definitely',
+  'certainly',
+  'clearly',
+]);
+
+/**
  * Whether a prefix (the text before an outcome match) carries a qualifier
  * that belongs to THIS outcome's clause. A conjunction is a clause boundary
  * when it introduces a new subject ("No errors and tests passed" — "no"
- * scopes only the errors clause), but NOT when it coordinates verbs under a
- * shared modal ("Tests will run and pass", "CI will run and report
- * failures" — "will" still applies).
+ * scopes only the errors clause), but NOT when it coordinates predicates
+ * under a shared modal ("Tests will run and pass", "CI will run and report
+ * failures", "Tests will run and eventually pass" — "will" still applies).
  */
 function prefixHasQualifier(prefix: string): boolean {
   let cut = -1;
@@ -646,8 +700,19 @@ function prefixHasQualifier(prefix: string): boolean {
   if (cut >= 0) {
     const afterConjunction = prefix.slice(cut + conjunctionLength).trimStart();
     if (afterConjunction) {
-      const firstWord = afterConjunction.split(/\s+/)[0]?.toLowerCase() ?? '';
-      if (!COORDINATED_VERBS.has(firstWord)) {
+      const words = afterConjunction.trim().split(/\s+/);
+      let index = 0;
+      while (index < words.length && INTERVENING_ADVERBS.has(words[index].toLowerCase())) {
+        index++;
+      }
+      // Only adverbs sit between the conjunction and the outcome — the
+      // outcome itself continues the coordinated predicate, as it does when
+      // an explicit coordinated verb leads ("will run and report failures").
+      // Anything else is a new clause's subject, so the conjunction ends the
+      // qualified clause.
+      const continuesPredicate =
+        index === words.length || COORDINATED_VERBS.has(words[index].toLowerCase());
+      if (!continuesPredicate) {
         return NON_AFFIRMATIVE_PREFIX_RE.test(prefix.slice(cut));
       }
     }
@@ -678,6 +743,16 @@ const NEW_CLAUSE_CONJUNCTION_RE =
   /\b(?:and|but|while|whereas|although|though)\s+(?:the\s+|a\s+|an\s+)?(?:\w+\s+){0,3}(?:is|are|was|were|has|have|had|remains?|stays?|seems?)\b/i;
 
 /**
+ * The same new-clause pattern in status shorthand, where the linking verb is
+ * omitted ("Tests passed but deployment pending" = "but deployment [is]
+ * pending"). Requires at least one subject word so an elliptical qualifier
+ * that directly follows the conjunction ("passing but blocked") still
+ * attaches to the outcome's clause.
+ */
+const NEW_CLAUSE_STATUS_RE =
+  /\b(?:and|but|while|whereas|although|though)\s+(?:the\s+|a\s+|an\s+)?(?:\w+\s+){1,3}(?:pending|blocked|queued|incomplete|unfinished|planned|scheduled|waiting|stalled)\b/i;
+
+/**
  * Whether a suffix (the text after an outcome match) carries a qualifier that
  * belongs to THIS outcome rather than a new independent clause.
  */
@@ -687,6 +762,7 @@ function suffixHasQualifier(suffix: string): boolean {
   const segment = suffix.slice(0, match.index + match[0].length);
   // The qualifier sits in a new clause with its own subject — not ours.
   if (NEW_CLAUSE_CONJUNCTION_RE.test(segment)) return false;
+  if (NEW_CLAUSE_STATUS_RE.test(segment)) return false;
   return true;
 }
 
@@ -741,10 +817,11 @@ function hasArtifactOutcome(text: string): boolean {
 /**
  * Status/pending language: the recognizable signature of the process-level
  * notes the no-op gate targets ("waiting for X", "not done yet", "will do
- * Y", "no update"). A manual note WITHOUT any status language and without a
- * recognized affirmative outcome is substantive qualitative content (a
- * diagnosis, lesson, decision, or observation) and keeps its retrospective —
- * substantive content is not always an achieved outcome.
+ * Y", "no update"). Evaluated per clause: a note is thin only when every
+ * clause carries this signature — a clause without it is substantive
+ * qualitative content (a diagnosis, lesson, decision, or observation) that
+ * keeps its retrospective, since substantive content is not always an
+ * achieved outcome.
  */
 const STATUS_LANGUAGE_RE =
   /\b(?:waiting|wait|pending|queued|incomplete|unfinished|planned|scheduled|upcoming|todo|blocked|stalled|goal|target|aim|need(?:s|ed)? to|must|has to|have to|required to|not\s+(?:yet|done|started|run|runned)|hasn'?t|haven'?t|hadn'?t|didn'?t|doesn'?t|won'?t|isn'?t|aren'?t|wasn'?t|weren'?t|can'?t|cannot|no\s|never|not\s|will|would|should|could|might|maybe|later|soon|tomorrow|tbd|n\/a)\b/i;
@@ -753,9 +830,10 @@ const STATUS_LANGUAGE_RE =
  * A self_nag tick is a no-op worth skipping when the selection itself carries
  * no substantive signal: no affirmative outcome (a PR reference or a
  * merge/pass/fail/quantitative/artifact result — not a negated, pending, or
- * prospective mention) and every row thin. A manual note is thin only when it
- * carries status/pending language (or is empty) — substantive qualitative
- * content without a recognized outcome keyword still keeps its episode. The
+ * prospective mention) and every row thin. A manual note is thin only when
+ * every clause of it carries status/pending language (or it is empty) — a
+ * note mixing a status clause with substantive qualitative content still
+ * keeps its episode. The
  * preflight level is advisory only — scope-wide metrics and loose keyword
  * outcomes can inflate a thin batch to medium, so the selection-aware content
  * test decides rather than the score. Any structural/task-linked evidence
