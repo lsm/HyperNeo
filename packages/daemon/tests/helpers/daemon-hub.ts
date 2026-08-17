@@ -141,8 +141,12 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
     sessionId: string;
     toolUseId: string;
     mode: 'submitted' | 'cancelled';
-    /** True when the queued answer was consumed by a re-played canUseTool call. */
-    viaCanUseTool: boolean;
+    /**
+     * How the answer reached the SDK: consumed by a re-played live
+     * interception (PreToolUse hook or canUseTool callback), or delivered via
+     * the synthetic tool_result injection used on the post-restart path.
+     */
+    via: 'can_use_tool' | 'pre_tool_use_hook' | 'tool_result';
   };
 
   // User message processing events (3-layer communication pattern)

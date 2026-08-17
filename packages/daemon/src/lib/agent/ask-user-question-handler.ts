@@ -16,13 +16,15 @@
  *    SDK 0.3.233: under bypassPermissions the hook fires, its
  *    allow+updatedInput is honored, and canUseTool is never consulted for
  *    AskUserQuestion.
- * 2. `createCanUseToolCallback()` — the legacy canUseTool callback. Under
- *    `bypassPermissions` the SDK auto-approves tool calls before consulting
- *    canUseTool (warning `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`), so this channel
- *    alone silently dropped AskUserQuestion handling in default-config
- *    sessions. It is still used by non-bypass modes as a fallback and —
- *    crucially — by the ACP query runner, which invokes the callback directly
- *    on ACP permission requests.
+ * 2. `createCanUseToolCallback()` — the legacy/ACP-fallback canUseTool callback.
+ *    Under `bypassPermissions` the SDK auto-approves tool calls before
+ *    consulting canUseTool (warning `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`), so
+ *    this channel alone silently dropped AskUserQuestion handling in
+ *    default-config sessions — and even in non-bypass modes the PreToolUse
+ *    hook above now satisfies the interaction before canUseTool is consulted.
+ *    The callback remains in use for non-AskUserQuestion permission decisions
+ *    (matched-ask-rule fail-closed, allow-all) and — crucially — by the ACP
+ *    query runner, which invokes it directly on ACP permission requests.
  *
  * Core flow (shared by both channels):
  *
@@ -136,8 +138,9 @@ export class AskUserQuestionHandler {
   /**
    * Answers received via RPC after the in-memory resolver was lost (e.g.
    * daemon restart). Keyed by toolUseId. If the SDK re-issues the same
-   * AskUserQuestion call after resume, `createCanUseToolCallback` consumes
-   * the queued answer instead of re-prompting the user.
+   * AskUserQuestion call after resume, the interception core (PreToolUse
+   * hook or canUseTool callback) consumes the queued answer instead of
+   * re-prompting the user.
    */
   private queuedAnswers: Map<string, PermissionResult> = new Map();
 
@@ -150,12 +153,31 @@ export class AskUserQuestionHandler {
    * hook: prompt the user for an AskUserQuestion call and wait for their
    * answer. Resolves with the SDK-agnostic {@link PermissionResult}; each
    * delivery channel maps it to its own envelope shape.
+   *
+   * @param viaChannel Which SDK delivery channel invoked the interception —
+   *   reported on the `question.injected_as_tool_result` telemetry event when
+   *   a queued (post-restart) answer is consumed.
    */
   private async interceptAskUserQuestion(
     toolUseID: string,
-    input: Record<string, unknown>
+    input: Record<string, unknown>,
+    viaChannel: 'can_use_tool' | 'pre_tool_use_hook'
   ): Promise<PermissionResult> {
     const { session, stateManager, internalEventBus } = this.ctx;
+
+    // Malformed input guard: a missing/empty questions array would throw in
+    // the mapping below and abort the tool call inside the CLI. Deny with a
+    // reason instead so the model sees a recoverable error.
+    const askInput = input as unknown as AskUserQuestionInput;
+    if (!Array.isArray(askInput.questions) || askInput.questions.length === 0) {
+      this.logger.warn(
+        `AskUserQuestion ${toolUseID}: malformed tool_input (questions missing or empty); denying`
+      );
+      return {
+        behavior: 'deny',
+        message: 'AskUserQuestion input is malformed: no questions were provided.',
+      };
+    }
 
     // Restart-survival fast path: if a queued answer is waiting for this
     // toolUseId, resolve immediately and skip the user prompt entirely.
@@ -180,12 +202,10 @@ export class AskUserQuestionHandler {
         sessionId: session.id,
         toolUseId: toolUseID,
         mode: queued.behavior === 'allow' ? 'submitted' : 'cancelled',
-        viaCanUseTool: true,
+        via: viaChannel,
       });
       return merged;
     }
-
-    const askInput = input as unknown as AskUserQuestionInput;
 
     // Build the pending question structure for UI
     // Use the SDK's toolUseID for consistency
@@ -215,6 +235,21 @@ export class AskUserQuestionHandler {
 
     // Return a Promise that waits for user input
     return new Promise<PermissionResult>((resolve, reject) => {
+      // A previous interception can still be pending if the model issued two
+      // AskUserQuestion calls in one turn (two tool_use blocks). The resolver
+      // map is single-slot; reject the superseded one so its SDK-side promise
+      // settles (the CLI aborts that tool call) instead of hanging forever.
+      if (this.pendingResolver) {
+        this.logger.warn(
+          `AskUserQuestion ${this.pendingResolver.toolUseId}: superseded by a newer ` +
+            `AskUserQuestion call (${toolUseID}); rejecting the older resolver`
+        );
+        try {
+          this.pendingResolver.reject(new Error('Superseded by a newer AskUserQuestion call'));
+        } catch {
+          // Ignore — best-effort settlement of a dead promise
+        }
+      }
       // Store the resolver so handleQuestionResponse can complete it
       this.pendingResolver = {
         toolUseId: toolUseID,
@@ -253,7 +288,8 @@ export class AskUserQuestionHandler {
       const preInput = input as PreToolUseHookInput;
       const result = await this.interceptAskUserQuestion(
         preInput.tool_use_id,
-        (preInput.tool_input ?? {}) as Record<string, unknown>
+        (preInput.tool_input ?? {}) as Record<string, unknown>,
+        'pre_tool_use_hook'
       );
 
       if (result.behavior === 'allow') {
@@ -312,7 +348,7 @@ export class AskUserQuestionHandler {
         return { behavior: 'allow', updatedInput: input };
       }
 
-      return this.interceptAskUserQuestion(options.toolUseID, input);
+      return this.interceptAskUserQuestion(options.toolUseID, input, 'can_use_tool');
     };
   }
 
@@ -320,7 +356,8 @@ export class AskUserQuestionHandler {
    * Handle user's response to an AskUserQuestion
    *
    * This is called from the RPC handler when user submits their answer.
-   * It resolves the Promise in canUseTool callback with the formatted answers.
+   * It resolves the pending Promise stored by the interception core (hook or
+   * canUseTool channel) with the formatted answers.
    *
    * @param toolUseId - The tool use ID from the question (for validation)
    * @param responses - Array of user responses for each question
@@ -532,11 +569,12 @@ export class AskUserQuestionHandler {
    * Restart-survival delivery: queue the answer for the resumed SDK and
    * inject a synthetic tool_result user message into the streaming queue so
    * the conversation moves forward even if the SDK does not re-issue the
-   * canUseTool call.
+   * AskUserQuestion call.
    *
    * Both halves are intentionally redundant:
    * 1. `queuedAnswers` covers the case where the SDK re-plays the
-   *    AskUserQuestion call (canUseTool consumes the queued answer).
+   *    AskUserQuestion call (the interception core — PreToolUse hook or
+   *    canUseTool — consumes the queued answer).
    * 2. The injected `tool_result` user message covers the case where the SDK
    *    treats the prior tool_use as already-resolved and just needs the
    *    matching tool_result to continue the conversation cleanly.
@@ -591,7 +629,7 @@ export class AskUserQuestionHandler {
         sessionId: session.id,
         toolUseId,
         mode,
-        viaCanUseTool: false,
+        via: 'tool_result',
       });
     } catch (publishError) {
       stateManager.releaseIdleWaiters();
@@ -615,11 +653,11 @@ export class AskUserQuestionHandler {
       // `parent_tool_use_id` on the SDK user message — that's the wire
       // format the Anthropic API expects for a user→assistant tool reply.
       //
-      // Redundancy note: if the resumed SDK query *also* re-fires
-      // canUseTool for the same `tool_use_id` (path A — queuedAnswers
+      // Redundancy note: if the resumed SDK query *also* re-fires the
+      // interception for the same `tool_use_id` (path A — queuedAnswers
       // consumed), the SDK will see two responses for that tool_use:
-      // the canUseTool return and this enqueued tool_result. In
-      // practice the SDK we use treats the canUseTool response as
+      // the hook/canUseTool return and this enqueued tool_result. In
+      // practice the SDK we use treats the interception response as
       // authoritative and forwards the tool_result as a regular user
       // message. We tolerate the duplicate rather than try to detect
       // which path the SDK will pick before it picks one.
@@ -645,7 +683,7 @@ export class AskUserQuestionHandler {
       } catch {
         /* non-fatal — the turn is abandoned either way */
       }
-      // Leave the queued answer in place — a future canUseTool fire can
+      // Leave the queued answer in place — a future interception fire can
       // still consume it. Do not rethrow; the user's RPC already
       // succeeded from their perspective (the question is marked
       // resolved and removed from the UI).
@@ -718,7 +756,7 @@ export class AskUserQuestionHandler {
    * Inspect the current queued-answer map.
    *
    * @internal Test-only inspector. Production code MUST NOT depend on this
-   * — it bypasses the canUseTool delivery contract and is exposed solely so
+   * — it bypasses the live-interception delivery contract and is exposed solely so
    * unit tests can assert side-effects of `submitQuestionResponse` and
    * `cancelQuestion` along the post-restart path. Returns a shallow copy
    * so callers cannot mutate handler internals.

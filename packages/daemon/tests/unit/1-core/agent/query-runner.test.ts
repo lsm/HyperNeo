@@ -22,6 +22,7 @@ import type { ProcessingStateManager } from '../../../../src/lib/agent/processin
 import { ErrorCategory, type ErrorManager } from '../../../../src/lib/error-manager';
 import type { Logger } from '../../../../src/lib/logger';
 import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder';
+import type { QueryLike } from '../../../../src/lib/agent/query-like';
 import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-question-handler';
 
 describe('QueryRunner', () => {
@@ -707,6 +708,101 @@ describe('QueryRunner', () => {
         expect(onMissingMemberSpaceMcpServers).not.toHaveBeenCalled();
         expect(buildSpy).toHaveBeenCalledTimes(1);
         expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    describe('AskUserQuestion hook + deferred permission mode wiring', () => {
+      // The SDK's query() cannot be reliably mocked in this file (import is
+      // bound at module load), so the deferred-switch call site past query()
+      // is covered through the extracted applyDeferredPermissionMode method,
+      // and the registration wiring through a run stopped right after the
+      // options build (the wiring happens before build()).
+      it('registers the canUseTool callback and the AskUserQuestion PreToolUse hook', async () => {
+        await withAnthropicApiKey(async () => {
+          isRunningSpy.mockReturnValue(false);
+          mockSession.workspacePath = tmpdir();
+          // Stop deterministically after the wiring point: addSessionStateOptions
+          // runs right after build(), and a non-transient error there prevents
+          // runQuery from ever reaching the un-mockable query() call.
+          addSessionStateOptionsSpy.mockImplementationOnce(() => {
+            throw new Error('stop after wiring');
+          });
+          const ctx = createContext();
+          runner = new QueryRunner(ctx);
+          runner.start();
+          await ctx.queryPromise?.catch(() => {});
+
+          // canUseTool stays registered in every mode: the CLI only exposes
+          // the AskUserQuestion tool when a prompting surface exists.
+          expect(setCanUseToolSpy).toHaveBeenCalledTimes(1);
+          // The PreToolUse hook is registered with the builder and is the
+          // callback produced by the handler.
+          expect(setAskUserQuestionHookSpy).toHaveBeenCalledTimes(1);
+          expect(setAskUserQuestionHookSpy).toHaveBeenCalledWith(
+            createPreToolUseHookSpy.mock.results[0]?.value
+          );
+        });
+      });
+
+      it('applyDeferredPermissionMode switches the live query to the withheld mode', async () => {
+        const setPermissionMode = mock(async () => {});
+        const queryObject = { setPermissionMode } as unknown as QueryLike;
+
+        runner = createRunner();
+        await (
+          runner as unknown as {
+            applyDeferredPermissionMode: (q: QueryLike, m: string | undefined) => Promise<void>;
+          }
+        ).applyDeferredPermissionMode(queryObject, 'bypassPermissions');
+
+        expect(setPermissionMode).toHaveBeenCalledTimes(1);
+        expect(setPermissionMode).toHaveBeenCalledWith('bypassPermissions');
+      });
+
+      it('applyDeferredPermissionMode retries a rejected switch and logs the give-up', async () => {
+        const setPermissionMode = mock(async () => {
+          throw new Error('control stream closed');
+        });
+        const queryObject = { setPermissionMode } as unknown as QueryLike;
+
+        runner = createRunner();
+        await (
+          runner as unknown as {
+            applyDeferredPermissionMode: (q: QueryLike, m: string | undefined) => Promise<void>;
+          }
+        ).applyDeferredPermissionMode(queryObject, 'bypassPermissions');
+
+        // Transient failures are retried, then the give-up is logged at error
+        // level (the session keeps 'default' mode — NOT equivalent to bypass,
+        // permissions.ask rules are denied fail-closed there).
+        expect(setPermissionMode.mock.calls.length).toBe(3);
+        const warnSpy = mockLogger.warn as ReturnType<typeof mock>;
+        expect(warnSpy.mock.calls.length).toBe(2); // attempts 1 and 2
+        const errorSpy = mockLogger.error as ReturnType<typeof mock>;
+        expect(errorSpy.mock.calls.length).toBe(1);
+        const errorText = errorSpy.mock.calls.at(-1)?.join(' ') ?? '';
+        expect(errorText).toContain('bypassPermissions');
+        expect(errorText).toContain('control stream closed');
+        expect(errorText).toContain("'default' permission mode");
+      });
+
+      it('applyDeferredPermissionMode is a no-op without a deferred mode or method', () => {
+        const setPermissionMode = mock(async () => {});
+        const queryObject = { setPermissionMode } as unknown as QueryLike;
+
+        runner = createRunner();
+        const apply = (
+          runner as unknown as {
+            applyDeferredPermissionMode: (q: QueryLike, m: string | undefined) => void;
+          }
+        ).applyDeferredPermissionMode.bind(runner);
+
+        // No deferred mode (non-bypass session): nothing to apply.
+        apply(queryObject, undefined);
+        // Query object without setPermissionMode (unit-test mocks): skip silently.
+        apply({} as QueryLike, 'bypassPermissions');
+
+        expect(setPermissionMode).not.toHaveBeenCalled();
       });
     });
   });

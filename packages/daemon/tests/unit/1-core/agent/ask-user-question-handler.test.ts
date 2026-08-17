@@ -368,9 +368,68 @@ describe('AskUserQuestionHandler', () => {
       );
       expect(emitSpy).toHaveBeenCalledWith(
         'question.injected_as_tool_result',
-        expect.objectContaining({ toolUseId: 'hook-replay', viaCanUseTool: true })
+        expect.objectContaining({ toolUseId: 'hook-replay', via: 'pre_tool_use_hook' })
       );
       expect(handler.getQueuedAnswersForTesting().has('hook-replay')).toBe(false);
+    });
+
+    it('denies malformed tool_input (missing questions) instead of throwing', async () => {
+      const hook = handler.createPreToolUseHook();
+
+      const result = (await hook(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'AskUserQuestion',
+          tool_input: { questions: 'not-an-array' },
+          tool_use_id: 'hook-malformed',
+        },
+        'hook-malformed',
+        { signal: new AbortController().signal }
+      )) as {
+        hookSpecificOutput: { permissionDecision: string; permissionDecisionReason?: string };
+      };
+
+      expect(result.hookSpecificOutput.permissionDecision).toBe('deny');
+      expect(result.hookSpecificOutput.permissionDecisionReason).toContain('malformed');
+      expect(setWaitingForInputSpy).not.toHaveBeenCalled();
+    });
+
+    it('rejects the superseded resolver when a second question arrives while one is pending', async () => {
+      const hook = handler.createPreToolUseHook();
+
+      const firstPromise = hook(preToolUseInput('AskUserQuestion', 'hook-dup-1'), 'hook-dup-1', {
+        signal: new AbortController().signal,
+      });
+      // Attach a handler immediately — the rejection fires synchronously when
+      // the second call's executor runs below, and an briefly-unhandled
+      // rejection would be reported by the runner before the assertion.
+      let firstError: Error | undefined;
+      const firstSettled = firstPromise.then(
+        () => {
+          firstError = new Error('expected the superseded call to reject');
+        },
+        (e: Error) => {
+          firstError = e;
+        }
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // A second AskUserQuestion call in the same turn replaces the first.
+      const secondPromise = hook(preToolUseInput('AskUserQuestion', 'hook-dup-2'), 'hook-dup-2', {
+        signal: new AbortController().signal,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // The first call settled (rejected), not hanging forever.
+      await firstSettled;
+      expect(firstError?.message).toContain('Superseded');
+
+      // The second question is the live one and resolves normally.
+      await handler.handleQuestionCancel('hook-dup-2');
+      const second = (await secondPromise) as {
+        hookSpecificOutput: { permissionDecision: string };
+      };
+      expect(second.hookSpecificOutput.permissionDecision).toBe('deny');
     });
   });
 
@@ -476,7 +535,7 @@ describe('AskUserQuestionHandler', () => {
           sessionId: testSessionId,
           toolUseId: 'tool-123',
           mode: 'submitted',
-          viaCanUseTool: false,
+          via: 'tool_result',
         })
       );
     });
@@ -828,7 +887,7 @@ describe('AskUserQuestionHandler', () => {
         'question.injected_as_tool_result',
         expect.objectContaining({
           mode: 'cancelled',
-          viaCanUseTool: false,
+          via: 'tool_result',
         })
       );
     });
@@ -1121,7 +1180,7 @@ describe('AskUserQuestionHandler', () => {
   });
 
   describe('createCanUseToolCallback queued-answer fast path', () => {
-    it('consumes a queued allow without re-prompting and emits viaCanUseTool=true', async () => {
+    it('consumes a queued allow without re-prompting and emits via=can_use_tool', async () => {
       // Pre-populate the queued-answer map by simulating a post-restart
       // handleQuestionResponse that ran before the SDK re-issued the
       // AskUserQuestion call.
@@ -1164,13 +1223,13 @@ describe('AskUserQuestionHandler', () => {
         (result as { updatedInput: { answers: Record<string, string> } }).updatedInput.answers
       ).toEqual({ 'Pick?': 'A' });
 
-      // Telemetry should record viaCanUseTool=true on consume
+      // Telemetry should record via=can_use_tool on consume
       expect(emitSpy).toHaveBeenCalledWith(
         'question.injected_as_tool_result',
         expect.objectContaining({
           toolUseId: 'replay-tool',
           mode: 'submitted',
-          viaCanUseTool: true,
+          via: 'can_use_tool',
         })
       );
 

@@ -522,6 +522,58 @@ export class QueryRunner {
   }
 
   /**
+   * Apply the deferred permission mode withheld by `QueryOptionsBuilder.build()`.
+   *
+   * For bypassPermissions sessions the builder omits `permissionMode` from the
+   * SDK options (see QueryOptionsBuilder.getDeferredPermissionMode) so the SDK
+   * does not warn that canUseTool is shadowed — canUseTool must stay registered
+   * for the CLI to expose the AskUserQuestion tool, and the PreToolUse hook
+   * delivers the answers. The control request queues behind the initialize
+   * handshake, so the session runs the real mode from its first turn.
+   *
+   * `setPermissionMode` is idempotent, so every query (re)spawn re-applies the
+   * switch via this call site, and a transient failure within one long-lived
+   * streaming query is retried here. If all attempts fail the session keeps
+   * the intake 'default' mode: canUseTool's allow-all fallback auto-approves
+   * consults there, but it is NOT identical to bypass — a permissions.ask rule
+   * that bypass would auto-approve is instead denied fail-closed by the
+   * canUseTool callback — so the final failure is logged at error level.
+   */
+  private async applyDeferredPermissionMode(
+    queryObject: QueryLike,
+    deferredPermissionMode: string | undefined
+  ): Promise<void> {
+    if (!deferredPermissionMode || !queryObject.setPermissionMode) return;
+    const { session, logger } = this.ctx;
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await queryObject.setPermissionMode(deferredPermissionMode);
+        return;
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        if (attempt === maxAttempts) {
+          logger.error(
+            `QueryRunner.start: failed to apply deferred permission mode ` +
+              `'${deferredPermissionMode}' for session ${session.id} after ` +
+              `${maxAttempts} attempts: ${detail}. Session continues in the ` +
+              `'default' permission mode (canUseTool allow-all fallback; ` +
+              `permissions.ask rules are denied fail-closed instead of ` +
+              `bypassed). The mode is re-applied on the next query spawn.`
+          );
+          return;
+        }
+        logger.warn(
+          `QueryRunner.start: deferred permission mode ` +
+            `'${deferredPermissionMode}' for session ${session.id} failed on ` +
+            `attempt ${attempt}/${maxAttempts}: ${detail}; retrying`
+        );
+        await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+      }
+    }
+  }
+
+  /**
    * Run the query (main execution loop)
    *
    * @param queryGeneration - Generation counter to detect stale queries
@@ -895,25 +947,12 @@ export class QueryRunner {
       });
       this.ctx.queryObject = queryObject;
 
-      // Apply the deferred bypassPermissions switch. `build()` withheld the
-      // mode from the options (see QueryOptionsBuilder.getDeferredPermissionMode)
-      // so the SDK does not warn that canUseTool is shadowed — canUseTool must
-      // stay registered for the CLI to expose the AskUserQuestion tool, and the
-      // PreToolUse hook delivers the answers. The control request queues behind
-      // the initialize handshake, so the session runs the real mode from its
-      // first turn. Fire-and-forget: if the switch fails the session keeps the
-      // intake default ('default' mode) where canUseTool's allow-all fallback
-      // preserves effectively identical tool behavior.
-      const deferredPermissionMode = optionsBuilder.getDeferredPermissionMode();
-      if (deferredPermissionMode && queryObject.setPermissionMode) {
-        void queryObject.setPermissionMode(deferredPermissionMode).catch((err) => {
-          logger.warn(
-            `QueryRunner.start: failed to apply deferred permission mode ` +
-              `'${deferredPermissionMode}' for session ${session.id}: ` +
-              `${err instanceof Error ? err.message : String(err)}`
-          );
-        });
-      }
+      // Apply the deferred bypassPermissions switch (see
+      // applyDeferredPermissionMode for why the mode is withheld at intake).
+      void this.applyDeferredPermissionMode(
+        queryObject,
+        optionsBuilder.getDeferredPermissionMode()
+      );
 
       // Drain any MCP-server change that arrived during startup. Streaming-input
       // queries run once per session (start() is a no-op while the message queue
