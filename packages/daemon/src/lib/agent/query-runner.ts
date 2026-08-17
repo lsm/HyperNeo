@@ -193,6 +193,8 @@ function getStartupRetryBaseMs(): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_STARTUP_RETRY_BASE_MS;
 }
 
+// Exported for AcpQueryRunner, which shares the same knobs so operators have
+// one contract across both session runners.
 export function getMaxStartupTimeoutRetries(): number {
   const raw = process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX;
   if (!raw) return DEFAULT_MAX_STARTUP_TIMEOUT_RETRIES;

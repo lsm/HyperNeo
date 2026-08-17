@@ -23,6 +23,8 @@ import { AcpProvider } from '../providers/acp-provider';
 import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from '../agent/transient-error-patterns';
 import { drainDeliveryWaitersOnTerminalSDKMessage } from '../agent/message-delivery';
 import {
+  getMaxStartupTimeoutRetries,
+  getStartupRetryDelayMs,
   refreshQueryEnvFromProcess,
   type QueryRunnerContext,
   type TrackedAgentProcess,
@@ -48,6 +50,10 @@ function getStartupTimeoutMs(): number {
   if (!raw) return DEFAULT_STARTUP_TIMEOUT_MS;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STARTUP_TIMEOUT_MS;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function getAcpContextWindow(): number {
@@ -411,6 +417,30 @@ export class AcpQueryRunner {
     content: string | MessageContent[];
   } | null = null;
 
+  /**
+   * Consecutive startup-timeout retry budget for the delivery currently being
+   * (re)driven, keyed by the delivery's kickoff message uuid — the ACP mirror
+   * of QueryRunner._startupTimeoutRetryState (PR #2551). Per-delivery: a
+   * different message starts fresh, and any accepted ACP prompt clears it
+   * (see the messageCount === 1 branch in runQuery).
+   *
+   * The state intentionally lives on this long-lived instance — NOT in
+   * runQuery's isRetry parameter — so IN-PROCESS redrives of the SAME message
+   * (delivery-layer redrive, stale-claim reclaim) keep counting toward the cap
+   * instead of resetting to zero on every redrive; that reset is what made the
+   * 2026-08-16 restart-recovery herd self-sustaining on the SDK side. Scope:
+   * per process only — a daemon restart or an ACP↔non-ACP runner swap
+   * (AgentSession.startStreamingQuery recreates the runner) starts from a
+   * fresh budget. `key: null` means nothing was consumed AND nothing is
+   * pending in the queue — residual null attempts charge the in-flight budget
+   * so persistent, unidentified starvation stays bounded
+   * (see claimStartupTimeoutRetry).
+   */
+  private _startupTimeoutRetryState: { key: string | null; retries: number } = {
+    key: null,
+    retries: 0,
+  };
+
   get lastConsumedUserMessage() {
     return this._lastConsumedUserMessage;
   }
@@ -467,6 +497,12 @@ export class AcpQueryRunner {
     // only the retained reference distinguishes "interrupted during the run"
     // from "aborted during normal cleanup".
     let runAbortController: AbortController | null = this.ctx.queryAbortController;
+    // A fresh attempt owns no in-flight prompt. Clearing here prevents a stale
+    // _lastConsumedUserMessage from a PREVIOUS chain (it survives turn
+    // completion — only the retry branches null it) from keying this attempt's
+    // starved-handshake timeout onto the wrong delivery, or re-feeding a
+    // completed prompt. Retry recursions re-set it on the replay's first yield.
+    this._lastConsumedUserMessage = null;
 
     try {
       const { initializeProviders, waitForOptionalProviderRegistration } = await import(
@@ -747,6 +783,12 @@ export class AcpQueryRunner {
                 this.persistAcpInstructionsSent();
               }
               this.clearStartupTimer();
+              // This prompt's delivery started successfully (the ACP agent
+              // accepted it) — its startup-timeout backoff budget is spent. A
+              // later delivery, or a redrive of this message, must start from
+              // a fresh budget, not inherit stale backoff/cap state. (Mirrors
+              // the messageCount === 1 branch in QueryRunner.runQuery.)
+              this.clearStartupTimeoutRetryBudget();
             }
             this.ctx.firstMessageReceived = true;
 
@@ -938,24 +980,255 @@ export class AcpQueryRunner {
       errorMessage.includes(substr)
     );
 
+    // Auto-retry startup timeouts with per-delivery exponential backoff and a
+    // hard attempt cap, mirroring QueryRunner (PR #2551): the user shouldn't
+    // have to resend after a transient startup failure, but immediate retries
+    // also regenerate the concurrent-start load that causes startup timeouts
+    // under a restart-recovery herd, so they back off (base → 2×base → 4×base
+    // → …) and stop past the cap, settling the delivery as failed. The budget
+    // is keyed by the delivery's kickoff message uuid and survives
+    // delivery-layer redrives of the same message; the schedule and cap share
+    // the SDK runner's HYPERNEO_SDK_STARTUP_RETRY_BASE_MS /
+    // HYPERNEO_SDK_STARTUP_RETRY_MAX knobs so operators have one contract.
+    // Skip messageQueue.clear() so the user's pending tail survives for the
+    // retry. An interrupt that raced this catch must not respawn:
+    // interrupt-handler sets 'interrupted' without bumping the generation, so
+    // this entry status guard (not just the generation/isCleaningUp checks
+    // above) stops a fresh subprocess spawning on a stopped session; the
+    // post-sleep guard re-checks it for interrupts that land DURING the
+    // backoff window.
     if (
-      (isStartupTimeout || (isTransientConnectionError && !isQueryInterrupted)) &&
-      !isRetry &&
-      !this.ctx.isCleaningUp()
+      isStartupTimeout &&
+      !this.ctx.isCleaningUp() &&
+      stateManager.getState().status !== 'interrupted'
     ) {
-      logger.warn(
-        isStartupTimeout
-          ? 'Auto-retrying ACP query after startup timeout (1 retry).'
-          : 'Auto-retrying ACP query after transient connection error (1 retry).'
-      );
+      // Charge this timeout to the delivery's budget BEFORE anything async
+      // (the path from the per-prompt throw to here is synchronous): every
+      // catch entry must count exactly once even if the retry is later
+      // cancelled mid-backoff. The in-flight prompt identifies the delivery
+      // across redrives (redrives re-enqueue the durable message under the
+      // same uuid). When nothing was consumed yet (handshake starvation),
+      // the first message still PENDING in the queue is the delivery being
+      // started — key on it so a starved first timeout of a NEW delivery gets
+      // a fresh budget (and the settled-failed check below applies) instead
+      // of charging whatever delivery timed out before it.
+      const deliveryKey =
+        this._lastConsumedUserMessage?.uuid ?? messageQueue.peekNextUserMessageId() ?? null;
+      const retryNumber = this.claimStartupTimeoutRetry(deliveryKey);
+
+      if (retryNumber === null) {
+        logger.warn(
+          `Startup-timeout retry budget exhausted for this delivery ` +
+            `(${this._startupTimeoutRetryState.retries} consecutive timeout(s), ` +
+            `cap ${getMaxStartupTimeoutRetries()}); giving up and surfacing the failure — ` +
+            `the per-prompt settle already terminalized the delivery row.`
+        );
+        // Fall through to the terminal error path below: the per-prompt
+        // finally already marked the kickoff row failed (markACPDeliveryFailed),
+        // and handleError surfaces the actionable resend hint.
+      } else {
+        const maxStartupRetries = getMaxStartupTimeoutRetries();
+        const delayMs = getStartupRetryDelayMs(retryNumber);
+        logger.warn(
+          `Auto-retrying ACP query after startup timeout ` +
+            `(retry ${retryNumber}/${maxStartupRetries} in ${delayMs}ms).`
+        );
+        // Deliberately do NOT call stateManager.setIdle() here (the transient
+        // retry below still does — it recurses near-instantly). The startup
+        // retry sleeps 15–240 s before respawning; publishing idle for that
+        // window would (a) make handleInterrupt early-return on idle, silently
+        // dropping a Stop pressed during the backoff, (b) show the session as
+        // idle for up to ~4 min per round, and (c) let waitForIdle observers
+        // false-pass on the blip. Mirrors QueryRunner: stay 'processing'
+        // during backoff — queryPromise is still set, the retry's generator
+        // re-asserts 'processing' on its first yield, and the finally sets
+        // 'idle' when the chain actually completes.
+
+        if (createdAcpSessionDuringRun && !receivedAcpMessageDuringRun) {
+          this.persistAcpSessionId(undefined);
+        }
+
+        // The per-prompt finally terminalized the timed-out row as
+        // fail-ambiguous (markACPDeliveryFailed — submitted but never
+        // accepted). Reopen it so the retry's resubmission can re-drive the
+        // same uuid (enqueued → submitted): without this, markMessageSubmitted
+        // finds no 'enqueued' row and aborts the retried prompt as revoked.
+        // The reopen ALSO makes the post-backoff settled-failed check below
+        // meaningful: the row is 'enqueued' during the window, so a 'failed'
+        // read at wake can only mean the delivery layer (consumption timeout /
+        // dead-letter) or an interrupt settled it while we slept.
+        const retryMessage = this._lastConsumedUserMessage;
+        if (retryMessage) {
+          try {
+            const reopenedId = this.ctx.db
+              .getSDKMessageRepo()
+              .reopenDeliveryByUuid(session.id, retryMessage.uuid);
+            if (reopenedId) {
+              this.ctx.internalEventBus
+                .publish('messages.statusChanged', {
+                  sessionId: session.id,
+                  messageIds: [reopenedId],
+                  status: 'enqueued',
+                })
+                .catch(() => {});
+            }
+          } catch (err) {
+            logger.warn('Failed to reopen the startup-retry delivery row:', err);
+          }
+        }
+
+        // Clean-slate teardown: close the dead client/transport, drop the MCP
+        // proxy bridge, and wait for the subprocess to exit so the retry's
+        // fresh spawn does not collide with workspace locks.
+        if (this.ctx.queryObject) {
+          try {
+            this.ctx.queryObject.close();
+          } catch {
+            // Ignore close errors
+          }
+          this.ctx.queryObject = null;
+        } else {
+          client?.close();
+        }
+        await closeProxyBridge();
+
+        const exitPromise = this.ctx.processExitedPromise;
+        if (exitPromise) {
+          await Promise.race([
+            exitPromise,
+            new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
+          ]);
+          // Clear only if the tracking still belongs to the old subprocess —
+          // a concurrent start during the await may have installed the
+          // replacement's exit promise. (Mirrors QueryRunner.)
+          if (this.ctx.processExitedPromise === exitPromise) {
+            this.ctx.resetProcessExitedPromise();
+          }
+        }
+
+        // Restore provider env vars BEFORE the backoff sleep so process.env
+        // is clean during the (potentially minutes-long) wait, and so a
+        // cancelled return below cannot skip the restore — the finally block
+        // skips cleanup for stale queries. The recursive attempt re-applies
+        // fresh provider env. (Mirrors QueryRunner.)
+        const envVarsToRestore = this.ctx.originalEnvVars;
+        if (Object.keys(envVarsToRestore).length > 0) {
+          getProviderService().restoreEnvVars(envVarsToRestore);
+          this.ctx.originalEnvVars = {};
+        }
+
+        // Exponential backoff before the retry attempt — immediate retries
+        // are what make a concurrent-start herd self-sustaining (each retry
+        // respawns an ACP subprocess into the very load that timed it out).
+        // Sleeps AFTER teardown so the wait is not spent holding a dead
+        // subprocess. (Mirrors the provider-retry / startup-retry ordering in
+        // QueryRunner.)
+        await sleep(delayMs);
+
+        // Cancellation guard at wake (mirrors QueryRunner, incl. its PR #2551
+        // P1 thread). This attempt's controller was legitimately ABORTED by
+        // the startup timer, but abort() leaves it non-null — null can only
+        // mean handleInterrupt (a COMPLETED Stop nulls the controller without
+        // touching the generation, queryPromise, or — here — the reopened
+        // 'enqueued' row the settled check below reads) or the lifecycle stop
+        // (already covered by the queryPromise disjunct). Cancellation
+        // signals, all cheap:
+        // - ctx.queryPromise === null — stall-watchdog reset / lifecycle
+        //   stop gave up on this chain (no generation bump).
+        // - ctx.queryAbortController === null — a completed user Stop.
+        // - generation supersession / interrupted status / shutdown.
+        if (
+          this.ctx.isCleaningUp() ||
+          this.ctx.queryAbortController === null ||
+          this.ctx.queryPromise === null ||
+          this.ctx.getQueryGeneration() !== queryGeneration ||
+          stateManager.getState().status === 'interrupted'
+        ) {
+          logger.warn(
+            'Startup-timeout retry cancelled: session interrupted/stopped/restarted/reset/cleaning up during backoff.'
+          );
+          return;
+        }
+
+        // Delivery row settled failed during the window: the reopen above
+        // left it 'enqueued', so this read can only be true when the
+        // delivery layer's consumption timeout / dead-letter — or an
+        // interrupt — terminalized it while we slept. Retrying would respawn
+        // subprocesses for a delivery the layer already settled; abandon and
+        // let the settled state stand. (Mirrors QueryRunner; runs AFTER the
+        // cheap disjuncts and reads a single row.)
+        if (
+          deliveryKey !== null &&
+          this.ctx.db.getMessageByStatusAndUuid(session.id, 'failed', deliveryKey)
+        ) {
+          logger.warn(
+            'Startup-timeout retry cancelled: delivery already settled failed during backoff ' +
+              `(message ${deliveryKey}).`
+          );
+          return;
+        }
+
+        // A stop path that ran during the waits above may have stopped the
+        // queue without tripping the guards above; restart it so the replay
+        // below can feed the retry (the retry's generator exits immediately
+        // while the queue is stopped and the attempt would time out again at
+        // zero messages). No-op when still running. (Mirrors QueryRunner.)
+        if (
+          !messageQueue.isRunning() &&
+          !this.ctx.isCleaningUp() &&
+          stateManager.getState().status !== 'interrupted'
+        ) {
+          messageQueue.start();
+        }
+
+        // Re-feed the timed-out prompt AFTER the backoff (not before the
+        // teardown) so the replay does not expire in the queue
+        // (enqueueWithId has a ~30s TTL) during a long backoff window. ACP
+        // replays the single in-flight prompt only — unlike the SDK runner
+        // (whose streaming-input generator can hand a silent subprocess the
+        // kickoff AND trailing steers, hence PR #2499's multi-message
+        // replay), the ACP outer loop awaits each prompt's turn to completion
+        // before pulling the next message, so a startup timeout always has
+        // exactly one un-consumed prompt. Unlike the SDK runner there is also
+        // no startup-gate wait between this enqueue and the generator attach
+        // (PR #2552 gates SDK spawns only), so no gate-admission deferral is
+        // needed — the enqueue-to-consume gap is the recursion itself.
+        if (retryMessage) {
+          // Duplicate guard (mirrors the SDK runner's staged-replay guard):
+          // the reopen above left the durable row 'enqueued', so a
+          // delivery-layer redrive during the backoff window may have
+          // re-admitted this same uuid — admitWithId is not idempotent, and
+          // feeding it twice would hand the ACP agent the same prompt twice.
+          // The retry's generator consumes the existing admission instead.
+          if (messageQueue.hasPendingOrInFlight(retryMessage.uuid)) {
+            logger.warn(
+              `Startup replay skip: message ${retryMessage.uuid} is already pending or ` +
+                'in-flight (a redrive re-admitted it); not feeding it twice.'
+            );
+          } else {
+            messageQueue.enqueueWithId(retryMessage.uuid, retryMessage.content).catch(() => {});
+          }
+          this._lastConsumedUserMessage = null;
+        }
+
+        // `return await` keeps this chain's finally{} from racing the retry
+        // (it runs only after the retry chain completes). isRetry=true also
+        // disables the 1-shot transient retry on later attempts — the shared
+        // budget bounds TOTAL retries per turn, mirroring QueryRunner.
+        return await this.runQuery(queryGeneration, true, recoveryState);
+      }
+    }
+
+    // Auto-retry once on transient connection errors (mid-stream connection
+    // drop that escapes the ACP client's own handling) — near-instant
+    // recursion, so the intermediate setIdle (suppressed delivery waiters) is
+    // safe here, unlike the startup-timeout backoff above.
+    if (isTransientConnectionError && !isQueryInterrupted && !isRetry && !this.ctx.isCleaningUp()) {
+      logger.warn('Auto-retrying ACP query after transient connection error (1 retry).');
       await stateManager.setIdle({ suppressDeliveryWaiters: true });
 
-      if (isStartupTimeout && createdAcpSessionDuringRun && !receivedAcpMessageDuringRun) {
-        this.persistAcpSessionId(undefined);
-      }
-
       const lastMsg = this._lastConsumedUserMessage;
-      if (lastMsg && (isStartupTimeout || isTransientConnectionError)) {
+      if (lastMsg) {
         messageQueue.enqueueWithId(lastMsg.uuid, lastMsg.content).catch(() => {});
         this._lastConsumedUserMessage = null;
       }
@@ -1053,6 +1326,35 @@ export class AcpQueryRunner {
   private async handleSDKMessage(message: SDKMessage): Promise<void> {
     await this.ctx.onSDKMessage(message);
     await this.ctx.onMarkApiSuccess(message);
+  }
+
+  /**
+   * Record one startup timeout against the delivery identified by `deliveryKey`
+   * (its kickoff message uuid, or null when nothing was consumed yet) and
+   * return the 1-indexed retry number to run — or null when the per-delivery
+   * budget is exhausted and the delivery must settle failed instead of
+   * looping. (Mirrors QueryRunner.claimStartupTimeoutRetry.)
+   */
+  private claimStartupTimeoutRetry(deliveryKey: string | null): number | null {
+    const state = this._startupTimeoutRetryState;
+    if (deliveryKey !== null && state.key !== deliveryKey) {
+      // An identified, DIFFERENT delivery — the previous delivery's backoff
+      // state must not leak into it.
+      this._startupTimeoutRetryState = { key: deliveryKey, retries: 1 };
+    } else {
+      // Same delivery, or an unidentified (starved) attempt: charge the
+      // in-flight budget. Charging starved attempts instead of resetting keeps
+      // a consume/no-consume flap from resetting the budget every other round
+      // (which would unbound the loop this cap exists to close).
+      state.retries += 1;
+    }
+    const { retries } = this._startupTimeoutRetryState;
+    return retries <= getMaxStartupTimeoutRetries() ? retries : null;
+  }
+
+  /** Startup succeeded for the in-flight delivery — clear its backoff budget. */
+  private clearStartupTimeoutRetryBudget(): void {
+    this._startupTimeoutRetryState = { key: null, retries: 0 };
   }
 
   private async ensureRequiredMcpServersForAcp(queryOptions: Options): Promise<Options> {

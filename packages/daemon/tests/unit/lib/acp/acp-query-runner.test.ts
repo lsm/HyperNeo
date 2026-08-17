@@ -124,6 +124,8 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     stop: stopSpy,
     clear: mock(() => {}),
     size: mock(() => overrides.queueSize ?? 0),
+    peekNextUserMessageId: mock(() => null),
+    hasPendingOrInFlight: mock(() => false),
     enqueueWithId: mock(async () => {}),
     onMessageEnqueued: undefined,
     messageGenerator: mock(generatorFactory),
@@ -154,11 +156,17 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     metadata: overrides.session?.metadata ?? baseSession.metadata,
   } as Session;
 
+  const sdkRepo = {
+    reopenDeliveryByUuid: mock(() => 'reopened-db-id'),
+  };
+
   const ctx: QueryRunnerContext = {
     session,
     db: {
       saveSDKMessage: mock(() => {}),
       updateSession: mock(() => {}),
+      getMessageByStatusAndUuid: mock(() => null),
+      getSDKMessageRepo: mock(() => sdkRepo),
       getNodeExecutionRepo: mock(() => ({
         getByAgentSessionId: mock(() => null),
         getById: mock(() => null),
@@ -166,7 +174,7 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
       getSpaceTaskRepo: mock(() => ({ getTask: mock(() => null) })),
     } as unknown as Database,
     messageHub: { event: mock(() => {}) } as unknown as MessageHub,
-    internalEventBus: { publishAsync: mock(async () => {}) },
+    internalEventBus: { publish: mock(async () => {}), publishAsync: mock(async () => {}) },
     messageQueue,
     stateManager: {
       getState: mock(() => ({ status: 'idle' })),
@@ -231,7 +239,60 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     onMarkApiSuccess,
     canUseTool,
     messageQueue,
+    sdkRepo,
   };
+}
+
+/**
+ * Pin the shared startup-retry knobs for one test (returning a restore fn).
+ * Mirrors the query-runner suites' treatment of PR #2551: base 0 keeps retries
+ * near-immediate and cap 1 preserves the single-retry-entry shape the
+ * pre-existing startup tests were written for — the daemon defaults would
+ * sleep 15 s per retry and allow 5 rounds.
+ */
+function pinStartupRetryEnv(overrides?: { timeout?: string; base?: string; max?: string }) {
+  const saved: Record<string, string | undefined> = {
+    HYPERNEO_SDK_STARTUP_TIMEOUT_MS: process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS,
+    HYPERNEO_SDK_STARTUP_RETRY_BASE_MS: process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS,
+    HYPERNEO_SDK_STARTUP_RETRY_MAX: process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX,
+  };
+  process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = overrides?.timeout ?? '20';
+  process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = overrides?.base ?? '0';
+  process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = overrides?.max ?? '1';
+  return () => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  };
+}
+
+/** A client whose prompt never answers — its startup timer always fires. */
+function createHangingClient(): ReturnType<typeof createMockClient> {
+  const client = createMockClient();
+  let releasePrompt: (() => void) | undefined;
+  client.close.mockImplementation(() => releasePrompt?.());
+  client.sendPrompt.mockImplementation(async function* () {
+    await new Promise<void>((resolve) => {
+      releasePrompt = resolve;
+    });
+  });
+  return client;
+}
+
+type WarnCaptureCtx = { logger: { warn: { mock: { calls: unknown[][] } } } };
+
+function warnLines(ctx: WarnCaptureCtx): string[] {
+  return ctx.logger.warn.mock.calls.map((args) => args.map(String).join(' '));
+}
+
+/** Poll briefly until a warn containing `fragment` has been logged. */
+async function waitForWarn(ctx: WarnCaptureCtx, fragment: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (warnLines(ctx).some((line) => line.includes(fragment))) return true;
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+  return false;
 }
 
 describe('AcpQueryRunner', () => {
@@ -1001,8 +1062,7 @@ describe('AcpQueryRunner', () => {
       },
     });
 
-    const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+    const restoreStartupRetryEnv = pinStartupRetryEnv();
     try {
       await runner.start();
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -1015,8 +1075,7 @@ describe('AcpQueryRunner', () => {
 
       expect(client.sendPrompt).toHaveBeenCalled();
     } finally {
-      if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-      else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+      restoreStartupRetryEnv();
     }
   }, 1000);
 
@@ -1042,8 +1101,7 @@ describe('AcpQueryRunner', () => {
     };
     const runner = new AcpQueryRunner(ctx, () => clients.shift() as unknown as AcpClient);
 
-    const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+    const restoreStartupRetryEnv = pinStartupRetryEnv();
     try {
       await runner.start();
       await ctx.queryPromise;
@@ -1053,8 +1111,7 @@ describe('AcpQueryRunner', () => {
       expect(secondClient.sendPrompt).toHaveBeenCalled();
       expect(messageQueue.onMessageEnqueued).toBe(previousOnMessageEnqueued);
     } finally {
-      if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-      else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+      restoreStartupRetryEnv();
     }
   }, 1000);
 
@@ -1073,8 +1130,7 @@ describe('AcpQueryRunner', () => {
     const { ctx } = createRunnerFixture({ client: firstClient, queueSize: 1 });
     const runner = new AcpQueryRunner(ctx, () => clients.shift() as unknown as AcpClient);
 
-    const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+    const restoreStartupRetryEnv = pinStartupRetryEnv();
     try {
       await runner.start();
       await ctx.queryPromise;
@@ -1082,8 +1138,7 @@ describe('AcpQueryRunner', () => {
       expect(firstClient.close).toHaveBeenCalled();
       expect(secondClient.sendPrompt).toHaveBeenCalled();
     } finally {
-      if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-      else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+      restoreStartupRetryEnv();
     }
   }, 1000);
 
@@ -1116,8 +1171,7 @@ describe('AcpQueryRunner', () => {
     });
     const runner = new AcpQueryRunner(ctx, () => clients.shift() as unknown as AcpClient);
 
-    const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+    const restoreStartupRetryEnv = pinStartupRetryEnv();
     try {
       await runner.start();
       await ctx.queryPromise;
@@ -1131,8 +1185,7 @@ describe('AcpQueryRunner', () => {
         acpSessionId: undefined,
       });
     } finally {
-      if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-      else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+      restoreStartupRetryEnv();
     }
   }, 1000);
 
@@ -1156,8 +1209,7 @@ describe('AcpQueryRunner', () => {
     });
     const retryRunner = new AcpQueryRunner(ctx, createClient);
 
-    const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+    const restoreStartupRetryEnv = pinStartupRetryEnv();
     try {
       await retryRunner.start();
       await ctx.queryPromise;
@@ -1169,8 +1221,7 @@ describe('AcpQueryRunner', () => {
       ]);
       expect(secondClient.sendPrompt).toHaveBeenCalled();
     } finally {
-      if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-      else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+      restoreStartupRetryEnv();
     }
   }, 1000);
 
@@ -1362,5 +1413,300 @@ describe('AcpQueryRunner', () => {
 
     expect(client.sendPrompt).toHaveBeenCalled();
     expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+  }, 1000);
+});
+
+describe('AcpQueryRunner startup-timeout bounded retry', () => {
+  let originalAcpCommand: string | undefined;
+
+  beforeEach(() => {
+    originalAcpCommand = process.env.HYPERNEO_ACP_COMMAND;
+    process.env.HYPERNEO_ACP_COMMAND = 'mock-acp --stdio';
+    resetProviderRegistry();
+    resetProviderFactory();
+  });
+
+  afterEach(() => {
+    if (originalAcpCommand === undefined) delete process.env.HYPERNEO_ACP_COMMAND;
+    else process.env.HYPERNEO_ACP_COMMAND = originalAcpCommand;
+    resetProviderRegistry();
+    resetProviderFactory();
+  });
+
+  test('backs off exponentially and settles failed past the cap', async () => {
+    const restoreStartupRetryEnv = pinStartupRetryEnv({ base: '25', max: '2' });
+    try {
+      const clients = [createHangingClient(), createHangingClient(), createHangingClient()];
+      const { ctx, sdkRepo } = createRunnerFixture({ client: clients[0] });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      // The scheduled delays are pinned by the warn lines (1 → base, 2 → 2×base).
+      const lines = warnLines(ctx);
+      expect(
+        lines.some((line) =>
+          line.includes('Auto-retrying ACP query after startup timeout (retry 1/2 in 25ms)')
+        )
+      ).toBe(true);
+      expect(lines.some((line) => line.includes('(retry 2/2 in 50ms)'))).toBe(true);
+      // Third timeout: budget exhausted → terminal settle, no fourth client.
+      expect(lines.some((line) => line.includes('Startup-timeout retry budget exhausted'))).toBe(
+        true
+      );
+      expect(createClient).toHaveBeenCalledTimes(3);
+      expect(ctx.errorManager.handleError).toHaveBeenCalledWith(
+        'session-1',
+        expect.any(Error),
+        'timeout',
+        expect.stringContaining('ACP agent failed to start'),
+        expect.any(Object),
+        expect.objectContaining({ providerId: 'acp' })
+      );
+      // Each retry reopens the fail-ambiguous row so the retried prompt can
+      // resubmit under the same uuid (markMessageSubmitted requires an
+      // 'enqueued' row).
+      expect(sdkRepo.reopenDeliveryByUuid).toHaveBeenCalledWith('session-1', 'user-message-1');
+      expect(sdkRepo.reopenDeliveryByUuid).toHaveBeenCalledTimes(2);
+    } finally {
+      restoreStartupRetryEnv();
+    }
+  }, 1000);
+
+  test('cancels the retry when a COMPLETED Stop lands during the backoff', async () => {
+    const restoreStartupRetryEnv = pinStartupRetryEnv({ base: '60' });
+    try {
+      const clients = [createHangingClient(), createMockClient()];
+      const { ctx, messageQueue } = createRunnerFixture({ client: clients[0] });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      await runner.start();
+      expect(await waitForWarn(ctx, 'Auto-retrying ACP query')).toBe(true);
+
+      // A completed Stop: handleInterrupt nulls the controller without
+      // touching the generation or queryPromise, and returns the session to
+      // idle — none of which the generation/status checks observe. Only the
+      // controller-null disjunct catches it.
+      ctx.queryAbortController = null;
+      await ctx.queryPromise;
+
+      expect(createClient).toHaveBeenCalledTimes(1);
+      expect(warnLines(ctx).some((line) => line.includes('Startup-timeout retry cancelled'))).toBe(
+        true
+      );
+      expect(messageQueue.enqueueWithId).not.toHaveBeenCalled();
+    } finally {
+      restoreStartupRetryEnv();
+    }
+  }, 1000);
+
+  test('cancels the retry when a lifecycle stop nulls queryPromise during the backoff', async () => {
+    const restoreStartupRetryEnv = pinStartupRetryEnv({ base: '60' });
+    try {
+      const clients = [createHangingClient(), createMockClient()];
+      const { ctx } = createRunnerFixture({ client: clients[0] });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      await runner.start();
+      const chain = ctx.queryPromise;
+      expect(await waitForWarn(ctx, 'Auto-retrying ACP query')).toBe(true);
+
+      // The stall-watchdog reset / lifecycle stop nulls queryPromise without
+      // bumping the generation.
+      ctx.queryPromise = null;
+      await chain;
+
+      expect(createClient).toHaveBeenCalledTimes(1);
+      expect(warnLines(ctx).some((line) => line.includes('Startup-timeout retry cancelled'))).toBe(
+        true
+      );
+    } finally {
+      restoreStartupRetryEnv();
+    }
+  }, 1000);
+
+  test('cancels the retry when a replacement query bumps the generation during the backoff', async () => {
+    const restoreStartupRetryEnv = pinStartupRetryEnv({ base: '60' });
+    try {
+      const clients = [createHangingClient(), createMockClient()];
+      const { ctx } = createRunnerFixture({ client: clients[0] });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      await runner.start();
+      expect(await waitForWarn(ctx, 'Auto-retrying ACP query')).toBe(true);
+
+      ctx.incrementQueryGeneration();
+      await ctx.queryPromise;
+
+      expect(createClient).toHaveBeenCalledTimes(1);
+      expect(warnLines(ctx).some((line) => line.includes('Startup-timeout retry cancelled'))).toBe(
+        true
+      );
+    } finally {
+      restoreStartupRetryEnv();
+    }
+  }, 1000);
+
+  test('cancels the retry when the session enters cleanup during the backoff', async () => {
+    const restoreStartupRetryEnv = pinStartupRetryEnv({ base: '60' });
+    try {
+      const clients = [createHangingClient(), createMockClient()];
+      const { ctx } = createRunnerFixture({ client: clients[0] });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      await runner.start();
+      expect(await waitForWarn(ctx, 'Auto-retrying ACP query')).toBe(true);
+
+      ctx.isCleaningUp = () => true;
+      await ctx.queryPromise;
+
+      expect(createClient).toHaveBeenCalledTimes(1);
+      expect(warnLines(ctx).some((line) => line.includes('Startup-timeout retry cancelled'))).toBe(
+        true
+      );
+    } finally {
+      restoreStartupRetryEnv();
+    }
+  }, 1000);
+
+  test('cancels the retry when the delivery row settles failed during the backoff', async () => {
+    const restoreStartupRetryEnv = pinStartupRetryEnv({ base: '60' });
+    try {
+      const clients = [createHangingClient(), createMockClient()];
+      const { ctx } = createRunnerFixture({ client: clients[0] });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      await runner.start();
+      expect(await waitForWarn(ctx, 'Auto-retrying ACP query')).toBe(true);
+
+      // The retry branch reopened the row to 'enqueued'; the delivery layer's
+      // consumption timeout / dead-letter re-fails it during the window.
+      ctx.db.getMessageByStatusAndUuid = mock(() => ({ dbId: 'settled-row' }));
+      await ctx.queryPromise;
+
+      expect(createClient).toHaveBeenCalledTimes(1);
+      const lines = warnLines(ctx);
+      expect(
+        lines.some((line) => line.includes('delivery already settled failed during backoff'))
+      ).toBe(true);
+      expect(lines.some((line) => line.includes('(message user-message-1)'))).toBe(true);
+    } finally {
+      restoreStartupRetryEnv();
+    }
+  }, 1000);
+
+  test('keeps charging the same delivery across a fresh start() (in-process redrive)', async () => {
+    const restoreStartupRetryEnv = pinStartupRetryEnv({ base: '0', max: '1' });
+    try {
+      // Resumable clients: chain 1's terminal attempt leaves the created
+      // acpSessionId behind (the reset only runs on retry-granted paths), so
+      // chain 2 must be able to load it like a real ACP agent would.
+      const hanging = () => {
+        const client = createHangingClient();
+        client.canLoadSession.mockImplementation(() => true);
+        return client;
+      };
+      const clients: Array<ReturnType<typeof createMockClient>> = [hanging(), hanging(), hanging()];
+      const { ctx } = createRunnerFixture({ client: clients[0] });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      // Chain 1: timeout → retry 1/1 → timeout → budget exhausted → terminal.
+      await runner.start();
+      await ctx.queryPromise;
+      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(ctx.errorManager.handleError).toHaveBeenCalledTimes(1);
+
+      // A delivery-layer redrive of the SAME message starts a fresh chain
+      // (new generation, isRetry=false). The instance-level budget must keep
+      // counting — otherwise every redrive resets to zero and the herd loop
+      // this cap closes becomes unbounded again.
+      clients.push(hanging());
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(createClient).toHaveBeenCalledTimes(3);
+      expect(ctx.errorManager.handleError).toHaveBeenCalledTimes(2);
+      expect(
+        warnLines(ctx).filter((line) => line.includes('Startup-timeout retry budget exhausted'))
+          .length
+      ).toBe(2);
+    } finally {
+      restoreStartupRetryEnv();
+    }
+  }, 1000);
+
+  test('skips the replay feed when a redrive re-admitted the message during the backoff', async () => {
+    const restoreStartupRetryEnv = pinStartupRetryEnv({ base: '60' });
+    try {
+      const clients = [createHangingClient(), createMockClient()];
+      const { ctx, messageQueue } = createRunnerFixture({ client: clients[0] });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      await runner.start();
+      expect(await waitForWarn(ctx, 'Auto-retrying ACP query')).toBe(true);
+
+      // The retry branch reopened the durable row ('enqueued' = re-drivable),
+      // and the delivery layer redrove it into the queue while we slept.
+      (messageQueue.hasPendingOrInFlight as unknown as ReturnType<typeof mock>).mockImplementation(
+        (id: string) => id === 'user-message-1'
+      );
+      await ctx.queryPromise;
+
+      // The retry still ran (the generator consumes the redrive's admission)
+      // but our own re-enqueue was suppressed — feeding it too would hand the
+      // ACP agent the same prompt twice.
+      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(messageQueue.enqueueWithId).not.toHaveBeenCalled();
+      expect(
+        warnLines(ctx).some((line) =>
+          line.includes(
+            'Startup replay skip: message user-message-1 is already pending or in-flight'
+          )
+        )
+      ).toBe(true);
+    } finally {
+      restoreStartupRetryEnv();
+    }
+  }, 1000);
+
+  test('stays processing during the backoff — no idle blip, replay re-enqueued after', async () => {
+    const restoreStartupRetryEnv = pinStartupRetryEnv({ base: '40' });
+    try {
+      const clients = [createHangingClient(), createMockClient()];
+      const { ctx, messageQueue } = createRunnerFixture({ client: clients[0] });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      await runner.start();
+      expect(await waitForWarn(ctx, 'Auto-retrying ACP query')).toBe(true);
+
+      // Mid-window: the session must never have published idle (an idle blip
+      // makes handleInterrupt early-return, silently dropping a Stop).
+      expect(ctx.stateManager.setIdle).not.toHaveBeenCalled();
+      expect(messageQueue.enqueueWithId).not.toHaveBeenCalled();
+
+      await ctx.queryPromise;
+
+      // The retry ran and completed; every idle publication came from the
+      // chain's own completion (no suppressDeliveryWaiters blip).
+      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'hello' },
+      ]);
+      expect(ctx.stateManager.setIdle).not.toHaveBeenCalledWith({
+        suppressDeliveryWaiters: true,
+      });
+    } finally {
+      restoreStartupRetryEnv();
+    }
   }, 1000);
 });
