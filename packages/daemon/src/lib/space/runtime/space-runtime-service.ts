@@ -1205,27 +1205,27 @@ export class SpaceRuntimeService {
           isRateOrUsageLimited(t.status)
       );
 
-    const cleanupOutcomes = await Promise.allSettled(
+    // Snapshot the PRE-CLEANUP post-approval pointers: these are the ONLY
+    // sessions this stop's cleanup actually targets. A pointer that appears
+    // AFTER this snapshot (a dispatch that raced the stop and stamped when its
+    // spawner resolved, or — the reachable hole — the resume sweep's re-spawn
+    // when a `space.start` lands mid-quiesce) belongs to a NEW merger this
+    // stop did NOT interrupt: nulling it would kill a live merge and spawn a
+    // duplicate.
+    const preStopMergePointers = new Map<string, string>();
+    for (const task of activeTasks) {
+      if (task.status === 'approved' && task.postApprovalSessionId) {
+        preStopMergePointers.set(task.id, task.postApprovalSessionId);
+      }
+    }
+
+    await Promise.allSettled(
       activeTasks.map(async (task) => {
         if (this.taskAgentManager) {
           await this.taskAgentManager.cleanup(task.id, 'stopped');
         }
       })
     );
-    // Map task → whether its cleanup resolved. cleanup has no per-sub-session
-    // try/catch: a teardown throw aborts its loop, so a REJECTED outcome
-    // means the task's sub-sessions (possibly the merger) may still be live.
-    const cleanupSucceeded = new Map<string, boolean>();
-    activeTasks.forEach((task, i) => {
-      const outcome = cleanupOutcomes[i];
-      cleanupSucceeded.set(task.id, outcome?.status === 'fulfilled');
-      if (outcome?.status === 'rejected') {
-        log.warn(
-          `stopActiveWork: failed to cleanup agent session for task ${task.id}:`,
-          outcome.reason
-        );
-      }
-    });
 
     // 1.5. Record interrupted in-flight merges durably. A fresh merger
     // sub-session carries no node_executions row (#852), so park below has
@@ -1235,24 +1235,27 @@ export class SpaceRuntimeService {
     // "Post-Approval Running" state forever. Stamping `postApprovalBlockedReason`
     // (a tracking field — still no task STATUS writes) gives the banner and
     // hooks `resumeDeferredPostApprovals`, whose re-dispatch re-spawns the
-    // merge with full route context. The session POINTER is nulled in the same
-    // write whenever the task's cleanup SUCCEEDED (even when a reason is
-    // already set — keep its wording): an interrupted session reads as 'idle'
-    // (handleInterrupt ends with setIdle), so a retained pointer would make
-    // the router's `already-routed` guard short-circuit the resume re-dispatch
-    // (no spawn, no injection) and the task would wedge `approved`. The
-    // REASON is only written when unset. When the task's cleanup REJECTED,
-    // cleanup's loop aborted and the merger may still be LIVE — the pointer is
-    // kept so resume does not spawn a duplicate merge (the already-routed
-    // guard sees the live session).
+    // merge with full route context.
+    //
+    // The session POINTER is nulled (and the reason stamped, when unset)
+    // only for the pointers this stop's cleanup actually interrupted — the
+    // ones captured in the snapshot above whose id is UNCHANGED on the fresh
+    // row. An interrupted session reads as 'idle' (handleInterrupt ends with
+    // setIdle), so a retained pointer would make the router's `already-routed`
+    // guard short-circuit the resume re-dispatch (no spawn, no injection) and
+    // the task would wedge `approved`. A CHANGED pointer (the resume sweep
+    // re-spawned the merger mid-quiesce, or a mid-dispatch stamp landed after
+    // the snapshot) is a session this stop did not interrupt — kept, so the
+    // live merge is not duplicated; dispatchPostApproval's own post-route stop
+    // correction handles the mid-dispatch-stopped variant.
     //
     // The space row is RE-READ here: a `space.start` that landed during the
     // cleanup awaits above already fired `onSpaceResumed`, whose sweep ran
     // before this stamp existed and so missed it — a deferral written now
     // would promise a re-drive that no future resume will deliver. When the
     // space is no longer stopped the interruption is still recorded (the
-    // session IS dead), but the dispatch is re-driven immediately. A failed
-    // re-read keeps the deferral (conservative: the next real resume
+    // session IS interrupted), but the dispatch is re-driven immediately. A
+    // failed re-read keeps the deferral (conservative: the next real resume
     // re-drives).
     let spaceResumedDuringQuiesce = false;
     try {
@@ -1266,27 +1269,14 @@ export class SpaceRuntimeService {
     }
     for (const task of activeTasks) {
       if (task.status !== 'approved') continue;
-      // Re-read the row: the snapshot predates the cleanup awaits, and a
-      // dispatch that raced the stop stamps its pointer only when the spawner
-      // resolves — the fresh row catches a pointer (or reason) written after
-      // the snapshot. Anything stamped after THIS read is corrected by
-      // dispatchPostApproval's post-route stop check, which runs after the
-      // router's stamp by construction.
       const fresh = taskRepo.getTask(task.id);
       if (!fresh || fresh.status !== 'approved' || !fresh.postApprovalSessionId) continue;
-      // Null the pointer only when the merger was ACTUALLY interrupted.
-      // `cleanup` has no per-sub-session try/catch — a teardown throw aborts
-      // its loop and the merger stays LIVE; nulling a live pointer would
-      // make the resume sweep spawn a duplicate merge. The probe
-      // (interrupted = dead) is the exact check; absence on a mock/older
-      // shape assumes usable and skips.
-      // Null the pointer whenever this task's cleanup SUCCEEDED (the merger
-      // was interrupted — even though it now reads 'idle', the pointer must
-      // go so the already-routed guard cannot pin it). Keep it when the
-      // cleanup REJECTED: its loop aborted, so the merger may still be LIVE,
-      // and nulling a live pointer would make the resume sweep spawn a
-      // duplicate merge.
-      if (cleanupSucceeded.get(fresh.id) === false) continue;
+      // Pointer-identity gate: null only the pointer this stop interrupted.
+      // cleanup never rejects (stopSessionPreserveDb is non-strict — teardown
+      // errors are swallowed and only rethrown under `{strict:true}`), so a
+      // cleanup-outcome gate would be dead code; the id match against the
+      // snapshot is the discriminator.
+      if (preStopMergePointers.get(fresh.id) !== fresh.postApprovalSessionId) continue;
       try {
         taskRepo.updateTask(fresh.id, {
           postApprovalSessionId: null,

@@ -3125,16 +3125,16 @@ export class TaskAgentManager {
   }
 
   /**
-   * Post-approval dispatchability probe: like `isSessionAlive` but (a) never
+   * Post-approval dispatchability probe: like `isSessionAlive` but never
    * lazy-hydrates from SessionManager (in-memory index or synchronous cache
    * only — a session absent from memory is dead for dispatch purposes, e.g.
-   * after a daemon restart), and (b) deliberately excludes `'interrupted'`:
-   * an interrupted session is dead as a worker, yet `isAgentSessionAlive`
-   * counts it alive, so the router's `already-routed` guard would pin a
-   * `postApprovalSessionId` left on an interrupted merger forever (every
-   * later dispatch short-circuits, nothing re-spawns). With this probe the
-   * guard falls through and the merger is re-spawned instead — the safety net
-   * for every stop-race window the pointer-nulling correctors can miss.
+   * after a daemon restart). It deliberately excludes `'interrupted'` as
+   * defensive hardening, but note that does NOT make it an interruption
+   * detector: handleInterrupt ends with setIdle, so a normally-interrupted
+   * session reads 'idle' and the probe reports it usable. The interruption
+   * detection is `stopActiveWork`'s step 1.5 (it nulls the pointer of a
+   * stop-interrupted merger); this probe only re-spawns a `postApprovalSessionId`
+   * that survived into a session absent from memory (post-restart).
    */
   isSessionUsableForPostApproval(sessionId: string): boolean {
     const session =

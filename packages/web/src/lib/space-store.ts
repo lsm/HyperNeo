@@ -2152,9 +2152,10 @@ class SpaceStore {
   }
 
   /**
-   * Stop the current space: terminates all running agent sessions and cancels
-   * in-progress tasks/workflow runs. Marks the space as stopped so it does not
-   * auto-start on daemon restart. The space remains active and can be restarted.
+   * Stop the current space: pauses scheduling and interrupts active agent
+   * sessions; in-progress work is preserved (nothing is cancelled) and resumes
+   * when the space is started again. Marks the space as stopped so it does not
+   * auto-start on daemon restart.
    */
   async stopSpace(): Promise<void> {
     const spaceId = this.spaceId.value;

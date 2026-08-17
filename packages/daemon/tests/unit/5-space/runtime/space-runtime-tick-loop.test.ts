@@ -2407,6 +2407,34 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(pausedSpaceIds.has(SPACE_ID)).toBe(false);
     });
 
+    test('onSpaceResumed read→delete TOCTOU: a stop landing in the window re-adds the hold', async () => {
+      // The guard re-reads the row, then deletes the cache entry; a stop
+      // committing between the read and the delete would have its hold wiped.
+      // The post-delete re-check re-adds it. Drives the window by stubbing
+      // getSpace: the pre-delete read sees active, the post-delete re-check
+      // sees stopped.
+      const rt = new SpaceRuntime(
+        buildConfig(makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {}))
+      );
+      const pausedSpaceIds = (rt as unknown as { pausedSpaceIds: Set<string> }).pausedSpaceIds;
+      pausedSpaceIds.add(SPACE_ID); // hold is present at the start
+
+      let reads = 0;
+      const origGetSpace = spaceManager.getSpace.bind(spaceManager);
+      (spaceManager as unknown as { getSpace: () => Promise<unknown> }).getSpace = async () => {
+        reads += 1;
+        if (reads === 1) {
+          return { id: SPACE_ID, stopped: false, paused: false } as never;
+        }
+        return { id: SPACE_ID, stopped: true, paused: false } as never; // stop landed
+      };
+      await rt.onSpaceResumed(SPACE_ID);
+      (spaceManager as unknown as { getSpace: () => Promise<unknown> }).getSpace = origGetSpace;
+
+      expect(reads).toBeGreaterThanOrEqual(2);
+      expect(pausedSpaceIds.has(SPACE_ID)).toBe(true); // re-added by the re-check
+    });
+
     test('stopped space (no park) does not nag or restart a live idle-stuck session', async () => {
       // The stopped half of the alive-stuck guard — the in-process face of a
       // spawn that raced the stop: a live session bound to an in_progress

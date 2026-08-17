@@ -4452,12 +4452,12 @@ export class SpaceRuntime {
         spawnPostApprovalSubSession: (args) => manager.spawnPostApprovalSubSession(args),
       },
       livenessProbe: {
-        // Interruption-aware and non-lazy: 'interrupted' counts as DEAD here
-        // (isAgentSessionAlive counts it alive), so a postApprovalSessionId
-        // left on a stop-interrupted merger re-spawns instead of pinning
-        // already-routed forever — the safety net for the stop-race windows
-        // the pointer-nulling correctors can miss. In-memory only: a session
-        // absent from memory (post-restart) is dead for dispatch purposes.
+        // In-memory only: a session absent from memory (post-restart) is dead
+        // for dispatch purposes, so the already-routed guard falls through and
+        // re-spawns it. NOT an interruption detector — a stop-interrupted
+        // session reads 'idle' (handleInterrupt ends with setIdle), so the
+        // interruption detection is stopActiveWork's step 1.5 pointer-nulling;
+        // this probe only guards pointers that survived into absent sessions.
         isSessionAlive: (sessionId) => manager.isSessionUsableForPostApproval(sessionId),
       },
       goalService: this.config.goalService,
@@ -4760,14 +4760,16 @@ export class SpaceRuntime {
       ) {
         const errText = routeErr instanceof Error ? routeErr.message : String(routeErr);
         const unreadable = errText.includes('unreadable');
+        // The banner must NOT embed the raw error text (rendered verbatim to
+        // web clients) — the cause stays in the log line below.
         const detail = unreadable
-          ? `post-approval dispatch of task ${taskId} aborted — space state could not be ` +
-            `re-read (${errText}); pausing and resuming the space re-runs the dispatch`
+          ? `post-approval dispatch of task ${taskId} aborted — the space state could not be ` +
+            `re-read; pausing and resuming the space re-runs the dispatch`
           : `post-approval dispatch of task ${taskId} aborted — space ${spaceId} stopped ` +
             `during dispatch; the dispatch re-runs automatically when the space resumes`;
         this.config.taskRepo.updateTask(taskId, { postApprovalBlockedReason: detail });
         await this.emitTaskUpdateBestEffort(spaceId, taskId);
-        log.info(`dispatchPostApproval: ${detail}`);
+        log.info(`dispatchPostApproval: ${detail} (cause: ${errText})`);
         throw new PostApprovalDeferredError(detail, unreadable ? 'unreadable' : 'stopped');
       }
       throw routeErr;
@@ -4835,11 +4837,15 @@ export class SpaceRuntime {
         // on the reason, and the wrapper excludes 'unreadable' from firing —
         // so without a stamp the task would wedge `approved` with no banner
         // and no recovery signal. Stamp the reason (the same recovery copy
-        // the banner needs) before throwing the deferral; the router guard's
-        // interruption-aware probe keeps a stale pointer from pinning.
+        // the banner needs) before throwing the deferral — the pointer is
+        // left for the router guard's in-memory probe (absent = re-spawn),
+        // which cannot distinguish interrupted (idle) from live.
+        // The banner must NOT embed the raw error text (daemon paths, SQL,
+        // ids) — it is rendered verbatim to web clients. The cause stays in
+        // the log below; the banner carries a generic recovery copy.
         const detail =
           `post-approval dispatch of task ${taskId} could not be stop-corrected ` +
-          `(${err instanceof Error ? err.message : String(err)}); the dispatch re-runs ` +
+          `(a read/write error during the stop correction); the dispatch re-runs ` +
           `when the space is paused and resumed`;
         this.config.taskRepo.updateTask(taskId, {
           postApprovalBlockedReason: detail,
@@ -6558,12 +6564,11 @@ export class SpaceRuntime {
    * a task whose merge is genuinely LIVE keeps its `postApprovalSessionId`, so
    * the router's `already-routed` guard leaves it alone; a stop-INTERRUPTED
    * merge is re-spawned because `stopActiveWork`'s step 1.5 nulls the pointer
-   * when it records the interruption. The guard's probe is
-   * `isSessionUsableForPostApproval` — interruption-aware ('interrupted'
-   * counts DEAD) — so a stop-race window the correctors miss still
-   * re-spawns instead of pinning: the probe IS the safety net, and the
-   * residual clear below only fires for a genuinely-live merge. A no-route
-   * task simply closes to `done`.
+   * when it records the interruption (an interrupted session reads 'idle',
+   * so the guard's `isSessionUsableForPostApproval` probe — which only
+   * distinguishes absent-from-memory — is NOT the interruption detector).
+   * The residual clear below only fires for a genuinely-live merge. A
+   * no-route task simply closes to `done`.
    *
    * Error-isolated per task; a re-stop mid-sweep re-defers (the hold re-stamps
    * the blocked reason), and a genuine dispatch failure keeps the reason and

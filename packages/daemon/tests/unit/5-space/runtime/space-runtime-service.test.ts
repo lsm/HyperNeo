@@ -295,12 +295,11 @@ describe('SpaceRuntimeService', () => {
         cleanup: async (taskId: string, reason: 'done' | 'cancelled' | 'stopped') => {
           cleanupCalls.push({ taskId, reason });
         },
-        // P1 pin (round 10): a normally-interrupted merger reads 'idle'
-        // (handleInterrupt ends with setIdle), so a liveness probe would
-        // return TRUE here — yet the pointer must STILL be nulled (cleanup
-        // succeeded, so the merger is interrupted). The gate is the
-        // cleanup OUTCOME, not the probe.
-        isSessionUsableForPostApproval: () => true,
+        // P1/round-11 pin: the merger's pointer is UNCHANGED from the
+        // pre-stop snapshot, so this stop's cleanup targeted it — the
+        // pointer is nulled even though the session reads 'idle' after the
+        // interrupt (a liveness probe cannot tell interrupted from live-
+        // idle, so it must not be the discriminator).
       } as unknown as TaskAgentManager;
 
       const svc = new SpaceRuntimeService({
@@ -463,25 +462,36 @@ describe('SpaceRuntimeService', () => {
       expect(redrives).toHaveLength(0);
     });
 
-    test('live merger (cleanup threw): step 1.5 keeps the pointer — no duplicate merge', async () => {
-      // cleanup has no per-sub-session try/catch: a teardown throw aborts its
-      // loop and the merger stays LIVE. Step 1.5 must not null a live
-      // pointer — the resume sweep would spawn a duplicate merge while the
-      // original still runs. The cleanup-outcome gate is the discriminator
-      // (NOT a liveness probe: an interrupted session reads 'idle', so the
-      // probe cannot tell interrupted from live).
-      const activeTasks = [
+    test('a merger re-spawned mid-quiesce (pointer changed): step 1.5 keeps it — no duplicate', async () => {
+      // Round-11 P2-1: a `space.start` landing during the cleanup awaits fires
+      // the resume sweep, which re-spawns the merger S1 and stamps the pointer
+      // (clearing the reason). Step 1.5's fresh re-read sees S1, whose id
+      // differs from the PRE-STOP snapshot pointer — S1 is a LIVE merger this
+      // stop did NOT interrupt, so the pointer must be kept (nulling it would
+      // kill S1 and spawn S2: two concurrent mergers).
+      const snapshotTasks = [
         {
           id: 't5',
           status: 'approved' as const,
-          postApprovalSessionId: 'session:merge-live',
-          postApprovalBlockedReason: null,
+          postApprovalSessionId: 'session:merge-old', // the pre-stop pointer
+          postApprovalBlockedReason: 'deferred by a stop',
         },
       ];
+      const freshRows = new Map([
+        [
+          't5',
+          {
+            id: 't5',
+            status: 'approved' as const,
+            postApprovalSessionId: 'session:merge-new', // the sweep's re-spawn
+            postApprovalBlockedReason: null,
+          },
+        ],
+      ]);
       const updateCalls: Array<{ taskId: string; updates: unknown }> = [];
       const mockTaskRepo = {
-        listBySpace: () => activeTasks,
-        getTask: (id: string) => activeTasks.find((t) => t.id === id),
+        listBySpace: () => snapshotTasks,
+        getTask: (id: string) => freshRows.get(id),
         updateTask: (taskId: string, updates: unknown) => {
           updateCalls.push({ taskId, updates });
         },
@@ -497,10 +507,7 @@ describe('SpaceRuntimeService', () => {
         workflowRunRepo: mockWorkflowRunRepo,
       });
       svc.setTaskAgentManager({
-        // The merger is STILL LIVE — cleanup THREW (its loop aborted).
-        cleanup: async () => {
-          throw new Error('teardown blew up');
-        },
+        cleanup: async () => {},
       } as unknown as TaskAgentManager);
       const redrives: Array<{ taskId: string }> = [];
       svc.dispatchPostApproval = async (_spaceId, taskId) => {
@@ -509,18 +516,19 @@ describe('SpaceRuntimeService', () => {
 
       await svc.stopActiveWork('space-1');
 
-      // No write at all: the pointer is kept, no reason stamped, no re-drive.
+      // No write: the new pointer is kept, no reason stamped, no re-drive.
       expect(updateCalls).toHaveLength(0);
       expect(redrives).toHaveLength(0);
     });
 
-    test('pointer stamped after the snapshot: step 1.5 re-reads the fresh row', async () => {
-      // A dispatch that raced the stop passes the hold and the spawner's
-      // pre-kickoff assert, and the router stamps its pointer only when the
-      // spawner resolves — possibly AFTER stopActiveWork snapshotted the task
-      // with a null pointer. The loop must act on the re-read row, not the
-      // stale snapshot, or the freshly stamped pointer is never recorded and
-      // the task wedges with a healthy-looking post-approval state.
+    test('pointer stamped after the snapshot: step 1.5 does NOT null a session it never targeted', async () => {
+      // A dispatch that raced the stop stamps its pointer only when the
+      // spawner resolves — possibly AFTER the snapshot (which saw null). That
+      // session is NOT one this stop's cleanup targeted (it was not in the
+      // snapshot), so step 1.5 must not null it — a mid-dispatch-stopped
+      // variant is corrected by dispatchPostApproval's own post-route stop
+      // check, and a live one must not be duplicated. The pointer-identity
+      // gate skips the changed pointer.
       const snapshotTasks = [
         {
           id: 't5',
@@ -565,15 +573,8 @@ describe('SpaceRuntimeService', () => {
 
       await svc.stopActiveWork('space-1');
 
-      // The FRESH pointer is the one recorded as interrupted — not skipped
-      // because the snapshot was stale.
-      expect(updateCalls).toHaveLength(1);
-      expect(updateCalls[0]!.updates).toMatchObject({
-        postApprovalSessionId: null,
-        postApprovalBlockedReason: expect.stringMatching(
-          /session:merge-late interrupted by space\.stop/
-        ),
-      });
+      // No write: the late pointer is kept (this stop did not interrupt it).
+      expect(updateCalls).toHaveLength(0);
     });
 
     test('failed pre-stamp space re-read keeps the deferral (conservative)', async () => {
