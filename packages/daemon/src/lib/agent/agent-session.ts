@@ -2749,14 +2749,19 @@ export class AgentSession
           // stopped queue before dead-lettering `failed`. Park instead: the
           // job re-evaluates on its park cadence and feeds (or promotes once
           // the turn settles) after the backoff ends. Bounded by
-          // MAX_STEER_PARKS (~5 min) — comfortable at the default knobs where
-          // the schedule (60 s windows + 15–240 s sleeps) terminates inside
-          // it via the retry cap or the post-backoff cancellation paths (the
-          // stall watchdog does NOT bound the starved case — no activity ever
-          // arms it), but a much raised HYPERNEO_SDK_STARTUP_RETRY_BASE_MS
-          // can outlast the bound and surface the parked follow-up failed.
-          // The ≤5 s teardown waits of the other retry paths are covered by
-          // the same gate.
+          // MAX_STEER_PARKS (~5 min). At default knobs the bound holds via
+          // window alternation, not a watchdog: the stall watchdog arms only
+          // after the kickoff acknowledgment resolves, so in the starved case
+          // (the case this gate exists for) it never truncates anything.
+          // What keeps the schedule inside the bound is that each post-sleep
+          // retry round is a RUNNING window (≤60 s, during which the 5 s
+          // -cadence steer re-run feeds) and the longest sleep is 240 s ≈ 48
+          // parks < 60. Two caveats: a much raised
+          // HYPERNEO_SDK_STARTUP_RETRY_BASE_MS makes a single sleep outlast
+          // the whole bound, and __parkCount is CUMULATIVE per steer job, so
+          // chained stall-reset + delivery-redrive cycles can dead-letter a
+          // steer `failed` even at default knobs. The ≤5 s teardown waits of
+          // the other retry paths are covered by the same gate.
           if (!this.messageQueue.isRunning()) return { kind: 'park' as const };
           const generation = this.getQueryGeneration();
           observer?.reportStage('query_ready', { generation });
