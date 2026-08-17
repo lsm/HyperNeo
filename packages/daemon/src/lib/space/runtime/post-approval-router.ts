@@ -321,13 +321,16 @@ export function clearPendingCompletionState(
  * `dispatchPostApproval` throws after the `review → approved` status commit.
  */
 export function mapPostApprovalDispatchWarning(detail: string): string {
-  const trimmed = (detail ?? '').trim();
-  const lower = trimmed.toLowerCase();
+  // The raw detail is used ONLY to classify the cause — it must NOT be
+  // embedded in the returned banner copy, which the web PendingPostApprovalBanner
+  // renders verbatim (daemon paths, SQL text, and ids would otherwise leak to
+  // web clients). The raw cause stays in the caller's log line.
+  const lower = (detail ?? '').trim().toLowerCase();
   const interrupted =
     lower.includes('interrupted') || lower.includes('abort') || lower.includes('cancel');
   const cause = interrupted
-    ? `post-approval dispatch was interrupted (${trimmed})`
-    : `post-approval dispatch hit an error: ${trimmed}`;
+    ? 'the post-approval dispatch was interrupted'
+    : 'the post-approval dispatch hit an error';
   return `Approval recorded, but ${cause}. The task is approved; you may need to manually trigger post-approval work.`;
 }
 

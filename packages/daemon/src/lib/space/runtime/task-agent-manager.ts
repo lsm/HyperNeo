@@ -3697,7 +3697,10 @@ export class TaskAgentManager {
    * @param reason - Retained for logging only; behavior is identical for
    *                'done', 'cancelled', and 'stopped' (space stop quiesce).
    */
-  async cleanup(taskId: string, reason: 'done' | 'cancelled' | 'stopped' = 'done'): Promise<void> {
+  async cleanup(
+    taskId: string,
+    reason: 'done' | 'cancelled' | 'stopped' = 'done'
+  ): Promise<Set<string>> {
     const sessionIdsToClean = new Set<string>();
 
     // 1. Stop sub-sessions (interrupt + cleanup, preserve DB).
@@ -3746,6 +3749,7 @@ export class TaskAgentManager {
     log.info(
       `TaskAgentManager: cleaned up in-memory state for task ${taskId} (reason: ${reason}, DB + worktree preserved)`
     );
+    return sessionIdsToClean;
   }
 
   // -------------------------------------------------------------------------

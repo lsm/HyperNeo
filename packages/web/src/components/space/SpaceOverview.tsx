@@ -589,7 +589,7 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
           onClose={() => setShowStopConfirm(false)}
           onConfirm={() => void handleStop()}
           title="Stop Space"
-          message="Stopping will pause scheduling and interrupt active agent sessions. In-progress work is preserved and resumes when you start the space again. The space will not restart automatically."
+          message="Stopping will pause scheduling and interrupt active agent sessions. In-progress workflow work is preserved and resumes when you start the space again; standalone in-progress tasks pause and may need a manual restart. The space will not restart automatically."
           confirmText="Stop Space"
           isLoading={actionLoading}
         />

@@ -511,10 +511,12 @@ describe('mapPostApprovalDispatchWarning', () => {
     expect(mapPostApprovalDispatchWarning('Request was aborted by the user')).toContain(
       'was interrupted'
     );
-    // A non-abort error uses the generic phrasing, but still embeds the detail.
+    // A non-abort error uses the generic phrasing — and the raw detail is
+    // NOT embedded (the banner is rendered verbatim to web clients; the raw
+    // cause stays in the daemon log).
     const generic = mapPostApprovalDispatchWarning('spawn failed: ENOTFOUND');
     expect(generic).toContain('hit an error');
-    expect(generic).toContain('ENOTFOUND');
+    expect(generic).not.toContain('ENOTFOUND');
     expect(generic).not.toContain('was interrupted');
   });
 });

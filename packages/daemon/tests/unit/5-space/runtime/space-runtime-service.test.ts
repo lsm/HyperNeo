@@ -294,12 +294,12 @@ describe('SpaceRuntimeService', () => {
       const mockTaskAgentManager = {
         cleanup: async (taskId: string, reason: 'done' | 'cancelled' | 'stopped') => {
           cleanupCalls.push({ taskId, reason });
+          // This stop's cleanup interrupted the merger session — its id is in
+          // the reported set, so step 1.5 nulls it even though the session
+          // reads 'idle' after the interrupt (a liveness probe cannot tell
+          // interrupted from live-idle, so it must not be the discriminator).
+          return new Set(['session:merge-1']);
         },
-        // P1/round-11 pin: the merger's pointer is UNCHANGED from the
-        // pre-stop snapshot, so this stop's cleanup targeted it — the
-        // pointer is nulled even though the session reads 'idle' after the
-        // interrupt (a liveness probe cannot tell interrupted from live-
-        // idle, so it must not be the discriminator).
       } as unknown as TaskAgentManager;
 
       const svc = new SpaceRuntimeService({
@@ -391,7 +391,7 @@ describe('SpaceRuntimeService', () => {
         workflowRunRepo: mockWorkflowRunRepo,
       });
       svc.setTaskAgentManager({
-        cleanup: async () => {},
+        cleanup: async () => new Set(['session:merge-1']),
       } as unknown as TaskAgentManager);
       const redrives: Array<{ spaceId: string; taskId: string; source: string }> = [];
       svc.dispatchPostApproval = async (spaceId, taskId, approvalSource) => {
@@ -444,7 +444,7 @@ describe('SpaceRuntimeService', () => {
         workflowRunRepo: mockWorkflowRunRepo,
       });
       svc.setTaskAgentManager({
-        cleanup: async () => {},
+        cleanup: async () => new Set(['session:merge-1']),
       } as unknown as TaskAgentManager);
       const redrives: Array<{ taskId: string }> = [];
       svc.dispatchPostApproval = async (_spaceId, taskId) => {
@@ -507,7 +507,7 @@ describe('SpaceRuntimeService', () => {
         workflowRunRepo: mockWorkflowRunRepo,
       });
       svc.setTaskAgentManager({
-        cleanup: async () => {},
+        cleanup: async () => new Set(['session:merge-old']),
       } as unknown as TaskAgentManager);
       const redrives: Array<{ taskId: string }> = [];
       svc.dispatchPostApproval = async (_spaceId, taskId) => {
@@ -521,14 +521,13 @@ describe('SpaceRuntimeService', () => {
       expect(redrives).toHaveLength(0);
     });
 
-    test('pointer stamped after the snapshot: step 1.5 does NOT null a session it never targeted', async () => {
-      // A dispatch that raced the stop stamps its pointer only when the
-      // spawner resolves — possibly AFTER the snapshot (which saw null). That
-      // session is NOT one this stop's cleanup targeted (it was not in the
-      // snapshot), so step 1.5 must not null it — a mid-dispatch-stopped
-      // variant is corrected by dispatchPostApproval's own post-route stop
-      // check, and a live one must not be duplicated. The pointer-identity
-      // gate skips the changed pointer.
+    test('pointer stamped after the snapshot but registered BEFORE the cleanup loop: nulled (mid-dispatch)', async () => {
+      // Round-12 P2-1: a dispatch that raced the stop registers its session
+      // (createSubSession precedes the pre-kickoff assert, which must pass
+      // before the router stamps), so the stamp lands after the snapshot but
+      // the session WAS in cleanup's interrupted set — this stop DID interrupt
+      // it. The interrupted-set gate nulls it (the round-11 pointer-identity
+      // gate wrongly skipped this sub-case and wedged the task).
       const snapshotTasks = [
         {
           id: 't5',
@@ -567,7 +566,67 @@ describe('SpaceRuntimeService', () => {
         workflowRunRepo: mockWorkflowRunRepo,
       });
       svc.setTaskAgentManager({
-        cleanup: async () => {},
+        // The late session IS in cleanup's interrupted set.
+        cleanup: async () => new Set(['session:merge-late']),
+      } as unknown as TaskAgentManager);
+      svc.dispatchPostApproval = async () => {};
+
+      await svc.stopActiveWork('space-1');
+
+      // The interrupted late pointer is nulled + the reason stamped.
+      expect(updateCalls).toHaveLength(1);
+      expect(updateCalls[0]!.updates).toMatchObject({
+        postApprovalSessionId: null,
+        postApprovalBlockedReason: expect.stringMatching(
+          /session:merge-late interrupted by space\.stop/
+        ),
+      });
+    });
+
+    test('pointer stamped after the snapshot and registered AFTER the cleanup loop: kept (live)', async () => {
+      // The resume sweep's re-spawn (or a dispatch whose session registered
+      // after cleanup's loop) is NOT in the interrupted set — it is a LIVE
+      // merger this stop never touched. The interrupted-set gate keeps it, so
+      // the live merge is not duplicated.
+      const snapshotTasks = [
+        {
+          id: 't5',
+          status: 'approved' as const,
+          postApprovalSessionId: null, // snapshot taken mid-spawn
+          postApprovalBlockedReason: null,
+        },
+      ];
+      const freshRows = new Map([
+        [
+          't5',
+          {
+            id: 't5',
+            status: 'approved' as const,
+            postApprovalSessionId: 'session:merge-late', // stamped after the snapshot
+            postApprovalBlockedReason: null,
+          },
+        ],
+      ]);
+      const updateCalls: Array<{ taskId: string; updates: unknown }> = [];
+      const mockTaskRepo = {
+        listBySpace: () => snapshotTasks,
+        getTask: (id: string) => freshRows.get(id),
+        updateTask: (taskId: string, updates: unknown) => {
+          updateCalls.push({ taskId, updates });
+        },
+      } as unknown as SpaceTaskRepository;
+      const mockWorkflowRunRepo = {
+        listBySpace: () => [],
+        transitionStatus: () => {},
+      } as unknown as SpaceWorkflowRunRepository;
+
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(createMockSpaceManager({ ...mockSpace, stopped: true })),
+        taskRepo: mockTaskRepo,
+        workflowRunRepo: mockWorkflowRunRepo,
+      });
+      svc.setTaskAgentManager({
+        cleanup: async () => new Set([]),
       } as unknown as TaskAgentManager);
       svc.dispatchPostApproval = async () => {};
 
@@ -613,7 +672,7 @@ describe('SpaceRuntimeService', () => {
         } as unknown as SpaceWorkflowRunRepository,
       });
       svc.setTaskAgentManager({
-        cleanup: async () => {},
+        cleanup: async () => new Set(['session:merge-1']),
       } as unknown as TaskAgentManager);
       const redrives: Array<{ taskId: string }> = [];
       svc.dispatchPostApproval = async (_spaceId, taskId) => {
