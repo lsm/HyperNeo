@@ -538,14 +538,16 @@ describe('QueryOptionsBuilder', () => {
     // BEFORE this session's provider env is applied, so a leftover
     // CLAUDE_CODE_SUBAGENT_MODEL from another provider's session (e.g. a
     // concurrent Kimi worker) used to be copied verbatim into options.env —
-    // and since the var is not ANTHROPIC_*-prefixed, the SDK subprocess
-    // inherits it too. Subagents then sent the foreign model ID upstream and
-    // GLM rejected it with 400 code 1214 "modelCode 不存在" while main turns
-    // kept working (the var only affects subagents). Subagents otherwise
-    // inherit the main model via the CLI's own defaults, so the guard never
-    // sets the var itself — it only stops the foreign snapshot.
+    // and since the SDK spawns with env = {...options.env} (replace, not
+    // merge), that snapshot becomes the complete subprocess env. Subagents
+    // then sent the foreign model ID upstream and GLM rejected it with 400
+    // code 1214 "modelCode 不存在" while main turns kept working (the var
+    // only affects subagents). Subagents otherwise inherit the main model
+    // via the CLI's own defaults, so the guard never sets the var itself —
+    // it only stops the foreign snapshot.
     const foreignSubagentModel = 'k3-256k';
     let savedSubagentModel: string | undefined;
+    let savedToolSearch: string | undefined;
 
     function registerCompatProvider(envVars: Record<string, string>): void {
       resetProviderRegistry();
@@ -569,7 +571,9 @@ describe('QueryOptionsBuilder', () => {
 
     beforeEach(() => {
       savedSubagentModel = process.env.CLAUDE_CODE_SUBAGENT_MODEL;
+      savedToolSearch = process.env.ENABLE_TOOL_SEARCH;
       process.env.CLAUDE_CODE_SUBAGENT_MODEL = foreignSubagentModel;
+      process.env.ENABLE_TOOL_SEARCH = 'true';
     });
 
     afterEach(() => {
@@ -578,6 +582,11 @@ describe('QueryOptionsBuilder', () => {
       } else {
         process.env.CLAUDE_CODE_SUBAGENT_MODEL = savedSubagentModel;
       }
+      if (savedToolSearch === undefined) {
+        delete process.env.ENABLE_TOOL_SEARCH;
+      } else {
+        process.env.ENABLE_TOOL_SEARCH = savedToolSearch;
+      }
       resetProviderRegistry();
     });
 
@@ -585,6 +594,7 @@ describe('QueryOptionsBuilder', () => {
       registerCompatProvider({
         ANTHROPIC_BASE_URL: 'https://open.bigmodel.cn/api/anthropic',
         CLAUDE_CODE_SUBAGENT_MODEL: 'glm-5.3',
+        ENABLE_TOOL_SEARCH: 'false',
       });
       mockSession.config.provider = 'glm';
       mockSession.config.model = 'glm-5.3';
@@ -592,6 +602,7 @@ describe('QueryOptionsBuilder', () => {
       const options = await builder.build();
 
       expect(options.env?.CLAUDE_CODE_SUBAGENT_MODEL).toBe('glm-5.3');
+      expect(options.env?.ENABLE_TOOL_SEARCH).toBe('false');
     });
 
     it('omits the subagent model when the provider does not define one, even with an ambient leftover', async () => {
@@ -609,6 +620,7 @@ describe('QueryOptionsBuilder', () => {
       const options = await builder.build();
 
       expect(options.env?.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
+      expect(options.env?.ENABLE_TOOL_SEARCH).toBeUndefined();
     });
   });
 
