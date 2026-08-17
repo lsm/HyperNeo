@@ -1140,6 +1140,60 @@ describe('AskUserQuestionHandler', () => {
       expect(first.hookSpecificOutput.permissionDecision).toBe('deny');
       expect(first.hookSpecificOutput.permissionDecisionReason).toContain('Superseded');
     });
+
+    it('dedupes a same-toolUseId re-entry to share the pending promise (no supersede, no second card)', async () => {
+      const hook = handler.createPreToolUseHook();
+      const input = {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'AskUserQuestion',
+        tool_input: {
+          questions: [
+            {
+              question: 'Pick?',
+              header: 'P',
+              options: [
+                { label: 'A', description: 'A' },
+                { label: 'B', description: 'B' },
+              ],
+              multiSelect: false,
+            },
+          ],
+        },
+        tool_use_id: 'dup-1',
+      };
+
+      // The PreToolUse hook intercepts first.
+      const firstPromise = hook(input, 'dup-1', { signal: new AbortController().signal });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(setWaitingForInputSpy).toHaveBeenCalledTimes(1);
+
+      // canUseTool re-enters for the SAME toolUseId (hook + canUseTool both
+      // fire for one AskUserQuestion call in non-bypass modes). It must NOT
+      // supersede the live resolver (a question can never supersede itself) or
+      // install a second card.
+      const callback = handler.createCanUseToolCallback();
+      const secondPromise = callback(
+        'AskUserQuestion',
+        { questions: input.tool_input.questions },
+        { signal: new AbortController().signal, toolUseID: 'dup-1' }
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(setWaitingForInputSpy).toHaveBeenCalledTimes(1);
+
+      // Both channels resolve with the same user answer.
+      await handler.handleQuestionResponse('dup-1', [{ questionIndex: 0, selectedLabels: ['A'] }]);
+      const first = (await firstPromise) as {
+        hookSpecificOutput: { permissionDecision: string };
+      };
+      // The canUseTool channel returns a raw PermissionResult (no envelope).
+      const second = (await secondPromise) as {
+        behavior: string;
+        updatedInput?: { answers: Record<string, string> };
+      };
+      expect(first.hookSpecificOutput.permissionDecision).toBe('allow');
+      expect(second.behavior).toBe('allow');
+      expect(second.updatedInput?.answers).toEqual({ 'Pick?': 'A' });
+    });
   });
 
   describe('handleQuestionResponse', () => {

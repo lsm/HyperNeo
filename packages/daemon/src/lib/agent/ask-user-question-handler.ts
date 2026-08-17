@@ -127,6 +127,9 @@ interface PendingQuestionResolver {
   /** The UI structure built for this question — used to restore the card if a
    *  newer question supersedes this one mid-response-transition. */
   pendingQuestion: PendingUserQuestion;
+  /** The promise this resolver settles — shared by a same-toolUseId re-entry
+   *  from the other delivery channel so both resolve with the same answer. */
+  promise: Promise<PermissionResult>;
   resolve: (result: PermissionResult) => void;
   reject: (error: Error) => void;
 }
@@ -287,61 +290,78 @@ export class AskUserQuestionHandler {
       askedAt: Date.now(),
     };
 
+    // Same-toolUseId re-entry: a second channel intercepting the SAME
+    // AskUserQuestion call (the PreToolUse hook and canUseTool can both fire
+    // for one call in non-bypass modes). The card is already up and a resolver
+    // exists — share its pending promise so both channels resolve with the
+    // same user answer instead of installing a second resolver + card. A
+    // question can never supersede itself, so the supersede block below only
+    // ever fires for a genuinely different question.
+    if (this.pendingResolver?.toolUseId === toolUseID) {
+      return this.pendingResolver.promise;
+    }
+
     // Create the pending promise and store the resolver SYNCHRONOUSLY before
     // the awaits below: no window may exist where the state already reflects
     // this question (setWaitingForInput) but this.pendingResolver still points
     // at the previous question — a submit/cancel landing in that window would
     // be keyed against the wrong question's raw input and mis-routed down the
     // restart-survival path.
+    let resolvePending!: (result: PermissionResult) => void;
+    let rejectPending!: (error: Error) => void;
     const pending = new Promise<PermissionResult>((resolve, reject) => {
-      // A previous interception can still be pending if the model issued two
-      // AskUserQuestion calls in one turn (two tool_use blocks). The resolver
-      // map is single-slot; settle the superseded one with a deny RESULT —
-      // not a rejection — so the CLI gets an unambiguous denial for the older
-      // call. (A rejection marshals as a channel error: under
-      // bypassPermissions an errored PreToolUse hook is non-blocking, so the
-      // superseded call could proceed with no interaction; in 'default' mode
-      // the error fall-through can re-consult canUseTool for the same
-      // tool_use_id and supersede the newer question's resolver.)
-      if (this.pendingResolver) {
-        this.logger.warn(
-          `AskUserQuestion ${this.pendingResolver.toolUseId}: superseded by a newer ` +
-            `AskUserQuestion call (${toolUseID}); denying the older question`
-        );
-        this.pendingResolver.resolve({
-          behavior: 'deny',
-          message:
-            'Superseded by a newer AskUserQuestion call; that question is now awaiting the user.',
-        });
-      }
-      // Store the resolver so handleQuestionResponse can complete it
-      this.pendingResolver = {
-        toolUseId: toolUseID,
-        input,
-        pendingQuestion,
-        resolve,
-        reject,
-      };
+      resolvePending = resolve;
+      rejectPending = reject;
     });
 
-    // Transition to waiting_for_input state
-    // This will persist to DB and broadcast to clients
+    // A previous interception can still be pending if the model issued two
+    // AskUserQuestion calls in one turn (two tool_use blocks). The resolver
+    // map is single-slot; settle the superseded one with a deny RESULT —
+    // not a rejection — so the CLI gets an unambiguous denial for the older
+    // call. (A rejection marshals as a channel error: under
+    // bypassPermissions an errored PreToolUse hook is non-blocking, so the
+    // superseded call could proceed with no interaction; in 'default' mode
+    // the error fall-through can re-consult canUseTool.)
+    if (this.pendingResolver) {
+      this.logger.warn(
+        `AskUserQuestion ${this.pendingResolver.toolUseId}: superseded by a newer ` +
+          `AskUserQuestion call (${toolUseID}); denying the older question`
+      );
+      this.pendingResolver.resolve({
+        behavior: 'deny',
+        message:
+          'Superseded by a newer AskUserQuestion call; that question is now awaiting the user.',
+      });
+    }
+    // Store the resolver so handleQuestionResponse can complete it
+    this.pendingResolver = {
+      toolUseId: toolUseID,
+      input,
+      pendingQuestion,
+      promise: pending,
+      resolve: resolvePending,
+      reject: rejectPending,
+    };
+
+    // Transition to waiting_for_input state (persist + broadcast). If this
+    // fails, the card was never shown — drop the resolver stored above so it
+    // does not dangle against a question the user never saw.
     try {
       await stateManager.setWaitingForInput(pendingQuestion);
-
-      // Emit event for logging/debugging
-      await internalEventBus.publish('question.asked', {
-        sessionId: session.id,
-        pendingQuestion,
-      });
     } catch (err) {
-      // The card could not be shown — drop the resolver stored above so it
-      // does not dangle against a question the user never saw.
       if (this.pendingResolver?.toolUseId === toolUseID) {
         this.pendingResolver = null;
       }
       throw err;
     }
+
+    // Emit event for logging/debugging. This runs AFTER the card is live; a
+    // publish failure (no 'question.asked' subscribers today) must NOT drop
+    // the resolver — the question is shown and answerable.
+    await internalEventBus.publish('question.asked', {
+      sessionId: session.id,
+      pendingQuestion,
+    });
 
     return pending;
   }
