@@ -133,6 +133,64 @@ describe('MessagePersistence', () => {
     );
   });
 
+  it('flags hasDraftToClear when the sent text matches the draft directly', async () => {
+    mockAgentSession.getSessionData.mockReturnValue({
+      ...mockSession,
+      metadata: { ...mockSession.metadata, inputDraft: 'hello idle' },
+    });
+    await persistence.persist({
+      sessionId: 'test-session-id',
+      messageId: 'msg-1',
+      content: 'hello idle',
+    });
+    expect(internalEventBusPublishSpy).toHaveBeenCalledWith(
+      'message.persisted',
+      expect.objectContaining({ hasDraftToClear: true })
+    );
+  });
+
+  it('flags hasDraftToClear when the sent text matches the voice composition', async () => {
+    // The composer showed the composition of typing + staged transcript
+    // (session.get presents them joined); the sent message carried both.
+    mockAgentSession.getSessionData.mockReturnValue({
+      ...mockSession,
+      metadata: {
+        ...mockSession.metadata,
+        inputDraft: 'hello idle',
+        inputDraftVoicePending: 'plus voice',
+      },
+    });
+    await persistence.persist({
+      sessionId: 'test-session-id',
+      messageId: 'msg-1',
+      content: 'hello idle plus voice',
+    });
+    expect(internalEventBusPublishSpy).toHaveBeenCalledWith(
+      'message.persisted',
+      expect.objectContaining({ hasDraftToClear: true })
+    );
+  });
+
+  it('does not flag hasDraftToClear when neither the draft nor the composition matches', async () => {
+    mockAgentSession.getSessionData.mockReturnValue({
+      ...mockSession,
+      metadata: {
+        ...mockSession.metadata,
+        inputDraft: 'different draft',
+        inputDraftVoicePending: 'voice',
+      },
+    });
+    await persistence.persist({
+      sessionId: 'test-session-id',
+      messageId: 'msg-1',
+      content: 'hello idle',
+    });
+    expect(internalEventBusPublishSpy).toHaveBeenCalledWith(
+      'message.persisted',
+      expect.objectContaining({ hasDraftToClear: false })
+    );
+  });
+
   it('persists busy immediate as enqueued and defers dispatch', async () => {
     processingStateSpy.mockReturnValue({ status: 'processing' });
 

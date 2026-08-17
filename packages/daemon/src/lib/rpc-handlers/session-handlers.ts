@@ -366,39 +366,27 @@ export function setupSessionHandlers(
       throw new Error('Session not found');
     }
 
-    // Consume any staged voice transcript atomically: merge
-    // inputDraftVoicePending into inputDraft and clear the staging field in one
-    // synchronous write. Doing the merge server-side (rather than in the
-    // client's debounced useInputDraft hook) means there is a single writer and
-    // no window for a stale client snapshot or a cancelled debounce to lose the
-    // transcript. The client just reads inputDraft, already merged. See
-    // session.appendVoiceDraft for how the pending field is populated.
-    // The staging field is cleared ONLY when the entire staged value merged: a
-    // draft already at the character limit truncates it, and clearing then
-    // would deterministically lose the transcript the client's toast promised
-    // was saved — retain it instead so it survives until there is room.
-    const beforeMerge = agentSession.getSessionData();
-    const voicePending = beforeMerge.metadata?.inputDraftVoicePending;
+    // PURE read: never persists anything. A staged voice transcript
+    // (inputDraftVoicePending) is presented as the COMPOSITION of draft +
+    // pending — joined exactly like appendDraftText joins them — so the client
+    // sees the text it will send, while the pending itself stays staged and
+    // durable until a draft write that contains it ("adoption"), the
+    // voice-aware send-clear, or a clear of an already-empty draft consumes
+    // it. When the composition would exceed the character limit, the draft is
+    // returned alone: appendDraftText slices silently, and presenting a
+    // truncated composition would let a client save it back and durably drop
+    // the transcript's tail. The pending simply waits for room.
+    let session = agentSession.getSessionData();
+    const voicePending = session.metadata?.inputDraftVoicePending;
     if (voicePending && voicePending.trim()) {
-      const draft = beforeMerge.metadata?.inputDraft ?? '';
-      const merged = appendDraftText(draft, voicePending);
-      const fullyMerged =
-        merged === `${draft}${voicePending}` || merged === `${draft} ${voicePending}`;
-      // Only consume on a FULL merge. On a partial fit, write nothing and keep
-      // the staged transcript: writing the prefix would duplicate it once room
-      // appears and the merge retries.
-      if (fullyMerged) {
-        await sessionManager.updateSession(targetSessionId, {
-          metadata: {
-            inputDraft: merged,
-            inputDraftVoicePending: null,
-            inputDraftVersion: (beforeMerge.metadata?.inputDraftVersion ?? 0) + 1,
-          },
-        } as Partial<Session>);
+      const draft = session.metadata?.inputDraft ?? '';
+      const composed = appendDraftText(draft, voicePending);
+      const fitsWhole =
+        composed === `${draft}${voicePending}` || composed === `${draft} ${voicePending}`;
+      if (fitsWhole && session.metadata) {
+        session = { ...session, metadata: { ...session.metadata, inputDraft: composed } };
       }
     }
-
-    const session = agentSession.getSessionData();
 
     return {
       session,
@@ -444,80 +432,46 @@ export function setupSessionHandlers(
   });
 
   messageHub.onRequest('session.update', async (data, _ctx) => {
-    const {
-      sessionId: targetSessionId,
-      expectedDraftVersion,
-      ...updates
-    } = data as UpdateSessionRequest & {
+    const { sessionId: targetSessionId, ...updates } = data as UpdateSessionRequest & {
       sessionId: string;
-      expectedDraftVersion?: number;
     };
 
-    // A draft write while a voice pending sequence is STAGED must refresh the
-    // sequence's BASELINE snapshot: the pending eventually merges onto
-    // whatever draft is current at merge time, and a stale baseline would make
-    // reconciliation treat concurrently-typed text as transcript (restoring it
-    // twice, or preserving already-sent text through a strip). The pending
-    // itself lives in a separate field this update never touches, so a plain
-    // metadata write here only re-anchors the merge point.
+    // DAEMON-COORDINATED voice drafts: a draft write replaces the typing part
+    // (`inputDraft`) with exactly what the client shows, and the staged
+    // transcript (`inputDraftVoicePending`) is consumed only when the write
+    // demonstrably carries it —
+    // - A NON-EMPTY write containing the pending's text is an ADOPTION: the
+    //   composer read the composed draft (session.get presents typing +
+    //   pending as one string) and saved what it saw, transcript included.
+    //   Clearing the pending here makes the adoption durable in one write.
+    //   (A writer that merely typed the same words clears it too — the texts
+    //   are identical, so nothing is visibly lost.)
+    // - A write WITHOUT the pending keeps it staged: a tab that never re-read
+    //   the draft (continuously typing since before the landing) must never
+    //   be able to wipe a transcript it never saw.
+    // - An EMPTY write clears the typing only — EXCEPT when the stored draft
+    //   was already empty: the visible draft is then the voice alone, and
+    //   clearing it is a deliberate discard of the transcript.
+    // There is no version protocol: concurrent typing is last-writer-wins,
+    // exactly like every non-voice draft in the app.
     const draftWrite = (updates.metadata as Partial<SessionMetadata> | undefined)?.inputDraft;
-    // Whether this write took the transcript-folding branch (its ack carries
-    // the applied value so the client can adopt it).
-    let didFold = false;
     if (draftWrite !== undefined) {
       const existing = sessionManager.getSessionFromDB(targetSessionId);
       const meta = existing?.metadata;
-      if ((meta?.inputDraftVoicePending ?? '').trim() !== '') {
-        (updates.metadata as Partial<SessionMetadata>).inputDraftVoiceBaseline = draftWrite ?? '';
-        (updates.metadata as Partial<SessionMetadata>).inputDraftVersion =
-          (meta?.inputDraftVersion ?? 0) + 1;
-      } else if (typeof meta?.inputDraftVoiceBaseline === 'string') {
-        // MERGED but still unreconciled (the baseline snapshot lingers after
-        // the pending cleared): the draft holds baseline + transcripts, and a
-        // STALE save — started before the merge landed — would overwrite the
-        // transcripts outright (the dedup id only stops a replay, not this).
-        // Whether the write already carries the transcripts is decided by the
-        // DRAFT VERSION it echoes: the daemon bumps inputDraftVersion on every
-        // draft mutation, so a writer that read the merged draft holds the
-        // current version and is applied as-is, while a stale writer (absent
-        // or older version — or one that coincidentally ends with the same
-        // phrase, which a suffix comparison cannot tell apart) gets the
-        // transcripts folded in.
-        const baseline = meta.inputDraftVoiceBaseline;
-        const draft = meta.inputDraft ?? '';
-        let transcripts = '';
-        if (draft.startsWith(`${baseline} `)) transcripts = draft.slice(baseline.length + 1);
-        else if (draft.startsWith(baseline)) transcripts = draft.slice(baseline.length);
-        const currentVersion = meta.inputDraftVersion ?? 0;
-        const alreadyIncluded =
-          expectedDraftVersion !== undefined && expectedDraftVersion === currentVersion;
-        const written = draftWrite ?? '';
-        const folded = alreadyIncluded
-          ? written
-          : transcripts
-            ? appendDraftText(written, transcripts)
-            : written;
-        (updates.metadata as Partial<SessionMetadata>).inputDraft = folded || null;
-        // A version-current writer read the merged draft — its write IS the
-        // reconciliation, so the snapshot clears. A STALE writer's fold instead
-        // RE-ANCHORS the baseline to its (pre-merge) content with the sequence
-        // id intact: the folded draft is again exactly baseline + transcripts,
-        // so an in-flight or retrying clear's strip still recognizes the
-        // sequence and reduces the draft to the transcripts alone — clearing
-        // here would strand the strip (declined on the vanished snapshot) and
-        // resurrect text the user had sent or cleared.
-        if (alreadyIncluded) {
-          (updates.metadata as Partial<SessionMetadata>).inputDraftVoiceBaseline = null;
-        } else {
-          (updates.metadata as Partial<SessionMetadata>).inputDraftVoiceBaseline = written;
-          didFold = true;
+      const pending = meta?.inputDraftVoicePending;
+      const pendingStaged = !!pending && pending.trim() !== '';
+      const written = draftWrite ?? '';
+      if (pendingStaged) {
+        if (written.trim() === '') {
+          if ((meta?.inputDraft ?? '').trim() === '') {
+            // The visible (voice-only) draft was deliberately discarded.
+            (updates.metadata as Partial<SessionMetadata>).inputDraftVoicePending = null;
+          }
+          // else: clearing typing only — the transcript survives the clear.
+        } else if (written.includes(pending as string)) {
+          // Adoption: the write carries the staged transcript.
+          (updates.metadata as Partial<SessionMetadata>).inputDraftVoicePending = null;
         }
-        (updates.metadata as Partial<SessionMetadata>).inputDraftVersion = currentVersion + 1;
-      } else {
-        // A plain draft write (no sequence involved) still bumps the version
-        // so OTHER tabs' in-flight saves become recognizably stale.
-        const currentVersion = meta?.inputDraftVersion ?? 0;
-        (updates.metadata as Partial<SessionMetadata>).inputDraftVersion = currentVersion + 1;
       }
     }
 
@@ -538,22 +492,7 @@ export function setupSessionHandlers(
     });
 
     // Room channel broadcasts removed with legacy Room feature retirement.
-
-    // Echo the applied version when this write bumped it, so the client
-    // advances its cached version on the acknowledgement — without it, every
-    // later edit from that composer would echo the pre-write version and be
-    // misclassified as stale (folded) by the daemon. A FOLDED write also
-    // returns the applied VALUE: the caller must either adopt it (its local
-    // content lacks the transcripts) or deliberately keep its version cache
-    // stale — advancing without adopting would let its next edit apply as-is
-    // and clear the baseline, deleting the transcript from the draft.
-    const appliedMeta = (updates.metadata as Partial<SessionMetadata> | undefined) ?? {};
-    const appliedVersion = appliedMeta.inputDraftVersion;
-    return {
-      success: true,
-      ...(appliedVersion !== undefined ? { draftVersion: appliedVersion } : {}),
-      ...(didFold ? { draftValue: appliedMeta.inputDraft ?? '' } : {}),
-    };
+    return { success: true };
   });
 
   // Stage a voice transcript that completed AFTER its composer unmounted (the
@@ -611,19 +550,6 @@ export function setupSessionHandlers(
       pending === `${existingPending}${text}` || pending === `${existingPending} ${text}`;
     if (!fits) throw new Error('Pending voice draft is at the character limit');
     const metadataUpdate: Partial<SessionMetadata> = { inputDraftVoicePending: pending };
-    if (!existingPending.trim()) {
-      // A NEW pending sequence starts here: snapshot the draft it will merge
-      // onto, tagged with a fresh sequence id. The daemon is the single writer
-      // of the merge, so this baseline is the EXACT pre-sequence draft —
-      // regardless of which tabs appended entries or which tab's get performs
-      // the merge. session.get responses carry it so clients can structurally
-      // separate the transcripts from the stale baseline, and
-      // session.stripVoiceBaseline removes it on request — validated against
-      // the SEQUENCE id too, since a newer sequence can replace the baseline
-      // while leaving the draft text itself unchanged.
-      metadataUpdate.inputDraftVoiceBaseline = metadata.inputDraft ?? '';
-      metadataUpdate.inputDraftVoiceBaselineSeq = (metadata.inputDraftVoiceBaselineSeq ?? 0) + 1;
-    }
     if (dedupId) {
       // Append after the TTL filter above prunes expired ids. NO count cap:
       // logged ids come only from outbox flushes (each tab's outbox holds at
@@ -641,10 +567,21 @@ export function setupSessionHandlers(
         channel: `session:${sessionId}`,
       }
     );
+    // Tell the MOUNTED composer (if any) that a transcript just committed, so
+    // it re-reads and shows the composed draft. The event is the daemon's
+    // replacement for every client-side landing marker: tabs no longer
+    // coordinate through localStorage — a tab that misses the event (socket
+    // down, channel not yet joined) converges on its next get, clear, or
+    // send, and the pending itself is durable until consumed. Emitted only
+    // for a GENUINE commit: a deduped replay already had its landing
+    // announced by the original commit.
+    messageHub.event('session.voiceLanded', { sessionId }, { channel: `session:${sessionId}` });
     return { success: true };
   });
 
-  // Atomically clear the input draft ONLY if it still equals `expected`. The
+  // Atomically clear the input draft ONLY if it still equals `expected` (or
+  // the composition of the draft and a staged voice transcript — the sender
+  // then read the composed draft and its message carries the voice). The
   // unmounted voice send uses this to consume its click-time draft snapshot
   // without wiping newer edits persisted after the snapshot (the user reopened
   // the session, or another client saved). Read+write is one synchronous step
@@ -655,21 +592,25 @@ export function setupSessionHandlers(
     if (typeof expected !== 'string') throw new Error('Expected draft value is required');
     const session = sessionManager.getSessionFromDB(sessionId);
     if (!session) throw new Error('Session not found');
-    if ((session.metadata?.inputDraft ?? '').trim() !== expected.trim()) {
+    const draft = session.metadata?.inputDraft ?? '';
+    const pending = session.metadata?.inputDraftVoicePending ?? '';
+    const directMatch = draft.trim() === expected.trim();
+    let compositionMatch = false;
+    if (!directMatch && pending.trim() !== '') {
+      const composed = appendDraftText(draft, pending);
+      const fitsWhole = composed === `${draft}${pending}` || composed === `${draft} ${pending}`;
+      compositionMatch = fitsWhole && composed.trim() === expected.trim();
+    }
+    if (!directMatch && !compositionMatch) {
       return { cleared: false };
     }
-    // A staged voice sequence re-anchors its baseline to the CLEARED draft:
-    // the pending merges onto the (now empty) draft at the next session.get,
-    // and a baseline still naming the old non-empty draft would make every
-    // later reconciliation extract no transcript — letting a stale
-    // session.update overwrite the only merged copy after the pending field
-    // cleared.
-    const staged = (session.metadata?.inputDraftVoicePending ?? '').trim() !== '';
+    // The staged transcript is consumed ONLY on a composition match: the sent
+    // message carried it. A direct (typing-only) match means the sender never
+    // saw the staged voice — it stays for the next draft.
     const updates: UpdateSessionRequest = {
       metadata: {
         inputDraft: null,
-        ...(staged ? { inputDraftVoiceBaseline: '' } : {}),
-        inputDraftVersion: (session.metadata?.inputDraftVersion ?? 0) + 1,
+        ...(compositionMatch ? { inputDraftVoicePending: null } : {}),
       },
     };
     await sessionManager.updateSession(sessionId, updates as Partial<Session>);
@@ -681,163 +622,6 @@ export function setupSessionHandlers(
       }
     );
     return { cleared: true };
-  });
-
-  // Atomically strip the pre-sequence baseline from the input draft, keeping
-  // only the merged voice transcripts — the EXACT server-side counterpart of
-  // the client's clear-before-merge reconciliation. The baseline snapshot (see
-  // session.appendVoiceDraft) makes this precise: the merged draft is always
-  // baseline + pending (joined by appendDraftText), so removing the baseline
-  // prefix keeps EVERY transcript of the sequence regardless of which client
-  // knows which entry landed. Conditional on BOTH the draft text the client
-  // just read (`expected` — a NEWER draft saved by another client is never
-  // stomped) and the SEQUENCE id it observed (`expectedSeq` — a newer sequence
-  // can replace the baseline while leaving the draft text unchanged, and
-  // stripping then would clear the merged transcript the caller meant to
-  // keep). Read+write is one synchronous step, like clearInputDraftIf.
-  messageHub.onRequest('session.stripVoiceBaseline', async (data, _ctx) => {
-    const { sessionId, expected, expectedSeq } = data as {
-      sessionId: string;
-      expected: string;
-      expectedSeq?: number;
-    };
-    if (typeof expected !== 'string') throw new Error('Expected draft value is required');
-    const session = sessionManager.getSessionFromDB(sessionId);
-    if (!session) throw new Error('Session not found');
-    const metadata = session.metadata ?? {};
-    const baseline = metadata.inputDraftVoiceBaseline;
-    const draft = metadata.inputDraft ?? '';
-    if (
-      typeof baseline !== 'string' ||
-      typeof expectedSeq !== 'number' ||
-      metadata.inputDraftVoiceBaselineSeq !== expectedSeq ||
-      draft.trim() !== expected.trim()
-    ) {
-      return { updated: false };
-    }
-    // Mirror appendDraftText's joining so the remainder is exactly the
-    // transcripts (no leading separator).
-    let value: string;
-    if (draft === baseline) value = '';
-    else if (draft.startsWith(`${baseline} `)) value = draft.slice(baseline.length + 1);
-    else if (draft.startsWith(baseline)) value = draft.slice(baseline.length);
-    else return { updated: false }; // draft diverged from the snapshot
-    // Record WHICH sequence was stripped: a strip whose acknowledgement was
-    // lost leaves the client still owing its clear, and its retry must
-    // recognize the transcript-only draft as already-stripped rather than
-    // clearing it as a sequence that never merged.
-    const updates: UpdateSessionRequest = {
-      metadata: {
-        inputDraft: value || null,
-        inputDraftVoiceBaseline: null,
-        inputDraftVoiceLastStrippedSeq: expectedSeq,
-        inputDraftVersion: (metadata.inputDraftVersion ?? 0) + 1,
-      },
-    };
-    await sessionManager.updateSession(sessionId, updates as Partial<Session>);
-    messageHub.event(
-      'session.updated',
-      { ...updates, sessionId },
-      {
-        channel: `session:${sessionId}`,
-      }
-    );
-    return { updated: true, value };
-  });
-
-  // Atomically push a draft BACKUP onto the server draft WITHOUT discarding
-  // voice transcripts the sequence merged. A backup holds save-suppressed
-  // edits whose landing EXPIRED — the client's localStorage marker is gone, so
-  // it can no longer reconcile locally — and pushing the transcript-free
-  // backup with a bare session.update would clobber transcripts sitting in the
-  // draft. The baseline snapshot separates them exactly: transcripts are
-  // draft-minus-baseline (appendDraftText joining), so the write becomes
-  // backup + transcripts. While the pending is still STAGED nothing has
-  // merged, so the backup lands as the new draft and the baseline re-anchors
-  // to it (mirroring session.update); a draft that diverged from the snapshot
-  // means a newer writer intervened — decline rather than guess, the client
-  // retries. Read+write is one synchronous step, like stripVoiceBaseline.
-  messageHub.onRequest('session.mergeVoiceDraftBackup', async (data, _ctx) => {
-    const { sessionId, content, claimId } = data as {
-      sessionId: string;
-      content: string;
-      claimId?: string;
-    };
-    if (typeof content !== 'string') throw new Error('Backup content is required');
-    const session = sessionManager.getSessionFromDB(sessionId);
-    if (!session) throw new Error('Session not found');
-    const metadata = session.metadata ?? {};
-    // Idempotent replay: this claim's merge already COMMITTED but its ack was
-    // lost. Rewriting now would take the baseline-null branch (the first
-    // commit cleared it) and replace the combined draft with the
-    // transcript-free backup, permanently dropping the voice text. A LOG, not
-    // a single marker: another tab's claim can commit while this claim's ack
-    // is in flight, and a last-only marker would evict it before its retry.
-    const claimLogCutoff = Date.now() - VOICE_APPEND_LOG_TTL_MS;
-    const committedClaims = (metadata.inputDraftVoiceMergeClaimLog ?? []).filter(
-      (entry) =>
-        typeof entry?.id === 'string' && typeof entry?.ts === 'number' && entry.ts > claimLogCutoff
-    );
-    if (claimId && committedClaims.some((entry) => entry.id === claimId)) {
-      return { merged: true, value: metadata.inputDraft ?? '' };
-    }
-    const baseline = metadata.inputDraftVoiceBaseline;
-    const draft = metadata.inputDraft ?? '';
-    const trimmed = content.trim();
-    const metadataUpdate: Partial<SessionMetadata> = {};
-    if (typeof baseline !== 'string') {
-      // No sequence staged or lingering — a plain draft write.
-      metadataUpdate.inputDraft = trimmed || null;
-    } else if ((metadata.inputDraftVoicePending ?? '').trim() !== '') {
-      // Still staged: the pending merges onto whatever draft is current at
-      // merge time, so re-anchor the baseline to the pushed backup.
-      metadataUpdate.inputDraft = trimmed || null;
-      metadataUpdate.inputDraftVoiceBaseline = trimmed;
-    } else {
-      // Merged: keep the transcripts, drop the stale pre-sequence baseline.
-      let transcripts: string;
-      if (draft === baseline) transcripts = '';
-      else if (draft.startsWith(`${baseline} `)) transcripts = draft.slice(baseline.length + 1);
-      else if (draft.startsWith(baseline)) transcripts = draft.slice(baseline.length);
-      else return { merged: false };
-      // The COMPLETE combination must fit, as the append and session.get
-      // merge paths require: appendDraftText silently slices at the character
-      // limit, and committing a truncated draft while reporting merged:true
-      // would let the client retire its only durable copy of the lost tail.
-      // Decline instead — the claim retries once the draft has room.
-      const value = appendDraftText(trimmed, transcripts);
-      const fits =
-        transcripts === '' ||
-        value === `${trimmed} ${transcripts}` ||
-        value === `${trimmed}${transcripts}`;
-      if (!fits) return { merged: false };
-      metadataUpdate.inputDraft = value || null;
-      metadataUpdate.inputDraftVoiceBaseline = null;
-    }
-    // Every branch mutates inputDraft — bump the draft version so OTHER
-    // tabs' in-flight saves become recognizably stale against this write.
-    metadataUpdate.inputDraftVersion = (metadata.inputDraftVersion ?? 0) + 1;
-    if (claimId) {
-      // Record the committed claim AFTER the branches above, so a retry of
-      // THIS merge is recognized before any branch can rewrite the draft.
-      // Appended to the TTL-pruned LOG with NO count cap: a still-retrying
-      // claim's acknowledgement can arrive long after later claims commit,
-      // and evicting its id would send the retry down the plain-write branch.
-      metadataUpdate.inputDraftVoiceMergeClaimLog = [
-        ...committedClaims,
-        { id: claimId, ts: Date.now() },
-      ];
-    }
-    const updates: UpdateSessionRequest = { metadata: metadataUpdate };
-    await sessionManager.updateSession(sessionId, updates as Partial<Session>);
-    messageHub.event(
-      'session.updated',
-      { ...updates, sessionId },
-      {
-        channel: `session:${sessionId}`,
-      }
-    );
-    return { merged: true, value: metadataUpdate.inputDraft ?? '' };
   });
 
   messageHub.onRequest('session.delete', async (data, _ctx) => {

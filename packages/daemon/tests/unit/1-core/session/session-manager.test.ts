@@ -1429,12 +1429,12 @@ describe('SessionManager', () => {
         });
       });
 
-      it('should clear draft when hasDraftToClear is true', async () => {
+      it('clears the draft on a direct match and keeps a staged transcript', async () => {
         const handler = eventHandlers.get('message.persisted');
 
         (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
           id: 'test-id',
-          metadata: { inputDraft: 'test draft' },
+          metadata: { inputDraft: 'test message', inputDraftVoicePending: 'voice' },
         });
 
         await handler?.({
@@ -1444,30 +1444,33 @@ describe('SessionManager', () => {
           hasDraftToClear: true,
         });
 
-        // Should update session to clear draft
-        expect(mockDb.updateSession).toHaveBeenCalled();
+        // Direct (typing-only) match: the typing is cleared, the staged voice
+        // the sender never saw stays for the next draft.
+        expect(mockDb.updateSession).toHaveBeenCalledWith(
+          'test-id',
+          expect.objectContaining({
+            metadata: expect.objectContaining({ inputDraft: null }),
+          })
+        );
+        const call = mockDb.updateSession.mock.calls[0]?.[1] as {
+          metadata: Record<string, unknown>;
+        };
+        expect(call.metadata.inputDraftVoicePending).toBeUndefined();
       });
 
-      it('re-anchors a staged voice baseline when the send-clear runs', async () => {
-        // A voice pending staged at send time must not keep a baseline naming
-        // the SENT draft: the pending merges onto the now-empty draft, and a
-        // stale baseline would make later reconciliation extract no
-        // transcript — letting a stale save overwrite the only merged copy.
+      it('clears the draft and the staged transcript on a composition match', async () => {
+        // The sender read the composed draft (typing + staged voice) and the
+        // message carried both — the staging is consumed with the draft.
         const handler = eventHandlers.get('message.persisted');
 
         (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
           id: 'test-id',
-          metadata: {
-            inputDraft: 'test draft',
-            inputDraftVersion: 2,
-            inputDraftVoicePending: 'voice',
-            inputDraftVoiceBaseline: 'test draft',
-          },
+          metadata: { inputDraft: 'test message', inputDraftVoicePending: 'voice' },
         });
 
         await handler?.({
           sessionId: 'test-id',
-          userMessageText: 'test message',
+          userMessageText: 'test message voice',
           needsWorkspaceInit: false,
           hasDraftToClear: true,
         });
@@ -1477,23 +1480,20 @@ describe('SessionManager', () => {
           expect.objectContaining({
             metadata: expect.objectContaining({
               inputDraft: null,
-              inputDraftVersion: 3,
-              inputDraftVoiceBaseline: '',
+              inputDraftVoicePending: null,
             }),
           })
         );
       });
 
-      it('bumps inputDraftVersion when the sent-message draft clear runs', async () => {
-        // Another tab's debounced save still holds the PRE-send version; the
-        // stale-vs-current equality check in session.update would treat that
-        // write as current and resurrect the sent content — the clear must
-        // invalidate prior versions like every other draft mutation.
+      it('writes nothing when the fresh draft matches neither the text nor the composition', async () => {
+        // The persistence-time flag came from a pre-send snapshot; a newer
+        // draft saved in between must not be wiped by a stale match.
         const handler = eventHandlers.get('message.persisted');
 
         (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
           id: 'test-id',
-          metadata: { inputDraft: 'test draft', inputDraftVersion: 4 },
+          metadata: { inputDraft: 'newer edits', inputDraftVoicePending: 'voice' },
         });
 
         await handler?.({
@@ -1503,12 +1503,7 @@ describe('SessionManager', () => {
           hasDraftToClear: true,
         });
 
-        expect(mockDb.updateSession).toHaveBeenCalledWith(
-          'test-id',
-          expect.objectContaining({
-            metadata: expect.objectContaining({ inputDraft: null, inputDraftVersion: 5 }),
-          })
-        );
+        expect(mockDb.updateSession).not.toHaveBeenCalled();
       });
     });
 

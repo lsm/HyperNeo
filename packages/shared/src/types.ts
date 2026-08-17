@@ -601,30 +601,16 @@ export interface SessionMetadata {
   lastContextInfo?: ContextInfo | null; // Last known context info (persisted)
   inputDraft?: string | null; // Draft input text (null to clear; persisted across sessions and devices)
   /**
-   * Voice transcript that completed after its composer unmounted (the user
-   * navigated to another session mid-transcription). Held in a separate field
-   * so the client's debounced inputDraft saves — which carry a stale snapshot —
-   * can never clobber it; useInputDraft merges it into inputDraft once on load,
-   * then clears it. null/absent = nothing pending.
+   * Voice transcript staged by the daemon (session.appendVoiceDraft) for the
+   * session's composer. Daemon-coordinated: reads return the COMPOSITION of
+   * inputDraft + pending (when it fits the character limit whole) without
+   * mutating anything, and a draft write clears the pending exactly when the
+   * written text already contains it ("adoption") — so a tab that never saw
+   * the transcript can never wipe it, and no client-side reconciliation is
+   * needed. Consumed by adoption writes, the voice-aware send-clear, or a
+   * clear of an already-empty draft. null/absent = nothing pending.
    */
   inputDraftVoicePending?: string | null;
-  /**
-   * Snapshot of `inputDraft` taken when the CURRENT pending voice sequence
-   * started (the first session.appendVoiceDraft onto an empty
-   * inputDraftVoicePending). The merged draft is always baseline + pending, so
-   * reconciliation can structurally separate the transcripts from the stale
-   * baseline — exactly, regardless of which tabs appended or merged. Cleared
-   * by session.stripVoiceBaseline; absent = no unstripped sequence.
-   */
-  inputDraftVoiceBaseline?: string | null;
-  /**
-   * Monotonic id of the pending sequence the baseline snapshot belongs to
-   * (incremented each time a new sequence starts). The conditional strip
-   * validates BOTH the draft text and this id: a newer sequence can replace
-   * the baseline while leaving the draft text unchanged, and stripping then
-   * would clear the merged transcript the caller meant to keep.
-   */
-  inputDraftVoiceBaselineSeq?: number | null;
   /**
    * Timestamped log of voice-transcript outbox entry ids merged into
    * `inputDraftVoicePending` (see session.appendVoiceDraft). The client's
@@ -638,32 +624,6 @@ export interface SessionMetadata {
    * double-append. `ts` is ms since epoch.
    */
   inputDraftVoiceAppendLog?: Array<{ id: string; ts: number }> | null;
-  /**
-   * The sequence id whose baseline the LAST session.stripVoiceBaseline
-   * removed. Lets a strip whose ACKNOWLEDGEMENT was lost be recognized as
-   * committed on retry (the client's owed-clear reconcile would otherwise
-   * treat the transcript-only draft as a sequence that never merged and
-   * clear it). Absent = no strip has committed.
-   */
-  inputDraftVoiceLastStrippedSeq?: number | null;
-  /**
-   * Timestamped log of session.mergeVoiceDraftBackup claim ids that COMMITTED.
-   * A LOG (not a single last marker) because two tabs can commit different
-   * backup claims for the same session while either's acknowledgement is in
-   * flight: a single marker lets the second commit evict the first, whose
-   * retry would then take the plain-write branch and overwrite the newer
-   * draft with older transcript-free content. Bounded to the backup TTL.
-   */
-  inputDraftVoiceMergeClaimLog?: Array<{ id: string; ts: number }> | null;
-  /**
-   * Monotonic version of `inputDraft`, bumped by the daemon on EVERY draft
-   * mutation (merge, strip, backup merge, draft write, clear). Clients echo
-   * the version they last READ as `expectedDraftVersion` on session.update:
-   * a match proves the write is derived from the current draft (applied
-   * as-is), while a mismatch marks a stale in-flight save — whose content
-   * coincidentally ending with the transcript phrase cannot prove inclusion.
-   */
-  inputDraftVersion?: number | null;
   removedOutputs?: string[]; // UUIDs of messages whose tool_result outputs were removed from SDK session file
   resolvedQuestions?: Record<string, ResolvedQuestion>; // Resolved AskUserQuestion responses, keyed by toolUseId
   // Cost tracking: SDK reports cumulative cost per run, but resets on agent restart
@@ -846,6 +806,7 @@ export type EventType =
   | 'tools.unloaded'
   | 'session.created'
   | 'session.updated'
+  | 'session.voiceLanded' // A voice transcript committed into inputDraftVoicePending (per-session channel)
   | 'session.deleted'
   | 'session.ended'
   | 'session.interrupted'

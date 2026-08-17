@@ -19,7 +19,7 @@ import type {
   MessageOrigin,
   MessageImage,
 } from '@hyperneo/shared';
-import { generateUUID } from '@hyperneo/shared';
+import { appendDraftText, generateUUID } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import {
@@ -385,26 +385,35 @@ export class SessionManager {
             });
           }
 
-          // STEP 2: Clear draft if it matches the sent message content.
-          // Bump inputDraftVersion like every other draft mutation: another
-          // tab's debounced save still holds the PRE-send version, and the
-          // stale-vs-current equality check in session.update would otherwise
-          // treat that write as current and resurrect the sent content.
+          // STEP 2: Clear the draft when the sent message consumed it. The
+          // match is re-decided here from a FRESH read (the persistence-time
+          // flag was computed from a pre-send snapshot): direct match clears
+          // the typing only, while a composition match — the sent text equals
+          // draft + staged voice joined whole — means the sender read the
+          // composed draft and the voice went out in the message, so the
+          // staging is consumed too. A typing-only sender never saw the
+          // staged transcript and must not wipe it: it stays for the next
+          // draft. No match → write nothing (a newer draft intervened).
           if (hasDraftToClear) {
             const beforeClear = this.getSessionFromDB(sessionId);
-            // A staged voice sequence re-anchors its baseline to the CLEARED
-            // draft (same as session.clearInputDraftIf): the pending merges
-            // onto the now-empty draft at the next get, and a baseline naming
-            // the sent non-empty draft would make later reconciliation
-            // extract no transcript.
-            const staged = (beforeClear?.metadata?.inputDraftVoicePending ?? '').trim() !== '';
-            await this.sessionLifecycle.update(sessionId, {
-              metadata: {
-                inputDraft: null,
-                ...(staged ? { inputDraftVoiceBaseline: '' } : {}),
-                inputDraftVersion: (beforeClear?.metadata?.inputDraftVersion ?? 0) + 1,
-              },
-            } as Partial<Session>);
+            const draft = beforeClear?.metadata?.inputDraft ?? '';
+            const pending = beforeClear?.metadata?.inputDraftVoicePending ?? '';
+            const directMatch = draft.trim() === (userMessageText ?? '').trim();
+            let compositionMatch = false;
+            if (!directMatch && pending.trim() !== '') {
+              const composed = appendDraftText(draft, pending);
+              const fitsWhole =
+                composed === `${draft}${pending}` || composed === `${draft} ${pending}`;
+              compositionMatch = fitsWhole && composed.trim() === (userMessageText ?? '').trim();
+            }
+            if (directMatch || compositionMatch) {
+              await this.sessionLifecycle.update(sessionId, {
+                metadata: {
+                  inputDraft: null,
+                  ...(compositionMatch ? { inputDraftVoicePending: null } : {}),
+                },
+              } as Partial<Session>);
+            }
           }
         } catch (error) {
           this.logger.error(

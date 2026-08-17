@@ -20,6 +20,7 @@ import type {
   ReferenceMetadata,
   Session,
 } from '@hyperneo/shared';
+import { appendDraftText } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import type { Database } from '../../storage/database';
@@ -379,7 +380,23 @@ export class MessagePersistence {
             // either auto-generated or manually set by the user (titleSetBy).
             needsWorkspaceInit:
               !session.metadata.titleGenerated && session.metadata.titleSetBy !== 'user',
-            hasDraftToClear: session.metadata?.inputDraft === content.trim(),
+            // The draft is consumed by the send when it matches the sent text
+            // directly OR through the voice composition: a sender whose
+            // composer showed draft + staged transcript (session.get presents
+            // the composition) sent both, so the subscriber consumes the
+            // staging on that path. Computed from this pre-send snapshot as a
+            // GATE only — the subscriber re-decides the exact match from a
+            // fresh read.
+            hasDraftToClear: (() => {
+              const draft = session.metadata?.inputDraft ?? '';
+              if (draft.trim() === content.trim()) return true;
+              const pending = session.metadata?.inputDraftVoicePending;
+              if (!pending || pending.trim() === '') return false;
+              const composed = appendDraftText(draft, pending);
+              const fitsWhole =
+                composed === `${draft}${pending}` || composed === `${draft} ${pending}`;
+              return fitsWhole && composed.trim() === content.trim();
+            })(),
             sendStatus,
             deliveryMode: effectiveDeliveryMode,
             // The outbox already owns delivery (job enqueued + queued marker
