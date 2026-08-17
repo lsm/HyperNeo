@@ -1196,9 +1196,12 @@ describe('AcpQueryRunner', () => {
       await ctx.queryPromise;
 
       expect(firstClient.close).toHaveBeenCalled();
-      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
-        { type: 'text', text: 'second' },
-      ]);
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith(
+        'user-message-1',
+        [{ type: 'text', text: 'second' }],
+        false,
+        { prepend: true, durable: true }
+      );
       expect(secondClient.sendPrompt).toHaveBeenCalled();
       expect(ctx.db.updateSession).not.toHaveBeenCalledWith('session-1', {
         acpSessionId: undefined,
@@ -1235,9 +1238,12 @@ describe('AcpQueryRunner', () => {
 
       expect(createClient).toHaveBeenCalledTimes(2);
       expect(firstClient.close).toHaveBeenCalled();
-      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
-        { type: 'text', text: 'hello' },
-      ]);
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith(
+        'user-message-1',
+        [{ type: 'text', text: 'hello' }],
+        false,
+        { prepend: true, durable: true }
+      );
       expect(secondClient.sendPrompt).toHaveBeenCalled();
     } finally {
       restoreStartupRetryEnv();
@@ -1719,9 +1725,12 @@ describe('AcpQueryRunner startup-timeout bounded retry', () => {
       await ctx.queryPromise;
 
       expect(createClient).toHaveBeenCalledTimes(2);
-      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
-        { type: 'text', text: 'hello' },
-      ]);
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith(
+        'user-message-1',
+        [{ type: 'text', text: 'hello' }],
+        false,
+        { prepend: true, durable: true }
+      );
       expect(warnLines(ctx).some((line) => line.includes('Startup replay skip'))).toBe(false);
     } finally {
       restoreStartupRetryEnv();
@@ -1749,9 +1758,12 @@ describe('AcpQueryRunner startup-timeout bounded retry', () => {
       // The retry ran and completed; every idle publication came from the
       // chain's own completion (no suppressDeliveryWaiters blip).
       expect(createClient).toHaveBeenCalledTimes(2);
-      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
-        { type: 'text', text: 'hello' },
-      ]);
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith(
+        'user-message-1',
+        [{ type: 'text', text: 'hello' }],
+        false,
+        { prepend: true, durable: true }
+      );
       expect(ctx.stateManager.setIdle).not.toHaveBeenCalledWith({
         suppressDeliveryWaiters: true,
       });
@@ -1801,9 +1813,12 @@ describe('AcpQueryRunner startup-timeout bounded retry', () => {
       expect(createClient).toHaveBeenCalledTimes(2);
       expect(startCalls).toHaveBeenCalledTimes(2);
       expect(stopCalls).toHaveBeenCalledTimes(4);
-      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
-        { type: 'text', text: 'hello' },
-      ]);
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith(
+        'user-message-1',
+        [{ type: 'text', text: 'hello' }],
+        false,
+        { prepend: true, durable: true }
+      );
       expect(running).toBe(false);
     } finally {
       restoreStartupRetryEnv();
@@ -2025,6 +2040,82 @@ describe('AcpQueryRunner startup-timeout bounded retry', () => {
       expect(createClient).toHaveBeenCalledTimes(3);
       expect(warnLines(ctx).some((line) => line.includes('retry 1/1'))).toBe(true);
       expect(messageQueue.enqueueWithId).not.toHaveBeenCalled();
+    } finally {
+      restoreStartupRetryEnv();
+    }
+  }, 1000);
+
+  test('routes a replay admission-TTL rejection into the bounded startup retry', async () => {
+    // Parity with QueryRunner's staged-replay flush: when the re-fed
+    // admission is TTL-rejected (the retry attempt's handshake outlived the
+    // 30s admission window), the rejection must re-stage the prompt and fail
+    // the attempt into the bounded machine — not vanish into a swallowed
+    // .catch and leave the next round with nothing to re-feed.
+    const restoreStartupRetryEnv = pinStartupRetryEnv({ base: '0', max: '2' });
+    try {
+      const clients = [createHangingClient(), createStarvedHandshakeClient(), createMockClient()];
+      const { ctx, messageQueue, sdkRepo } = createRunnerFixture({ client: clients[0] });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+      // First re-feed admission TTL-rejects; the re-staged round's re-feed
+      // resolves. Attempt 2 starves at the handshake, with the queued
+      // admission (size mock) arming its startup timer.
+      const enqueue = mock(async () => {
+        if (enqueue.mock.calls.length === 1) {
+          throw new Error('Message queue timeout: SDK did not consume message');
+        }
+      });
+      messageQueue.enqueueWithId = enqueue as unknown as MessageQueue['enqueueWithId'];
+      (messageQueue.size as unknown as ReturnType<typeof mock>).mockImplementation(() => 1);
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      // Round 1 re-feed rejected → staged; attempt 2 starved → the staged
+      // replay drove round 2's re-feed; attempt 3 completed the turn.
+      expect(createClient).toHaveBeenCalledTimes(3);
+      expect(enqueue).toHaveBeenCalledTimes(2);
+      expect(sdkRepo.reopenDeliveryByUuid).toHaveBeenCalledTimes(2);
+      const lines = warnLines(ctx);
+      expect(
+        lines.some((line) => line.includes('Startup replay admission rejected for message'))
+      ).toBe(true);
+      expect(lines.some((line) => line.includes('retry 2/2'))).toBe(true);
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    } finally {
+      restoreStartupRetryEnv();
+    }
+  }, 1000);
+
+  test('classifies a replay-rejection abort as a startup timeout for the bounded retry', async () => {
+    // The rejection handler's abort can surface in the retry attempt as a
+    // plain error before any timer fires; the replay-rejected flag must
+    // reclassify it as a startup timeout so the bounded machine — not the
+    // terminal path — owns it. Mirrors QueryRunner's post-loop escape.
+    const restoreStartupRetryEnv = pinStartupRetryEnv({ base: '60', max: '2' });
+    try {
+      const failHandshake = createMockClient();
+      failHandshake.initialize.mockImplementation(async () => {
+        throw new Error('spawn failed');
+      });
+      const clients = [createHangingClient(), failHandshake, createMockClient()];
+      const { ctx } = createRunnerFixture({ client: clients[0] });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      await runner.start();
+      expect(await waitForWarn(ctx, 'Auto-retrying ACP query')).toBe(true);
+
+      // The previous round's re-feed was TTL-rejected while this backoff ran.
+      (runner as unknown as { _replayAdmissionRejected: boolean })._replayAdmissionRejected = true;
+
+      await ctx.queryPromise;
+
+      // Reclassified: the spawn failure entered the bounded machine (granted
+      // round 2, attempt 3 completed) instead of terminalizing the session.
+      expect(createClient).toHaveBeenCalledTimes(3);
+      expect(warnLines(ctx).some((line) => line.includes('retry 2/2'))).toBe(true);
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
     } finally {
       restoreStartupRetryEnv();
     }
