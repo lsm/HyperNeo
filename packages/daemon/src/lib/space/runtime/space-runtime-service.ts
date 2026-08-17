@@ -1205,15 +1205,27 @@ export class SpaceRuntimeService {
           isRateOrUsageLimited(t.status)
       );
 
-    await Promise.allSettled(
+    const cleanupOutcomes = await Promise.allSettled(
       activeTasks.map(async (task) => {
         if (this.taskAgentManager) {
-          await this.taskAgentManager.cleanup(task.id, 'stopped').catch((err: unknown) => {
-            log.warn(`stopActiveWork: failed to cleanup agent session for task ${task.id}:`, err);
-          });
+          await this.taskAgentManager.cleanup(task.id, 'stopped');
         }
       })
     );
+    // Map task → whether its cleanup resolved. cleanup has no per-sub-session
+    // try/catch: a teardown throw aborts its loop, so a REJECTED outcome
+    // means the task's sub-sessions (possibly the merger) may still be live.
+    const cleanupSucceeded = new Map<string, boolean>();
+    activeTasks.forEach((task, i) => {
+      const outcome = cleanupOutcomes[i];
+      cleanupSucceeded.set(task.id, outcome?.status === 'fulfilled');
+      if (outcome?.status === 'rejected') {
+        log.warn(
+          `stopActiveWork: failed to cleanup agent session for task ${task.id}:`,
+          outcome.reason
+        );
+      }
+    });
 
     // 1.5. Record interrupted in-flight merges durably. A fresh merger
     // sub-session carries no node_executions row (#852), so park below has
@@ -1224,13 +1236,15 @@ export class SpaceRuntimeService {
     // (a tracking field — still no task STATUS writes) gives the banner and
     // hooks `resumeDeferredPostApprovals`, whose re-dispatch re-spawns the
     // merge with full route context. The session POINTER is nulled in the same
-    // write — unconditionally, even when a reason is already set: the
-    // interrupted session is dead as a worker, yet `isAgentSessionAlive`
-    // counts 'interrupted' as alive, so a retained pointer would make the
-    // router's `already-routed` guard short-circuit the resume re-dispatch (no
-    // spawn, no injection) and the task would wedge `approved` with the banner
-    // silently cleared. The REASON is only written when unset (a deferral
-    // recorded by the hold uses the same resume path — keep its wording).
+    // write whenever the task's cleanup SUCCEEDED (even when a reason is
+    // already set — keep its wording): an interrupted session reads as 'idle'
+    // (handleInterrupt ends with setIdle), so a retained pointer would make
+    // the router's `already-routed` guard short-circuit the resume re-dispatch
+    // (no spawn, no injection) and the task would wedge `approved`. The
+    // REASON is only written when unset. When the task's cleanup REJECTED,
+    // cleanup's loop aborted and the merger may still be LIVE — the pointer is
+    // kept so resume does not spawn a duplicate merge (the already-routed
+    // guard sees the live session).
     //
     // The space row is RE-READ here: a `space.start` that landed during the
     // cleanup awaits above already fired `onSpaceResumed`, whose sweep ran
@@ -1266,10 +1280,13 @@ export class SpaceRuntimeService {
       // make the resume sweep spawn a duplicate merge. The probe
       // (interrupted = dead) is the exact check; absence on a mock/older
       // shape assumes usable and skips.
-      const mergerAlive =
-        this.taskAgentManager?.isSessionUsableForPostApproval?.(fresh.postApprovalSessionId) ??
-        true;
-      if (mergerAlive) continue;
+      // Null the pointer whenever this task's cleanup SUCCEEDED (the merger
+      // was interrupted — even though it now reads 'idle', the pointer must
+      // go so the already-routed guard cannot pin it). Keep it when the
+      // cleanup REJECTED: its loop aborted, so the merger may still be LIVE,
+      // and nulling a live pointer would make the resume sweep spawn a
+      // duplicate merge.
+      if (cleanupSucceeded.get(fresh.id) === false) continue;
       try {
         taskRepo.updateTask(fresh.id, {
           postApprovalSessionId: null,

@@ -5597,6 +5597,35 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     expect(ctx.taskRepo.getTask(taskId)?.postApprovalBlockedReason).toBe(runtimeStampedReason);
   });
 
+  test('approve: an UNSTAMPED typed deferral gets the generic recovery banner (defensive)', async () => {
+    // Round-7 P1 wedge: a typed deferral that reaches the coordinator path
+    // with NO blocked-reason stamped would wedge the task `approved` with no
+    // banner and no sweep (the resume sweep filters on the reason). The
+    // tool defensively stamps the generic warning in that case.
+    const taskId = await createReviewTask();
+
+    const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval').mockImplementation(
+      async (id: string) => {
+        // Commits the approval but does NOT stamp a reason — then throws the
+        // typed deferral, as if the runtime had a gap in its stamping.
+        ctx.taskRepo.updateTask(id, { status: 'approved' });
+        throw new PostApprovalDeferredError('unexpected unstamped deferral');
+      }
+    );
+
+    const result = await makeHandlers(ctx, {
+      callerRole: 'coordinator',
+    }).approve_pending_completion({ task_id: taskId, approved: true });
+    dispatchSpy.mockRestore();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(true);
+    expect(parsed.task.status).toBe('approved');
+    // The generic recovery banner was stamped so the task is not wedged.
+    expect(parsed.task.postApprovalBlockedReason).toContain('Approval recorded');
+    expect(ctx.taskRepo.getTask(taskId)?.postApprovalBlockedReason).toContain('Approval recorded');
+  });
+
   test('approve: a dispatch failure before the status commit is propagated as an error', async () => {
     const taskId = await createReviewTask();
 

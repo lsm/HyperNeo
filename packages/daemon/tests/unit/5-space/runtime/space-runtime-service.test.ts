@@ -295,8 +295,12 @@ describe('SpaceRuntimeService', () => {
         cleanup: async (taskId: string, reason: 'done' | 'cancelled' | 'stopped') => {
           cleanupCalls.push({ taskId, reason });
         },
-        // The merger is dead (interrupted) — step 1.5's liveness gate passes.
-        isSessionUsableForPostApproval: () => false,
+        // P1 pin (round 10): a normally-interrupted merger reads 'idle'
+        // (handleInterrupt ends with setIdle), so a liveness probe would
+        // return TRUE here — yet the pointer must STILL be nulled (cleanup
+        // succeeded, so the merger is interrupted). The gate is the
+        // cleanup OUTCOME, not the probe.
+        isSessionUsableForPostApproval: () => true,
       } as unknown as TaskAgentManager;
 
       const svc = new SpaceRuntimeService({
@@ -389,8 +393,6 @@ describe('SpaceRuntimeService', () => {
       });
       svc.setTaskAgentManager({
         cleanup: async () => {},
-        // The merger is dead (interrupted) — step 1.5's liveness gate passes.
-        isSessionUsableForPostApproval: () => false,
       } as unknown as TaskAgentManager);
       const redrives: Array<{ spaceId: string; taskId: string; source: string }> = [];
       svc.dispatchPostApproval = async (spaceId, taskId, approvalSource) => {
@@ -444,8 +446,6 @@ describe('SpaceRuntimeService', () => {
       });
       svc.setTaskAgentManager({
         cleanup: async () => {},
-        // The merger is dead (interrupted) — step 1.5's liveness gate passes.
-        isSessionUsableForPostApproval: () => false,
       } as unknown as TaskAgentManager);
       const redrives: Array<{ taskId: string }> = [];
       svc.dispatchPostApproval = async (_spaceId, taskId) => {
@@ -467,7 +467,9 @@ describe('SpaceRuntimeService', () => {
       // cleanup has no per-sub-session try/catch: a teardown throw aborts its
       // loop and the merger stays LIVE. Step 1.5 must not null a live
       // pointer — the resume sweep would spawn a duplicate merge while the
-      // original still runs. The liveness probe is the gate.
+      // original still runs. The cleanup-outcome gate is the discriminator
+      // (NOT a liveness probe: an interrupted session reads 'idle', so the
+      // probe cannot tell interrupted from live).
       const activeTasks = [
         {
           id: 't5',
@@ -495,9 +497,10 @@ describe('SpaceRuntimeService', () => {
         workflowRunRepo: mockWorkflowRunRepo,
       });
       svc.setTaskAgentManager({
-        cleanup: async () => {},
-        // The merger is STILL LIVE — cleanup did not interrupt it.
-        isSessionUsableForPostApproval: () => true,
+        // The merger is STILL LIVE — cleanup THREW (its loop aborted).
+        cleanup: async () => {
+          throw new Error('teardown blew up');
+        },
       } as unknown as TaskAgentManager);
       const redrives: Array<{ taskId: string }> = [];
       svc.dispatchPostApproval = async (_spaceId, taskId) => {
@@ -557,8 +560,6 @@ describe('SpaceRuntimeService', () => {
       });
       svc.setTaskAgentManager({
         cleanup: async () => {},
-        // The merger is dead (interrupted) — step 1.5's liveness gate passes.
-        isSessionUsableForPostApproval: () => false,
       } as unknown as TaskAgentManager);
       svc.dispatchPostApproval = async () => {};
 
@@ -612,8 +613,6 @@ describe('SpaceRuntimeService', () => {
       });
       svc.setTaskAgentManager({
         cleanup: async () => {},
-        // The merger is dead (interrupted) — step 1.5's liveness gate passes.
-        isSessionUsableForPostApproval: () => false,
       } as unknown as TaskAgentManager);
       const redrives: Array<{ taskId: string }> = [];
       svc.dispatchPostApproval = async (_spaceId, taskId) => {

@@ -6384,6 +6384,22 @@ export class SpaceRuntime {
    */
   async onSpaceResumed(spaceId: string): Promise<void> {
     const store = this.config.externalEventStore;
+    // Register the resume sweep FIRST so `flushResumeSweep` always finds it —
+    // the guard awaits below would otherwise race the registration (a flush
+    // called right after resume could return before the sweep is tracked).
+    // The sweep re-drives deferred dispatches; if the space turns out to still
+    // be paused/stopped, the dispatch hold re-defers (idempotent).
+    const sweep = this.resumeDeferredPostApprovals(spaceId).finally(() => {
+      // Conditional delete: a newer sweep may have overwritten this entry —
+      // deleting unconditionally would evict the NEWER sweep's handle while it
+      // is still running (this finally fires in the older sweep, after the
+      // older one has finished), and a subsequent flushResumeSweep would then
+      // return before the newer sweep finishes.
+      if (this.resumeSweeps.get(spaceId) === sweep) {
+        this.resumeSweeps.delete(spaceId);
+      }
+    });
+    this.resumeSweeps.set(spaceId, sweep);
     // Re-read the row before clearing the sync paused cache: `space.start`
     // fires this on a STOPPED space, which may ALSO still be PAUSED (a
     // pause→stop→start cycle leaves `paused` set). Clearing the cache for a
@@ -6399,128 +6415,135 @@ export class SpaceRuntime {
       return;
     }
     this.pausedSpaceIds.delete(spaceId);
-    // Re-drive post-approval dispatches deferred by a stop/pause (approved
-    // tasks with a blocked reason). Fire-and-forget with its own error
-    // isolation — delivery requeue below must not wait on it. The promise is
-    // tracked so flushResumeSweep can await it.
-    const sweep = this.resumeDeferredPostApprovals(spaceId).finally(() => {
-      // Conditional delete: a newer sweep may have overwritten this entry —
-      // deleting unconditionally would evict the NEWER sweep's handle while it
-      // is still running (this finally fires in the older sweep, after the
-      // older one has finished), and a subsequent flushResumeSweep would then
-      // return before the newer sweep finishes.
-      if (this.resumeSweeps.get(spaceId) === sweep) {
-        this.resumeSweeps.delete(spaceId);
+    // Close the read→delete TOCTOU: a stop/pause landing between the re-read
+    // above and this delete would have its hold entry wiped. Re-check and
+    // re-add; a failed re-read keeps the delete (conservative — the next
+    // resume re-reads again).
+    try {
+      const postDelete = await this.config.spaceManager.getSpace(spaceId);
+      if (postDelete?.paused || postDelete?.stopped) {
+        this.pausedSpaceIds.add(spaceId);
+        return;
       }
-    });
-    this.resumeSweeps.set(spaceId, sweep);
+    } catch {
+      /* keep the delete; the next resume re-reads */
+    }
     if (!store) return;
 
-    // Re-register workflow-defined static event interests for eligible runs
-    // before evaluating pending deliveries. The startup rehydrate skips paused
-    // spaces, so a run relying on a workflow eventInterests pattern may have no
-    // trie entry yet; rebuilding first avoids false subscription removal.
-    const reactiveRuns = this.config.workflowRunRepo
-      .listBySpace(spaceId)
-      .filter((run) => this.isRunInterestRebuildEligible(run));
-    for (const run of reactiveRuns) {
-      const staticWorkflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
-      if (staticWorkflow) {
-        try {
-          this.registerRunInterestsFromWorkflow(run, staticWorkflow);
-        } catch (err) {
-          log.warn(
-            `SpaceRuntime: failed to rebuild static interests for run ${run.id} on resume: ${formatCommandError(err)}`
-          );
+    // The delivery-requeue body below is wrapped so a sync throw logs instead
+    // of rejecting this fire-and-forget async callback (callers invoke it
+    // without awaiting — an unhandled rejection is Bun-fatal).
+    try {
+      // Re-register workflow-defined static event interests for eligible runs
+      // before evaluating pending deliveries. The startup rehydrate skips paused
+      // spaces, so a run relying on a workflow eventInterests pattern may have no
+      // trie entry yet; rebuilding first avoids false subscription removal.
+      const reactiveRuns = this.config.workflowRunRepo
+        .listBySpace(spaceId)
+        .filter((run) => this.isRunInterestRebuildEligible(run));
+      for (const run of reactiveRuns) {
+        const staticWorkflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
+        if (staticWorkflow) {
+          try {
+            this.registerRunInterestsFromWorkflow(run, staticWorkflow);
+          } catch (err) {
+            log.warn(
+              `SpaceRuntime: failed to rebuild static interests for run ${run.id} on resume: ${formatCommandError(err)}`
+            );
+          }
         }
       }
-    }
 
-    for (const delivery of store.listPendingDeliveries()) {
-      const task = this.config.taskRepo.getTask(delivery.taskId);
-      if (!task || task.spaceId !== spaceId) continue;
+      for (const delivery of store.listPendingDeliveries()) {
+        const task = this.config.taskRepo.getTask(delivery.taskId);
+        if (!task || task.spaceId !== spaceId) continue;
 
-      const target = {
-        workflowRunId: delivery.workflowRunId,
-        taskId: delivery.taskId,
-        nodeId: delivery.nodeId,
-        agentName: delivery.agentName,
-      };
-      const eventRecord = store.getById(delivery.eventId);
-      if (!eventRecord || eventRecord.state !== 'published') continue;
-      // A deferred delivery may have sat paused longer than the queue TTL.
-      // Apply the same event-age TTL guard as requeuePersistedPendingDeliveries
-      // before scheduling a retry so stale events are failed as ttl_expired
-      // instead of being injected on resume.
-      const mode = deliveryModeFromFailureReason(delivery.failureReason);
-      const ttlItem = {
-        event: this.externalEventPayloadFromRecord(eventRecord.event),
-        deliveryKey: delivery.deliveryKey,
-        deliveryMode: mode,
-        createdAt: eventRecord.createdAt,
-      };
-      if (this.isQueuedExternalEventExpired(ttlItem)) {
-        this.failQueuedDeliveryForTtl(ttlItem, this.buildQueueKey(target));
-        continue;
-      }
-      if (!this.isTargetStillSubscribed(target, eventRecord.event.topic)) {
-        store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
-          terminal: true,
-          reason: 'subscription_no_longer_active',
-        });
-        store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
-        continue;
-      }
+        const target = {
+          workflowRunId: delivery.workflowRunId,
+          taskId: delivery.taskId,
+          nodeId: delivery.nodeId,
+          agentName: delivery.agentName,
+        };
+        const eventRecord = store.getById(delivery.eventId);
+        if (!eventRecord || eventRecord.state !== 'published') continue;
+        // A deferred delivery may have sat paused longer than the queue TTL.
+        // Apply the same event-age TTL guard as requeuePersistedPendingDeliveries
+        // before scheduling a retry so stale events are failed as ttl_expired
+        // instead of being injected on resume.
+        const mode = deliveryModeFromFailureReason(delivery.failureReason);
+        const ttlItem = {
+          event: this.externalEventPayloadFromRecord(eventRecord.event),
+          deliveryKey: delivery.deliveryKey,
+          deliveryMode: mode,
+          createdAt: eventRecord.createdAt,
+        };
+        if (this.isQueuedExternalEventExpired(ttlItem)) {
+          this.failQueuedDeliveryForTtl(ttlItem, this.buildQueueKey(target));
+          continue;
+        }
+        if (!this.isTargetStillSubscribed(target, eventRecord.event.topic)) {
+          store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+            terminal: true,
+            reason: 'subscription_no_longer_active',
+          });
+          store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+          continue;
+        }
 
-      const lifecycleReason = this.evaluateRequeueTaskLifecycle(target, eventRecord.event);
-      if (lifecycleReason) {
-        store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
-          terminal: true,
-          reason: lifecycleReason,
-        });
-        store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
-        this.clearExternalEventRetry(delivery.deliveryKey);
-        continue;
-      }
+        const lifecycleReason = this.evaluateRequeueTaskLifecycle(target, eventRecord.event);
+        if (lifecycleReason) {
+          store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+            terminal: true,
+            reason: lifecycleReason,
+          });
+          store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+          this.clearExternalEventRetry(delivery.deliveryKey);
+          continue;
+        }
 
-      const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
-      // Pass the persisted event creation time so the queued item keeps the
-      // original TTL anchor — stamping the resume time would let an event that
-      // should already have expired survive until five minutes after resume.
-      this.queueForPendingNode(
-        target,
-        eventPayload,
-        delivery.deliveryKey,
-        mode,
-        eventRecord.createdAt
-      );
-      const resolved = this.resolveSubscriptionTarget(target);
-      if (resolved.sessionId) {
-        this.scheduleExternalEventRetry(
-          resolved,
-          eventPayload,
-          delivery.deliveryKey,
-          mode,
-          delivery.failureReason ?? `deliveryMode:${mode}; retry requeued after space resume`,
-          { preserveAttemptCount: true, createdAt: eventRecord.createdAt }
-        );
-      } else {
-        this.scheduleActivationRetry(
+        const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
+        // Pass the persisted event creation time so the queued item keeps the
+        // original TTL anchor — stamping the resume time would let an event that
+        // should already have expired survive until five minutes after resume.
+        this.queueForPendingNode(
           target,
           eventPayload,
           delivery.deliveryKey,
-          delivery.failureReason ?? 'node_execution_not_active'
+          mode,
+          eventRecord.createdAt
         );
+        const resolved = this.resolveSubscriptionTarget(target);
+        if (resolved.sessionId) {
+          this.scheduleExternalEventRetry(
+            resolved,
+            eventPayload,
+            delivery.deliveryKey,
+            mode,
+            delivery.failureReason ?? `deliveryMode:${mode}; retry requeued after space resume`,
+            { preserveAttemptCount: true, createdAt: eventRecord.createdAt }
+          );
+        } else {
+          this.scheduleActivationRetry(
+            target,
+            eventPayload,
+            delivery.deliveryKey,
+            delivery.failureReason ?? 'node_execution_not_active'
+          );
+        }
       }
-    }
 
-    // Replay retained no-delivery PR events unconditionally (after the
-    // persisted pending deliveries above are requeued). A retained event may
-    // have been kept published during pause for a run whose auto-sub already
-    // existed (so subscribedPrRuns stayed 0); without this it would never be
-    // re-evaluated and would expire. Re-entrancy-guarded; no-op when nothing is
-    // retained.
-    this.redispatchRetainedExternalEvents();
+      // Replay retained no-delivery PR events unconditionally (after the
+      // persisted pending deliveries above are requeued). A retained event may
+      // have been kept published during pause for a run whose auto-sub already
+      // existed (so subscribedPrRuns stayed 0); without this it would never be
+      // re-evaluated and would expire. Re-entrancy-guarded; no-op when nothing is
+      // retained.
+      this.redispatchRetainedExternalEvents();
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime: onSpaceResumed delivery requeue failed for space ${spaceId}: ${formatCommandError(err)}`
+      );
+    }
   }
 
   /**

@@ -758,9 +758,6 @@ describe('space-handlers', () => {
         sessionId: 'global',
         spaceId: 'space-1',
         space: stoppedSpace,
-        // The quiesce failure is surfaced so consumers can show the
-        // partial-stop state (the row itself was already committed stopped).
-        quiesceWarning: expect.stringMatching(/quiesce failed.*repo blew up during park/),
       });
     });
 
