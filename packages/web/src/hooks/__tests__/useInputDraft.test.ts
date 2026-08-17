@@ -1039,18 +1039,6 @@ describe('useInputDraft', () => {
     });
 
     it('does not adopt a stale refresh after the session changed', async () => {
-      let releaseGet: ((v: unknown) => void) | null = null;
-      mockHub.request.mockImplementation(async (method: string) => {
-        if (method === 'session.get') {
-          return new Promise((resolve) => {
-            releaseGet = resolve;
-          });
-        }
-        return { success: true };
-      });
-      connectionState.value = 'connected';
-      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
-
       const pending: Array<(v: unknown) => void> = [];
       mockHub.request.mockImplementation(async (method: string) => {
         if (method === 'session.get') {

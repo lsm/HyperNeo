@@ -1606,11 +1606,13 @@ describe('SessionManager', () => {
         });
       });
 
-      it("writes nothing when a voice-only send's empty write already discarded the staging", async () => {
-        // Voice-only flow raced with the composer's optimistic clear: the
-        // empty write landed over an ALREADY-EMPTY stored draft, which by the
-        // empty-write rule discards the staging. The end state is already
-        // correct — the fallback must not fire on an absent staging.
+      it("writes nothing when the sender's composition-match clear already consumed the staging", async () => {
+        // Voice-only flow raced with the sending composer's own clear: that
+        // composer DISPLAYED the voice-only composition and cleared through
+        // session.clearInputDraftIf's composition match — the only path that
+        // consumes a displayed staging — so the fresh read sees an absent
+        // staging. The end state is already correct — the fallback must not
+        // fire on an absent staging.
         const handler = eventHandlers.get('message.persisted');
 
         (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
