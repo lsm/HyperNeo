@@ -114,6 +114,10 @@ function makeNoopNodeExecutionRepo(): NodeExecutionRepository {
   return {
     getByAgentSessionId: mock(() => null),
     getById: mock(() => null),
+    // parkInFlightExecutionsForSpace walks runs' executions; the default
+    // no-executions shape keeps it a no-op.
+    listByWorkflowRun: mock(() => []),
+    update: mock(() => null),
   } as unknown as NodeExecutionRepository;
 }
 
@@ -267,7 +271,9 @@ describe('SpaceRuntimeService', () => {
       } as unknown as SpaceTaskRepository;
 
       const mockWorkflowRunRepo = {
-        listBySpace: () => [],
+        // One active run: park walks it (no-op — no executions) and the
+        // transitionStatus assertion below is meaningful, not vacuous.
+        listBySpace: () => [{ id: 'run-1', status: 'in_progress' as const }],
         transitionStatus: (runId: string, status: string) => {
           transitionCalls.push({ runId, status });
         },
@@ -300,18 +306,25 @@ describe('SpaceRuntimeService', () => {
       expect(transitionCalls).toHaveLength(0);
     });
 
-    test('parks in-flight node executions with the clean-recovery reset', async () => {
+    test('parks in-flight and waiting_rebind node executions with the clean-recovery reset', async () => {
       // In-flight executions are reset to pending with a blank session
       // binding (mirroring recoverRateLimitedTasks) so the tick loop neither
       // spawns nor nags while stopped, and space.start re-drives them without
-      // crash accounting.
+      // crash accounting. waiting_rebind rows are parked too — post-stop
+      // their session lazy-hydrates back to "alive" and the rebind sweep
+      // would skip them forever.
       const executionUpdates: Array<{ id: string; updates: unknown }> = [];
       const inFlightExec = {
         id: 'exec-1',
         status: 'in_progress' as const,
         agentSessionId: 'sess-1',
       };
-      const idleExec = { id: 'exec-2', status: 'idle' as const, agentSessionId: 'sess-2' };
+      const waitingRebindExec = {
+        id: 'exec-2',
+        status: 'waiting_rebind' as const,
+        agentSessionId: 'sess-2',
+      };
+      const idleExec = { id: 'exec-3', status: 'idle' as const, agentSessionId: 'sess-3' };
 
       const mockTaskRepo = {
         listBySpace: () => [{ id: 't1', status: 'in_progress' as const }],
@@ -324,7 +337,7 @@ describe('SpaceRuntimeService', () => {
       } as unknown as SpaceWorkflowRunRepository;
 
       const mockNodeExecutionRepo = {
-        listByWorkflowRun: () => [inFlightExec, idleExec],
+        listByWorkflowRun: () => [inFlightExec, waitingRebindExec, idleExec],
         update: (id: string, updates: unknown) => {
           executionUpdates.push({ id, updates });
         },
@@ -336,18 +349,78 @@ describe('SpaceRuntimeService', () => {
         workflowRunRepo: mockWorkflowRunRepo,
         nodeExecutionRepo: mockNodeExecutionRepo,
       });
-      svc.setTaskAgentManager({} as unknown as TaskAgentManager);
+      svc.setTaskAgentManager({
+        cleanup: async () => {},
+      } as unknown as TaskAgentManager);
 
       await svc.stopActiveWork('space-1');
 
-      // Only the in-flight execution is parked, with the full reset shape.
-      expect(executionUpdates).toHaveLength(1);
-      expect(executionUpdates[0]?.id).toBe('exec-1');
-      expect(executionUpdates[0]?.updates).toEqual({
-        status: 'pending',
-        result: null,
-        agentSessionId: null,
+      // in_progress + waiting_rebind are parked with the full reset shape;
+      // idle is left alone.
+      expect(executionUpdates).toHaveLength(2);
+      expect(executionUpdates.map((u) => u.id)).toEqual(['exec-1', 'exec-2']);
+      for (const update of executionUpdates) {
+        expect(update.updates).toEqual({
+          status: 'pending',
+          result: null,
+          agentSessionId: null,
+        });
+      }
+    });
+
+    test('isolates park failures per run — one repo error does not abort the stop', async () => {
+      // A repo failure while parking run 1 must not prevent parking run 2 nor
+      // reject stopActiveWork: the space is already marked stopped and the RPC
+      // must still complete (a retry re-parks idempotently).
+      const executionUpdates: Array<{ id: string; updates: unknown }> = [];
+      const execsByRun = new Map<string, unknown[]>([
+        ['run-broken', [{ id: 'exec-b1', status: 'in_progress' as const, agentSessionId: 's1' }]],
+        ['run-ok', [{ id: 'exec-o1', status: 'in_progress' as const, agentSessionId: 's2' }]],
+      ]);
+      const execById = new Map(
+        [...(execsByRun.get('run-broken') ?? []), ...(execsByRun.get('run-ok') ?? [])].map((e) => [
+          (e as { id: string }).id,
+          e,
+        ])
+      );
+
+      const mockTaskRepo = {
+        listBySpace: () => [{ id: 't1', status: 'in_progress' as const }],
+        updateTask: () => {},
+      } as unknown as SpaceTaskRepository;
+
+      const mockWorkflowRunRepo = {
+        listBySpace: () => [
+          { id: 'run-broken', status: 'in_progress' as const },
+          { id: 'run-ok', status: 'in_progress' as const },
+        ],
+        transitionStatus: () => {},
+      } as unknown as SpaceWorkflowRunRepository;
+
+      const mockNodeExecutionRepo = {
+        listByWorkflowRun: (runId: string) => execsByRun.get(runId) ?? [],
+        update: (id: string, updates: unknown) => {
+          if (id === 'exec-b1') throw new Error('repo blew up');
+          executionUpdates.push({ id, updates });
+        },
+        getById: (id: string) => execById.get(id) ?? null,
+      } as unknown as NodeExecutionRepository;
+
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(spaceManager),
+        taskRepo: mockTaskRepo,
+        workflowRunRepo: mockWorkflowRunRepo,
+        nodeExecutionRepo: mockNodeExecutionRepo,
       });
+      svc.setTaskAgentManager({
+        cleanup: async () => {},
+      } as unknown as TaskAgentManager);
+
+      await expect(svc.stopActiveWork('space-1')).resolves.toBeUndefined();
+
+      // The healthy run was still parked.
+      expect(executionUpdates).toHaveLength(1);
+      expect(executionUpdates[0]?.id).toBe('exec-o1');
     });
 
     test('swallows cleanup errors so a single stuck task does not block the stop', async () => {

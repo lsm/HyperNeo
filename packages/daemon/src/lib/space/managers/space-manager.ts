@@ -194,7 +194,9 @@ export class SpaceManager {
   }
 
   /**
-   * Stop a space (marks stopped=true; kills active work; no auto-start on daemon restart)
+   * Stop a space (marks stopped=true; pauses scheduling and interrupts active
+   * agent sessions non-destructively — task/run statuses are preserved; no
+   * auto-start on daemon restart)
    */
   async stopSpace(id: string): Promise<Space> {
     const space = this.spaceRepo.getSpace(id);

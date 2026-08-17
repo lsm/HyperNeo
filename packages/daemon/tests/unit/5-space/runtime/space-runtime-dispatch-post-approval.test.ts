@@ -207,6 +207,37 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Stopped-space hold — post-approval work is NEW work; a stopped space must
+  // not start it (the merge sub-session / inline Task Agent turn).
+  // ---------------------------------------------------------------------------
+
+  test('holds dispatch while the space is stopped (approved work deferred to resume)', async () => {
+    const task = seedReviewTask(ctx.taskRepo);
+    ctx.db.prepare(`UPDATE spaces SET stopped = 1 WHERE id = ?`).run(SPACE_ID);
+
+    const result = await ctx.runtime.dispatchPostApproval(task.id, 'human', {});
+
+    expect(result.mode).toBe('skipped');
+    expect(result.reason).toContain('stopped');
+    // Nothing was transitioned, emitted, or injected — the review status
+    // persists and a resumed tick re-dispatches.
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('review');
+    expect(ctx.emitted).toEqual([]);
+    expect(ctx.injected).toEqual([]);
+  });
+
+  test('holds dispatch while the space is paused', async () => {
+    const task = seedReviewTask(ctx.taskRepo);
+    ctx.db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+
+    const result = await ctx.runtime.dispatchPostApproval(task.id, 'human', {});
+
+    expect(result.mode).toBe('skipped');
+    expect(result.reason).toContain('paused');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('review');
+  });
+
+  // ---------------------------------------------------------------------------
   // Layer B regression — pending-completion fields cleared after dispatch
   // ---------------------------------------------------------------------------
 

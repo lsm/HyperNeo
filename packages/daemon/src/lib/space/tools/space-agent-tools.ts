@@ -2530,7 +2530,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
         if (args.cancel_workflow_run && task.workflowRunId) {
           // Always invoke runtime teardown — even if the run is already cancelled
-          // (e.g. space.stop cancelled it), cancelWorkflowRun still stops
+          // (e.g. by an earlier tool call), cancelWorkflowRun still stops
           // remaining task sessions and clears interests.
           const existingRun = workflowRunRepo.getRun(task.workflowRunId);
           if (existingRun !== null) {

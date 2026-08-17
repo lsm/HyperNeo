@@ -416,8 +416,10 @@ export class ChannelRouter {
         //
         // Fallback: if `isSessionAlive` reports the session is no longer live
         // (daemon restart, manual cleanup, crash), reset to `pending` so the
-        // tick loop respawns a fresh session. agentSessionId is write-once and
-        // is never cleared; spawn code detects pending status to create a new session.
+        // tick loop respawns a fresh session. agentSessionId is normally stable
+        // once assigned, but the clean-recovery resets (space-stop parking,
+        // passed rate-cap reset) deliberately clear it; either way spawn code
+        // detects pending status to create a new session.
         if (TERMINAL_NODE_EXECUTION_STATUSES.has(existing.status)) {
           const sessionId = existing.agentSessionId;
           const probe = this.config.isSessionAlive;

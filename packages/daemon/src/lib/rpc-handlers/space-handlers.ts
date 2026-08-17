@@ -381,9 +381,19 @@ export function setupSpaceHandlers(
     const space = await spaceManager.stopSpace(params.id);
 
     // Interrupt active agent sessions and park in-flight executions. Task and
-    // run statuses are preserved — nothing is cancelled.
+    // run statuses are preserved — nothing is cancelled. The space row is
+    // already committed stopped, so a quiesce failure must NOT reject the RPC
+    // or skip space.updated — the web UI has no error path for a half-stopped
+    // space. The quiesce is idempotent: a retried space.stop re-parks safely.
     if (spaceRuntimeService) {
-      await spaceRuntimeService.stopActiveWork(params.id);
+      try {
+        await spaceRuntimeService.stopActiveWork(params.id);
+      } catch (err) {
+        log.error(
+          `space.stop: quiesce failed for ${params.id} after the space was marked stopped (retry space.stop to re-quiesce):`,
+          err
+        );
+      }
     }
 
     internalEventBus

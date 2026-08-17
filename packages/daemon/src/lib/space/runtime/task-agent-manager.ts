@@ -103,7 +103,9 @@ import { collectDispatchablePostApprovalRoutes } from './post-approval-router';
 import { jsonResult } from '../tools/tool-result';
 import {
   assertExecutionValidAgainstWorkflow,
+  isTransientSpawnError,
   PermanentSpawnError,
+  TransientSpawnError,
   validateTaskAllowsSpawn,
 } from './workflow-node-execution-validation';
 import type { DbQueryMcpServer } from '../../db-query/tools';
@@ -1230,6 +1232,36 @@ export class TaskAgentManager {
       const spawned = this.getSubSession(actualSessionId);
       if (!spawned) {
         throw new Error(`Spawned node session ${actualSessionId} is not registered in memory`);
+      }
+
+      // Stop synchronization — `space.stop` can land while this spawn is in
+      // flight (the runtime's spawn gate checked the space row before the
+      // awaits above began). Re-read the space row AFTER the session is
+      // registered but BEFORE stamping the execution and injecting the
+      // kickoff. If the space stopped meanwhile, abort: the catch below
+      // interrupts the just-created session (cancelBySessionId preserves the
+      // DB row) and the deferral leaves the execution `pending` so
+      // space.start re-drives it. This closes the live window the
+      // daemon-restart rehydrate guard cannot: any session registered before
+      // this check is visible to stopActiveWork's cleanup pass (which runs
+      // after stopSpace committed), and any registration after it sees
+      // stopped=true and self-aborts here.
+      try {
+        const freshSpace = await this.config.spaceManager.getSpace(space.id);
+        if (freshSpace?.stopped) {
+          throw new TransientSpawnError(
+            `Space ${space.id} stopped during spawn of execution ${execution.id}; ` +
+              `deferring — the execution stays pending and space.start re-drives it`
+          );
+        }
+      } catch (err) {
+        if (isTransientSpawnError(err)) throw err;
+        // A failed lookup must not block the spawn — fail open (the tick
+        // loop's spawn gate re-checks the space row on every tick).
+        log.warn(
+          `TaskAgentManager: failed to re-check stopped state for space ${space.id} ` +
+            `during spawn of execution ${execution.id}: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
 
       const startedAt = Date.now();
@@ -4072,9 +4104,13 @@ export class TaskAgentManager {
 
     const executions = this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId);
     for (const execution of executions) {
-      // agentSessionId is write-once: once assigned during spawn, it is never
-      // cleared. Pending executions that were never spawned will have a null
-      // agentSessionId, which this guard correctly skips.
+      // agentSessionId is normally stable once assigned during spawn, but it
+      // IS deliberately cleared by the clean-recovery resets
+      // (parkInFlightExecutionsForSpace on space stop, recoverRateLimitedTasks
+      // on a passed rate-cap reset), which blank it so the spawn path re-drives
+      // the execution without crash accounting. Pending executions that were
+      // never spawned — or that were parked — have a null agentSessionId,
+      // which this guard correctly skips.
       const subSessionId = execution.agentSessionId;
       if (!subSessionId) continue;
 

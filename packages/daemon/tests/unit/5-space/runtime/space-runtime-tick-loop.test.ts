@@ -26,6 +26,7 @@ import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agen
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
@@ -2377,6 +2378,212 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect((rt as unknown as { taskCrashCounts: Map<string, number> }).taskCrashCounts.size).toBe(
         0
       );
+    });
+
+    test('stopped space (no park) does not nag or restart a live idle-stuck session', async () => {
+      // The stopped half of the alive-stuck guard — the in-process face of a
+      // spawn that raced the stop: a live session bound to an in_progress
+      // execution inside a stopped space must not be woken by the runtime.
+      const nags: string[] = [];
+      const restarts: string[] = [];
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionAlive: () => true,
+        getAgentSessionById: () => processingState('processing'),
+        injectRuntimeRecoveryMessage: async (sessionId) => {
+          nags.push(sessionId);
+          return `runtime-nag:${sessionId}`;
+        },
+        restartStuckSubSession: async (sessionId) => {
+          restarts.push(sessionId);
+        },
+      });
+      const rt = new SpaceRuntime(buildConfig(tam, { agentNoProgressThresholdMs: 60_000 }));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session:stopped-stuck',
+        startedAt: Date.now() - 20 * 60_000,
+      });
+      saveAssistantMessage('session:stopped-stuck', { minutesAgo: 20, toolUse: true });
+      nodeExecutionRepo.touchLastActivity(execution.id, Date.now() - 20 * 60_000);
+
+      // Stop WITHOUT parking — the session stays bound and live.
+      await spaceManager.stopSpace(SPACE_ID);
+      await rt.executeTick();
+      await rt.executeTick();
+
+      expect(nags).toEqual([]);
+      expect(restarts).toEqual([]);
+      const after = nodeExecutionRepo.getById(execution.id)!;
+      expect(after.status).toBe('in_progress');
+      expect(after.agentSessionId).toBe('session:stopped-stuck');
+    });
+
+    test('stopped space holds dead-session crash accounting (no retries, no blocked flip)', async () => {
+      // A session-bearing row whose session is genuinely dead (e.g. left by a
+      // stop racing a spawn) must not consume crash retries or flip the run
+      // blocked while the space is stopped.
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionAlive: () => false,
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session:dead-remnant',
+        startedAt: Date.now() - 5 * 60_000,
+      });
+
+      await spaceManager.stopSpace(SPACE_ID);
+      for (let i = 0; i < 3; i++) {
+        await rt.executeTick();
+      }
+
+      // Row untouched, no crash accounting, run not blocked.
+      const after = nodeExecutionRepo.getById(execution.id)!;
+      expect(after.status).toBe('in_progress');
+      expect(after.agentSessionId).toBe('session:dead-remnant');
+      expect((rt as unknown as { taskCrashCounts: Map<string, number> }).taskCrashCounts.size).toBe(
+        0
+      );
+      expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
+    });
+
+    test('stopped space holds waiting_rebind rows — no fail-and-block, no rebound spawn', async () => {
+      // A waiting_rebind row that slipped past stop's park (e.g. raced) must
+      // not be failed-and-blocked nor rebound into a fresh spawn while the
+      // space is stopped.
+      const spawns: string[] = [];
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionAlive: () => false,
+        spawnWorkflowNodeAgentForExecution: async (
+          _task: unknown,
+          _space: unknown,
+          _workflow: unknown,
+          _run: unknown,
+          execution: unknown
+        ) => {
+          const e = execution as { id: string };
+          spawns.push(e.id);
+          return `session:rebind-${e.id}`;
+        },
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'waiting_rebind',
+        agentSessionId: 'session:rebind-dead',
+      });
+
+      await spaceManager.stopSpace(SPACE_ID);
+      await rt.executeTick();
+      await rt.executeTick();
+
+      const after = nodeExecutionRepo.getById(execution.id)!;
+      expect(after.status).toBe('waiting_rebind');
+      expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
+      // The task was never spawned (the row was flipped to waiting_rebind
+      // before the first tick), so it stays open — the assertion is that the
+      // hold did NOT fail-and-block it.
+      expect(taskRepo.getTask(tasks[0].id)!.status).toBe('open');
+      expect(spawns).toEqual([]);
+    });
+
+    test('park is a no-op after the space resumed (stop→start race)', async () => {
+      // If space.start lands between the stop and the park call, the delivery
+      // hold is already released and park must not strip live session
+      // bindings of the resumed space.
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionAlive: () => true,
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session:still-live',
+        startedAt: Date.now(),
+      });
+
+      await spaceManager.stopSpace(SPACE_ID);
+      // Resume BEFORE parking — onSpaceResumed releases the hold.
+      await spaceManager.startSpace(SPACE_ID);
+      rt.parkInFlightExecutionsForSpace(SPACE_ID);
+
+      const after = nodeExecutionRepo.getById(execution.id)!;
+      expect(after.status).toBe('in_progress');
+      expect(after.agentSessionId).toBe('session:still-live');
+    });
+
+    test('spawn aborts when the space stops mid-spawn (fresh session interrupted, execution left pending)', async () => {
+      // The live-window face of the stop/spawn race: the runtime's spawn gate
+      // passed while the space was active, but the space row flipped to
+      // stopped before the session registered. The real TaskAgentManager
+      // spawn must re-check the row after registration and abort BEFORE
+      // stamping the execution or injecting the kickoff.
+      const cancelled: string[] = [];
+      const realTam = new TaskAgentManager({
+        db: { getDatabase: () => db, getSession: () => null },
+        internalEventBus: { subscribe: () => () => {} },
+        spaceManager,
+        spaceAgentManager: agentManager,
+        spaceWorkflowManager: workflowManager,
+        taskRepo,
+        workflowRunRepo,
+        nodeExecutionRepo,
+      } as unknown as ConstructorParameters<typeof TaskAgentManager>[0]);
+      const fakeSession = { id: 'session:race-window' };
+      (
+        realTam as unknown as {
+          createSubSession: (taskId: string, sessionId: string) => Promise<string>;
+        }
+      ).createSubSession = async (_taskId: string, sessionId: string) => sessionId;
+      (realTam as unknown as { getSubSession: (sessionId: string) => unknown }).getSubSession =
+        () => fakeSession;
+      (realTam as unknown as { cancelBySessionId: (sessionId: string) => void }).cancelBySessionId =
+        (sessionId: string) => {
+          cancelled.push(sessionId);
+        };
+
+      const rt = new SpaceRuntime(buildConfig());
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      const task = taskRepo.getTask(tasks[0].id)!;
+      const space = await spaceManager.getSpace(SPACE_ID);
+
+      // Stop lands while the spawn is in flight (after the gate, before the
+      // stamp): the spawn sees the fresh stopped row and self-aborts.
+      await spaceManager.stopSpace(SPACE_ID);
+      await expect(
+        realTam.spawnWorkflowNodeAgentForExecution(task, space, workflow, run, execution, {
+          kickoff: true,
+        })
+      ).rejects.toThrow(/stopped during spawn/);
+
+      // The just-created session was torn down (DB-preserving cancel), and
+      // the execution was never stamped — it stays parked-pending.
+      expect(cancelled).toHaveLength(1);
+      const after = nodeExecutionRepo.getById(execution.id)!;
+      expect(after.status).toBe('pending');
+      expect(after.agentSessionId).toBeNull();
     });
   });
 });

@@ -1902,10 +1902,11 @@ export class SpaceRuntime {
   }
 
   /**
-   * Park every in-flight node execution of a space: reset `in_progress`
-   * executions to `{status:'pending', result:null, agentSessionId:null}` — the
-   * same clean-recovery reset `recoverRateLimitedTasks` uses — so the tick
-   * loop's supervision is fully neutralized while the space is stopped:
+   * Park every in-flight node execution of a space: reset `in_progress` and
+   * `waiting_rebind` executions to `{status:'pending', result:null,
+   * agentSessionId:null}` — the same clean-recovery reset
+   * `recoverRateLimitedTasks` uses — so the tick loop's supervision is fully
+   * neutralized while the space is stopped:
    *   - the liveness scan skips them (no agentSessionId to check),
    *   - the alive-stuck nag never fires (no live session),
    *   - the spawn path is already gated for stopped spaces.
@@ -1914,35 +1915,62 @@ export class SpaceRuntime {
    * crash counters (`${runId}:${executionId}`), and blocked-retry counters
    * are cleared so resume is not charged for the stop.
    *
+   * `waiting_rebind` rows are parked deliberately: after stop their session
+   * is interrupted but `isSessionAlive` lazy-hydrates it back to "alive", so
+   * `handleWaitingRebindExecutions` would skip them forever — parking makes
+   * resume a fresh kickoff like every other parked execution. The orphaned
+   * tool-continuation retry budget is intentionally NOT consumed: its inbox
+   * rows keep their own TTL and age out if unreplayed.
+   *
+   * Best-effort and idempotent: a repo error on one run is logged and does
+   * not block parking of the others, and a retry of `space.stop` re-parks
+   * safely. No-ops if the space resumed mid-quiesce (its delivery hold is
+   * gone) so a stop→start race cannot strip the bindings of live sessions.
+   *
    * Called by `SpaceRuntimeService.stopActiveWork`. Run and task statuses are
    * NOT modified.
    */
   parkInFlightExecutionsForSpace(spaceId: string): void {
+    if (!this.pausedSpaceIds.has(spaceId)) {
+      log.info(
+        `SpaceRuntime: parkInFlightExecutionsForSpace skipped for ${spaceId} — space resumed mid-quiesce (delivery hold already released)`
+      );
+      return;
+    }
     let parkedCount = 0;
     for (const run of this.config.workflowRunRepo.listBySpace(spaceId)) {
-      let parkedInRun = 0;
-      for (const exec of this.config.nodeExecutionRepo.listByWorkflowRun(run.id)) {
-        if (exec.status !== 'in_progress') continue;
-        this.config.nodeExecutionRepo.update(exec.id, {
-          status: 'pending',
-          result: null,
-          // Clear the dead session binding: processRunTick scans pending
-          // executions WITH an agentSessionId, detects this stale one as
-          // dead, and would otherwise run it through the crash-retry path
-          // (incrementing taskCrashCounts). A blank agentSessionId makes
-          // the pending execution a clean non-crash recovery that the spawn
-          // path re-drives from scratch.
-          agentSessionId: null,
-        });
-        parkedInRun++;
-        this.taskCrashCounts.delete(`${run.id}:${exec.id}`);
+      try {
+        // Re-check per run: a long park across many runs must not reset rows
+        // of a space that resumed while the loop was still walking.
+        if (!this.pausedSpaceIds.has(spaceId)) break;
+        let parkedInRun = 0;
+        for (const exec of this.config.nodeExecutionRepo.listByWorkflowRun(run.id)) {
+          if (exec.status !== 'in_progress' && exec.status !== 'waiting_rebind') continue;
+          this.config.nodeExecutionRepo.update(exec.id, {
+            status: 'pending',
+            result: null,
+            // Clear the dead session binding: processRunTick scans pending
+            // executions WITH an agentSessionId, detects this stale one as
+            // dead, and would otherwise run it through the crash-retry path
+            // (incrementing taskCrashCounts). A blank agentSessionId makes
+            // the pending execution a clean non-crash recovery that the spawn
+            // path re-drives from scratch.
+            agentSessionId: null,
+          });
+          parkedInRun++;
+          this.taskCrashCounts.delete(`${run.id}:${exec.id}`);
+        }
+        if (parkedInRun === 0) continue;
+        parkedCount += parkedInRun;
+        // Fresh budgets on resume: stuck-detector state and blocked-run retry
+        // counters must not carry pre-stop history into the resumed session.
+        this.clearAgentStuckStateForRun(run.id);
+        this.blockedRetryCounts.delete(run.id);
+      } catch (err) {
+        log.warn(
+          `SpaceRuntime: failed to park in-flight executions for run ${run.id} of space ${spaceId}: ${formatCommandError(err)}`
+        );
       }
-      if (parkedInRun === 0) continue;
-      parkedCount += parkedInRun;
-      // Fresh budgets on resume: stuck-detector state and blocked-run retry
-      // counters must not carry pre-stop history into the resumed session.
-      this.clearAgentStuckStateForRun(run.id);
-      this.blockedRetryCounts.delete(run.id);
     }
     if (parkedCount > 0) {
       log.info(
@@ -4422,6 +4450,16 @@ export class SpaceRuntime {
 
     const spaceId = current.spaceId;
     const space = await this.config.spaceManager.getSpace(spaceId);
+    // Supervision hold: post-approval work (e.g. the merge sub-session) is NEW
+    // work — a stopped/paused space must not start it. The approved status
+    // persists, so the tick loop re-dispatches when the space resumes.
+    if (space?.paused || space?.stopped) {
+      const reason =
+        `space ${spaceId} is ${space.stopped ? 'stopped' : 'paused'}; ` +
+        `deferring post-approval dispatch of task ${taskId} until the space resumes`;
+      log.info(`dispatchPostApproval: ${reason}`);
+      return { mode: 'skipped', reason };
+    }
     // Workflow lookup goes via the run (tasks reference workflowRunId, runs
     // reference workflowId). Standalone tasks have no run → no workflow → the
     // router takes the no-route branch.
@@ -8150,6 +8188,13 @@ export class SpaceRuntime {
           );
         }
 
+        // Supervision hold: while scheduling is suspended (paused/stopped),
+        // a dead-session row — e.g. one left behind by a stop racing a spawn
+        // — must not consume crash retries, flip the run blocked, or emit
+        // agent_crash notifications. The row is left untouched; accounting
+        // resumes with the space.
+        if (space?.paused || space?.stopped) continue;
+
         const exhausted = this.resetWorkflowNodeExecutionForSpawnRetry(
           runId,
           execution,
@@ -8191,7 +8236,8 @@ export class SpaceRuntime {
         runId,
         run,
         meta.spaceId,
-        canonicalTask
+        canonicalTask,
+        space
       );
       if (stoppedAfterWaitingRebind) {
         return;
@@ -9764,8 +9810,17 @@ export class SpaceRuntime {
     runId: string,
     run: SpaceWorkflowRun,
     spaceId: string,
-    canonicalTask: SpaceTask
+    canonicalTask: SpaceTask,
+    space: Space | null
   ): Promise<boolean> {
+    // Supervision hold (stopped-only): a waiting_rebind row that slipped past
+    // stop's park must not be failed-and-blocked or rebound into a fresh
+    // spawn while the space is stopped — it sits until the space resumes.
+    // Deliberately NOT gated on paused: pause keeps live sessions and their
+    // orphaned-work recovery running by design (a paused space still replays
+    // orphaned tool_result continuations and can fail-and-block them).
+    if (space?.stopped) return false;
+
     const waitingExecutions = this.config.nodeExecutionRepo
       .listByWorkflowRun(runId)
       .filter((execution) => execution.status === 'waiting_rebind');

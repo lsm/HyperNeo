@@ -736,6 +736,31 @@ describe('space-handlers', () => {
       });
     });
 
+    it('still resolves and publishes space.updated when the quiesce fails', async () => {
+      // The space row is already committed stopped by the time stopActiveWork
+      // runs, so a quiesce failure must not reject the RPC or swallow
+      // space.updated — the web UI has no error path for a half-stopped
+      // space, and a retried space.stop re-quiesces idempotently.
+      const failingRuntimeService = {
+        setupSpaceAgentSession: mock(async () => {}),
+        stopActiveWork: mock(async () => {
+          throw new Error('repo blew up during park');
+        }),
+      } as unknown as SpaceRuntimeService;
+      setup(mockSpace, undefined, failingRuntimeService);
+      const stoppedSpace = { ...mockSpace, stopped: true };
+      (spaceManager.stopSpace as ReturnType<typeof mock>).mockResolvedValue(stoppedSpace);
+
+      const result = await call('space.stop', { id: 'space-1' });
+
+      expect((result as Space).stopped).toBe(true);
+      expect(internalEventBus.publish).toHaveBeenCalledWith('space.updated', {
+        sessionId: 'global',
+        spaceId: 'space-1',
+        space: stoppedSpace,
+      });
+    });
+
     it('works without runtime service (graceful degradation)', async () => {
       // Re-setup without runtime service
       setup(mockSpace, undefined, undefined);
