@@ -2079,7 +2079,9 @@ describe('AcpQueryRunner startup-timeout bounded retry', () => {
       // admission (size mock) arming its startup timer.
       const enqueue = mock(async () => {
         if (enqueue.mock.calls.length === 1) {
-          throw new Error('Message queue timeout: SDK did not consume message');
+          const ttlError = new Error('Message queue timeout: SDK did not consume message');
+          ttlError.name = 'MessageQueueTimeoutError';
+          throw ttlError;
         }
       });
       messageQueue.enqueueWithId = enqueue as unknown as MessageQueue['enqueueWithId'];
@@ -2188,6 +2190,227 @@ describe('AcpQueryRunner startup-timeout bounded retry', () => {
           line.includes('Removed superseded ACP replay entry user-message-1')
         )
       ).toBe(true);
+    } finally {
+      restoreStartupRetryEnv();
+    }
+  }, 1000);
+
+  test('a user Stop rejecting the re-fed admission surfaces no error card (TTL-only handler)', async () => {
+    // Round-4 P1: MessageQueue.clear() rejects pending admissions with a
+    // plain 'Interrupted by user', and the interrupt handler clears before
+    // aborting — a Stop during the retry attempt's pre-consumption window
+    // lands in the re-feed's rejection handler. It must no-op there: the
+    // cleanly-suppressed AbortError must surface NOTHING, not a synthetic
+    // "ACP agent failed to start" card.
+    const restoreStartupRetryEnv = pinStartupRetryEnv({ base: '0', max: '1' });
+    try {
+      const interruptableClient = createMockClient();
+      let releaseInitialize: (() => void) | undefined;
+      interruptableClient.initialize.mockImplementation(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            releaseInitialize = () => {
+              const aborted = new Error('This operation was aborted');
+              aborted.name = 'AbortError';
+              reject(aborted);
+            };
+          })
+      );
+      interruptableClient.close.mockImplementation(() => releaseInitialize?.());
+      const clients = [createHangingClient(), interruptableClient];
+      const { ctx, messageQueue } = createRunnerFixture({ client: clients[0] });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+      // The re-fed admission stays pending (interrupted before consumption).
+      let rejectEnqueue: ((error: Error) => void) | undefined;
+      messageQueue.enqueueWithId = mock(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectEnqueue = reject;
+          })
+      ) as unknown as typeof messageQueue.enqueueWithId;
+
+      await runner.start();
+      expect(await waitForWarn(ctx, 'Auto-retrying ACP query')).toBe(true);
+      // Wait until the retry attempt is hung in its handshake — interrupting
+      // earlier would hit the wake guard and cancel before anything re-feeds.
+      let attemptTwoReachedHandshake = false;
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        if (releaseInitialize) {
+          attemptTwoReachedHandshake = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2));
+      }
+      expect(attemptTwoReachedHandshake).toBe(true);
+
+      // Simulate handleInterrupt during the retry window: status, the
+      // clear()-shaped rejection of the pending admission, abort, and client
+      // teardown rejecting the hung initialize with a clean AbortError.
+      (ctx.stateManager as unknown as { getState: () => { status: string } }).getState = () => ({
+        status: 'interrupted',
+      });
+      ctx.queryAbortController?.abort();
+      rejectEnqueue?.(new Error('Interrupted by user'));
+      interruptableClient.close();
+
+      await ctx.queryPromise;
+
+      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+      expect(warnLines(ctx).some((line) => line.includes('admission rejected'))).toBe(false);
+    } finally {
+      restoreStartupRetryEnv();
+    }
+  }, 1000);
+
+  test('the handler-SET flag performs the classification end to end (no timer armed)', async () => {
+    // Round-4 P3: the weld — reject the re-feed with the TTL error, make the
+    // retry attempt fail its initialize with a PLAIN error, and keep size()
+    // at 0 so no startup timer ever arms. Attempt 2's reclassification into
+    // the bounded machine can then come only from the flag the rejection
+    // handler set (deleting that `= true` line fails this test).
+    const restoreStartupRetryEnv = pinStartupRetryEnv({ base: '0', max: '2' });
+    try {
+      const failHandshake = createMockClient();
+      failHandshake.initialize.mockImplementation(async () => {
+        throw new Error('spawn failed');
+      });
+      const clients = [createHangingClient(), failHandshake, createMockClient()];
+      const { ctx, messageQueue } = createRunnerFixture({ client: clients[0] });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+      const ttlError = new Error(
+        'Message queue timeout: SDK did not consume message user-message-1'
+      );
+      ttlError.name = 'MessageQueueTimeoutError';
+      const enqueue = mock(async () => {
+        if (enqueue.mock.calls.length === 1) throw ttlError;
+      });
+      messageQueue.enqueueWithId = enqueue as unknown as typeof messageQueue.enqueueWithId;
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      // Round 1: timer timeout → re-feed rejected (TTL) → handler sets the
+      // flag. Attempt 2: plain 'spawn failed', no timer — reclassified by the
+      // flag alone, round 2 granted, the re-staged prompt re-fed, attempt 3
+      // completes the turn.
+      expect(createClient).toHaveBeenCalledTimes(3);
+      expect(warnLines(ctx).some((line) => line.includes('retry 2/2'))).toBe(true);
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    } finally {
+      restoreStartupRetryEnv();
+    }
+  }, 1000);
+
+  test('start() discards a stale staged replay so a fresh turn never re-feeds it', async () => {
+    const restoreStartupRetryEnv = pinStartupRetryEnv({ base: '0', max: '1' });
+    try {
+      const okClient = createMockClient();
+      const clients: Array<ReturnType<typeof createMockClient>> = [okClient];
+      const { ctx, messageQueue } = createRunnerFixture({ client: okClient });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      // Chain 1 completes normally; a stale staging is left behind (e.g. a
+      // superseded chain's rejection handler ran after its finally).
+      await runner.start();
+      await ctx.queryPromise;
+      (runner as unknown as { _pendingStartupReplay: unknown })._pendingStartupReplay = {
+        uuid: 'user-message-1',
+        content: [{ type: 'text', text: 'hello' }],
+      };
+
+      // Chain 2 starves at the handshake (peek null): without start()'s
+      // discard, the retry branch would re-feed the STALE staging as a
+      // duplicate prompt from the previous turn.
+      clients.push(createStarvedHandshakeClient(), createStarvedHandshakeClient());
+      (messageQueue.size as unknown as ReturnType<typeof mock>).mockImplementation(() => 1);
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(messageQueue.enqueueWithId).not.toHaveBeenCalled();
+      expect(
+        (runner as unknown as { _pendingStartupReplay: unknown })._pendingStartupReplay
+      ).toBeNull();
+    } finally {
+      restoreStartupRetryEnv();
+    }
+  }, 1000);
+
+  test('the classification flag is read-once — one reclassification per set', async () => {
+    const restoreStartupRetryEnv = pinStartupRetryEnv({ base: '60', max: '2' });
+    try {
+      const failA = createMockClient();
+      failA.initialize.mockImplementation(async () => {
+        throw new Error('spawn failed A');
+      });
+      const failB = createMockClient();
+      failB.initialize.mockImplementation(async () => {
+        throw new Error('second failure B');
+      });
+      const clients = [createHangingClient(), failA, failB];
+      const { ctx } = createRunnerFixture({ client: clients[0] });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      await runner.start();
+      expect(await waitForWarn(ctx, 'Auto-retrying ACP query')).toBe(true);
+      (runner as unknown as { _replayAdmissionRejected: boolean })._replayAdmissionRejected = true;
+
+      await ctx.queryPromise;
+
+      // Attempt 2 ('spawn failed A') was reclassified by the flag (round 2
+      // granted); attempt 3's DIFFERENT plain failure was NOT — the raw
+      // error terminalized instead of a third synthetic timeout.
+      expect(createClient).toHaveBeenCalledTimes(3);
+      expect(warnLines(ctx).some((line) => line.includes('retry 2/2'))).toBe(true);
+      expect(
+        warnLines(ctx).some((line) => line.includes('Startup-timeout retry budget exhausted'))
+      ).toBe(false);
+      expect(ctx.errorManager.handleError).toHaveBeenCalledTimes(1);
+      expect(
+        (ctx.errorManager.handleError as unknown as ReturnType<typeof mock>).mock.calls[0][1]
+      ).toBeInstanceOf(Error);
+      expect(
+        (
+          (ctx.errorManager.handleError as unknown as ReturnType<typeof mock>).mock.calls[0][1] as {
+            message: string;
+          }
+        ).message
+      ).toContain('second failure B');
+    } finally {
+      restoreStartupRetryEnv();
+    }
+  }, 1000);
+
+  test('a redrive-skip round clears the staging (no double feed on the next round)', async () => {
+    const restoreStartupRetryEnv = pinStartupRetryEnv({ base: '0', max: '1' });
+    try {
+      const clients = [createHangingClient(), createMockClient()];
+      const { ctx, messageQueue } = createRunnerFixture({ client: clients[0] });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+      // A redrive re-admitted the uuid: the re-feed takes the skip branch,
+      // which must retire the staging alongside the feed branch.
+      (messageQueue.hasPendingAdmission as unknown as ReturnType<typeof mock>).mockImplementation(
+        () => true
+      );
+      (runner as unknown as { _pendingStartupReplay: unknown })._pendingStartupReplay = {
+        uuid: 'user-message-1',
+        content: [{ type: 'text', text: 'hello' }],
+      };
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(
+        warnLines(ctx).some((line) => line.includes('Startup replay skip: message user-message-1'))
+      ).toBe(true);
+      expect(
+        (runner as unknown as { _pendingStartupReplay: unknown })._pendingStartupReplay
+      ).toBeNull();
     } finally {
       restoreStartupRetryEnv();
     }

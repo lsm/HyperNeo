@@ -1260,6 +1260,20 @@ export class QueryRunner {
                   );
                   return;
                 }
+                // Gate on the admission-TTL error: MessageQueue.clear()
+                // rejects queue/claimed entries with a plain 'Interrupted by
+                // user' (the interrupt handler clears the queue before
+                // aborting), and treating a user Stop as starvation would
+                // fold the flag into the post-loop escape, convert the
+                // cleanly-suppressed AbortError into a synthetic startup
+                // timeout, and surface a spurious "failed to start" error
+                // card. Only the admission TTL timer sets that name;
+                // anything else is a no-op — the interrupt's own teardown
+                // owns the unwind. (Round-4 P1 on the ACP twin PR #2558,
+                // applied here to preserve the runners' parity.)
+                if (!(error instanceof Error) || error.name !== 'MessageQueueTimeoutError') {
+                  return;
+                }
                 const isTtlRejection =
                   error instanceof Error && error.name === 'MessageQueueTimeoutError';
                 const reasonText = isTtlRejection

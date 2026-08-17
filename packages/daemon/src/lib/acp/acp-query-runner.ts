@@ -457,13 +457,16 @@ export class AcpQueryRunner {
   } | null = null;
 
   /**
-   * True when the last startup-replay admission was TTL-rejected while its
-   * retry attempt was running: the rejection is a startup-timeout-class
-   * failure (the agent did not consume the prompt in time), so the catch
-   * classifies the attempt's abort as 'ACP startup timeout' and the bounded
-   * retry machine claims a budget round instead of silently losing the
-   * prompt. Read-once in the catch; mirrors QueryRunner's same-named flag,
-   * which its post-loop escape consults.
+   * True when the last startup-replay admission was TTL-rejected (the
+   * rejection handler sets it; the TTL can fire during the owning attempt's
+   * run or a later round's backoff — before or after that attempt's catch,
+   * whichever comes first): the rejection is a startup-timeout-class failure
+   * (the agent did not consume the prompt in time), so the catch classifies
+   * the attempt's pre-first-message failure as 'ACP startup timeout' and the
+   * bounded retry machine claims a budget round instead of silently losing
+   * the prompt. Retired by the catch's read-once, the first consumed prompt,
+   * or the next start(); mirrors QueryRunner's same-named flag, which its
+   * post-loop escape consults.
    */
   private _replayAdmissionRejected = false;
 
@@ -495,8 +498,11 @@ export class AcpQueryRunner {
     messageQueue.start();
 
     // A fresh turn owns its own inputs — discard any replay staged by a
-    // superseded startup-retry chain (its finally may have been skipped as
-    // stale) and its classification flag. (Mirrors QueryRunner.start().)
+    // superseded startup-retry chain and its classification flag. start() is
+    // the SOLE cross-chain retirement for these fields here: unlike
+    // QueryRunner, whose finally retires them on its live branch, the ACP
+    // finally never clears them, so without this a leftover staging would be
+    // re-fed into the fresh turn (duplicate prompt).
     this._pendingStartupReplay = null;
     this._replayAdmissionRejected = false;
 
@@ -900,12 +906,16 @@ export class AcpQueryRunner {
         !runAbortController?.signal.aborted && stateManager.getState().status !== 'interrupted';
     } catch (error) {
       restoreMessageEnqueuedHandler?.();
-      // Read-once: a replay-admission rejection from an earlier round of this
-      // chain classifies THIS attempt's pre-first-message failure as a
+      // Read-once: a replay-admission rejection from an earlier round of
+      // this chain classifies THIS attempt's pre-first-message failure as a
       // startup timeout (the agent did not consume the re-fed prompt within
       // the admission TTL — a startup-timeout-class failure, mirroring
-      // QueryRunner's post-loop escape), but must not outlive the round it
-      // belongs to and reclassify a later, unrelated error.
+      // QueryRunner's post-loop escape). Chain-scoped by design: the TTL
+      // (30 s) routinely fires after the owning attempt's catch already
+      // consumed the flag (default timer 15 s), re-arming it for the next
+      // round — the cross-attempt reclassification test asserts exactly
+      // that. Retired by this read, the first consumed prompt, or the next
+      // start(); nothing here outlives the chain.
       const replayAdmissionRejected = this._replayAdmissionRejected;
       this._replayAdmissionRejected = false;
       const effectiveError =
@@ -1363,6 +1373,22 @@ export class AcpQueryRunner {
                 durable: true,
               })
               .catch((rejectionError) => {
+                // Gate on the admission-TTL error specifically (mirrors the
+                // SDK runner's handler): MessageQueue.clear() rejects
+                // queue/claimed entries with a plain 'Interrupted by user'
+                // regardless of durability, and a user Stop during the retry
+                // attempt's pre-consumption window lands here too — treating
+                // that as starvation would re-stage the prompt, set the
+                // classification flag, and (via the synthetic startup
+                // timeout) surface a spurious "ACP agent failed to start"
+                // error card for a cleanly-interrupted session. Only the
+                // admission TTL timer sets that error name; anything else is
+                // a no-op (the interrupt's own teardown owns the unwind).
+                if (
+                  (rejectionError as { name?: string } | null)?.name !== 'MessageQueueTimeoutError'
+                ) {
+                  return;
+                }
                 // The admission TTL fired: the retry attempt did not consume
                 // the replay in time (slow ACP handshake) — a
                 // startup-timeout-class failure, so route it into the bounded
@@ -1379,14 +1405,17 @@ export class AcpQueryRunner {
                     `${rejectionError instanceof Error ? rejectionError.message : String(rejectionError)} — ` +
                     'aborting attempt for a bounded startup retry.'
                 );
+                // Guarded writes + abort: only the chain's own, still-live
+                // generation. The generation check excludes a replacement
+                // query that took over while the admission sat unconsumed
+                // (its start() retires the staging); the aborted check makes
+                // the timer-driven abort of the same attempt a no-op.
+                if (this.ctx.getQueryGeneration() !== queryGeneration) {
+                  return;
+                }
                 this._pendingStartupReplay = retryMessage;
                 this._replayAdmissionRejected = true;
-                // Guarded abort: only the chain's own, still-live controller.
-                // The generation check excludes a replacement query that took
-                // over while the admission sat unconsumed; the aborted check
-                // makes the timer-driven abort of the same attempt a no-op.
                 if (
-                  this.ctx.getQueryGeneration() === queryGeneration &&
                   this.ctx.queryAbortController &&
                   !this.ctx.queryAbortController.signal.aborted
                 ) {
@@ -1404,9 +1433,12 @@ export class AcpQueryRunner {
           }
           // The staged replay is now the queue's admission (or a redrive's) —
           // either way the NEXT round re-derives it from the queue or the
-          // rejection handler's re-staging, not from this field. Keeping
-          // _lastConsumedUserMessage nulled is what makes the next round's
-          // key derive from peek/staging instead of this consumed prompt.
+          // rejection handler's re-staging, not from this field. The
+          // operative guard for the next round's keying is runQuery's
+          // entry-null of _lastConsumedUserMessage (every attempt); this null
+          // is belt-and-suspenders for the same round's tail. Note the
+          // budget KEY never derives from the staging — only retryMessage
+          // does; the key path is _lastConsumedUserMessage/peek.
           this._pendingStartupReplay = null;
           this._lastConsumedUserMessage = null;
         }
