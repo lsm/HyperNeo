@@ -315,10 +315,15 @@ describe('SpaceRuntimeService', () => {
       // The interrupted merge is recorded durably: a fresh merger session has
       // no node_executions row, so park cannot reset it and resume has
       // nothing to re-drive — the blocked-reason stamp is what gives the
-      // banner and hooks resumeDeferredPostApprovals.
+      // banner and hooks resumeDeferredPostApprovals. The session POINTER is
+      // nulled in the same write: the interrupted session is dead as a worker
+      // but isAgentSessionAlive counts 'interrupted' as alive, so a retained
+      // pointer would make the router's already-routed guard short-circuit
+      // the resume re-dispatch and the task would wedge `approved`.
       expect(updateCalls).toHaveLength(1);
       expect(updateCalls[0]!.taskId).toBe('t5');
       expect(updateCalls[0]!.updates).toMatchObject({
+        postApprovalSessionId: null,
         postApprovalBlockedReason: expect.stringMatching(
           /session:merge-1 interrupted by space\.stop/
         ),

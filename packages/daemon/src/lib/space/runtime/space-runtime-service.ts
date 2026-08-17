@@ -1210,14 +1210,20 @@ export class SpaceRuntimeService {
     // "Post-Approval Running" state forever. Stamping `postApprovalBlockedReason`
     // (a tracking field — still no task STATUS writes) gives the banner and
     // hooks `resumeDeferredPostApprovals`, whose re-dispatch re-spawns the
-    // dead merge session via the router's liveness-based guard. Skipped when
-    // a reason is already set (a deferred dispatch from the hold — same
-    // resume path, keep the first wording).
+    // merge with full route context. The session POINTER is nulled in the same
+    // write: the interrupted session is dead as a worker, yet
+    // `isAgentSessionAlive` counts 'interrupted' as alive — a retained pointer
+    // would make the router's `already-routed` guard short-circuit the resume
+    // re-dispatch (no spawn, no injection) and the task would wedge `approved`
+    // with the banner silently cleared. Skipped when a reason is already set
+    // (a deferred dispatch from the hold — same resume path, keep the first
+    // wording).
     for (const task of activeTasks) {
       if (task.status !== 'approved' || !task.postApprovalSessionId) continue;
       if (task.postApprovalBlockedReason) continue;
       try {
         taskRepo.updateTask(task.id, {
+          postApprovalSessionId: null,
           postApprovalBlockedReason:
             `post-approval session ${task.postApprovalSessionId} interrupted by space.stop; ` +
             `the dispatch re-runs automatically when the space starts`,

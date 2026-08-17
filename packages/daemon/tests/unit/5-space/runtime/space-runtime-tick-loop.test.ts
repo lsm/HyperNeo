@@ -2815,8 +2815,11 @@ describe('SpaceRuntime — tick loop correctness', () => {
         status: 'approved',
         approvalSource: 'human',
         // Simulate the interrupted-merge recording from stopActiveWork 1.5 —
-        // the sweep key is (approved, postApprovalBlockedReason).
-        postApprovalSessionId: 'session:merge-old',
+        // the sweep key is (approved, postApprovalBlockedReason). The pointer
+        // is nulled there too: isAgentSessionAlive counts 'interrupted' as
+        // alive, so a retained pointer would wedge the resume re-dispatch in
+        // the router's already-routed guard.
+        postApprovalSessionId: null,
         postApprovalBlockedReason: 'post-approval session interrupted by space.stop',
       });
 

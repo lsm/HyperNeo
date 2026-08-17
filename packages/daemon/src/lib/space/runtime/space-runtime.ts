@@ -6259,10 +6259,14 @@ export class SpaceRuntime {
    * This is the other half of the supervision hold in `dispatchPostApproval`
    * (and of the interrupted-merge recording in `stopActiveWork`): the hold
    * stamps the blocked reason and defers; this sweep re-drives on
-   * `space.start` / `space.resume` (both fire `onSpaceResumed`). The router's
-   * liveness-based `already-routed` guard makes the re-drive idempotent — a
-   * live merge session is left alone, a dead/interrupted one is re-spawned,
-   * and a no-route task simply closes to `done`.
+   * `space.start` / `space.resume` (both fire `onSpaceResumed`). Idempotency:
+   * a task whose merge is genuinely LIVE keeps its `postApprovalSessionId`, so
+   * the router's `already-routed` guard leaves it alone; a stop-INTERRUPTED
+   * merge is re-spawned because `stopActiveWork`'s step 1.5 nulls the pointer
+   * when it stamps the reason — the guard's lazy probe counts 'interrupted' as
+   * alive (`isAgentSessionAlive`), so it must never be consulted for one, or
+   * the re-drive would short-circuit and the residual clear below would drop
+   * the banner on a wedged task. A no-route task simply closes to `done`.
    *
    * Error-isolated per task; a re-stop mid-sweep re-defers (the hold re-stamps
    * the blocked reason), and a genuine dispatch failure keeps the reason and

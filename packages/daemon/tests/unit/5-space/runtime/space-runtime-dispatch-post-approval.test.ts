@@ -296,6 +296,90 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
     expect(final?.postApprovalBlockedReason).toBeNull();
   });
 
+  test('space.start re-spawns an interrupted merge with full route context (stop nulled the pointer)', async () => {
+    // The route-bearing resume for the case stopActiveWork's step 1.5
+    // records: a merger session was interrupted mid-merge, so the pointer is
+    // NULLed and only the blocked reason marks the deferral. The stub's probe
+    // is deliberately adversarial — it reports every session alive
+    // (isAgentSessionAlive counts 'interrupted' as alive, the exact false
+    // positive this shape must not depend on) — proving the resume cannot be
+    // wedged by the router's already-routed guard: with no pointer the guard
+    // is never consulted, the spawner runs, and the task is re-stamped with
+    // the fresh merge session.
+    const workflow = ctx.workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: `Route resume ${Date.now()}`,
+      description: 'Test',
+      nodes: [
+        {
+          id: 'node-build',
+          name: 'Build',
+          agents: [{ agentId: 'agent-planner', name: 'Planner' }],
+          postApproval: { targetAgent: 'Planner', instructions: 'Merge {{pr_url}}' },
+        },
+      ],
+      transitions: [],
+      startNodeId: 'node-build',
+      endNodeId: 'node-build',
+      rules: [],
+      tags: [],
+      completionAutonomyLevel: 3,
+    });
+    const run = ctx.workflowRunRepo.createRun({
+      spaceId: SPACE_ID,
+      workflowId: workflow.id,
+      title: 'Run',
+    });
+    const task = ctx.taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'Ship it',
+      description: '',
+      status: 'in_progress',
+      workflowRunId: run.id,
+    });
+    // The exact post-stop shape step 1.5 writes: approved, pointer nulled,
+    // reason stamped (the message keeps the interrupted session id for the
+    // banner).
+    ctx.taskRepo.updateTask(task.id, {
+      status: 'approved',
+      approvalSource: 'human',
+      approvedAt: Date.now(),
+      postApprovalSessionId: null,
+      postApprovalBlockedReason:
+        'post-approval session session:merge-1 interrupted by space.stop; ' +
+        'the dispatch re-runs automatically when the space starts',
+    });
+
+    const spawnCalls: Array<{ targetAgent: string; kickoff: string }> = [];
+    const tam = (
+      ctx.runtime as unknown as { config: { taskAgentManager: Record<string, unknown> } }
+    ).config.taskAgentManager;
+    tam.isSessionAlive = () => true; // adversarial: 'interrupted' counts as alive
+    tam.spawnPostApprovalSubSession = async (args: {
+      targetAgent: string;
+      kickoffMessage: string;
+    }) => {
+      spawnCalls.push({ targetAgent: args.targetAgent, kickoff: args.kickoffMessage });
+      return { sessionId: 'session:merge-resumed' };
+    };
+
+    await ctx.spaceManager.stopSpace(SPACE_ID);
+    await ctx.spaceManager.startSpace(SPACE_ID);
+    // The sweep is fired (fire-and-forget) by the resumed callback — let it
+    // settle before asserting.
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(spawnCalls).toHaveLength(1);
+    expect(spawnCalls[0]!.targetAgent).toBe('Planner');
+    expect(spawnCalls[0]!.kickoff).toContain('Merge');
+    const final = ctx.taskRepo.getTask(task.id);
+    // The spawn branch does not close the task — the merger's mark_complete
+    // does once the merge lands.
+    expect(final?.status).toBe('approved');
+    expect(final?.postApprovalSessionId).toBe('session:merge-resumed');
+    expect(final?.postApprovalBlockedReason).toBeNull(); // banner resolved
+  });
+
   test('a stop landing mid-dispatch converts to the same durable deferral', async () => {
     // The merge spawner's pre-kickoff stop check throws TransientSpawnError
     // from inside router.route; dispatchPostApproval must convert it into the
