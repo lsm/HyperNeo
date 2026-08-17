@@ -1357,11 +1357,7 @@ export class TaskAgentManager {
       // row left bound to a dead session is either mis-accounted as a crash
       // on resume or nags for tens of minutes via the alive-stuck path.
       if (isTransientSpawnError(err)) {
-        this.config.nodeExecutionRepo.update(execution.id, {
-          status: 'pending',
-          result: null,
-          agentSessionId: null,
-        });
+        this.config.nodeExecutionRepo.resetForCleanRecovery(execution.id);
       }
       throw err;
     } finally {
@@ -5791,6 +5787,13 @@ export class TaskAgentManager {
           `spawnPostApprovalSubSession: live session ${existingSessionId} for agent "${matchedSlot.name}" vanished before injection (task ${taskId})`
         );
       }
+      // Stop synchronization for the reuse path too — a stop landing before
+      // this injection must not drive a live session of a stopped space into
+      // the merge (same deferral semantics as the create path below).
+      await this.assertSpaceNotStoppedForSpawn(
+        spaceId,
+        `pre-kickoff (post-approval reuse), task ${taskId}`
+      );
       await this.injectMessageIntoSession(existing, kickoffMessage);
       log.info(
         `TaskAgentManager.spawnPostApprovalSubSession: reused live session ${existingSessionId} for agent "${matchedSlot.name}" (task ${taskId}, node ${matchedNodeId})`
@@ -5897,6 +5900,17 @@ export class TaskAgentManager {
       phase: 'spawn',
     });
 
+    // Stop synchronization for the merge kickoff: the awaits above (MCP
+    // attach, invariant wiring) opened a window after the dispatch hold in
+    // `dispatchPostApproval` passed — a stop landing there must not have the
+    // merge instructions injected into the stopped space (and a live merger
+    // here could complete an external PR merge despite the operator's stop).
+    // Throws `TransientSpawnError`, which `dispatchPostApproval` converts
+    // into a durable post-approval deferral (banner + resume re-drive).
+    await this.assertSpaceNotStoppedForSpawn(
+      spaceId,
+      `pre-kickoff (post-approval), task ${taskId}`
+    );
     await this.injectMessageIntoSession(spawned, kickoffMessage);
 
     log.info(

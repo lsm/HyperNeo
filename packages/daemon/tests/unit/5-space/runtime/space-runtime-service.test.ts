@@ -257,7 +257,15 @@ describe('SpaceRuntimeService', () => {
         { id: 't2', status: 'open' as const },
         { id: 't3', status: 'rate_limited' as const },
         { id: 't4', status: 'review' as const }, // checkpoint end-node session
-        { id: 't5', status: 'approved' as const }, // in-flight merge session
+        // In-flight merge: approved + a post-approval session id but no
+        // blocked reason yet (stopActiveWork's step 1.5 records the
+        // interruption durably — see the assertion below).
+        {
+          id: 't5',
+          status: 'approved' as const,
+          postApprovalSessionId: 'session:merge-1',
+          postApprovalBlockedReason: null,
+        },
         { id: 't6', status: 'done' as const }, // should be filtered out
       ];
 
@@ -298,14 +306,27 @@ describe('SpaceRuntimeService', () => {
 
       // in_progress / open / rate-or-usage-limited / review / approved tasks
       // are quiesced — review/approved tasks own live sessions (checkpoint
-      // end nodes, in-flight merges) that park resets rows for.
+      // end nodes, in-flight merges).
       expect(cleanupCalls).toHaveLength(5);
       expect(cleanupCalls.map((c) => c.taskId).sort()).toEqual(['t1', 't2', 't3', 't4', 't5']);
       // All cleanup calls use the 'stopped' reason — the non-destructive
       // quiesce that preserves worktrees + DB rows.
       expect(cleanupCalls.every((c) => c.reason === 'stopped')).toBe(true);
-      // Task statuses are NEVER written — nothing is cancelled.
-      expect(updateCalls).toHaveLength(0);
+      // The interrupted merge is recorded durably: a fresh merger session has
+      // no node_executions row, so park cannot reset it and resume has
+      // nothing to re-drive — the blocked-reason stamp is what gives the
+      // banner and hooks resumeDeferredPostApprovals.
+      expect(updateCalls).toHaveLength(1);
+      expect(updateCalls[0]!.taskId).toBe('t5');
+      expect(updateCalls[0]!.updates).toMatchObject({
+        postApprovalBlockedReason: expect.stringMatching(
+          /session:merge-1 interrupted by space\.stop/
+        ),
+      });
+      // ... and the stamp carries NO status write — stop never cancels.
+      expect(Object.keys(updateCalls[0]!.updates as Record<string, unknown>)).not.toContain(
+        'status'
+      );
       // Workflow runs keep their statuses — no cancellations.
       expect(transitionCalls).toHaveLength(0);
     });
@@ -344,6 +365,14 @@ describe('SpaceRuntimeService', () => {
         listByWorkflowRun: () => [inFlightExec, waitingRebindExec, idleExec],
         update: (id: string, updates: unknown) => {
           executionUpdates.push({ id, updates });
+        },
+        resetForCleanRecovery: (id: string) => {
+          // Mirror the real helper's write shape.
+          executionUpdates.push({
+            id,
+            updates: { status: 'pending', result: null, agentSessionId: null },
+          });
+          return null;
         },
       } as unknown as NodeExecutionRepository;
 
@@ -406,6 +435,14 @@ describe('SpaceRuntimeService', () => {
         update: (id: string, updates: unknown) => {
           if (id === 'exec-b1') throw new Error('repo blew up');
           executionUpdates.push({ id, updates });
+        },
+        resetForCleanRecovery: (id: string) => {
+          if (id === 'exec-b1') throw new Error('repo blew up');
+          executionUpdates.push({
+            id,
+            updates: { status: 'pending', result: null, agentSessionId: null },
+          });
+          return null;
         },
         getById: (id: string) => execById.get(id) ?? null,
       } as unknown as NodeExecutionRepository;

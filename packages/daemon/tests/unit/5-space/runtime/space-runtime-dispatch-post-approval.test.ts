@@ -55,6 +55,9 @@ interface Ctx {
   db: BunDatabase;
   runtime: SpaceRuntime;
   taskRepo: SpaceTaskRepository;
+  spaceManager: SpaceManager;
+  workflowManager: SpaceWorkflowManager;
+  workflowRunRepo: SpaceWorkflowRunRepository;
   emitted: Array<{ spaceId: string; task: SpaceTask }>;
   injected: string[];
 }
@@ -96,7 +99,16 @@ function buildRuntime(): Ctx {
   };
 
   const runtime = new SpaceRuntime(config);
-  return { db, runtime, taskRepo, emitted, injected };
+  return {
+    db,
+    runtime,
+    taskRepo,
+    spaceManager,
+    workflowManager,
+    workflowRunRepo,
+    emitted,
+    injected,
+  };
 }
 
 function seedReviewTask(taskRepo: SpaceTaskRepository): SpaceTask {
@@ -208,18 +220,24 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
 
   // ---------------------------------------------------------------------------
   // Stopped/paused-space hold — post-approval work is NEW work, so the
-  // dispatch is held; but the approval DECISION commits first (Layer C) and
-  // the deferral is surfaced as a throw both callers translate into
-  // postApprovalBlockedReason (UI recovery banner with a retry).
+  // dispatch is held; but the approval DECISION commits first (Layer C), the
+  // deferral is durably recorded as postApprovalBlockedReason by the runtime
+  // itself (banner exists regardless of caller), and the typed
+  // PostApprovalDeferredError is what tick sites swallow and human callers
+  // report without re-stamping. space.start/space.resume re-drives it.
   // ---------------------------------------------------------------------------
 
-  test('stopped space: approval commits, dispatch throws, deferral is surfaced', async () => {
+  test('stopped space: approval commits, deferral stamped + thrown typed', async () => {
     const task = seedReviewTask(ctx.taskRepo);
     ctx.db.prepare(`UPDATE spaces SET stopped = 1 WHERE id = ?`).run(SPACE_ID);
 
-    await expect(ctx.runtime.dispatchPostApproval(task.id, 'human', {})).rejects.toThrow(
-      /stopped; post-approval dispatch deferred/
-    );
+    let caught: unknown;
+    try {
+      await ctx.runtime.dispatchPostApproval(task.id, 'human', {});
+    } catch (err) {
+      caught = err;
+    }
+    expect((caught as Error).name).toBe('PostApprovalDeferredError');
 
     // Layer C: the human decision is durable — never swallowed by the hold.
     const final = ctx.taskRepo.getTask(task.id);
@@ -228,6 +246,10 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
     // The pending-completion banner fields are cleared (the approval is
     // recorded; only the post-approval WORK is deferred).
     expect(final?.pendingCheckpointType).toBeNull();
+    // The deferral is durably recorded by the RUNTIME (not left to callers) —
+    // tick call sites have no Layer C catch, so this stamp is the banner.
+    expect(final?.postApprovalBlockedReason).toMatch(/stopped; post-approval dispatch deferred/);
+    expect(final?.postApprovalBlockedReason).toMatch(/re-runs automatically on space\.start/);
     // No post-approval work started.
     expect(ctx.injected).toEqual([]);
   });
@@ -236,12 +258,104 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
     const task = seedReviewTask(ctx.taskRepo);
     ctx.db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
 
-    await expect(ctx.runtime.dispatchPostApproval(task.id, 'human', {})).rejects.toThrow(
-      /paused; post-approval dispatch deferred/
-    );
+    let caught: unknown;
+    try {
+      await ctx.runtime.dispatchPostApproval(task.id, 'human', {});
+    } catch (err) {
+      caught = err;
+    }
+    expect((caught as Error).name).toBe('PostApprovalDeferredError');
 
     expect(ctx.taskRepo.getTask(task.id)?.status).toBe('approved');
+    expect(ctx.taskRepo.getTask(task.id)?.postApprovalBlockedReason).toMatch(
+      /paused; post-approval dispatch deferred/
+    );
     expect(ctx.injected).toEqual([]);
+  });
+
+  test('space.start re-drives the deferred dispatch (approval closes to done)', async () => {
+    // The resume path the deferral message promises: onSpaceResumed sweeps
+    // approved tasks with a blocked reason and re-invokes
+    // dispatchPostApproval, which (with the space active) completes — here
+    // the no-route branch closes the task to done and clears the reason.
+    const task = seedReviewTask(ctx.taskRepo);
+    await ctx.spaceManager.stopSpace(SPACE_ID);
+
+    await expect(ctx.runtime.dispatchPostApproval(task.id, 'human', {})).rejects.toThrow(
+      /stopped; post-approval dispatch deferred/
+    );
+    expect(ctx.taskRepo.getTask(task.id)?.postApprovalBlockedReason).toBeTruthy();
+
+    await ctx.spaceManager.startSpace(SPACE_ID);
+    // The sweep is fired (fire-and-forget) by the resumed callback — let it
+    // settle before asserting.
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const final = ctx.taskRepo.getTask(task.id);
+    expect(final?.status).toBe('done');
+    expect(final?.postApprovalBlockedReason).toBeNull();
+  });
+
+  test('a stop landing mid-dispatch converts to the same durable deferral', async () => {
+    // The merge spawner's pre-kickoff stop check throws TransientSpawnError
+    // from inside router.route; dispatchPostApproval must convert it into the
+    // typed durable deferral (banner + resume re-drive) instead of leaking a
+    // raw spawn error past an already-committed approval.
+    const workflow = ctx.workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: `Route ${Date.now()}`,
+      description: 'Test',
+      nodes: [
+        {
+          id: 'node-build',
+          name: 'Build',
+          agents: [{ agentId: 'agent-planner', name: 'Planner' }],
+          postApproval: { targetAgent: 'Planner', instructions: 'Merge {{pr_url}}' },
+        },
+      ],
+      transitions: [],
+      startNodeId: 'node-build',
+      endNodeId: 'node-build',
+      rules: [],
+      tags: [],
+      completionAutonomyLevel: 3,
+    });
+    const run = ctx.workflowRunRepo.createRun({
+      spaceId: SPACE_ID,
+      workflowId: workflow.id,
+      title: 'Run',
+    });
+    const task = ctx.taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'Ship it',
+      description: '',
+      status: 'in_progress',
+      workflowRunId: run.id,
+    });
+    ctx.taskRepo.updateTask(task.id, { status: 'review' });
+    // The spawner aborts as if a stop landed between the hold and the kickoff.
+    const { TransientSpawnError } = await import(
+      '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts'
+    );
+    const tam = (
+      ctx.runtime as unknown as { config: { taskAgentManager: Record<string, unknown> } }
+    ).config.taskAgentManager;
+    tam.spawnPostApprovalSubSession = async () => {
+      throw new TransientSpawnError('space stopped during merge spawn');
+    };
+
+    let caught: unknown;
+    try {
+      await ctx.runtime.dispatchPostApproval(task.id, 'agent');
+    } catch (err) {
+      caught = err;
+    }
+    expect((caught as Error).name).toBe('PostApprovalDeferredError');
+    expect((caught as Error).message).toMatch(/stopped during dispatch/);
+
+    const final = ctx.taskRepo.getTask(task.id);
+    expect(final?.status).toBe('approved');
+    expect(final?.postApprovalBlockedReason).toMatch(/stopped during dispatch/);
   });
 
   // ---------------------------------------------------------------------------

@@ -23,6 +23,7 @@ import type { SpaceManager } from '../../../../src/lib/space/managers/space-mana
 import type { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager';
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
 import type { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service';
+import { PostApprovalDeferredError } from '../../../../src/lib/space/runtime/post-approval-router';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
 
@@ -2054,21 +2055,28 @@ describe('space-task-handlers', () => {
 
     it('records the approval and surfaces the deferral when the space is stopped', async () => {
       // space.stop hold: dispatchPostApproval commits review → approved FIRST,
-      // then throws the deferral. The handler rides the Layer C path — the
-      // approval is durable, the deferral is captured as a blocked reason the
-      // UI renders with a retry, and the RPC resolves (never silently drops
-      // the click).
+      // stamps postApprovalBlockedReason itself, then throws the TYPED
+      // PostApprovalDeferredError. The handler's Layer C catch recognizes the
+      // deferral — the approval is durable, the runtime already stamped the
+      // banner reason, and the resume sweep re-drives it — so it must NOT
+      // overwrite the reason with the generic warning copy, and the RPC
+      // resolves (never silently drops the click).
       const reviewTask = {
         ...mockTask,
         status: 'review' as const,
         pendingCheckpointType: 'task_completion' as const,
       };
-      const approvedTask = { ...reviewTask, status: 'approved' as const };
+      const runtimeStampedReason =
+        'space space-1 is stopped; post-approval dispatch deferred until the space resumes — ' +
+        'approval recorded; the dispatch re-runs automatically on space.start/space.resume';
+      const approvedTask = {
+        ...reviewTask,
+        status: 'approved' as const,
+        postApprovalBlockedReason: runtimeStampedReason,
+      };
       const runtime = {
         dispatchPostApproval: mock(async () => {
-          throw new Error(
-            'space space-1 is stopped; post-approval dispatch deferred until the space resumes — approval recorded, retry the dispatch after space.start'
-          );
+          throw new PostApprovalDeferredError(runtimeStampedReason);
         }),
       } as unknown as SpaceRuntimeService;
       setup(mockSpace, reviewTask, runtime);
@@ -2085,10 +2093,14 @@ describe('space-task-handlers', () => {
 
       // The approval itself succeeded — status approved, no raw throw.
       expect(result.status).toBe('approved');
-      // The deferral is surfaced via the blocked-reason banner mechanism.
-      expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
-        postApprovalBlockedReason: expect.stringContaining('stopped'),
-      });
+      // The runtime's deferral stamp survives — the handler must NOT
+      // overwrite it with mapPostApprovalDispatchWarning's generic copy.
+      expect(taskManager.updateTask).not.toHaveBeenCalledWith(
+        'task-1',
+        expect.objectContaining({ postApprovalBlockedReason: expect.anything() })
+      );
+      // The returned/emitted task carries the runtime-stamped banner reason.
+      expect(result.postApprovalBlockedReason).toBe(runtimeStampedReason);
       expect(internalEventBus.publish).toHaveBeenCalledWith('space.task.updated', {
         sessionId: 'global',
         spaceId: 'space-1',

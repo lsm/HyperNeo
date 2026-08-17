@@ -37,10 +37,15 @@ import { isReservedWorkflowAgentName } from './space-workflow-manager';
  *   cancelled   → in_progress (retry)
  *
  * `in_progress → pending` is the clean-recovery reset (blank session
- * binding, no crash accounting): performed via direct repo updates by
- * `recoverRateLimitedTasks` (passed rate cap) and
- * `SpaceRuntime.parkInFlightExecutionsForSpace` (space stop), so the spawn
- * path re-drives the execution from scratch on the next active tick.
+ * binding, no crash accounting), performed via
+ * `NodeExecutionRepository.resetForCleanRecovery` — e.g. by
+ * `recoverRateLimitedTasks` (passed rate cap),
+ * `SpaceRuntime.parkInFlightExecutionsForSpace` (space stop), and the
+ * transient spawn-abort catch in `TaskAgentManager` (space stopped
+ * mid-spawn) — so the spawn path re-drives the execution from scratch on the
+ * next active tick. (The alive-stuck restart performs an equivalent reset
+ * with a different shape — it keeps a result message and nulls startedAt —
+ * so it stays on plain `update`.)
  */
 export const VALID_NODE_EXECUTION_TRANSITIONS: Record<NodeExecutionStatus, NodeExecutionStatus[]> =
   {

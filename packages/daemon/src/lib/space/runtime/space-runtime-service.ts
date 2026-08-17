@@ -1175,10 +1175,12 @@ export class SpaceRuntimeService {
     //    down here, the timer fires after the stop and re-enqueues work.
     //    review/approved tasks also own live sessions (an end-node agent
     //    hanging in a completion checkpoint, or an in-flight post-approval
-    //    merge sub-session) — park resets their runs' in_progress execution
-    //    rows below, so leaving their sessions running would diverge rows
-    //    from sessions (dropped results + duplicate work on resume).
-    //    Task status is deliberately left untouched.
+    //    merge sub-session) — leaving them running would diverge state from
+    //    sessions across the stop (dropped merge results, duplicate work on
+    //    resume). For rows park resets (see below) that is sufficient; for
+    //    row-less merge sessions the interruption is recorded durably in
+    //    step 1.5 so resume can re-drive it. Task status is deliberately
+    //    left untouched.
     const activeTasks = taskRepo
       .listBySpace(spaceId)
       .filter(
@@ -1199,6 +1201,34 @@ export class SpaceRuntimeService {
         }
       })
     );
+
+    // 1.5. Record interrupted in-flight merges durably. A fresh merger
+    // sub-session carries no node_executions row (#852), so park below has
+    // nothing to reset and the resume spawn path nothing to re-drive — without
+    // this stamp the task would sit `approved` with a stale
+    // `postApprovalSessionId` and the UI would render a healthy
+    // "Post-Approval Running" state forever. Stamping `postApprovalBlockedReason`
+    // (a tracking field — still no task STATUS writes) gives the banner and
+    // hooks `resumeDeferredPostApprovals`, whose re-dispatch re-spawns the
+    // dead merge session via the router's liveness-based guard. Skipped when
+    // a reason is already set (a deferred dispatch from the hold — same
+    // resume path, keep the first wording).
+    for (const task of activeTasks) {
+      if (task.status !== 'approved' || !task.postApprovalSessionId) continue;
+      if (task.postApprovalBlockedReason) continue;
+      try {
+        taskRepo.updateTask(task.id, {
+          postApprovalBlockedReason:
+            `post-approval session ${task.postApprovalSessionId} interrupted by space.stop; ` +
+            `the dispatch re-runs automatically when the space starts`,
+        });
+      } catch (err) {
+        log.warn(
+          `stopActiveWork: failed to record interrupted post-approval session for task ${task.id}:`,
+          err
+        );
+      }
+    }
 
     // 2. Park in-flight node executions (pending + cleared session binding) so
     //    the tick loop neither spawns nor nags while stopped, and resume

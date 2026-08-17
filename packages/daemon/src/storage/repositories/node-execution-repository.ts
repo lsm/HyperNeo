@@ -253,6 +253,30 @@ export class NodeExecutionRepository {
   }
 
   /**
+   * Reset an in-flight execution to the clean-recovery shape:
+   * `{status: 'pending', result: null, agentSessionId: null}`.
+   *
+   * The blank session binding is the point — processRunTick scans pending
+   * executions WITH an agentSessionId and would route a stale binding through
+   * the crash-retry path (incrementing taskCrashCounts). A blank binding makes
+   * the pending row a clean non-crash recovery that the spawn path re-drives
+   * from scratch.
+   *
+   * Used by the clean-recovery resets: `recoverRateLimitedTasks` (passed rate
+   * cap), `SpaceRuntime.parkInFlightExecutionsForSpace` (space stop), and the
+   * transient spawn-abort catch in `TaskAgentManager` (space stopped
+   * mid-spawn). Note: the alive-stuck restart uses a different shape (it
+   * keeps a result message and nulls startedAt), so it stays on `update`.
+   */
+  resetForCleanRecovery(id: string): NodeExecution | null {
+    return this.update(id, {
+      status: 'pending',
+      result: null,
+      agentSessionId: null,
+    });
+  }
+
+  /**
    * Update the agent session ID for a node execution.
    * Used when an agent sub-session is created or cleared.
    */

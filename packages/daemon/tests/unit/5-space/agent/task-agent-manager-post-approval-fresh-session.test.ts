@@ -445,4 +445,124 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     await fake.session.onMissingMemberSpaceMcpServers!(result.sessionId, ['space-agent-tools']);
     expect(reattachCalls).toEqual([result.sessionId]);
   });
+
+  // -------------------------------------------------------------------------
+  // Stop synchronization: a space.stop landing after the dispatch hold passed
+  // must abort BEFORE the merge kickoff is injected — into a live reused
+  // session no less than a fresh one. The TransientSpawnError propagates to
+  // dispatchPostApproval, which converts it into the durable post-approval
+  // deferral (banner + resume re-drive).
+  // -------------------------------------------------------------------------
+  test('stopped space: aborts before kickoff injection on the REUSE path', async () => {
+    const spaceRow = { id: SPACE_ID, workspacePath: '/tmp/ws', stopped: true };
+    const tam = new TaskAgentManager({
+      db: { getDatabase: () => new BunDatabase(':memory:') },
+      sessionManager: { registerSession: () => {} },
+      internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
+      taskRepo: { getTask: () => ({ id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID }) },
+      nodeExecutionRepo: { listByWorkflowRun: () => [reviewerExec()], listByNode: () => [] },
+      spaceManager: { getSpace: async () => spaceRow },
+    } as unknown as TaskAgentManagerConfig);
+    seedLiveSession(tam);
+    const injected: string[] = [];
+    (
+      tam as unknown as {
+        injectMessageIntoSession: (s: unknown, m: string) => Promise<string>;
+      }
+    ).injectMessageIntoSession = async (_s, m) => {
+      injected.push(m);
+      return 'msg-id';
+    };
+    const workflow = {
+      id: 'wf-1',
+      spaceId: SPACE_ID,
+      nodes: [
+        {
+          id: REVIEWER_NODE_ID,
+          name: 'Review',
+          agents: [{ agentId: 'agent-reviewer', name: REVIEWER_AGENT }],
+        },
+      ],
+      channels: [],
+      startNodeId: REVIEWER_NODE_ID,
+      endNodeId: REVIEWER_NODE_ID,
+    } as unknown as SpaceWorkflow;
+    const task = { id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID } as unknown as SpaceTask;
+
+    await expect(
+      tam.spawnPostApprovalSubSession({
+        task,
+        workflow,
+        targetAgent: REVIEWER_AGENT,
+        kickoffMessage: 'merge the PR',
+      })
+    ).rejects.toThrow(/pre-kickoff \(post-approval reuse\)/);
+    expect(injected).toEqual([]);
+  });
+
+  test('stopped space: aborts before kickoff injection on the CREATE path', async () => {
+    const spaceRow = { id: SPACE_ID, workspacePath: '/tmp/ws', stopped: true };
+    const tam = new TaskAgentManager({
+      db: { getDatabase: () => new BunDatabase(':memory:'), getSession: () => null },
+      sessionManager: { registerSession: () => {} },
+      internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
+      taskRepo: { getTask: () => ({ id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID }) },
+      nodeExecutionRepo: { listByWorkflowRun: () => [], listByNode: () => [] },
+      workflowRunRepo: { getRun: () => null },
+      spaceManager: { getSpace: async () => spaceRow },
+      spaceAgentManager: {
+        getById: () => ({
+          id: 'agent-reviewer',
+          name: REVIEWER_AGENT,
+          customPrompt: 'merge',
+          model: 'm',
+          tools: [],
+        }),
+      },
+      spaceRuntimeService: {
+        buildMemberSpaceToolsMcpServer: () => ({ __role: 'space-agent-tools' }),
+        reattachMemberSpaceTools: async () => {},
+      },
+    } as unknown as TaskAgentManagerConfig);
+    (
+      tam as unknown as { buildNodeAgentMcpServerForSession: () => unknown }
+    ).buildNodeAgentMcpServerForSession = () => ({ __role: 'node-agent' });
+    (
+      tam as unknown as { ensureNodeAgentAttached: (...a: unknown[]) => Promise<void> }
+    ).ensureNodeAgentAttached = async () => {};
+    const injected: string[] = [];
+    (
+      tam as unknown as {
+        injectMessageIntoSession: (s: unknown, m: string) => Promise<string>;
+      }
+    ).injectMessageIntoSession = async (_s, m) => {
+      injected.push(m);
+      return 'msg-id';
+    };
+    const workflow = {
+      id: 'wf-1',
+      spaceId: SPACE_ID,
+      nodes: [
+        {
+          id: REVIEWER_NODE_ID,
+          name: 'Review',
+          agents: [{ agentId: 'agent-reviewer', name: REVIEWER_AGENT }],
+        },
+      ],
+      channels: [],
+      startNodeId: REVIEWER_NODE_ID,
+      endNodeId: REVIEWER_NODE_ID,
+    } as unknown as SpaceWorkflow;
+    const task = { id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID } as unknown as SpaceTask;
+
+    await expect(
+      tam.spawnPostApprovalSubSession({
+        task,
+        workflow,
+        targetAgent: REVIEWER_AGENT,
+        kickoffMessage: 'merge the PR',
+      })
+    ).rejects.toThrow(/pre-kickoff \(post-approval\)/);
+    expect(injected).toEqual([]);
+  });
 });

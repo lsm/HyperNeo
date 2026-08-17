@@ -2710,5 +2710,133 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(taskRepo.getTask(tasks[0].id)!.status).toBe('in_progress');
       expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
     });
+
+    test('paused space: agent-source completion defers durably instead of wedging the tick', async () => {
+      // The completion sweep runs while paused (pause keeps live sessions
+      // working; their completions report while paused). The dispatch hold
+      // commits the approval, stamps the deferral banner, and throws a typed
+      // error the tick site SWALLOWS — pre-fix this rejected the tick and
+      // stranded the task approved+done with no banner and no resume path.
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isTaskAgentAlive: () => true,
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+      // Spawn while active, then the end node reports completion and the
+      // space pauses before the next tick.
+      await rt.executeTick();
+      taskRepo.updateTask(tasks[0].id, { reportedStatus: 'done' });
+      await spaceManager.pauseSpace(SPACE_ID);
+
+      // The tick must RESOLVE (not reject): the deferral is a normal outcome.
+      await expect(rt.executeTick()).resolves.toBeUndefined();
+
+      const task = taskRepo.getTask(tasks[0].id)!;
+      expect(task.status).toBe('approved');
+      expect(task.postApprovalBlockedReason).toMatch(/paused; post-approval dispatch deferred/);
+      expect(workflowRunRepo.getRun(run.id)!.status).toBe('done');
+
+      // space.resume re-drives the deferred dispatch (no-route → done) via
+      // the resumed callback's sweep. (A paused space resumes via
+      // space.resume — startSpace is a no-op unless the space is stopped.)
+      await spaceManager.resumeSpace(SPACE_ID);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
+      const final = taskRepo.getTask(tasks[0].id)!;
+      expect(final.status).toBe('done');
+      expect(final.postApprovalBlockedReason).toBeNull();
+    });
+
+    test('review-pending run: stop→start does not respawn a worker under the pending decision', async () => {
+      // Park resets the review task's end-node execution to pending; without
+      // the canonical-task spawn block, the resumed tick would spawn a fresh
+      // end-node worker under the still-pending human review — unsignalled
+      // work racing the decision. The spawn gate must hold review/approved.
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isTaskAgentAlive: () => false,
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+      // Spawn, then the task parks at a completion checkpoint.
+      await rt.executeTick();
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'review',
+        pendingCheckpointType: 'task_completion',
+      });
+
+      // Stop + park (exactly what stopActiveWork does), then resume.
+      await spaceManager.stopSpace(SPACE_ID);
+      rt.parkInFlightExecutionsForSpace(SPACE_ID);
+      await spaceManager.startSpace(SPACE_ID);
+      const spawnsBeforeResume = tam._spawned.length;
+
+      await rt.executeTick();
+      await rt.executeTick();
+
+      // No fresh worker under the pending review; the parked row stays
+      // pending until the human decides (reject → in_progress → respawn).
+      expect(tam._spawned).toHaveLength(spawnsBeforeResume);
+      expect(nodeExecutionRepo.getById(execution.id)!.status).toBe('pending');
+      expect(taskRepo.getTask(tasks[0].id)!.status).toBe('review');
+
+      // Send-back (reject) releases the hold: the task returns to
+      // in_progress and the parked execution re-drives with a fresh kickoff.
+      taskRepo.updateTask(tasks[0].id, { status: 'in_progress', pendingCheckpointType: null });
+      await rt.executeTick();
+      expect(tam._spawned.length).toBe(spawnsBeforeResume + 1);
+      expect(nodeExecutionRepo.getById(execution.id)!.status).toBe('in_progress');
+    });
+
+    test('approved task with parked row: resume does not respawn as a plain node kickoff', async () => {
+      // The merge variant of the spawn block: an approved task's post-approval
+      // work is the merger sub-session (route context: PR URL, autonomy-gate
+      // tokens) re-driven by resumeDeferredPostApprovals — a plain node
+      // kickoff would lose the route context entirely.
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isTaskAgentAlive: () => false,
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      await rt.executeTick();
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'approved',
+        approvalSource: 'human',
+        // Simulate the interrupted-merge recording from stopActiveWork 1.5 —
+        // the sweep key is (approved, postApprovalBlockedReason).
+        postApprovalSessionId: 'session:merge-old',
+        postApprovalBlockedReason: 'post-approval session interrupted by space.stop',
+      });
+
+      await spaceManager.stopSpace(SPACE_ID);
+      rt.parkInFlightExecutionsForSpace(SPACE_ID);
+      await spaceManager.startSpace(SPACE_ID);
+      const spawnsBeforeResume = tam._spawned.length;
+
+      await rt.executeTick();
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
+      // No plain node kickoff for the approved task.
+      expect(tam._spawned).toHaveLength(spawnsBeforeResume);
+      expect(nodeExecutionRepo.getById(execution.id)!.status).toBe('pending');
+      // The blocked reason is durable until a real merge re-drive clears it
+      // (no live merge session here, so the sweep's dispatch re-runs; in this
+      // fixture the workflow declares no postApproval route, so the no-route
+      // branch closes the task and clears the reason).
+      const final = taskRepo.getTask(tasks[0].id)!;
+      expect(['approved', 'done']).toContain(final.status);
+    });
   });
 });

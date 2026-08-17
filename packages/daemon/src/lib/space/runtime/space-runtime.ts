@@ -119,7 +119,9 @@ import {
   type PostApprovalRouteContext,
   type PostApprovalRouteResult,
   PostApprovalRouter,
+  PostApprovalDeferredError,
   clearPendingCompletionState,
+  isPostApprovalDeferredError,
 } from './post-approval-router';
 
 import type { TaskAgentManager } from './task-agent-manager';
@@ -1946,17 +1948,7 @@ export class SpaceRuntime {
         let parkedInRun = 0;
         for (const exec of this.config.nodeExecutionRepo.listByWorkflowRun(run.id)) {
           if (exec.status !== 'in_progress' && exec.status !== 'waiting_rebind') continue;
-          this.config.nodeExecutionRepo.update(exec.id, {
-            status: 'pending',
-            result: null,
-            // Clear the dead session binding: processRunTick scans pending
-            // executions WITH an agentSessionId, detects this stale one as
-            // dead, and would otherwise run it through the crash-retry path
-            // (incrementing taskCrashCounts). A blank agentSessionId makes
-            // the pending execution a clean non-crash recovery that the spawn
-            // path re-drives from scratch.
-            agentSessionId: null,
-          });
+          this.config.nodeExecutionRepo.resetForCleanRecovery(exec.id);
           parkedInRun++;
           this.taskCrashCounts.delete(`${run.id}:${exec.id}`);
         }
@@ -3898,10 +3890,11 @@ export class SpaceRuntime {
   ): boolean {
     // A cancelled run (e.g. cancelled via the workflow-run cancel path) must
     // not have its static event interests rebuilt on resume/rehydrate — the
-    // run is no longer active even if a review task on it was not cancelled. A `done` run is terminal
-    // (it can no longer deliver events — every delivery fails with
-    // target_task_terminal), so rebuilding its interests only causes fan-out
-    // waste on every matching event; the coder re-subscribes if the run reopens.
+    // run is no longer active even if a review task on it was not cancelled.
+    // A `done` run is terminal (it can no longer deliver events — every
+    // delivery fails with target_task_terminal), so rebuilding its interests
+    // only causes fan-out waste on every matching event; the coder
+    // re-subscribes if the run reopens.
     if (run.status === 'cancelled' || isWorkflowRunSucceeded(run.status)) {
       return false;
     }
@@ -4490,20 +4483,32 @@ export class SpaceRuntime {
     // Supervision hold — DELIBERATELY after the review → approved commit.
     // Post-approval work (e.g. the merge sub-session) is NEW work, so a
     // stopped/paused space must not start it; but the human decision itself
-    // is durable and must never be swallowed. Throwing here (instead of
-    // returning a skip) rides the Layer C contract both callers implement:
-    // they see the task already `approved`, capture this message as
-    // `postApprovalBlockedReason` (UI recovery banner with a retry), and
-    // report the approval as recorded. Nothing re-dispatches an `approved`
-    // task on its own — the banner retry after `space.start` is the resume
-    // path (the tick's completion path treats approved as already routed).
-    if (space?.paused || space?.stopped) {
+    // is durable and must never be swallowed. The space row is RE-READ here
+    // (post-commit): the `space` local was fetched before the transition
+    // await, and a stop committing inside that window must still hold.
+    //
+    // The deferral is made durable and resumable before throwing:
+    //   - `postApprovalBlockedReason` is stamped here (not left to callers)
+    //     so the UI banner exists no matter which of the four call sites
+    //     dispatched — the tick sites have no Layer C catch of their own.
+    //   - The typed `PostApprovalDeferredError` lets human-facing callers
+    //     (RPC handler / coordinator tool) skip re-stamping, and lets the
+    //     tick sites swallow the deferral instead of logging it as a tick
+    //     failure.
+    //   - `onSpaceResumed` → `resumeDeferredPostApprovals` re-invokes this
+    //     method for approved tasks with a blocked reason when the space
+    //     starts/resumes — the router's liveness-based `already-routed`
+    //     guard makes that re-drive idempotent.
+    const holdSpace = await this.config.spaceManager.getSpace(spaceId);
+    if (holdSpace?.paused || holdSpace?.stopped) {
       clearPendingCompletionState(this.config.taskRepo, taskId);
       const detail =
-        `space ${spaceId} is ${space.stopped ? 'stopped' : 'paused'}; ` +
-        `post-approval dispatch deferred until the space resumes — approval recorded, retry the dispatch after space.start`;
+        `space ${spaceId} is ${holdSpace.stopped ? 'stopped' : 'paused'}; ` +
+        `post-approval dispatch deferred until the space resumes — approval recorded; ` +
+        `the dispatch re-runs automatically on space.start/space.resume`;
+      this.config.taskRepo.updateTask(taskId, { postApprovalBlockedReason: detail });
       log.info(`dispatchPostApproval: ${detail}`);
-      throw new Error(detail);
+      throw new PostApprovalDeferredError(detail);
     }
 
     // 2. Resolve the post-approval route context (PR URL + template tokens).
@@ -4580,6 +4585,20 @@ export class SpaceRuntime {
     let routeResult: PostApprovalRouteResult;
     try {
       routeResult = await router.route(approvedTask, workflow, routeContext);
+    } catch (routeErr) {
+      // A stop landing between the hold above and the merge kickoff surfaces
+      // as a transient spawn error from the spawner's own pre-kickoff stop
+      // check — same durable-deferral semantics as the hold, so the resume
+      // sweep re-drives it.
+      if (isTransientSpawnError(routeErr)) {
+        const detail =
+          `post-approval dispatch of task ${taskId} aborted — space ${spaceId} stopped ` +
+          `during dispatch; the dispatch re-runs automatically when the space resumes`;
+        this.config.taskRepo.updateTask(taskId, { postApprovalBlockedReason: detail });
+        log.info(`dispatchPostApproval: ${detail}`);
+        throw new PostApprovalDeferredError(detail);
+      }
+      throw routeErr;
     } finally {
       clearPendingCompletionState(this.config.taskRepo, taskId);
     }
@@ -5197,7 +5216,17 @@ export class SpaceRuntime {
         if (updates) {
           await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, updates);
         }
-        await this.dispatchPostApproval(canonicalTask.id, 'agent');
+        try {
+          await this.dispatchPostApproval(canonicalTask.id, 'agent');
+        } catch (dispatchErr) {
+          // Stopped/paused-space deferral: the approval committed and the
+          // deferral is durably recorded on the task; the resume sweep
+          // re-drives it. Not a reconciliation failure.
+          if (!isPostApprovalDeferredError(dispatchErr)) throw dispatchErr;
+          log.info(
+            `SpaceRuntime: post-approval dispatch of task ${canonicalTask.id} deferred (space ${run.spaceId} stopped/paused) during terminal-run reconciliation`
+          );
+        }
       } else {
         const updates = this.buildTaskOutcomeUpdates(
           canonicalTask,
@@ -6109,6 +6138,10 @@ export class SpaceRuntime {
     // The space is active again — clear the sync paused cache so the delivery
     // hot path resumes injecting into live sessions.
     this.pausedSpaceIds.delete(spaceId);
+    // Re-drive post-approval dispatches deferred by a stop/pause (approved
+    // tasks with a blocked reason). Fire-and-forget with its own error
+    // isolation — delivery requeue below must not wait on it.
+    void this.resumeDeferredPostApprovals(spaceId);
     if (!store) return;
 
     // Re-register workflow-defined static event interests for eligible runs
@@ -6216,6 +6249,58 @@ export class SpaceRuntime {
     // re-evaluated and would expire. Re-entrancy-guarded; no-op when nothing is
     // retained.
     this.redispatchRetainedExternalEvents();
+  }
+
+  /**
+   * Resume path for post-approval dispatches deferred or interrupted by a
+   * stop/pause: re-invoke `dispatchPostApproval` for every `approved` task in
+   * the space that still carries a `postApprovalBlockedReason`.
+   *
+   * This is the other half of the supervision hold in `dispatchPostApproval`
+   * (and of the interrupted-merge recording in `stopActiveWork`): the hold
+   * stamps the blocked reason and defers; this sweep re-drives on
+   * `space.start` / `space.resume` (both fire `onSpaceResumed`). The router's
+   * liveness-based `already-routed` guard makes the re-drive idempotent — a
+   * live merge session is left alone, a dead/interrupted one is re-spawned,
+   * and a no-route task simply closes to `done`.
+   *
+   * Error-isolated per task; a re-stop mid-sweep re-defers (the hold re-stamps
+   * the blocked reason), and a genuine dispatch failure keeps the reason and
+   * is logged for the banner's manual recovery.
+   */
+  private async resumeDeferredPostApprovals(spaceId: string): Promise<void> {
+    try {
+      const deferred = this.config.taskRepo
+        .listBySpace(spaceId)
+        .filter((t) => t.status === 'approved' && !!t.postApprovalBlockedReason);
+      for (const task of deferred) {
+        try {
+          await this.dispatchPostApproval(task.id, task.approvalSource ?? 'agent');
+          // The router clears postApprovalBlockedReason on its spawn/no-route
+          // writes, but the `already-routed` short-circuit returns without
+          // writing — clear any residual reason so the banner drops once the
+          // dispatch is confirmed live/complete.
+          const fresh = this.config.taskRepo.getTask(task.id);
+          if (fresh?.postApprovalBlockedReason) {
+            await this.updateTaskAndEmit(spaceId, task.id, {
+              postApprovalBlockedReason: null,
+            });
+          }
+          log.info(
+            `SpaceRuntime: re-drove deferred post-approval dispatch of task ${task.id} after space ${spaceId} resumed`
+          );
+        } catch (err) {
+          if (isPostApprovalDeferredError(err)) continue; // re-stopped; reason re-stamped
+          log.warn(
+            `SpaceRuntime: failed to re-drive deferred post-approval dispatch of task ${task.id} after space ${spaceId} resumed: ${formatCommandError(err)} — keeping the blocked reason for banner recovery`
+          );
+        }
+      }
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime: failed to sweep deferred post-approval dispatches for space ${spaceId}: ${formatCommandError(err)}`
+      );
+    }
   }
 
   private redispatchPublishedEventsWithoutDeliveries(): void {
@@ -8346,10 +8431,12 @@ export class SpaceRuntime {
         // Capture the post-approval session the router may spawn just below so
         // the sibling-quiesce sweep does NOT interrupt it. The spawn happens in
         // the SAME synchronous block as the sweep (`dispatchPostApproval` →
-        // `PostApprovalRouter.route` → `spawnPostApprovalSubSession` stamps an
-        // `in_progress` node_execution for the merge target node). Without this
-        // exclusion the sweep's victim set is stale relative to that spawn and
-        // kills the freshly-created merge session ~2ms after it starts.
+        // `PostApprovalRouter.route` → `spawnPostApprovalSubSession`; a fresh
+        // merge target carries no node_execution row — #852 — so the SESSION
+        // id, not a row, is the only thing the exclusion can key on). Without
+        // this exclusion the sweep's victim set is stale relative to that
+        // spawn and kills the freshly-created merge session ~2ms after it
+        // starts.
         let spawnedPostApprovalSessionId: string | undefined;
 
         if (!taskAlreadyResolved) {
@@ -8361,24 +8448,40 @@ export class SpaceRuntime {
           if (updates) {
             await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, updates);
           }
-          const result = await this.dispatchPostApproval(canonicalTask.id, 'agent');
-          // The router stamps `postApprovalSessionId` on the task for the
-          // `spawn` (fresh sub-session) and `already-routed` (prior live
-          // sub-session) modes. Narrow the union so we can carry it into the
-          // sibling-quiesce exclusion below.
-          spawnedPostApprovalSessionId =
-            result.mode === 'spawn' || result.mode === 'already-routed'
-              ? result.postApprovalSessionId
-              : undefined;
-          // Resolve the final status from the router result. 'no-route'
-          // moved directly to done; 'inline' / 'spawn' / 'already-routed'
-          // parked at approved awaiting mark_complete.
-          finalTaskStatus =
-            result.mode === 'no-route'
-              ? 'done'
-              : result.mode === 'skipped'
-                ? canonicalTask.status
-                : 'approved';
+          try {
+            const result = await this.dispatchPostApproval(canonicalTask.id, 'agent');
+            // The router stamps `postApprovalSessionId` on the task for the
+            // `spawn` (fresh sub-session) and `already-routed` (prior live
+            // sub-session) modes. Narrow the union so we can carry it into the
+            // sibling-quiesce exclusion below.
+            spawnedPostApprovalSessionId =
+              result.mode === 'spawn' || result.mode === 'already-routed'
+                ? result.postApprovalSessionId
+                : undefined;
+            // Resolve the final status from the router result. 'no-route'
+            // moved directly to done; 'inline' / 'spawn' / 'already-routed'
+            // parked at approved awaiting mark_complete.
+            finalTaskStatus =
+              result.mode === 'no-route'
+                ? 'done'
+                : result.mode === 'skipped'
+                  ? canonicalTask.status
+                  : 'approved';
+          } catch (dispatchErr) {
+            // A stopped/paused space deferred the dispatch. The approval
+            // committed inside dispatchPostApproval and the deferral is
+            // durably recorded (postApprovalBlockedReason + banner); the
+            // resume sweep re-drives it. This is the normal flow for a
+            // paused space (live sessions keep working and their
+            // completions report while paused) — NOT a tick failure, so
+            // swallow the typed deferral and keep the sweep coherent: the
+            // task crossed the post-approval boundary, so siblings quiesce.
+            if (!isPostApprovalDeferredError(dispatchErr)) throw dispatchErr;
+            log.info(
+              `SpaceRuntime: post-approval dispatch of task ${canonicalTask.id} deferred (space ${meta.spaceId} stopped/paused); run ${runId} completed with the task parked at approved`
+            );
+            finalTaskStatus = 'approved';
+          }
         } else {
           const updates = this.buildTaskOutcomeUpdates(
             canonicalTask,
@@ -8510,18 +8613,28 @@ export class SpaceRuntime {
         (execution) => execution.status === 'pending'
       );
 
-      // Skip spawning when the canonical task is terminal (done/cancelled/archived).
-      // The task was externally resolved while the run was in_progress — spawning new
-      // agent sub-sessions would conflict with the caller's intent and disturb tests
-      // that mark the task done to prevent agent interference.
-      const canonicalTaskIsTerminal =
+      // Skip spawning when the canonical task is terminal (done/cancelled/archived)
+      // or sitting at a decision boundary (review/approved). Terminal: the task was
+      // externally resolved while the run was in_progress — spawning new agent
+      // sub-sessions would conflict with the caller's intent and disturb tests that
+      // mark the task done to prevent agent interference. review/approved: a
+      // review-pending task must not have a fresh end-node worker spawned under the
+      // still-pending human decision (redo racing the decision), and an approved
+      // task's post-approval work is the merger sub-session — re-driven by
+      // `resumeDeferredPostApprovals`, not by a plain node kickoff, which would
+      // lose the merge route context (PR URL, autonomy-gate tokens). After a
+      // Send-back rejection the task returns to `in_progress` and pending
+      // executions spawn normally.
+      const canonicalTaskBlocksSpawn =
         canonicalTask.status === 'done' ||
         canonicalTask.status === 'cancelled' ||
-        canonicalTask.status === 'archived';
+        canonicalTask.status === 'archived' ||
+        canonicalTask.status === 'review' ||
+        canonicalTask.status === 'approved';
 
-      if (pendingExecutions.length > 0 && canonicalTaskIsTerminal) {
+      if (pendingExecutions.length > 0 && canonicalTaskBlocksSpawn) {
         log.info(
-          `SpaceRuntime: skipping agent spawn for run ${runId} — canonical task ${canonicalTask.id} is terminal (${canonicalTask.status})`
+          `SpaceRuntime: skipping agent spawn for run ${runId} — canonical task ${canonicalTask.id} is terminal or awaiting decision (${canonicalTask.status})`
         );
       } else if (pendingExecutions.length > 0) {
         if (!space) {
@@ -10319,17 +10432,7 @@ export class SpaceRuntime {
               task.workflowRunId
             )) {
               if (exec.status === 'in_progress') {
-                this.config.nodeExecutionRepo.update(exec.id, {
-                  status: 'pending',
-                  result: null,
-                  // Clear the dead session binding: processRunTick scans pending
-                  // executions WITH an agentSessionId, detects this stale one as
-                  // dead, and would otherwise run it through the crash-retry path
-                  // (incrementing taskCrashCounts). A blank agentSessionId makes
-                  // the pending execution a clean non-crash recovery that the
-                  // spawn path re-drives from scratch.
-                  agentSessionId: null,
-                });
+                this.config.nodeExecutionRepo.resetForCleanRecovery(exec.id);
               }
             }
           }

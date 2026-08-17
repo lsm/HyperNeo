@@ -94,6 +94,40 @@ export function isPostApprovalRoutingEnabled(
 }
 
 // ---------------------------------------------------------------------------
+// Deferral signal
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown by `SpaceRuntime.dispatchPostApproval` when the review → approved
+ * commit has already happened but the post-approval dispatch must not run
+ * because the space is stopped/paused (the supervision hold), or a stop
+ * landed mid-dispatch (the merge spawner's pre-kickoff check surfaces as a
+ * transient spawn error that the runtime converts).
+ *
+ * Contract with callers:
+ *   - The approval itself is durable — the task is `approved`.
+ *   - `postApprovalBlockedReason` is stamped on the task by the runtime
+ *     BEFORE throwing, so the UI banner exists regardless of caller. Human
+ *     callers (RPC handler / coordinator tool) should NOT re-stamp it — their
+ *     `mapPostApprovalDispatchWarning` copy would both duplicate the
+ *     "approval recorded" phrasing and give deferral-inappropriate advice.
+ *   - `onSpaceResumed` re-drives the deferred dispatch when the space
+ *     starts/resumes (`resumeDeferredPostApprovals`), so this is a deferral,
+ *     not a dead end.
+ */
+export class PostApprovalDeferredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PostApprovalDeferredError';
+  }
+}
+
+/** Type guard for {@link PostApprovalDeferredError}. */
+export function isPostApprovalDeferredError(err: unknown): err is PostApprovalDeferredError {
+  return err instanceof PostApprovalDeferredError;
+}
+
+// ---------------------------------------------------------------------------
 // Dispatch delegates
 // ---------------------------------------------------------------------------
 
@@ -104,7 +138,10 @@ export function isPostApprovalRoutingEnabled(
  *
  * The delegate is responsible for everything that differs between a regular
  * node activation and a post-approval activation:
- *   - Creating a `NodeExecution` row (or reusing the agent's existing session).
+ *   - Reusing the agent's existing session when one is live; a FRESH
+ *     post-approval target (e.g. the built-in merger) carries no
+ *     `NodeExecution` row at all (#852) — `createSubSession` stamps a row
+ *     only when one already exists with a blank session binding.
  *   - Attaching the same MCP server set that the target node would have.
  *   - Injecting the `kickoffMessage` as the first user turn.
  *   - Returning the spawned session ID so the router can stamp it on the task.

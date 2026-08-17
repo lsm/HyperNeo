@@ -148,6 +148,14 @@ describe('isValidNodeExecutionTransition', () => {
     expect(isValidNodeExecutionTransition('in_progress', 'cancelled')).toBe(true);
   });
 
+  test('6b. in_progress → pending is valid (clean-recovery reset)', () => {
+    // Space stop / passed rate cap / transient spawn abort reset an in-flight
+    // execution to pending with a blank session binding via
+    // NodeExecutionRepository.resetForCleanRecovery so the spawn path
+    // re-drives it from scratch (no crash accounting).
+    expect(isValidNodeExecutionTransition('in_progress', 'pending')).toBe(true);
+  });
+
   test('7. idle → in_progress is valid (reactivation)', () => {
     expect(isValidNodeExecutionTransition('idle', 'in_progress')).toBe(true);
   });

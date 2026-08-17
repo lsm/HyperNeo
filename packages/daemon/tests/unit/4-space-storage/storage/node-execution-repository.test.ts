@@ -404,6 +404,27 @@ describe('NodeExecutionRepository', () => {
     });
   });
 
+  describe('resetForCleanRecovery', () => {
+    it('resets an in-flight execution to pending with a blank session binding and cleared result', () => {
+      // The clean-recovery shape shared by space stop (park), passed rate
+      // caps (recoverRateLimitedTasks), and transient spawn aborts: the
+      // blank agentSessionId keeps the pending row OFF the crash-retry scan
+      // so the spawn path re-drives it from scratch.
+      const exec = createExecution();
+      repo.update(exec.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-doomed',
+        result: 'partial work',
+      });
+
+      const updated = repo.resetForCleanRecovery(exec.id);
+
+      expect(updated!.status).toBe('pending');
+      expect(updated!.agentSessionId).toBeNull();
+      expect(updated!.result).toBeNull();
+    });
+  });
+
   describe('updateSessionId', () => {
     it('sets the session ID', () => {
       const exec = createExecution();

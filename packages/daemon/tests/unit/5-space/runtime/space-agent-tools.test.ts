@@ -48,6 +48,7 @@ import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { formatAgentMessage } from '../../../../src/lib/space/agent-message-envelope.ts';
 import { getModelsCache, setModelsCache } from '../../../../src/lib/model-service.ts';
+import { PostApprovalDeferredError } from '../../../../src/lib/space/runtime/post-approval-router';
 
 // ---------------------------------------------------------------------------
 // DB + space setup helpers
@@ -5557,6 +5558,43 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     expect(parsed.task.postApprovalBlockedReason).toContain('Approval recorded');
     expect(parsed.task.postApprovalBlockedReason).toContain('interrupted');
     expect(ctx.taskRepo.getTask(taskId)?.postApprovalBlockedReason).toContain('Approval recorded');
+  });
+
+  test('approve: stopped-space deferral — the runtime-stamped reason survives, no generic warning', async () => {
+    // space.stop hold variant of Layer C: dispatchPostApproval commits the
+    // approval, stamps the deferral reason itself (banner + resume sweep),
+    // then throws the TYPED PostApprovalDeferredError. The coordinator path
+    // is what autonomous flows use — it must report the approval as recorded
+    // and keep the runtime's accurate deferral copy rather than overwriting
+    // it with mapPostApprovalDispatchWarning's generic "approval recorded...
+    // may need to manually trigger" advice.
+    const taskId = await createReviewTask();
+    const runtimeStampedReason =
+      'space space-1 is stopped; post-approval dispatch deferred until the space resumes — ' +
+      'approval recorded; the dispatch re-runs automatically on space.start/space.resume';
+
+    const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval').mockImplementation(
+      async (id: string) => {
+        ctx.taskRepo.updateTask(id, {
+          status: 'approved',
+          postApprovalBlockedReason: runtimeStampedReason,
+        });
+        throw new PostApprovalDeferredError(runtimeStampedReason);
+      }
+    );
+
+    const result = await makeHandlers(ctx, {
+      callerRole: 'coordinator',
+    }).approve_pending_completion({ task_id: taskId, approved: true });
+    dispatchSpy.mockRestore();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(true);
+    expect(parsed.task.status).toBe('approved');
+    // The runtime's deferral copy is preserved verbatim — no generic warning
+    // overwrite ("Approval recorded, but ... may need to manually trigger").
+    expect(parsed.task.postApprovalBlockedReason).toBe(runtimeStampedReason);
+    expect(ctx.taskRepo.getTask(taskId)?.postApprovalBlockedReason).toBe(runtimeStampedReason);
   });
 
   test('approve: a dispatch failure before the status commit is propagated as an error', async () => {
