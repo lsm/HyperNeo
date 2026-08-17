@@ -3221,11 +3221,26 @@ describe('QueryRunner', () => {
           }
           expect(retryWarnCount()).toBe(2);
 
-          // …and a replacement query takes the session DURING the sleep
-          // (restart → stop + start; the old code's start() nulled the
-          // instance tracking here). The post-sleep guard cancels the retry.
-          ctx.incrementQueryGeneration();
-          await ctx.queryPromise?.catch(() => {});
+          // …and a REAL replacement takes the session DURING the sleep — the
+          // same-runner restart() shape: stop the queue (restart semantics)
+          // so start() proceeds past its isRunning guard, then start() —
+          // which bumps the generation and, on the pre-round-9 shape, nulled
+          // the instance tracking this chain's stale finally is about to
+          // read. The replacement parks (its iterator never resolves on its
+          // own), so the dying chain's purge is the thing under test.
+          const dyingChainPromise = ctx.queryPromise;
+          messageQueue.stop();
+          runner.start();
+          deadline = Date.now() + 2000;
+          while (buildSpy.mock.calls.length < 3 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          // Pins that the replacement genuinely started (the discriminating
+          // condition: a start() that early-returns on isRunning would leave
+          // this at 2).
+          expect(buildSpy).toHaveBeenCalledTimes(3);
+
+          await dyingChainPromise?.catch(() => {});
 
           const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
             String(args[0])
@@ -3233,6 +3248,10 @@ describe('QueryRunner', () => {
           expect(warns.some((w) => w.includes('Startup-timeout retry cancelled'))).toBe(true);
           expect(messageQueue.hasPendingOrInFlight(kickoff.uuid)).toBe(false);
           expect(warns.some((w) => w.includes('Removed superseded replay entry'))).toBe(true);
+
+          // End the parked replacement chain.
+          ctx.queryAbortController?.abort();
+          await ctx.queryPromise?.catch(() => {});
         } finally {
           messageQueue.clear();
           (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
@@ -3730,6 +3749,161 @@ describe('QueryRunner', () => {
       expect(helper._pendingStartupReplay?.map((entry) => entry.uuid)).toEqual(['a', 'b', 'c']);
       expect(helper._pendingStartupReplay?.length).toBe(3);
     });
+
+    it.skipIf(!sdkQueryIsMock)(
+      'folds a flushed entry back into the staging when its admission dies unclaimed by any lane',
+      async () => {
+        // Round-10 P3: a flushed entry can outlive its attempt WITHOUT
+        // landing in either merge input at the retry site — its admission
+        // TTL may fire after the recursion replaced ctx.queryAbortController
+        // (the rejection handler's identity guard correctly no-ops), and its
+        // durable row is 'consumed'. Without the fold-back the prompt has no
+        // lane left; with it, the next attempt re-feeds it.
+        process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '2';
+        const kickoff = {
+          uuid: 'fold-kickoff',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff]]]);
+        peekNextUserMessageIdSpy.mockImplementation(() => kickoff.uuid);
+
+        buildSpy
+          .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+          .mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
+        // Attempt 2 flushes the replay, then dies as a startup timeout ON
+        // DEMAND; attempt 3 (the folded re-feed) parks until aborted.
+        let queryCalls = 0;
+        let dieAsTimeout: (() => void) | null = null;
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => {
+          queryCalls++;
+          return {
+            close: () => {},
+            [Symbol.asyncIterator]:
+              queryCalls === 1
+                ? async function* () {
+                    await new Promise<void>((resolve) => {
+                      dieAsTimeout = resolve;
+                    });
+                    throw new Error('SDK startup timeout - query aborted');
+                  }
+                : async function* () {
+                    await new Promise(() => {});
+                  },
+          };
+        });
+        // Attempt 2's flush admission stays pending in this test (the entry
+        // "dies" via the throw, not via a rejection we would observe).
+        enqueueWithIdSpy.mockImplementation(() => new Promise<void>(() => {}));
+
+        try {
+          runner.start();
+          let deadline = Date.now() + 2000;
+          while (
+            (!dieAsTimeout || enqueueWithIdSpy.mock.calls.length < 1) &&
+            Date.now() < deadline
+          ) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(enqueueWithIdSpy.mock.calls.length).toBe(1);
+          expect(dieAsTimeout).toBeTypeOf('function');
+
+          dieAsTimeout();
+          // The retry site folds the flushed kickoff into the staging even
+          // though consumed is empty and nothing re-staged → attempt 3's
+          // flush re-feeds it.
+          deadline = Date.now() + 2000;
+          while (enqueueWithIdSpy.mock.calls.length < 2 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(enqueueWithIdSpy).toHaveBeenCalledTimes(2);
+          expect(enqueueWithIdSpy).toHaveBeenNthCalledWith(
+            2,
+            kickoff.uuid,
+            kickoff.content,
+            false,
+            { prepend: true, durable: true }
+          );
+
+          ctx.queryAbortController?.abort();
+          await ctx.queryPromise?.catch(() => {});
+        } finally {
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+        }
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      'skips the fenced purge on a LIVE same-generation unwind (and pins the fence capture)',
+      async () => {
+        // Round-10 P3: the stale-finally purge is gated on the chain being
+        // superseded — a live unwind (the chain still owns the session) must
+        // NOT remove its own flushed entries; the replacement turn's
+        // generator legitimately consumes them. Also pins the fence capture
+        // (getAdmissionSeq) the flush performs, per the round-10 review.
+        const kickoff = {
+          uuid: 'live-kickoff',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff]]]);
+
+        buildSpy
+          .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+          .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514' });
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => ({
+          close: () => {},
+          [Symbol.asyncIterator]: async function* () {
+            await new Promise(() => {});
+          },
+        }));
+        enqueueWithIdSpy.mockImplementation(() => new Promise<void>(() => {}));
+        // The flushed entry reports as still pending AFTER the flush fed it
+        // (call-order keyed: the flush's own duplicate-guard check sees
+        // false) so a wrongly-ungated purge would actually attempt the
+        // removal rather than short-circuit at the pre-check — keeps the
+        // negative pin honest.
+        let pendingChecks = 0;
+        hasPendingOrInFlightSpy.mockImplementation(() => pendingChecks++ > 0);
+
+        try {
+          runner.start();
+          const deadline = Date.now() + 2000;
+          while (enqueueWithIdSpy.mock.calls.length < 1 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(enqueueWithIdSpy.mock.calls.length).toBe(1);
+
+          // End the attempt WITHOUT superseding it — the finally runs its
+          // LIVE branch (same generation), which owns cleanup but must not
+          // purge its own flushed entry.
+          ctx.queryAbortController?.abort();
+          await ctx.queryPromise?.catch(() => {});
+
+          expect(getAdmissionSeqSpy).toHaveBeenCalled(); // fence captured at the flush
+          expect(removeIfAdmittedNoLaterThanSpy).not.toHaveBeenCalled();
+          const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+            String(args[0])
+          );
+          expect(warns.some((w) => w.includes('Removed superseded replay entry'))).toBe(false);
+          expect(warns.some((w) => w.includes('Left pending entry'))).toBe(false);
+        } finally {
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+        }
+      }
+    );
 
     it('parses the new knobs and keeps the retired HYPERNEO_SDK_STARTUP_MAX_RETRIES inert', async () => {
       // Round-5 P3-9(3): parsing garbage/negative/float inputs falls back to

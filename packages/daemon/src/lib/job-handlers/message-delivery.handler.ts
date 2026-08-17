@@ -273,11 +273,17 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       return { outcome: 'aborted' };
     }
     if (result.outcome === 'park') {
-      // The owning turn is blocked (sdk_resume_choice, session `queued`): the
-      // steer can neither feed nor promote (the parked turn holds the active-turn
-      // slot). Park it with the turn's delay so it is NOT reclaimed every poll
-      // (unbounded hot loop); it re-evaluates (feed/promote) when reclaimed after
-      // the delay. See Codex (#3742693683).
+      // The owning turn cannot take the steer right now, for one of three
+      // reasons (full enumeration in the FeedSteerOutcome 'park' doc,
+      // message-delivery.ts): blocked on an open human gate
+      // (sdk_resume_choice); session `queued` (a parked owner); or
+      // 'processing' with a STOPPED queue (the startup-timeout retry's
+      // backoff window — feeding would arm an admission TTL nothing
+      // consumes). In every case the steer can neither feed (no live
+      // generator) nor promote (the parked turn holds the active-turn slot).
+      // Park it with the turn's delay so it is NOT reclaimed every poll
+      // (unbounded hot loop); it re-evaluates (feed/promote) when reclaimed
+      // after the delay. See Codex (#3742693683).
       //
       // Bounded: parking uses requeue (no retry_count bump), so without a cap a
       // steer whose owning turn never unblocks re-parks every cycle forever.

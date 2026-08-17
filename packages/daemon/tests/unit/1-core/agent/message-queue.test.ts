@@ -5,9 +5,9 @@
  * and queue lifecycle management.
  */
 
-import { describe, expect, it, beforeEach } from 'bun:test';
-import { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import { beforeEach, describe, expect, it } from 'bun:test';
 import { generateUUID } from '@hyperneo/shared';
+import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 
 describe('MessageQueue', () => {
   let queue: MessageQueue;
@@ -178,6 +178,66 @@ describe('MessageQueue', () => {
       expect(queue.remove('yielded-kept')).toBe(false);
       expect(queue.size()).toBe(1);
 
+      result.value.onSent();
+      await acknowledgment;
+      queue.stop();
+    });
+  });
+
+  describe('removeIfAdmittedNoLaterThan', () => {
+    it('removes a queued entry admitted before the fence and leaves later admissions alone', () => {
+      // The purge API a superseded startup-retry chain uses: uuid alone
+      // cannot tell its own flushed entry from a delivery-layer redrive's
+      // later re-admission of the same uuid — the admission sequence can.
+      queue.admitWithId('fenced-queued', 'Message 1', false, { durable: true }).catch(() => {});
+      const fence = queue.getAdmissionSeq();
+      // The redrive's fresh admission, strictly after the fence.
+      queue.admitWithId('fenced-queued', 'Message 2', false, { durable: true }).catch(() => {});
+      expect(queue.size()).toBe(2);
+
+      // Our own (pre-fence) entry is removed; the later re-admission survives.
+      expect(queue.removeIfAdmittedNoLaterThan('fenced-queued', fence)).toBe(true);
+      expect(queue.hasPendingOrInFlight('fenced-queued')).toBe(true);
+      expect(queue.size()).toBe(1);
+      queue.clear();
+    });
+
+    it('removes a generator-claimed entry admitted before the fence (claimed branch)', async () => {
+      queue.start();
+      const acknowledgment = queue.admitWithId('fenced-claimed', 'Message 1');
+      const fence = queue.getAdmissionSeq();
+      const generator = queue.messageGenerator(testSessionId);
+
+      // next() runs synchronously up to its first await: the message is
+      // shifted out of `queue` and claimed by the generator, but not yet
+      // yielded — the fenced removal must still win in that state.
+      const nextPromise = generator.next();
+
+      expect(queue.removeIfAdmittedNoLaterThan('fenced-claimed', fence)).toBe(true);
+      expect(queue.size()).toBe(0);
+      await acknowledgment; // revocation resolves the admission
+
+      // The generator skips the revoked claim and exits on stop.
+      queue.stop();
+      const result = await nextPromise;
+      expect(result.done).toBe(true);
+    });
+
+    it('leaves a claimed entry admitted after the fence for its rightful owner', async () => {
+      queue.start();
+      const acknowledgment = queue.admitWithId('fenced-late', 'Message 1');
+      // A fence BELOW this entry's admission sequence — as a stale chain's
+      // purge would hold it against a redrive's fresh admission.
+      const staleFence = queue.getAdmissionSeq() - 1;
+      const generator = queue.messageGenerator(testSessionId);
+      const nextPromise = generator.next();
+
+      expect(queue.removeIfAdmittedNoLaterThan('fenced-late', staleFence)).toBe(false);
+      expect(queue.size()).toBe(1); // still claimed, untouched
+
+      // The generator proceeds normally and the entry feeds its real owner.
+      const result = await nextPromise;
+      expect(result.done).toBe(false);
       result.value.onSent();
       await acknowledgment;
       queue.stop();
