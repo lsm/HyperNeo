@@ -536,6 +536,20 @@ export class AcpQueryRunner {
     // completed prompt. Retry recursions re-set it on the replay's first yield.
     this._lastConsumedUserMessage = null;
 
+    // The re-fed admission THIS attempt's startup-retry chain flushes into the
+    // queue (set by handleRunError's re-feed), plus the admission sequence
+    // that fences it. Attempt-LOCAL on purpose (mirrors QueryRunner's round-9
+    // attempt-local flushedReplayUuids): the finally reads them at unwind time
+    // to purge this chain's still-pending entry when superseded — as instance
+    // fields a replacement's start() could neutralize the purge, and uuid
+    // alone cannot tell our own entry from a later legitimate re-admission of
+    // the same uuid (the fence seq can; see
+    // MessageQueue.removeIfAdmittedNoLaterThan).
+    const refeedTracking: { uuid: string | null; fenceSeq: number } = {
+      uuid: null,
+      fenceSeq: 0,
+    };
+
     try {
       const { initializeProviders, waitForOptionalProviderRegistration } = await import(
         '../providers/factory.js'
@@ -909,7 +923,8 @@ export class AcpQueryRunner {
           await proxyBridge?.close();
           proxyBridge = null;
         },
-        recoveryState
+        recoveryState,
+        refeedTracking
       );
     } finally {
       restoreMessageEnqueuedHandler?.();
@@ -985,6 +1000,36 @@ export class AcpQueryRunner {
 
         this.ctx.queryPromise = null;
       }
+
+      // Stale query: skip shared-state cleanup — the new query owns it — with
+      // ONE exception (mirrors QueryRunner's stale branch, round-9 P2): the
+      // admission this chain's startup retry re-fed must not survive into the
+      // replacement's generator. restart()/reset() can supersede via
+      // stop-without-clear, so a still-pending re-fed entry would otherwise be
+      // consumed as the replacement turn's own prompt (foreign feed). The
+      // tracking is attempt-local (see runQuery's top) so a replacement's
+      // start() cannot neutralize this purge, and the removal is fenced on
+      // the re-feed's admission sequence so a LATER legitimate re-admission of
+      // the same uuid — a delivery-layer redrive that re-fed the message after
+      // this chain died — is left for its rightful owner. An entry already
+      // yielded to the replacement is equally out of reach (the feed
+      // happened); that residual window is bounded by the admission TTL.
+      if (
+        refeedTracking.uuid &&
+        isStaleQuery &&
+        messageQueue.hasPendingOrInFlight(refeedTracking.uuid)
+      ) {
+        const removed = messageQueue.removeIfAdmittedNoLaterThan(
+          refeedTracking.uuid,
+          refeedTracking.fenceSeq
+        );
+        if (removed) {
+          logger.warn(
+            `Removed superseded ACP replay entry ${refeedTracking.uuid} from the queue ` +
+              '(the chain was replaced before the retry consumed it).'
+          );
+        }
+      }
     }
   }
 
@@ -996,7 +1041,8 @@ export class AcpQueryRunner {
     createdAcpSessionDuringRun = false,
     receivedAcpMessageDuringRun = false,
     closeProxyBridge: () => Promise<void> = async () => {},
-    recoveryState = { rateLimitCooldownScheduled: false }
+    recoveryState = { rateLimitCooldownScheduled: false },
+    refeedTracking: { uuid: string | null; fenceSeq: number } = { uuid: null, fenceSeq: 0 }
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger } = this.ctx;
     logger.error('ACP query error:', error);
@@ -1133,7 +1179,13 @@ export class AcpQueryRunner {
         // Prefer a STAGED replay (set when the previous round's re-feed was
         // admission-TTL-rejected — the entry-null below already cleared
         // _lastConsumedUserMessage for that round); otherwise the prompt this
-        // attempt consumed is the replay.
+        // attempt consumed is the replay. QueryRunner MERGES the consumed set
+        // with its staging here (round-9 P1) because its replay can hold a
+        // kickoff plus trailing steers with no delivery-layer recovery lane;
+        // ACP replays exactly ONE prompt, and a staged entry plus a consumed
+        // prompt in the same round are necessarily the same uuid (the staging
+        // came from this chain's own re-feed of that uuid) — the ?? preference
+        // is that dedupe-merge under ACP's single-prompt invariant.
         const retryMessage = this._pendingStartupReplay ?? this._lastConsumedUserMessage;
         if (retryMessage) {
           try {
@@ -1341,6 +1393,14 @@ export class AcpQueryRunner {
                   this.ctx.queryAbortController.abort();
                 }
               });
+            // Fence for this chain's finally: admitWithId records the entry
+            // synchronously, so everything admitted through this point is
+            // THIS chain's re-feed — any admission of the same uuid recorded
+            // after this counter read belongs to a later re-feed (delivery-
+            // layer redrive) and must survive a superseded chain's purge.
+            // (Mirrors QueryRunner's flushAdmissionFenceSeq, round-9 P2.)
+            refeedTracking.uuid = retryMessage.uuid;
+            refeedTracking.fenceSeq = messageQueue.getAdmissionSeq();
           }
           // The staged replay is now the queue's admission (or a redrive's) —
           // either way the NEXT round re-derives it from the queue or the
@@ -1350,6 +1410,18 @@ export class AcpQueryRunner {
           this._pendingStartupReplay = null;
           this._lastConsumedUserMessage = null;
         }
+
+        // Reset the startup-phase state for the recursive attempt (mirrors
+        // QueryRunner's recursion site, round-9 P3). Recursive retries do NOT
+        // go through start(); a stale firstMessageReceived=true — a first
+        // frame racing the timeout's abort past the loop's message
+        // bookkeeping — would suppress the retry's catch-timeout
+        // classification (the error surfacing as whatever the handshake threw
+        // instead of a startup timeout), so the recursive attempt could
+        // terminalize instead of re-entering the bounded machine. Drop this
+        // attempt's (fired) timer handle too so the retry arms a fresh one.
+        this.clearStartupTimer();
+        this.ctx.firstMessageReceived = false;
 
         // `return await` keeps this chain's finally{} from racing the retry
         // (it runs only after the retry chain completes). isRetry=true also

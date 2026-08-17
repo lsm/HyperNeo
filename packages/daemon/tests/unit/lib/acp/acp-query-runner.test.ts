@@ -127,6 +127,8 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     peekNextUserMessageId: mock(() => null),
     hasPendingOrInFlight: mock(() => false),
     hasPendingAdmission: mock(() => false),
+    getAdmissionSeq: mock(() => 0),
+    removeIfAdmittedNoLaterThan: mock(() => false),
     enqueueWithId: mock(async () => {}),
     onMessageEnqueued: undefined,
     messageGenerator: mock(generatorFactory),
@@ -2131,6 +2133,61 @@ describe('AcpQueryRunner startup-timeout bounded retry', () => {
       expect(createClient).toHaveBeenCalledTimes(3);
       expect(warnLines(ctx).some((line) => line.includes('retry 2/2'))).toBe(true);
       expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    } finally {
+      restoreStartupRetryEnv();
+    }
+  }, 1000);
+
+  test('purges its own re-fed admission when the chain is superseded during the backoff', async () => {
+    // Mirrors QueryRunner's round-9 P2 stale-branch purge: a re-fed entry
+    // this chain admitted must not survive into a replacement's generator
+    // (restart supersedes stop-without-clear), while a later re-admission of
+    // the same uuid by a delivery-layer redrive must survive — hence the
+    // admission-sequence fence, not a bare remove-by-uuid.
+    const restoreStartupRetryEnv = pinStartupRetryEnv({ base: '60' });
+    try {
+      const clients = [createHangingClient(), createMockClient()];
+      const { ctx, messageQueue } = createRunnerFixture({ client: clients[0] });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+      let admissionSeq = 0;
+      (messageQueue.getAdmissionSeq as unknown as ReturnType<typeof mock>).mockImplementation(
+        () => ++admissionSeq
+      );
+      const purge = mock(() => true);
+      messageQueue.removeIfAdmittedNoLaterThan =
+        purge as unknown as typeof messageQueue.removeIfAdmittedNoLaterThan;
+      // The re-fed admission is still pending when the chain is superseded.
+      (messageQueue.hasPendingOrInFlight as unknown as ReturnType<typeof mock>).mockImplementation(
+        () => true
+      );
+
+      await runner.start();
+      expect(await waitForWarn(ctx, 'Auto-retrying ACP query')).toBe(true);
+      // A replacement takes over right as this chain re-feeds its replay
+      // (supersession lands between the re-feed and the retry's consumption —
+      // bumping during the backoff instead would cancel at the wake guard
+      // before anything is re-fed, leaving nothing to purge).
+      let superseded = false;
+      messageQueue.enqueueWithId = mock(async () => {
+        if (!superseded) {
+          superseded = true;
+          ctx.incrementQueryGeneration();
+        }
+      }) as unknown as typeof messageQueue.enqueueWithId;
+
+      await ctx.queryPromise;
+
+      // The recursive attempt ran (spawn 2) and unwound stale, and the
+      // finally's stale branch purged this chain's own re-fed entry, fenced
+      // on the admission sequence captured right after the re-feed.
+      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(purge).toHaveBeenCalledWith('user-message-1', 1);
+      expect(
+        warnLines(ctx).some((line) =>
+          line.includes('Removed superseded ACP replay entry user-message-1')
+        )
+      ).toBe(true);
     } finally {
       restoreStartupRetryEnv();
     }
