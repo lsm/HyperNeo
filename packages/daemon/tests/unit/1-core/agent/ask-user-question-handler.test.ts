@@ -338,7 +338,10 @@ describe('AskUserQuestionHandler', () => {
           {
             question: 'Pick?',
             header: 'P',
-            options: [{ label: 'A', description: 'A' }],
+            options: [
+              { label: 'A', description: 'A' },
+              { label: 'B', description: 'B' },
+            ],
             multiSelect: false,
           },
         ],
@@ -449,8 +452,17 @@ describe('AskUserQuestionHandler', () => {
       // q.options.map((o) => o.label) would throw on a null / non-object /
       // label-less option — under bypass an errored hook is non-blocking, so
       // without the guard the question would proceed with no interaction and
-      // no card (the silent-drop failure this PR fixes).
-      for (const options of [[null], [undefined], [{}], [{ label: 42 }]]) {
+      // no card (the silent-drop failure this PR fixes). Empty and single-
+      // option arrays also deny: the SDK schema requires @minItems 2, and a
+      // sub-min option list would render an unanswerable card.
+      for (const options of [
+        [],
+        [{ label: 'A', description: 'A' }],
+        [null],
+        [undefined],
+        [{}],
+        [{ label: 42 }],
+      ]) {
         const result = (await hook(
           {
             hook_event_name: 'PreToolUse',
@@ -568,7 +580,10 @@ describe('AskUserQuestionHandler', () => {
               {
                 question: long,
                 header: long,
-                options: [{ label: long, description: long }],
+                options: [
+                  { label: long, description: long },
+                  { label: 'B', description: 'B' },
+                ],
                 multiSelect: false,
               },
             ],
@@ -700,7 +715,10 @@ describe('AskUserQuestionHandler', () => {
               {
                 question: 'Pick?',
                 header: 'P',
-                options: [{ label: 'A', description: 'A' }],
+                options: [
+                  { label: 'A', description: 'A' },
+                  { label: 'B', description: 'B' },
+                ],
                 multiSelect: false,
               },
             ],
@@ -740,7 +758,10 @@ describe('AskUserQuestionHandler', () => {
               {
                 question: 'Pick 2?',
                 header: 'P',
-                options: [{ label: 'B', description: 'B' }],
+                options: [
+                  { label: 'B', description: 'B' },
+                  { label: 'C', description: 'C' },
+                ],
                 multiSelect: false,
               },
             ],
@@ -784,7 +805,10 @@ describe('AskUserQuestionHandler', () => {
             {
               question,
               header: 'P',
-              options: [{ label, description: label }],
+              options: [
+                { label, description: label },
+                { label: 'B', description: 'B' },
+              ],
               multiSelect: false,
             },
           ],
@@ -858,7 +882,10 @@ describe('AskUserQuestionHandler', () => {
             {
               question,
               header: 'P',
-              options: [{ label, description: label }],
+              options: [
+                { label, description: label },
+                { label: 'B', description: 'B' },
+              ],
               multiSelect: false,
             },
           ],
@@ -1041,7 +1068,10 @@ describe('AskUserQuestionHandler', () => {
           {
             question: 'Pick?',
             header: 'P',
-            options: [{ label: 'A', description: 'A' }],
+            options: [
+              { label: 'A', description: 'A' },
+              { label: 'B', description: 'B' },
+            ],
             multiSelect: false,
           },
         ],
@@ -1342,7 +1372,10 @@ describe('AskUserQuestionHandler', () => {
           {
             question: 'Test?',
             header: 'Test',
-            options: [{ label: 'A', description: 'A' }],
+            options: [
+              { label: 'A', description: 'A' },
+              { label: 'B', description: 'B' },
+            ],
             multiSelect: false,
           },
         ],
@@ -1569,7 +1602,10 @@ describe('AskUserQuestionHandler', () => {
           {
             question: 'Pending?',
             header: 'Pending',
-            options: [{ label: 'A', description: 'A' }],
+            options: [
+              { label: 'A', description: 'A' },
+              { label: 'B', description: 'B' },
+            ],
             multiSelect: false,
           },
         ],
@@ -1609,7 +1645,10 @@ describe('AskUserQuestionHandler', () => {
           {
             question: '?',
             header: 'X',
-            options: [{ label: 'A', description: 'A' }],
+            options: [
+              { label: 'A', description: 'A' },
+              { label: 'B', description: 'B' },
+            ],
             multiSelect: false,
           },
         ],
@@ -1674,7 +1713,10 @@ describe('AskUserQuestionHandler', () => {
           {
             question: 'Pick?',
             header: 'P',
-            options: [{ label: 'A', description: 'A' }],
+            options: [
+              { label: 'A', description: 'A' },
+              { label: 'B', description: 'B' },
+            ],
             multiSelect: false,
           },
         ],
@@ -1733,7 +1775,10 @@ describe('AskUserQuestionHandler', () => {
           {
             question: 'Skip?',
             header: 'S',
-            options: [{ label: 'A', description: 'A' }],
+            options: [
+              { label: 'A', description: 'A' },
+              { label: 'B', description: 'B' },
+            ],
             multiSelect: false,
           },
         ],

@@ -550,11 +550,14 @@ export class QueryRunner {
    * streaming query is retried here. `allowDangerouslySkipPermissions` is passed
    * at intake (bypassPermissions REQUIRES it), so the CLI already spawns with
    * the skip-permissions consent flag: even before the switch lands, permission
-   * decisions route to canUseTool, whose allow-all auto-approves (user ask-rules
-   * are still denied fail-closed by the callback) — the session is NOT degraded
-   * to interactive prompting. The switch aligns the reported mode to
-   * bypassPermissions; if all attempts fail, the session keeps that intake
-   * host-managed state and the final failure is logged at error level.
+   * decisions route to canUseTool, whose allow-all auto-approves — the session
+   * is NOT degraded to interactive prompting. QA-VERIFY: whether the callback's
+   * matchedAskRule branch actually fires (ask-rules denied fail-closed) during
+   * this intake window is NOT among the empirically confirmed SDK behaviors —
+   * a future QA pass should confirm it before relying on the fail-closed
+   * framing. The switch aligns the reported mode to bypassPermissions; if all
+   * attempts fail, the session keeps that intake host-managed state and the
+   * final failure is logged at error level.
    */
   private async applyDeferredPermissionMode(
     queryObject: QueryLike,
@@ -606,8 +609,8 @@ export class QueryRunner {
               `${maxAttempts} attempts: ${detail}. The reported mode stays ` +
               `unset (allowDangerouslySkipPermissions at intake keeps ` +
               `permission decisions host-managed via canUseTool allow-all; ` +
-              `permissions.ask rules are denied fail-closed instead of ` +
-              `bypassed). The mode is re-applied on the next query spawn.`
+              `whether ask-rules are denied fail-closed there is unverified ` +
+              `— QA item). The mode is re-applied on the next query spawn.`
           );
           return;
         }

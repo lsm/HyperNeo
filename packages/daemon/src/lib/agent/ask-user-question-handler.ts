@@ -212,6 +212,7 @@ export class AskUserQuestionHandler {
           typeof q.question === 'string' &&
           typeof q.multiSelect === 'boolean' &&
           Array.isArray(q.options) &&
+          q.options.length >= 2 &&
           q.options.length <= MAX_OPTIONS &&
           q.options.every((o) => o !== null && typeof o === 'object' && typeof o.label === 'string')
       );
