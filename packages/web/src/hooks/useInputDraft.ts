@@ -48,6 +48,12 @@ export interface UseInputDraftResult {
   setContent: (content: string) => void;
   /** Clear the content and draft */
   clear: () => void;
+  /**
+   * Run `fn` with the deferred voice-adoption re-check held (see
+   * holdDraftAdoption below). The submit flow wraps its optimistic
+   * clear → send → restore-on-failure sequence in this.
+   */
+  holdDraftAdoption: <T>(fn: () => Promise<T>) => Promise<T>;
 }
 
 /**
@@ -109,6 +115,15 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // during typing deferred until the composer cleared and a refresh that
   // failed offline retried on reconnect.
   const deferredVoiceAdoptRef = useRef<string | null>(null);
+  // Count of in-flight submissions holding the composer's empty state
+  // OPTIMISTIC (the submit flow clears the input, then restores the draft if
+  // the send fails). While any hold is active, the adoption refresh must not
+  // run: adopting into the transient emptiness consumes the staging
+  // server-side, and a failed send's setContent(savedContent) restore would
+  // then stomp the composition and persist the typed text alone — the
+  // transcript gone everywhere without ever being shown. See
+  // holdDraftAdoption.
+  const submissionHoldsRef = useRef(0);
   // Monotonic id of the latest loadDraft REQUEST: a response applies only
   // while its request is still the newest. A slower OLDER response (the
   // mount-time get racing a voiceLanded refresh, or two refreshes) must never
@@ -190,6 +205,17 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // when a typing composer empties, and the post-reconnect retry.
   const issueAdoptionRefresh = useCallback(
     (targetSessionId: string): void => {
+      // A submission holds the composer's empty state optimistic (the send
+      // cleared it; a failure restores the draft right after). Adopting into
+      // that transient emptiness consumes the staging server-side and the
+      // restore would stomp it — defer instead: arm the one-shot and let the
+      // hold's end fire it only if the composer is genuinely empty (the send
+      // succeeded). Covers every entry point — the voiceLanded listener, the
+      // empty-branch re-check, and the connection-transition retry.
+      if (submissionHoldsRef.current > 0) {
+        deferredVoiceAdoptRef.current = targetSessionId;
+        return;
+      }
       // Only an IDLE or UNCHANGED composer adopts: empty, or still showing
       // exactly the last-read draft (no user edits since). The guard is
       // re-checked at RESOLVE time inside loadDraft, so typing that began
@@ -285,6 +311,36 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       );
     },
     [contentSignal, loadDraft]
+  );
+
+  // Run `fn` with the deferred voice-adoption re-check HELD. The submit flow
+  // clears the composer optimistically, which the hook cannot otherwise
+  // distinguish from a deliberate clear: an armed landing would surface (and
+  // its immediate adoption save consume the staging server-side) while the
+  // send is in flight, and a failed send's draft restore would then stomp
+  // that composition and durably persist the typed text alone. While held,
+  // every adoption-refresh entry point defers. When the last hold ends, an
+  // armed marker fires only if the composer is EMPTY (a successful send left
+  // it cleared — the transcript surfaces post-send as designed); after a
+  // failed-send restore the composer is non-empty and the marker stays armed
+  // for the next empty-composer or connection transition.
+  const holdDraftAdoption = useCallback(
+    async <T>(fn: () => Promise<T>): Promise<T> => {
+      submissionHoldsRef.current += 1;
+      try {
+        return await fn();
+      } finally {
+        submissionHoldsRef.current -= 1;
+        if (submissionHoldsRef.current === 0) {
+          const live = currentSessionIdRef.current;
+          if (live && deferredVoiceAdoptRef.current === live && contentSignal.peek() === '') {
+            deferredVoiceAdoptRef.current = null;
+            issueAdoptionRefresh(live);
+          }
+        }
+      }
+    },
+    [contentSignal, issueAdoptionRefresh]
   );
 
   // Load draft on session change
@@ -567,7 +623,8 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       },
       setContent,
       clear,
+      holdDraftAdoption,
     }),
-    [contentSignal, setContent, clear]
+    [contentSignal, setContent, clear, holdDraftAdoption]
   );
 }

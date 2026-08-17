@@ -71,6 +71,7 @@ vi.mock('../../hooks', () => ({
     clear: () => {
       draft.value = '';
     },
+    holdDraftAdoption: async (fn: () => Promise<unknown>) => fn(),
   }),
   useModelSwitcher: () => ({
     currentModel: 'mock-model',

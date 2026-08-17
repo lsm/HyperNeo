@@ -670,8 +670,10 @@ interface AgentControlEvents {
     hasDraftToClear: boolean;
     /**
      * The staged voice transcript verifiably carried in the sent message —
-     * set when the PRE-SEND composition of inputDraft + inputDraftVoicePending
-     * joined to exactly the sent text. The send-clear subscriber consumes
+     * set when the sent text CONTAINS the PRE-SEND composition of
+     * inputDraft + inputDraftVoicePending (see MessagePersistence: exact
+     * trim-equality, or containment of an extend-then-send that appended
+     * typing inside the debounce window). The send-clear subscriber consumes
      * exactly this staging when the sender's own optimistic composer clear
      * has already emptied or replaced the stored draft by re-read time.
      */

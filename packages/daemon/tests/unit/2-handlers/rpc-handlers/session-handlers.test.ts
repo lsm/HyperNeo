@@ -845,6 +845,20 @@ describe('Session RPC Handlers — session.update voice adoption', () => {
     });
   });
 
+  it('consumes a MID-STRING coincidental containment (the documented trade-off)', async () => {
+    // The containment needle may appear anywhere in the write, not only as a
+    // suffix: this pins the documented coincidental-substring acceptance —
+    // an endsWith/word-boundary tightening would break here while passing
+    // every suffix-shaped adoption test above.
+    existingPending = 'ok';
+    existingDraft = 'typed';
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!({ sessionId: 's1', metadata: { inputDraft: 'looks ok to me' } }, {});
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: 'looks ok to me', inputDraftVoicePending: null },
+    });
+  });
+
   it('adopts a trailing-whitespace transcript through a trimmed save', async () => {
     // appendVoiceDraft normalizes staging by trimming (STT output often
     // carries trailing whitespace), so the web's TRIMMED debounced saves can

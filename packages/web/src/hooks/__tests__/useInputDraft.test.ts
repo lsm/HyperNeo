@@ -1752,25 +1752,21 @@ describe('useInputDraft', () => {
       expect(saves.length).toBeGreaterThanOrEqual(2);
       expect(gets).toBe(3);
     });
-
-    it('does not flush a stale pre-adoption draft over the adoption save on session switch', async () => {
-      // NOTE: keep this test LAST in the describe. Its rerender-inside-act
-      // (required to switch sessions before the deferred save effect runs —
-      // the very interleave under test) leaves preact test-utils' act rAF
-      // restore wedged, which breaks signal-effect scheduling for any test
-      // that follows in the same file.
-      // The adoption records the adopted composition as the session's
-      // last-seen content BEFORE the immediate save: a session switch in the
-      // frame before the deferred save effect runs must flush the ADOPTED
-      // value, never the stale pre-adoption draft the switch-flush branch
-      // would otherwise read.
+    it('never adopts into a submission-held empty composer; a failed send restores over an intact staging', async () => {
+      // A landing deferred by typing arms the one-shot; the submit clears the
+      // composer optimistically; the empty-branch re-check would adopt and its
+      // immediate save consumes the staging server-side; the FAILED send then
+      // restores the typed text and the debounced save persists it alone —
+      // the transcript destroyed everywhere, never shown. The submission hold
+      // defers the re-check for the whole submit: nothing is adopted, the
+      // staging survives, and it surfaces on the NEXT empty transition.
       let gets = 0;
       mockHub.request.mockImplementation(async (method: string) => {
         if (method === 'session.get') {
           gets += 1;
           return {
             session: {
-              metadata: { inputDraft: gets === 1 ? 'plain draft' : 'plain draft voice' },
+              metadata: { inputDraft: 'hello voice', inputDraftVoicePending: 'voice' },
             },
           };
         }
@@ -1779,28 +1775,124 @@ describe('useInputDraft', () => {
       connectionState.value = 'connected';
       vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
-      const { result, rerender } = renderHook(({ id }) => useInputDraft(id), {
-        initialProps: { id: 'session-1' },
-      });
+      const { result } = renderHook(() => useInputDraft('session-1'));
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(0);
-      });
-      expect(result.current.content).toBe('plain draft');
-      const listener = captureListener();
-      // Adopt, then switch BEFORE the deferred save effect runs — all inside
-      // one act so the effect flush happens after the switch.
-      await act(async () => {
-        listener({ sessionId: 'session-1' }, { channel: 'session:session-1' });
-        await vi.advanceTimersByTimeAsync(0);
-        rerender({ id: 'session-2' });
         await vi.runAllTimersAsync();
       });
-      const s1Updates = mockHub.request.mock.calls
-        .filter(([m, d]) => m === 'session.update' && d?.sessionId === 'session-1')
-        .map(([, d]) => d?.metadata?.inputDraft);
-      const adoptedAt = s1Updates.indexOf('plain draft voice');
-      expect(adoptedAt).toBeGreaterThanOrEqual(0);
-      expect(s1Updates.slice(adoptedAt + 1)).not.toContain('plain draft');
+      // The user types; a landing arrives and is DEFERRED (marker armed).
+      act(() => {
+        result.current.setContent('hello');
+      });
+      const listener = captureListener();
+      act(() => {
+        listener({ sessionId: 'session-1' }, { channel: 'session:session-1' });
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      const getsAfterLanding = gets;
+
+      // The submit: the hold wraps the optimistic clear and the failing send.
+      // This synchronous act runs the hook up to its first await and flushes
+      // the empty-branch effect WHILE the hold is active.
+      let resolveSend: () => void = () => {};
+      const sendSettled = new Promise<void>((resolve) => {
+        resolveSend = resolve;
+      });
+      let held: Promise<void> = Promise.resolve();
+      act(() => {
+        held = result.current.holdDraftAdoption(async () => {
+          result.current.clear(); // optimistic clear
+          await sendSettled; // onSend in flight
+          result.current.setContent('hello'); // failed send restores the typed text
+        });
+      });
+      // The send fails and the hold ends AFTER the restore: the composer is
+      // non-empty, so the armed marker must NOT fire.
+      await act(async () => {
+        resolveSend();
+        await held;
+        await vi.runAllTimersAsync();
+      });
+
+      // No adoption refresh ever ran — no extra get, no composition applied,
+      // no composition save that would consume the staging server-side.
+      expect(gets).toBe(getsAfterLanding);
+      expect(result.current.content).toBe('hello');
+      const compositionSaves = mockHub.request.mock.calls.filter(
+        ([m, d]) => m === 'session.update' && d?.metadata?.inputDraft === 'hello voice'
+      );
+      expect(compositionSaves).toHaveLength(0);
+
+      // The staging is intact and still armed: the next composer-empty
+      // transition (no hold active) surfaces it.
+      act(() => {
+        result.current.clear();
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('hello voice');
+      expect(gets).toBe(getsAfterLanding + 1);
+    });
+
+    it('surfaces a deferred staging after a successful submit releases the hold', async () => {
+      // Same arming, but the send SUCCEEDS: the composer stays empty, and the
+      // hold's end fires the deferred re-check — the transcript surfaces
+      // post-send exactly as a deliberate clear would surface it.
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return {
+            session: {
+              metadata: { inputDraft: 'hello voice', inputDraftVoicePending: 'voice' },
+            },
+          };
+        }
+        return { success: true };
+      });
+      connectionState.value = 'connected';
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      act(() => {
+        result.current.setContent('hello');
+      });
+      const listener = captureListener();
+      act(() => {
+        listener({ sessionId: 'session-1' }, { channel: 'session:session-1' });
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      // Successful submit with a send long enough that the empty-branch
+      // effect flushes WHILE the hold is active (it defers, re-arming the
+      // marker): the hold's end then releases on an EMPTY composer and fires
+      // the deferred re-check — without that reconciliation nothing would
+      // re-run and the transcript would never surface.
+      let resolveSend: () => void = () => {};
+      const sendSettled = new Promise<void>((resolve) => {
+        resolveSend = resolve;
+      });
+      let held: Promise<void> = Promise.resolve();
+      act(() => {
+        held = result.current.holdDraftAdoption(async () => {
+          result.current.clear();
+          await sendSettled;
+        });
+      });
+      await act(async () => {
+        resolveSend();
+        await held;
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('hello voice');
+      const saves = mockHub.request.mock.calls.filter(
+        ([m, d]) => m === 'session.update' && d?.metadata?.inputDraft === 'hello voice'
+      );
+      expect(saves.length).toBeGreaterThanOrEqual(1);
     });
   });
 });

@@ -33,7 +33,12 @@ vi.mock('../../hooks', () => ({
     stop: vi.fn(async () => ({ audioBase64: '', mimeType: 'audio/wav' })),
     cancel: vi.fn(async () => {}),
   }),
-  useInputDraft: () => ({ content: '', setContent: vi.fn(), clear: vi.fn() }),
+  useInputDraft: () => ({
+    content: '',
+    setContent: vi.fn(),
+    clear: vi.fn(),
+    holdDraftAdoption: async (fn: () => Promise<unknown>) => fn(),
+  }),
   useModelSwitcher: () => ({
     currentModel: 'mock-model',
     currentModelInfo: null,

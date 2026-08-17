@@ -264,7 +264,7 @@ export default function MessageInput({
   }, []);
 
   // Use shared hooks
-  const { content, setContent, clear: clearDraft } = useInputDraft(sessionId);
+  const { content, setContent, clear: clearDraft, holdDraftAdoption } = useInputDraft(sessionId);
   // Always-current draft content. insertTranscript can run long after the render
   // that created it (a transcription RPC may take up to 125s while the textarea
   // is unmounted), so it must splice into the LATEST draft — e.g. one that
@@ -1084,39 +1084,48 @@ export default function MessageInput({
       // Guard against stale onInput events racing with clear/useLayoutEffect
       submittingRef.current = true;
 
-      // Clear UI optimistically
-      clearDraft();
-      clearAttachments();
+      // Hold the deferred voice-adoption re-check for the whole submit: the
+      // optimistic clear empties the composer, and an armed landing must not
+      // surface-and-consume into that transient emptiness — a failed send
+      // restores the draft right after and would stomp the composition,
+      // durably destroying a transcript that was never shown. The hold ends
+      // only after the restore-or-succeed decision, so a successful send
+      // surfaces the transcript post-send and a failed one keeps it staged.
+      await holdDraftAdoption(async () => {
+        // Clear UI optimistically
+        clearDraft();
+        clearAttachments();
 
-      // Immediately clear textarea DOM — don't wait for batched useLayoutEffect
-      if (textareaInputRef.current) {
-        textareaInputRef.current.value = '';
-      }
+        // Immediately clear textarea DOM — don't wait for batched useLayoutEffect
+        if (textareaInputRef.current) {
+          textareaInputRef.current.value = '';
+        }
 
-      try {
-        // Send message with images; a boolean false return signals failure
-        const result = await onSend(savedContent, outgoing.images, deliveryMode);
+        try {
+          // Send message with images; a boolean false return signals failure
+          const result = await onSend(savedContent, outgoing.images, deliveryMode);
 
-        if (result === false) {
-          // Restore the draft and attachments so the user doesn't lose their work
-          setContent(savedContent);
-          if (savedAttachments.length > 0) {
-            restoreAttachments(savedAttachments);
+          if (result === false) {
+            // Restore the draft and attachments so the user doesn't lose their work
+            setContent(savedContent);
+            if (savedAttachments.length > 0) {
+              restoreAttachments(savedAttachments);
+            }
+            return;
           }
-          return;
-        }
 
-        if (
-          agentWorking ||
-          deliveryMode === 'defer' ||
-          queuedForCurrentTurn.length > 0 ||
-          queuedForNextTurn.length > 0
-        ) {
-          await refreshQueuedMessages();
+          if (
+            agentWorking ||
+            deliveryMode === 'defer' ||
+            queuedForCurrentTurn.length > 0 ||
+            queuedForNextTurn.length > 0
+          ) {
+            await refreshQueuedMessages();
+          }
+        } finally {
+          submittingRef.current = false;
         }
-      } finally {
-        submittingRef.current = false;
-      }
+      });
     },
     [
       disabled,
@@ -1127,6 +1136,7 @@ export default function MessageInput({
       restoreAttachments,
       setContent,
       onSend,
+      holdDraftAdoption,
       agentWorking,
       queuedForCurrentTurn.length,
       queuedForNextTurn.length,

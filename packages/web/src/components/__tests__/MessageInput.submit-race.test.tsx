@@ -31,6 +31,7 @@ let mockDraftContent = '';
 
 const mockSetContent = vi.fn(() => {});
 const mockClearDraft = vi.fn(() => {});
+const mockHoldDraftAdoption = vi.fn(async (fn: () => Promise<unknown>) => fn());
 const mockClearAttachments = vi.fn(() => {});
 const mockRestoreAttachments = vi.fn(() => {});
 const mockGetImagesForSend = vi.fn(() => undefined);
@@ -66,6 +67,7 @@ vi.mock('../../hooks', () => ({
     content: mockDraftContent,
     setContent: mockSetContent,
     clear: mockClearDraft,
+    holdDraftAdoption: mockHoldDraftAdoption,
   }),
   useModelSwitcher: () => ({
     currentModel: 'mock-model',
@@ -131,6 +133,7 @@ describe('MessageInput submit race condition', () => {
     mockAgentWorking.value = false;
     mockSetContent.mockClear();
     mockClearDraft.mockClear();
+    mockHoldDraftAdoption.mockClear();
     mockClearAttachments.mockClear();
     mockRestoreAttachments.mockClear();
     mockGetImagesForSend.mockClear();
@@ -330,6 +333,39 @@ describe('MessageInput submit race condition', () => {
         [{ data: 'base64data', media_type: 'image/png', name: 'test.png' }],
         'immediate'
       );
+    });
+  });
+
+  describe('draft-adoption hold wiring', () => {
+    it("runs the optimistic clear, the send, and a failed send's restore INSIDE holdDraftAdoption", async () => {
+      // A failed send restores the draft with setContent. That restore must
+      // happen while the hook\'s holdDraftAdoption is still active: the
+      // optimistic clear empties the composer, and an armed voice landing
+      // surfacing into that transient emptiness would consume its staging
+      // server-side only for the restore to stomp it (see useInputDraft).
+      mockDraftContent = 'hello';
+      const order: string[] = [];
+      mockHoldDraftAdoption.mockImplementationOnce(async (fn: () => Promise<unknown>) => {
+        order.push('hold-start');
+        await fn();
+        order.push('hold-end');
+      });
+      mockSetContent.mockImplementation(() => {
+        order.push('restore');
+      });
+      const onSend = vi.fn(async () => {
+        order.push('send');
+        return false;
+      });
+
+      const { container } = renderInput(onSend);
+      const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+      fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
+
+      await waitFor(() => expect(onSend).toHaveBeenCalledOnce());
+      await waitFor(() => expect(order).toEqual(['hold-start', 'send', 'restore', 'hold-end']));
+      expect(mockHoldDraftAdoption).toHaveBeenCalledTimes(1);
+      mockSetContent.mockImplementation(() => {});
     });
   });
 });
