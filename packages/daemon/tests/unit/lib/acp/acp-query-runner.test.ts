@@ -1709,4 +1709,54 @@ describe('AcpQueryRunner startup-timeout bounded retry', () => {
       restoreStartupRetryEnv();
     }
   }, 1000);
+
+  test('stops the queue through the backoff window so mid-backoff steers park', async () => {
+    // feedDeliverySteer (agent-session.ts) parks a follow-up only when the
+    // 'processing' session's queue is STOPPED; a running queue makes it admit,
+    // and the admitted steer would run BEFORE the replayed kickoff it answers
+    // (or TTL-reject toward dead-letter). The timeout throw skips the
+    // post-loop stop, so the retry branch itself must stop the queue before
+    // its first await and restart it after the sleep to feed the replay.
+    const restoreStartupRetryEnv = pinStartupRetryEnv({ base: '60' });
+    try {
+      const clients = [createHangingClient(), createMockClient()];
+      const { ctx, messageQueue } = createRunnerFixture({ client: clients[0] });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+      // Track running state so the assertions exercise the exact gate
+      // feedDeliverySteer keys on — not the fixture's static isRunning=false.
+      let running = false;
+      const startCalls = mock(() => {
+        running = true;
+      });
+      const stopCalls = mock(() => {
+        running = false;
+      });
+      messageQueue.start = startCalls;
+      messageQueue.stop = stopCalls;
+
+      await runner.start();
+      expect(await waitForWarn(ctx, 'Auto-retrying ACP query')).toBe(true);
+
+      // Mid-window: the queue must be stopped (the steer-park gate input).
+      expect(running).toBe(false);
+      expect(stopCalls).toHaveBeenCalledTimes(1);
+
+      await ctx.queryPromise;
+
+      // At wake the restart block ran (start ×2: initial + post-sleep restart)
+      // and the replay fed the retry. Four stops, each load-bearing: ours
+      // mid-branch (the steer-park window), the retry attempt's post-loop
+      // stop, and the retry's + the first attempt's finally cleanups.
+      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(startCalls).toHaveBeenCalledTimes(2);
+      expect(stopCalls).toHaveBeenCalledTimes(4);
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'hello' },
+      ]);
+      expect(running).toBe(false);
+    } finally {
+      restoreStartupRetryEnv();
+    }
+  }, 1000);
 });

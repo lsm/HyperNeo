@@ -1044,6 +1044,24 @@ export class AcpQueryRunner {
         // re-asserts 'processing' on its first yield, and the finally sets
         // 'idle' when the chain actually completes.
 
+        // Stop the queue BEFORE the first await of this branch. The timeout
+        // throw jumps from inside the prompt loop straight to the catch, so
+        // the post-loop stop (runQuery's generation-guarded messageQueue.stop()
+        // after the for-await) never ran — and until the queue is stopped, the
+        // session looks live to AgentSession.feedDeliverySteer ('processing' +
+        // queryPromise set + queue running), which ADMITS a mid-backoff
+        // follow-up instead of parking it. An admitted steer would either be
+        // consumed by the retry's generator BEFORE the replayed kickoff it
+        // answers (also re-keying the retry budget onto the steer), or sit
+        // unconsumed until the ~30s admission TTL rejects it and its delivery
+        // job churns retries toward dead-letter. With the queue stopped, the
+        // steer parks until the turn settles — feedDeliverySteer keys its
+        // mid-recovery park on exactly this stopped-queue state. Pending
+        // admissions survive the stop; the post-sleep restart below re-runs
+        // the queue. (Mirrors QueryRunner, whose post-loop stop runs before
+        // the starved throw reaches its catch, plus its post-sleep restart.)
+        messageQueue.stop();
+
         if (createdAcpSessionDuringRun && !receivedAcpMessageDuringRun) {
           this.persistAcpSessionId(undefined);
         }
@@ -1168,11 +1186,13 @@ export class AcpQueryRunner {
           return;
         }
 
-        // A stop path that ran during the waits above may have stopped the
-        // queue without tripping the guards above; restart it so the replay
-        // below can feed the retry (the retry's generator exits immediately
-        // while the queue is stopped and the attempt would time out again at
-        // zero messages). No-op when still running. (Mirrors QueryRunner.)
+        // The retry branch stopped the queue before its teardown/sleep (see
+        // above — the timeout throw skips the post-loop stop), so restart it:
+        // the retry's generator exits immediately while the queue is stopped,
+        // the replay below would never feed it, and the attempt would time
+        // out again at zero messages. A stop by interrupt/shutdown is excluded
+        // by the checks above (generation, isCleaningUp) and the status guard
+        // below. (Mirrors QueryRunner's post-sleep restart.)
         if (
           !messageQueue.isRunning() &&
           !this.ctx.isCleaningUp() &&
