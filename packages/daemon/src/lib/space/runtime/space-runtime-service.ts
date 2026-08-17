@@ -1289,18 +1289,38 @@ export class SpaceRuntimeService {
           err
         );
       }
-      // Fresh per-task space read: a start landing between this loop and the
-      // stamp above (or earlier in the loop) already fired the resume sweep,
-      // which missed this reason — honor the "re-runs automatically" promise
-      // now. Fire-and-forget: the stop RPC must not wait on a merge spawn. A
-      // deferral throw means another stop landed in between (the hold
-      // re-stamped the reason) — swallowed. A failed re-read keeps the
+      // Fresh per-task space read: a start landing BEFORE this task's stamp
+      // (earlier in the loop, or during the cleanup awaits) fired the resume
+      // sweep, which missed this reason — honor the "re-runs automatically"
+      // promise now. A start landing AFTER the stamp (between it and this
+      // read) is already re-driven by the sweep, so the per-task re-drive
+      // below is a deduped no-op (the dispatch mutex + already-routed guard).
+      // Fire-and-forget: the stop RPC must not wait on a merge spawn. A
+      // deferral throw means another stop or pause landed in between (the
+      // hold re-stamped the reason) — swallowed. A failed re-read keeps the
+      // deferral (conservative).
+      // Fresh per-task space read: a start landing BEFORE this task's stamp
+      // (earlier in the loop, or during the cleanup awaits) fired the resume
+      // sweep, which missed this reason — honor the "re-runs automatically"
+      // promise now. A start landing AFTER the stamp (between it and this
+      // read) is already re-driven by the sweep, so the per-task re-drive
+      // below is a deduped no-op (the dispatch mutex + already-routed guard).
+      // Fire-and-forget: the stop RPC must not wait on a merge spawn. A
+      // deferral throw means another stop or pause landed in between (the
+      // hold re-stamped the reason) — swallowed. A failed re-read keeps the
       // deferral (conservative).
       let spaceActiveNow = false;
       try {
         const spaceRow = await this.config.spaceManager.getSpace(spaceId);
         spaceActiveNow = !spaceRow?.stopped;
-      } catch {
+      } catch (err) {
+        // A read failure that suppresses a re-drive must be distinguishable
+        // from "no start raced" — the reason stays and the next resume
+        // re-drives it.
+        log.warn(
+          `stopActiveWork: failed to re-read space ${spaceId} before re-driving post-approval dispatch of task ${fresh.id}:`,
+          err
+        );
         spaceActiveNow = false;
       }
       if (spaceActiveNow) {

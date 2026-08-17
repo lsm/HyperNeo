@@ -636,7 +636,7 @@ describe('SpaceRuntimeService', () => {
       expect(updateCalls).toHaveLength(0);
     });
 
-    test('failed pre-stamp space re-read keeps the deferral (conservative)', async () => {
+    test('failed post-stamp space re-read keeps the deferral (conservative)', async () => {
       // The resumed-race re-read's own failure path: a transient getSpace
       // error must not skip recording the interruption — treat the space as
       // still stopped so the next real resume sweep re-drives it.
@@ -688,6 +688,72 @@ describe('SpaceRuntimeService', () => {
         postApprovalBlockedReason: expect.stringMatching(/session:merge-1 interrupted/),
       });
       expect(redrives).toHaveLength(0);
+    });
+
+    test('a start landing between tasks re-drives only the later task', async () => {
+      // Round-14 P3-1 pin: the space is re-read PER TASK at the re-drive
+      // decision. A start landing after task A's decision but before task
+      // B's fires the resume sweep (which missed B's reason) — B must
+      // re-drive, A must not. Under the round-13 single pre-loop sample,
+      // both would see the same stale flag. getSpace is consumed exactly
+      // once per stamped task in this path, so the flip is deterministic.
+      const activeTasks = [
+        {
+          id: 'tA',
+          status: 'approved' as const,
+          postApprovalSessionId: 'session:a',
+          postApprovalBlockedReason: null,
+        },
+        {
+          id: 'tB',
+          status: 'approved' as const,
+          postApprovalSessionId: 'session:b',
+          postApprovalBlockedReason: null,
+        },
+      ];
+      const freshRows = new Map(activeTasks.map((t) => [t.id, t]));
+      const updateCalls: Array<{ taskId: string; updates: unknown }> = [];
+      const mockTaskRepo = {
+        listBySpace: () => activeTasks,
+        getTask: (id: string) => freshRows.get(id),
+        updateTask: (taskId: string, updates: unknown) => {
+          updateCalls.push({ taskId, updates });
+        },
+      } as unknown as SpaceTaskRepository;
+      let reads = 0;
+      const flippingSpaceManager = {
+        getSpace: async () => {
+          reads += 1;
+          // A's re-read sees stopped; B's sees started (a start landed
+          // between the two decisions).
+          return { id: 'space-1', stopped: reads < 2, paused: false } as never;
+        },
+        listSpaces: async () => [],
+      } as unknown as SpaceManager;
+
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(flippingSpaceManager),
+        taskRepo: mockTaskRepo,
+        workflowRunRepo: {
+          listBySpace: () => [],
+          transitionStatus: () => {},
+        } as unknown as SpaceWorkflowRunRepository,
+      });
+      svc.setTaskAgentManager({
+        // Both merger sessions were interrupted by this stop.
+        cleanup: async () => new Set(['session:a', 'session:b']),
+      } as unknown as TaskAgentManager);
+      const redrives: Array<string> = [];
+      svc.dispatchPostApproval = async (_sid, taskId) => {
+        redrives.push(taskId as string);
+      };
+
+      await svc.stopActiveWork('space-1');
+
+      // Both tasks are stamped (both pointers nulled + reasons recorded).
+      expect(updateCalls).toHaveLength(2);
+      // Only B re-drives: A's decision saw the still-stopped space.
+      expect(redrives).toEqual(['tB']);
     });
 
     test('parks in-flight and waiting_rebind node executions with the clean-recovery reset', async () => {
