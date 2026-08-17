@@ -528,8 +528,14 @@ export class QueryRunner {
    * SDK options (see QueryOptionsBuilder.getDeferredPermissionMode) so the SDK
    * does not warn that canUseTool is shadowed — canUseTool must stay registered
    * for the CLI to expose the AskUserQuestion tool, and the PreToolUse hook
-   * delivers the answers. The control request queues behind the initialize
-   * handshake, so the session runs the real mode from its first turn.
+   * delivers the answers.
+   *
+   * Ordering: `Query.request()` writes the control request to the transport
+   * synchronously — it does NOT await the initialize handshake — and this call
+   * site runs right after `query()` returns, so today the switch reaches the
+   * CLI ahead of the first pumped user message and the session runs the real
+   * mode from its first turn. That is write-ordering on the control stream,
+   * not handshake queueing; do not rely on it for correctness.
    *
    * `setPermissionMode` is idempotent, so every query (re)spawn re-applies the
    * switch via this call site, and a transient failure within one long-lived
