@@ -517,13 +517,14 @@ interface QueryRecoveryState {
    * scheduled its recursive attempt (this.ctx.queryAbortController, read
    * right after the post-sleep cancellation guard). The recursive attempt
    * re-verifies it immediately before publishing its OWN controller: a
-   * completed user Stop (interrupt-handler) or a stall-watchdog
-   * QueryLifecycleManager.stop() nulls ctx.queryAbortController WITHOUT
-   * aborting it, bumping the generation, or nulling queryPromise — every
-   * other guard in the rebuild window (the post-sleep checks, the child's
-   * post-admission identity check, which compares against the child's own
-   * just-published controller) is blind to exactly that, and the child
-   * would spawn a fresh subprocess on a session the user stopped.
+   * stall-watchdog QueryLifecycleManager.stop() nulls ctx.queryAbortController
+   * WITHOUT aborting it, and a completed user Stop (interrupt-handler) aborts
+   * it and then nulls — an abort the recursive attempt cannot observe either
+   * way once the field is nulled. Neither bumps the generation or nulls
+   * queryPromise, so every other guard in the rebuild window (the post-sleep
+   * checks, the child's post-admission identity check, which compares against
+   * the child's own just-published controller) is blind to exactly that, and
+   * the child would spawn a fresh subprocess on a session the user stopped.
    * Consumed (nulled) at the verification so a LATER category's recursion —
    * whose legitimate current controller is a different object — cannot
    * false-positive against a stale handoff.
@@ -627,6 +628,29 @@ export class QueryRunner {
    * finally's live branch.
    */
   private _replayAdmissionRejected = false;
+
+  /**
+   * True only inside a startup-timeout retry's recovery window: from the
+   * teardown (terminate/close/exit-wait/env-restore) through the backoff
+   * sleep and the post-sleep guards, until the queue is restarted for the
+   * recursive attempt. In that window the session is 'processing' with a
+   * STOPPED queue, so follow-up steers park on exactly this state — and the
+   * window is bounded recovery, not abandonment: a full default chain sleeps
+   * 15+30+60+120+240 = 465 s, well past the delivery lane's MAX_STEER_PARKS
+   * bound (~300 s), so charging parks for it would dead-letter the steer
+   * `failed` minutes before the turn recovers and feeds it. The session
+   * surfaces this flag (AgentSession.isInStartupBackoff) and the delivery
+   * handler parks such steers with a plain requeue — no __parkCount charge,
+   * mirroring the open-human-gate exemption. Cleared on EVERY exit from the
+   * window (queue restart, cancellation return, unexpected throw) via the
+   * try/finally at the retry site. (Round-12 P2.)
+   */
+  private _inStartupBackoff = false;
+
+  /** True while a startup-timeout retry chain is inside its backoff window. */
+  isInStartupBackoff(): boolean {
+    return this._inStartupBackoff;
+  }
 
   /**
    * Add `message` to the staged replay, deduped by uuid and ordered by its
@@ -1068,18 +1092,20 @@ export class QueryRunner {
       // catch/finally backstops below — retries re-queue like any other start.
       const abortController = new AbortController();
       // Startup-retry rebuild guard (round-11 P1): between the retry site's
-      // post-sleep cancellation checks and this publication, a completed user
-      // Stop or a lifecycle stop can NULL ctx.queryAbortController without
-      // aborting it, bumping the generation, or nulling queryPromise — every
-      // other guard in the window is blind to exactly that combination, and
-      // the post-admission check below cannot catch it either (it compares
-      // against THIS controller, freshly published one line down). If the
-      // controller the retry site handed down is no longer the current one,
-      // this chain lost ownership mid-rebuild: do not publish, do not spawn —
-      // surface as an abort so the interrupt/stop cleanup that already ran
-      // keeps the session. Consume the handoff here so a LATER category's
-      // recursion (whose legitimate owner is a different controller) cannot
-      // false-positive against a stale handoff.
+      // post-sleep cancellation checks and this publication, a stall-watchdog
+      // lifecycle stop NULLS ctx.queryAbortController without aborting it,
+      // and a completed user Stop aborts it and then nulls — an abort nothing
+      // in this window reads, so both shapes look identical here. Neither
+      // bumps the generation or nulls queryPromise, every other guard in the
+      // window is blind to that combination, and the post-admission check
+      // below cannot catch it either (it compares against THIS controller,
+      // freshly published one line down). If the controller the retry site
+      // handed down is no longer the current one, this chain lost ownership
+      // mid-rebuild: do not publish, do not spawn — surface as an abort so
+      // the interrupt/stop cleanup that already ran keeps the session.
+      // Consume the handoff here so a LATER category's recursion (whose
+      // legitimate owner is a different controller) cannot false-positive
+      // against a stale handoff.
       const startupRetryOwnerController = recoveryState.startupRetryOwnerController;
       recoveryState.startupRetryOwnerController = null;
       if (
@@ -1563,6 +1589,47 @@ export class QueryRunner {
               `cap ${getMaxStartupTimeoutRetries()}); giving up and surfacing the failure — ` +
               `the delivery layer settles the durable row.`
           );
+          // Surface this chain's still-unrecovered STEERS (round-12 P3): the
+          // terminal path below clears the queue, and the retry site's
+          // fold-back only serves a NEXT flush — which never comes on
+          // give-up. Kickoffs are the delivery layer's to settle (its
+          // dead-letter lane re-opens them for retry); consumed steers have
+          // no re-drive lane, so flip their rows to `failed` here — the same
+          // inclusive flip the delivery dead-letter settlement uses for a
+          // consumed row that genuinely failed after retries — so they
+          // surface with a Retry affordance instead of vanishing silently as
+          // 'consumed'. Both carriers are checked: the flush moved entries
+          // into the queue (flushedReplayEntries) OR they never got that far
+          // and are still staged (_pendingStartupReplay — cleared by the
+          // finally on the way out).
+          const droppedSteerEntries = [
+            ...(this._pendingStartupReplay ?? []),
+            ...(flushedReplayEntries ?? []),
+          ];
+          for (const entry of droppedSteerEntries) {
+            if (entry.uuid === deliveryKey) continue; // kickoff: delivery layer owns it
+            try {
+              const flipped = this.ctx.db
+                .getSDKMessageRepo()
+                ?.markDeliveryFailedByUuidInclusive(session.id, entry.uuid);
+              if (flipped) {
+                logger.warn(
+                  `Startup-timeout budget exhausted: steer ${entry.uuid} never reached a ` +
+                    'producing turn; marked failed so it surfaces with a Retry affordance.'
+                );
+              } else {
+                logger.warn(
+                  `Startup-timeout budget exhausted: steer ${entry.uuid} could not be ` +
+                    'marked failed (row missing or already terminal); dropped.'
+                );
+              }
+            } catch {
+              logger.warn(
+                `Startup-timeout budget exhausted: failed to mark steer ${entry.uuid} ` +
+                  'failed while surfacing the loss; dropped.'
+              );
+            }
+          }
         } else {
           const maxStartupRetries = getMaxStartupTimeoutRetries();
           const delayMs = getStartupRetryDelayMs(retryNumber);
@@ -1601,235 +1668,256 @@ export class QueryRunner {
           // QueryLifecycleManager.stop() (terminate → close). Teardown runs
           // BEFORE the backoff below so the dead subprocess stops competing
           // for CPU while we wait out the concurrent-start load.
-          this.ctx.terminateTrackedAgentProcesses?.();
+          // Recovery window opens (round-12 P2): from the teardown below through
+          // the backoff sleep and the post-sleep guards, the session is
+          // 'processing' with a STOPPED queue — follow-up steers park on exactly
+          // this state, and the window is bounded recovery, not abandonment. The
+          // session surfaces it (AgentSession.isInStartupBackoff) so the delivery
+          // handler can park those steers without charging their park budget.
+          // Closed on EVERY exit below (cancellation returns included) and before
+          // the recursive attempt starts — steers feed normally once the queue is
+          // running again.
+          this._inStartupBackoff = true;
+          try {
+            this.ctx.terminateTrackedAgentProcesses?.();
 
-          // Close the current queryObject BEFORE retrying to prevent the
-          // "Already connected to a transport" crash. The finally{} block has not
-          // yet run (we are still in the catch block), so MCP transports are still
-          // open. Explicitly closing here ensures a clean slate for the retry.
-          if (this.ctx.queryObject) {
-            try {
-              this.ctx.queryObject.close();
-            } catch {
-              // Ignore close errors — transport may already be in a broken state
+            // Close the current queryObject BEFORE retrying to prevent the
+            // "Already connected to a transport" crash. The finally{} block has not
+            // yet run (we are still in the catch block), so MCP transports are still
+            // open. Explicitly closing here ensures a clean slate for the retry.
+            if (this.ctx.queryObject) {
+              try {
+                this.ctx.queryObject.close();
+              } catch {
+                // Ignore close errors — transport may already be in a broken state
+              }
+              this.ctx.queryObject = null;
             }
-            this.ctx.queryObject = null;
-          }
 
-          // Wait for the old subprocess to fully exit before retrying.
-          // close() above terminates the process, but we must wait for it to
-          // release workspace locks before spawning a replacement.
-          const exitPromise = this.ctx.processExitedPromise;
-          if (exitPromise) {
-            await Promise.race([
-              exitPromise,
-              new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
-            ]);
-            // Clear only if the tracking still belongs to the old subprocess —
-            // a concurrent start during the await may have installed the
-            // replacement's exit promise (same race as the lifecycle manager's
-            // stale-running recovery).
-            if (this.ctx.processExitedPromise === exitPromise) {
-              this.ctx.resetProcessExitedPromise();
+            // Wait for the old subprocess to fully exit before retrying.
+            // close() above terminates the process, but we must wait for it to
+            // release workspace locks before spawning a replacement.
+            const exitPromise = this.ctx.processExitedPromise;
+            if (exitPromise) {
+              await Promise.race([
+                exitPromise,
+                new Promise((resolve) => setTimeout(resolve, RETRY_EXIT_TIMEOUT_MS)),
+              ]);
+              // Clear only if the tracking still belongs to the old subprocess —
+              // a concurrent start during the await may have installed the
+              // replacement's exit promise (same race as the lifecycle manager's
+              // stale-running recovery).
+              if (this.ctx.processExitedPromise === exitPromise) {
+                this.ctx.resetProcessExitedPromise();
+              }
             }
-          }
 
-          // Restore provider env vars BEFORE the backoff sleep so process.env
-          // is clean during the (potentially minutes-long) wait, and so a
-          // cancelled return below cannot skip the restore — the finally block
-          // skips cleanup for stale queries. (Same rationale as the
-          // provider-retry path's pre-sleep restore; the recursive attempt
-          // re-applies fresh provider env.)
-          const envVarsToRestore = this.ctx.originalEnvVars;
-          if (Object.keys(envVarsToRestore).length > 0) {
-            const { getProviderService: getProviderServiceForBackoff } = await import(
-              '../provider-service'
-            );
-            getProviderServiceForBackoff().restoreEnvVars(envVarsToRestore);
-            this.ctx.originalEnvVars = {};
-          }
-
-          // Exponential backoff before the retry attempt — immediate retries
-          // are what make a concurrent-start herd self-sustaining (each retry
-          // respawns an SDK subprocess into the very load that timed it out).
-          // Sleeps AFTER teardown so the wait is not spent holding a dead
-          // subprocess. (Mirrors the provider-retry backoff ordering.)
-          await sleep(delayMs);
-
-          // Ownership check: a replacement query may have started during the
-          // waits above (restart / delivery reclaim drove a new start). This
-          // recursive call bypasses start()'s queue-running guard, so recursing
-          // with a stale generation would spawn a competing query that
-          // overwrites the replacement's queryObject while its stale finally{}
-          // skips cleanup. Abandon the retry — the replacement owns the session.
-          // (Codex P1, PR #2491; the backoff window widened this race, so the
-          // check now also runs post-sleep.)
-          //
-          // The queue-running check used by the provider retry's post-sleep
-          // guard does NOT apply here (the timeout escape intentionally left
-          // the queue stopped — restarted below). The controller-null check
-          // DOES apply even though this attempt's controller was legitimately
-          // ABORTED by the startup timer: abort() leaves it non-null, so null
-          // can only mean handleInterrupt (a COMPLETED Stop nulls the
-          // controller without touching the generation, queryPromise, or
-          // delivery rows — the kickoff row is 'consumed', so the settled
-          // check below misses it) or the lifecycle stop (already covered by
-          // the queryPromise disjunct). Cancellation signals, all cheap:
-          // - ctx.queryPromise === null — stall-watchdog reset / lifecycle
-          //   stop gave up on this chain (no generation bump).
-          // - ctx.queryAbortController === null — a completed user Stop.
-          // - generation supersession / interrupted status / shutdown.
-          if (
-            this.ctx.isCleaningUp() ||
-            this.ctx.queryAbortController === null ||
-            this.ctx.queryPromise === null ||
-            this.retrySupersededByReplacement(queryGeneration) ||
-            stateManager.getState().status === 'interrupted'
-          ) {
-            logger.warn(
-              'Startup-timeout retry cancelled: session interrupted/stopped/restarted/reset/cleaning up during backoff.'
-            );
-            return;
-          }
-
-          // Hand the recursive attempt the controller that owns the session
-          // RIGHT NOW — everything above this line that could stop the chain
-          // has already been checked, so the remaining exposure is the child's
-          // own rebuild window (provider resolution, options build, gate wait)
-          // before it publishes its own controller. The child re-verifies
-          // this identity pre-publication; a Stop/lifecycle stop in that
-          // window NULLS the field without tripping any other guard.
-          // (Round-11 P1 — see QueryRecoveryState.)
-          recoveryState.startupRetryOwnerController = this.ctx.queryAbortController;
-
-          // Delivery row settled failed: the 30s delivery-consumption timeout
-          // (awaitDeliveryConsumption) and the dead-letter paths terminalize
-          // the kickoff's durable row while this chain sleeps. Retrying would
-          // respawn subprocesses for a delivery the layer already settled —
-          // abandon and let the settled state stand. (Bounds the zombie window
-          // to one round past settlement instead of the full cap — with the
-          // 60 s default startup window, the full 5-round schedule runs
-          // ~13 min: 5 windows × 60 s + 15+30+60+120+240 s of sleeps, plus
-          // teardown waits.) Runs AFTER the cheap disjuncts and reads a single row.
-          if (
-            deliveryKey !== null &&
-            this.ctx.db.getMessageByStatusAndUuid(session.id, 'failed', deliveryKey)
-          ) {
-            logger.warn(
-              'Startup-timeout retry cancelled: delivery already settled failed during backoff ' +
-                `(message ${deliveryKey}).`
-            );
-            return;
-          }
-
-          // The timeout escape returns the iterator NORMALLY (non-blocking
-          // cleanup), so the post-loop code already ran messageQueue.stop()
-          // before this throw reached the catch. Restart it — the retry's
-          // messageGenerator exits immediately while the queue is stopped, so
-          // the preserved prompt would never feed the retry and it would time
-          // out again. A stop by interrupt/shutdown is excluded by the checks
-          // above (generation, isCleaningUp) and the status guard below.
-          // (Codex P1, PR #2499.)
-          if (
-            !messageQueue.isRunning() &&
-            !this.ctx.isCleaningUp() &&
-            stateManager.getState().status !== 'interrupted'
-          ) {
-            messageQueue.start();
-          }
-
-          // The old SDK may have pulled prompts out of the queue via
-          // messageGenerator() before going silent; restarting the queue above
-          // alone leaves the retry with no input, so it times out again at zero
-          // messages. Stage every recorded consumed message for replay IN ORDER
-          // (a silent iterator can pull the kickoff AND trailing steers —
-          // replaying only the last would silently drop the earlier prompts
-          // whose durable rows are already consumed). The actual enqueue is
-          // DEFERRED until the recursive attempt clears the startup gate
-          // (flushed immediately before its generator attaches): enqueuing here
-          // would expose the replay to the gate wait — behind up to K−1
-          // 60-second silent-startup holds — and the 30 s queue TTL would
-          // expire it mid-wait, burning the attempt against an empty queue.
-          // See _pendingStartupReplay and the flush in runQuery.
-          // (Codex P1, PR #2499; gate-wait deferral per round-6 review.)
-          const consumed = this._consumedUserMessages.get(queryGeneration) ?? [];
-          if (consumed.length > 0) {
-            this._consumedUserMessages.delete(queryGeneration);
-            this._lastConsumedUserMessage = null;
-          }
-          // Re-populate the staging by MERGING, never assigning (round-9 P1).
-          // Mixed case: the generator pulled the kickoff (recorded consumed)
-          // while a trailing steer's admission TTL rejected and was re-staged;
-          // assigning `consumed` alone would clobber the staged steer, and
-          // steers have no delivery-layer recovery lane (their rows stay
-          // 'consumed') — the loss would be permanent. Consumed messages form
-          // the ordered base (their feed order); staged entries not already
-          // present are appended (a staged entry whose uuid was ALSO consumed
-          // is the skip-branch re-stage racing a redrive consumption — one
-          // copy).
-          const staged = this._pendingStartupReplay ?? [];
-          const mergedEntries = [
-            ...consumed,
-            ...staged.filter((entry) => !consumed.some((c) => c.uuid === entry.uuid)),
-          ];
-          // Fold this attempt's flushed entries back in (round-10 P3). A
-          // flushed entry can die WITHOUT landing in either merge input: its
-          // admission TTL may fire after the recursion has already replaced
-          // ctx.queryAbortController, so the rejection handler's identity
-          // guard correctly no-ops (no re-stage, no abort), and its durable
-          // row is 'consumed' — without this fold the prompt has no lane left
-          // (warn-only loss; the exposure needs the startup window set BELOW
-          // the queue's 30 s admission TTL so the TTL outlives the attempt).
-          // Entries still pending in the queue are folded too, deliberately:
-          // the retry re-queues at the startup gate with the old admission's
-          // SHRINKING TTL exposed to the wait, and a TTL firing mid-wait is a
-          // harmless no-op rejection precisely because this staging carries
-          // the message. The next flush's duplicate guard
-          // (hasPendingOrInFlight) resolves any double-carrier, and the queue
-          // TTL bounds it. Iterate back-to-front: the flush recorded these in
-          // its own REVERSE iteration order, so its array is reversed feed
-          // order — folding forward would re-stage a multi-message fold
-          // back-to-front and the next flush would enqueue the prompts in
-          // the wrong sequence. (Round-11 P3.)
-          const flushedToFold = flushedReplayEntries ?? [];
-          for (let i = flushedToFold.length - 1; i >= 0; i--) {
-            const flushed = flushedToFold[i];
-            if (!mergedEntries.some((entry) => entry.uuid === flushed.uuid)) {
-              mergedEntries.push(flushed);
+            // Restore provider env vars BEFORE the backoff sleep so process.env
+            // is clean during the (potentially minutes-long) wait, and so a
+            // cancelled return below cannot skip the restore — the finally block
+            // skips cleanup for stale queries. (Same rationale as the
+            // provider-retry path's pre-sleep restore; the recursive attempt
+            // re-applies fresh provider env.)
+            const envVarsToRestore = this.ctx.originalEnvVars;
+            if (Object.keys(envVarsToRestore).length > 0) {
+              const { getProviderService: getProviderServiceForBackoff } = await import(
+                '../provider-service'
+              );
+              getProviderServiceForBackoff().restoreEnvVars(envVarsToRestore);
+              this.ctx.originalEnvVars = {};
             }
-          }
-          if (mergedEntries.length > 0) {
-            this._pendingStartupReplay = mergedEntries;
-          }
 
-          // Reset the startup-phase state for the recursive attempt (mirror of
-          // the message-not-found / transient / provider retry sites — this
-          // was the only recursion missing it, round-9 P3). Recursive retries
-          // do NOT go through start(); a stale firstMessageReceived=true — a
-          // first frame racing the timeout's abort past the loop's message
-          // bookkeeping — would disarm the retry's startup timer, and a silent
-          // replacement spawn would then sit in the for-await forever, never
-          // reaching a permit release site and permanently holding its
-          // startup-gate slot. Drop this attempt's (fired) timer handle too so
-          // the retry arms a fresh one.
-          const staleStartupTimer = this.ctx.startupTimeoutTimer;
-          if (staleStartupTimer) {
-            clearTimeout(staleStartupTimer);
-            this.ctx.startupTimeoutTimer = null;
-          }
-          this.ctx.firstMessageReceived = false;
+            // Exponential backoff before the retry attempt — immediate retries
+            // are what make a concurrent-start herd self-sustaining (each retry
+            // respawns an SDK subprocess into the very load that timed it out).
+            // Sleeps AFTER teardown so the wait is not spent holding a dead
+            // subprocess. (Mirrors the provider-retry backoff ordering.)
+            await sleep(delayMs);
 
-          // Use `return await` so this call's finally{} runs only after the retry
-          // completes. Otherwise finally{} would race the retry and can tear down
-          // shared state (queue/controller/queryObject) while it is still running.
-          //
-          // Coupling note: startup retries increment retryAttempt, which is
-          // shared with the OTHER retry gates — the 1-shot message-not-found /
-          // transient-connection retries are disabled on attempts > 0, and the
-          // provider-retry budget (retryAttempt < maxProviderRetries) shrinks by
-          // the number of startup retries already spent (after 3 startup
-          // retries a later 5xx gets zero provider retries). Intentional: the
-          // counter bounds TOTAL retries per turn, not retries per category.
+            // Ownership check: a replacement query may have started during the
+            // waits above (restart / delivery reclaim drove a new start). This
+            // recursive call bypasses start()'s queue-running guard, so recursing
+            // with a stale generation would spawn a competing query that
+            // overwrites the replacement's queryObject while its stale finally{}
+            // skips cleanup. Abandon the retry — the replacement owns the session.
+            // (Codex P1, PR #2491; the backoff window widened this race, so the
+            // check now also runs post-sleep.)
+            //
+            // The queue-running check used by the provider retry's post-sleep
+            // guard does NOT apply here (the timeout escape intentionally left
+            // the queue stopped — restarted below). The controller-null check
+            // DOES apply even though this attempt's controller was legitimately
+            // ABORTED by the startup timer: abort() leaves it non-null, so null
+            // can only mean handleInterrupt (a COMPLETED Stop nulls the
+            // controller without touching the generation, queryPromise, or
+            // delivery rows — the kickoff row is 'consumed', so the settled
+            // check below misses it) or the lifecycle stop (already covered by
+            // the queryPromise disjunct). Cancellation signals, all cheap:
+            // - ctx.queryPromise === null — stall-watchdog reset / lifecycle
+            //   stop gave up on this chain (no generation bump).
+            // - ctx.queryAbortController === null — a completed user Stop.
+            // - generation supersession / interrupted status / shutdown.
+            if (
+              this.ctx.isCleaningUp() ||
+              this.ctx.queryAbortController === null ||
+              this.ctx.queryPromise === null ||
+              this.retrySupersededByReplacement(queryGeneration) ||
+              stateManager.getState().status === 'interrupted'
+            ) {
+              logger.warn(
+                'Startup-timeout retry cancelled: session interrupted/stopped/restarted/reset/cleaning up during backoff.'
+              );
+              return;
+            }
+
+            // Hand the recursive attempt the controller that owns the session
+            // RIGHT NOW — everything above this line that could stop the chain
+            // has already been checked, so the remaining exposure is the child's
+            // own rebuild window (provider resolution, options build, gate wait)
+            // before it publishes its own controller. The child re-verifies
+            // this identity pre-publication; a lifecycle stop in that window
+            // NULLS the field (and a user Stop aborts-then-nulls it) without
+            // tripping any other guard.
+            // (Round-11 P1 — see QueryRecoveryState.)
+            recoveryState.startupRetryOwnerController = this.ctx.queryAbortController;
+
+            // Delivery row settled failed: the 30s delivery-consumption timeout
+            // (awaitDeliveryConsumption) and the dead-letter paths terminalize
+            // the kickoff's durable row while this chain sleeps. Retrying would
+            // respawn subprocesses for a delivery the layer already settled —
+            // abandon and let the settled state stand. (Bounds the zombie window
+            // to one round past settlement instead of the full cap — with the
+            // 60 s default startup window, the full 5-round schedule runs
+            // ~13 min: 5 windows × 60 s + 15+30+60+120+240 s of sleeps, plus
+            // teardown waits.) Runs AFTER the cheap disjuncts and reads a single row.
+            if (
+              deliveryKey !== null &&
+              this.ctx.db.getMessageByStatusAndUuid(session.id, 'failed', deliveryKey)
+            ) {
+              logger.warn(
+                'Startup-timeout retry cancelled: delivery already settled failed during backoff ' +
+                  `(message ${deliveryKey}).`
+              );
+              return;
+            }
+
+            // The timeout escape returns the iterator NORMALLY (non-blocking
+            // cleanup), so the post-loop code already ran messageQueue.stop()
+            // before this throw reached the catch. Restart it — the retry's
+            // messageGenerator exits immediately while the queue is stopped, so
+            // the preserved prompt would never feed the retry and it would time
+            // out again. A stop by interrupt/shutdown is excluded by the checks
+            // above (generation, isCleaningUp) and the status guard below.
+            // (Codex P1, PR #2499.)
+            if (
+              !messageQueue.isRunning() &&
+              !this.ctx.isCleaningUp() &&
+              stateManager.getState().status !== 'interrupted'
+            ) {
+              messageQueue.start();
+            }
+
+            // The old SDK may have pulled prompts out of the queue via
+            // messageGenerator() before going silent; restarting the queue above
+            // alone leaves the retry with no input, so it times out again at zero
+            // messages. Stage every recorded consumed message for replay IN ORDER
+            // (a silent iterator can pull the kickoff AND trailing steers —
+            // replaying only the last would silently drop the earlier prompts
+            // whose durable rows are already consumed). The actual enqueue is
+            // DEFERRED until the recursive attempt clears the startup gate
+            // (flushed immediately before its generator attaches): enqueuing here
+            // would expose the replay to the gate wait — behind up to K−1
+            // 60-second silent-startup holds — and the 30 s queue TTL would
+            // expire it mid-wait, burning the attempt against an empty queue.
+            // See _pendingStartupReplay and the flush in runQuery.
+            // (Codex P1, PR #2499; gate-wait deferral per round-6 review.)
+            const consumed = this._consumedUserMessages.get(queryGeneration) ?? [];
+            if (consumed.length > 0) {
+              this._consumedUserMessages.delete(queryGeneration);
+              this._lastConsumedUserMessage = null;
+            }
+            // Re-populate the staging by MERGING, never assigning (round-9 P1).
+            // Mixed case: the generator pulled the kickoff (recorded consumed)
+            // while a trailing steer's admission TTL rejected and was re-staged;
+            // assigning `consumed` alone would clobber the staged steer, and
+            // steers have no delivery-layer recovery lane (their rows stay
+            // 'consumed') — the loss would be permanent. Consumed messages form
+            // the ordered base (their feed order); staged entries not already
+            // present are appended (a staged entry whose uuid was ALSO consumed
+            // is the skip-branch re-stage racing a redrive consumption — one
+            // copy).
+            const staged = this._pendingStartupReplay ?? [];
+            const mergedEntries = [
+              ...consumed,
+              ...staged.filter((entry) => !consumed.some((c) => c.uuid === entry.uuid)),
+            ];
+            // Fold this attempt's flushed entries back in (round-10 P3). A
+            // flushed entry can die WITHOUT landing in either merge input: its
+            // admission TTL may fire after the recursion has already replaced
+            // ctx.queryAbortController, so the rejection handler's identity
+            // guard correctly no-ops (no re-stage, no abort), and its durable
+            // row is 'consumed' — without this fold the prompt has no lane left
+            // (warn-only loss; the exposure needs the startup window set BELOW
+            // the queue's 30 s admission TTL so the TTL outlives the attempt).
+            // SCOPE (round-12 P3): this fold only serves the NEXT flush — i.e.
+            // it prevents loss when a retry is granted (this branch). On
+            // give-up (budget exhausted) no next flush ever runs and the
+            // terminal messageQueue.clear() drops the entries; that path
+            // surfaces its steers separately via the failed-flip at the
+            // give-up branch above instead of here.
+            // Entries still pending in the queue are folded too, deliberately:
+            // the retry re-queues at the startup gate with the old admission's
+            // SHRINKING TTL exposed to the wait, and a TTL firing mid-wait is a
+            // harmless no-op rejection precisely because this staging carries
+            // the message. The next flush's duplicate guard
+            // (hasPendingOrInFlight) resolves any double-carrier, and the queue
+            // TTL bounds it. Iterate back-to-front: the flush recorded these in
+            // its own REVERSE iteration order, so its array is reversed feed
+            // order — folding forward would re-stage a multi-message fold
+            // back-to-front and the next flush would enqueue the prompts in
+            // the wrong sequence. (Round-11 P3.)
+            const flushedToFold = flushedReplayEntries ?? [];
+            for (let i = flushedToFold.length - 1; i >= 0; i--) {
+              const flushed = flushedToFold[i];
+              if (!mergedEntries.some((entry) => entry.uuid === flushed.uuid)) {
+                mergedEntries.push(flushed);
+              }
+            }
+            if (mergedEntries.length > 0) {
+              this._pendingStartupReplay = mergedEntries;
+            }
+
+            // Reset the startup-phase state for the recursive attempt (mirror of
+            // the message-not-found / transient / provider retry sites — this
+            // was the only recursion missing it, round-9 P3). Recursive retries
+            // do NOT go through start(); a stale firstMessageReceived=true — a
+            // first frame racing the timeout's abort past the loop's message
+            // bookkeeping — would disarm the retry's startup timer, and a silent
+            // replacement spawn would then sit in the for-await forever, never
+            // reaching a permit release site and permanently holding its
+            // startup-gate slot. Drop this attempt's (fired) timer handle too so
+            // the retry arms a fresh one.
+            const staleStartupTimer = this.ctx.startupTimeoutTimer;
+            if (staleStartupTimer) {
+              clearTimeout(staleStartupTimer);
+              this.ctx.startupTimeoutTimer = null;
+            }
+            this.ctx.firstMessageReceived = false;
+
+            // Use `return await` so this call's finally{} runs only after the retry
+            // completes. Otherwise finally{} would race the retry and can tear down
+            // shared state (queue/controller/queryObject) while it is still running.
+            //
+            // Coupling note: startup retries increment retryAttempt, which is
+            // shared with the OTHER retry gates — the 1-shot message-not-found /
+            // transient-connection retries are disabled on attempts > 0, and the
+            // provider-retry budget (retryAttempt < maxProviderRetries) shrinks by
+            // the number of startup retries already spent (after 3 startup
+            // retries a later 5xx gets zero provider retries). Intentional: the
+            // counter bounds TOTAL retries per turn, not retries per category.
+          } finally {
+            this._inStartupBackoff = false;
+          }
           return await this.runQuery(queryGeneration, retryAttempt + 1, recoveryState);
         }
       }

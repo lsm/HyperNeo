@@ -80,6 +80,7 @@ describe('QueryRunner', () => {
   let getAdmissionSeqSpy: ReturnType<typeof mock>;
   let removeIfAdmittedNoLaterThanSpy: ReturnType<typeof mock>;
   let getMessageByStatusAndUuidSpy: ReturnType<typeof mock>;
+  let markDeliveryFailedInclusiveSpy: ReturnType<typeof mock>;
 
   // State variables (mutable context properties)
   let queryGeneration: number;
@@ -131,6 +132,9 @@ describe('QueryRunner', () => {
     getSDKMessagesSpy = mock(() => ({ messages: [], hasMore: false }));
     updateMessageStatusSpy = mock(() => {});
     getMessageByStatusAndUuidSpy = mock(() => null);
+    // Give-up steer surfacing (round-12 P3): the runner flips unrecovered
+    // steer rows failed through the repo's inclusive dead-letter flip.
+    markDeliveryFailedInclusiveSpy = mock(() => 'db-row-id');
     mockDb = {
       saveSDKMessage: saveSDKMessageSpy,
       updateSession: updateSessionSpy,
@@ -138,6 +142,9 @@ describe('QueryRunner', () => {
       getSDKMessages: getSDKMessagesSpy,
       updateMessageStatus: updateMessageStatusSpy,
       getMessageByStatusAndUuid: getMessageByStatusAndUuidSpy,
+      getSDKMessageRepo: mock(() => ({
+        markDeliveryFailedByUuidInclusive: markDeliveryFailedInclusiveSpy,
+      })),
       getNodeExecutionRepo: mock(() => ({
         getByAgentSessionId: (sessionId: string) =>
           sessionId === 'space:s1:task:t1:exec:e1' ? { id: 'exec-1' } : null,
@@ -2384,8 +2391,11 @@ describe('QueryRunner', () => {
           }
           if (buildCalls === 2) {
             // The recursive attempt is mid-rebuild (post-guard, pre-spawn).
-            // Mimic handleInterrupt's observable effects: controller nulled,
-            // status 'interrupted', queue stopped — nothing else touched.
+            // The observable state at the guard: controller nulled, status
+            // 'interrupted', queue stopped. (handleInterrupt aborts BEFORE
+            // nulling, but the abort is not what the guard reads — the
+            // stricter no-abort shape here is the lifecycle-stop variant, and
+            // the identity check sees both identically.)
             stoppedDuringRebuild = true;
             ctx.queryAbortController = null;
             getStateSpy.mockReturnValue({ status: 'interrupted' });
@@ -2534,6 +2544,142 @@ describe('QueryRunner', () => {
 
           ctx.queryAbortController?.abort();
           await ctx.queryPromise?.catch(() => {});
+        } finally {
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+        }
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      'exposes the startup-backoff window to the delivery lane (flag opens at retry, closes before the recursion)',
+      async () => {
+        // Round-12 P2: follow-up steers park while the session is 'processing'
+        // with a stopped queue (this window); the delivery handler must be
+        // able to tell this bounded-recovery window from abandonment so it
+        // does not dead-letter those steers mid-schedule. The runner marks
+        // the window: true from the retry teardown through the backoff sleep
+        // and the post-sleep guards, false again BEFORE the recursive
+        // attempt runs (the queue restart ends the park cause — steers feed
+        // normally from there).
+        process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '100';
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        buildSpy
+          .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+          .mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
+        let queryCalls = 0;
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => {
+          queryCalls++;
+          return {
+            close: () => {},
+            [Symbol.asyncIterator]: async function* () {
+              await new Promise(() => {});
+            },
+          };
+        });
+
+        try {
+          expect(runner.isInStartupBackoff()).toBe(false); // closed before any retry
+          runner.start();
+          // Window opens with the retry (teardown + 100ms sleep): poll it.
+          let sawWindow = false;
+          let deadline = Date.now() + 2000;
+          while (Date.now() < deadline) {
+            if (runner.isInStartupBackoff()) {
+              sawWindow = true;
+              break;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(sawWindow).toBe(true);
+
+          // Window closes before the recursion: once the recursive attempt
+          // has spawned its query, the flag must be back to false (a latched
+          // true would exempt genuine-abandonment parks from the budget
+          // forever).
+          deadline = Date.now() + 2000;
+          while (queryCalls < 1 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(queryCalls).toBe(1);
+          expect(runner.isInStartupBackoff()).toBe(false);
+
+          ctx.queryAbortController?.abort();
+          await ctx.queryPromise?.catch(() => {});
+          expect(runner.isInStartupBackoff()).toBe(false); // stays closed after settle
+        } finally {
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+        }
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      'flips still-unrecovered steers failed when the startup-retry budget is exhausted',
+      async () => {
+        // Round-12 P3: on give-up the terminal messageQueue.clear() drops
+        // this chain's flushed/staged prompts, and the retry-site fold-back
+        // only serves a NEXT flush that never comes. Kickoffs are the
+        // delivery layer's to settle (re-open lane is kickoff-only); the
+        // consumed STEERS have no re-drive lane, so the give-up branch must
+        // flip their durable rows failed (the inclusive dead-letter flip) to
+        // surface them with a Retry affordance — and must NOT touch the
+        // kickoff.
+        const kickoff = {
+          uuid: 'giveup-kickoff',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+        const steer = {
+          uuid: 'giveup-steer',
+          content: [{ type: 'text' as const, text: 'S' }],
+        };
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff, steer]]]);
+        // Starved give-up keys the delivery by the PENDING kickoff (peek).
+        peekNextUserMessageIdSpy.mockReturnValue(kickoff.uuid);
+
+        buildSpy
+          .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+          .mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
+        // Attempt 2 flushes BOTH messages into the queue, then dies as a
+        // startup timeout — budget (suite default MAX=1) exhausts at its
+        // catch, so the give-up branch runs with the flush's entries as the
+        // dropped set.
+        let queryCalls = 0;
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => {
+          queryCalls++;
+          return {
+            close: () => {},
+            [Symbol.asyncIterator]: async function* () {
+              throw new Error('SDK startup timeout - query aborted');
+            },
+          };
+        });
+
+        try {
+          runner.start();
+          await ctx.queryPromise?.catch(() => {});
+          expect(queryCalls).toBe(1);
+
+          // The STEER is flipped failed (surfaced, Retry affordance); the
+          // kickoff is NOT — the delivery layer owns its settlement.
+          expect(markDeliveryFailedInclusiveSpy).toHaveBeenCalledTimes(1);
+          expect(markDeliveryFailedInclusiveSpy).toHaveBeenCalledWith(mockSession.id, steer.uuid);
+          const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+            String(args[0])
+          );
+          expect(
+            warns.some((w) => w.includes(`steer ${steer.uuid} never reached a producing turn`))
+          ).toBe(true);
+          expect(warns.some((w) => w.includes('retry budget exhausted'))).toBe(true);
         } finally {
           (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
         }

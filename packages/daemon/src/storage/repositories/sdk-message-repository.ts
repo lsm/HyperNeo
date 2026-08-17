@@ -2133,7 +2133,11 @@ export class SDKMessageRepository {
    * Like {@link markDeliveryFailedByUuid} but ALSO flips a `consumed` row. Used
    * ONLY by the message-delivery dead-letter settlement when a driven turn that
    * already reached `consumed` (the SDK accepted the prompt) then died on a
-   * provider error and exhausted its retries (or hit a non-recoverable error).
+   * provider error and exhausted its retries (or hit a non-recoverable error),
+   * and by the SDK runner's startup-retry give-up for the same class — a
+   * consumed row whose delivery genuinely failed after exhausting its bounded
+   * retries (there the steers were only ever yielded to silent subprocesses;
+   * see the budget-exhausted branch in query-runner.ts).
    * The narrow method deliberately excludes `consumed` (other callers — archive
    * barriers, enqueue failures, interrupts — must not fail a message that WAS
    * delivered), so this sibling exists for the one path where a consumed row

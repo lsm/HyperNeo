@@ -575,7 +575,11 @@ export const MESSAGE_DELIVERY_PARK_MS = 5_000;
  * before it dead-letters. Parking uses `requeue` (no retry_count bump), so
  * without this bound a steer whose owning turn never unblocks re-parks every
  * {@link MESSAGE_DELIVERY_PARK_MS} indefinitely. ~5 min at the 5s park cadence;
- * the user can re-send if the owning turn was abandoned.
+ * the user can re-send if the owning turn was abandoned. Parks while the human
+ * gate is open or the owning turn is inside its startup-backoff recovery
+ * window do NOT count toward this bound (plain requeue — the handler's
+ * exemptions; a full default recovery chain's 465 s of sleeps outlives the
+ * ~300 s this bound represents). (Round-12 P2.)
  */
 export const MAX_STEER_PARKS = 60;
 
@@ -620,7 +624,11 @@ export type DriveTurnOutcome =
  *   neither feed (no live generator) nor promote (the parked turn still
  *   holds the active-turn slot). Park it with the turn's delay so it is NOT
  *   reclaimed every poll (hot loop); it re-evaluates when the turn unblocks.
- *   See Codex (#3742693683).
+ *   See Codex (#3742693683). Two of the three causes are bounded waits, not
+ *   abandonment — an open human gate and the startup-backoff recovery window
+ *   (isInStartupBackoff) — and the handler parks those WITHOUT charging the
+ *   MAX_STEER_PARKS budget (plain requeue, like an open gate); the bound
+ *   applies to the rest. (Round-12 P2.)
  */
 export type FeedSteerOutcome =
   | { outcome: 'consumed' }
@@ -683,6 +691,16 @@ export interface MessageDeliverySession {
    * gate resolving, not elapsed parks. (Codex #11.)
    */
   isWaitingForInput?(): boolean;
+  /**
+   * True while the session's startup-timeout retry chain is inside its
+   * recovery window ('processing' with a stopped queue — teardown + backoff
+   * sleep, until the recursive attempt restarts the queue). Used by the
+   * handler to park follow-up steers WITHOUT charging their park budget:
+   * the window is bounded recovery, not abandonment, and outlives
+   * MAX_STEER_PARKS at default knobs. Mirrors the isWaitingForInput
+   * exemption. (Round-12 P2.)
+   */
+  isInStartupBackoff?(): boolean;
   /** Clear queued state only if this skipped message still owns it. */
   settleSkippedDelivery?(messageUuid: string): Promise<void>;
 }

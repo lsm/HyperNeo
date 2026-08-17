@@ -289,27 +289,41 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       // steer whose owning turn never unblocks re-parks every cycle forever.
       // After MAX_STEER_PARKS, dead-letter (the owning turn was likely abandoned)
       // so the message surfaces as `failed` with a Retry affordance instead of
-      // parking silently forever — EXCEPT while the human gate is genuinely open
-      // (an unanswered resume choice): a legitimately-blocked turn is not
-      // abandonment, so the steer keeps parking without burning its budget until
-      // the choice resolves or the session leaves the gate. (Codex #11.)
+      // parking silently forever — EXCEPT while the wait is legitimately
+      // bounded rather than abandonment: an open human gate (an unanswered
+      // resume choice) or the owning turn's startup-backoff recovery window
+      // ('processing' with a stopped queue — a full default chain sleeps
+      // 465 s, past the ~300 s this bound represents, so charged parks would
+      // dead-letter the steer mid-schedule minutes before the turn recovers
+      // and feeds it). Both keep parking without burning the budget until
+      // the gate resolves or the window closes. (Codex #11; round-12 P2.)
       const waitingForInput = session.isWaitingForInput?.() ?? false;
-      if (!waitingForInput && deps.jobQueue.getParkCount(job.id) >= MAX_STEER_PARKS) {
+      const startupRecovering = session.isInStartupBackoff?.() ?? false;
+      const parkBudgetExempt = waitingForInput || startupRecovering;
+      if (!parkBudgetExempt && deps.jobQueue.getParkCount(job.id) >= MAX_STEER_PARKS) {
         throw new DeadLetterImmediatelyError(
           'Steer parked past its budget — owning turn never unblocked'
         );
       }
       const retryAt = Date.now() + MESSAGE_DELIVERY_PARK_MS;
-      if (waitingForInput) {
-        // Gate-open re-park uses plain requeue so the open gate does not CHARGE
-        // the park budget: a long-open choice must not accumulate __parkCount
-        // past the cap (or past the ACP acceptance budget) and dead-letter the
-        // steer on its first post-resolution pass. (Codex review.)
+      if (parkBudgetExempt) {
+        // Gate-open/recovery-window re-park uses plain requeue so the blocked
+        // window does not CHARGE the park budget: a long-open choice or a
+        // long recovery must not accumulate __parkCount past the cap (or
+        // past the ACP acceptance budget) and dead-letter the steer on its
+        // first post-resolution pass. (Codex review; round-12 P2.)
         deps.jobQueue.requeue(job.id, retryAt, job.claimToken);
       } else {
         deps.jobQueue.requeueParked(job.id, retryAt, job.claimToken);
       }
-      return { parked: waitingForInput ? 'turn_blocked_gate_open' : 'turn_blocked', retryAt };
+      return {
+        parked: waitingForInput
+          ? 'turn_blocked_gate_open'
+          : startupRecovering
+            ? 'turn_blocked_startup_backoff'
+            : 'turn_blocked',
+        retryAt,
+      };
     }
     if (result.outcome === 'awaiting_acceptance') {
       // ACP steer: the prompt reached the subprocess (onSent ≡ onSubmitted) but

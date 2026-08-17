@@ -2748,22 +2748,27 @@ export class AgentSession
           // delivery job burns its retry budget re-admitting into the still-
           // stopped queue before dead-lettering `failed`. Park instead: the
           // job re-evaluates on its park cadence and feeds (or promotes once
-          // the turn settles) after the backoff ends. Bounded by
-          // MAX_STEER_PARKS (~5 min of cumulative ~5 s-cadence parks). The
+          // the turn settles) after the backoff ends. Parks in this window do
+          // NOT charge the steer's park budget: the runner marks the window
+          // (QueryRunner.isInStartupBackoff) and the delivery handler
+          // plain-requeues these like an open human gate (round-12 P2) —
+          // __parkCount is CUMULATIVE per steer job and a full default
+          // chain's sleeps total 15+30+60+120+240 = 465 s, past the
+          // MAX_STEER_PARKS bound (~300 s), so charged parks would
+          // dead-letter `failed` mid-schedule (~300 s in, during the 120/240 s
+          // tail sleeps), minutes before the turn recovers and feeds the
+          // steer; the post-sleep RUNNING windows (≤60 s each) are when the
+          // re-run feeds instead of parking, and they do not reset the
+          // counter. The bound applies again once the window closes. The
           // stall watchdog does NOT bound this window: it arms only after
           // the kickoff acknowledgment resolves, so in the starved case
           // (the case this gate exists for) it never truncates anything.
-          // Honest arithmetic at default knobs: __parkCount is CUMULATIVE
-          // per steer job, and a full chain's sleeps total 15+30+60+120+240
-          // = 465 s, so a steer parked from the start accrues ~93 parks and
-          // CAN dead-letter `failed` mid-schedule (~300 s in, during the
-          // 120/240 s tail sleeps) even with no chained cycles — the post-
-          // sleep RUNNING windows (≤60 s each) are when the re-run feeds
-          // instead of parking, but they do not reset the counter. A raised
-          // HYPERNEO_SDK_STARTUP_RETRY_BASE_MS lengthens the sleeps and
-          // crosses the bound sooner; chained stall-reset +
-          // delivery-redrive cycles stack on top. The ≤5 s teardown waits
-          // of the other retry paths are covered by the same gate.
+          // A raised HYPERNEO_SDK_STARTUP_RETRY_BASE_MS lengthens the sleeps
+          // but no longer crosses the bound (window parks are uncharged);
+          // chained stall-reset + delivery-redrive cycles still stack on top.
+          // The ≤5 s teardown waits of the other retry paths park through the
+          // same gate but charge normally — bounded at a park or two, far
+          // inside any budget.
           if (!this.messageQueue.isRunning()) return { kind: 'park' as const };
           const generation = this.getQueryGeneration();
           observer?.reportStage('query_ready', { generation });
@@ -2876,6 +2881,22 @@ export class AgentSession
     } catch {
       return false;
     }
+  }
+
+  /**
+   * True while the session's startup-timeout retry chain is inside its
+   * recovery window — 'processing' with a STOPPED queue (the teardown +
+   * backoff sleep, until the recursive attempt restarts the queue). The
+   * delivery handler uses this to park follow-up steers WITHOUT charging
+   * their park budget: the window is bounded recovery, not abandonment, and
+   * a full default chain (15+30+60+120+240 = 465 s of sleeps) outlives the
+   * MAX_STEER_PARKS bound (~300 s), so charged parks would dead-letter the
+   * steer `failed` mid-schedule, minutes before the turn recovers and feeds
+   * it. Mirrors the isWaitingForInput exemption; the bound applies again as
+   * soon as the window closes. (Round-12 P2.)
+   */
+  isInStartupBackoff(): boolean {
+    return this.queryRunner instanceof QueryRunner && this.queryRunner.isInStartupBackoff();
   }
 
   async deliverChatMessage(messageUuid: string): Promise<void> {

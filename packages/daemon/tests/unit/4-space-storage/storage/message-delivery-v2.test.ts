@@ -556,6 +556,8 @@ class MockSession implements MessageDeliverySession {
   lastBatchUuids?: string[];
   /** Toggle for the human-gate-open park exemption (Codex #11). */
   waitingForInput = false;
+  /** Toggle for the startup-backoff recovery-window park exemption (round-12 P2). */
+  inStartupBackoff = false;
 
   async driveDeliveryTurn(
     uuid: string,
@@ -596,6 +598,10 @@ class MockSession implements MessageDeliverySession {
 
   isWaitingForInput(): boolean {
     return this.waitingForInput;
+  }
+
+  isInStartupBackoff(): boolean {
+    return this.inStartupBackoff;
   }
 }
 
@@ -1512,6 +1518,53 @@ describe('message-delivery v2 — steer park bound (dead-letter after MAX_STEER_
     for (let i = 0; i < MAX_STEER_PARKS; i++) {
       const result = await handler(current);
       expect(result).toMatchObject({ parked: 'turn_blocked' });
+      db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(current.id);
+      const [next] = repo.dequeue(MESSAGE_DELIVERY, 1);
+      current = next!;
+    }
+    await expect(handler(current)).rejects.toThrow(/parked past its budget/);
+  });
+
+  it("a steer parked during the owner's startup-backoff window keeps parking past the budget (round-12 P2)", async () => {
+    // The recovery window ('processing' with a stopped queue while the
+    // startup-timeout retry backs off) is bounded recovery, not abandonment:
+    // a full default chain sleeps 465 s, past the ~300 s MAX_STEER_PARKS
+    // bound, so charging these parks would dead-letter the steer `failed`
+    // mid-schedule, minutes before the turn recovers and feeds it. The
+    // handler must park these free (plain requeue, no __parkCount charge),
+    // mirroring the open-gate exemption, and charge again once the window
+    // closes.
+    const session = new MockSession();
+    session.feedResult = { outcome: 'park' };
+    session.inStartupBackoff = true;
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'steer', sendStatus: 'enqueued' }),
+    });
+
+    let current = steerJob(repo, 'msg-startup-backoff');
+    // Park well past the budget — every attempt still parks (no dead-letter),
+    // the requeue does NOT charge the park budget, and the outcome names the
+    // recovery window for observability.
+    for (let i = 0; i < MAX_STEER_PARKS + 5; i++) {
+      const result = await handler(current);
+      expect(result).toMatchObject({ parked: 'turn_blocked_startup_backoff' });
+      expect(repo.getJob(current.id)?.retryCount).toBe(0);
+      expect(repo.getParkCount(current.id)).toBe(0);
+      db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(current.id);
+      const [next] = repo.dequeue(MESSAGE_DELIVERY, 1);
+      expect(next).toBeTruthy();
+      current = next!;
+    }
+    // Once the recovery window closes (the turn restarted its queue), the
+    // bound applies again from a clean count — the steer gets its full park
+    // budget before dead-lettering, exactly like the gate-open tail above.
+    session.inStartupBackoff = false;
+    for (let i = 0; i < MAX_STEER_PARKS; i++) {
+      const result = await handler(current);
+      expect(result).toMatchObject({ parked: 'turn_blocked' });
+      expect(repo.getParkCount(current.id)).toBe(i + 1);
       db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(current.id);
       const [next] = repo.dequeue(MESSAGE_DELIVERY, 1);
       current = next!;
