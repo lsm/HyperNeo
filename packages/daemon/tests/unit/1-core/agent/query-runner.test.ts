@@ -1665,6 +1665,31 @@ describe('QueryRunner', () => {
       expect(startSpy.mock.calls.length).toBe(1);
     });
 
+    it('does not respawn after a startup timeout when an interrupt raced the catch', async () => {
+      // interrupt-handler sets 'interrupted' (and aborts the controller)
+      // without bumping the query generation, so neither
+      // retrySupersededByReplacement nor isCleaningUp excludes it — the
+      // status guard on the retry condition is what stops a fresh
+      // subprocess spawning on a stopped session (spurious terminal
+      // "failed to start"). Mirrors the guard on the queue restart above.
+      const kickoff = { uuid: 'kickoff-uuid', content: [{ type: 'text' as const, text: 'K' }] };
+      getStateSpy.mockReturnValue({ status: 'interrupted' } as never);
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages = new Map([[1, [kickoff]]]);
+
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      // Exactly one build = the first attempt; no recursive retry respawn.
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).not.toHaveBeenCalledWith(kickoff.uuid, kickoff.content, false, {
+        prepend: true,
+      });
+    });
+
     it('re-enqueues every consumed prompt before the startup-timeout retry', async () => {
       // Codex P1 (PR #2499): if the old SDK pulled prompts out of the queue via
       // messageGenerator() before going silent, restarting the queue leaves the
