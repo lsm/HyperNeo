@@ -182,9 +182,15 @@ export class MessagePersistence {
     const preSendComposed = preSendPending.trim()
       ? composeDraftWhole(preSendDraft, preSendPending)
       : null;
-    // The staging verifiably carried in the sent message: the pre-send
-    // composition joined to exactly the sent text.
-    const compositionAtSend = preSendComposed !== null && preSendComposed.trim() === content.trim();
+    // The staging verifiably carried in the sent message: the sent text
+    // CONTAINS the pre-send composition. Exact equality covers the composer
+    // that read the composition and sent it verbatim; containment also covers
+    // an extend-then-send inside the debounce window (the composer appended
+    // typing to the presented composition and sent before any intermediate
+    // save). A typing-only sender's text never contains draft + transcript
+    // joined, so the voice-awareness rule is preserved.
+    const compositionAtSend =
+      preSendComposed !== null && content.trim().includes(preSendComposed.trim());
 
     const agentSession = await this.sessionCache.getAsync(sessionId);
     if (!agentSession) {

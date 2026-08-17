@@ -1559,6 +1559,31 @@ describe('SessionManager', () => {
         expect(mockDb.updateSession).not.toHaveBeenCalled();
       });
 
+      it('consumes the staging when the sent text extends the pre-send composition', async () => {
+        // Extend-then-send inside the debounce window: the fresh read
+        // matches neither directly nor by exact composition (the sent text
+        // has trailing typing), but the gate proved the voice went out —
+        // consume the staging only, leaving the draft to the latest writer.
+        const handler = eventHandlers.get('message.persisted');
+
+        (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+          id: 'test-id',
+          metadata: { inputDraft: null, inputDraftVoicePending: 'voice' },
+        });
+
+        await handler?.({
+          sessionId: 'test-id',
+          userMessageText: 'typing voice now',
+          needsWorkspaceInit: false,
+          hasDraftToClear: true,
+          voicePendingSent: 'voice',
+        });
+
+        expect(mockDb.updateSession).toHaveBeenCalledWith('test-id', {
+          metadata: { inputDraftVoicePending: null },
+        });
+      });
+
       it('clears both the empty draft and the staging on a voice-only composition send', async () => {
         // inputDraft empty, pending alone equals the sent text: the fresh
         // composition match consumes the staging with the (empty) draft.

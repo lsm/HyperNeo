@@ -852,6 +852,19 @@ describe('Session RPC Handlers — session.update voice adoption', () => {
     });
   });
 
+  it('adopts a LEGACY untrimmed pending (staged by a pre-PR daemon) through a trimmed save', async () => {
+    // Values staged before staging normalized can carry surrounding
+    // whitespace; the containment needle is trimmed so the web's trimmed
+    // saves can still adopt them instead of duplicating on every read.
+    existingPending = 'hello ';
+    existingDraft = 'typed';
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!({ sessionId: 's1', metadata: { inputDraft: 'typed hello' } }, {});
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: 'typed hello', inputDraftVoicePending: null },
+    });
+  });
+
   it('no longer registers the retired reconciliation RPCs', async () => {
     expect(messageHubData.handlers.get('session.stripVoiceBaseline')).toBeUndefined();
     expect(messageHubData.handlers.get('session.mergeVoiceDraftBackup')).toBeUndefined();
@@ -981,6 +994,42 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
       metadata: { inputDraftVoicePending: 'hello' },
     });
+  });
+
+  it('normalizes a legacy untrimmed pending when composing the next append', async () => {
+    // A pending staged by a pre-PR daemon can carry surrounding whitespace;
+    // the next append trims it before joining so the stored value heals.
+    existingPending = '  spaced  ';
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    await handler!({ sessionId: 's1', text: 'more' }, {});
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraftVoicePending: 'spaced more' },
+    });
+  });
+
+  it('rejects a non-string dedupId before reading or writing', async () => {
+    // The dedup log's own type filter silently drops non-string ids, so an
+    // unvalidated id would append once and double-append on replay — the
+    // exact failure the log exists to prevent.
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    await expect(
+      handler!({ sessionId: 's1', text: 'hello', dedupId: 42 as never }, {})
+    ).rejects.toThrow('dedupId must be a string when provided');
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('propagates a failed commit without announcing a landing or acking success', async () => {
+    // An acked-but-uncommitted entry would be dropped from the client outbox
+    // (it believes delivery done), losing the transcript — the handler must
+    // reject, emit no session.voiceLanded, and let the outbox retry.
+    sessionManager.updateSession.mockImplementation(async () => {
+      throw new Error('db locked');
+    });
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    await expect(handler!({ sessionId: 's1', text: 'hello' }, {})).rejects.toThrow('db locked');
+    expect(
+      messageHubData.hub.event.mock.calls.filter(([m]) => m === 'session.voiceLanded')
+    ).toHaveLength(0);
   });
 
   it('prunes expired dedup-log entries on the next append', async () => {

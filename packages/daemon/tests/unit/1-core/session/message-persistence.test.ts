@@ -265,6 +265,31 @@ describe('MessagePersistence', () => {
     );
   });
 
+  it('carries the staging when the sent text extends the pre-send composition', async () => {
+    // Extend-then-send inside the debounce window: the composer showed the
+    // composition "typing voice", appended " now", and sent before any
+    // intermediate save — the sent text CONTAINS the composition, so the
+    // voice verifiably went out in the message.
+    setStoredDraftState({ inputDraft: 'typing', inputDraftVoicePending: 'voice' });
+    mockAgentSession.getSessionData.mockReturnValue({
+      ...mockSession,
+      metadata: {
+        ...mockSession.metadata,
+        inputDraft: 'typing',
+        inputDraftVoicePending: 'voice',
+      },
+    });
+    await persistence.persist({
+      sessionId: 'test-session-id',
+      messageId: 'msg-1',
+      content: 'typing voice now',
+    });
+    expect(internalEventBusPublishSpy).toHaveBeenCalledWith(
+      'message.persisted',
+      expect.objectContaining({ hasDraftToClear: true, voicePendingSent: 'voice' })
+    );
+  });
+
   it('persists busy immediate as enqueued and defers dispatch', async () => {
     processingStateSpy.mockReturnValue({ status: 'processing' });
 

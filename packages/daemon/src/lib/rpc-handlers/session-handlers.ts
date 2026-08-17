@@ -470,8 +470,12 @@ export function setupSessionHandlers(
             (updates.metadata as Partial<SessionMetadata>).inputDraftVoicePending = null;
           }
           // else: clearing typing only — the transcript survives the clear.
-        } else if (written.includes(pending as string)) {
-          // Adoption: the write carries the staged transcript.
+        } else if (written.includes((pending as string).trim())) {
+          // Adoption: the write carries the staged transcript. The needle is
+          // trimmed so a pending staged UNTRIMMED by a pre-PR daemon (before
+          // staging normalized) is still adoptable by the web's trimmed
+          // saves; freshly staged values are already trimmed, so this is
+          // equivalence for them.
           (updates.metadata as Partial<SessionMetadata>).inputDraftVoicePending = null;
         }
       }
@@ -518,6 +522,12 @@ export function setupSessionHandlers(
     if (typeof text !== 'string' || text.trim().length === 0) {
       throw new Error('Text to append is required');
     }
+    // The dedup log's own type filter silently drops non-string ids, so an
+    // unvalidated id would append once, never match on replay, and
+    // double-append — the exact failure the log exists to prevent.
+    if (dedupId !== undefined && typeof dedupId !== 'string') {
+      throw new Error('dedupId must be a string when provided');
+    }
     const session = sessionManager.getSessionFromDB(sessionId);
     if (!session) throw new Error('Session not found');
     const metadata = session.metadata ?? {};
@@ -545,13 +555,15 @@ export function setupSessionHandlers(
     if (dedupId && processedLog.some((entry) => entry.id === dedupId)) {
       return { success: true, deduped: true };
     }
-    const existingPending = metadata.inputDraftVoicePending ?? '';
-    // Normalize at staging: trim the transcript before joining. STT output
-    // routinely carries trailing whitespace, and the web's debounced saves
-    // persist TRIMMED text — an untrimmed staging could never be found by the
-    // adoption containment check once only trimmed writes remain (immediate
-    // adoption save offline or skipped), leaving a transcript that duplicates
-    // in every read and can never be adopted away.
+    // Normalize at staging: trim BOTH sides before joining. The incoming
+    // transcript is trimmed because STT output routinely carries trailing
+    // whitespace, and the web's debounced saves persist TRIMMED text — an
+    // untrimmed staging could never be found by the adoption containment
+    // check once only trimmed writes remain, leaving a transcript that
+    // duplicates in every read and can never be adopted away. The EXISTING
+    // pending is trimmed to heal values staged by a pre-PR daemon (which
+    // joined untrimmed) the next time an append flows through.
+    const existingPending = (metadata.inputDraftVoicePending ?? '').trim();
     const stagedText = text.trim();
     // Reject (rather than silently truncate) when the staged value is at the
     // character limit and the new transcript cannot fit whole — the client
