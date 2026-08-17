@@ -446,6 +446,65 @@ describe('stale-reclaim herd jitter (run_at spread)', () => {
     expect(await processor.tick()).toBe(1);
   });
 
+  it('isolates a single failed reschedule: the rest of the herd keeps its jitter', () => {
+    // Helper-level pin of the per-job failure isolation: one bad UPDATE must
+    // not un-jitter the rest of the herd (the incident's recurrence path) nor
+    // miscount the applied result. The all-fail processor-level test below
+    // covers the emit wiring; this one pins isolation and the count.
+    const jobs = [
+      repo.enqueue({ queue: 'isolate-queue', payload: { seq: 0 } }),
+      repo.enqueue({ queue: 'isolate-queue', payload: { seq: 1 } }),
+      repo.enqueue({ queue: 'isolate-queue', payload: { seq: 2 } }),
+    ];
+    const ids = jobs.map((job) => job.id);
+    // Pending rows with a clearly-past original run_at, as a reclaim leaves them.
+    const originalRunAt = Date.now() - 60_000;
+    db.prepare(`UPDATE job_queue SET run_at = ? WHERE id IN (${ids.map(() => '?').join(',')})`).run(
+      originalRunAt,
+      ...ids
+    );
+
+    const originalReschedule = repo.reschedulePending.bind(repo);
+    const failures: Array<{ jobId: string; error: unknown }> = [];
+    const before = Date.now();
+    try {
+      // Fail exactly the middle job's reschedule; deterministic draws put the
+      // three delays ~1 s, ~5 s, ~3 s out (2 s slots, midpoint offsets).
+      repo.reschedulePending = (jobId: string, runAt: number) => {
+        if (jobId === ids[1]) throw new Error('simulated I/O error');
+        return originalReschedule(jobId, runAt);
+      };
+
+      const applied = applyStaleReclaimJitter(
+        repo,
+        ids,
+        () => 0.5,
+        (jobId, error) => {
+          failures.push({ jobId, error });
+        }
+      );
+      const after = Date.now();
+
+      expect(applied).toBe(2);
+      expect(failures).toHaveLength(1);
+      expect(failures[0]?.jobId).toBe(ids[1]);
+      expect(failures[0]?.error).toBeInstanceOf(Error);
+
+      const [first, second, third] = ids.map((id) => repo.getJob(id)?.runAt ?? 0);
+      // The two rescheduled rows keep their future, distinct-slot jitter.
+      const windowMs = 3 * 2_000;
+      for (const runAt of [first, third]) {
+        expect(runAt).toBeGreaterThanOrEqual(before);
+        expect(runAt).toBeLessThanOrEqual(after + windowMs);
+      }
+      expect(first).not.toBe(third);
+      // The failed row is untouched at its original, immediately claimable run_at.
+      expect(second).toBe(originalRunAt);
+    } finally {
+      repo.reschedulePending = originalReschedule;
+    }
+  });
+
   it('spreads a graceful-shutdown requeue herd on the next boot (deploy path)', async () => {
     // The SIGTERM twin of the crash herd: app.cleanup() requeues in-flight
     // rows to pending with run_at=now (the eager stale-reclaim never sees
