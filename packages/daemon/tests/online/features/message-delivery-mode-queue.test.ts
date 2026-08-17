@@ -122,7 +122,12 @@ describe('Message delivery mode queue flow', () => {
         expect(second.messageId).not.toBe(first.messageId);
 
         await waitForCount(sessionId, 'deferred', (count) => count >= 1, 12000);
-        await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
+        // The busy turn holds a 15 s timer, and this idle wait can start
+        // early in it (the upstream waits complete quickly on warm runners) —
+        // the 10 s mock-mode IDLE_TIMEOUT then expires mid-timer. Size this
+        // one wait to the timer; the deferred→0 dispatch wait below (20 s)
+        // carries the actual assertion. Never tightens the real-API budget.
+        await waitForIdle(daemon, sessionId, Math.max(IDLE_TIMEOUT, 30_000));
 
         await waitForCount(sessionId, 'deferred', (count) => count === 0, 20000);
         const sentCount = await getCountByStatus(sessionId, 'consumed');
