@@ -48,7 +48,7 @@ type EventHandler<TData = unknown> = ChannelEventHandler<TData>;
 export interface UseMessageHubOptions {
   /**
    * Default timeout for RPC calls in milliseconds
-   * @default 10000
+   * @default 30000
    */
   defaultTimeout?: number;
 
@@ -143,7 +143,7 @@ export interface UseMessageHubResult {
 
   /**
    * Wait for connection to be established
-   * @param timeout - Timeout in milliseconds (default: 10000)
+   * @param timeout - Timeout in milliseconds (default: 30000)
    * @throws {ConnectionTimeoutError} If timeout exceeded
    */
   waitForConnection: (timeout?: number) => Promise<void>;
@@ -198,7 +198,7 @@ export interface UseMessageHubResult {
  * ```
  */
 export function useMessageHub(options: UseMessageHubOptions = {}): UseMessageHubResult {
-  const { defaultTimeout = 10000, debug = false } = options;
+  const { defaultTimeout = 30000, debug = false } = options;
 
   // Track active subscriptions for cleanup
   const subscriptionsRef = useRef<Array<() => void>>([]);
