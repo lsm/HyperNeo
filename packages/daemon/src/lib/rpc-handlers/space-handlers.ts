@@ -362,8 +362,12 @@ export function setupSpaceHandlers(
   });
 
   // ─── space.stop ─────────────────────────────────────────────────────────────
-  // Stops all active work (terminates running agent sessions, cancels in-progress
-  // tasks and workflow runs) and marks the space as stopped.
+  // Non-destructive stop: pauses scheduling and interrupts active agent sessions
+  // WITHOUT cancelling tasks or workflow runs, so space.start resumes cleanly.
+  // The space is marked stopped FIRST — stopSpace synchronously fires the
+  // onSpaceStopped callback, which adds the space to the runtime's delivery-hold
+  // cache before any async quiesce below — then stopActiveWork interrupts the
+  // in-memory sessions and parks in-flight node executions.
   // Unlike space.archive, a stopped space remains active and can be restarted.
   // The stopped flag persists across daemon restarts — no work auto-starts.
   messageHub.onRequest('space.stop', async (data) => {
@@ -373,12 +377,14 @@ export function setupSpaceHandlers(
       throw new Error('id is required');
     }
 
-    // Terminate all running agent sessions and cancel active tasks/workflow runs.
+    // Mark stopped first so deliveries/spawns are held before the async quiesce.
+    const space = await spaceManager.stopSpace(params.id);
+
+    // Interrupt active agent sessions and park in-flight executions. Task and
+    // run statuses are preserved — nothing is cancelled.
     if (spaceRuntimeService) {
       await spaceRuntimeService.stopActiveWork(params.id);
     }
-
-    const space = await spaceManager.stopSpace(params.id);
 
     internalEventBus
       .publish('space.updated', { sessionId: 'global', spaceId: params.id, space })

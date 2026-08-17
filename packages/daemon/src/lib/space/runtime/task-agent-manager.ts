@@ -3546,9 +3546,9 @@ export class TaskAgentManager {
    *
    * @param taskId - The task to clean up.
    * @param reason - Retained for logging only; behavior is identical for
-   *                'done' and 'cancelled'.
+   *                'done', 'cancelled', and 'stopped' (space stop quiesce).
    */
-  async cleanup(taskId: string, reason: 'done' | 'cancelled' = 'done'): Promise<void> {
+  async cleanup(taskId: string, reason: 'done' | 'cancelled' | 'stopped' = 'done'): Promise<void> {
     const sessionIdsToClean = new Set<string>();
 
     // 1. Stop sub-sessions (interrupt + cleanup, preserve DB).
@@ -4032,10 +4032,43 @@ export class TaskAgentManager {
    * Failures are isolated per sub-session and logged at warn level — one
    * broken sub-session must not block rehydration of its siblings.
    *
-   * No-op when `workflowRunId` is null (standalone task with no workflow).
+   * No-op when the run's space is STOPPED (see the guard below — paused
+   * spaces still rehydrate) or when `workflowRunId` is null (standalone task
+   * with no workflow).
    */
   private async rehydrateSubSessionsForRun(workflowRunId: string | null): Promise<void> {
     if (!workflowRunId) return;
+
+    // Defense-in-depth for `space.stop` landing mid-spawn: a STOPPED space
+    // must not restore its sub-sessions on daemon restart. stopActiveWork
+    // parks in-flight executions (pending + null session), but a stop that
+    // raced a spawn can still leave an in_progress row with a session id
+    // behind — restoring it would wake work the user explicitly stopped.
+    // Deliberately stopped-only: paused spaces keep their live sessions by
+    // design, and gating paused too would break pause + daemon restart +
+    // resume (sessions would not be restored, then the first active tick
+    // would burn crash retries re-spawning them). The space ROW is read — not
+    // the runtime's pausedSpaceIds cache — because that cache conflates
+    // paused with stopped; only the row distinguishes them.
+    try {
+      const run = this.config.workflowRunRepo.getRun(workflowRunId);
+      const spaceId = run?.spaceId;
+      if (spaceId) {
+        const space = await this.config.spaceManager.getSpace(spaceId);
+        if (space?.stopped) {
+          log.info(
+            `TaskAgentManager.rehydrateSubSessionsForRun: skipping run ${workflowRunId} — space ${spaceId} is stopped`
+          );
+          return;
+        }
+      }
+    } catch (err) {
+      // A failed space lookup must not block rehydration of the run's other
+      // sessions — log and fall through to the normal path.
+      log.warn(
+        `TaskAgentManager.rehydrateSubSessionsForRun: failed to check stopped state for run ${workflowRunId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
 
     const executions = this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId);
     for (const execution of executions) {

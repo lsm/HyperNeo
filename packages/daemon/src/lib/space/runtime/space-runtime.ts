@@ -1901,6 +1901,56 @@ export class SpaceRuntime {
     this.pausedSpaceIds.add(spaceId);
   }
 
+  /**
+   * Park every in-flight node execution of a space: reset `in_progress`
+   * executions to `{status:'pending', result:null, agentSessionId:null}` — the
+   * same clean-recovery reset `recoverRateLimitedTasks` uses — so the tick
+   * loop's supervision is fully neutralized while the space is stopped:
+   *   - the liveness scan skips them (no agentSessionId to check),
+   *   - the alive-stuck nag never fires (no live session),
+   *   - the spawn path is already gated for stopped spaces.
+   * `space.start` then re-drives each parked execution via the normal spawn
+   * path with fresh budgets — per affected run the stuck-detector state,
+   * crash counters (`${runId}:${executionId}`), and blocked-retry counters
+   * are cleared so resume is not charged for the stop.
+   *
+   * Called by `SpaceRuntimeService.stopActiveWork`. Run and task statuses are
+   * NOT modified.
+   */
+  parkInFlightExecutionsForSpace(spaceId: string): void {
+    let parkedCount = 0;
+    for (const run of this.config.workflowRunRepo.listBySpace(spaceId)) {
+      let parkedInRun = 0;
+      for (const exec of this.config.nodeExecutionRepo.listByWorkflowRun(run.id)) {
+        if (exec.status !== 'in_progress') continue;
+        this.config.nodeExecutionRepo.update(exec.id, {
+          status: 'pending',
+          result: null,
+          // Clear the dead session binding: processRunTick scans pending
+          // executions WITH an agentSessionId, detects this stale one as
+          // dead, and would otherwise run it through the crash-retry path
+          // (incrementing taskCrashCounts). A blank agentSessionId makes
+          // the pending execution a clean non-crash recovery that the spawn
+          // path re-drives from scratch.
+          agentSessionId: null,
+        });
+        parkedInRun++;
+        this.taskCrashCounts.delete(`${run.id}:${exec.id}`);
+      }
+      if (parkedInRun === 0) continue;
+      parkedCount += parkedInRun;
+      // Fresh budgets on resume: stuck-detector state and blocked-run retry
+      // counters must not carry pre-stop history into the resumed session.
+      this.clearAgentStuckStateForRun(run.id);
+      this.blockedRetryCounts.delete(run.id);
+    }
+    if (parkedCount > 0) {
+      log.info(
+        `SpaceRuntime: parked ${parkedCount} in-flight node execution(s) for space ${spaceId} (statuses preserved)`
+      );
+    }
+  }
+
   clearTaskInterests(taskId: string): void {
     this.workflowEventSubscriptionRepo.deleteByTask(taskId);
     this.topicTrie.remove(
@@ -7663,8 +7713,13 @@ export class SpaceRuntime {
     canonicalTask: SpaceTask,
     nodeExecutions: NodeExecution[],
     tam: TaskAgentManager,
-    workflow: SpaceWorkflow
+    workflow: SpaceWorkflow,
+    space: Space | null
   ): Promise<'none' | 'restarted' | 'blocked'> {
+    // Paused/stopped spaces keep their live sessions by design — never nag or
+    // restart a session awake while scheduling is held.
+    if (space?.paused || space?.stopped) return 'none';
+
     const nagGraceMs = this.config.agentStuckNagGraceMs ?? DEFAULT_AGENT_STUCK_NAG_GRACE_MS;
     const now = Date.now();
     for (const execution of nodeExecutions) {
@@ -8125,7 +8180,8 @@ export class SpaceRuntime {
         canonicalTask,
         nodeExecutions,
         tam,
-        meta.workflow
+        meta.workflow,
+        space
       );
       if (aliveStuckOutcome === 'restarted' || aliveStuckOutcome === 'blocked') {
         return;
@@ -9863,6 +9919,11 @@ export class SpaceRuntime {
   private async attemptBlockedRunRecovery(runId: string, run: SpaceWorkflowRun): Promise<void> {
     const meta = this.executorMeta.get(runId);
     if (!meta) return;
+
+    // Paused/stopped spaces hold their blocked runs as-is: no retry churn, no
+    // escalation notifications. The space resumes recovery when it resumes
+    // scheduling (pausedSpaceIds covers both paused and stopped spaces).
+    if (this.pausedSpaceIds.has(meta.spaceId)) return;
 
     const allRunTasks = this.config.taskRepo.listByWorkflowRun(runId);
     if (allRunTasks.length === 0) return;

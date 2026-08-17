@@ -26,6 +26,7 @@ import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agen
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceWorkflow } from '@hyperneo/shared';
 
@@ -707,6 +708,94 @@ describe('SpaceRuntime — crash recovery and rehydration', () => {
       const task = taskRepo.getTask(existingTask.id)!;
       // Session ID unchanged
       expect(task.taskAgentSessionId).toBe('session:existing');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 5b. Stopped-space rehydration guard (space.stop is non-destructive but
+  // must hold across daemon restarts — a stopped space's sub-sessions are
+  // NOT restored; paused spaces still restore theirs).
+  // -------------------------------------------------------------------------
+
+  describe('stopped-space rehydration guard', () => {
+    function seedRunWithLiveExecution(): { runId: string; sessionId: string } {
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Step A', agentId: AGENT },
+      ]);
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Live Execution Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Step A',
+        description: '',
+        workflowRunId: run.id,
+        workflowNodeId: STEP_A,
+        status: 'in_progress',
+      });
+      const sessionId = `session:${run.id}`;
+      new NodeExecutionRepository(db).createOrIgnore({
+        workflowRunId: run.id,
+        workflowNodeId: STEP_A,
+        agentName: 'Step A',
+        agentId: AGENT,
+        agentSessionId: sessionId,
+        status: 'in_progress',
+      });
+      return { runId: run.id, sessionId };
+    }
+
+    function makeRealTaskAgentManager(): {
+      tam: TaskAgentManager;
+      restored: string[];
+    } {
+      const restored: string[] = [];
+      const tam = new TaskAgentManager({
+        // The manager only reads these fields on the rehydrate() path; the
+        // db shim satisfies the constructor's audit-log wiring.
+        db: { getDatabase: () => db },
+        internalEventBus: { subscribe: () => () => {} },
+        spaceManager,
+        taskRepo,
+        workflowRunRepo,
+        nodeExecutionRepo: new NodeExecutionRepository(db),
+      } as unknown as ConstructorParameters<typeof TaskAgentManager>[0]);
+      // Stub the per-session restore (needs the full AgentSession stack) and
+      // record which sessions the guard lets through.
+      (
+        tam as unknown as { rehydrateSubSession: (sessionId: string) => Promise<void> }
+      ).rehydrateSubSession = async (sessionId: string) => {
+        restored.push(sessionId);
+      };
+      return { tam, restored };
+    }
+
+    test('stopped space: in_progress execution with a session id is NOT restored', async () => {
+      db.prepare(`UPDATE spaces SET stopped = 1 WHERE id = ?`).run(SPACE_ID);
+      const { sessionId } = seedRunWithLiveExecution();
+
+      const { tam, restored } = makeRealTaskAgentManager();
+      await tam.rehydrate();
+
+      expect(restored).toEqual([]);
+      // The execution row itself is untouched by the guard — only the restore
+      // is skipped (stop parks it; resume re-drives via spawn).
+      expect(new NodeExecutionRepository(db).getByAgentSessionId(sessionId)?.status).toBe(
+        'in_progress'
+      );
+    });
+
+    test('paused space: sessions are still restored (pause keeps live sessions)', async () => {
+      db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+      const { sessionId } = seedRunWithLiveExecution();
+
+      const { tam, restored } = makeRealTaskAgentManager();
+      await tam.rehydrate();
+
+      expect(restored).toEqual([sessionId]);
     });
   });
 

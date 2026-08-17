@@ -1140,24 +1140,31 @@ export class SpaceRuntimeService {
   }
 
   /**
-   * Stop all active work for a space: terminates running agent sessions and
-   * cancels all in-progress/open tasks and active workflow runs.
+   * Stop all active work for a space — non-destructively.
    *
-   * Called by the `space.stop` RPC handler before archiving the space.
-   * Does NOT archive the space itself — the caller is responsible for that.
+   * Interrupts the in-memory agent sessions of active tasks and parks their
+   * in-flight node executions so nothing keeps running or gets nudged while
+   * the space is stopped. No task or workflow-run status is written: stop is a
+   * pause, not a cancellation — `space.start` resumes by re-spawning the
+   * parked executions with fresh kickoff sessions (the same clean-recovery
+   * path crash restart uses).
+   *
+   * Called by the `space.stop` RPC handler after the space row is already
+   * marked stopped (so the delivery hold is in force).
    */
   async stopActiveWork(spaceId: string): Promise<void> {
-    const { taskRepo, workflowRunRepo } = this.config;
+    const { taskRepo } = this.config;
 
     // Install the delivery hold BEFORE async cleanup so a check_failed arriving
     // during the cleanup window cannot reactivate a task that the snapshot
     // misses.
     this.runtime.holdSpaceDeliveries(spaceId);
 
-    // 1. Cancel all active tasks (in_progress, open, or paused on a rate/usage
-    //    cap) and their agent sessions. A paused task still owns a live session
+    // 1. Interrupt the agent sessions of active tasks (in_progress, open, or
+    //    paused on a rate/usage cap). A paused task still owns a live session
     //    with an armed cooldown timer; if it isn't torn down here, the timer
-    //    fires after the stop and re-enqueues work on a cancelled task.
+    //    fires after the stop and re-enqueues work. Task status is deliberately
+    //    left untouched.
     const activeTasks = taskRepo
       .listBySpace(spaceId)
       .filter(
@@ -1166,76 +1173,21 @@ export class SpaceRuntimeService {
 
     await Promise.allSettled(
       activeTasks.map(async (task) => {
-        // Stop the agent session first, then mark the task as cancelled in the DB.
         if (this.taskAgentManager) {
-          await this.taskAgentManager.cleanup(task.id, 'cancelled').catch((err: unknown) => {
+          await this.taskAgentManager.cleanup(task.id, 'stopped').catch((err: unknown) => {
             log.warn(`stopActiveWork: failed to cleanup agent session for task ${task.id}:`, err);
           });
         }
-        taskRepo.updateTask(task.id, { status: 'cancelled' });
       })
     );
-    // Rescan for tasks reactivated (e.g. by a check_failed) during the cleanup
-    // await above and cancel those too — they weren't in the initial snapshot.
-    const processedTaskIds = new Set(activeTasks.map((t) => t.id));
-    const reactivatedTasks = taskRepo
-      .listBySpace(spaceId)
-      .filter(
-        (t) => !processedTaskIds.has(t.id) && (t.status === 'in_progress' || t.status === 'open')
-      );
-    for (const task of reactivatedTasks) {
-      if (this.taskAgentManager) {
-        await this.taskAgentManager.cleanup(task.id, 'cancelled').catch((err: unknown) => {
-          log.warn(`stopActiveWork: failed to cleanup reactivated task ${task.id}:`, err);
-        });
-      }
-      taskRepo.updateTask(task.id, { status: 'cancelled' });
-    }
-    // Publish space.task.updated for each cancelled task so the task-owned
-    // subscription cleanup (clearRunInterests) fires — the direct repo update
-    // above emits no event otherwise.
-    if (this.config.internalEventBus) {
-      for (const task of [...activeTasks, ...reactivatedTasks]) {
-        const cancelled = taskRepo.getTask(task.id);
-        if (!cancelled) continue;
-        void this.config.internalEventBus
-          .publish('space.task.updated', {
-            sessionId: 'global',
-            spaceId,
-            taskId: task.id,
-            task: cancelled,
-          })
-          .catch((err: unknown) => {
-            log.warn(`stopActiveWork: failed to emit task.updated for task ${task.id}:`, err);
-          });
-      }
-    }
 
-    // 2. Cancel all active workflow runs (pending, in_progress, blocked).
-    const activeRuns = workflowRunRepo
-      .listBySpace(spaceId)
-      .filter(
-        (r) => r.status === 'pending' || r.status === 'in_progress' || r.status === 'blocked'
-      );
-
-    for (const run of activeRuns) {
-      try {
-        workflowRunRepo.transitionStatus(run.id, 'cancelled');
-      } catch (err) {
-        log.warn(`stopActiveWork: failed to cancel workflow run ${run.id}:`, err);
-      }
-      // Clear run interests explicitly so a later space start (which drops the
-      // hold cache) cannot match events against cancelled-run targets.
-      this.runtime.clearRunInterests(run.id);
-      // Dead-loop event history is intentionally retained here: `cancelled` is
-      // reopenable, so a resumed run must keep its rolling-window history (a
-      // reopened runaway still has to trip the rate gate). Rows age out of the
-      // window and are pruned at startup; the owning task's archive is the true
-      // tombstone that clears them (SpaceTaskManager.setTaskStatus).
-    }
+    // 2. Park in-flight node executions (pending + cleared session binding) so
+    //    the tick loop neither spawns nor nags while stopped, and resume
+    //    re-drives them without crash accounting. Run/task statuses stay as-is.
+    this.runtime.parkInFlightExecutionsForSpace(spaceId);
 
     log.info(
-      `stopActiveWork: cancelled ${activeTasks.length} tasks and ${activeRuns.length} workflow runs for space ${spaceId}`
+      `stopActiveWork: interrupted ${activeTasks.length} task session(s) and parked in-flight executions for space ${spaceId} (statuses preserved)`
     );
   }
 

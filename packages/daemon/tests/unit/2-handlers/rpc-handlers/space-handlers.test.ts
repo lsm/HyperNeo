@@ -7,7 +7,7 @@
  * - space.get: happy path, missing id, not found
  * - space.update: happy path, missing id, not found
  * - space.archive: happy path (publishes space.archived with full space), missing id
- * - space.stop: stops active work via runtime service, marks stopped, publishes space.updated; missing id; graceful degradation without runtime service
+ * - space.stop: marks stopped before quiescing active work via runtime service, publishes space.updated; missing id; graceful degradation without runtime service
  * - space.start: clears stopped flag, publishes space.updated; missing id
  * - space.delete: happy path, missing id, not found
  * - space.overview: happy path, missing id, not found
@@ -712,15 +712,20 @@ describe('space-handlers', () => {
       setup(mockSpace, undefined, mockRuntimeService);
     });
 
-    it('stops active work via runtime service, marks space stopped, and publishes space.updated', async () => {
+    it('marks space stopped before quiescing active work, and publishes space.updated', async () => {
       const stoppedSpace = { ...mockSpace, stopped: true };
       (spaceManager.stopSpace as ReturnType<typeof mock>).mockResolvedValue(stoppedSpace);
 
       const result = await call('space.stop', { id: 'space-1' });
 
-      // Must call stopActiveWork before marking stopped
+      // Must mark the space stopped BEFORE quiescing active work — stopSpace
+      // synchronously updates the runtime's delivery-hold cache, so no event
+      // delivery or spawn races the async session cleanup.
       expect(mockRuntimeService.stopActiveWork).toHaveBeenCalledWith('space-1');
       expect(spaceManager.stopSpace).toHaveBeenCalledWith('space-1');
+      expect(spaceManager.stopSpace.mock.invocationCallOrder[0]).toBeLessThan(
+        mockRuntimeService.stopActiveWork.mock.invocationCallOrder[0]
+      );
       expect((result as Space).stopped).toBe(true);
       // Space is NOT archived — status stays 'active'
       expect((result as Space).status).toBe('active');
