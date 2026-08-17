@@ -385,19 +385,26 @@ export function setupSpaceHandlers(
     // already committed stopped, so a quiesce failure must NOT reject the RPC
     // or skip space.updated — the web UI has no error path for a half-stopped
     // space. The quiesce is idempotent: a retried space.stop re-parks safely.
+    let quiesceWarning: string | undefined;
     if (spaceRuntimeService) {
       try {
         await spaceRuntimeService.stopActiveWork(params.id);
       } catch (err) {
-        log.error(
-          `space.stop: quiesce failed for ${params.id} after the space was marked stopped (retry space.stop to re-quiesce):`,
-          err
-        );
+        const detail = err instanceof Error ? err.message : String(err);
+        quiesceWarning =
+          `space.stop quiesce failed after the space was marked stopped ` +
+          `(${detail}); retry space.stop to re-quiesce`;
+        log.error(`space.stop: ${quiesceWarning}`);
       }
     }
 
     internalEventBus
-      .publish('space.updated', { sessionId: 'global', spaceId: params.id, space })
+      .publish('space.updated', {
+        sessionId: 'global',
+        spaceId: params.id,
+        space,
+        quiesceWarning,
+      })
       .catch((err) => {
         log.warn('Failed to emit space.updated:', err);
       });

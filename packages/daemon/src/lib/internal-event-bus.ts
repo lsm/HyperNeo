@@ -687,6 +687,10 @@ interface ClientForwardingEvents {
     sessionId: string;
     spaceId: string;
     space?: Partial<import('@hyperneo/shared').Space>;
+    /** Set when an operation on the space partially failed (e.g. a stop whose
+     * quiesce threw) — consumers should surface it; the space row itself is
+     * unchanged (it was already committed before the failure). */
+    quiesceWarning?: string;
   };
   'space.archived': { sessionId: string; spaceId: string; space: import('@hyperneo/shared').Space };
   'space.deleted': { sessionId: string; spaceId: string };

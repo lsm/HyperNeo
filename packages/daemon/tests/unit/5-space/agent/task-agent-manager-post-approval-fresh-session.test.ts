@@ -249,6 +249,29 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     expect(fromInitSpy).not.toHaveBeenCalled();
   });
 
+  test('createSubSession reuses an INTERRUPTED session (resume continues the transcript)', async () => {
+    // On resume, a row that kept its binding (e.g. a blocked or non-parked
+    // path) reuses the interrupted session — the pause/resume semantic
+    // preserves the conversation. The reuse path must NOT treat 'interrupted'
+    // as a reason to create a fresh session.
+    const tam = makeManager();
+    const interrupted = seedLiveSession(tam);
+    (
+      interrupted as unknown as { getProcessingState: () => { status: string } }
+    ).getProcessingState = () => ({ status: 'interrupted' });
+    stubReusePathHelpers(tam);
+
+    const memberInfo = {
+      agentId: 'agent-reviewer',
+      agentName: REVIEWER_AGENT,
+      nodeId: REVIEWER_NODE_ID,
+    };
+    const actual = await tam.createSubSession(TASK_ID, 'proposed-id', minimalInit(), memberInfo);
+
+    expect(actual).toBe(REVIEWER_SESSION_ID);
+    expect(fromInitSpy).not.toHaveBeenCalled();
+  });
+
   test('stale co-owner sweep preserves blocked status (only active owners become idle)', async () => {
     // The reused session is also referenced by a BLOCKED execution on another
     // node. The sweep must clear the stale session pointer but PRESERVE
@@ -500,6 +523,36 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
 
     await tam.injectSubSessionMessage(MERGER_SESSION, 'peer message');
     expect(injected).toEqual(['peer message']);
+  });
+
+  test('peer-injection gate: a stop landing between the gate and the lock is re-checked inside the lock', async () => {
+    // TOCTOU: the gate read passes, then the space stops before the lock
+    // body (rehydrate branch would re-bind a parked execution and restart the
+    // interrupted session). The in-lock re-check must reject.
+    const tam = makeManager([]);
+    let calls = 0;
+    (tam.config as unknown as Record<string, unknown>).spaceManager = {
+      getSpace: async () => {
+        calls += 1;
+        // First read (the gate) sees active; the in-lock re-check sees stopped.
+        return { id: SPACE_ID, workspacePath: '/tmp/ws', stopped: calls >= 2 };
+      },
+    };
+    const MERGER_SESSION = `space:${SPACE_ID}:task:${TASK_ID}:post-approval:merger`;
+    seedLiveSession(tam, MERGER_SESSION);
+    const injected: string[] = [];
+    (
+      tam as unknown as { injectMessageIntoSession: (...a: unknown[]) => Promise<string> }
+    ).injectMessageIntoSession = async () => {
+      injected.push('x');
+      return 'msg-id';
+    };
+
+    await expect(tam.injectSubSessionMessage(MERGER_SESSION, 'peer message')).rejects.toThrow(
+      /stopped during the inject/
+    );
+    expect(injected).toEqual([]);
+    expect(calls).toBe(2);
   });
 
   test('peer-injection gate: an active space injects normally', async () => {

@@ -2381,6 +2381,32 @@ describe('SpaceRuntime — tick loop correctness', () => {
       );
     });
 
+    test('onSpaceResumed keeps the delivery hold while the space is still paused', async () => {
+      // onSpaceResumed re-reads the space row before clearing the paused
+      // cache: a resume signal arriving while the space is STILL paused must
+      // not drop the hold (a cleared hold on a paused space is not re-added
+      // until a daemon restart or a re-pause). `space.start` itself clears
+      // the paused flag, so this guards the interleavings where the resume
+      // signal reaches the runtime before/independently of that clear.
+      const rt = new SpaceRuntime(
+        buildConfig(makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {}))
+      );
+      const pausedSpaceIds = (rt as unknown as { pausedSpaceIds: Set<string> }).pausedSpaceIds;
+
+      await spaceManager.pauseSpace(SPACE_ID); // adds the hold
+      expect(pausedSpaceIds.has(SPACE_ID)).toBe(true);
+      await rt.onSpaceResumed(SPACE_ID); // resume signal while still paused
+      await rt.flushResumeSweep(SPACE_ID);
+
+      expect(pausedSpaceIds.has(SPACE_ID)).toBe(true); // hold survives
+
+      // Once the space is genuinely resumed (paused cleared), the hold drops.
+      await spaceManager.resumeSpace(SPACE_ID);
+      await rt.onSpaceResumed(SPACE_ID);
+      await rt.flushResumeSweep(SPACE_ID);
+      expect(pausedSpaceIds.has(SPACE_ID)).toBe(false);
+    });
+
     test('stopped space (no park) does not nag or restart a live idle-stuck session', async () => {
       // The stopped half of the alive-stuck guard — the in-process face of a
       // spawn that raced the stop: a live session bound to an in_progress

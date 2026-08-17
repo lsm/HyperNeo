@@ -2139,6 +2139,24 @@ export class TaskAgentManager {
     // Serialize per session so a resetContextPerTurn clear (in-stream /clear
     // ahead of the handoff) cannot interleave with a concurrent inject.
     return this.withSessionInjectLock(subSessionId, async () => {
+      // Re-check the space inside the lock: the gate read above ran before
+      // the lock acquisition and index scans, and a stop landing in between
+      // must not let the rehydrate branch below re-bind a parked execution
+      // (`updateSessionId` on the repair path) and restart the interrupted
+      // session via startStreamingQuery — the exact work the gate prevents.
+      // Same stopped-only semantics as the gate.
+      if (gateSpaceId) {
+        const lockedSpace = await this.config.spaceManager.getSpace(gateSpaceId);
+        if (lockedSpace?.stopped) {
+          log.warn(
+            `TaskAgentManager.injectSubSessionMessageWithOrigin: rejecting inject to session ` +
+              `${subSessionId} — space ${gateSpaceId} stopped during the inject`
+          );
+          throw new Error(
+            `Cannot inject message to session ${subSessionId} — space ${gateSpaceId} stopped during the inject`
+          );
+        }
+      }
       const indexed = this.agentSessionIndex.get(subSessionId);
       if (indexed) {
         return await this.injectMessageIntoSession(

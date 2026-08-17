@@ -3409,10 +3409,26 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             // suggests a manual retry that space.start/space.resume performs
             // automatically).
             if (isPostApprovalDeferredError(dispatchErr)) {
-              log.info(
-                `approve_pending_completion: post-approval dispatch of task ${args.task_id} deferred ` +
-                  `(${dispatchErr.message}); approval recorded, dispatch re-runs when the space resumes`
-              );
+              // Most typed deferrals are stamped by the runtime before
+              // throwing — defensive re-check (mirrors the RPC handler): the
+              // resume sweep filters on the reason, so a typed deferral that
+              // reached us unstamped would wedge the task `approved` with no
+              // banner and no recovery. Stamp the generic warning in that
+              // case.
+              if (!afterCommit.postApprovalBlockedReason) {
+                log.warn(
+                  `approve_pending_completion: post-approval dispatch of task ${args.task_id} deferred ` +
+                    `without a blocked-reason stamp (${dispatchErr.message}); stamping the generic recovery banner`
+                );
+                await taskManager.updateTask(args.task_id, {
+                  postApprovalBlockedReason: mapPostApprovalDispatchWarning(dispatchErr.message),
+                });
+              } else {
+                log.info(
+                  `approve_pending_completion: post-approval dispatch of task ${args.task_id} deferred ` +
+                    `(${dispatchErr.message}); approval recorded, dispatch re-runs when the space resumes`
+                );
+              }
             } else {
               const detail =
                 dispatchErr instanceof Error ? dispatchErr.message : String(dispatchErr);

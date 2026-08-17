@@ -295,6 +295,8 @@ describe('SpaceRuntimeService', () => {
         cleanup: async (taskId: string, reason: 'done' | 'cancelled' | 'stopped') => {
           cleanupCalls.push({ taskId, reason });
         },
+        // The merger is dead (interrupted) — step 1.5's liveness gate passes.
+        isSessionUsableForPostApproval: () => false,
       } as unknown as TaskAgentManager;
 
       const svc = new SpaceRuntimeService({
@@ -387,6 +389,8 @@ describe('SpaceRuntimeService', () => {
       });
       svc.setTaskAgentManager({
         cleanup: async () => {},
+        // The merger is dead (interrupted) — step 1.5's liveness gate passes.
+        isSessionUsableForPostApproval: () => false,
       } as unknown as TaskAgentManager);
       const redrives: Array<{ spaceId: string; taskId: string; source: string }> = [];
       svc.dispatchPostApproval = async (spaceId, taskId, approvalSource) => {
@@ -440,6 +444,8 @@ describe('SpaceRuntimeService', () => {
       });
       svc.setTaskAgentManager({
         cleanup: async () => {},
+        // The merger is dead (interrupted) — step 1.5's liveness gate passes.
+        isSessionUsableForPostApproval: () => false,
       } as unknown as TaskAgentManager);
       const redrives: Array<{ taskId: string }> = [];
       svc.dispatchPostApproval = async (_spaceId, taskId) => {
@@ -454,6 +460,54 @@ describe('SpaceRuntimeService', () => {
       expect(Object.keys(updateCalls[0]!.updates as Record<string, unknown>)).not.toContain(
         'postApprovalBlockedReason'
       );
+      expect(redrives).toHaveLength(0);
+    });
+
+    test('live merger (cleanup threw): step 1.5 keeps the pointer — no duplicate merge', async () => {
+      // cleanup has no per-sub-session try/catch: a teardown throw aborts its
+      // loop and the merger stays LIVE. Step 1.5 must not null a live
+      // pointer — the resume sweep would spawn a duplicate merge while the
+      // original still runs. The liveness probe is the gate.
+      const activeTasks = [
+        {
+          id: 't5',
+          status: 'approved' as const,
+          postApprovalSessionId: 'session:merge-live',
+          postApprovalBlockedReason: null,
+        },
+      ];
+      const updateCalls: Array<{ taskId: string; updates: unknown }> = [];
+      const mockTaskRepo = {
+        listBySpace: () => activeTasks,
+        getTask: (id: string) => activeTasks.find((t) => t.id === id),
+        updateTask: (taskId: string, updates: unknown) => {
+          updateCalls.push({ taskId, updates });
+        },
+      } as unknown as SpaceTaskRepository;
+      const mockWorkflowRunRepo = {
+        listBySpace: () => [],
+        transitionStatus: () => {},
+      } as unknown as SpaceWorkflowRunRepository;
+
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(createMockSpaceManager({ ...mockSpace, stopped: true })),
+        taskRepo: mockTaskRepo,
+        workflowRunRepo: mockWorkflowRunRepo,
+      });
+      svc.setTaskAgentManager({
+        cleanup: async () => {},
+        // The merger is STILL LIVE — cleanup did not interrupt it.
+        isSessionUsableForPostApproval: () => true,
+      } as unknown as TaskAgentManager);
+      const redrives: Array<{ taskId: string }> = [];
+      svc.dispatchPostApproval = async (_spaceId, taskId) => {
+        redrives.push({ taskId });
+      };
+
+      await svc.stopActiveWork('space-1');
+
+      // No write at all: the pointer is kept, no reason stamped, no re-drive.
+      expect(updateCalls).toHaveLength(0);
       expect(redrives).toHaveLength(0);
     });
 
@@ -503,6 +557,8 @@ describe('SpaceRuntimeService', () => {
       });
       svc.setTaskAgentManager({
         cleanup: async () => {},
+        // The merger is dead (interrupted) — step 1.5's liveness gate passes.
+        isSessionUsableForPostApproval: () => false,
       } as unknown as TaskAgentManager);
       svc.dispatchPostApproval = async () => {};
 
@@ -556,6 +612,8 @@ describe('SpaceRuntimeService', () => {
       });
       svc.setTaskAgentManager({
         cleanup: async () => {},
+        // The merger is dead (interrupted) — step 1.5's liveness gate passes.
+        isSessionUsableForPostApproval: () => false,
       } as unknown as TaskAgentManager);
       const redrives: Array<{ taskId: string }> = [];
       svc.dispatchPostApproval = async (_spaceId, taskId) => {

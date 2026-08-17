@@ -4470,9 +4470,10 @@ export class SpaceRuntime {
    * Best-effort `space.task.updated` emit for deferral stamps, which write
    * via the raw repo (no event). The web store refreshes tasks ONLY on this
    * event — without it, connected clients keep rendering the pre-stop healthy
-   * post-approval state after a stop interrupts a merge, and the banner (this
-   * PR's recovery UX) never reaches them. Emission failures are logged, never
-   * thrown: a deferral must not fail because its notification did.
+   * post-approval state after a stop interrupts a merge, and the
+   * interrupted-merge recovery banner never reaches them. Emission failures
+   * are logged, never thrown: a deferral must not fail because its
+   * notification did.
    */
   async emitTaskUpdateBestEffort(spaceId: string, taskId: string): Promise<void> {
     try {
@@ -4480,7 +4481,7 @@ export class SpaceRuntime {
       if (task) await this.safeOnTaskUpdated(spaceId, task);
     } catch (err) {
       log.warn(
-        `dispatchPostApproval: failed to emit task update after deferral stamp for task ${taskId}: ${formatCommandError(err)}`
+        `task update emit: failed to emit task update after deferral stamp for task ${taskId}: ${formatCommandError(err)}`
       );
     }
   }
@@ -6381,10 +6382,22 @@ export class SpaceRuntime {
    * for sessionless pending deliveries in that space so idle subscribed targets
    * are not stranded until an unrelated activation or restart happens.
    */
-  onSpaceResumed(spaceId: string): void {
+  async onSpaceResumed(spaceId: string): Promise<void> {
     const store = this.config.externalEventStore;
-    // The space is active again — clear the sync paused cache so the delivery
-    // hot path resumes injecting into live sessions.
+    // Re-read the row before clearing the sync paused cache: `space.start`
+    // fires this on a STOPPED space, which may ALSO still be PAUSED (a
+    // pause→stop→start cycle leaves `paused` set). Clearing the cache for a
+    // still-paused space would drop the external-event delivery hold until a
+    // restart or re-pause — the pause reconciliation only runs at daemon
+    // start. Only clear when the space is genuinely neither paused nor
+    // stopped; a failed re-read keeps the hold (conservative — the next
+    // resume retries).
+    try {
+      const resumedSpace = await this.config.spaceManager.getSpace(spaceId);
+      if (resumedSpace?.paused || resumedSpace?.stopped) return;
+    } catch {
+      return;
+    }
     this.pausedSpaceIds.delete(spaceId);
     // Re-drive post-approval dispatches deferred by a stop/pause (approved
     // tasks with a blocked reason). Fire-and-forget with its own error
@@ -6522,10 +6535,12 @@ export class SpaceRuntime {
    * a task whose merge is genuinely LIVE keeps its `postApprovalSessionId`, so
    * the router's `already-routed` guard leaves it alone; a stop-INTERRUPTED
    * merge is re-spawned because `stopActiveWork`'s step 1.5 nulls the pointer
-   * when it stamps the reason — the guard's lazy probe counts 'interrupted' as
-   * alive (`isAgentSessionAlive`), so it must never be consulted for one, or
-   * the re-drive would short-circuit and the residual clear below would drop
-   * the banner on a wedged task. A no-route task simply closes to `done`.
+   * when it records the interruption. The guard's probe is
+   * `isSessionUsableForPostApproval` — interruption-aware ('interrupted'
+   * counts DEAD) — so a stop-race window the correctors miss still
+   * re-spawns instead of pinning: the probe IS the safety net, and the
+   * residual clear below only fires for a genuinely-live merge. A no-route
+   * task simply closes to `done`.
    *
    * Error-isolated per task; a re-stop mid-sweep re-defers (the hold re-stamps
    * the blocked reason), and a genuine dispatch failure keeps the reason and

@@ -1171,7 +1171,7 @@ export class SpaceRuntimeService {
     // misses.
     this.runtime.holdSpaceDeliveries(spaceId);
 
-    // 1.75. Capture the stop's epoch BEFORE the cleanup awaits: the in-flight
+    // 0.5. Capture the stop's epoch BEFORE the cleanup awaits: the in-flight
     //     rows as of right now. The cleanup interrupts every session those
     //     rows are bound to, so when it finishes they are parked EXACTLY as
     //     captured — even if a space.start landed mid-quiesce and released
@@ -1260,6 +1260,16 @@ export class SpaceRuntimeService {
       // router's stamp by construction.
       const fresh = taskRepo.getTask(task.id);
       if (!fresh || fresh.status !== 'approved' || !fresh.postApprovalSessionId) continue;
+      // Null the pointer only when the merger was ACTUALLY interrupted.
+      // `cleanup` has no per-sub-session try/catch — a teardown throw aborts
+      // its loop and the merger stays LIVE; nulling a live pointer would
+      // make the resume sweep spawn a duplicate merge. The probe
+      // (interrupted = dead) is the exact check; absence on a mock/older
+      // shape assumes usable and skips.
+      const mergerAlive =
+        this.taskAgentManager?.isSessionUsableForPostApproval?.(fresh.postApprovalSessionId) ??
+        true;
+      if (mergerAlive) continue;
       try {
         taskRepo.updateTask(fresh.id, {
           postApprovalSessionId: null,
