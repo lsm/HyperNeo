@@ -50,6 +50,7 @@ export type MessageDeliveryLifecycleEventName =
   | 'first_sdk_response'
   | 'lease_renewed'
   | 'stale_reclaimed'
+  | 'stale_reclaim_jitter_failed'
   | 'old_handler_aborted'
   | 'settled'
   | 'slot_released'
@@ -86,7 +87,10 @@ export function emitMessageDeliveryLifecycleEvent(
       if (value !== undefined) metadata[key] = value;
     }
     emitStructuredLogEvent({
-      level: event === 'fenced_completion_rejected' ? 'warn' : 'info',
+      level:
+        event === 'fenced_completion_rejected' || event === 'stale_reclaim_jitter_failed'
+          ? 'warn'
+          : 'info',
       args: ['message_delivery.lifecycle'],
       source: 'logger',
       module: 'hyperneo:daemon:message-delivery.lifecycle',

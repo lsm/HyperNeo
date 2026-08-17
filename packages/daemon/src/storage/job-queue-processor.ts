@@ -104,6 +104,12 @@ export interface JobQueueProcessorOptions {
   maxConcurrent?: number;
   staleThresholdMs?: number;
   /**
+   * Random source for the stale-reclaim re-enqueue jitter (see
+   * {@link staleReclaimJitterDelays}). Defaults to Math.random; injectable so
+   * tests can make the herd spread deterministic.
+   */
+  jitterRandom?: () => number;
+  /**
    * Grace for a stale-reclaimed handler to settle after its abort before its
    * replacement claim may proceed. Default {@link SETTLEMENT_GRACE_MS}. Lanes
    * whose abort path awaits a bounded-but-slow settlement — message_delivery
@@ -158,6 +164,104 @@ interface Registration {
  * needing a longer, still-bounded window. */
 const SETTLEMENT_GRACE_MS = 10_000;
 
+/** Slot width of the stale-reclaim jitter: a herd of M reclaimed jobs spreads
+ * over M slots of this width, bounded by {@link STALE_RECLAIM_JITTER_MAX_MS}. */
+const STALE_RECLAIM_JITTER_STEP_MS = 2_000;
+
+/** Hard bound on the total stale-reclaim jitter spread, so even a large herd
+ * is fully re-enqueued within 30 s and reclamation never parks work for long. */
+const STALE_RECLAIM_JITTER_MAX_MS = 30_000;
+
+/**
+ * Randomized delays (ms from now) for one stale-reclaim pass's re-enqueued
+ * run_at values.
+ *
+ * When the daemon dies with M message_delivery jobs in flight, their rows
+ * freeze in `processing` until the leases go stale, and stale-reclaim then
+ * re-enqueues ALL of them in the same instant. Each reclaimed job spawns a
+ * fresh SDK subprocess resuming a large transcript; M simultaneous cold-starts
+ * all exceed the 15 s startup timeout (a solo cold-start is ~4–5 s), so the
+ * timeout/retry loop self-sustains instead of draining (measured in the live
+ * incident: 10 claims within 12 ms → 120–160 timeouts, 0 successes over 7+ min).
+ * Spreading run_at produces a rolling start where each session cold-starts
+ * with the machine mostly to itself.
+ *
+ * The spread window [0, min(M·step, max)] is partitioned into M equal slots;
+ * each job gets a randomly permuted slot plus a random offset within it, so
+ * the delay order is random per pass (restarts never produce a deterministic
+ * stagger) while the density is bounded by construction: with slot width w no
+ * 1-second window holds more than ⌈1000/w⌉ + 1 reclaimed jobs (≤ 2 for M ≤ 15,
+ * ≤ 3 through M ≈ 60). A single reclaimed job (M = 1) gets no delay — it
+ * recovers immediately.
+ */
+export function staleReclaimJitterDelays(count: number, random: () => number): number[] {
+  if (count <= 1) return Array.from({ length: count }, () => 0);
+  const windowMs = Math.min(count * STALE_RECLAIM_JITTER_STEP_MS, STALE_RECLAIM_JITTER_MAX_MS);
+  const slotWidth = windowMs / count;
+  // Clamp each draw to [0, 1): an injected source returning NaN would poison
+  // run_at into a NULL SQLite binding that fails `run_at <= now` forever (a
+  // silent, unerrored park), and out-of-range draws break the shuffle.
+  const draw = (): number => {
+    const value = random();
+    return Number.isFinite(value) ? Math.min(Math.max(value, 0), 0.999_999_999_999) : 0;
+  };
+  // Random permutation of slot indices (Fisher–Yates over the injected random):
+  // which job lands in which slot is random per pass, never index-ordered.
+  const slots = Array.from({ length: count }, (_slot, i) => i);
+  for (let i = slots.length - 1; i > 0; i--) {
+    const j = Math.min(i, Math.floor(draw() * (i + 1)));
+    [slots[i], slots[j]] = [slots[j], slots[i]];
+  }
+  return slots.map((slot) => slot * slotWidth + draw() * slotWidth);
+}
+
+/**
+ * Apply {@link staleReclaimJitterDelays} to a re-enqueued herd's pending rows.
+ * The single shared sequence for both herd paths — the processor's stale-reclaim
+ * pass (crash recovery) and the graceful-shutdown requeue in `app.cleanup()`
+ * (deploy/restart) — so they roll identically instead of drifting apart.
+ *
+ * Per-job isolation: one failed UPDATE (disk-full / I/O error) leaves THAT row
+ * at its original — past, immediately claimable — run_at (the pre-jitter
+ * behavior) while the rest of the herd keeps its jitter, and the failure is
+ * surfaced through `onRescheduleError` with the thrown error (the processor
+ * folds it into a `stale_reclaim_jitter_failed` lifecycle event; the shutdown
+ * path logs it). Neither the UPDATE errors nor a throwing observer propagate,
+ * so this can never skip the caller's remaining reclaim work (predecessor
+ * aborts, settling deferrals). A throw from the reclaim transaction itself —
+ * before any row flipped — still propagates from the caller; that rejects
+ * tick()'s promise and exits the daemon on the unhandled rejection, and
+ * recovery is a restart whose eager reclaim re-sweeps (and re-jitters) the
+ * herd.
+ *
+ * @returns how many rows were successfully rescheduled.
+ */
+export function applyStaleReclaimJitter(
+  repo: Pick<JobQueueRepository, 'reschedulePending'>,
+  jobIds: string[],
+  random: () => number,
+  onRescheduleError?: (jobId: string, error: unknown) => void
+): number {
+  if (jobIds.length === 0) return 0;
+  const delays = staleReclaimJitterDelays(jobIds.length, random);
+  const jitteredAt = Date.now();
+  let applied = 0;
+  for (let i = 0; i < jobIds.length; i++) {
+    try {
+      if (repo.reschedulePending(jobIds[i], jitteredAt + delays[i])) applied++;
+    } catch (error) {
+      try {
+        onRescheduleError?.(jobIds[i], error);
+      } catch {
+        // The observer is diagnostics (a lifecycle emit / a shutdown log); a
+        // throwing callback must not skip the remaining reschedules nor the
+        // caller's reclaim work — same hardening class as the draw clamp.
+      }
+    }
+  }
+  return applied;
+}
+
 export class JobQueueProcessor {
   private handlers = new Map<string, Registration>();
   private pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -194,6 +298,7 @@ export class JobQueueProcessor {
   private readonly pollIntervalMs: number;
   private readonly maxConcurrent: number;
   private readonly staleThresholdMs: number;
+  private readonly jitterRandom: () => number;
   private readonly settlementGraceMs: number;
   private readonly heartbeatIntervalMs: number;
   private lastStaleCheck = 0;
@@ -206,6 +311,7 @@ export class JobQueueProcessor {
     this.pollIntervalMs = options?.pollIntervalMs ?? 1000;
     this.maxConcurrent = options?.maxConcurrent ?? 1;
     this.staleThresholdMs = options?.staleThresholdMs ?? 5 * 60 * 1000;
+    this.jitterRandom = options?.jitterRandom ?? Math.random;
     this.settlementGraceMs = options?.settlementGraceMs ?? SETTLEMENT_GRACE_MS;
     this.heartbeatIntervalMs = Math.max(10, Math.floor(this.staleThresholdMs / 3));
   }
@@ -550,7 +656,42 @@ export class JobQueueProcessor {
     // another processor's shared-repository lanes (its reclaim would flip the
     // row to pending while the owner's handler keeps running until its next
     // heartbeat, overlapping a replacement claim).
-    for (const claim of this.repo.reclaimStale(staleBefore, [...this.handlers.keys()])) {
+    const claims = this.repo.reclaimStale(staleBefore, [...this.handlers.keys()]);
+    if (claims.length > 0) {
+      // Re-enqueue the whole herd with randomized run_at jitter: a crash that
+      // froze N in-flight deliveries would otherwise make every replacement
+      // claim cold-start its SDK subprocess in the same instant (see
+      // applyStaleReclaimJitter). Applied synchronously, before any tick can
+      // dequeue, so no reclaimed job slips through un-jittered. A failed
+      // reschedule emits stale_reclaim_jitter_failed and falls back to the
+      // pre-jitter (immediately claimable) behavior for that row — it can
+      // never skip the abort/deferral loop below, whose predecessor
+      // cancellation is what prevents replacement claims from overlapping
+      // live attempts.
+      const claimByJobId = new Map(claims.map((claim) => [claim.jobId, claim] as const));
+      applyStaleReclaimJitter(
+        this.repo,
+        claims.map((claim) => claim.jobId),
+        this.jitterRandom,
+        (jobId, error) => {
+          const claim = claimByJobId.get(jobId);
+          if (claim) {
+            // The cause rides in `reason` (disk-full vs locked vs …) so a
+            // recurrence is diagnosable, not just detectable.
+            const cause = error instanceof Error ? error.message : String(error);
+            this.emitLifecycle(
+              'stale_reclaim_jitter_failed',
+              jobFromReclaimedClaim(claim),
+              undefined,
+              {
+                reason: `reschedule_failed: ${cause}`,
+              }
+            );
+          }
+        }
+      );
+    }
+    for (const claim of claims) {
       const record = claim.claimToken
         ? this.inFlightClaims.get(claim.jobId)?.get(claim.claimToken)
         : undefined;

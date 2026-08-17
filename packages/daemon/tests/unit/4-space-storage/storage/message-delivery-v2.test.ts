@@ -1139,8 +1139,10 @@ describe('repo — exempt dequeue + requeueAllProcessing (#2587/#2593)', () => {
     deliverMessage(repo, 'other-session', 'c', { origin: 'chat' });
     repo.dequeue(MESSAGE_DELIVERY, 10); // claim all → processing
     const runAt = Date.now();
-    const n = repo.requeueAllProcessing(MESSAGE_DELIVERY, runAt);
-    expect(n).toBe(3);
+    // Returns the re-enqueued IDs (count = length) so the shutdown path can
+    // spread the restart herd with the stale-reclaim jitter.
+    const requeued = repo.requeueAllProcessing(MESSAGE_DELIVERY, runAt);
+    expect(requeued).toHaveLength(3);
     const all = repo.listJobs({ queue: MESSAGE_DELIVERY, limit: 50 });
     expect(
       all.every((j) => j.status === 'pending' && j.runAt === runAt && j.startedAt === null)
