@@ -2359,6 +2359,187 @@ describe('QueryRunner', () => {
       expect(warns.some((w) => w.includes('Startup-timeout retry cancelled'))).toBe(true);
     });
 
+    it.skipIf(!sdkQueryIsMock)(
+      'aborts the rebuild when a Stop nulls the controller after the post-sleep guard',
+      async () => {
+        // Round-11 P1: the post-sleep guard checks controller-null BEFORE the
+        // recursive attempt starts. A Stop landing inside the child's REBUILD
+        // window (provider resolution → options build → controller
+        // publication) nulls the controller without aborting it, bumping the
+        // generation, or nulling queryPromise — and none of the child's own
+        // later checks can see it (the post-admission identity check compares
+        // against the child's OWN just-published controller). The retry site
+        // must hand the child the owner identity, and the child must refuse
+        // to publish or spawn on mismatch.
+        process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '25';
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        let buildCalls = 0;
+        let stoppedDuringRebuild = false;
+        buildSpy.mockImplementation(async () => {
+          buildCalls++;
+          if (buildCalls === 1) {
+            throw new Error('SDK startup timeout - query aborted');
+          }
+          if (buildCalls === 2) {
+            // The recursive attempt is mid-rebuild (post-guard, pre-spawn).
+            // Mimic handleInterrupt's observable effects: controller nulled,
+            // status 'interrupted', queue stopped — nothing else touched.
+            stoppedDuringRebuild = true;
+            ctx.queryAbortController = null;
+            getStateSpy.mockReturnValue({ status: 'interrupted' });
+            stopSpy();
+          }
+          return { model: 'claude-sonnet-4-20250514' };
+        });
+        let queryCalls = 0;
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => {
+          queryCalls++;
+          return {
+            close: () => {},
+            // Self-ending on a regression: an ungated rebuild would reach
+            // query(), die as a startup timeout, and burn to the cap instead
+            // of parking this test.
+            [Symbol.asyncIterator]: async function* () {
+              throw new Error('SDK startup timeout - query aborted');
+            },
+          };
+        });
+
+        try {
+          runner.start();
+          await ctx.queryPromise?.catch(() => {});
+
+          expect(stoppedDuringRebuild).toBe(true);
+          expect(buildCalls).toBe(2);
+          // No spawn, and the child never published a controller over the Stop.
+          expect(queryCalls).toBe(0);
+          expect(ctx.queryAbortController).toBeNull();
+          const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+            String(args[0])
+          );
+          expect(
+            warns.some((w) => w.includes('SDK startup retry abandoned: the session was stopped'))
+          ).toBe(true);
+          // Exactly the one scheduled retry from attempt 1 — the aborted
+          // rebuild did not respawn into the stopped session.
+          expect(
+            warns.filter((w) => w.includes('Auto-retrying query after startup timeout')).length
+          ).toBe(1);
+        } finally {
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+        }
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      'restores and clears seeded originalEnvVars before the recursive startup retry',
+      async () => {
+        // Round-11 P3: the startup-retry site's env restore had no coverage
+        // with a NON-EMPTY originalEnvVars (the provider-retry analog at the
+        // 5xx site has one; this site's own restore+clear was un-pinned).
+        // Seed real values and pin that by the time the recursive attempt
+        // builds options the restore ran (process.env carries the ORIGINAL
+        // value) and the ctx slot is cleared (the child re-captures fresh
+        // originals after its own provider application).
+        const ctx = createContext({
+          originalEnvVars: { ANTHROPIC_API_KEY: 'fake-original-key' },
+        });
+        runner = new QueryRunner(ctx);
+        let buildCalls = 0;
+        let originalEnvVarsAtRetryBuild: Record<string, string> | undefined;
+        let apiKeyAtRetryBuild: string | undefined;
+        buildSpy.mockImplementation(async () => {
+          buildCalls++;
+          if (buildCalls === 1) {
+            throw new Error('SDK startup timeout - query aborted');
+          }
+          originalEnvVarsAtRetryBuild = { ...(ctx.originalEnvVars as Record<string, string>) };
+          apiKeyAtRetryBuild = process.env.ANTHROPIC_API_KEY;
+          return { model: 'claude-sonnet-4-20250514' };
+        });
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => ({
+          close: () => {},
+          [Symbol.asyncIterator]: async function* () {
+            await new Promise(() => {});
+          },
+        }));
+
+        try {
+          runner.start();
+          const deadline = Date.now() + 2000;
+          while (buildCalls < 2 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(buildCalls).toBe(2);
+          // At the recursive attempt's build: restored (the ORIGINAL key is
+          // back in process.env, not this suite's 'sk-test-key') and cleared
+          // (an empty slot was handed to the child).
+          expect(apiKeyAtRetryBuild).toBe('fake-original-key');
+          expect(originalEnvVarsAtRetryBuild).toEqual({});
+
+          ctx.queryAbortController?.abort();
+          await ctx.queryPromise?.catch(() => {});
+        } finally {
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+        }
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      'stays processing across the startup-retry backoff (no setIdle before the recursive build)',
+      async () => {
+        // Round-11 P3: the startup-retry branch deliberately skips
+        // stateManager.setIdle (unlike the near-instant 1-shot retries) — a
+        // multi-second backoff that publishes idle would drop Stop presses
+        // (handleInterrupt early-returns on idle) and false-pass waitForIdle
+        // observers. The invariant had no pin.
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        let buildCalls = 0;
+        let setIdleCallsAtRetryBuild = -1;
+        buildSpy.mockImplementation(async () => {
+          buildCalls++;
+          if (buildCalls === 1) {
+            throw new Error('SDK startup timeout - query aborted');
+          }
+          setIdleCallsAtRetryBuild = setIdleSpy.mock.calls.length;
+          return { model: 'claude-sonnet-4-20250514' };
+        });
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => ({
+          close: () => {},
+          [Symbol.asyncIterator]: async function* () {
+            await new Promise(() => {});
+          },
+        }));
+
+        try {
+          runner.start();
+          const deadline = Date.now() + 2000;
+          while (buildCalls < 2 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(buildCalls).toBe(2);
+          // No idle was published anywhere between attempt 1's catch and the
+          // recursive attempt's options build. (The chain END may idle in the
+          // finally — only the backoff window is pinned.)
+          expect(setIdleCallsAtRetryBuild).toBe(0);
+
+          ctx.queryAbortController?.abort();
+          await ctx.queryPromise?.catch(() => {});
+        } finally {
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+        }
+      }
+    );
+
     it('cancels the retry when the session enters cleanup during the backoff', async () => {
       // The isCleaningUp disjunct had no dedicated coverage. Daemon shutdown
       // mid-backoff must not relaunch an orphaned query after the sleep.
@@ -2803,6 +2984,92 @@ describe('QueryRunner', () => {
             false,
             { prepend: true, durable: true }
           );
+        } finally {
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+        }
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      'routes a NON-TTL admission rejection the same way (abort + bounded retry)',
+      async () => {
+        // Round-11 P3: the flush's rejection handler distinguishes a TTL
+        // rejection only for the reason TEXT — every other rejection (e.g.
+        // 'Interrupted by user' from a concurrent queue clear) must still
+        // re-stage the prompt, abort the attempt, and land in the bounded
+        // startup-retry machine. Only the MessageQueueTimeoutError shape had
+        // coverage. RETRY_MAX=2 mirrors the TTL test: the describe default
+        // of 1 would exhaust the budget before the re-fed attempt could run.
+        process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '2';
+        const kickoff = {
+          uuid: 'nonttl-reject-uuid',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff]]]);
+
+        buildSpy
+          .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+          .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514' })
+          .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514' })
+          .mockRejectedValueOnce(new Error('stop after retry'));
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => ({
+          close: () => {},
+          [Symbol.asyncIterator]: async function* () {
+            await new Promise(() => {});
+          },
+        }));
+        // Controllable admission promise: reject on demand with a PLAIN
+        // error — name stays 'Error', nothing resembling the queue TTL.
+        let rejectAdmission: ((error: Error) => void) | null = null;
+        enqueueWithIdSpy.mockImplementation(
+          () =>
+            new Promise<void>((_resolve, reject) => {
+              rejectAdmission = reject;
+            })
+        );
+
+        try {
+          runner.start();
+          let deadline = Date.now() + 2000;
+          while (!rejectAdmission && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(rejectAdmission).toBeTypeOf('function');
+
+          rejectAdmission(new Error('Interrupted by user'));
+
+          // The handler aborted the attempt → starved escape → bounded retry
+          // → the next attempt flushes the re-staged prompt again.
+          deadline = Date.now() + 2000;
+          while (enqueueWithIdSpy.mock.calls.length < 2 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(enqueueWithIdSpy.mock.calls.length).toBe(2);
+          rejectAdmission?.(new Error('Interrupted by user'));
+          await ctx.queryPromise?.catch(() => {});
+
+          const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+            String(args[0])
+          );
+          const rejectionWarn = warns.find((w) => w.includes('admission rejected for message'));
+          // The NON-TTL reason text is surfaced verbatim, and the abort
+          // branch (not the producing-turn skip) handled it.
+          expect(rejectionWarn).toContain('Interrupted by user');
+          expect(rejectionWarn).toContain('aborting attempt for a bounded startup retry');
+          // Both rejected attempts were ROUTED into the bounded retry (the
+          // third claim then exhausted the budget — warn asserted below).
+          expect(
+            warns.filter((w) => w.includes('Auto-retrying query after startup timeout')).length
+          ).toBe(2);
+          expect(buildSpy).toHaveBeenCalledTimes(3);
+          expect(warns.some((w) => w.includes('retry budget exhausted'))).toBe(true);
         } finally {
           (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
         }
@@ -3717,11 +3984,13 @@ describe('QueryRunner', () => {
       }
     );
 
-    it('pins the staged-replay ordering and dedupe used by the merge (stageStartupReplayEntry)', () => {
-      // Round-9 test gap: staged.sort + the uuid dedupe inside the merge
-      // helper were un-pinned (the flush-order assertions only cover the
-      // downstream enqueue). Direct pin: out-of-order staging re-sorts by
-      // position in the flush's replay array, and duplicates are no-ops.
+    it('pins staged-replay ordering and uuid dedupe inside stageStartupReplayEntry itself', () => {
+      // Round-9 test gap, retitled round-11: this is a DIRECT unit pin of the
+      // staging helper's own staged.sort + uuid dedupe (the flush-order
+      // assertions elsewhere only cover the downstream enqueue). It does NOT
+      // pin the retry-site merge's dedupe — that is pinned end-to-end by
+      // 'merges a staged steer with the consumed kickoff at the retry site
+      // (mixed consumed/rejected)' above.
       const ctx = createContext();
       runner = new QueryRunner(ctx);
       const helper = runner as unknown as {
@@ -3833,6 +4102,145 @@ describe('QueryRunner', () => {
 
           ctx.queryAbortController?.abort();
           await ctx.queryPromise?.catch(() => {});
+        } finally {
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+        }
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      'folds a two-message flush back in FEED order (not the flush loop order)',
+      async () => {
+        // Round-11 P3: the flush records flushedEntries during its REVERSE
+        // iteration, so the array it leaves behind is reversed feed order.
+        // Folding it forward at the retry site re-staged [steer, kickoff],
+        // and the next flush would enqueue the prompts back-to-front. Two
+        // messages, both still pending at the retry site (admissions never
+        // settle), so the fold's iteration direction is the ONLY ordering
+        // input. RETRY_MAX=2: the describe default of 1 would settle the
+        // delivery before the fold's re-feed could be observed.
+        process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '2';
+        const kickoff = {
+          uuid: 'fold2-kickoff',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+        const steer = {
+          uuid: 'fold2-steer',
+          content: [{ type: 'text' as const, text: 'S' }],
+        };
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff, steer]]]);
+
+        buildSpy
+          .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+          .mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
+        // Attempt 2 (query call 1) dies as a startup timeout right after its
+        // flush enqueued BOTH messages; attempt 3 parks so the test can
+        // observe its flush order.
+        let queryCalls = 0;
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => {
+          queryCalls++;
+          return {
+            close: () => {},
+            [Symbol.asyncIterator]:
+              queryCalls === 1
+                ? async function* () {
+                    throw new Error('SDK startup timeout - query aborted');
+                  }
+                : async function* () {
+                    await new Promise(() => {});
+                  },
+          };
+        });
+        // Admissions never settle: both flushed entries reach the retry site
+        // via the fold — neither consumed (the mock generator starves) nor
+        // re-staged (no rejection ever fires).
+        enqueueWithIdSpy.mockImplementation(() => new Promise<void>(() => {}));
+
+        try {
+          runner.start();
+          const deadline = Date.now() + 2000;
+          while (enqueueWithIdSpy.mock.calls.length < 4 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          // Attempt 2's flush: reverse iteration over staging [kickoff,
+          // steer] → steer, kickoff. Attempt 3's flush re-feeds the FOLD —
+          // it must repeat the SAME order (a forward fold would re-stage
+          // [steer, kickoff] and enqueue kickoff, steer).
+          expect(enqueueWithIdSpy.mock.calls.map((call) => call[0])).toEqual([
+            steer.uuid,
+            kickoff.uuid,
+            steer.uuid,
+            kickoff.uuid,
+          ]);
+
+          ctx.queryAbortController?.abort();
+          await ctx.queryPromise?.catch(() => {});
+        } finally {
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+        }
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      'drops a stale generation consumed history on unwind (no full-content leak)',
+      async () => {
+        // Round-11 P3: the live finally deletes the generation's consumed
+        // map entry; the STALE branch did not — a superseded chain that
+        // reached no retry site (restart mid-stream, watchdog reset) leaked
+        // every consumed prompt's full content under a dead generation key
+        // for the session's lifetime.
+        const kickoff = {
+          uuid: 'stale-history-kickoff',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff]]]);
+
+        buildSpy.mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
+        let queryCalls = 0;
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => {
+          queryCalls++;
+          return {
+            close: () => {},
+            [Symbol.asyncIterator]: async function* () {
+              await new Promise(() => {});
+            },
+          };
+        });
+
+        try {
+          runner.start();
+          const deadline = Date.now() + 2000;
+          while (queryCalls < 1 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(queryCalls).toBe(1);
+
+          // Supersede (a replacement start bumped the generation), then end
+          // this chain: the abort breaks the for-await into a NORMAL (not
+          // thrown) unwind, so the finally's stale branch is the only
+          // clear-site the history has.
+          ctx.incrementQueryGeneration();
+          ctx.queryAbortController?.abort();
+          await ctx.queryPromise?.catch(() => {});
+
+          const history = (runner as unknown as { _consumedUserMessages: Map<number, unknown[]> })
+            ._consumedUserMessages;
+          expect(history.has(1)).toBe(false);
+          expect(history.size).toBe(0);
         } finally {
           (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
         }

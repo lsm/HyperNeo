@@ -244,6 +244,28 @@ describe('MessageQueue', () => {
     });
   });
 
+  describe('peekNextUserMessageId', () => {
+    it('skips an internal head-of-queue message and returns the first user entry', async () => {
+      // The startup-retry budget keys starved attempts by the pending
+      // KICKOFF uuid — an internal system message at the head of the queue
+      // must not hide it (peek scans for the first non-internal entry).
+      const internalPromise = queue.enqueueWithId('internal-head', 'System nudge', true);
+      const userPromise = queue.enqueueWithId('first-user', 'Hello');
+      expect(queue.peekNextUserMessageId()).toBe('first-user');
+
+      queue.clear();
+      await Promise.allSettled([internalPromise, userPromise]);
+    });
+
+    it('returns null when only internal messages are queued', async () => {
+      const internalPromise = queue.enqueueWithId('internal-only', 'System nudge', true);
+      expect(queue.peekNextUserMessageId()).toBeNull();
+
+      queue.clear();
+      await Promise.allSettled([internalPromise]);
+    });
+  });
+
   describe('hasPendingOrInFlight', () => {
     it('reports false for an unknown id and true while queued/claimed/yielded', async () => {
       expect(queue.hasPendingOrInFlight('nope')).toBe(false);

@@ -243,6 +243,18 @@ The three bugs share common dependencies. The plan addresses them in dependency 
 
 **Description**: Update `packages/daemon/tests/unit/agent/query-runner.test.ts` to remove all auto-recovery tests and update the remaining tests.
 
+> **Superseded in part (PR #2551)**: the acceptance criteria demanding
+> first-failure surfacing and an unconditional `messageQueue.clear()` on
+> startup timeout predate the bounded per-delivery retry this plan's Task 2.4
+> note already covers. A startup timeout is now retried with exponential
+> backoff (`HYPERNEO_SDK_STARTUP_RETRY_BASE_MS`) up to
+> `HYPERNEO_SDK_STARTUP_RETRY_MAX` (default 5; `0` restores surface-on-first-
+> timeout) before surfacing, and the retry path deliberately SKIPS
+> `messageQueue.clear()` so queued tails survive for the retry — the clear
+> criterion applies to the terminal (budget-exhausted / non-retried) path
+> only. Read "surfaced immediately on the first failure" as "surfaced once
+> the bounded retry budget is exhausted".
+
 **Files to modify**:
 - `packages/daemon/tests/unit/agent/query-runner.test.ts`:
   - Remove `startupTimeoutAutoRecoverAttempts` from the test context.

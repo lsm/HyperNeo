@@ -505,6 +505,33 @@ export interface QueryRunnerContext {
 }
 
 /**
+ * Mutable state threaded through one query chain's recursive attempts.
+ * Created at the top-level runQuery (from start()) and passed by reference
+ * to every recursive retry attempt of that chain.
+ */
+interface QueryRecoveryState {
+  /** True once a 429 rate-limit cooldown was scheduled for this chain. */
+  rateLimitCooldownScheduled: boolean;
+  /**
+   * Controller the startup-retry site observed owning the session when it
+   * scheduled its recursive attempt (this.ctx.queryAbortController, read
+   * right after the post-sleep cancellation guard). The recursive attempt
+   * re-verifies it immediately before publishing its OWN controller: a
+   * completed user Stop (interrupt-handler) or a stall-watchdog
+   * QueryLifecycleManager.stop() nulls ctx.queryAbortController WITHOUT
+   * aborting it, bumping the generation, or nulling queryPromise — every
+   * other guard in the rebuild window (the post-sleep checks, the child's
+   * post-admission identity check, which compares against the child's own
+   * just-published controller) is blind to exactly that, and the child
+   * would spawn a fresh subprocess on a session the user stopped.
+   * Consumed (nulled) at the verification so a LATER category's recursion —
+   * whose legitimate current controller is a different object — cannot
+   * false-positive against a stale handoff.
+   */
+  startupRetryOwnerController: AbortController | null;
+}
+
+/**
  * Runs SDK queries with streaming input mode
  */
 export class QueryRunner {
@@ -690,7 +717,10 @@ export class QueryRunner {
   private async runQuery(
     queryGeneration: number,
     retryAttempt = 0,
-    recoveryState = { rateLimitCooldownScheduled: false }
+    recoveryState: QueryRecoveryState = {
+      rateLimitCooldownScheduled: false,
+      startupRetryOwnerController: null,
+    }
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
 
@@ -1037,6 +1067,35 @@ export class QueryRunner {
       // clearing the startup timer) and on every other attempt exit via the
       // catch/finally backstops below — retries re-queue like any other start.
       const abortController = new AbortController();
+      // Startup-retry rebuild guard (round-11 P1): between the retry site's
+      // post-sleep cancellation checks and this publication, a completed user
+      // Stop or a lifecycle stop can NULL ctx.queryAbortController without
+      // aborting it, bumping the generation, or nulling queryPromise — every
+      // other guard in the window is blind to exactly that combination, and
+      // the post-admission check below cannot catch it either (it compares
+      // against THIS controller, freshly published one line down). If the
+      // controller the retry site handed down is no longer the current one,
+      // this chain lost ownership mid-rebuild: do not publish, do not spawn —
+      // surface as an abort so the interrupt/stop cleanup that already ran
+      // keeps the session. Consume the handoff here so a LATER category's
+      // recursion (whose legitimate owner is a different controller) cannot
+      // false-positive against a stale handoff.
+      const startupRetryOwnerController = recoveryState.startupRetryOwnerController;
+      recoveryState.startupRetryOwnerController = null;
+      if (
+        startupRetryOwnerController !== null &&
+        this.ctx.queryAbortController !== startupRetryOwnerController
+      ) {
+        logger.warn(
+          'SDK startup retry abandoned: the session was stopped while the retry ' +
+            'was rebuilding (controller ownership changed before spawn).'
+        );
+        const stoppedDuringRebuild = new Error(
+          'SDK startup retry abandoned: session stopped during rebuild'
+        );
+        stoppedDuringRebuild.name = 'AbortError';
+        throw stoppedDuringRebuild;
+      }
       this.ctx.queryAbortController = abortController;
       {
         const startupGate = getSdkStartupGate();
@@ -1633,6 +1692,16 @@ export class QueryRunner {
             return;
           }
 
+          // Hand the recursive attempt the controller that owns the session
+          // RIGHT NOW — everything above this line that could stop the chain
+          // has already been checked, so the remaining exposure is the child's
+          // own rebuild window (provider resolution, options build, gate wait)
+          // before it publishes its own controller. The child re-verifies
+          // this identity pre-publication; a Stop/lifecycle stop in that
+          // window NULLS the field without tripping any other guard.
+          // (Round-11 P1 — see QueryRecoveryState.)
+          recoveryState.startupRetryOwnerController = this.ctx.queryAbortController;
+
           // Delivery row settled failed: the 30s delivery-consumption timeout
           // (awaitDeliveryConsumption) and the dead-letter paths terminalize
           // the kickoff's durable row while this chain sleeps. Retrying would
@@ -1717,8 +1786,14 @@ export class QueryRunner {
           // harmless no-op rejection precisely because this staging carries
           // the message. The next flush's duplicate guard
           // (hasPendingOrInFlight) resolves any double-carrier, and the queue
-          // TTL bounds it.
-          for (const flushed of flushedReplayEntries ?? []) {
+          // TTL bounds it. Iterate back-to-front: the flush recorded these in
+          // its own REVERSE iteration order, so its array is reversed feed
+          // order — folding forward would re-stage a multi-message fold
+          // back-to-front and the next flush would enqueue the prompts in
+          // the wrong sequence. (Round-11 P3.)
+          const flushedToFold = flushedReplayEntries ?? [];
+          for (let i = flushedToFold.length - 1; i >= 0; i--) {
+            const flushed = flushedToFold[i];
             if (!mergedEntries.some((entry) => entry.uuid === flushed.uuid)) {
               mergedEntries.push(flushed);
             }
@@ -2325,7 +2400,18 @@ export class QueryRunner {
         this.ctx.queryPromise = null;
       }
       // Stale query: skip shared-state cleanup — the new query owns it — with
-      // ONE exception: entries THIS attempt flushed into the queue must not
+      // TWO exceptions. First, this generation's consumed-message history:
+      // the map is keyed by generation and nothing reads a superseded key
+      // again (the replacement accumulates under its own), but each entry
+      // retains full message content, so leaving it leaks every prompt of
+      // every superseded turn for the session's lifetime. The retry site and
+      // retrySupersededByReplacement already delete on their paths; this is
+      // the terminal-unwind counterpart for stale ends that reach no retry
+      // site (restart mid-stream, watchdog reset). (Round-11 P3.)
+      if (isStaleQuery) {
+        this._consumedUserMessages.delete(queryGeneration);
+      }
+      // Second exception: entries THIS attempt flushed into the queue must not
       // survive into the replacement's generator. restart() supersedes via
       // stop-without-clear, so a still-pending flushed entry would otherwise
       // be consumed as the replacement turn's own prompt (foreign/duplicate
