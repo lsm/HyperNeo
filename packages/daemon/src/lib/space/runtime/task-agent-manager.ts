@@ -2090,24 +2090,25 @@ export class TaskAgentManager {
     inputKind: MessageInputKind = 'task',
     messageId?: string
   ): Promise<string> {
-    // Gate: peer messages must not drive sessions of a stopped/paused space.
-    // A stop quiesce interrupts sessions, and a rowless merger (no row to
-    // park) or an out-of-snapshot row (blocked/rate-limited, binding kept)
-    // would still be a resolvable peer — injecting would restart the
-    // interrupted session via ensureQueryStarted and drive work the operator
-    // paused. The routers report the failed delivery, so the sender sees the
-    // failure rather than silently losing the message.
+    // Gate: peer messages must not drive sessions of a STOPPED space. A stop
+    // quiesce interrupts sessions, and a rowless merger (no row to park) or a
+    // row that keeps its binding would otherwise remain a resolvable peer —
+    // injecting would restart the interrupted session via ensureQueryStarted
+    // and drive work the operator stopped. Deliberately NOT gated on paused:
+    // pause keeps live sessions running by contract (`Space.paused` =
+    // "running work continues"), so a live session on a paused space must
+    // still be reachable. The routers report the failed delivery, so the
+    // sender sees the failure rather than silently losing the message.
     const gateSpaceId = await this.resolveSpaceIdForSubSession(subSessionId);
     if (gateSpaceId) {
       const gateSpace = await this.config.spaceManager.getSpace(gateSpaceId);
-      if (gateSpace?.stopped || gateSpace?.paused) {
+      if (gateSpace?.stopped) {
         log.warn(
           `TaskAgentManager.injectSubSessionMessageWithOrigin: rejecting inject to session ` +
-            `${subSessionId} — space ${gateSpaceId} is ${gateSpace.stopped ? 'stopped' : 'paused'}`
+            `${subSessionId} — space ${gateSpaceId} is stopped`
         );
         throw new Error(
-          `Cannot inject message to session ${subSessionId} — space ${gateSpaceId} is ` +
-            `${gateSpace.stopped ? 'stopped' : 'paused'}`
+          `Cannot inject message to session ${subSessionId} — space ${gateSpaceId} is stopped`
         );
       }
     }
@@ -4571,16 +4572,6 @@ export class TaskAgentManager {
   }
 
   /**
-   * Resolve the workflow execution that owns a sub-session.
-   *
-   * Normal path: NodeExecution.agentSessionId points at the sub-session.
-   * Recovery path: deterministic workflow sub-session ids include the execution
-   * id (`space:<spaceId>:task:<taskId>:exec:<nodeExecutionId>`). If a daemon
-   * restart or spawn race left `agent_session_id` null, use that embedded id to
-   * repair the row and continue rehydration/self-heal without discarding the
-   * existing session transcript or queued message.
-   */
-  /**
    * Resolve the space a sub-session belongs to, for the stopped/paused
    * injection gate. Row-bearing sessions resolve via their execution → run;
    * rowless sub-sessions (the post-approval merger, #852) embed
@@ -4605,6 +4596,16 @@ export class TaskAgentManager {
     return null;
   }
 
+  /**
+   * Resolve the workflow execution that owns a sub-session.
+   *
+   * Normal path: NodeExecution.agentSessionId points at the sub-session.
+   * Recovery path: deterministic workflow sub-session ids include the execution
+   * id (`space:<spaceId>:task:<taskId>:exec:<nodeExecutionId>`). If a daemon
+   * restart or spawn race left `agent_session_id` null, use that embedded id to
+   * repair the row and continue rehydration/self-heal without discarding the
+   * existing session transcript or queued message.
+   */
   private resolveNodeExecutionForSubSession(subSessionId: string): NodeExecution | null {
     const bySessionId = this.config.nodeExecutionRepo.listByAgentSessionId(subSessionId);
     const embeddedExecutionId = this.parseExecutionIdFromSubSessionId(subSessionId);

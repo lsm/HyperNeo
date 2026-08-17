@@ -385,12 +385,13 @@ export interface UpdateSpaceParams {
  * - `in_progress` — a Task Agent session is actively working on this task
  * - `review`      — workflow agents completed; awaiting human review/approval (supervised mode)
  * - `approved`    — work has been approved (human or auto_policy); a post-approval
- *                   executor (e.g. Task Agent running a `postApproval` route such
+ *                   executor (e.g. a Task Agent running a `postApproval` route such
  *                   as a PR merge) may still be executing before the task reaches
- *                   its terminal `done` state. No runtime consumer exists yet —
- *                   PR 2 of the task-agent-as-post-approval-executor refactor
- *                   wires this status in. See
- *                   `docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md`.
+ *                   its terminal `done` state. The runtime consumes it:
+ *                   `dispatchPostApproval` routes the approved step, the resume
+ *                   sweep (`resumeDeferredPostApprovals`) re-drives deferrals
+ *                   stamped with a blocked reason, and the tick completion sweep
+ *                   quiesces siblings once only the merge remains.
  * - `done`        — task completed successfully
  * - `blocked`     — task requires human attention or intervention
  * - `cancelled`   — task was cancelled and will not be completed

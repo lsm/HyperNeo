@@ -481,7 +481,9 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     expect(injected).toEqual([]);
   });
 
-  test('peer-injection gate: a paused space rejects the inject too', async () => {
+  test('peer-injection gate: a paused space still injects (pause keeps live sessions reachable)', async () => {
+    // Pause contract: running work continues — a live session on a paused
+    // space must stay reachable. The gate is stopped-ONLY.
     const tam = makeManager([]);
     (tam.config as unknown as Record<string, unknown>).spaceManager = {
       getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws', paused: true }),
@@ -491,15 +493,13 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     const injected: string[] = [];
     (
       tam as unknown as { injectMessageIntoSession: (...a: unknown[]) => Promise<string> }
-    ).injectMessageIntoSession = async () => {
-      injected.push('x');
+    ).injectMessageIntoSession = async (_s: unknown, m: string) => {
+      injected.push(m);
       return 'msg-id';
     };
 
-    await expect(tam.injectSubSessionMessage(MERGER_SESSION, 'peer message')).rejects.toThrow(
-      /paused/
-    );
-    expect(injected).toEqual([]);
+    await tam.injectSubSessionMessage(MERGER_SESSION, 'peer message');
+    expect(injected).toEqual(['peer message']);
   });
 
   test('peer-injection gate: an active space injects normally', async () => {

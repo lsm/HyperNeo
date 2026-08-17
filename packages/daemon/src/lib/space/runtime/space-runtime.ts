@@ -1962,20 +1962,16 @@ export class SpaceRuntime {
       for (const exec of stopSnapshot) {
         try {
           // Re-read: a row that legitimately settled during the cleanup window
-          // (not interrupted) must not be regressed.
+          // (not interrupted) must not be regressed. Blocked rows are
+          // deliberately NOT in the snapshot: their sessions are live (stop's
+          // cleanup filter excludes blocked tasks, so nothing interrupted
+          // them) and the stopped-only injection gate already prevents peer
+          // messages from driving them during the quiesce — parking would
+          // detach a LIVE binding.
           const current = this.config.nodeExecutionRepo.getById(exec.id);
           if (!current) continue;
-          if (current.status === 'in_progress' || current.status === 'waiting_rebind') {
-            this.config.nodeExecutionRepo.resetForCleanRecovery(exec.id);
-          } else if (current.status === 'blocked' && current.agentSessionId) {
-            // Out-of-snapshot status preserved: the blocked row was
-            // interrupted like any in-flight row, but the blocked status is
-            // meaningful (a dependency must clear first) — detach the dead
-            // binding so it stops being a resolvable peer, keep the status.
-            this.config.nodeExecutionRepo.update(exec.id, { agentSessionId: null });
-          } else {
-            continue; // settled or already detached — leave alone
-          }
+          if (current.status !== 'in_progress' && current.status !== 'waiting_rebind') continue;
+          this.config.nodeExecutionRepo.resetForCleanRecovery(exec.id);
           this.taskCrashCounts.delete(`${exec.workflowRunId}:${exec.id}`);
           parkedRuns.add(exec.workflowRunId);
           parkedCount++;
@@ -4471,27 +4467,6 @@ export class SpaceRuntime {
   }
 
   /**
-   * Public entry point — transition a task into `approved` and dispatch the
-   * post-approval step via `PostApprovalRouter`.
-   *
-   * Called by:
-   *   - The `space-runtime.ts` tick loop once an end-node `approve_task` has
-   *     flagged the task ready to approve (via `reportedStatus='done'`).
-   *   - `SpaceRuntimeService.dispatchPostApproval`, invoked from the
-   *     `spaceTask.approvePendingCompletion` RPC handler when a human approves
-   *     a task paused at a `task_completion` checkpoint.
-   *
-   * Contract:
-   *   1. If the task is not already `approved`, transition it there via
-   *      `SpaceTaskManager.setTaskStatus` (so the centralised transition
-   *      validator runs).
-   *   2. Call `PostApprovalRouter.route()` — which handles the no-route,
-   *      inline (Task Agent), spawn, already-routed, and skip branches.
-   *
-   * Returns the `PostApprovalRouteResult` from the router (or a `skipped`
-   * result when the router is not yet wired / the task is missing).
-   */
-  /**
    * Best-effort `space.task.updated` emit for deferral stamps, which write
    * via the raw repo (no event). The web store refreshes tasks ONLY on this
    * event — without it, connected clients keep rendering the pre-stop healthy
@@ -4510,6 +4485,34 @@ export class SpaceRuntime {
     }
   }
 
+  /**
+   * Public entry point — transition a task into `approved` and dispatch the
+   * post-approval step via `PostApprovalRouter`.
+   *
+   * Called by:
+   *   - The `space-runtime.ts` tick loop once an end-node `approve_task` has
+   *     flagged the task ready to approve (via `reportedStatus='done'`).
+   *   - `SpaceRuntimeService.dispatchPostApproval`, invoked from the
+   *     `spaceTask.approvePendingCompletion` RPC handler when a human approves
+   *     a task paused at a `task_completion` checkpoint.
+   *   - `resumeDeferredPostApprovals` (the resume sweep) and the stop-race
+   *     compensation, re-driving deferred dispatches.
+   *
+   * Contract:
+   *   1. If the task is not already `approved`, transition it there via
+   *      `SpaceTaskManager.setTaskStatus` (so the centralised transition
+   *      validator runs).
+   *   2. Call `PostApprovalRouter.route()` — which handles the no-route,
+   *      inline (Task Agent), spawn, already-routed, and skip branches.
+   *
+   * Returns the `PostApprovalRouteResult` from the router (or a `skipped`
+   * result when the router is not yet wired / the task is missing). May
+   * THROW `PostApprovalDeferredError` when the space is stopped/paused (or
+   * the post-route correction fails) — the approval is committed and the
+   * blocked reason stamped, and the resume sweep re-drives. Concurrent
+   * dispatches for the same task short-circuit as `{mode:'skipped',
+   * inFlight:true}` while another owns the spawn.
+   */
   async dispatchPostApproval(
     taskId: string,
     approvalSource: SpaceApprovalSource,
@@ -8263,18 +8266,28 @@ export class SpaceRuntime {
       if (now - observedAt <= thresholdMs) continue;
 
       if (state.nagCount < MAX_AGENT_STUCK_NAGS) {
-        const nagMessageId = await tam.injectRuntimeRecoveryMessage(
-          execution.agentSessionId,
-          this.buildRuntimeNagMessage(runId, execution, observedAt, classification.reason)
-        );
-        state.lastRuntimeNagMessageId = nagMessageId;
-        state.nagCount += 1;
-        state.lastAction = 'nag';
-        state.lastActionAt = now;
-        log.warn(
-          `SpaceRuntime: sent runtime nag to stuck agent execution ${execution.id} ` +
-            `(agent ${execution.agentName}, session ${execution.agentSessionId})`
-        );
+        // Wrapped like the sibling recovery injects: a stop landing between
+        // the guard's space read and the nag makes the stopped-injection gate
+        // reject — that must not abort the rest of the tick. The stuck row is
+        // left for the resume sweep.
+        try {
+          const nagMessageId = await tam.injectRuntimeRecoveryMessage(
+            execution.agentSessionId,
+            this.buildRuntimeNagMessage(runId, execution, observedAt, classification.reason)
+          );
+          state.lastRuntimeNagMessageId = nagMessageId;
+          state.nagCount += 1;
+          state.lastAction = 'nag';
+          state.lastActionAt = now;
+          log.warn(
+            `SpaceRuntime: sent runtime nag to stuck agent execution ${execution.id} ` +
+              `(agent ${execution.agentName}, session ${execution.agentSessionId})`
+          );
+        } catch (err) {
+          log.warn(
+            `SpaceRuntime: failed to send runtime nag to stuck agent execution ${execution.id}: ${formatCommandError(err)}`
+          );
+        }
         continue;
       }
 

@@ -2935,11 +2935,11 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(nodeExecutionRepo.getById(execution.id)!.agentSessionId).toBe('s1');
     });
 
-    test('snapshot park: a blocked row keeps its status but loses the dead binding', async () => {
-      // Out-of-snapshot rows: park's clean-recovery reset only handles the
-      // two in-flight statuses, so a blocked row would keep its binding and
-      // remain a resolvable peer that peer messages could drive during the
-      // quiesce. Park clears the binding while preserving the blocked status.
+    test('snapshot park: a blocked row is left alone (its session is live, not interrupted)', async () => {
+      // Blocked tasks are excluded from stop's cleanup filter, so a blocked
+      // execution's session is NEVER interrupted by the stop — its binding is
+      // live and must not be detached. The stopped-only injection gate is
+      // what keeps peer messages from driving it during the quiesce.
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
         isTaskAgentAlive: () => true,
       });
@@ -2954,8 +2954,8 @@ describe('SpaceRuntime — tick loop correctness', () => {
       rt.parkInFlightExecutionsForSpace(SPACE_ID, [nodeExecutionRepo.getById(execution.id)!]);
 
       const parked = nodeExecutionRepo.getById(execution.id)!;
-      expect(parked.status).toBe('blocked'); // status preserved
-      expect(parked.agentSessionId).toBeNull(); // binding detached — no longer a peer
+      expect(parked.status).toBe('blocked');
+      expect(parked.agentSessionId).toBe('s-blocked'); // live binding untouched
     });
 
     test('completion sweep: a mutex skip maps to approved (sibling quiesce stays coherent)', async () => {
