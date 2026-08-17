@@ -1190,12 +1190,21 @@ export class AcpQueryRunner {
         // admission-TTL-rejected — the entry-null below already cleared
         // _lastConsumedUserMessage for that round); otherwise the prompt this
         // attempt consumed is the replay. QueryRunner MERGES the consumed set
-        // with its staging here (round-9 P1) because its replay can hold a
-        // kickoff plus trailing steers with no delivery-layer recovery lane;
-        // ACP replays exactly ONE prompt, and a staged entry plus a consumed
-        // prompt in the same round are necessarily the same uuid (the staging
-        // came from this chain's own re-feed of that uuid) — the ?? preference
-        // is that dedupe-merge under ACP's single-prompt invariant.
+        // with its staging here (round-9 P1) and folds its flushed entries
+        // back in (round-10 P3) because its replay can hold a kickoff plus
+        // trailing steers whose durable rows are 'consumed' — no
+        // delivery-layer recovery lane — and its rejection handler's
+        // controller-IDENTITY guard no-ops once the recursion replaces
+        // ctx.queryAbortController, so a late TTL leaves those prompts
+        // lane-less. ACP needs neither: it replays exactly ONE prompt whose
+        // durable row this branch REOPENED to 'enqueued' (delivery-re-
+        // drivable), and the rejection handler below is GENERATION-guarded —
+        // the recursion keeps the same queryGeneration, so a late TTL still
+        // re-stages through the handler rather than dying. A staged entry
+        // plus a consumed prompt in the same round are necessarily the same
+        // uuid (the staging came from this chain's own re-feed of it) — the
+        // ?? preference is that dedupe-merge under ACP's single-prompt
+        // invariant.
         const retryMessage = this._pendingStartupReplay ?? this._lastConsumedUserMessage;
         if (retryMessage) {
           try {
