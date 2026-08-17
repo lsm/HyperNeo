@@ -347,6 +347,21 @@ export class MessageQueue {
   }
 
   /**
+   * True when `messageId` is admitted and still waiting in the queue — the
+   * narrower sibling of {@link MessageQueue.hasPendingOrInFlight} that
+   * excludes entries claimed by a generator or already yielded to a runner.
+   * The startup-retry replay guard uses it to distinguish a FRESH redrive
+   * admission (sitting in `queue`) from the timed-out attempt's own stale
+   * `yielded` entry: a prompt whose stdin write never fired stays in
+   * `yielded` until the admission TTL settles it, and suppressing the
+   * re-feed on that stale entry would leave the retry with an empty (but
+   * sized) queue and a wedged spawn.
+   */
+  hasPendingAdmission(messageId: string): boolean {
+    return this.queue.some((message) => message.id === messageId);
+  }
+
+  /**
    * Start the message queue (allows messages to be yielded)
    * Increments generation to invalidate old generators
    */

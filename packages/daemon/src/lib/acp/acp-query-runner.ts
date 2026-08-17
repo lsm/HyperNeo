@@ -1021,11 +1021,22 @@ export class AcpQueryRunner {
           `Startup-timeout retry budget exhausted for this delivery ` +
             `(${this._startupTimeoutRetryState.retries} consecutive timeout(s), ` +
             `cap ${getMaxStartupTimeoutRetries()}); giving up and surfacing the failure — ` +
-            `the per-prompt settle already terminalized the delivery row.`
+            `the delivery layer settles the durable row.`
         );
-        // Fall through to the terminal error path below: the per-prompt
-        // finally already marked the kickoff row failed (markACPDeliveryFailed),
-        // and handleError surfaces the actionable resend hint.
+        // Reset the created-but-never-accepted ACP session id, exactly like a
+        // granted retry round does: this chain created the remote session but
+        // never got a message through, so keeping the id would steer the next
+        // resend into loadSession/resumeSession against a session that never
+        // processed anything ("Failed to resume ACP session … Reset Agent")
+        // instead of a fresh create. (Mirrors the retry-round reset below.)
+        if (createdAcpSessionDuringRun && !receivedAcpMessageDuringRun) {
+          this.persistAcpSessionId(undefined);
+        }
+        // Fall through to the terminal error path below. When a prompt was
+        // consumed, the per-prompt finally already marked the kickoff row
+        // failed (markACPDeliveryFailed); when the handshake itself starved,
+        // the row is still 'enqueued' and a live delivery job owns settling
+        // it. Either way handleError surfaces the actionable resend hint.
       } else {
         const maxStartupRetries = getMaxStartupTimeoutRetries();
         const delayMs = getStartupRetryDelayMs(retryNumber);
@@ -1214,16 +1225,26 @@ export class AcpQueryRunner {
         // (PR #2552 gates SDK spawns only), so no gate-admission deferral is
         // needed — the enqueue-to-consume gap is the recursion itself.
         if (retryMessage) {
-          // Duplicate guard (mirrors the SDK runner's staged-replay guard):
-          // the reopen above left the durable row 'enqueued', so a
-          // delivery-layer redrive during the backoff window may have
-          // re-admitted this same uuid — admitWithId is not idempotent, and
-          // feeding it twice would hand the ACP agent the same prompt twice.
-          // The retry's generator consumes the existing admission instead.
-          if (messageQueue.hasPendingOrInFlight(retryMessage.uuid)) {
+          // Duplicate guard (mirrors the SDK runner's staged-replay guard,
+          // narrowed to the queue): the reopen above left the durable row
+          // 'enqueued', so a delivery-layer redrive during the backoff window
+          // may have re-admitted this same uuid — admitWithId is not
+          // idempotent, and feeding it twice would hand the ACP agent the
+          // same prompt twice; the retry's generator consumes the existing
+          // admission instead. PENDING-ONLY (hasPendingAdmission), not
+          // hasPendingOrInFlight: this attempt's own admission lingers in
+          // `yielded` when the timed-out prompt's stdin write never fired
+          // (onSubmitted never ran, so onSent never settled it), and skipping
+          // the re-feed on that stale entry would leave the retry with an
+          // empty-but-sized queue — the generator arms the startup timer and
+          // blocks in waitForNextMessage (not abort-wakeable): one burned
+          // spawn plus a wedged window until the admission TTL / stall
+          // watchdog. A FRESH redrive admission sits in `queue`; our own
+          // stale entry self-settles at its TTL and duplicates nothing.
+          if (messageQueue.hasPendingAdmission(retryMessage.uuid)) {
             logger.warn(
-              `Startup replay skip: message ${retryMessage.uuid} is already pending or ` +
-                'in-flight (a redrive re-admitted it); not feeding it twice.'
+              `Startup replay skip: message ${retryMessage.uuid} is already pending ` +
+                '(a redrive re-admitted it); not feeding it twice.'
             );
           } else {
             messageQueue.enqueueWithId(retryMessage.uuid, retryMessage.content).catch(() => {});
@@ -1361,11 +1382,22 @@ export class AcpQueryRunner {
       // An identified, DIFFERENT delivery — the previous delivery's backoff
       // state must not leak into it.
       this._startupTimeoutRetryState = { key: deliveryKey, retries: 1 };
+    } else if (
+      deliveryKey === null &&
+      state.key !== null &&
+      this.ctx.db.getMessageByStatusAndUuid(this.ctx.session.id, 'failed', state.key)
+    ) {
+      // Unidentified (starved) attempt, but the in-flight budget belongs to a
+      // delivery whose durable row has already settled failed — that delivery
+      // is over, so this is a NEW starved delivery: fresh budget. Without this
+      // guard it would inherit the exhausted count and settle failed with zero
+      // retries of its own (or start deep into the backoff schedule).
+      this._startupTimeoutRetryState = { key: null, retries: 1 };
     } else {
-      // Same delivery, or an unidentified (starved) attempt: charge the
-      // in-flight budget. Charging starved attempts instead of resetting keeps
-      // a consume/no-consume flap from resetting the budget every other round
-      // (which would unbound the loop this cap exists to close).
+      // Same delivery, or a starved attempt whose predecessor has NOT settled:
+      // charge the in-flight budget. Charging (rather than resetting) keeps a
+      // consume/no-consume flap from resetting the budget every other round,
+      // which would unbound the loop this cap exists to close.
       state.retries += 1;
     }
     const { retries } = this._startupTimeoutRetryState;
