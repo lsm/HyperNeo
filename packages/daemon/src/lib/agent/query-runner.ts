@@ -24,6 +24,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import { Logger } from '../logger';
 import { isNonRetryableBillingError } from './fallback-recovery';
 import type { OriginalEnvVars, ProviderEnvVars } from '../provider-service';
+import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service';
 import {
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
@@ -763,7 +764,7 @@ export class QueryRunner {
           },
         };
         const providerEnvVars = providerService.getProviderEnvVars(providerSession);
-        extraProviderManagedEnvVars = ['CLAUDE_CODE_SUBAGENT_MODEL', 'ENABLE_TOOL_SEARCH'].filter(
+        extraProviderManagedEnvVars = NON_ANTHROPIC_PREFIX_PROVIDER_VARS.filter(
           (key) => providerEnvVars[key] !== undefined
         );
         applyProviderEnvToFlagSettings(queryOptions, providerEnvVars);

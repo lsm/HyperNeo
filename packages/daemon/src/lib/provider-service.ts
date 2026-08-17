@@ -64,6 +64,20 @@ function toLegacyProviderInfo(newInfo: NewProviderInfo): ProviderInfo {
 }
 
 /**
+ * Provider-controlled vars that are not ANTHROPIC_*-prefixed.
+ *
+ * Unlike the ANTHROPIC_* routing vars, these are forwarded into options.env
+ * for non-Anthropic sessions (provider's own value only — see
+ * getMergedEnvironmentVars in query-options-builder.ts) and treated as
+ * provider-managed extras during the post-apply env refresh in query-runner.
+ * Single source of truth so the two call sites cannot drift.
+ */
+export const NON_ANTHROPIC_PREFIX_PROVIDER_VARS = [
+  'CLAUDE_CODE_SUBAGENT_MODEL',
+  'ENABLE_TOOL_SEARCH',
+] as const;
+
+/**
  * Environment variables for provider routing
  *
  * IMPORTANT: These must be set in process.env (parent process) before SDK query creation.
