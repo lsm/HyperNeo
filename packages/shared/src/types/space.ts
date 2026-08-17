@@ -276,7 +276,9 @@ export interface Space {
   /** Whether the space runtime is paused (no new tasks scheduled; running work continues) */
   paused: boolean;
   /**
-   * Whether the space runtime is stopped (all active work killed; no auto-start on daemon restart).
+   * Whether the space runtime is stopped (active agent sessions interrupted
+   * non-destructively and in-flight executions parked for a clean re-drive;
+   * task/run statuses preserved; no auto-start on daemon restart).
    * A stopped space must be explicitly started again to resume. Takes precedence over `paused`.
    */
   stopped: boolean;

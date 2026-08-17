@@ -116,9 +116,12 @@ export function isPostApprovalRoutingEnabled(
  *     not a dead end.
  */
 export class PostApprovalDeferredError extends Error {
-  constructor(message: string) {
+  /** Why the dispatch deferred — drives the resumed-race compensation. */
+  readonly cause: 'stopped' | 'paused' | 'unreadable';
+  constructor(message: string, cause: 'stopped' | 'paused' | 'unreadable' = 'stopped') {
     super(message);
     this.name = 'PostApprovalDeferredError';
+    this.cause = cause;
   }
 }
 
@@ -226,7 +229,17 @@ export type PostApprovalRouteResult =
       missingKeys: string[];
     }
   | { mode: 'already-routed'; postApprovalSessionId: string }
-  | { mode: 'skipped'; reason: string };
+  | {
+      mode: 'skipped';
+      reason: string;
+      /**
+       * `true` marks the MUTEX variant of skipped — another dispatch for the
+       * same task owns the work and will clear or re-stamp the reason on
+       * completion — as opposed to the router's permanent skipped (broken
+       * route, manual recovery). Consumers branch on it.
+       */
+      inFlight?: boolean;
+    };
 
 // ---------------------------------------------------------------------------
 // Event shapes (§2.3)

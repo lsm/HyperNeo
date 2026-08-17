@@ -2832,6 +2832,108 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
     });
 
+    test('park clears the supervision budgets the resume must not inherit', async () => {
+      // Pre-charged counters are the point: without them the budget clears
+      // were untestable (deleting the clears passed the suite — nothing was
+      // ever charged, making size===0 asserts tautological).
+      const rt = new SpaceRuntime(buildConfig());
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, { status: 'in_progress', agentSessionId: 's1' });
+
+      const internals = rt as unknown as {
+        taskCrashCounts: Map<string, number>;
+        blockedRetryCounts: Map<string, number>;
+        agentStuckRecovery: Map<string, unknown>;
+        nonTerminalIdleStates: Map<string, unknown>;
+      };
+      internals.taskCrashCounts.set(`${run.id}:${execution.id}`, 2);
+      internals.blockedRetryCounts.set(run.id, 1);
+      internals.agentStuckRecovery.set(`${run.id}:${execution.id}`, {});
+      internals.nonTerminalIdleStates.set(`${run.id}:${execution.id}`, {});
+
+      rt.holdSpaceDeliveries(SPACE_ID);
+      rt.parkInFlightExecutionsForSpace(SPACE_ID);
+
+      // Fresh budgets on resume — no pre-stop crash/stuck history carries.
+      expect(internals.taskCrashCounts.has(`${run.id}:${execution.id}`)).toBe(false);
+      expect(internals.blockedRetryCounts.has(run.id)).toBe(false);
+      expect(internals.agentStuckRecovery.has(`${run.id}:${execution.id}`)).toBe(false);
+      expect(internals.nonTerminalIdleStates.has(`${run.id}:${execution.id}`)).toBe(false);
+      expect(nodeExecutionRepo.getById(execution.id)!.status).toBe('pending');
+
+      // Same pins through the SNAPSHOT path (the production stopActiveWork
+      // route): re-charge, re-park via snapshot, budgets fresh again.
+      nodeExecutionRepo.update(execution.id, { status: 'in_progress', agentSessionId: 's1' });
+      internals.taskCrashCounts.set(`${run.id}:${execution.id}`, 1);
+      internals.blockedRetryCounts.set(run.id, 2);
+      internals.agentStuckRecovery.set(`${run.id}:${execution.id}`, {});
+      internals.nonTerminalIdleStates.set(`${run.id}:${execution.id}`, {});
+      rt.parkInFlightExecutionsForSpace(SPACE_ID, [nodeExecutionRepo.getById(execution.id)!]);
+      expect(internals.taskCrashCounts.has(`${run.id}:${execution.id}`)).toBe(false);
+      expect(internals.blockedRetryCounts.has(run.id)).toBe(false);
+      expect(internals.agentStuckRecovery.has(`${run.id}:${execution.id}`)).toBe(false);
+      expect(internals.nonTerminalIdleStates.has(`${run.id}:${execution.id}`)).toBe(false);
+      expect(nodeExecutionRepo.getById(execution.id)!.status).toBe('pending');
+    });
+
+    test('completion sweep: a mutex skip maps to approved (sibling quiesce stays coherent)', async () => {
+      // The skipped result has two meanings; the MUTEX variant means another
+      // dispatch owns the task, which crossed the post-approval boundary
+      // exactly like a spawn. Mapping it to the pre-dispatch snapshot status
+      // (in_progress) would mark the task non-terminal and skip the sibling
+      // quiesce although only the merge remains.
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isTaskAgentAlive: () => true,
+        isSessionAlive: () => true, // the sibling's session reads live
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+        { id: 'step-b', name: 'Build', agentId: AGENT_CODER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      await rt.executeTick(); // start node A spawns (the future sibling)
+      // The END node (step-b) reports completion while A is still mid-flight —
+      // exactly the boundary race the sibling quiesce exists for.
+      nodeExecutionRepo.create({
+        workflowRunId: run.id,
+        workflowNodeId: 'step-b',
+        agentName: 'Coder',
+        agentId: 'agent-coder',
+        status: 'idle',
+      });
+      taskRepo.updateTask(tasks[0].id, {
+        reportedStatus: 'done',
+        pendingCompletionSubmittedByNodeId: 'step-b',
+      });
+      const spawnedExecution = nodeExecutionRepo
+        .listByWorkflowRun(run.id)
+        .find((e) => e.workflowNodeId === STEP_A)!;
+      // Mid-flight with a live session binding — the quiesce filter's shape.
+      nodeExecutionRepo.update(spawnedExecution.id, {
+        status: 'in_progress',
+        agentSessionId: 'sib-a',
+      });
+      rt.dispatchPostApproval = async () =>
+        ({
+          mode: 'skipped',
+          reason: 'another post-approval dispatch is already in flight',
+          inFlight: true,
+        }) as unknown as Awaited<ReturnType<SpaceRuntime['dispatchPostApproval']>>;
+
+      await expect(rt.executeTick()).resolves.toBeUndefined();
+
+      // taskTerminal must hold for the mutex skip: the in-flight sibling on
+      // the start node quiesces to idle. Mapping a mutex skip to the
+      // pre-dispatch snapshot status would leave it running past the
+      // post-approval boundary.
+      expect(nodeExecutionRepo.getById(spawnedExecution.id)!.status).toBe('idle');
+    });
+
     test('paused space: agent-source completion defers durably instead of wedging the tick', async () => {
       // The completion sweep runs while paused (pause keeps live sessions
       // working; their completions report while paused). The dispatch hold

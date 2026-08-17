@@ -95,6 +95,7 @@ function buildRuntime(): Ctx {
       },
       spawnPostApprovalSubSession: async () => ({ sessionId: 'stub-session' }),
       isSessionAlive: () => false,
+      isSessionUsableForPostApproval: () => true,
     } as unknown as NonNullable<SpaceRuntimeConfig['taskAgentManager']>,
   };
 
@@ -120,13 +121,14 @@ function seedRouteDeferredTask(
   ctx: Ctx,
   opts: { sessionId?: string | null; instructions?: string } = {}
 ): string {
+  const nodeId = `node-build-${Math.random().toString(36).slice(2, 8)}`;
   const workflow = ctx.workflowManager.createWorkflow({
     spaceId: SPACE_ID,
     name: `Route ${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     description: 'Test',
     nodes: [
       {
-        id: 'node-build',
+        id: nodeId,
         name: 'Build',
         agents: [{ agentId: 'agent-planner', name: 'Planner' }],
         postApproval: {
@@ -136,8 +138,8 @@ function seedRouteDeferredTask(
       },
     ],
     transitions: [],
-    startNodeId: 'node-build',
-    endNodeId: 'node-build',
+    startNodeId: nodeId,
+    endNodeId: nodeId,
     rules: [],
     tags: [],
     completionAutonomyLevel: 3,
@@ -413,7 +415,7 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
     const tam = (
       ctx.runtime as unknown as { config: { taskAgentManager: Record<string, unknown> } }
     ).config.taskAgentManager;
-    tam.isSessionAlive = () => true; // adversarial: 'interrupted' counts as alive
+    tam.isSessionUsableForPostApproval = () => true; // adversarial probe
     tam.spawnPostApprovalSubSession = async (args: {
       targetAgent: string;
       kickoffMessage: string;
@@ -480,7 +482,7 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
     // merger with nothing left to re-drive it.
     const taskId = seedRouteDeferredTask(ctx, { sessionId: 'session:merge-live' });
     const tam = tamOf(ctx);
-    tam.isSessionAlive = (sid: string) => {
+    tam.isSessionUsableForPostApproval = (sid: string) => {
       // Simulate stopActiveWork 1.5 firing inside the dispatch await.
       ctx.taskRepo.updateTask(taskId, { postApprovalSessionId: null });
       expect(sid).toBe('session:merge-live');
@@ -501,7 +503,7 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
     const taskId = seedRouteDeferredTask(ctx, { instructions: '   ' }); // empty template
     const spawnCalls: string[] = [];
     const tam = tamOf(ctx);
-    tam.isSessionAlive = () => false;
+    tam.isSessionUsableForPostApproval = () => false;
     tam.spawnPostApprovalSubSession = async (args: { targetAgent: string }) => {
       spawnCalls.push(args.targetAgent);
       return { sessionId: 'should-not-happen' };
@@ -533,28 +535,41 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
       postApprovalBlockedReason: 'deferred by a stop; awaiting the resume sweep',
     });
     const tam = tamOf(ctx);
-    tam.isSessionAlive = () => false;
+    tam.isSessionUsableForPostApproval = () => true; // spawned sessions are usable
+    let spawns = 0;
     tam.spawnPostApprovalSubSession = async () => {
-      throw new TransientSpawnError('space stopped during merge spawn');
+      // First attempt aborts transiently (as if re-stopped mid-dispatch); the
+      // wrapper's resumed-race compensation re-drives on the active space and
+      // the retry succeeds.
+      if (++spawns === 1) throw new TransientSpawnError('space stopped during merge spawn');
+      return { sessionId: 'session:merge-retry' };
     };
 
     await ctx.spaceManager.stopSpace(SPACE_ID);
     await ctx.spaceManager.startSpace(SPACE_ID);
     await ctx.runtime.flushResumeSweep(SPACE_ID);
+    // The compensation's re-drive is fire-and-forget past the flush — poll
+    // for A's recovery.
+    for (let i = 0; i < 100 && ctx.taskRepo.getTask(taskA)?.postApprovalBlockedReason; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
 
-    const finalA = ctx.taskRepo.getTask(taskA);
-    expect(finalA?.status).toBe('approved');
-    expect(finalA?.postApprovalBlockedReason).toMatch(/stopped during dispatch/);
     // B was still processed after A's deferral — the catch `continue`s.
     const finalB = ctx.taskRepo.getTask(plain.id);
     expect(finalB?.status).toBe('done');
     expect(finalB?.postApprovalBlockedReason).toBeNull();
+    // A's deferral was compensated: the retry spawned and cleared the reason.
+    const finalA = ctx.taskRepo.getTask(taskA);
+    expect(finalA?.status).toBe('approved');
+    expect(finalA?.postApprovalSessionId).toBe('session:merge-retry');
+    expect(finalA?.postApprovalBlockedReason).toBeNull();
+    expect(spawns).toBe(2);
   });
 
   test('a genuine dispatch failure keeps the reason (no deferral rewrite)', async () => {
     const taskId = seedRouteDeferredTask(ctx);
     const tam = tamOf(ctx);
-    tam.isSessionAlive = () => false;
+    tam.isSessionUsableForPostApproval = () => false;
     tam.spawnPostApprovalSubSession = async () => {
       throw new Error('boom');
     };
@@ -580,17 +595,23 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
     const tam = tamOf(ctx);
     let releaseSpawn: (() => void) | null = null;
     const spawnCalls: string[] = [];
-    tam.isSessionAlive = () => false;
+    tam.isSessionUsableForPostApproval = () => true; // spawned sessions are usable
+    let signalSpawnEntered: (() => void) | null = null;
+    const spawnEntered = new Promise<void>((resolve) => {
+      signalSpawnEntered = resolve;
+    });
     tam.spawnPostApprovalSubSession = () => {
       spawnCalls.push('spawn');
+      signalSpawnEntered?.();
       return new Promise((resolve) => {
         releaseSpawn = () => resolve({ sessionId: 'session:merge-first' });
       });
     };
 
     const first = ctx.runtime.dispatchPostApproval(taskId, 'agent');
-    // Let the first dispatch reach the (gated) spawn before firing the second.
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    // Gate on the spawn actually being entered — a timer barrier would hang
+    // under CI load if the first dispatch hadn't reached the stub yet.
+    await spawnEntered;
     const second = await ctx.runtime.dispatchPostApproval(taskId, 'agent');
     releaseSpawn?.();
     const firstResult = await first;
@@ -613,7 +634,7 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
     // and the verification read.
     const taskId = seedRouteDeferredTask(ctx, { sessionId: 'session:merge-live' });
     const tam = tamOf(ctx);
-    tam.isSessionAlive = () => true; // already-routed, live session
+    tam.isSessionUsableForPostApproval = () => true; // already-routed, live session
     tam.spawnPostApprovalSubSession = async () => ({ sessionId: 'should-not-happen' });
     const origUpdate = ctx.taskRepo.updateTask.bind(ctx.taskRepo);
     ctx.taskRepo.updateTask = (id: string, payload: Record<string, unknown>) => {
@@ -682,6 +703,373 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
     const final = ctx.taskRepo.getTask(taskId);
     expect(final?.status).toBe('approved');
     expect(final?.postApprovalBlockedReason).toMatch(/could not be re-read/);
+  });
+
+  test('a start racing the post-route correction: compensation re-drives after the mutex releases', async () => {
+    // The P1 interleaving: the correction fires inside the dispatch while the
+    // per-task mutex is still held, and a start has already run the resume
+    // sweep (which missed the not-yet-stamped reason). The wrapper fires the
+    // compensating sweep AFTER the mutex release — a sweep fired any earlier
+    // would hit its own in-flight entry and self-skip, deterministically.
+    const workflow = ctx.workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: `Route bounce ${Date.now()}`,
+      description: 'Test',
+      nodes: [
+        {
+          id: 'node-build',
+          name: 'Build',
+          agents: [{ agentId: 'agent-planner', name: 'Planner' }],
+          postApproval: { targetAgent: 'Planner', instructions: 'Merge {{pr_url}}' },
+        },
+      ],
+      transitions: [],
+      startNodeId: 'node-build',
+      endNodeId: 'node-build',
+      rules: [],
+      tags: [],
+      completionAutonomyLevel: 3,
+    });
+    const run = ctx.workflowRunRepo.createRun({
+      spaceId: SPACE_ID,
+      workflowId: workflow.id,
+      title: 'Run',
+    });
+    const task = ctx.taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'Ship it',
+      description: '',
+      status: 'in_progress',
+      workflowRunId: run.id,
+    });
+    ctx.taskRepo.updateTask(task.id, { status: 'review' });
+    const tam = tamOf(ctx);
+    tam.isSessionUsableForPostApproval = () => true;
+    let spawns = 0;
+    tam.spawnPostApprovalSubSession = async () => {
+      if (++spawns === 1) {
+        // The stop commits during the injection await...
+        ctx.db.prepare(`UPDATE spaces SET stopped = 1 WHERE id = ?`).run(SPACE_ID);
+        return { sessionId: 'session:merge-raced' };
+      }
+      // ...and the compensation's re-drive spawns fresh on the active space.
+      return { sessionId: 'session:merge-compensated' };
+    };
+    const origUpdate = ctx.taskRepo.updateTask.bind(ctx.taskRepo);
+    ctx.taskRepo.updateTask = (id: string, payload: Record<string, unknown>) => {
+      const result = origUpdate(id, payload);
+      // The start lands exactly when the correction stamps: the wrapper's
+      // compensation read then sees an active space and re-drives.
+      if (
+        payload.postApprovalSessionId === null &&
+        typeof payload.postApprovalBlockedReason === 'string' &&
+        payload.postApprovalBlockedReason.includes('landed while space')
+      ) {
+        ctx.db.prepare(`UPDATE spaces SET stopped = 0 WHERE id = ?`).run(SPACE_ID);
+      }
+      return result;
+    };
+
+    let caught: unknown;
+    try {
+      await ctx.runtime.dispatchPostApproval(task.id, 'agent');
+    } catch (err) {
+      caught = err;
+    }
+    expect((caught as Error).name).toBe('PostApprovalDeferredError');
+    // The compensating sweep is fire-and-forget past the throw — poll for the
+    // re-drive.
+    for (
+      let i = 0;
+      i < 100 &&
+      ctx.taskRepo.getTask(task.id)?.postApprovalSessionId !== 'session:merge-compensated';
+      i++
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    const final = ctx.taskRepo.getTask(task.id);
+    expect(final?.status).toBe('approved');
+    expect(final?.postApprovalSessionId).toBe('session:merge-compensated');
+    expect(final?.postApprovalBlockedReason).toBeNull();
+    expect(spawns).toBe(2);
+  });
+
+  test('hold-path compensation: a start racing the hold stamp re-drives to closure', async () => {
+    // The hold defers while stopped; a start landing between its space read
+    // and the stamp means the resume sweep already ran and missed the reason.
+    // The wrapper compensation covers the hold exactly like the correction —
+    // here a standalone task closes to done on the re-drive.
+    const task = seedReviewTask(ctx.taskRepo);
+    ctx.db.prepare(`UPDATE spaces SET stopped = 1 WHERE id = ?`).run(SPACE_ID);
+    const origUpdate = ctx.taskRepo.updateTask.bind(ctx.taskRepo);
+    ctx.taskRepo.updateTask = (id: string, payload: Record<string, unknown>) => {
+      const result = origUpdate(id, payload);
+      if (
+        typeof payload.postApprovalBlockedReason === 'string' &&
+        payload.postApprovalBlockedReason.includes('deferred until the space resumes')
+      ) {
+        ctx.db.prepare(`UPDATE spaces SET stopped = 0 WHERE id = ?`).run(SPACE_ID);
+      }
+      return result;
+    };
+
+    let caught: unknown;
+    try {
+      await ctx.runtime.dispatchPostApproval(task.id, 'human');
+    } catch (err) {
+      caught = err;
+    }
+    expect((caught as Error).name).toBe('PostApprovalDeferredError');
+    for (let i = 0; i < 100 && ctx.taskRepo.getTask(task.id)?.status !== 'done'; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    // Re-driven on the now-active space: the no-route branch closes it.
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('done');
+    expect(ctx.taskRepo.getTask(task.id)?.postApprovalBlockedReason).toBeNull();
+  });
+
+  test('deferral stamps emit space.task.updated (the banner reaches web clients)', async () => {
+    const task = seedReviewTask(ctx.taskRepo);
+    ctx.db.prepare(`UPDATE spaces SET stopped = 1 WHERE id = ?`).run(SPACE_ID);
+
+    await expect(ctx.runtime.dispatchPostApproval(task.id, 'human')).rejects.toThrow(
+      /deferred until the space resumes/
+    );
+    // The hold's stamp emitted the refreshed task — the web store refreshes
+    // tasks ONLY on this event.
+    const emitted = ctx.emitted.filter(
+      (e) => e.task.id === task.id && e.task.postApprovalBlockedReason !== null
+    );
+    expect(emitted.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('a stop→start bounce mid-spawn: the dead-session probe corrects the healthy stamp', async () => {
+    // The P2-1 interleaving: the dispatch passes hold and assert while live;
+    // the stop interrupts the just-registered merger; a start lands before
+    // the post-route read, so the SPACE check sees active — only the
+    // session-level probe (interrupted = not usable) still corrects, and the
+    // wrapper compensation then re-spawns on the active space.
+    const workflow = ctx.workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: `Route probe ${Date.now()}`,
+      description: 'Test',
+      nodes: [
+        {
+          id: 'node-build',
+          name: 'Build',
+          agents: [{ agentId: 'agent-planner', name: 'Planner' }],
+          postApproval: { targetAgent: 'Planner', instructions: 'Merge {{pr_url}}' },
+        },
+      ],
+      transitions: [],
+      startNodeId: 'node-build',
+      endNodeId: 'node-build',
+      rules: [],
+      tags: [],
+      completionAutonomyLevel: 3,
+    });
+    const run = ctx.workflowRunRepo.createRun({
+      spaceId: SPACE_ID,
+      workflowId: workflow.id,
+      title: 'Run',
+    });
+    const task = ctx.taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'Ship it',
+      description: '',
+      status: 'in_progress',
+      workflowRunId: run.id,
+    });
+    ctx.taskRepo.updateTask(task.id, { status: 'review' });
+    const tam = tamOf(ctx);
+    // The first spawn's session reads DEAD (interrupted by the stop's
+    // cleanup); the compensation's fresh spawn reads usable.
+    tam.isSessionUsableForPostApproval = (sid: string) => sid !== 'session:merge-bounce';
+    let spawns = 0;
+    tam.spawnPostApprovalSubSession = async () => {
+      return { sessionId: ++spawns === 1 ? 'session:merge-bounce' : 'session:merge-alive' };
+    };
+
+    let caught: unknown;
+    try {
+      await ctx.runtime.dispatchPostApproval(task.id, 'agent');
+    } catch (err) {
+      caught = err;
+    }
+    expect((caught as Error).name).toBe('PostApprovalDeferredError');
+    expect((caught as Error).message).toMatch(/dead merge session/);
+    for (
+      let i = 0;
+      i < 100 && ctx.taskRepo.getTask(task.id)?.postApprovalSessionId !== 'session:merge-alive';
+      i++
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    const final = ctx.taskRepo.getTask(task.id);
+    expect(final?.postApprovalSessionId).toBe('session:merge-alive');
+    expect(final?.postApprovalBlockedReason).toBeNull();
+    expect(spawns).toBe(2);
+  });
+
+  test('paused space with a live spawned merger: the space check is excluded, pointer kept', async () => {
+    // Pause keeps in-flight work alive — the post-route correction must NOT
+    // fire for a paused space whose spawned merger is genuinely usable. The
+    // pause lands between the hold read and the post-route read.
+    const task = seedReviewTask(ctx.taskRepo);
+    const { TransientSpawnError } = await import(
+      '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts'
+    );
+    void TransientSpawnError;
+    const workflow = ctx.workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: `Route paused ${Date.now()}`,
+      description: 'Test',
+      nodes: [
+        {
+          id: 'node-build',
+          name: 'Build',
+          agents: [{ agentId: 'agent-planner', name: 'Planner' }],
+          postApproval: { targetAgent: 'Planner', instructions: 'Merge {{pr_url}}' },
+        },
+      ],
+      transitions: [],
+      startNodeId: 'node-build',
+      endNodeId: 'node-build',
+      rules: [],
+      tags: [],
+      completionAutonomyLevel: 3,
+    });
+    const run = ctx.workflowRunRepo.createRun({
+      spaceId: SPACE_ID,
+      workflowId: workflow.id,
+      title: 'Run',
+    });
+    ctx.taskRepo.updateTask(task.id, { workflowRunId: run.id });
+    const tam = tamOf(ctx);
+    tam.isSessionUsableForPostApproval = () => true; // genuinely live merger
+    tam.spawnPostApprovalSubSession = async () => ({ sessionId: 'session:merge-paused' });
+    const origUpdate = ctx.taskRepo.updateTask.bind(ctx.taskRepo);
+    ctx.taskRepo.updateTask = (id: string, payload: Record<string, unknown>) => {
+      const result = origUpdate(id, payload);
+      // The pause lands when the router stamps the healthy pointer.
+      if (payload.postApprovalSessionId === 'session:merge-paused') {
+        ctx.db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+      }
+      return result;
+    };
+
+    const result = await ctx.runtime.dispatchPostApproval(task.id, 'agent');
+    expect(result.mode).toBe('spawn');
+    const final = ctx.taskRepo.getTask(task.id);
+    // Pointer kept, no correction, no banner — the merger is live on pause.
+    expect(final?.postApprovalSessionId).toBe('session:merge-paused');
+    expect(final?.postApprovalBlockedReason).toBeNull();
+  });
+
+  test('fresh-spawn pointer change during the clear window: NO stale-reason restore', async () => {
+    // The restore discriminator is the stop signature (pointer nulled). A
+    // concurrent re-dispatch's fresh spawn stamps a NON-null S2 and clears
+    // the reason itself — restoring the pre-dispatch reason there would
+    // banner healthy work.
+    const taskId = seedRouteDeferredTask(ctx, { sessionId: 'session:merge-live' });
+    const tam = tamOf(ctx);
+    tam.isSessionUsableForPostApproval = () => true;
+    tam.spawnPostApprovalSubSession = async () => ({ sessionId: 'should-not-happen' });
+    const origUpdate = ctx.taskRepo.updateTask.bind(ctx.taskRepo);
+    ctx.taskRepo.updateTask = (id: string, payload: Record<string, unknown>) => {
+      const result = origUpdate(id, payload);
+      const isSweepClear =
+        payload.postApprovalBlockedReason === null &&
+        !('postApprovalSessionId' in payload) &&
+        !('status' in payload);
+      if (isSweepClear) {
+        // A concurrent re-dispatch's spawn branch landing right after the
+        // clear: fresh pointer S2 + its own reason clear.
+        origUpdate(id, { postApprovalSessionId: 'session:merge-fresh' });
+      }
+      return result;
+    };
+
+    await ctx.spaceManager.stopSpace(SPACE_ID);
+    await ctx.spaceManager.startSpace(SPACE_ID);
+    await ctx.runtime.flushResumeSweep(SPACE_ID);
+
+    const final = ctx.taskRepo.getTask(taskId);
+    expect(final?.postApprovalSessionId).toBe('session:merge-fresh');
+    // No stale reason restored onto the live fresh spawn.
+    expect(final?.postApprovalBlockedReason).toBeNull();
+  });
+
+  test('overlapping resume sweeps: flushResumeSweep stays deterministic (conditional delete)', async () => {
+    // Two tasks, two gated spawns. sweep1 (older) gates on task A; sweep2
+    // (newer, fired by a second resume) skips A on the mutex and gates on B.
+    // When sweep1 finishes first, its finally must NOT evict sweep2's map
+    // entry — a flush during sweep2 must keep waiting until B releases.
+    const taskA = seedRouteDeferredTask(ctx);
+    const taskB = seedRouteDeferredTask(ctx);
+    const tam = tamOf(ctx);
+    tam.isSessionUsableForPostApproval = () => true;
+    const releaseGates: Array<() => void> = [];
+    const gatedSpawn = () =>
+      new Promise<{ sessionId: string }>((resolve) => {
+        releaseGates.push(() => resolve({ sessionId: `session:merge-${releaseGates.length}` }));
+      });
+    tam.spawnPostApprovalSubSession = gatedSpawn;
+
+    await ctx.spaceManager.stopSpace(SPACE_ID);
+    await ctx.spaceManager.startSpace(SPACE_ID); // sweep1: dispatches A (gated)
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await ctx.spaceManager.pauseSpace(SPACE_ID);
+    await ctx.spaceManager.resumeSpace(SPACE_ID); // sweep2: skips A, gates on B
+
+    // Release A (sweep1's only task): sweep1 finishes while sweep2 still
+    // gates on B.
+    releaseGates[0]!();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Flush tracks the LATEST sweep (sweep2, still running): it must not
+    // resolve while B is gated. (With an unconditional delete, sweep1's
+    // finally would have evicted sweep2's entry and the flush would return.)
+    const flush = ctx.runtime.flushResumeSweep(SPACE_ID);
+    const winner = await Promise.race([
+      flush.then(() => 'flush'),
+      new Promise((resolve) => setTimeout(() => resolve('timeout'), 50)),
+    ]);
+    expect(winner).toBe('timeout');
+
+    releaseGates[1]!();
+    await flush;
+    expect(ctx.taskRepo.getTask(taskA)?.postApprovalBlockedReason).toBeNull();
+    expect(ctx.taskRepo.getTask(taskB)?.postApprovalBlockedReason).toBeNull();
+  });
+
+  test('an interrupted merger pointer re-spawns instead of pinning already-routed', async () => {
+    // The class-level safety net: any stop-race window the pointer-nulling
+    // correctors miss leaves postApprovalSessionId on an INTERRUPTED session.
+    // The old lazy probe counts 'interrupted' alive and would short-circuit
+    // already-routed forever; the interruption-aware guard falls through and
+    // re-spawns. The two probes deliberately disagree on this session — the
+    // exact 'interrupted' shape — so reverting the wiring fails this test.
+    const taskId = seedRouteDeferredTask(ctx, { sessionId: 'session:merge-interrupted' });
+    const tam = tamOf(ctx);
+    tam.isSessionAlive = () => true; // the OLD probe: interrupted counts alive
+    // The guard: the interrupted session reads dead; a fresh spawn reads usable.
+    tam.isSessionUsableForPostApproval = (sid: string) => sid !== 'session:merge-interrupted';
+    const spawnCalls: string[] = [];
+    tam.spawnPostApprovalSubSession = async () => {
+      spawnCalls.push('spawn');
+      return { sessionId: 'session:merge-fresh' };
+    };
+
+    const result = await ctx.runtime.dispatchPostApproval(taskId, 'agent');
+
+    expect(result.mode).toBe('spawn');
+    expect(spawnCalls).toEqual(['spawn']);
+    expect(ctx.taskRepo.getTask(taskId)?.postApprovalSessionId).toBe('session:merge-fresh');
+    expect(ctx.taskRepo.getTask(taskId)?.postApprovalBlockedReason).toBeNull();
   });
 
   test('terminal-run reconcile: stopped-space deferral is not a reconciliation failure', async () => {
@@ -763,6 +1151,10 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
       ctx.runtime as unknown as { config: { taskAgentManager: Record<string, unknown> } }
     ).config.taskAgentManager;
     tam.spawnPostApprovalSubSession = async () => {
+      // The stop actually commits (the pre-kickoff assert window): the
+      // wrapper's resumed-race compensation then reads a stopped space and
+      // correctly does not fire.
+      ctx.db.prepare(`UPDATE spaces SET stopped = 1 WHERE id = ?`).run(SPACE_ID);
       throw new TransientSpawnError('space stopped during merge spawn');
     };
 

@@ -1171,6 +1171,17 @@ export class SpaceRuntimeService {
     // misses.
     this.runtime.holdSpaceDeliveries(spaceId);
 
+    // 1.75. Capture the stop's epoch BEFORE the cleanup awaits: the in-flight
+    //     rows as of right now. The cleanup interrupts every session those
+    //     rows are bound to, so when it finishes they are parked EXACTLY as
+    //     captured — even if a space.start landed mid-quiesce and released
+    //     the hold (a hold-guarded park would skip, and the resumed tick
+    //     would charge crash counters on rows bound to dead sessions).
+    const stopSnapshot = this.config.workflowRunRepo
+      .listBySpace(spaceId)
+      .flatMap((run) => this.config.nodeExecutionRepo?.listByWorkflowRun(run.id) ?? [])
+      .filter((exec) => exec.status === 'in_progress' || exec.status === 'waiting_rebind');
+
     // 1. Interrupt the agent sessions of active tasks (in_progress, open,
     //    paused on a rate/usage cap, review, approved). A paused task still
     //    owns a live session with an armed cooldown timer; if it isn't torn
@@ -1260,6 +1271,10 @@ export class SpaceRuntimeService {
                   `the dispatch re-runs automatically when the space starts`,
               }),
         });
+        // space.task.updated: the web store refreshes tasks only on this
+        // event — the banner must reach connected clients on the paths with
+        // no follow-up publish (the tick deferrals have none either).
+        await this.runtime.emitTaskUpdateBestEffort(spaceId, fresh.id);
       } catch (err) {
         log.warn(
           `stopActiveWork: failed to record interrupted post-approval session for task ${fresh.id}:`,
@@ -1285,8 +1300,10 @@ export class SpaceRuntimeService {
 
     // 2. Park in-flight node executions (pending + cleared session binding) so
     //    the tick loop neither spawns nor nags while stopped, and resume
-    //    re-drives them without crash accounting. Run/task statuses stay as-is.
-    this.runtime.parkInFlightExecutionsForSpace(spaceId);
+    //    re-drives them without crash accounting — exactly the rows captured
+    //    before cleanup, regardless of an intervening start. Run/task statuses
+    //    stay as-is.
+    this.runtime.parkInFlightExecutionsForSpace(spaceId, stopSnapshot);
 
     log.info(
       `stopActiveWork: interrupted ${activeTasks.length} task session(s) and parked in-flight executions for space ${spaceId} (task/run statuses preserved)`

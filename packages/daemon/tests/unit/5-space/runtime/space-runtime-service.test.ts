@@ -595,8 +595,10 @@ describe('SpaceRuntimeService', () => {
         transitionStatus: () => {},
       } as unknown as SpaceWorkflowRunRepository;
 
+      const rowsById = new Map([inFlightExec, waitingRebindExec, idleExec].map((e) => [e.id, e]));
       const mockNodeExecutionRepo = {
         listByWorkflowRun: () => [inFlightExec, waitingRebindExec, idleExec],
+        getById: (id: string) => rowsById.get(id) ?? null,
         update: (id: string, updates: unknown) => {
           executionUpdates.push({ id, updates });
         },
@@ -633,6 +635,68 @@ describe('SpaceRuntimeService', () => {
           agentSessionId: null,
         });
       }
+    });
+
+    test('a start landing during the cleanup window still parks the stop-snapshot rows', async () => {
+      // The snapshot collected BEFORE the cleanup awaits is the stop's
+      // epoch: park proceeds regardless of an intervening start. Guarding on
+      // the (mutable) hold set would skip parking here, and the resumed tick
+      // would route the dead-bound rows through crash accounting — the exact
+      // regression the snapshot exists to prevent.
+      const inFlightExec = {
+        id: 'exec-1',
+        workflowRunId: 'run-1',
+        status: 'in_progress' as const,
+        agentSessionId: 'sess-1',
+      };
+      const executionUpdates: Array<{ id: string; updates: unknown }> = [];
+      const rowsById = new Map([[inFlightExec.id, inFlightExec]]);
+      const mockTaskRepo = {
+        listBySpace: () => [],
+        updateTask: () => {},
+      } as unknown as SpaceTaskRepository;
+      const mockNodeExecutionRepo = {
+        listByWorkflowRun: () => [inFlightExec],
+        getById: (id: string) => rowsById.get(id) ?? null,
+        update: (id: string, updates: unknown) => {
+          executionUpdates.push({ id, updates });
+        },
+        resetForCleanRecovery: (id: string) => {
+          executionUpdates.push({
+            id,
+            updates: { status: 'pending', result: null, agentSessionId: null },
+          });
+          return null;
+        },
+      } as unknown as NodeExecutionRepository;
+
+      // The space reads ACTIVE throughout — the start won the race before
+      // stopActiveWork even reached park.
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(createMockSpaceManager({ ...mockSpace, stopped: false })),
+        taskRepo: mockTaskRepo,
+        workflowRunRepo: {
+          listBySpace: () => [{ id: 'run-1', status: 'in_progress' as const }],
+          transitionStatus: () => {},
+        } as unknown as SpaceWorkflowRunRepository,
+        nodeExecutionRepo: mockNodeExecutionRepo,
+      });
+      svc.setTaskAgentManager({
+        cleanup: async () => {},
+      } as unknown as TaskAgentManager);
+      // Simulate the start having released the hold before park runs: without
+      // the snapshot, the legacy park path would no-op here.
+      (
+        svc as unknown as { runtime: { holdSpaceDeliveries: () => void } }
+      ).runtime.holdSpaceDeliveries = () => {};
+
+      await svc.stopActiveWork('space-1');
+
+      // The snapshotted row is parked with the clean-recovery shape even
+      // though the space is active again and the hold is gone.
+      expect(executionUpdates).toEqual([
+        { id: 'exec-1', updates: { status: 'pending', result: null, agentSessionId: null } },
+      ]);
     });
 
     test('isolates park failures per run — one repo error does not abort the stop', async () => {

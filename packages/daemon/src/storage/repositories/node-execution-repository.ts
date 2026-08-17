@@ -265,7 +265,8 @@ export class NodeExecutionRepository {
    * Used by the clean-recovery resets: `recoverRateLimitedTasks` (passed rate
    * cap), `SpaceRuntime.parkInFlightExecutionsForSpace` (space stop), and the
    * transient spawn-abort catch in `TaskAgentManager` (space stopped
-   * mid-spawn). Note: the alive-stuck restart uses a different shape (it
+   * mid-spawn or task paused on a rate/usage cap — any
+   * TransientSpawnError). Note: the alive-stuck restart uses a different shape (it
    * keeps a result message and nulls startedAt), so it stays on `update`.
    */
   resetForCleanRecovery(id: string): NodeExecution | null {

@@ -3083,6 +3083,33 @@ export class TaskAgentManager {
     return !!indexed && this.isAgentSessionAlive(indexed);
   }
 
+  /**
+   * Post-approval dispatchability probe: like `isSessionAlive` but (a) never
+   * lazy-hydrates from SessionManager (in-memory index or synchronous cache
+   * only — a session absent from memory is dead for dispatch purposes, e.g.
+   * after a daemon restart), and (b) deliberately excludes `'interrupted'`:
+   * an interrupted session is dead as a worker, yet `isAgentSessionAlive`
+   * counts it alive, so the router's `already-routed` guard would pin a
+   * `postApprovalSessionId` left on an interrupted merger forever (every
+   * later dispatch short-circuits, nothing re-spawns). With this probe the
+   * guard falls through and the merger is re-spawned instead — the safety net
+   * for every stop-race window the pointer-nulling correctors can miss.
+   */
+  isSessionUsableForPostApproval(sessionId: string): boolean {
+    const session =
+      this.agentSessionIndex.get(sessionId) ??
+      this.config.sessionManager.getCachedSession(sessionId);
+    if (!session) return false;
+    const status = session.getProcessingState().status;
+    return (
+      status === 'idle' ||
+      status === 'queued' ||
+      status === 'processing' ||
+      status === 'waiting_for_input' ||
+      status === 'rate_limit_cooldown'
+    );
+  }
+
   private isAgentSessionAlive(session: AgentSession): boolean {
     const state = session.getProcessingState();
     return (

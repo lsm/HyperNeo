@@ -41,8 +41,9 @@ import { isReservedWorkflowAgentName } from './space-workflow-manager';
  * `NodeExecutionRepository.resetForCleanRecovery` — e.g. by
  * `recoverRateLimitedTasks` (passed rate cap),
  * `SpaceRuntime.parkInFlightExecutionsForSpace` (space stop), and the
- * transient spawn-abort catch in `TaskAgentManager` (space stopped
- * mid-spawn) — so the spawn path re-drives the execution from scratch on the
+ * transient spawn-abort catch in `TaskAgentManager` (space stopped mid-spawn
+ * OR task paused on a rate/usage cap — any TransientSpawnError) — so the
+ * spawn path re-drives the execution from scratch on the
  * next active tick. (The alive-stuck restart performs an equivalent reset
  * with a different shape — it keeps a result message and nulls startedAt —
  * so it stays on plain `update`.)
