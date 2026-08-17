@@ -286,8 +286,8 @@ import { MessageQueue } from './message-queue';
 import { ModelSwitchHandler, type ModelSwitchHandlerContext } from './model-switch-handler';
 import { ProcessingStateManager } from './processing-state-manager';
 import {
-  QueryLifecycleManager,
   type EnsureQueryStartedResult,
+  QueryLifecycleManager,
   type QueryLifecycleManagerContext,
 } from './query-lifecycle-manager';
 import type { QueryLike } from './query-like';
@@ -2749,19 +2749,21 @@ export class AgentSession
           // stopped queue before dead-lettering `failed`. Park instead: the
           // job re-evaluates on its park cadence and feeds (or promotes once
           // the turn settles) after the backoff ends. Bounded by
-          // MAX_STEER_PARKS (~5 min). At default knobs the bound holds via
-          // window alternation, not a watchdog: the stall watchdog arms only
-          // after the kickoff acknowledgment resolves, so in the starved case
+          // MAX_STEER_PARKS (~5 min of cumulative ~5 s-cadence parks). The
+          // stall watchdog does NOT bound this window: it arms only after
+          // the kickoff acknowledgment resolves, so in the starved case
           // (the case this gate exists for) it never truncates anything.
-          // What keeps the schedule inside the bound is that each post-sleep
-          // retry round is a RUNNING window (≤60 s, during which the 5 s
-          // -cadence steer re-run feeds) and the longest sleep is 240 s ≈ 48
-          // parks < 60. Two caveats: a much raised
-          // HYPERNEO_SDK_STARTUP_RETRY_BASE_MS makes a single sleep outlast
-          // the whole bound, and __parkCount is CUMULATIVE per steer job, so
-          // chained stall-reset + delivery-redrive cycles can dead-letter a
-          // steer `failed` even at default knobs. The ≤5 s teardown waits of
-          // the other retry paths are covered by the same gate.
+          // Honest arithmetic at default knobs: __parkCount is CUMULATIVE
+          // per steer job, and a full chain's sleeps total 15+30+60+120+240
+          // = 465 s, so a steer parked from the start accrues ~93 parks and
+          // CAN dead-letter `failed` mid-schedule (~300 s in, during the
+          // 120/240 s tail sleeps) even with no chained cycles — the post-
+          // sleep RUNNING windows (≤60 s each) are when the re-run feeds
+          // instead of parking, but they do not reset the counter. A raised
+          // HYPERNEO_SDK_STARTUP_RETRY_BASE_MS lengthens the sleeps and
+          // crosses the bound sooner; chained stall-reset +
+          // delivery-redrive cycles stack on top. The ≤5 s teardown waits
+          // of the other retry paths are covered by the same gate.
           if (!this.messageQueue.isRunning()) return { kind: 'park' as const };
           const generation = this.getQueryGeneration();
           observer?.reportStage('query_ready', { generation });

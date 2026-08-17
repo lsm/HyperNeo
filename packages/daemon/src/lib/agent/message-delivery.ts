@@ -612,11 +612,15 @@ export type DriveTurnOutcome =
  *   already admitted (the bridge suppresses the re-admit), so this never
  *   re-feeds.
  * - `promote` ⇒ no live turn; re-enqueue as a turn.
- * - `park` ⇒ the owning turn is BLOCKED (sdk_resume_choice, session `queued`),
- *   not actively processing — the steer can neither feed (no live generator) nor
- *   promote (the parked turn still holds the active-turn slot). Park it with the
- *   turn's delay so it is NOT reclaimed every poll (hot loop); it re-evaluates
- *   when the turn unblocks. See Codex (#3742693683).
+ * - `park` ⇒ the owning turn cannot take the steer right now, for one of
+ *   three reasons: it is BLOCKED on an open human gate (sdk_resume_choice);
+ *   the session is `queued` (a parked owner); or the session is 'processing'
+ *   with a STOPPED queue (the startup-timeout retry's backoff window —
+ *   feeding would arm an admission TTL nothing consumes). The steer can
+ *   neither feed (no live generator) nor promote (the parked turn still
+ *   holds the active-turn slot). Park it with the turn's delay so it is NOT
+ *   reclaimed every poll (hot loop); it re-evaluates when the turn unblocks.
+ *   See Codex (#3742693683).
  */
 export type FeedSteerOutcome =
   | { outcome: 'consumed' }

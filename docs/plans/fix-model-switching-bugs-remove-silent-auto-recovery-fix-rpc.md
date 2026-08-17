@@ -277,11 +277,19 @@ The three bugs share common dependencies. The plan addresses them in dependency 
 
 **Description**: Add an online test verifying that a startup timeout error is surfaced to the user (via `errorManager.handleError`) without any silent retry.
 
+> **Superseded (PR #2551)**: startup timeouts are no longer surfaced on the
+> first failure — the SDK runner now retries with per-delivery exponential
+> backoff (`HYPERNEO_SDK_STARTUP_RETRY_BASE_MS`) up to a cap
+> (`HYPERNEO_SDK_STARTUP_RETRY_MAX`, default 5; `0` restores the
+> surface-on-first-timeout behavior this task originally specified) and only
+> then surfaces. The steps/criteria below read "no retry"/"immediately" as
+> "once the bounded retry budget is exhausted".
+
 **Files to create/modify**:
 - `packages/daemon/tests/online/convo/startup-timeout-no-retry.test.ts` (new; since renamed to `startup-timeout-bounded-retry.test.ts` when the retry became a capped/backoff retry) — Test:
   1. Start a session and send a message.
   2. Simulate a startup timeout condition.
-  3. Verify the error is surfaced immediately (no retry).
+  3. Verify the error is surfaced once the bounded retry budget is exhausted (see the supersession note above).
   4. Verify the error message contains actionable recovery hints.
   5. Verify the session state returns to idle after the error.
 
@@ -295,12 +303,12 @@ The implementer should choose the approach that works reliably with the existing
 **Subtasks**:
 1. Create the test file using the existing online test patterns (`createDaemonServer` with dev proxy).
 2. Trigger a startup timeout condition using one of the approaches above.
-3. Verify error is surfaced via `errorManager.handleError` without any retry.
+3. Verify error is surfaced via `errorManager.handleError` once the bounded retry budget is exhausted (see the supersession note above).
 4. Verify the error message contains recovery hints.
 5. Clean up the session after the test.
 
 **Acceptance criteria**:
-- The test verifies no retry occurs.
+- The test verifies the retry stays bounded (no unbounded/silent retry loop).
 - The error is surfaced via `errorManager.handleError`.
 - The test passes with `HYPERNEO_USE_DEV_PROXY=1`.
 

@@ -4,22 +4,8 @@
  * Tests for SDK query execution with streaming input.
  */
 
-import { describe, expect, it, beforeEach, afterEach, mock, jest } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, jest, mock } from 'bun:test';
 import { tmpdir } from 'node:os';
-import {
-  QueryRunner,
-  getStartupRetryDelayMs,
-  looksLikeRateLimit429,
-  refreshQueryEnvFromProcess,
-  type QueryRunnerContext,
-} from '../../../../src/lib/agent/query-runner';
-import {
-  getSdkStartupGate,
-  resetSdkStartupGateForTests,
-} from '../../../../src/lib/agent/sdk-startup-gate';
-import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
-import type { Session, MessageHub } from '@hyperneo/shared';
-import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 // The daemon vitest config aliases the SDK specifier to tests/sdk-mock.ts, so
 // under vitest `query` is a controllable vi.fn and tests can drive runQuery's
@@ -29,14 +15,27 @@ import type { Query } from '@anthropic-ai/claude-agent-sdk';
 // .mockImplementation would throw. Detect which one we got and skip the
 // mock-driven tests when the import is not a mock.
 import { query as mockedSdkQuery } from '@anthropic-ai/claude-agent-sdk';
-
-import type { Database } from '../../../../src/storage/database';
-import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import type { MessageHub, Session } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
+import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-question-handler';
+import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
+import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder';
+import {
+  getStartupRetryDelayMs,
+  looksLikeRateLimit429,
+  QueryRunner,
+  type QueryRunnerContext,
+  refreshQueryEnvFromProcess,
+} from '../../../../src/lib/agent/query-runner';
+import {
+  getSdkStartupGate,
+  resetSdkStartupGateForTests,
+} from '../../../../src/lib/agent/sdk-startup-gate';
 import { ErrorCategory, type ErrorManager } from '../../../../src/lib/error-manager';
 import type { Logger } from '../../../../src/lib/logger';
-import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder';
-import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-question-handler';
+import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
+import type { Database } from '../../../../src/storage/database';
 
 const sdkQueryIsMock =
   typeof (mockedSdkQuery as { mockImplementation?: unknown }).mockImplementation === 'function';
@@ -78,6 +77,8 @@ describe('QueryRunner', () => {
   let peekNextUserMessageIdSpy: ReturnType<typeof mock>;
   let hasPendingOrInFlightSpy: ReturnType<typeof mock>;
   let removeSpy: ReturnType<typeof mock>;
+  let getAdmissionSeqSpy: ReturnType<typeof mock>;
+  let removeIfAdmittedNoLaterThanSpy: ReturnType<typeof mock>;
   let getMessageByStatusAndUuidSpy: ReturnType<typeof mock>;
 
   // State variables (mutable context properties)
@@ -171,6 +172,12 @@ describe('QueryRunner', () => {
     peekNextUserMessageIdSpy = mock(() => null);
     hasPendingOrInFlightSpy = mock(() => false);
     removeSpy = mock(() => true);
+    // Fenced-removal pair (round-9): the flush captures the admission
+    // sequence right after its loop, and the stale finally purges through the
+    // fenced API. Tests that need REAL admission semantics swap in a real
+    // MessageQueue via createContext({ messageQueue }).
+    getAdmissionSeqSpy = mock(() => 0);
+    removeIfAdmittedNoLaterThanSpy = mock(() => false);
     mockMessageQueue = {
       isRunning: isRunningSpy,
       start: startSpy,
@@ -182,6 +189,8 @@ describe('QueryRunner', () => {
       peekNextUserMessageId: peekNextUserMessageIdSpy,
       hasPendingOrInFlight: hasPendingOrInFlightSpy,
       remove: removeSpy,
+      getAdmissionSeq: getAdmissionSeqSpy,
+      removeIfAdmittedNoLaterThan: removeIfAdmittedNoLaterThanSpy,
       messageGenerator: mock(async function* () {
         // Empty generator for tests
       }),
@@ -2671,7 +2680,7 @@ describe('QueryRunner', () => {
           runner.start();
           // Wait for the skip warn (attempt 2 flushed and skipped), then
           // observe the stage BEFORE the chain ends.
-          let deadline = Date.now() + 2000;
+          const deadline = Date.now() + 2000;
           const skipSeen = () =>
             (mockLogger.warn as ReturnType<typeof mock>).mock.calls.some((args) =>
               String(args[0]).includes('already pending or in-flight')
@@ -2834,7 +2843,14 @@ describe('QueryRunner', () => {
           },
         }));
 
-        // Arm both admissions; reject steer FIRST (worst order), then kickoff.
+        // Arm both admissions. The flush iterates the replay in REVERSE, so
+        // the STEER is admitted first — rejections[0] is the steer,
+        // rejections[1] the kickoff (the previous comments had the two
+        // identities swapped, so the claimed worst order was never the one
+        // exercised). Worst order, correctly named: the steer's TTL fires
+        // FIRST, then the kickoff's — under a per-message assignment the
+        // LAST rejection (kickoff) would overwrite the staging and drop the
+        // steer, the entry with no delivery-layer recovery lane.
         const rejections: Array<(error: Error) => void> = [];
         enqueueWithIdSpy.mockImplementation(
           () =>
@@ -2852,8 +2868,8 @@ describe('QueryRunner', () => {
           expect(rejections.length).toBe(2);
           const ttlError = new Error('Message queue timeout');
           ttlError.name = 'MessageQueueTimeoutError';
-          rejections[1](ttlError); // steer (flushed last → armed last)
-          rejections[0](ttlError); // kickoff
+          rejections[0](ttlError); // steer (admitted first by the reverse flush)
+          rejections[1](ttlError); // kickoff — would overwrite the steer re-stage pre-fix
 
           // The merged re-stage feeds BOTH on attempt 3's flush.
           deadline = Date.now() + 2000;
@@ -2934,6 +2950,7 @@ describe('QueryRunner', () => {
             await new Promise((resolve) => setTimeout(resolve, 5));
           }
           expect(rejectAdmission).toBeTypeOf('function');
+          const chainController = ctx.queryAbortController;
 
           // A replacement query takes ownership (generation bump + its own
           // controller) while the admission is still pending…
@@ -2953,11 +2970,23 @@ describe('QueryRunner', () => {
             (runner as unknown as { _pendingStartupReplay: unknown[] | null })
               ._pendingStartupReplay === stagedBefore
           ).toBe(true);
+          expect(
+            (runner as unknown as { _replayAdmissionRejected: boolean })._replayAdmissionRejected
+          ).toBe(false);
           expect(ctx.queryAbortController.signal.aborted).toBe(false);
           const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
             String(args[0])
           );
           expect(warns.some((w) => w.includes('lost session ownership; ignoring'))).toBe(true);
+
+          // End the parked attempt (round-9 test gap): its 60 s startup timer
+          // and pending admission must not outlive the test.
+          chainController?.abort();
+          await ctx.queryPromise?.catch(() => {});
+          if (ctx.startupTimeoutTimer) {
+            clearTimeout(ctx.startupTimeoutTimer);
+            ctx.startupTimeoutTimer = null;
+          }
         } finally {
           (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
         }
@@ -3015,7 +3044,7 @@ describe('QueryRunner', () => {
           runner.start();
           // Let the frame arrive (firstMessageReceived) — then reject the
           // still-pending steer admission mid-production.
-          let deadline = Date.now() + 2000;
+          const deadline = Date.now() + 2000;
           while (!ctx.firstMessageReceived && Date.now() < deadline) {
             await new Promise((resolve) => setTimeout(resolve, 5));
           }
@@ -3027,9 +3056,17 @@ describe('QueryRunner', () => {
           const ttlError = new Error('Message queue timeout');
           ttlError.name = 'MessageQueueTimeoutError';
           rejectSteerAdmission(ttlError);
-          // Give the handler a tick, then end the open attempt (the abort
-          // breaks the parked iterator; messageCount=1 → normal completion).
+          // Give the handler a tick, then pin the stays-staged half of the
+          // producing branch (round-9 test gap): the unconsumed steer keeps
+          // its lane in the staging, not just a warn line.
           await new Promise((resolve) => setTimeout(resolve, 25));
+          expect(
+            (
+              runner as unknown as { _pendingStartupReplay: Array<{ uuid: string }> | null }
+            )._pendingStartupReplay?.map((entry) => entry.uuid)
+          ).toEqual([steer.uuid]);
+          // End the open attempt (the abort breaks the parked iterator;
+          // messageCount=1 → normal completion).
           ctx.queryAbortController?.abort();
           await ctx.queryPromise?.catch(() => {});
 
@@ -3051,25 +3088,32 @@ describe('QueryRunner', () => {
     it.skipIf(!sdkQueryIsMock)(
       'removes still-pending flushed entries when the chain is superseded',
       async () => {
-        // Round-8 P2: restart() supersedes via stop-without-clear; entries
-        // this chain flushed would be eaten by the replacement's generator.
-        // The stale finally must remove them from the queue.
+        // Round-8 P2 + round-9 P2: restart() supersedes via stop-without-clear;
+        // entries this chain flushed would be eaten by the replacement's
+        // generator. The stale finally must purge them through the
+        // admission-fenced API from ATTEMPT-LOCAL tracking. Real MessageQueue
+        // so the admission sequence and removal semantics are exercised for
+        // real; a revoked second entry pins the hasPendingOrInFlight gating
+        // (no removal — not even an attempt — for an entry no longer pending).
         const kickoff = {
           uuid: 'orphan-kickoff',
           content: [{ type: 'text' as const, text: 'K' }],
         };
+        const steer = {
+          uuid: 'orphan-steer',
+          content: [{ type: 'text' as const, text: 'S' }],
+        };
+        const messageQueue = new MessageQueue();
 
-        const ctx = createContext();
+        const ctx = createContext({ messageQueue });
         runner = new QueryRunner(ctx);
         (
           runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
-        )._consumedUserMessages = new Map([[1, [kickoff]]]);
+        )._consumedUserMessages = new Map([[1, [kickoff, steer]]]);
 
         buildSpy
           .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
           .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514' });
-        // Admission stays pending forever (never consumed, never TTL'd here).
-        enqueueWithIdSpy.mockImplementation(() => new Promise<void>(() => {}));
         (
           mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
         ).mockImplementation(() => ({
@@ -3081,26 +3125,611 @@ describe('QueryRunner', () => {
 
         try {
           runner.start();
-          let deadline = Date.now() + 2000;
-          while (enqueueWithIdSpy.mock.calls.length < 1 && Date.now() < deadline) {
+          const deadline = Date.now() + 2000;
+          while (!messageQueue.hasPendingOrInFlight(kickoff.uuid) && Date.now() < deadline) {
             await new Promise((resolve) => setTimeout(resolve, 5));
           }
-          expect(enqueueWithIdSpy.mock.calls.length).toBe(1);
+          expect(messageQueue.hasPendingOrInFlight(kickoff.uuid)).toBe(true);
+          expect(messageQueue.hasPendingOrInFlight(steer.uuid)).toBe(true);
 
-          // restart(): supersede the chain (generation bump), and the queue
-          // reports the flushed entry as still pending (stop-without-clear).
+          // The steer is revoked (user remove/defer) while the chain is
+          // parked — the purge must not attempt anything for it.
+          messageQueue.remove(steer.uuid);
+
+          // restart(): supersede the chain (generation bump), then abort the
+          // parked attempt so the finally runs while stale.
+          const chainController = ctx.queryAbortController;
           ctx.incrementQueryGeneration();
-          hasPendingOrInFlightSpy.mockImplementation((id: string) => id === kickoff.uuid);
-          // Abort the attempt so the finally runs while stale.
-          ctx.queryAbortController?.abort();
-          await new Promise((resolve) => setTimeout(resolve, 50));
+          chainController?.abort();
+          await ctx.queryPromise?.catch(() => {});
 
-          expect(removeSpy).toHaveBeenCalledWith(kickoff.uuid);
+          expect(messageQueue.hasPendingOrInFlight(kickoff.uuid)).toBe(false);
+          const removedWarns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls
+            .map((args) => String(args[0]))
+            .filter((w) => w.includes('Removed superseded replay entry'));
+          expect(removedWarns).toHaveLength(1);
+          expect(removedWarns[0]).toContain(kickoff.uuid);
+        } finally {
+          messageQueue.clear();
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+        }
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      'still purges flushed entries when the replacement starts during the backoff (restart ordering)',
+      async () => {
+        // Round-9 P2: the old instance-field tracking was nulled by the
+        // replacement's start() while THIS chain slept in its backoff — the
+        // post-sleep cancellation returned, the stale finally then read a
+        // nulled field, and the purge never fired: the replacement's
+        // generator ate this delivery's prompts. The attempt-local tracking
+        // must survive the replacement's start().
+        process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '100';
+        process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '2';
+        const kickoff = {
+          uuid: 'ordering-kickoff',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+        const messageQueue = new MessageQueue();
+
+        const ctx = createContext({ messageQueue });
+        runner = new QueryRunner(ctx);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff]]]);
+
+        // Attempt 1 dies at build (timeout) → the retry stages the replay.
+        // Attempt 2 flushes it, then dies as a startup timeout ON DEMAND so
+        // the catch enters its backoff sleep with the entry still pending.
+        buildSpy
+          .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+          .mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
+        let dieAsTimeout: (() => void) | null = null;
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => ({
+          close: () => {},
+          [Symbol.asyncIterator]: async function* () {
+            await new Promise<void>((resolve) => {
+              dieAsTimeout = resolve;
+            });
+            throw new Error('SDK startup timeout - query aborted');
+          },
+        }));
+
+        try {
+          runner.start();
+          let deadline = Date.now() + 2000;
+          while (!messageQueue.hasPendingOrInFlight(kickoff.uuid) && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(messageQueue.hasPendingOrInFlight(kickoff.uuid)).toBe(true);
+          expect(dieAsTimeout).toBeTypeOf('function');
+
+          // Attempt 2 dies as a startup timeout → its catch claims a retry
+          // and enters its backoff sleep. Wait for the SECOND 'Auto-retrying'
+          // warn — attempt 1's catch logged the first long before the flush.
+          dieAsTimeout();
+          const retryWarnCount = () =>
+            (mockLogger.warn as ReturnType<typeof mock>).mock.calls.filter((args) =>
+              String(args[0]).includes('Auto-retrying query after startup timeout')
+            ).length;
+          deadline = Date.now() + 2000;
+          while (retryWarnCount() < 2 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(retryWarnCount()).toBe(2);
+
+          // …and a replacement query takes the session DURING the sleep
+          // (restart → stop + start; the old code's start() nulled the
+          // instance tracking here). The post-sleep guard cancels the retry.
+          ctx.incrementQueryGeneration();
+          await ctx.queryPromise?.catch(() => {});
+
+          const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+            String(args[0])
+          );
+          expect(warns.some((w) => w.includes('Startup-timeout retry cancelled'))).toBe(true);
+          expect(messageQueue.hasPendingOrInFlight(kickoff.uuid)).toBe(false);
+          expect(warns.some((w) => w.includes('Removed superseded replay entry'))).toBe(true);
+        } finally {
+          messageQueue.clear();
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+        }
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      'leaves a later re-admission of the same uuid in place (admission fence)',
+      async () => {
+        // Round-9 P2: uuid alone cannot distinguish this chain's flushed
+        // entry from a delivery-layer redrive re-feed of the same uuid that
+        // landed after it — the old unfenced late removal could delete the
+        // legitimate re-admission. The purge must remove ONLY entries
+        // admitted no later than this chain's flush.
+        const kickoff = {
+          uuid: 'fence-kickoff',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+        const messageQueue = new MessageQueue();
+
+        const ctx = createContext({ messageQueue });
+        runner = new QueryRunner(ctx);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff]]]);
+
+        buildSpy
+          .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+          .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514' });
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => ({
+          close: () => {},
+          [Symbol.asyncIterator]: async function* () {
+            await new Promise(() => {});
+          },
+        }));
+
+        try {
+          runner.start();
+          const deadline = Date.now() + 2000;
+          while (!messageQueue.hasPendingOrInFlight(kickoff.uuid) && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(messageQueue.hasPendingOrInFlight(kickoff.uuid)).toBe(true);
+          const chainController = ctx.queryAbortController;
+
+          // Supersede; this chain's own entry is gone (consumed/revoked/TTL'd
+          // — any of the ways it leaves the sets)…
+          ctx.incrementQueryGeneration();
+          expect(messageQueue.remove(kickoff.uuid)).toBe(true);
+
+          // …and the delivery layer redrives: a FRESH admission of the same
+          // uuid, strictly after this chain's flush. (catch attached — the
+          // finally's clear() would otherwise surface an unhandled rejection.)
+          messageQueue
+            .admitWithId(kickoff.uuid, kickoff.content, false, { durable: true })
+            .catch(() => {});
+          expect(messageQueue.hasPendingOrInFlight(kickoff.uuid)).toBe(true);
+
+          chainController?.abort();
+          await ctx.queryPromise?.catch(() => {});
+
+          // The purge must leave the redrive's entry for its rightful owner.
+          expect(messageQueue.hasPendingOrInFlight(kickoff.uuid)).toBe(true);
+          const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+            String(args[0])
+          );
+          expect(warns.some((w) => w.includes('Left pending entry fence-kickoff'))).toBe(true);
+          expect(warns.some((w) => w.includes('Removed superseded replay entry'))).toBe(false);
+        } finally {
+          messageQueue.clear();
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+        }
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      'merges a staged steer with the consumed kickoff at the retry site (mixed consumed/rejected)',
+      async () => {
+        // Round-9 P1: during one attempt's replay flush the generator can
+        // pull the KICKOFF (recorded consumed, admission resolved) while a
+        // trailing STEER's admission TTL rejects (re-staged). The retry site
+        // re-populates the staging from the consumed set — a plain assignment
+        // there clobbers the staged steer, and steers have NO delivery-layer
+        // recovery lane (their rows stay 'consumed'): the loss is permanent.
+        // The re-population must MERGE: consumed base + staged survivors.
+        process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '2';
+        const kickoff = {
+          uuid: 'mixed-kickoff',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+        const steer = {
+          uuid: 'mixed-steer',
+          content: [{ type: 'text' as const, text: 'S' }],
+        };
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        // Attempt 1 "consumed" both (a silent iterator can pull the kickoff
+        // AND trailing steers) before dying at build (timeout).
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff, steer]]]);
+
+        buildSpy
+          .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+          .mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => ({
+          close: () => {},
+          [Symbol.asyncIterator]: async function* () {
+            await new Promise(() => {});
+          },
+        }));
+        let rejectSteerAdmission: ((error: Error) => void) | null = null;
+        enqueueWithIdSpy.mockImplementation((uuid: string) => {
+          if (uuid === kickoff.uuid) {
+            // The generator pulled the kickoff: the wrapper records it
+            // consumed and the admission resolves (onSent).
+            (
+              runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+            )._consumedUserMessages.set(1, [kickoff]);
+            return Promise.resolve();
+          }
+          return new Promise<void>((_resolve, reject) => {
+            rejectSteerAdmission = reject;
+          });
+        });
+
+        try {
+          runner.start();
+          // Attempt 2's flush: the steer's admission is armed (flushed first
+          // — the flush iterates in reverse) and the kickoff consumed.
+          let deadline = Date.now() + 2000;
+          while (!rejectSteerAdmission && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(rejectSteerAdmission).toBeTypeOf('function');
+          expect(
+            (
+              runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+            )._consumedUserMessages.get(1)
+          ).toEqual([kickoff]);
+
+          // The steer's admission TTL rejects → re-staged, attempt aborted →
+          // bounded retry. At the retry site: consumed=[kickoff],
+          // staged=[steer] — the merge must keep BOTH.
+          const ttlError = new Error('Message queue timeout');
+          ttlError.name = 'MessageQueueTimeoutError';
+          rejectSteerAdmission(ttlError);
+
+          // Attempt 3's flush feeds the merged replay (2 more admissions).
+          deadline = Date.now() + 2000;
+          while (enqueueWithIdSpy.mock.calls.length < 4 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(enqueueWithIdSpy.mock.calls.length).toBe(4);
+          ctx.queryAbortController?.abort();
+          await ctx.queryPromise?.catch(() => {});
+
+          // The mixed case survived: attempt 3 re-fed BOTH — the steer first
+          // (reverse flush of [kickoff, steer]), then the kickoff. Without
+          // the merge the steer is absent from calls 3–4.
+          const secondFlushUuids = (
+            enqueueWithIdSpy.mock.calls.slice(2) as unknown as Array<[string]>
+          ).map(([uuid]) => uuid);
+          expect(secondFlushUuids).toEqual(['mixed-steer', 'mixed-kickoff']);
         } finally {
           (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
         }
       }
     );
+
+    it.skipIf(!sdkQueryIsMock)(
+      "a stale replay-admission flag does not misclassify the next attempt's 0-message EOF",
+      async () => {
+        // Round-9 P3: _replayAdmissionRejected used to be chain-scoped (reset
+        // only in start() and the finally) — a stale true from attempt N
+        // leaked into attempt N+1, where an ORDINARY zero-message completion
+        // was misclassified as a startup timeout and burned another budget
+        // round. The flag must reset at every attempt entry.
+        process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '2';
+        const kickoff = {
+          uuid: 'eof-kickoff',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff]]]);
+
+        buildSpy
+          .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+          .mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
+        // Attempt 2's iterator parks; attempt 3's completes NORMALLY with
+        // zero messages. (Counter counts query() calls — attempt 1 died at
+        // build and never reached query().)
+        let queryCalls = 0;
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => {
+          queryCalls++;
+          return {
+            close: () => {},
+            [Symbol.asyncIterator]:
+              queryCalls >= 2
+                ? async function* () {}
+                : async function* () {
+                    await new Promise(() => {});
+                  },
+          };
+        });
+        // Attempt 2's admission rejects (TTL) — sets the flag and aborts;
+        // attempt 3's admission resolves.
+        let admissions = 0;
+        let rejectAdmission: ((error: Error) => void) | null = null;
+        enqueueWithIdSpy.mockImplementation(() => {
+          admissions++;
+          if (admissions === 1) {
+            return new Promise<void>((_resolve, reject) => {
+              rejectAdmission = reject;
+            });
+          }
+          return Promise.resolve();
+        });
+
+        try {
+          runner.start();
+          const deadline = Date.now() + 2000;
+          while (!rejectAdmission && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(rejectAdmission).toBeTypeOf('function');
+          const ttlError = new Error('Message queue timeout');
+          ttlError.name = 'MessageQueueTimeoutError';
+          rejectAdmission(ttlError);
+
+          await ctx.queryPromise?.catch(() => {});
+
+          // Attempt 3 completed cleanly at zero messages: no startup-timeout
+          // surfacing, no fourth build. (Pre-fix: the stale flag re-threw
+          // 'SDK startup timeout', exhausted the budget and called
+          // handleError.)
+          expect(buildSpy).toHaveBeenCalledTimes(3);
+          expect(handleErrorSpy).not.toHaveBeenCalled();
+          const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+            String(args[0])
+          );
+          expect(warns.some((w) => w.includes('retry budget exhausted'))).toBe(false);
+        } finally {
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+        }
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      'resets firstMessageReceived before the startup-timeout retry attempt',
+      async () => {
+        // Round-9 P3: a first frame can race the timeout's abort past the
+        // loop's bookkeeping, leaving firstMessageReceived=true on entry to
+        // the catch. The recursion is the one retry gate that did NOT reset
+        // it — the retry's startup timer would then be disarmed and a silent
+        // spawn could hold its gate slot forever.
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+
+        buildSpy
+          .mockImplementationOnce(async () => {
+            // The racing first frame lands after the timer's abort decision
+            // but before the catch runs.
+            ctx.firstMessageReceived = true;
+            throw new Error('SDK startup timeout - query aborted');
+          })
+          .mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => ({
+          close: () => {},
+          [Symbol.asyncIterator]: async function* () {
+            await new Promise(() => {});
+          },
+        }));
+
+        try {
+          runner.start();
+          const deadline = Date.now() + 2000;
+          while (buildSpy.mock.calls.length < 2 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(buildSpy).toHaveBeenCalledTimes(2);
+          // The retry attempt must start with a clean startup-phase flag.
+          expect(ctx.firstMessageReceived).toBe(false);
+
+          ctx.queryAbortController?.abort();
+          await ctx.queryPromise?.catch(() => {});
+        } finally {
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+        }
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      're-feeds a skip-branch re-stage on the next flush once the duplicate clears',
+      async () => {
+        // Round-9 test gap: the skip branch RE-STAGES a uuid a redrive
+        // already re-admitted (keeping a lane open). The re-feed half — the
+        // NEXT flush re-checking hasPendingOrInFlight and feeding normally
+        // once the duplicate is gone — was never asserted.
+        process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '2';
+        const kickoff = {
+          uuid: 'refeed-kickoff',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff]]]);
+
+        buildSpy
+          .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+          .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514' })
+          .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514' });
+        // Attempt 2's iterator dies as a startup timeout right after its
+        // (fully skipped) flush; attempt 3's iterator parks. (Counter counts
+        // query() calls — attempt 1 died at build.)
+        let queryCalls = 0;
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => {
+          queryCalls++;
+          return {
+            close: () => {},
+            [Symbol.asyncIterator]:
+              queryCalls === 1
+                ? async function* () {
+                    throw new Error('SDK startup timeout - query aborted');
+                  }
+                : async function* () {
+                    await new Promise(() => {});
+                  },
+          };
+        });
+        // First check (attempt 2's flush): the redrive's duplicate is still
+        // pending → skip. Later checks (attempt 3's flush): cleared → feed.
+        let pendingChecks = 0;
+        hasPendingOrInFlightSpy.mockImplementation(() => pendingChecks++ === 0);
+
+        try {
+          runner.start();
+          const deadline = Date.now() + 2000;
+          while (enqueueWithIdSpy.mock.calls.length < 1 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          // End the parked attempt 3 (normal completion at zero messages).
+          ctx.queryAbortController?.abort();
+          await ctx.queryPromise?.catch(() => {});
+
+          const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+            String(args[0])
+          );
+          expect(warns.some((w) => w.includes('already pending or in-flight'))).toBe(true);
+          expect(enqueueWithIdSpy).toHaveBeenCalledTimes(1);
+          expect(enqueueWithIdSpy).toHaveBeenCalledWith(kickoff.uuid, kickoff.content, false, {
+            prepend: true,
+            durable: true,
+          });
+        } finally {
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+        }
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      'ignores an admission rejection when only the CONTROLLER identity changed (isolated disjunct)',
+      async () => {
+        // Round-9 test gap: the rejection handler's attempt-scope guard has
+        // two disjuncts — generation mismatch and controller IDENTITY. The
+        // stall-reset regression covers controller-null-with-no-bump; the
+        // generation test covers a bump. Neither isolates "same generation,
+        // DIFFERENT live controller" (a replacement runner start on the same
+        // generation) — the second disjunct's own case.
+        const kickoff = {
+          uuid: 'identity-kickoff',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff]]]);
+
+        buildSpy
+          .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+          .mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => ({
+          close: () => {},
+          [Symbol.asyncIterator]: async function* () {
+            await new Promise(() => {});
+          },
+        }));
+        let rejectAdmission: ((error: Error) => void) | null = null;
+        enqueueWithIdSpy.mockImplementation(
+          () =>
+            new Promise<void>((_resolve, reject) => {
+              rejectAdmission = reject;
+            })
+        );
+
+        try {
+          runner.start();
+          const deadline = Date.now() + 2000;
+          while (!rejectAdmission && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(rejectAdmission).toBeTypeOf('function');
+
+          // SAME generation, but a different (live) controller now owns the
+          // session — only the identity disjunct can detect the takeover.
+          const chainController = ctx.queryAbortController;
+          ctx.queryAbortController = new AbortController();
+          const stagedBefore = (runner as unknown as { _pendingStartupReplay: unknown[] | null })
+            ._pendingStartupReplay;
+
+          const ttlError = new Error('Message queue timeout');
+          ttlError.name = 'MessageQueueTimeoutError';
+          rejectAdmission(ttlError);
+          await new Promise((resolve) => setTimeout(resolve, 50));
+
+          expect(
+            (runner as unknown as { _pendingStartupReplay: unknown[] | null })
+              ._pendingStartupReplay === stagedBefore
+          ).toBe(true);
+          expect(
+            (runner as unknown as { _replayAdmissionRejected: boolean })._replayAdmissionRejected
+          ).toBe(false);
+          expect(chainController?.signal.aborted).toBe(false);
+          const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+            String(args[0])
+          );
+          expect(warns.some((w) => w.includes('lost session ownership; ignoring'))).toBe(true);
+
+          // End the parked attempt (its 60 s startup timer and pending
+          // admission must not outlive the test).
+          chainController?.abort();
+          await ctx.queryPromise?.catch(() => {});
+          if (ctx.startupTimeoutTimer) {
+            clearTimeout(ctx.startupTimeoutTimer);
+            ctx.startupTimeoutTimer = null;
+          }
+        } finally {
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+        }
+      }
+    );
+
+    it('pins the staged-replay ordering and dedupe used by the merge (stageStartupReplayEntry)', () => {
+      // Round-9 test gap: staged.sort + the uuid dedupe inside the merge
+      // helper were un-pinned (the flush-order assertions only cover the
+      // downstream enqueue). Direct pin: out-of-order staging re-sorts by
+      // position in the flush's replay array, and duplicates are no-ops.
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      const helper = runner as unknown as {
+        _pendingStartupReplay: Array<{ uuid: string }> | null;
+        stageStartupReplayEntry: (
+          replay: Array<{ uuid: string; content: string }>,
+          message: { uuid: string; content: string }
+        ) => void;
+      };
+      const replay = [
+        { uuid: 'a', content: 'A' },
+        { uuid: 'b', content: 'B' },
+        { uuid: 'c', content: 'C' },
+      ];
+      helper._pendingStartupReplay = null;
+
+      // Stage in the worst order: tail, head, middle.
+      helper.stageStartupReplayEntry(replay, replay[2]);
+      helper.stageStartupReplayEntry(replay, replay[0]);
+      helper.stageStartupReplayEntry(replay, replay[1]);
+      expect(helper._pendingStartupReplay?.map((entry) => entry.uuid)).toEqual(['a', 'b', 'c']);
+
+      // Deduped by uuid: re-staging an existing entry changes nothing.
+      helper.stageStartupReplayEntry(replay, replay[1]);
+      expect(helper._pendingStartupReplay?.map((entry) => entry.uuid)).toEqual(['a', 'b', 'c']);
+      expect(helper._pendingStartupReplay?.length).toBe(3);
+    });
 
     it('parses the new knobs and keeps the retired HYPERNEO_SDK_STARTUP_MAX_RETRIES inert', async () => {
       // Round-5 P3-9(3): parsing garbage/negative/float inputs falls back to

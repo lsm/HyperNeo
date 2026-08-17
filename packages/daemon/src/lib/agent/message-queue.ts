@@ -8,10 +8,10 @@
  * without being consumed by the SDK, it will be rejected with a timeout error.
  */
 
-import type { UUID } from 'crypto';
 import type { MessageContent, ToolResultContent } from '@hyperneo/shared';
-import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { generateUUID } from '@hyperneo/shared';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import type { UUID } from 'crypto';
 
 /**
  * Check if content is a tool_result content block
@@ -53,6 +53,13 @@ interface QueuedMessage {
   internal?: boolean; // If true, don't save to DB or emit to client
   timeoutId?: ReturnType<typeof setTimeout>; // Timeout handle for cleanup
   durable?: boolean;
+  /**
+   * Monotonic admission sequence for THIS queue. Admissions are not idempotent
+   * by uuid (a re-feed pushes a fresh entry), so uuid alone cannot tell "the
+   * entry a superseded chain flushed" from "a later legitimate re-admission
+   * of the same uuid" — the seq can (see removeIfAdmittedNoLaterThan).
+   */
+  admissionSeq: number;
 }
 
 export class MessageQueue {
@@ -75,6 +82,9 @@ export class MessageQueue {
   // Generation counter to detect stale queries
   // When incrementing, old generators will skip yielding messages
   private generation: number = 0;
+
+  // Monotonic admission counter (see QueuedMessage.admissionSeq).
+  private admissionSeq = 0;
 
   /**
    * Callback fired when the generator yields a message to the SDK.
@@ -135,6 +145,7 @@ export class MessageQueue {
         content,
         timestamp: new Date().toISOString(),
         queuedAt: Date.now(),
+        admissionSeq: ++this.admissionSeq,
         durable: options?.durable,
         resolve: () => {
           // Clear timeout when message is successfully consumed
@@ -246,6 +257,42 @@ export class MessageQueue {
     // after its await and skips a revoked claim. Once in `yielded`, provider
     // ownership has won and removal correctly returns false.
     const claimed = [...this.claimed].find((msg) => msg.id === messageId);
+    if (!claimed) return false;
+    this.claimed.delete(claimed);
+    if (claimed.timeoutId) clearTimeout(claimed.timeoutId);
+    claimed.resolve(messageId);
+    return true;
+  }
+
+  /** Current admission sequence — the fence value for the API below. */
+  getAdmissionSeq(): number {
+    return this.admissionSeq;
+  }
+
+  /**
+   * Variant of {@link remove} that only touches an entry THIS caller admitted:
+   * the removal is fenced on the admission sequence, so an entry (re-)admitted
+   * AFTER `admittedNoLaterThanSeq` — e.g. a delivery-layer redrive re-feeding
+   * the same uuid after a superseded startup-retry chain flushed it — is left
+   * in place for its rightful owner. Used by a stale chain's cleanup to purge
+   * its own flushed prompts without deleting a newer legitimate admission of
+   * the same uuid. Like `remove`, an already-YIELDED entry is untouched (the
+   * provider owns it); returns whether an entry was actually removed.
+   */
+  removeIfAdmittedNoLaterThan(messageId: string, admittedNoLaterThanSeq: number): boolean {
+    const queueIndex = this.queue.findIndex(
+      (msg) => msg.id === messageId && msg.admissionSeq <= admittedNoLaterThanSeq
+    );
+    if (queueIndex !== -1) {
+      const [msg] = this.queue.splice(queueIndex, 1);
+      if (msg.timeoutId) clearTimeout(msg.timeoutId);
+      msg.resolve(messageId);
+      return true;
+    }
+
+    const claimed = [...this.claimed].find(
+      (msg) => msg.id === messageId && msg.admissionSeq <= admittedNoLaterThanSeq
+    );
     if (!claimed) return false;
     this.claimed.delete(claimed);
     if (claimed.timeoutId) clearTimeout(claimed.timeoutId);

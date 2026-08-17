@@ -572,10 +572,17 @@ export class QueryRunner {
    * zero; the remaining gap to consumption is the subprocess cold start,
    * whose own admission-TTL risk the flush's rejection handler owns (it
    * re-stages the message here and routes the failure into the bounded
-   * startup-retry machine — see stageStartupReplayEntry). Cleared on start()
-   * and in the finally so an aborted chain cannot leak a stale replay into
-   * the next turn; steers staged by a dying chain have no delivery-layer
-   * recovery lane and are dropped there (with a warn).
+   * startup-retry machine — see stageStartupReplayEntry).
+   *
+   * Clear-sites, exhaustively: a flush DRAINS it into the queue (nulled at
+   * flush start; the rejection handler and skip branch may re-stage into it);
+   * the startup-timeout retry re-populates it by MERGING the newly consumed
+   * set with whatever survived (a plain assignment would clobber re-staged
+   * steers — they have no delivery-layer recovery lane); start() nulls it so
+   * a fresh turn discards a superseded chain's leftovers; the finally's LIVE
+   * branch nulls it at normal chain end. The finally's STALE branch leaves it
+   * alone — the replacement's start() is the clear-site there, and a
+   * same-generation recursive retry legitimately adopts the staging.
    */
   private _pendingStartupReplay: Array<{
     uuid: string;
@@ -587,18 +594,12 @@ export class QueryRunner {
    * queue's 30 s TTL (slow cold start) and the handler aborted the attempt.
    * The post-loop escape folds this into the startup-timeout throw so the
    * catch's retry state machine — not the ~3-min stall watchdog — owns the
-   * recovery. Attempt-scoped: reset in start() and in the finally.
+   * recovery. Attempt-scoped for real: reset at EVERY runQuery entry (a
+   * stale-true from attempt N would otherwise misclassify attempt N+1's
+   * ordinary zero-message EOF as a startup timeout), in start(), and in the
+   * finally's live branch.
    */
   private _replayAdmissionRejected = false;
-
-  /**
-   * uuids flushed into the queue by the CURRENT attempt's replay flush (null
-   * when this attempt flushed nothing). Read by the finally's stale branch to
-   * remove entries still pending in the queue when the chain is superseded —
-   * without this, a replacement turn's generator would consume this
-   * delivery's prompts (restart() supersedes via stop-without-clear).
-   */
-  private _flushedReplayUuids: string[] | null = null;
 
   /**
    * Add `message` to the staged replay, deduped by uuid and ordered by its
@@ -666,7 +667,6 @@ export class QueryRunner {
     // stale).
     this._pendingStartupReplay = null;
     this._replayAdmissionRejected = false;
-    this._flushedReplayUuids = null;
 
     // Store query promise for cleanup
     this.ctx.queryPromise = this.runQuery(currentGeneration);
@@ -711,6 +711,27 @@ export class QueryRunner {
       );
       permit.release();
     };
+
+    // Attempt-scoped replay-admission verdict: a stale true carried over from
+    // a prior attempt of this chain would misclassify THIS attempt's ordinary
+    // zero-message EOF as a startup timeout and burn a budget round on it.
+    // Reset here (every attempt entry) — start() and the finally cover the
+    // chain boundaries, the recursion between attempts is only covered by
+    // this line. (Round-9 P3.)
+    this._replayAdmissionRejected = false;
+
+    // uuids THIS attempt flushed into the queue during its replay flush, plus
+    // the admission sequence that fences them. Attempt-LOCAL on purpose
+    // (round-9 P2): the finally reads them at unwind time to purge this
+    // attempt's still-pending entries when the chain is superseded — as
+    // instance fields the same data was neutralized by a replacement's
+    // start() nulling them before the stale finally ran, and could not tell
+    // our own entry from a later legitimate re-admission of the same uuid.
+    // `flushAdmissionFenceSeq` is captured right after the flush loop; the
+    // queue's monotonic admission counter guarantees anything admitted later
+    // (a delivery-layer redrive re-feed) survives the purge.
+    let flushedReplayUuids: string[] | null = null;
+    let flushAdmissionFenceSeq = 0;
 
     try {
       // Verify authentication for the selected provider
@@ -1069,12 +1090,13 @@ export class QueryRunner {
           logger.warn(
             `Re-enqueueing ${replay.length} consumed user message(s) after startup-gate admission.`
           );
-          // uuids this attempt flushed; the finally's stale branch removes any
+          // uuids this attempt flushed (attempt-local — see the declaration
+          // near the top of runQuery); the finally's stale branch removes any
           // that are still pending so a replacement turn's generator cannot
           // eat this delivery's prompts (restart() supersedes stop-without-
           // clear, so the queue would otherwise carry them across the swap).
           const flushedUuids: string[] = [];
-          this._flushedReplayUuids = flushedUuids;
+          flushedReplayUuids = flushedUuids;
           for (let i = replay.length - 1; i >= 0; i--) {
             const message = replay[i];
             // Duplicate guard (mirrors the steer re-admission guard): if a
@@ -1158,6 +1180,12 @@ export class QueryRunner {
                 }
               });
           }
+          // Fence for the finally's purge: everything admitted through this
+          // synchronous loop is THIS attempt's flush (the loop never awaits);
+          // any admission of the same uuids recorded after this counter read
+          // belongs to a later re-feed (delivery-layer redrive) and must
+          // survive the superseded chain's cleanup. (Round-9 P2.)
+          flushAdmissionFenceSeq = messageQueue.getAdmissionSeq();
         } else {
           logger.warn(
             `Dropping staged startup replay for generation ${queryGeneration}: ` +
@@ -1654,10 +1682,44 @@ export class QueryRunner {
           // (Codex P1, PR #2499; gate-wait deferral per round-6 review.)
           const consumed = this._consumedUserMessages.get(queryGeneration) ?? [];
           if (consumed.length > 0) {
-            this._pendingStartupReplay = consumed;
             this._consumedUserMessages.delete(queryGeneration);
             this._lastConsumedUserMessage = null;
+            // MERGE with whatever the dying attempt's flush re-staged — never
+            // a plain assignment (round-9 P1). Mixed case: the generator
+            // pulled the kickoff (recorded consumed) while a trailing steer's
+            // admission TTL rejected and was re-staged; assigning `consumed`
+            // here would clobber the staged steer, and steers have no
+            // delivery-layer recovery lane (their rows stay 'consumed') — the
+            // loss would be permanent. Consumed messages form the ordered
+            // base (their feed order); staged entries not already present are
+            // appended (a staged entry whose uuid was ALSO consumed is the
+            // skip-branch re-stage racing a redrive consumption — one copy).
+            const staged = this._pendingStartupReplay ?? [];
+            this._pendingStartupReplay =
+              staged.length === 0
+                ? consumed
+                : [
+                    ...consumed,
+                    ...staged.filter((entry) => !consumed.some((c) => c.uuid === entry.uuid)),
+                  ];
           }
+
+          // Reset the startup-phase state for the recursive attempt (mirror of
+          // the message-not-found / transient / provider retry sites — this
+          // was the only recursion missing it, round-9 P3). Recursive retries
+          // do NOT go through start(); a stale firstMessageReceived=true — a
+          // first frame racing the timeout's abort past the loop's message
+          // bookkeeping — would disarm the retry's startup timer, and a silent
+          // replacement spawn would then sit in the for-await forever, never
+          // reaching a permit release site and permanently holding its
+          // startup-gate slot. Drop this attempt's (fired) timer handle too so
+          // the retry arms a fresh one.
+          const staleStartupTimer = this.ctx.startupTimeoutTimer;
+          if (staleStartupTimer) {
+            clearTimeout(staleStartupTimer);
+            this.ctx.startupTimeoutTimer = null;
+          }
+          this.ctx.firstMessageReceived = false;
 
           // Use `return await` so this call's finally{} runs only after the retry
           // completes. Otherwise finally{} would race the retry and can tear down
@@ -2235,33 +2297,40 @@ export class QueryRunner {
         // that loss observable when it happens.
         this._pendingStartupReplay = null;
         this._replayAdmissionRejected = false;
-        this._flushedReplayUuids = null;
 
         // Null queryPromise last so callers awaiting it see queryObject=null.
         this.ctx.queryPromise = null;
       }
       // Stale query: skip shared-state cleanup — the new query owns it — with
-      // ONE exception: entries this attempt flushed into the queue must not
+      // ONE exception: entries THIS attempt flushed into the queue must not
       // survive into the replacement's generator. restart() supersedes via
       // stop-without-clear, so a still-pending flushed entry would otherwise
       // be consumed as the replacement turn's own prompt (foreign/duplicate
-      // feed). Removing here races only the replacement's FIRST generator
-      // pull; the redrive's own re-enqueue (if any) happens after our
-      // removal, so legitimate inputs are untouched.
-      const flushedByThisAttempt = this._flushedReplayUuids;
-      if (flushedByThisAttempt && this.ctx.getQueryGeneration() !== queryGeneration) {
-        for (const uuid of flushedByThisAttempt) {
-          if (messageQueue.hasPendingOrInFlight(uuid)) {
-            const removed = messageQueue.remove(uuid);
+      // feed). The tracking is attempt-local (declared at the top of runQuery)
+      // so a replacement's start() cannot neutralize this purge, and the
+      // removal is fenced on the flush's admission sequence so a LATER
+      // legitimate re-admission of the same uuid — a delivery-layer redrive
+      // that re-fed the message after this chain died — is left for its
+      // rightful owner. An entry already yielded to the replacement's SDK is
+      // equally out of reach (the feed happened); that residual window is
+      // bounded by the flush's admission TTL.
+      if (flushedReplayUuids && this.ctx.getQueryGeneration() !== queryGeneration) {
+        for (const uuid of flushedReplayUuids) {
+          if (!messageQueue.hasPendingOrInFlight(uuid)) continue;
+          const removed = messageQueue.removeIfAdmittedNoLaterThan(uuid, flushAdmissionFenceSeq);
+          if (removed) {
             logger.warn(
               `Removed superseded replay entry ${uuid} from the queue ` +
-                `(claimed by this chain, stale generation ${queryGeneration}; removed=${removed}).`
+                `(claimed by this chain, stale generation ${queryGeneration}).`
+            );
+          } else {
+            logger.warn(
+              `Left pending entry ${uuid} in place while unwinding stale generation ` +
+                `${queryGeneration}: it was admitted after this chain's flush (a ` +
+                'delivery-layer redrive owns it) or already yielded to the replacement.'
             );
           }
         }
-      }
-      if (this._flushedReplayUuids === flushedByThisAttempt) {
-        this._flushedReplayUuids = null;
       }
     }
   }
