@@ -87,6 +87,43 @@ describe('Message delivery mode queue flow', () => {
     return false;
   }
 
+  /**
+   * Wait until the busy turn's kickoff message has been consumed by the SDK,
+   * so an immediate steer feeds a live generator mid-turn. The kickoff flips
+   * to `consumed` at the generator's admission signal, which is the earliest
+   * proof a steer can be inserted; steering on any LATER observable is a race
+   * against the turn's own pacing — a dev-proxy mock response is
+   * non-streaming, so the assistant message and the final result persist
+   * within the same millisecond, and a steer sent after "some content" (or
+   * after a fixed sleep that outlasts the turn) is claimed only after the
+   * result: promoted to a fresh turn whose consumption timestamp lands after
+   * the original result, failing the ordering this suite asserts. Steering
+   * right after admission keeps the steered message's timestamp inside the
+   * live turn, ahead of its final result by the whole response latency.
+   * Returns false when the session goes idle (or the wait times out while
+   * busy) before the kickoff is consumed — the steer-while-busy premise no
+   * longer holds, so the caller should skip instead of asserting against a
+   * promoted turn.
+   */
+  async function waitForTurnKickoffConsumed(
+    sessionId: string,
+    timeoutMs = IS_MOCK ? 10000 : 30000
+  ): Promise<boolean> {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      if ((await getCountByStatus(sessionId, 'consumed')) >= 1) {
+        // Verify busyness as late as possible — the steer must feed the live
+        // turn, not one that settled since the kickoff's consumption.
+        const state = await getProcessingState(daemon, sessionId);
+        return state.status === 'queued' || state.status === 'processing';
+      }
+      const state = await getProcessingState(daemon, sessionId);
+      if (state.status === 'idle') return false;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    return false;
+  }
+
   test(
     'defer while busy should be saved then auto-dispatched on turn end',
     async () => {
@@ -201,8 +238,15 @@ describe('Message delivery mode queue flow', () => {
           return;
         }
 
-        // Wait a moment to ensure some assistant content has been streamed
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        // Steer only once the turn's kickoff has been admitted by the SDK —
+        // a fixed sleep can outlast a fast (dev-proxy mock) turn entirely,
+        // promoting the steer to a fresh turn that consumes after the
+        // original turn's final result. See waitForTurnKickoffConsumed.
+        const kickoffConsumed = await waitForTurnKickoffConsumed(sessionId);
+        if (!kickoffConsumed) {
+          console.log('Skipping: turn ended before its kickoff message was consumed');
+          return;
+        }
 
         // Send a steering message (immediate while busy)
         const steerResult = await sendMessage(

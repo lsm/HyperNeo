@@ -147,7 +147,7 @@ describe('useMessageHub', () => {
       expect(mockHub.request).toHaveBeenCalledWith(
         'test.method',
         { input: 'data' },
-        { timeout: 10000 }
+        { timeout: 30000 }
       );
       expect(response).toEqual({ success: true, data: 'result' });
     });
@@ -373,7 +373,7 @@ describe('useMessageHub', () => {
 
       await result.current.waitForConnection();
 
-      expect(mockOnConnected).toHaveBeenCalledWith(10000);
+      expect(mockOnConnected).toHaveBeenCalledWith(30000);
     });
 
     it('should call connectionManager.onConnected with custom timeout', async () => {
@@ -767,7 +767,7 @@ describe('useMessageHub', () => {
       expect(mockHub.request).toHaveBeenCalledWith(
         'test.method',
         { input: 'data' },
-        { timeout: 10000 }
+        { timeout: 30000 }
       );
       expect(response).toEqual({ data: 'result' });
     });
