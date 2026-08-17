@@ -250,6 +250,27 @@ describe('AskUserQuestionHandler', () => {
       ]);
       const result = (await resultPromise) as { behavior: string };
       expect(result.behavior).toBe('allow');
+
+      // Same asymmetry on the max: ACP can legitimately offer >4 options, so
+      // the canUseTool channel must not deny a >4-option request either.
+      const manyOptions = Array.from({ length: 6 }, (_, i) => ({
+        label: `O${i}`,
+        description: `O${i}`,
+      }));
+      const manyResultPromise = callback(
+        'AskUserQuestion',
+        {
+          questions: [
+            { question: 'Pick many?', header: 'ACP', options: manyOptions, multiSelect: false },
+          ],
+        },
+        { signal: new AbortController().signal, toolUseID: 'acp-2' }
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(setWaitingForInputSpy).toHaveBeenCalledTimes(2);
+      await handler.handleQuestionCancel('acp-2');
+      const manyResult = (await manyResultPromise) as { behavior: string };
+      expect(manyResult.behavior).toBe('deny');
     });
   });
 
@@ -1193,6 +1214,62 @@ describe('AskUserQuestionHandler', () => {
       expect(first.hookSpecificOutput.permissionDecision).toBe('allow');
       expect(second.behavior).toBe('allow');
       expect(second.updatedInput?.answers).toEqual({ 'Pick?': 'A' });
+    });
+
+    it('settles the shared promise when setWaitingForInput fails after a same-ID dedupe', async () => {
+      // If setWaitingForInput throws (a rejecting session.updated subscriber),
+      // the hook channel's interception rejects — but a canUseTool channel that
+      // already deduped onto the shared promise must NOT await forever.
+      // Gate the throw so the dedupe lands BEFORE the failure fires.
+      let releaseFailure!: () => void;
+      const failureGate = new Promise<void>((resolve) => {
+        releaseFailure = resolve;
+      });
+      setWaitingForInputSpy.mockImplementationOnce(async () => {
+        await failureGate;
+        throw new Error('session.updated subscriber failed');
+      });
+      const hook = handler.createPreToolUseHook();
+      const input = {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'AskUserQuestion',
+        tool_input: {
+          questions: [
+            {
+              question: 'Q?',
+              header: 'H',
+              options: [
+                { label: 'A', description: 'A' },
+                { label: 'B', description: 'B' },
+              ],
+              multiSelect: false,
+            },
+          ],
+        },
+        tool_use_id: 'fail-1',
+      };
+
+      // Hook fires (resolver stored, setWaitingForInput gated), then canUseTool
+      // dedupes onto the same pending promise.
+      const firstPromise = hook(input, 'fail-1', { signal: new AbortController().signal });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const callback = handler.createCanUseToolCallback();
+      const secondPromise = callback(
+        'AskUserQuestion',
+        { questions: input.tool_input.questions },
+        { signal: new AbortController().signal, toolUseID: 'fail-1' }
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Now let setWaitingForInput fail.
+      releaseFailure();
+
+      // The hook channel rejects (setWaitingForInput threw).
+      await expect(firstPromise).rejects.toThrow('session.updated subscriber failed');
+
+      // The deduped canUseTool channel resolves with a deny — not forever-pending.
+      const second = (await secondPromise) as { behavior: string };
+      expect(second.behavior).toBe('deny');
     });
   });
 

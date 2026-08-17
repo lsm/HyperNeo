@@ -846,6 +846,33 @@ describe('QueryRunner', () => {
         expect(errorSpy).not.toHaveBeenCalled(); // no false degraded-mode alarm
       });
 
+      it('applyDeferredPermissionMode bails out when the permission mode changes mid-retry', async () => {
+        // The retry loop must not re-apply the captured 'bypassPermissions' if
+        // the user changed the mode while it was retrying — otherwise the
+        // switch silently reverts a newer user choice (CLI enforces bypass
+        // while config/UI say default).
+        const setPermissionMode = mock(async () => {
+          throw new Error('control stream closed');
+        });
+        const queryObject = { setPermissionMode } as unknown as QueryLike;
+        const ctx = createContext();
+        ctx.queryObject = queryObject;
+        ctx.session.config.permissionMode = 'default';
+        runner = new QueryRunner(ctx);
+
+        const attempt = applyOnRunner(runner)(queryObject, 'bypassPermissions', 20, 50);
+        // Change the mode during the first backoff window.
+        setTimeout(() => {
+          ctx.session.config.permissionMode = 'acceptEdits';
+        }, 25);
+        await attempt;
+
+        // The loop bailed after the mode changed — no retry of the stale mode.
+        expect(setPermissionMode.mock.calls.length).toBeLessThan(3);
+        const errorSpy = mockLogger.error as ReturnType<typeof mock>;
+        expect(errorSpy).not.toHaveBeenCalled(); // no false degraded-mode alarm
+      });
+
       it('applyDeferredPermissionMode is a no-op without a deferred mode or method', () => {
         const setPermissionMode = mock(async () => {});
         const queryObject = { setPermissionMode } as unknown as QueryLike;

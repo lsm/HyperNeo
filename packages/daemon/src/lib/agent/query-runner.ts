@@ -569,6 +569,18 @@ export class QueryRunner {
     const { session, logger } = this.ctx;
     const maxAttempts = 3;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      // If the user changed the permission mode since the deferred mode was
+      // captured (e.g. to 'acceptEdits'/'default' during the retry window),
+      // stop re-applying the captured bypass — the switch must not silently
+      // override a newer user choice. 'default' still maps to bypass.
+      const configMode = this.ctx.session.config.permissionMode;
+      if (configMode && configMode !== 'default' && configMode !== 'bypassPermissions') {
+        logger.debug(
+          `QueryRunner.start: deferred permission mode switch for session ` +
+            `${session.id} aborted — permission mode changed to '${configMode}' mid-retry`
+        );
+        return;
+      }
       try {
         const attemptPromise = queryObject.setPermissionMode(deferredPermissionMode);
         // Swallow a late rejection if the timeout wins the race below — the

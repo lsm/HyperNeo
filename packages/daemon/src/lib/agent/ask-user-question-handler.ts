@@ -207,6 +207,13 @@ export class AskUserQuestionHandler {
     // would proceed with no interaction and no card). Deny with a reason
     // instead so the model sees a recoverable error.
     const askInput = input as unknown as AskUserQuestionInput;
+    // The min/max option-count bounds mirror the SDK schema only on the
+    // PreToolUse hook channel (the primary one, seeing raw pre-schema input).
+    // The canUseTool channel also feeds ACP permission input, which maps
+    // params.options directly and has NO min-2/max-4 contract — a 1-option or
+    // >4-option request there must not be denied (it would auto-cancel a
+    // legitimate prompt).
+    const isHook = viaChannel === 'pre_tool_use_hook';
     const questionsWellFormed =
       Array.isArray(askInput.questions) &&
       askInput.questions.length >= 1 &&
@@ -218,13 +225,8 @@ export class AskUserQuestionHandler {
           typeof q.question === 'string' &&
           typeof q.multiSelect === 'boolean' &&
           Array.isArray(q.options) &&
-          // @minItems 2 is enforced on the PreToolUse hook channel (the
-          // primary one, seeing raw pre-schema input). The canUseTool channel
-          // also feeds ACP permission input, which maps params.options
-          // directly and has NO min-2 contract — a 1-option request there
-          // must not be denied (it would auto-cancel a legitimate prompt).
-          q.options.length >= (viaChannel === 'pre_tool_use_hook' ? 2 : 1) &&
-          q.options.length <= MAX_OPTIONS &&
+          q.options.length >= (isHook ? 2 : 1) &&
+          (!isHook || q.options.length <= MAX_OPTIONS) &&
           q.options.every((o) => o !== null && typeof o === 'object' && typeof o.label === 'string')
       );
     if (!questionsWellFormed) {
@@ -263,12 +265,23 @@ export class AskUserQuestionHandler {
       this.logger.info(
         `AskUserQuestion ${toolUseID}: consuming queued answer (behavior=${queued.behavior})`
       );
-      await internalEventBus.publish('question.injected_as_tool_result', {
-        sessionId: session.id,
-        toolUseId: toolUseID,
-        mode: queued.behavior === 'allow' ? 'submitted' : 'cancelled',
-        via: viaChannel,
-      });
+      // Telemetry-only publish: log-only so a throwing subscriber cannot lose
+      // the consumed answer (it was already deleted from the queue above) or
+      // reject the interception.
+      try {
+        await internalEventBus.publish('question.injected_as_tool_result', {
+          sessionId: session.id,
+          toolUseId: toolUseID,
+          mode: queued.behavior === 'allow' ? 'submitted' : 'cancelled',
+          via: viaChannel,
+        });
+      } catch (publishError) {
+        this.logger.warn(
+          `AskUserQuestion ${toolUseID}: question.injected_as_tool_result publish failed (${
+            publishError instanceof Error ? publishError.message : String(publishError)
+          })`
+        );
+      }
       return merged;
     }
 
@@ -291,12 +304,13 @@ export class AskUserQuestionHandler {
     };
 
     // Same-toolUseId re-entry: a second channel intercepting the SAME
-    // AskUserQuestion call (the PreToolUse hook and canUseTool can both fire
-    // for one call in non-bypass modes). The card is already up and a resolver
-    // exists — share its pending promise so both channels resolve with the
-    // same user answer instead of installing a second resolver + card. A
-    // question can never supersede itself, so the supersede block below only
-    // ever fires for a genuinely different question.
+    // AskUserQuestion call (QA-VERIFY: the PreToolUse hook and canUseTool both
+    // firing for one call in non-bypass modes is the non-bypass ordering the
+    // header marks NOT empirically confirmed). The card is already up and a
+    // resolver exists — share its pending promise so both channels resolve
+    // with the same user answer instead of installing a second resolver +
+    // card. A question can never supersede itself, so the supersede block
+    // below only ever fires for a genuinely different question.
     if (this.pendingResolver?.toolUseId === toolUseID) {
       return this.pendingResolver.promise;
     }
@@ -318,10 +332,11 @@ export class AskUserQuestionHandler {
     // AskUserQuestion calls in one turn (two tool_use blocks). The resolver
     // map is single-slot; settle the superseded one with a deny RESULT —
     // not a rejection — so the CLI gets an unambiguous denial for the older
-    // call. (A rejection marshals as a channel error: under
-    // bypassPermissions an errored PreToolUse hook is non-blocking, so the
-    // superseded call could proceed with no interaction; in 'default' mode
-    // the error fall-through can re-consult canUseTool.)
+    // call. (QA-VERIFY: the errored-hook claim — under bypassPermissions an
+    // errored PreToolUse hook is non-blocking, so the superseded call could
+    // proceed with no interaction — is the empirical claim the header marks
+    // NOT confirmed; in 'default' mode the error fall-through can re-consult
+    // canUseTool.)
     if (this.pendingResolver) {
       this.logger.warn(
         `AskUserQuestion ${this.pendingResolver.toolUseId}: superseded by a newer ` +
@@ -344,24 +359,40 @@ export class AskUserQuestionHandler {
     };
 
     // Transition to waiting_for_input state (persist + broadcast). If this
-    // fails, the card was never shown — drop the resolver stored above so it
-    // does not dangle against a question the user never saw.
+    // fails — a rejecting session.updated subscriber can throw after the DB
+    // write, leaving the session persisted as waiting_for_input — settle the
+    // pending promise so any channel that deduped onto it (same-toolUseId
+    // re-entry) resolves instead of awaiting forever, then drop the resolver
+    // (it becomes unreachable from every settle path once nulled).
     try {
       await stateManager.setWaitingForInput(pendingQuestion);
     } catch (err) {
+      resolvePending({
+        behavior: 'deny',
+        message: 'AskUserQuestion failed to surface; the question was not answered.',
+      });
       if (this.pendingResolver?.toolUseId === toolUseID) {
         this.pendingResolver = null;
       }
       throw err;
     }
 
-    // Emit event for logging/debugging. This runs AFTER the card is live; a
-    // publish failure (no 'question.asked' subscribers today) must NOT drop
-    // the resolver — the question is shown and answerable.
-    await internalEventBus.publish('question.asked', {
-      sessionId: session.id,
-      pendingQuestion,
-    });
+    // Emit event for logging/debugging. Runs AFTER the card is live; log-only
+    // so a throwing subscriber can never reject the interception (under bypass
+    // a rejected channel would let the tool proceed uninteracted with an
+    // answerable card up — the silent-drop class). The card stays answerable.
+    try {
+      await internalEventBus.publish('question.asked', {
+        sessionId: session.id,
+        pendingQuestion,
+      });
+    } catch (publishError) {
+      this.logger.warn(
+        `AskUserQuestion ${toolUseID}: question.asked publish failed (${
+          publishError instanceof Error ? publishError.message : String(publishError)
+        })`
+      );
+    }
 
     return pending;
   }
