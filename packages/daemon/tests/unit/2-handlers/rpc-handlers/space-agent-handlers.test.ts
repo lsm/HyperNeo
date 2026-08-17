@@ -32,6 +32,7 @@ import type { SpaceManager } from '../../../../src/lib/space/managers/space-mana
 import { setModelsCache } from '../../../../src/lib/model-service';
 import {
   createSpaceAgentSchema,
+  createWorkflowPinningTables,
   insertSpace,
   insertWorkflow,
   insertWorkflowNode,
@@ -179,6 +180,7 @@ describe('Space Agent RPC Handlers', () => {
   beforeEach(() => {
     db = new Database(':memory:');
     createSpaceAgentSchema(db);
+    createWorkflowPinningTables(db);
     insertSpace(db, 'space-1');
 
     const repo = new SpaceAgentRepository(db as any);

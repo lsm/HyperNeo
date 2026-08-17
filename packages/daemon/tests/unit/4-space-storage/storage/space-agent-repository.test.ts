@@ -10,9 +10,13 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import {
   createSpaceAgentSchema,
+  createWorkflowPinningTables,
+  insertDefinitionVersion,
+  insertRunTask,
   insertSpace,
   insertWorkflow,
   insertWorkflowNode,
+  insertWorkflowRun,
 } from '../../helpers/space-agent-schema';
 
 describe('SpaceAgentRepository', () => {
@@ -22,6 +26,7 @@ describe('SpaceAgentRepository', () => {
   beforeEach(() => {
     db = new Database(':memory:');
     createSpaceAgentSchema(db);
+    createWorkflowPinningTables(db);
     insertSpace(db);
     repo = new SpaceAgentRepository(db as any);
   });
@@ -286,6 +291,80 @@ describe('SpaceAgentRepository', () => {
       const result = repo.isAgentReferenced(agent.id);
       expect(result.workflowNames).toHaveLength(1);
       expect(result.workflowNames[0]).toBe('CI Workflow');
+    });
+  });
+
+  describe('isReferencedByActivePinnedRun', () => {
+    it('returns not-referenced when no runs or versions exist', () => {
+      const agent = repo.create({ spaceId: 'space-1', name: 'Agent' });
+      const result = repo.isReferencedByActivePinnedRun(agent.id);
+      expect(result.referenced).toBe(false);
+      expect(result.runIds).toEqual([]);
+    });
+
+    it('returns not-referenced when a run is pinned to a version that does not reference the agent', () => {
+      const agent = repo.create({ spaceId: 'space-1', name: 'Agent' });
+      // Version references some OTHER agent id, not this one.
+      insertWorkflow(db, 'wf-1', 'space-1', 'Deploy');
+      insertDefinitionVersion(db, 'wf-1', 'hash-1', 'other-agent-id');
+      insertWorkflowRun(db, 'run-1', 'wf-1', 'hash-1');
+      insertRunTask(db, 'task-1', 'run-1');
+
+      const result = repo.isReferencedByActivePinnedRun(agent.id);
+      expect(result.referenced).toBe(false);
+      expect(result.runIds).toEqual([]);
+    });
+
+    it('returns referenced when a non-archived run is pinned to a version referencing the agent', () => {
+      const agent = repo.create({ spaceId: 'space-1', name: 'Agent' });
+      insertWorkflow(db, 'wf-1', 'space-1', 'Deploy');
+      insertDefinitionVersion(db, 'wf-1', 'hash-1', agent.id);
+      insertWorkflowRun(db, 'run-1', 'wf-1', 'hash-1');
+      insertRunTask(db, 'task-1', 'run-1');
+
+      const result = repo.isReferencedByActivePinnedRun(agent.id);
+      expect(result.referenced).toBe(true);
+      expect(result.runIds).toContain('run-1');
+    });
+
+    it('returns not-referenced when the only run pinned to a referencing version is archived (tombstone)', () => {
+      const agent = repo.create({ spaceId: 'space-1', name: 'Agent' });
+      insertWorkflow(db, 'wf-1', 'space-1', 'Deploy');
+      insertDefinitionVersion(db, 'wf-1', 'hash-1', agent.id);
+      insertWorkflowRun(db, 'run-1', 'wf-1', 'hash-1');
+      // Fully archived → the run can never execute again, so the pin is inert.
+      insertRunTask(db, 'task-1', 'run-1', true);
+
+      const result = repo.isReferencedByActivePinnedRun(agent.id);
+      expect(result.referenced).toBe(false);
+      expect(result.runIds).toEqual([]);
+    });
+
+    it('returns not-referenced for an unpinned run that references the agent only in the head', () => {
+      // An unpinned run (definition_version NULL) re-reads the mutable head, so
+      // it is isAgentReferenced's concern, not this predicate's.
+      const agent = repo.create({ spaceId: 'space-1', name: 'Agent' });
+      insertWorkflow(db, 'wf-1', 'space-1', 'Deploy');
+      insertDefinitionVersion(db, 'wf-1', 'hash-1', agent.id);
+      insertWorkflowRun(db, 'run-1', 'wf-1', null);
+      insertRunTask(db, 'task-1', 'run-1');
+
+      const result = repo.isReferencedByActivePinnedRun(agent.id);
+      expect(result.referenced).toBe(false);
+      expect(result.runIds).toEqual([]);
+    });
+
+    it('counts a run whose canonical task is live even alongside archived duplicates', () => {
+      const agent = repo.create({ spaceId: 'space-1', name: 'Agent' });
+      insertWorkflow(db, 'wf-1', 'space-1', 'Deploy');
+      insertDefinitionVersion(db, 'wf-1', 'hash-1', agent.id);
+      insertWorkflowRun(db, 'run-1', 'wf-1', 'hash-1');
+      insertRunTask(db, 'task-archived', 'run-1', true);
+      insertRunTask(db, 'task-live', 'run-1', false);
+
+      const result = repo.isReferencedByActivePinnedRun(agent.id);
+      expect(result.referenced).toBe(true);
+      expect(result.runIds).toContain('run-1');
     });
   });
 });

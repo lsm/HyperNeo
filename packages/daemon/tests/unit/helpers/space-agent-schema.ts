@@ -234,6 +234,58 @@ export function createSpaceAgentSchema(db: Database): void {
 	`);
 }
 
+/**
+ * Create the Phase-1 version-pinning tables (RFC §4) needed by the agent
+ * deletion guard's pinned-run predicate. Opt-in (not in `createSpaceAgentSchema`)
+ * so it does not collide with tests that define their own bespoke copies of these
+ * tables (e.g. space-workflow-manager's Phase-1 read-cutover block). Call AFTER
+ * `createSpaceAgentSchema`, which provides the `spaces` / `space_workflows` rows
+ * these tables reference. Mirrors M180 (versions) + the M181 run rebuild
+ * (definition_version + composite FK to the version history) + the space_tasks
+ * columns the "non-archived run" predicate reads.
+ */
+export function createWorkflowPinningTables(db: Database): void {
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS space_workflow_definition_versions (
+			workflow_id TEXT NOT NULL,
+			version_hash TEXT NOT NULL,
+			space_id TEXT NOT NULL,
+			payload TEXT NOT NULL,
+			source TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (workflow_id, version_hash),
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS space_workflow_runs (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			workflow_id TEXT NOT NULL,
+			definition_version TEXT,
+			title TEXT NOT NULL,
+			description TEXT,
+			status TEXT NOT NULL DEFAULT 'pending',
+			failure_reason TEXT,
+			created_at INTEGER NOT NULL,
+			started_at INTEGER,
+			updated_at INTEGER NOT NULL,
+			completed_at INTEGER,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (workflow_id, definition_version)
+				REFERENCES space_workflow_definition_versions(workflow_id, version_hash)
+		)
+	`);
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS space_tasks (
+			id TEXT PRIMARY KEY,
+			workflow_run_id TEXT,
+			archived_at INTEGER,
+			FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL
+		)
+	`);
+}
+
 export function insertSpace(db: Database, id = 'space-1'): void {
   const now = Date.now();
   db.prepare(
@@ -260,4 +312,71 @@ export function insertWorkflowNode(
   db.prepare(
     `INSERT INTO space_workflow_nodes (id, workflow_id, name, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
   ).run(id, workflowId, `Node ${id}`, configJson, now, now);
+}
+
+/**
+ * Append an immutable definition-version snapshot whose payload embeds an agent
+ * slot when `agentId` is given. The payload mirrors `computeDefinitionVersion`
+ * output — a workflow object whose nodes carry `agents: [{ agentId }]` — so the
+ * deletion guard's `payload LIKE '%"agentId":"<id>"%'` matches exactly when this
+ * version references the agent. Omit `agentId` for a version that does not
+ * reference the agent (negative case).
+ */
+export function insertDefinitionVersion(
+  db: Database,
+  workflowId: string,
+  versionHash: string,
+  agentId: string | null,
+  spaceId = 'space-1'
+): void {
+  const now = Date.now();
+  const nodes = agentId
+    ? [{ id: 'n1', name: 'Node 1', agents: [{ agentId, name: 'Agent' }] }]
+    : [{ id: 'n1', name: 'Node 1', agents: [] }];
+  const payload = JSON.stringify({ id: workflowId, spaceId, nodes });
+  db.prepare(
+    `INSERT INTO space_workflow_definition_versions
+       (workflow_id, version_hash, space_id, payload, source, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(workflowId, versionHash, spaceId, payload, 'run_create', now);
+}
+
+/**
+ * Insert a workflow run, optionally pinned to a definition version. Pass a null
+ * `definitionVersion` for an unpinned (pre-Phase-1) run. The composite FK on
+ * (workflow_id, definition_version) requires the referenced version row to
+ * exist first — call `insertDefinitionVersion` before pinning.
+ */
+export function insertWorkflowRun(
+  db: Database,
+  id: string,
+  workflowId: string,
+  definitionVersion: string | null,
+  spaceId = 'space-1'
+): void {
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO space_workflow_runs
+       (id, space_id, workflow_id, definition_version, title, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, spaceId, workflowId, definitionVersion, `Run ${id}`, 'in_progress', now, now);
+}
+
+/**
+ * Insert a task for a run. `archived = true` marks it as a non-reopenable
+ * tombstone (the only state that disqualifies a run from the deletion guard);
+ * the default is a live, executable task.
+ */
+export function insertRunTask(
+  db: Database,
+  id: string,
+  workflowRunId: string,
+  archived = false
+): void {
+  const now = Date.now();
+  db.prepare(`INSERT INTO space_tasks (id, workflow_run_id, archived_at) VALUES (?, ?, ?)`).run(
+    id,
+    workflowRunId,
+    archived ? now : null
+  );
 }

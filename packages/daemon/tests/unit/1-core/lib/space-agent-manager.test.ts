@@ -14,9 +14,13 @@ import { setModelsCache } from '../../../../src/lib/model-service';
 import type { ModelInfo } from '@hyperneo/shared';
 import {
   createSpaceAgentSchema,
+  createWorkflowPinningTables,
+  insertDefinitionVersion,
+  insertRunTask,
   insertSpace,
   insertWorkflow,
   insertWorkflowNode,
+  insertWorkflowRun,
 } from '../../helpers/space-agent-schema';
 
 function makeModelInfo(id: string, alias: string, provider = 'anthropic'): ModelInfo {
@@ -42,6 +46,7 @@ describe('SpaceAgentManager', () => {
   beforeEach(() => {
     db = new Database(':memory:');
     createSpaceAgentSchema(db);
+    createWorkflowPinningTables(db);
     insertSpace(db);
     repo = new SpaceAgentRepository(db as any);
     longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
@@ -372,6 +377,45 @@ describe('SpaceAgentManager', () => {
       const result = manager.delete('no-such-id');
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toMatch(/not found/i);
+    });
+
+    it('blocks deletion when an in-flight run is pinned to a version referencing the agent (RFC §4 #5)', async () => {
+      // The mutable head no longer references the agent (the slot was removed),
+      // but a run is still pinned to an older version that does. Deleting would
+      // strand that run — resolveAgentInit throws "Agent not found" at spawn.
+      const created = await manager.create({ spaceId: 'space-1', name: 'Agent' });
+      if (!created.ok) throw new Error('create failed');
+
+      insertWorkflow(db, 'wf-1', 'space-1', 'Release Workflow');
+      // Head has NO node referencing the agent — isAgentReferenced returns false.
+      insertDefinitionVersion(db, 'wf-1', 'hash-1', created.value.id);
+      insertWorkflowRun(db, 'run-1', 'wf-1', 'hash-1');
+      insertRunTask(db, 'task-1', 'run-1');
+
+      const result = manager.delete(created.value.id);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toMatch(/in-flight run/i);
+        expect(result.details).toBeDefined();
+        expect(result.details?.some((d) => d.includes('run-1'))).toBe(true);
+      }
+      // The agent survives the blocked deletion.
+      expect(manager.getById(created.value.id)).not.toBeNull();
+    });
+
+    it('allows deletion once the only run pinned to a referencing version is archived', async () => {
+      const created = await manager.create({ spaceId: 'space-1', name: 'Agent' });
+      if (!created.ok) throw new Error('create failed');
+
+      insertWorkflow(db, 'wf-1', 'space-1', 'Release Workflow');
+      insertDefinitionVersion(db, 'wf-1', 'hash-1', created.value.id);
+      insertWorkflowRun(db, 'run-1', 'wf-1', 'hash-1');
+      // Fully archived → a non-reopenable tombstone; the pin is inert.
+      insertRunTask(db, 'task-1', 'run-1', true);
+
+      const result = manager.delete(created.value.id);
+      expect(result.ok).toBe(true);
+      expect(manager.getById(created.value.id)).toBeNull();
     });
   });
 
