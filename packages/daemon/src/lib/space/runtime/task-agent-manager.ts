@@ -5890,20 +5890,29 @@ export class TaskAgentManager {
       },
     };
 
-    const actualSessionId = await this.createSubSession(taskId, sessionId, init, {
-      agentId: matchedSlot.agentId,
-      agentName: matchedSlot.name,
-      nodeId: matchedNodeId,
-    });
-
     // From registration on, any abort must tear the session back down — the
     // same rollback shape as the node-spawn path: an idle registered session
     // that never received its kickoff would leak in the SessionManager cache
     // (and its DB row) until daemon restart, and the resume re-spawn never
     // reclaims it. Most notably a stop landing in the MCP-attach window throws
     // `TransientSpawnError`, which `dispatchPostApproval` converts into the
-    // durable post-approval deferral (banner + resume re-drive).
+    // durable post-approval deferral (banner + resume re-drive). The try
+    // wraps the createSubSession call itself: registration happens INSIDE it
+    // (before its startStreamingQuery await), so a throw there must roll the
+    // fresh registration back too. The session-id comparison is the
+    // discriminator for both boundaries: a FRESH create registers under (and
+    // returns) the proposed id, while the internal reuse branch returns a
+    // PRE-EXISTING session under a different id (e.g. rehydrated after a
+    // daemon restart) — that one belongs to the run, not this spawn, and is
+    // never torn down here (the outer reuse path's no-teardown invariant).
+    let actualSessionId = sessionId;
     try {
+      actualSessionId = await this.createSubSession(taskId, sessionId, init, {
+        agentId: matchedSlot.agentId,
+        agentName: matchedSlot.name,
+        nodeId: matchedNodeId,
+      });
+
       const spawned = this.getSubSession(actualSessionId);
       if (!spawned) {
         throw new Error(
@@ -5947,7 +5956,12 @@ export class TaskAgentManager {
       );
       await this.injectMessageIntoSession(spawned, kickoffMessage);
     } catch (err) {
-      this.cancelBySessionId(actualSessionId);
+      // Fresh create (returned/threw under the proposed id) → roll it back;
+      // pre-existing reused session (different id) → leave it to the run.
+      // cancelBySessionId no-ops safely on an id nothing registered under.
+      if (actualSessionId === sessionId) {
+        this.cancelBySessionId(actualSessionId);
+      }
       throw err;
     }
 

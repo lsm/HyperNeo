@@ -666,4 +666,155 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     ]);
     expect(getSpaceCalls).toBe(2);
   });
+
+  test('createSubSession throwing post-registration rolls the fresh session back', async () => {
+    // Registration happens INSIDE createSubSession (before its
+    // startStreamingQuery await), so the teardown try must wrap the call
+    // itself — a throw there would otherwise leak the registered session
+    // exactly as the pre-fix code did. The proposed (deterministic) id is
+    // cancelled; cancelBySessionId no-ops safely when nothing registered.
+    const spaceRow = { id: SPACE_ID, workspacePath: '/tmp/ws' };
+    const tam = new TaskAgentManager({
+      db: { getDatabase: () => new BunDatabase(':memory:'), getSession: () => null },
+      sessionManager: { registerSession: () => {} },
+      internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
+      taskRepo: { getTask: () => ({ id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID }) },
+      nodeExecutionRepo: { listByWorkflowRun: () => [], listByNode: () => [] },
+      workflowRunRepo: { getRun: () => null },
+      spaceManager: { getSpace: async () => spaceRow },
+      spaceAgentManager: {
+        getById: () => ({
+          id: 'agent-reviewer',
+          name: REVIEWER_AGENT,
+          customPrompt: 'merge',
+          model: 'm',
+          tools: [],
+        }),
+      },
+      spaceRuntimeService: {
+        buildMemberSpaceToolsMcpServer: () => ({ __role: 'space-agent-tools' }),
+        reattachMemberSpaceTools: async () => {},
+      },
+    } as unknown as TaskAgentManagerConfig);
+    const proposedId = `space:${SPACE_ID}:task:${TASK_ID}:post-approval:${REVIEWER_AGENT}`;
+    (
+      tam as unknown as {
+        createSubSession: (taskId: string, sessionId: string) => Promise<string>;
+      }
+    ).createSubSession = async () => {
+      throw new Error('attach blew up');
+    };
+    const cancelled: string[] = [];
+    (tam as unknown as { cancelBySessionId: (sid: string) => void }).cancelBySessionId = (sid) => {
+      cancelled.push(sid);
+    };
+    const workflow = {
+      id: 'wf-1',
+      spaceId: SPACE_ID,
+      nodes: [
+        {
+          id: REVIEWER_NODE_ID,
+          name: 'Review',
+          agents: [{ agentId: 'agent-reviewer', name: REVIEWER_AGENT }],
+        },
+      ],
+      channels: [],
+      startNodeId: REVIEWER_NODE_ID,
+      endNodeId: REVIEWER_NODE_ID,
+    } as unknown as SpaceWorkflow;
+    const task = { id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID } as unknown as SpaceTask;
+
+    await expect(
+      tam.spawnPostApprovalSubSession({
+        task,
+        workflow,
+        targetAgent: REVIEWER_AGENT,
+        kickoffMessage: 'merge the PR',
+      })
+    ).rejects.toThrow(/attach blew up/);
+    expect(cancelled).toEqual([proposedId]);
+  });
+
+  test('internal reuse branch: an abort never tears down the PRE-EXISTING session', async () => {
+    // When the merge target has no in-memory session but a DB row (e.g.
+    // after a daemon restart), createSubSession's internal reuse path
+    // rehydrates and returns the PRE-EXISTING session under a different id.
+    // A later failClosed abort must skip the teardown — that session belongs
+    // to the run, not this spawn (the outer reuse path's pinned invariant).
+    const spaceRow = { id: SPACE_ID, workspacePath: '/tmp/ws', stopped: true };
+    const tam = new TaskAgentManager({
+      db: { getDatabase: () => new BunDatabase(':memory:'), getSession: () => null },
+      sessionManager: { registerSession: () => {} },
+      internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
+      taskRepo: { getTask: () => ({ id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID }) },
+      nodeExecutionRepo: { listByWorkflowRun: () => [], listByNode: () => [] },
+      workflowRunRepo: { getRun: () => null },
+      spaceManager: { getSpace: async () => spaceRow },
+      spaceAgentManager: {
+        getById: () => ({
+          id: 'agent-reviewer',
+          name: REVIEWER_AGENT,
+          customPrompt: 'merge',
+          model: 'm',
+          tools: [],
+        }),
+      },
+      spaceRuntimeService: {
+        buildMemberSpaceToolsMcpServer: () => ({ __role: 'space-agent-tools' }),
+        reattachMemberSpaceTools: async () => {},
+      },
+    } as unknown as TaskAgentManagerConfig);
+    const preexisting = `space:${SPACE_ID}:task:${TASK_ID}:node:old`;
+    (
+      tam as unknown as {
+        createSubSession: (taskId: string, sessionId: string) => Promise<string>;
+      }
+    ).createSubSession = async () => preexisting; // internal reuse
+    (tam as unknown as { getSubSession: (sid: string) => unknown }).getSubSession = () => ({
+      id: preexisting,
+    });
+    (
+      tam as unknown as { ensureNodeAgentAttached: (...a: unknown[]) => Promise<void> }
+    ).ensureNodeAgentAttached = async () => {};
+    const injected: string[] = [];
+    (
+      tam as unknown as {
+        injectMessageIntoSession: (s: unknown, m: string) => Promise<string>;
+      }
+    ).injectMessageIntoSession = async (_s, m) => {
+      injected.push(m);
+      return 'msg-id';
+    };
+    const cancelled: string[] = [];
+    (tam as unknown as { cancelBySessionId: (sid: string) => void }).cancelBySessionId = (sid) => {
+      cancelled.push(sid);
+    };
+    const workflow = {
+      id: 'wf-1',
+      spaceId: SPACE_ID,
+      nodes: [
+        {
+          id: REVIEWER_NODE_ID,
+          name: 'Review',
+          agents: [{ agentId: 'agent-reviewer', name: REVIEWER_AGENT }],
+        },
+      ],
+      channels: [],
+      startNodeId: REVIEWER_NODE_ID,
+      endNodeId: REVIEWER_NODE_ID,
+    } as unknown as SpaceWorkflow;
+    const task = { id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID } as unknown as SpaceTask;
+
+    await expect(
+      tam.spawnPostApprovalSubSession({
+        task,
+        workflow,
+        targetAgent: REVIEWER_AGENT,
+        kickoffMessage: 'merge the PR',
+      })
+    ).rejects.toThrow(/pre-kickoff \(post-approval\)/);
+    expect(injected).toEqual([]);
+    // The pre-existing session survives the abort.
+    expect(cancelled).toEqual([]);
+  });
 });

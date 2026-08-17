@@ -569,6 +569,121 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
     expect(final?.postApprovalBlockedReason).toBe('deferred by a stop; awaiting the resume sweep');
   });
 
+  test('concurrent dispatches serialize: the second short-circuits, one merger spawns', async () => {
+    // Two overlapping resume sweeps (resume → pause → resume inside the
+    // multi-second spawn window) read the same pre-spawn state — the router
+    // stamps the pointer only after the spawn resolves — so without per-task
+    // mutual exclusion both pass the already-routed guard and each spawn a
+    // merger (duplicate merge work). The second dispatcher must
+    // short-circuit while the first is in flight.
+    const taskId = seedRouteDeferredTask(ctx);
+    const tam = tamOf(ctx);
+    let releaseSpawn: (() => void) | null = null;
+    const spawnCalls: string[] = [];
+    tam.isSessionAlive = () => false;
+    tam.spawnPostApprovalSubSession = () => {
+      spawnCalls.push('spawn');
+      return new Promise((resolve) => {
+        releaseSpawn = () => resolve({ sessionId: 'session:merge-first' });
+      });
+    };
+
+    const first = ctx.runtime.dispatchPostApproval(taskId, 'agent');
+    // Let the first dispatch reach the (gated) spawn before firing the second.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const second = await ctx.runtime.dispatchPostApproval(taskId, 'agent');
+    releaseSpawn?.();
+    const firstResult = await first;
+
+    expect(second.mode).toBe('skipped');
+    expect(second.reason ?? '').toMatch(/already in flight/);
+    expect(firstResult.mode).toBe('spawn');
+    expect(spawnCalls).toEqual(['spawn']); // exactly one merger
+  });
+
+  test('a stop racing the sweep clear: verify-and-restore keeps the deferral reason', async () => {
+    // The clear is read-then-write with an await between: the gate passes
+    // (pointer unchanged), then a stop's step 1.5 lands INSIDE the clear's
+    // write window — it sees the reason still set, keeps the wording, and
+    // nulls the pointer — and the sweep's clear then erases the reason the
+    // stop's deferral depends on (pointer null + reason null + stopped =
+    // no automatic recovery). The post-clear verification must detect the
+    // changed pointer and restore the reason. The taskRepo.updateTask wrap
+    // simulates the stop's step-1.5 write landing exactly between the clear
+    // and the verification read.
+    const taskId = seedRouteDeferredTask(ctx, { sessionId: 'session:merge-live' });
+    const tam = tamOf(ctx);
+    tam.isSessionAlive = () => true; // already-routed, live session
+    tam.spawnPostApprovalSubSession = async () => ({ sessionId: 'should-not-happen' });
+    const origUpdate = ctx.taskRepo.updateTask.bind(ctx.taskRepo);
+    ctx.taskRepo.updateTask = (id: string, payload: Record<string, unknown>) => {
+      const result = origUpdate(id, payload);
+      const isSweepClear =
+        payload.postApprovalBlockedReason === null &&
+        !('postApprovalSessionId' in payload) &&
+        !('status' in payload);
+      if (isSweepClear) {
+        // The stop's step 1.5 racing the clear: keeps the reason, drops the
+        // pointer.
+        origUpdate(id, { postApprovalSessionId: null });
+      }
+      return result;
+    };
+
+    await ctx.spaceManager.stopSpace(SPACE_ID);
+    await ctx.spaceManager.startSpace(SPACE_ID);
+    await ctx.runtime.flushResumeSweep(SPACE_ID);
+
+    const final = ctx.taskRepo.getTask(taskId);
+    expect(final?.postApprovalSessionId).toBeNull();
+    // The reason the stop's deferral depends on is RESTORED, not erased.
+    expect(final?.postApprovalBlockedReason).toBe('deferred by a stop; awaiting the resume sweep');
+  });
+
+  test('sweep outer failure is isolated: listBySpace throwing does not reject the flush', async () => {
+    ctx.taskRepo.listBySpace = (() => {
+      throw new Error('boom-list');
+    }) as unknown as typeof ctx.taskRepo.listBySpace;
+    await ctx.spaceManager.stopSpace(SPACE_ID);
+    await ctx.spaceManager.startSpace(SPACE_ID);
+    // Logs the failure and resolves — the flush handle must never reject.
+    await expect(ctx.runtime.flushResumeSweep(SPACE_ID)).resolves.toBeUndefined();
+  });
+
+  test('unreadable-state abort keeps an honest banner (no false stop claim, honest re-drive)', async () => {
+    // The fail-closed pre-kickoff variant throws "state unreadable" — the
+    // space was never stopped. The deferral copy must not claim a stop
+    // happened nor promise an automatic resume trigger that will not fire
+    // (on an active space, space.start is a no-op); a pause→resume cycle is
+    // the honest re-drive instruction.
+    const taskId = seedRouteDeferredTask(ctx);
+    const { TransientSpawnError } = await import(
+      '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts'
+    );
+    const tam = tamOf(ctx);
+    tam.spawnPostApprovalSubSession = async () => {
+      throw new TransientSpawnError(
+        'Space space-dispatch-pa state unreadable during spawn (pre-kickoff (post-approval), ' +
+          'task t); failing closed'
+      );
+    };
+
+    let caught: unknown;
+    try {
+      await ctx.runtime.dispatchPostApproval(taskId, 'human');
+    } catch (err) {
+      caught = err;
+    }
+    expect((caught as Error).name).toBe('PostApprovalDeferredError');
+    expect((caught as Error).message).not.toMatch(/stopped during dispatch/);
+    expect((caught as Error).message).toMatch(/could not be re-read/);
+    expect((caught as Error).message).toMatch(/pausing and resuming/);
+
+    const final = ctx.taskRepo.getTask(taskId);
+    expect(final?.status).toBe('approved');
+    expect(final?.postApprovalBlockedReason).toMatch(/could not be re-read/);
+  });
+
   test('terminal-run reconcile: stopped-space deferral is not a reconciliation failure', async () => {
     // The reconcileTerminalRunTasks dispatch site (sibling of the completion
     // sweep's): with the space stopped, dispatchPostApproval commits the

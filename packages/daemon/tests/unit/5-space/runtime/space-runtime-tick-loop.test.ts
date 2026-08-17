@@ -2678,6 +2678,127 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(after.agentSessionId).toBeNull();
     });
 
+    test('node spawn fails OPEN when the space re-read throws — the spawn proceeds', async () => {
+      // The fail-open half of assertSpaceNotStoppedForSpawn, pinned: a
+      // transient getSpace error on the NODE path must not block a legitimate
+      // spawn (the tick loop's spawn gate re-checks the space row every
+      // tick). Only the post-approval kickoff passes failClosed. Without this
+      // pin, flipping the helper default to failClosed would pass the suite
+      // and silently start aborting tick spawns on read blips.
+      const cancelled: string[] = [];
+      const injected: string[] = [];
+      const realTam = new TaskAgentManager({
+        db: { getDatabase: () => db, getSession: () => null },
+        internalEventBus: { subscribe: () => () => {} },
+        // The spawn path never calls getSpace itself (the space is passed in),
+        // so this rejection reaches exactly the helper's re-check.
+        spaceManager: {
+          getSpace: async () => {
+            throw new Error('db hiccup');
+          },
+        },
+        spaceAgentManager: agentManager,
+        spaceWorkflowManager: workflowManager,
+        taskRepo,
+        workflowRunRepo,
+        nodeExecutionRepo,
+      } as unknown as ConstructorParameters<typeof TaskAgentManager>[0]);
+      const fakeSession = { id: 'session:fail-open' };
+      let executionId = '';
+      (
+        realTam as unknown as {
+          createSubSession: (taskId: string, sessionId: string) => Promise<string>;
+        }
+      ).createSubSession = async (_taskId: string, sessionId: string) => sessionId;
+      (realTam as unknown as { getSubSession: (sessionId: string) => unknown }).getSubSession =
+        () => fakeSession;
+      (
+        realTam as unknown as {
+          ensureNodeAgentAttached: () => Promise<void>;
+        }
+      ).ensureNodeAgentAttached = async () => {};
+      (realTam as unknown as { cancelBySessionId: (sessionId: string) => void }).cancelBySessionId =
+        (sessionId: string) => {
+          cancelled.push(sessionId);
+        };
+      (
+        realTam as unknown as {
+          injectMessageIntoSession: (session: unknown, message: string) => Promise<void>;
+        }
+      ).injectMessageIntoSession = async (_session: unknown, message: string) => {
+        injected.push(message);
+      };
+
+      const rt = new SpaceRuntime(buildConfig());
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      executionId = execution.id;
+      const task = taskRepo.getTask(tasks[0].id)!;
+      const space = await spaceManager.getSpace(SPACE_ID);
+
+      await expect(
+        realTam.spawnWorkflowNodeAgentForExecution(task, space, workflow, run, execution, {
+          kickoff: true,
+        })
+      ).resolves.toBeTypeOf('string');
+
+      // Fail-open: the read blip did not abort the spawn — the kickoff was
+      // injected and nothing torn down.
+      expect(injected).toHaveLength(1);
+      expect(cancelled).toEqual([]);
+    });
+
+    test('a space.start landing mid-park stops the park loop at the next run boundary', async () => {
+      // The entry guard is covered elsewhere; this pins the MID-LOOP break:
+      // a resume clearing the hold between run 1 and run 2 must leave run 2's
+      // executions untouched (the resumed tick owns re-driving them, and
+      // parking after the resume would fight it).
+      const rt = new SpaceRuntime(buildConfig());
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run: run1 } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run 1');
+      const { run: run2 } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run 2');
+      const exec1 = nodeExecutionRepo.listByWorkflowRun(run1.id)[0];
+      const exec2 = nodeExecutionRepo.listByWorkflowRun(run2.id)[0];
+      nodeExecutionRepo.update(exec1.id, { status: 'in_progress', agentSessionId: 's1' });
+      nodeExecutionRepo.update(exec2.id, { status: 'in_progress', agentSessionId: 's2' });
+
+      rt.holdSpaceDeliveries(SPACE_ID);
+      const pausedSpaceIds = (rt as unknown as { pausedSpaceIds: Set<string> }).pausedSpaceIds;
+      const origReset = nodeExecutionRepo.resetForCleanRecovery.bind(nodeExecutionRepo);
+      let resets = 0;
+      nodeExecutionRepo.resetForCleanRecovery = (id: string) => {
+        const result = origReset(id);
+        if (++resets === 1) {
+          // The resume's cache clear lands right after run 1's rows are
+          // parked, before run 2's per-run break check (onSpaceResumed
+          // deletes from this set synchronously).
+          pausedSpaceIds.delete(SPACE_ID);
+        }
+        return result;
+      };
+
+      rt.parkInFlightExecutionsForSpace(SPACE_ID);
+      nodeExecutionRepo.resetForCleanRecovery = origReset;
+
+      // Exactly one run parked (the first walked — listBySpace is
+      // newest-first), with the clean-recovery shape; the other untouched
+      // (break) and keeping its live binding.
+      expect(resets).toBe(1);
+      const after1 = nodeExecutionRepo.getById(exec1.id)!;
+      const after2 = nodeExecutionRepo.getById(exec2.id)!;
+      expect([after1.status, after2.status].sort()).toEqual(['in_progress', 'pending']);
+      const parked = after1.status === 'pending' ? after1 : after2;
+      const untouched = parked === after1 ? after2 : after1;
+      expect(parked.agentSessionId).toBeNull();
+      expect(untouched.agentSessionId).toBeTruthy();
+      expect(untouched.status).toBe('in_progress');
+    });
+
     test('runtime defers a transient spawn failure without crash accounting and retries next tick', async () => {
       // Pins the runtime-side TransientSpawnError contract the stop-abort
       // relies on: a transient rejection leaves the execution pending, never

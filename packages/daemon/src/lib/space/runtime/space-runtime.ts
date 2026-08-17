@@ -1101,9 +1101,16 @@ export class SpaceRuntime {
   /**
    * In-flight `resumeDeferredPostApprovals` promises, keyed by space id, so
    * `flushResumeSweep` can await the fire-and-forget sweep deterministically
-   * (tests and shutdown) instead of sleeping past it.
+   * instead of sleeping past it. Exposed for tests.
    */
   private resumeSweeps = new Map<string, Promise<void>>();
+  /**
+   * TaskIds with a `dispatchPostApproval` currently in flight. Concurrent
+   * dispatches read the same pre-spawn state (the router stamps the session
+   * pointer only after the spawn resolves), so a second dispatcher would
+   * double-spawn the merger — see the mutex in `dispatchPostApproval`.
+   */
+  private postApprovalDispatchesInFlight = new Set<string>();
   /**
    * Re-entrancy depth for {@link handleExternalEvent}. When > 0, a newly-created
    * PR auto-subscription must not synchronously redispatch retained events — it
@@ -4433,6 +4440,32 @@ export class SpaceRuntime {
     approvalSource: SpaceApprovalSource,
     contextExtras: Omit<PostApprovalRouteContext, 'approvalSource'> = {}
   ): Promise<PostApprovalRouteResult> {
+    // Per-task mutual exclusion: concurrent dispatches (e.g. two overlapping
+    // resume sweeps, or the stop-race re-drive racing a sweep) read the same
+    // pre-spawn state — the router stamps `postApprovalSessionId` only when
+    // the spawn resolves, so without serialization both would pass the
+    // already-routed guard and each spawn a merger (duplicate merge work).
+    // The second caller short-circuits; the first caller's completion clears
+    // or re-stamps the reason, so keeping it here is safe.
+    if (this.postApprovalDispatchesInFlight.has(taskId)) {
+      return {
+        mode: 'skipped',
+        reason: `another post-approval dispatch for task ${taskId} is already in flight`,
+      };
+    }
+    this.postApprovalDispatchesInFlight.add(taskId);
+    try {
+      return await this.dispatchPostApprovalInner(taskId, approvalSource, contextExtras);
+    } finally {
+      this.postApprovalDispatchesInFlight.delete(taskId);
+    }
+  }
+
+  private async dispatchPostApprovalInner(
+    taskId: string,
+    approvalSource: SpaceApprovalSource,
+    contextExtras: Omit<PostApprovalRouteContext, 'approvalSource'> = {}
+  ): Promise<PostApprovalRouteResult> {
     const router = this.getPostApprovalRouter();
     if (!router) {
       const reason = `PostApprovalRouter not wired yet (taskAgentManager missing); task=${taskId}`;
@@ -4495,9 +4528,8 @@ export class SpaceRuntime {
     //
     // The deferral is made durable and resumable before throwing:
     //   - `postApprovalBlockedReason` is stamped here (not left to callers)
-    //     so the UI banner exists no matter which call site dispatched (RPC,
-    //     coordinator tool, either tick site, or the resume sweep itself) —
-    //     the tick sites have no Layer C catch of their own.
+    //     so the UI banner exists no matter which caller dispatched — the
+    //     tick sites have no Layer C catch of their own.
     //   - The typed `PostApprovalDeferredError` lets human-facing callers
     //     (RPC handler / coordinator tool) skip re-stamping, and lets the
     //     tick sites swallow the deferral instead of logging it as a tick
@@ -4505,7 +4537,10 @@ export class SpaceRuntime {
     //   - `onSpaceResumed` → `resumeDeferredPostApprovals` re-invokes this
     //     method for approved tasks with a blocked reason when the space
     //     starts/resumes — the router's liveness-based `already-routed`
-    //     guard makes that re-drive idempotent.
+    //     guard makes that re-drive idempotent for a genuinely LIVE merge
+    //     (for a stop-interrupted one the stop path nulls
+    //     `postApprovalSessionId` so the guard is not consulted — see
+    //     `resumeDeferredPostApprovals`).
     const holdSpace = await this.config.spaceManager.getSpace(spaceId);
     if (holdSpace?.paused || holdSpace?.stopped) {
       clearPendingCompletionState(this.config.taskRepo, taskId);
@@ -4595,19 +4630,27 @@ export class SpaceRuntime {
     } catch (routeErr) {
       // A stop landing between the hold above and the merge kickoff surfaces
       // either as a transient spawn error from the spawner's own pre-kickoff
-      // stop check, or as a raw failure out of the spawn tail (e.g. the
-      // kickoff injection dying when the stop's cleanup interrupts the
-      // just-registered merger). Detect the latter by re-reading the space:
-      // when a stop is in force, the right record is the durable deferral
-      // whatever the error was — same semantics as the hold, so the resume
-      // sweep re-drives it.
+      // stop check (or its fail-closed unreadable-state variant), or as a raw
+      // failure out of the spawn tail (e.g. the kickoff injection dying when
+      // the stop's cleanup interrupts the just-registered merger). Detect the
+      // latter by re-reading the space: when a stop is in force, the right
+      // record is the durable deferral whatever the error was — same
+      // semantics as the hold. The banner copy derives from the error message
+      // so the recorded cause is the real one: an unreadable-state abort on a
+      // never-stopped space must not claim a stop happened, and its re-drive
+      // trigger is honest (a pause→resume cycle fires onSpaceResumed; a bare
+      // space.start on an active space is a no-op).
       if (
         isTransientSpawnError(routeErr) ||
         (await this.config.spaceManager.getSpace(spaceId))?.stopped
       ) {
-        const detail =
-          `post-approval dispatch of task ${taskId} aborted — space ${spaceId} stopped ` +
-          `during dispatch; the dispatch re-runs automatically when the space resumes`;
+        const errText = routeErr instanceof Error ? routeErr.message : String(routeErr);
+        const unreadable = errText.includes('unreadable');
+        const detail = unreadable
+          ? `post-approval dispatch of task ${taskId} aborted — space state could not be ` +
+            `re-read (${errText}); pausing and resuming the space re-runs the dispatch`
+          : `post-approval dispatch of task ${taskId} aborted — space ${spaceId} stopped ` +
+            `during dispatch; the dispatch re-runs automatically when the space resumes`;
         this.config.taskRepo.updateTask(taskId, { postApprovalBlockedReason: detail });
         log.info(`dispatchPostApproval: ${detail}`);
         throw new PostApprovalDeferredError(detail);
@@ -6193,12 +6236,15 @@ export class SpaceRuntime {
     // tasks with a blocked reason). Fire-and-forget with its own error
     // isolation — delivery requeue below must not wait on it. The promise is
     // tracked so flushResumeSweep can await it.
-    this.resumeSweeps.set(
-      spaceId,
-      this.resumeDeferredPostApprovals(spaceId).finally(() => {
+    const sweep = this.resumeDeferredPostApprovals(spaceId).finally(() => {
+      // Conditional delete: a newer sweep may have overwritten this entry —
+      // deleting unconditionally would evict ITS handle while still running,
+      // and flushResumeSweep would return before the older sweep finished.
+      if (this.resumeSweeps.get(spaceId) === sweep) {
         this.resumeSweeps.delete(spaceId);
-      })
-    );
+      }
+    });
+    this.resumeSweeps.set(spaceId, sweep);
     if (!store) return;
 
     // Re-register workflow-defined static event interests for eligible runs
@@ -6363,6 +6409,19 @@ export class SpaceRuntime {
             await this.updateTaskAndEmit(spaceId, task.id, {
               postApprovalBlockedReason: null,
             });
+            // Compare-and-set verification: a stop may commit between the gate
+            // read above and the write that just landed — its step 1.5 re-read
+            // saw the reason still set, so it kept the wording and nulled the
+            // pointer, and this clear then erased the reason the stop's
+            // deferral depends on. If the pointer no longer matches the
+            // pre-dispatch value, the interruption was re-recorded mid-flight:
+            // restore the reason so the deferral survives for the next resume.
+            const after = this.config.taskRepo.getTask(task.id);
+            if (after && after.postApprovalSessionId !== task.postApprovalSessionId) {
+              await this.updateTaskAndEmit(spaceId, task.id, {
+                postApprovalBlockedReason: task.postApprovalBlockedReason,
+              });
+            }
           }
           log.info(
             `SpaceRuntime: re-drove deferred post-approval dispatch of task ${task.id} after space ${spaceId} resumed`
@@ -6384,8 +6443,8 @@ export class SpaceRuntime {
   /**
    * Await the resume sweep currently in flight for a space (no-op when none
    * is). The sweep is fire-and-forget from `onSpaceResumed` so the resume
-   * callback is never blocked; this gives tests and shutdown a deterministic
-   * handle on its completion instead of sleeping past it.
+   * callback is never blocked; this exposes a deterministic handle on its
+   * completion instead of sleeping past it. Exposed for tests.
    */
   async flushResumeSweep(spaceId: string): Promise<void> {
     const pending = this.resumeSweeps.get(spaceId);

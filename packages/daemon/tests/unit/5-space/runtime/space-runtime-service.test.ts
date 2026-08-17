@@ -511,6 +511,60 @@ describe('SpaceRuntimeService', () => {
       });
     });
 
+    test('failed pre-stamp space re-read keeps the deferral (conservative)', async () => {
+      // The resumed-race re-read's own failure path: a transient getSpace
+      // error must not skip recording the interruption — treat the space as
+      // still stopped so the next real resume sweep re-drives it.
+      const activeTasks = [
+        {
+          id: 't5',
+          status: 'approved' as const,
+          postApprovalSessionId: 'session:merge-1',
+          postApprovalBlockedReason: null,
+        },
+      ];
+      const updateCalls: Array<{ taskId: string; updates: unknown }> = [];
+      const mockTaskRepo = {
+        listBySpace: () => activeTasks,
+        getTask: (id: string) => activeTasks.find((t) => t.id === id),
+        updateTask: (taskId: string, updates: unknown) => {
+          updateCalls.push({ taskId, updates });
+        },
+      } as unknown as SpaceTaskRepository;
+      const failingSpaceManager = {
+        getSpace: async () => {
+          throw new Error('db hiccup');
+        },
+        listSpaces: async () => [],
+      } as unknown as SpaceManager;
+
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(failingSpaceManager),
+        taskRepo: mockTaskRepo,
+        workflowRunRepo: {
+          listBySpace: () => [],
+          transitionStatus: () => {},
+        } as unknown as SpaceWorkflowRunRepository,
+      });
+      svc.setTaskAgentManager({
+        cleanup: async () => {},
+      } as unknown as TaskAgentManager);
+      const redrives: Array<{ taskId: string }> = [];
+      svc.dispatchPostApproval = async (_spaceId, taskId) => {
+        redrives.push({ taskId });
+      };
+
+      await svc.stopActiveWork('space-1');
+
+      // Deferral still recorded; no speculative re-drive on an unreadable row.
+      expect(updateCalls).toHaveLength(1);
+      expect(updateCalls[0]!.updates).toMatchObject({
+        postApprovalSessionId: null,
+        postApprovalBlockedReason: expect.stringMatching(/session:merge-1 interrupted/),
+      });
+      expect(redrives).toHaveLength(0);
+    });
+
     test('parks in-flight and waiting_rebind node executions with the clean-recovery reset', async () => {
       // In-flight executions are reset to pending with a blank session
       // binding (mirroring recoverRateLimitedTasks) so the tick loop neither
