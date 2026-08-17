@@ -189,9 +189,12 @@ export class AskUserQuestionHandler {
    * answer. Resolves with the SDK-agnostic {@link PermissionResult}; each
    * delivery channel maps it to its own envelope shape.
    *
-   * @param viaChannel Which SDK delivery channel invoked the interception —
-   *   reported on the `question.injected_as_tool_result` telemetry event when
-   *   a queued (post-restart) answer is consumed.
+   * @param viaChannel Which SDK delivery channel invoked the interception.
+   *   Also drives validation semantics: the option min-2/max-4 bounds are
+   *   enforced only on the 'pre_tool_use_hook' channel (canUseTool feeds
+   *   schema-valid SDK input or ACP input with no such contract). Reported on
+   *   the `question.injected_as_tool_result` telemetry event when a queued
+   *   (post-restart) answer is consumed.
    */
   private async interceptAskUserQuestion(
     toolUseID: string,
@@ -203,9 +206,10 @@ export class AskUserQuestionHandler {
     // Malformed input guard: a missing/empty questions array — a question
     // entry without an options array, or an option entry without a label —
     // would throw in the mapping below and abort the tool call inside the
-    // CLI (under bypass an errored hook is non-blocking, so the question
-    // would proceed with no interaction and no card). Deny with a reason
-    // instead so the model sees a recoverable error.
+    // CLI (QA-VERIFY: that an errored PreToolUse hook is non-blocking under
+    // bypass — so the question would proceed with no interaction and no card
+    // — is an empirical claim, NOT confirmed). Deny with a reason instead so
+    // the model sees a recoverable error.
     const askInput = input as unknown as AskUserQuestionInput;
     // The min/max option-count bounds mirror the SDK schema only on the
     // PreToolUse hook channel (the primary one, seeing raw pre-schema input).
@@ -329,14 +333,16 @@ export class AskUserQuestionHandler {
     });
 
     // A previous interception can still be pending if the model issued two
-    // AskUserQuestion calls in one turn (two tool_use blocks). The resolver
-    // map is single-slot; settle the superseded one with a deny RESULT —
-    // not a rejection — so the CLI gets an unambiguous denial for the older
-    // call. (QA-VERIFY: the errored-hook claim — under bypassPermissions an
-    // errored PreToolUse hook is non-blocking, so the superseded call could
-    // proceed with no interaction — is the empirical claim the header marks
-    // NOT confirmed; in 'default' mode the error fall-through can re-consult
-    // canUseTool.)
+    // AskUserQuestion calls in one turn (two tool_use blocks). (QA-VERIFY:
+    // two PreToolUse hooks firing concurrently for one tool_use_id is assumed
+    // impossible — the dual-fire case is hook+canUseTool, which the dedupe
+    // above handles.) The resolver map is single-slot; settle the superseded
+    // one with a deny RESULT — not a rejection — so the CLI gets an
+    // unambiguous denial for the older call. (QA-VERIFY: that an errored
+    // PreToolUse hook is non-blocking under bypassPermissions — so the
+    // superseded call could proceed with no interaction — is an empirical
+    // claim, NOT confirmed, same as the guard comment; in 'default' mode the
+    // error fall-through can re-consult canUseTool.)
     if (this.pendingResolver) {
       this.logger.warn(
         `AskUserQuestion ${this.pendingResolver.toolUseId}: superseded by a newer ` +
@@ -550,8 +556,19 @@ export class AskUserQuestionHandler {
     // AskUserQuestion supersedes during the await, the post-await capture
     // would resolve the newer resolver with this older question's answers.
     if (resolverMatches) {
-      // Transition back to processing state
-      await stateManager.setProcessing(toolUseId, 'streaming');
+      // Transition back to processing state. If this throws (a rejecting
+      // session.updated subscriber after the DB write), settle the resolver
+      // with a deny before rethrowing so the awaiting hook doesn't wedge.
+      try {
+        await stateManager.setProcessing(toolUseId, 'streaming');
+      } catch (err) {
+        resolver.resolve({
+          behavior: 'deny',
+          message: 'AskUserQuestion failed to transition; the question was not answered.',
+        });
+        this.pendingResolver = null;
+        throw err;
+      }
       // Re-verify after the await — the supersede block already denied the
       // old resolver, and this submit is stale. Restore the newer question's
       // card (this transition clobbered it) so it stays answerable.
@@ -561,7 +578,18 @@ export class AskUserQuestionHandler {
         );
         const current = this.pendingResolver;
         if (current) {
-          await stateManager.setWaitingForInput(current.pendingQuestion);
+          try {
+            await stateManager.setWaitingForInput(current.pendingQuestion);
+          } catch (restoreError) {
+            // The newer card restore failed — settle the newer resolver so its
+            // hook doesn't wedge, then rethrow.
+            current.resolve({
+              behavior: 'deny',
+              message: 'AskUserQuestion failed to restore the card; the question was not answered.',
+            });
+            this.pendingResolver = null;
+            throw restoreError;
+          }
         }
         return;
       }
@@ -632,14 +660,33 @@ export class AskUserQuestionHandler {
     // cancel the newer question with this older question's intent.
     const resolver = this.pendingResolver;
     if (resolver && resolver.toolUseId === toolUseId) {
-      await stateManager.setProcessing(toolUseId, 'streaming');
+      try {
+        await stateManager.setProcessing(toolUseId, 'streaming');
+      } catch (err) {
+        resolver.resolve({
+          behavior: 'deny',
+          message: 'AskUserQuestion failed to transition; the question was not cancelled.',
+        });
+        this.pendingResolver = null;
+        throw err;
+      }
       if (this.pendingResolver !== resolver) {
         this.logger.warn(
           `AskUserQuestion ${toolUseId}: cancel arrived after the question was superseded; dropping it`
         );
         const current = this.pendingResolver;
         if (current) {
-          await stateManager.setWaitingForInput(current.pendingQuestion);
+          try {
+            await stateManager.setWaitingForInput(current.pendingQuestion);
+          } catch (restoreError) {
+            current.resolve({
+              behavior: 'deny',
+              message:
+                'AskUserQuestion failed to restore the card; the question was not cancelled.',
+            });
+            this.pendingResolver = null;
+            throw restoreError;
+          }
         }
         return;
       }
@@ -726,11 +773,21 @@ export class AskUserQuestionHandler {
     // forward.
     await stateManager.setIdle();
 
-    await internalEventBus.publish('question.orphaned', {
-      sessionId: session.id,
-      toolUseId: pendingQuestion.toolUseId,
-      reason: telemetryReason,
-    });
+    // Telemetry-only; log-only so a throwing subscriber cannot report a
+    // failed cleanup for one that already succeeded.
+    try {
+      await internalEventBus.publish('question.orphaned', {
+        sessionId: session.id,
+        toolUseId: pendingQuestion.toolUseId,
+        reason: telemetryReason,
+      });
+    } catch (publishError) {
+      this.logger.warn(
+        `AskUserQuestion ${pendingQuestion.toolUseId}: question.orphaned publish failed (${
+          publishError instanceof Error ? publishError.message : String(publishError)
+        })`
+      );
+    }
 
     this.logger.info(
       `AskUserQuestion ${pendingQuestion.toolUseId} orphaned (telemetryReason=${telemetryReason}); UI card cleaned up`

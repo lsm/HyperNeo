@@ -1271,6 +1271,113 @@ describe('AskUserQuestionHandler', () => {
       const second = (await secondPromise) as { behavior: string };
       expect(second.behavior).toBe('deny');
     });
+
+    it('completes the interception when the question.asked publish fails (log-only guard)', async () => {
+      // A throwing question.asked subscriber must not reject the interception
+      // (under bypass a rejected channel would let the tool proceed
+      // uninteracted with an answerable card up).
+      emitSpy.mockImplementation(async (event: string) => {
+        if (event === 'question.asked') throw new Error('subscriber failed');
+      });
+      const hook = handler.createPreToolUseHook();
+
+      const resultPromise = hook(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'AskUserQuestion',
+          tool_input: {
+            questions: [
+              {
+                question: 'Q?',
+                header: 'H',
+                options: [
+                  { label: 'A', description: 'A' },
+                  { label: 'B', description: 'B' },
+                ],
+                multiSelect: false,
+              },
+            ],
+          },
+          tool_use_id: 'pub-1',
+        },
+        'pub-1',
+        { signal: new AbortController().signal }
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // The card is still shown and answerable despite the publish failure.
+      expect(setWaitingForInputSpy).toHaveBeenCalled();
+      await handler.handleQuestionResponse('pub-1', [{ questionIndex: 0, selectedLabels: ['A'] }]);
+      const result = (await resultPromise) as {
+        hookSpecificOutput: { permissionDecision: string };
+      };
+      expect(result.hookSpecificOutput.permissionDecision).toBe('allow');
+    });
+
+    it('returns the consumed queued answer even when its telemetry publish fails (log-only guard)', async () => {
+      // Pre-populate a queued answer via the restart path.
+      const pendingQuestion: PendingUserQuestion = {
+        toolUseId: 'queued-1',
+        questions: [
+          {
+            question: 'Pick?',
+            header: 'P',
+            options: [
+              { label: 'A', description: 'A' },
+              { label: 'B', description: 'B' },
+            ],
+            multiSelect: false,
+          },
+        ],
+        askedAt: Date.now(),
+      };
+      currentState = { status: 'waiting_for_input', pendingQuestion };
+      await handler.handleQuestionResponse('queued-1', [
+        { questionIndex: 0, selectedLabels: ['A'] },
+      ]);
+      expect(handler.getQueuedAnswersForTesting().has('queued-1')).toBe(true);
+
+      // The consume path's telemetry publish throws.
+      emitSpy.mockImplementation(async (event: string) => {
+        if (event === 'question.injected_as_tool_result') throw new Error('subscriber failed');
+      });
+      currentState = { status: 'idle' };
+
+      const hook = handler.createPreToolUseHook();
+      const result = (await hook(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'AskUserQuestion',
+          tool_input: {
+            questions: [
+              {
+                question: 'Pick?',
+                header: 'P',
+                options: [
+                  { label: 'A', description: 'A' },
+                  { label: 'B', description: 'B' },
+                ],
+                multiSelect: false,
+              },
+            ],
+          },
+          tool_use_id: 'queued-1',
+        },
+        'queued-1',
+        { signal: new AbortController().signal }
+      )) as {
+        hookSpecificOutput: {
+          permissionDecision: string;
+          updatedInput?: { answers: Record<string, string> };
+        };
+      };
+
+      // The answer is still returned...
+      expect(result.hookSpecificOutput.permissionDecision).toBe('allow');
+      expect(result.hookSpecificOutput.updatedInput?.answers).toEqual({ 'Pick?': 'A' });
+      // ...AND was already deleted from the queue.
+      expect(handler.getQueuedAnswersForTesting().has('queued-1')).toBe(false);
+    });
   });
 
   describe('handleQuestionResponse', () => {

@@ -850,25 +850,26 @@ describe('QueryRunner', () => {
         // The retry loop must not re-apply the captured 'bypassPermissions' if
         // the user changed the mode while it was retrying — otherwise the
         // switch silently reverts a newer user choice (CLI enforces bypass
-        // while config/UI say default).
+        // while config/UI say default). The mode is flipped inside the mock
+        // (simulating the user changing it during attempt 1), so the next
+        // iteration's check deterministically bails — no timing window.
+        const ctx = createContext();
+        ctx.queryObject = { setPermissionMode: mock(async () => {}) } as unknown as QueryLike;
+        ctx.session.config.permissionMode = 'default';
         const setPermissionMode = mock(async () => {
+          ctx.session.config.permissionMode = 'acceptEdits';
           throw new Error('control stream closed');
         });
         const queryObject = { setPermissionMode } as unknown as QueryLike;
-        const ctx = createContext();
         ctx.queryObject = queryObject;
-        ctx.session.config.permissionMode = 'default';
         runner = new QueryRunner(ctx);
 
-        const attempt = applyOnRunner(runner)(queryObject, 'bypassPermissions', 20, 50);
-        // Change the mode during the first backoff window.
-        setTimeout(() => {
-          ctx.session.config.permissionMode = 'acceptEdits';
-        }, 25);
-        await attempt;
+        await applyOnRunner(runner)(queryObject, 'bypassPermissions', 20, 1);
 
-        // The loop bailed after the mode changed — no retry of the stale mode.
-        expect(setPermissionMode.mock.calls.length).toBeLessThan(3);
+        // Exactly one attempt — the mode changed during it, so the loop bailed
+        // without re-applying the stale bypass (2 calls would mean one stale
+        // bypass applied post-change, the exact harm this guards).
+        expect(setPermissionMode.mock.calls.length).toBe(1);
         const errorSpy = mockLogger.error as ReturnType<typeof mock>;
         expect(errorSpy).not.toHaveBeenCalled(); // no false degraded-mode alarm
       });

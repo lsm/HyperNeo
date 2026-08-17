@@ -84,6 +84,13 @@ import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
 const log = new Logger('QueryOptionsBuilder');
 
 /**
+ * PreToolUse hook timeout for AskUserQuestion (seconds). Generous (24h) because
+ * the hook legitimately waits for a human answer, but it IS a hard bound —
+ * unlike canUseTool, which has no timeout.
+ */
+const AUQ_HOOK_TIMEOUT_SECONDS = 86400;
+
+/**
  * Compile a single declarative tool guard into a PreToolUse hook callback.
  * The guard specifies a tool matcher, a regex pattern against the tool input,
  * and a decision to apply when matched.
@@ -1451,13 +1458,14 @@ CRITICAL RULES:
     // bypassPermissions, where canUseTool is shadowed by auto-approval — so
     // this is the channel that keeps interactive questions working under the
     // default configuration. The matcher restricts invocation to
-    // AskUserQuestion; the timeout is effectively unbounded because the hook
-    // legitimately waits for a human answer (same semantics the canUseTool
-    // channel always had).
+    // AskUserQuestion; the timeout is generous (AUQ_HOOK_TIMEOUT_SECONDS, 24h)
+    // because the hook legitimately waits for a human answer — but it IS a
+    // hard bound (unlike canUseTool, which has no timeout): a question left
+    // unanswered past it falls into the silent-drop timeout class.
     if (this.askUserQuestionHook) {
       preToolUse.push({
         matcher: 'AskUserQuestion',
-        timeout: 86400,
+        timeout: AUQ_HOOK_TIMEOUT_SECONDS,
         hooks: [this.askUserQuestionHook],
       });
     }
