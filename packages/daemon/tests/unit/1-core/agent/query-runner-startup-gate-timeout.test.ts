@@ -20,9 +20,17 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun
 const FORCED_STARTUP_TIMEOUT_MS = '60';
 const SAVED_TIMEOUT_ENV = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
 const SAVED_MAX_CONCURRENT_ENV = process.env.HYPERNEO_SDK_STARTUP_MAX_CONCURRENT;
+const SAVED_RETRY_BASE_ENV = process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS;
+const SAVED_RETRY_MAX_ENV = process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX;
 
 process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = FORCED_STARTUP_TIMEOUT_MS;
 process.env.HYPERNEO_SDK_STARTUP_MAX_CONCURRENT = '1';
+// Startup-timeout retries back off exponentially by default (15 s base). These
+// tests assert the gate's single-retry re-admission within a 5 s waitFor, so
+// pin the backoff to zero and the cap to one retry (the pre-backoff shape the
+// assertions were written against).
+process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '0';
+process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '1';
 
 let queryFactory: (() => unknown) | null = null;
 
@@ -152,6 +160,8 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
       size: () => 0,
       getGeneration: () => 0,
       enqueueWithId: async () => {},
+      // QueryRunner derives the starved delivery key from the pending kickoff.
+      peekNextUserMessageId: () => null,
       messageGenerator: mock(async function* () {
         // The silent SDK never consumes input.
       }),
@@ -163,6 +173,7 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
         saveSDKMessage: () => {},
         updateSession: () => {},
         getMessagesByStatus: () => [],
+        getMessageByStatusAndUuid: () => null,
         getSDKMessages: () => ({ messages: [], hasMore: false }),
         updateMessageStatus: () => {},
         getNodeExecutionRepo: () => ({ getByAgentSessionId: () => null }),
@@ -328,6 +339,16 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
     } else {
       process.env.HYPERNEO_SDK_STARTUP_MAX_CONCURRENT = SAVED_MAX_CONCURRENT_ENV;
     }
+    if (SAVED_RETRY_BASE_ENV === undefined) {
+      delete process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS;
+    } else {
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = SAVED_RETRY_BASE_ENV;
+    }
+    if (SAVED_RETRY_MAX_ENV === undefined) {
+      delete process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX;
+    } else {
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = SAVED_RETRY_MAX_ENV;
+    }
   });
 
   it('releases the slot on startup-timeout abort; the single retry re-admits through the gate', async () => {
@@ -443,7 +464,13 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
     await ctx.queryPromise;
     await waitFor(() => handleErrorSpy.mock.calls.length > 0);
 
-    expect(spawnNexts.length).toBe(2); // initial + transient retry
+    // initial + transient retry + one startup-timeout retry. The transient
+    // retry's replacement stays silent, so its startup timeout fires; the
+    // startup-retry budget is per delivery (NOT gated by retryAttempt — see
+    // the backoff/cap work), so that timeout claims retry 1 of the pinned
+    // cap and spawns once more before settling. The permit-leak invariant
+    // this test exists for is the stats below: every spawn released.
+    expect(spawnNexts.length).toBe(3);
     expect(getSdkStartupGate().getStats()).toEqual({
       active: 0,
       queued: 0,
