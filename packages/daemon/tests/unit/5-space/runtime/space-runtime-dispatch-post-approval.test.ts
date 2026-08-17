@@ -919,10 +919,6 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
     // fire for a paused space whose spawned merger is genuinely usable. The
     // pause lands between the hold read and the post-route read.
     const task = seedReviewTask(ctx.taskRepo);
-    const { TransientSpawnError } = await import(
-      '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts'
-    );
-    void TransientSpawnError;
     const workflow = ctx.workflowManager.createWorkflow({
       spaceId: SPACE_ID,
       name: `Route paused ${Date.now()}`,
@@ -1104,6 +1100,64 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
     const final = ctx.taskRepo.getTask(task.id);
     expect(final?.status).toBe('approved');
     expect(final?.postApprovalBlockedReason).toMatch(/stopped; post-approval dispatch deferred/);
+  });
+
+  test('correction read failure: the unreadable deferral still stamps the blocked reason', async () => {
+    // P1 (round 7): the fix-up catch used to throw the typed 'unreadable'
+    // deferral WITHOUT stamping postApprovalBlockedReason — the RPC handler
+    // treats every typed deferral as already durably recorded (no re-stamp),
+    // the resume sweep filters on the reason, and the wrapper excludes
+    // 'unreadable' from firing, so the task would wedge `approved` with no
+    // banner and no recovery signal. The catch now stamps before throwing.
+    const workflow = ctx.workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: `Route unreadable ${Date.now()}`,
+      description: 'Test',
+      nodes: [
+        {
+          id: 'node-build',
+          name: 'Build',
+          agents: [{ agentId: 'agent-planner', name: 'Planner' }],
+          postApproval: { targetAgent: 'Planner', instructions: 'Merge {{pr_url}}' },
+        },
+      ],
+      transitions: [],
+      startNodeId: 'node-build',
+      endNodeId: 'node-build',
+      rules: [],
+      tags: [],
+      completionAutonomyLevel: 3,
+    });
+    const run = ctx.workflowRunRepo.createRun({
+      spaceId: SPACE_ID,
+      workflowId: workflow.id,
+      title: 'Run',
+    });
+    const task = seedReviewTask(ctx.taskRepo);
+    ctx.taskRepo.updateTask(task.id, { workflowRunId: run.id });
+    const tam = tamOf(ctx);
+    tam.isSessionUsableForPostApproval = () => true;
+    tam.spawnPostApprovalSubSession = async () => ({ sessionId: 'session:merge-corr' });
+    // Call-counted getSpace: the pre-route read + the hold read return an
+    // active space; the post-route correction read throws.
+    let reads = 0;
+    ctx.spaceManager.getSpace = async () => {
+      reads += 1;
+      if (reads >= 3) throw new Error('db hiccup');
+      return { id: SPACE_ID, stopped: false, paused: false } as never;
+    };
+
+    let caught: unknown;
+    try {
+      await ctx.runtime.dispatchPostApproval(task.id, 'agent');
+    } catch (err) {
+      caught = err;
+    }
+    expect((caught as Error).name).toBe('PostApprovalDeferredError');
+    const final = ctx.taskRepo.getTask(task.id);
+    expect(final?.status).toBe('approved');
+    // The P1 assertion: the reason is stamped even on the unreadable path.
+    expect(final?.postApprovalBlockedReason).toMatch(/could not be stop-corrected/);
   });
 
   test('a stop landing mid-dispatch converts to the same durable deferral', async () => {

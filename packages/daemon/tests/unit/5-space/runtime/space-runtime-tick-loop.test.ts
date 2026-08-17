@@ -2502,6 +2502,34 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(spawns).toEqual([]);
     });
 
+    test('paused space does NOT hold waiting_rebind rows — orphaned recovery proceeds', async () => {
+      // The waiting_rebind hold is stopped-ONLY: pause keeps live sessions and
+      // their orphaned-work recovery running by design. A regression to
+      // `space?.stopped || space?.paused` would freeze recovery on pause — the
+      // row here would otherwise be fail-and-blocked.
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionAlive: () => false, // dead session → recovery proceeds
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'waiting_rebind',
+        agentSessionId: 'session:rebind-dead',
+      });
+
+      await spaceManager.pauseSpace(SPACE_ID);
+      await rt.executeTick();
+      await rt.executeTick();
+
+      // Recovery proceeded: the orphaned row was fail-and-blocked, not held.
+      expect(nodeExecutionRepo.getById(execution.id)!.status).toBe('blocked');
+      expect(taskRepo.getTask(tasks[0].id)!.status).toBe('blocked');
+    });
+
     test('park is a no-op after the space resumed (stop→start race)', async () => {
       // If space.start lands between the stop and the park call, the delivery
       // hold is already released and park must not strip live session
@@ -2878,6 +2906,56 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(internals.agentStuckRecovery.has(`${run.id}:${execution.id}`)).toBe(false);
       expect(internals.nonTerminalIdleStates.has(`${run.id}:${execution.id}`)).toBe(false);
       expect(nodeExecutionRepo.getById(execution.id)!.status).toBe('pending');
+    });
+
+    test('snapshot park re-read: a row that settled during the window is not regressed', async () => {
+      // The production snapshot path re-reads each row at park time: a row
+      // that legitimately reached a terminal status during the cleanup window
+      // (not interrupted — it completed on its own) must not be reset to
+      // pending. Without the guard the snapshot would regress finished work.
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isTaskAgentAlive: () => true,
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, { status: 'in_progress', agentSessionId: 's1' });
+      // The snapshot captured it in_progress…
+      const snapshot = [nodeExecutionRepo.getById(execution.id)!];
+      // …but the row settled to a terminal status during the cleanup window.
+      nodeExecutionRepo.update(execution.id, { status: 'idle', agentSessionId: 's1' });
+
+      rt.parkInFlightExecutionsForSpace(SPACE_ID, snapshot);
+
+      // Not reset: the row keeps its settled terminal status + binding.
+      expect(nodeExecutionRepo.getById(execution.id)!.status).toBe('idle');
+      expect(nodeExecutionRepo.getById(execution.id)!.agentSessionId).toBe('s1');
+    });
+
+    test('snapshot park: a blocked row keeps its status but loses the dead binding', async () => {
+      // Out-of-snapshot rows: park's clean-recovery reset only handles the
+      // two in-flight statuses, so a blocked row would keep its binding and
+      // remain a resolvable peer that peer messages could drive during the
+      // quiesce. Park clears the binding while preserving the blocked status.
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isTaskAgentAlive: () => true,
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, { status: 'blocked', agentSessionId: 's-blocked' });
+
+      rt.parkInFlightExecutionsForSpace(SPACE_ID, [nodeExecutionRepo.getById(execution.id)!]);
+
+      const parked = nodeExecutionRepo.getById(execution.id)!;
+      expect(parked.status).toBe('blocked'); // status preserved
+      expect(parked.agentSessionId).toBeNull(); // binding detached — no longer a peer
     });
 
     test('completion sweep: a mutex skip maps to approved (sibling quiesce stays coherent)', async () => {

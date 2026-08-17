@@ -1180,7 +1180,17 @@ export class SpaceRuntimeService {
     const stopSnapshot = this.config.workflowRunRepo
       .listBySpace(spaceId)
       .flatMap((run) => this.config.nodeExecutionRepo?.listByWorkflowRun(run.id) ?? [])
-      .filter((exec) => exec.status === 'in_progress' || exec.status === 'waiting_rebind');
+      .filter(
+        (exec) =>
+          exec.status === 'in_progress' ||
+          exec.status === 'waiting_rebind' ||
+          // Out-of-snapshot bound row: a blocked row keeps its binding (park's
+          // clean-recovery reset only handles the two in-flight statuses), so
+          // it would remain a resolvable peer that peer messages could drive
+          // during the quiesce. Park clears the binding while preserving the
+          // blocked status (the dependency must clear first).
+          (exec.status === 'blocked' && !!exec.agentSessionId)
+      );
 
     // 1. Interrupt the agent sessions of active tasks (in_progress, open,
     //    paused on a rate/usage cap, review, approved). A paused task still

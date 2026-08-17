@@ -19,6 +19,7 @@ import {
   beforeAll,
   afterAll,
   mock,
+  spyOn,
   type Mock,
 } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
@@ -306,9 +307,16 @@ describe('SpaceRuntimeService', () => {
       svc.dispatchPostApproval = async (spaceId, taskId) => {
         redrives.push({ spaceId, taskId });
       };
+      const emitSpy = spyOn(
+        (svc as unknown as { runtime: SpaceRuntime }).runtime,
+        'emitTaskUpdateBestEffort'
+      );
 
       await svc.stopActiveWork('space-1');
 
+      // The banner must reach connected clients: the web store refreshes tasks
+      // only on space.task.updated, so the step-1.5 stamp emits it.
+      expect(emitSpy).toHaveBeenCalled();
       // in_progress / open / rate-or-usage-limited / review / approved tasks
       // are quiesced — review/approved tasks own live sessions (checkpoint
       // end nodes, in-flight merges).

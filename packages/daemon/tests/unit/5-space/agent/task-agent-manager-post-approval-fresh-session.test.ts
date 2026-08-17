@@ -53,6 +53,8 @@ function makeFakeSession(id: string = REVIEWER_SESSION_ID) {
     skillOverrides: undefined,
     toolGuards: undefined,
     onMissingWorkflowMcpServers: undefined,
+    // Default idle; individual tests can override to probe other statuses.
+    getProcessingState: (): { status: string } => ({ status: 'idle' }),
     updateConfig: async (): Promise<void> => {
       calls.push('updateConfig');
     },
@@ -123,6 +125,7 @@ function makeManager(rows: unknown[] = [reviewerExec()]): TaskAgentManager {
     nodeExecutionRepo: {
       listByWorkflowRun: () => rows,
       listByNode: () => rows,
+      listByAgentSessionId: () => [],
       update: () => rows[0],
     },
     spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
@@ -453,6 +456,97 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
   // dispatchPostApproval, which converts it into the durable post-approval
   // deferral (banner + resume re-drive).
   // -------------------------------------------------------------------------
+  test('peer-injection gate: a stopped space rejects the inject without reaching the session', async () => {
+    // A peer message must not drive a session of a stopped space (the stop
+    // quiesce interrupted it; injecting would restart it via
+    // ensureQueryStarted). The gate resolves the space from the rowless
+    // merger session id (`space:<id>:…`) and rejects before injection.
+    const tam = makeManager([]);
+    (tam.config as unknown as Record<string, unknown>).spaceManager = {
+      getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws', stopped: true }),
+    };
+    const MERGER_SESSION = `space:${SPACE_ID}:task:${TASK_ID}:post-approval:merger`;
+    seedLiveSession(tam, MERGER_SESSION);
+    const injected: string[] = [];
+    (
+      tam as unknown as { injectMessageIntoSession: (...a: unknown[]) => Promise<string> }
+    ).injectMessageIntoSession = async () => {
+      injected.push('x');
+      return 'msg-id';
+    };
+
+    await expect(tam.injectSubSessionMessage(MERGER_SESSION, 'peer message')).rejects.toThrow(
+      /stopped/
+    );
+    expect(injected).toEqual([]);
+  });
+
+  test('peer-injection gate: a paused space rejects the inject too', async () => {
+    const tam = makeManager([]);
+    (tam.config as unknown as Record<string, unknown>).spaceManager = {
+      getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws', paused: true }),
+    };
+    const MERGER_SESSION = `space:${SPACE_ID}:task:${TASK_ID}:post-approval:merger`;
+    seedLiveSession(tam, MERGER_SESSION);
+    const injected: string[] = [];
+    (
+      tam as unknown as { injectMessageIntoSession: (...a: unknown[]) => Promise<string> }
+    ).injectMessageIntoSession = async () => {
+      injected.push('x');
+      return 'msg-id';
+    };
+
+    await expect(tam.injectSubSessionMessage(MERGER_SESSION, 'peer message')).rejects.toThrow(
+      /paused/
+    );
+    expect(injected).toEqual([]);
+  });
+
+  test('peer-injection gate: an active space injects normally', async () => {
+    const tam = makeManager([]);
+    (tam.config as unknown as Record<string, unknown>).spaceManager = {
+      getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws', stopped: false }),
+    };
+    const MERGER_SESSION = `space:${SPACE_ID}:task:${TASK_ID}:post-approval:merger`;
+    seedLiveSession(tam, MERGER_SESSION);
+    const injected: string[] = [];
+    (
+      tam as unknown as { injectMessageIntoSession: (...a: unknown[]) => Promise<string> }
+    ).injectMessageIntoSession = async (_s: unknown, m: string) => {
+      injected.push(m);
+      return 'msg-id';
+    };
+
+    await tam.injectSubSessionMessage(MERGER_SESSION, 'peer message');
+    expect(injected).toEqual(['peer message']);
+  });
+
+  test('isSessionUsableForPostApproval: interrupted/absent are dead, idle/processing are alive', async () => {
+    // Direct body coverage of the interruption-aware probe — every guard test
+    // stubs the probe, so the real body would otherwise be unpinned (a
+    // regression to isAgentSessionAlive, which counts 'interrupted' as alive,
+    // would pass the suite and re-open the already-routed wedge).
+    const tam = makeManager([]); // no node-execution rows; no live sessions yet
+    (
+      tam.config as unknown as { sessionManager: { getCachedSession: () => unknown } }
+    ).sessionManager = { getCachedSession: () => null };
+
+    const live = makeFakeSession('session-live').session;
+    (tam as unknown as { agentSessionIndex: Map<string, typeof live> }).agentSessionIndex.set(
+      'session-live',
+      live
+    );
+    const interrupted = makeFakeSession('session-interrupted').session;
+    (
+      tam as unknown as { agentSessionIndex: Map<string, typeof interrupted> }
+    ).agentSessionIndex.set('session-interrupted', interrupted);
+
+    // live.fake status is idle → alive.
+    expect(tam.isSessionUsableForPostApproval('session-live')).toBe(true);
+    // Absent from both the index and the SessionManager → dead.
+    expect(tam.isSessionUsableForPostApproval('session-absent')).toBe(false);
+  });
+
   test('stopped space: aborts before kickoff injection on the REUSE path', async () => {
     const spaceRow = { id: SPACE_ID, workspacePath: '/tmp/ws', stopped: true };
     const tam = new TaskAgentManager({

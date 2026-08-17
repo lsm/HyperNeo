@@ -1942,8 +1942,10 @@ export class SpaceRuntime {
    * safely. No-ops if the space resumed mid-quiesce (its delivery hold is
    * gone) so a stop→start race cannot strip the bindings of live sessions.
    *
-   * Called by `SpaceRuntimeService.stopActiveWork`. Run and task statuses are
-   * NOT modified.
+   * Called by `SpaceRuntimeService.stopActiveWork`, which passes the stop's
+   * pre-cleanup snapshot (production path). The no-snapshot form below is the
+   * legacy/test-only overload (hold-guarded): production never parks against
+   * the mutable hold set. Run and task statuses are NOT modified.
    */
   parkInFlightExecutionsForSpace(spaceId: string, stopSnapshot?: NodeExecution[]): void {
     if (stopSnapshot) {
@@ -1958,14 +1960,22 @@ export class SpaceRuntime {
       let parkedCount = 0;
       const parkedRuns = new Set<string>();
       for (const exec of stopSnapshot) {
-        if (exec.status !== 'in_progress' && exec.status !== 'waiting_rebind') continue;
         try {
           // Re-read: a row that legitimately settled during the cleanup window
-          // (not interrupted) must not be regressed to pending.
+          // (not interrupted) must not be regressed.
           const current = this.config.nodeExecutionRepo.getById(exec.id);
           if (!current) continue;
-          if (current.status !== 'in_progress' && current.status !== 'waiting_rebind') continue;
-          this.config.nodeExecutionRepo.resetForCleanRecovery(exec.id);
+          if (current.status === 'in_progress' || current.status === 'waiting_rebind') {
+            this.config.nodeExecutionRepo.resetForCleanRecovery(exec.id);
+          } else if (current.status === 'blocked' && current.agentSessionId) {
+            // Out-of-snapshot status preserved: the blocked row was
+            // interrupted like any in-flight row, but the blocked status is
+            // meaningful (a dependency must clear first) — detach the dead
+            // binding so it stops being a resolvable peer, keep the status.
+            this.config.nodeExecutionRepo.update(exec.id, { agentSessionId: null });
+          } else {
+            continue; // settled or already detached — leave alone
+          }
           this.taskCrashCounts.delete(`${exec.workflowRunId}:${exec.id}`);
           parkedRuns.add(exec.workflowRunId);
           parkedCount++;
@@ -4815,18 +4825,26 @@ export class SpaceRuntime {
       } catch (err) {
         if (isPostApprovalDeferredError(err)) throw err;
         // The correction itself failed (read/write error). Never propagate a
-        // raw error past the approved commit: throw the deferral anyway (tick
-        // sites swallow it), and the router guard's interruption-aware probe
-        // keeps a stale pointer from pinning until the next stop/start cycle
-        // re-records the interruption.
+        // raw error past the approved commit, and never leave the task
+        // unstamped: the RPC handler treats every typed deferral as already
+        // durably recorded (it skips re-stamping), the resume sweep filters
+        // on the reason, and the wrapper excludes 'unreadable' from firing —
+        // so without a stamp the task would wedge `approved` with no banner
+        // and no recovery signal. Stamp the reason (the same recovery copy
+        // the banner needs) before throwing the deferral; the router guard's
+        // interruption-aware probe keeps a stale pointer from pinning.
+        const detail =
+          `post-approval dispatch of task ${taskId} could not be stop-corrected ` +
+          `(${err instanceof Error ? err.message : String(err)}); the dispatch re-runs ` +
+          `when the space is paused and resumed`;
+        this.config.taskRepo.updateTask(taskId, {
+          postApprovalBlockedReason: detail,
+        });
+        await this.emitTaskUpdateBestEffort(spaceId, taskId);
         log.warn(
           `dispatchPostApproval: stop-correction read/write failed for task ${taskId}: ${formatCommandError(err)}`
         );
-        throw new PostApprovalDeferredError(
-          `post-approval dispatch of task ${taskId} could not be stop-corrected ` +
-            `(${err instanceof Error ? err.message : String(err)}); the dispatch re-runs on the next space resume`,
-          'unreadable'
-        );
+        throw new PostApprovalDeferredError(detail, 'unreadable');
       }
     }
 

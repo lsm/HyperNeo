@@ -2090,6 +2090,28 @@ export class TaskAgentManager {
     inputKind: MessageInputKind = 'task',
     messageId?: string
   ): Promise<string> {
+    // Gate: peer messages must not drive sessions of a stopped/paused space.
+    // A stop quiesce interrupts sessions, and a rowless merger (no row to
+    // park) or an out-of-snapshot row (blocked/rate-limited, binding kept)
+    // would still be a resolvable peer — injecting would restart the
+    // interrupted session via ensureQueryStarted and drive work the operator
+    // paused. The routers report the failed delivery, so the sender sees the
+    // failure rather than silently losing the message.
+    const gateSpaceId = await this.resolveSpaceIdForSubSession(subSessionId);
+    if (gateSpaceId) {
+      const gateSpace = await this.config.spaceManager.getSpace(gateSpaceId);
+      if (gateSpace?.stopped || gateSpace?.paused) {
+        log.warn(
+          `TaskAgentManager.injectSubSessionMessageWithOrigin: rejecting inject to session ` +
+            `${subSessionId} — space ${gateSpaceId} is ${gateSpace.stopped ? 'stopped' : 'paused'}`
+        );
+        throw new Error(
+          `Cannot inject message to session ${subSessionId} — space ${gateSpaceId} is ` +
+            `${gateSpace.stopped ? 'stopped' : 'paused'}`
+        );
+      }
+    }
+
     // Reject inject for a cancelled/archived task or cancelled run — the session
     // may still be in memory (idle, not evicted on cancel) but must not be
     // restarted via ensureQueryStarted. Mirrors the rehydrateSubSession guard.
@@ -4558,6 +4580,31 @@ export class TaskAgentManager {
    * repair the row and continue rehydration/self-heal without discarding the
    * existing session transcript or queued message.
    */
+  /**
+   * Resolve the space a sub-session belongs to, for the stopped/paused
+   * injection gate. Row-bearing sessions resolve via their execution → run;
+   * rowless sub-sessions (the post-approval merger, #852) embed
+   * `space:<id>:` in the session id. Returns null when neither resolves
+   * (conservative no-gate: an unknown shape is not refused).
+   */
+  private async resolveSpaceIdForSubSession(subSessionId: string): Promise<string | null> {
+    // Prefix first: session ids embed `space:<id>:…` (the merger does, and
+    // node-agent sub-sessions too), which resolves without a repo read. The
+    // execution path below is the fallback for legacy ids without the prefix.
+    const spaceMarker = 'space:';
+    const markerIndex = subSessionId.indexOf(spaceMarker);
+    if (markerIndex !== -1) {
+      const spaceId = subSessionId.slice(markerIndex + spaceMarker.length).split(':')[0];
+      if (spaceId) return spaceId;
+    }
+    const execution = this.resolveNodeExecutionForSubSession(subSessionId);
+    if (execution) {
+      const run = this.config.workflowRunRepo.getRun(execution.workflowRunId);
+      if (run) return run.spaceId;
+    }
+    return null;
+  }
+
   private resolveNodeExecutionForSubSession(subSessionId: string): NodeExecution | null {
     const bySessionId = this.config.nodeExecutionRepo.listByAgentSessionId(subSessionId);
     const embeddedExecutionId = this.parseExecutionIdFromSubSessionId(subSessionId);
