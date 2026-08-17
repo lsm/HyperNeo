@@ -1646,8 +1646,23 @@ describe('AcpQueryRunner startup-timeout bounded retry', () => {
       expect(ctx.errorManager.handleError).toHaveBeenCalledTimes(1);
       // Every never-accepted chain — including the exhausted terminal round —
       // drops the created ACP session id so the next chain creates fresh
-      // instead of resuming a session that never processed anything.
-      expect(ctx.db.updateSession).toHaveBeenCalledWith('session-1', { acpSessionId: undefined });
+      // instead of resuming a session that never processed anything. Chain 1
+      // resets exactly twice (the granted-retry round's reset and the
+      // exhausted round's, amid the two create-persists) with the exhausted
+      // reset LAST — deleting either reset branch fails this.
+      const acpIdResets = (
+        ctx.db.updateSession as unknown as ReturnType<typeof mock>
+      ).mock.calls.filter(
+        (args) =>
+          args[1] !== null &&
+          typeof args[1] === 'object' &&
+          'acpSessionId' in args[1] &&
+          (args[1] as { acpSessionId?: string }).acpSessionId === undefined
+      );
+      expect(acpIdResets).toHaveLength(2);
+      expect(ctx.db.updateSession).toHaveBeenLastCalledWith('session-1', {
+        acpSessionId: undefined,
+      });
 
       // A delivery-layer redrive of the SAME message starts a fresh chain
       // (new generation, isRetry=false). The instance-level budget must keep
