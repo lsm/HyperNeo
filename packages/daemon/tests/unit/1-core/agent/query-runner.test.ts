@@ -77,6 +77,7 @@ describe('QueryRunner', () => {
   let enqueueWithIdSpy: ReturnType<typeof mock>;
   let peekNextUserMessageIdSpy: ReturnType<typeof mock>;
   let hasPendingOrInFlightSpy: ReturnType<typeof mock>;
+  let removeSpy: ReturnType<typeof mock>;
   let getMessageByStatusAndUuidSpy: ReturnType<typeof mock>;
 
   // State variables (mutable context properties)
@@ -169,6 +170,7 @@ describe('QueryRunner', () => {
     enqueueWithIdSpy = mock(async () => {});
     peekNextUserMessageIdSpy = mock(() => null);
     hasPendingOrInFlightSpy = mock(() => false);
+    removeSpy = mock(() => true);
     mockMessageQueue = {
       isRunning: isRunningSpy,
       start: startSpy,
@@ -179,6 +181,7 @@ describe('QueryRunner', () => {
       enqueueWithId: enqueueWithIdSpy,
       peekNextUserMessageId: peekNextUserMessageIdSpy,
       hasPendingOrInFlight: hasPendingOrInFlightSpy,
+      remove: removeSpy,
       messageGenerator: mock(async function* () {
         // Empty generator for tests
       }),
@@ -2653,22 +2656,41 @@ describe('QueryRunner', () => {
         buildSpy.mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
         // The redrive already re-admitted the kickoff.
         hasPendingOrInFlightSpy.mockImplementation((id: string) => id === kickoff.uuid);
+        // Keep attempt 2 alive so the re-staged skip is observable mid-chain
+        // (the finally's leak guard clears it once the chain ends).
         (
           mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
         ).mockImplementation(() => ({
           close: () => {},
-          [Symbol.asyncIterator]: async function* () {},
+          [Symbol.asyncIterator]: async function* () {
+            await new Promise(() => {});
+          },
         }));
 
         try {
           runner.start();
-          await ctx.queryPromise?.catch(() => {});
-
+          // Wait for the skip warn (attempt 2 flushed and skipped), then
+          // observe the stage BEFORE the chain ends.
+          let deadline = Date.now() + 2000;
+          const skipSeen = () =>
+            (mockLogger.warn as ReturnType<typeof mock>).mock.calls.some((args) =>
+              String(args[0]).includes('already pending or in-flight')
+            );
+          while (!skipSeen() && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(skipSeen()).toBe(true);
           expect(enqueueWithIdSpy).not.toHaveBeenCalled();
-          const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
-            String(args[0])
-          );
-          expect(warns.some((w) => w.includes('already pending or in-flight'))).toBe(true);
+
+          // Round-8 P2: the skip re-stages (never drops) — the message keeps
+          // a lane for the next flush to re-check.
+          expect(
+            (runner as unknown as { _pendingStartupReplay: Array<{ uuid: string }> | null })
+              ._pendingStartupReplay?.[0]?.uuid
+          ).toBe('dup-kickoff-uuid');
+          // End the chain (abort the parked attempt) so the test can finish.
+          ctx.queryAbortController?.abort();
+          await ctx.queryPromise?.catch(() => {});
         } finally {
           (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
         }
@@ -2772,6 +2794,308 @@ describe('QueryRunner', () => {
             false,
             { prepend: true, durable: true }
           );
+        } finally {
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+        }
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      'merges multi-message TTL rejections order-preserving (no overwrite)',
+      async () => {
+        // Round-8 P1: a replay of [kickoff, steer] arms two admission TTLs
+        // that fire back-to-back; a per-message assignment would let the
+        // second rejection overwrite the first re-stage. Steers have no
+        // delivery-layer recovery lane, so both must survive, in feed order.
+        process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '2';
+        const kickoff = {
+          uuid: 'merge-kickoff',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+        const steer = { uuid: 'merge-steer', content: [{ type: 'text' as const, text: 'S' }] };
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff, steer]]]);
+
+        buildSpy
+          .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+          .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514' })
+          .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514' })
+          .mockRejectedValueOnce(new Error('stop after retry'));
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => ({
+          close: () => {},
+          [Symbol.asyncIterator]: async function* () {
+            await new Promise(() => {});
+          },
+        }));
+
+        // Arm both admissions; reject steer FIRST (worst order), then kickoff.
+        const rejections: Array<(error: Error) => void> = [];
+        enqueueWithIdSpy.mockImplementation(
+          () =>
+            new Promise<void>((_resolve, reject) => {
+              rejections.push(reject);
+            })
+        );
+
+        try {
+          runner.start();
+          let deadline = Date.now() + 2000;
+          while (rejections.length < 2 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(rejections.length).toBe(2);
+          const ttlError = new Error('Message queue timeout');
+          ttlError.name = 'MessageQueueTimeoutError';
+          rejections[1](ttlError); // steer (flushed last → armed last)
+          rejections[0](ttlError); // kickoff
+
+          // The merged re-stage feeds BOTH on attempt 3's flush.
+          deadline = Date.now() + 2000;
+          while (enqueueWithIdSpy.mock.calls.length < 4 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(enqueueWithIdSpy.mock.calls.length).toBe(4);
+          // Reject the merged re-flush: budget (MAX=2) exhausts and the chain
+          // terminates instead of retrying further.
+          const ttlError2 = new Error('Message queue timeout');
+          ttlError2.name = 'MessageQueueTimeoutError';
+          rejections[2](ttlError2);
+          rejections[3](ttlError2);
+          await ctx.queryPromise?.catch(() => {});
+
+          // The re-stage merged BOTH (next flush fed 2 more entries) and the
+          // staged order fed kickoff before steer (prepend-reverse of an
+          // array ordered [kickoff, steer]).
+          expect(enqueueWithIdSpy.mock.calls.length).toBe(4);
+          const secondFlushUuids = (
+            enqueueWithIdSpy.mock.calls.slice(2) as unknown as Array<[string]>
+          ).map(([uuid]) => uuid);
+          expect(secondFlushUuids).toEqual(['merge-steer', 'merge-kickoff']);
+          const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+            String(args[0])
+          );
+          expect(warns.some((w) => w.includes('admission rejected for message merge-steer'))).toBe(
+            true
+          );
+          expect(
+            warns.some((w) => w.includes('admission rejected for message merge-kickoff'))
+          ).toBe(true);
+        } finally {
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+        }
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      'ignores a late admission rejection once a replacement owns the session',
+      async () => {
+        // Round-8 P2: the .catch must be attempt-scoped — a TTL firing after
+        // a replacement started must not write stage/flag into the live chain.
+        const kickoff = {
+          uuid: 'late-reject-kickoff',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff]]]);
+
+        buildSpy
+          .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+          .mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => ({
+          close: () => {},
+          [Symbol.asyncIterator]: async function* () {
+            await new Promise(() => {});
+          },
+        }));
+        let rejectAdmission: ((error: Error) => void) | null = null;
+        enqueueWithIdSpy.mockImplementation(
+          () =>
+            new Promise<void>((_resolve, reject) => {
+              rejectAdmission = reject;
+            })
+        );
+
+        try {
+          runner.start();
+          const deadline = Date.now() + 2000;
+          while (!rejectAdmission && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(rejectAdmission).toBeTypeOf('function');
+
+          // A replacement query takes ownership (generation bump + its own
+          // controller) while the admission is still pending…
+          ctx.incrementQueryGeneration();
+          ctx.queryAbortController = new AbortController();
+          const stagedBefore = (runner as unknown as { _pendingStartupReplay: unknown[] | null })
+            ._pendingStartupReplay;
+
+          const ttlError = new Error('Message queue timeout');
+          ttlError.name = 'MessageQueueTimeoutError';
+          rejectAdmission(ttlError);
+          await new Promise((resolve) => setTimeout(resolve, 50));
+
+          // …so the late rejection is a no-op: nothing staged, no starved
+          // flag, no abort of the replacement's controller.
+          expect(
+            (runner as unknown as { _pendingStartupReplay: unknown[] | null })
+              ._pendingStartupReplay === stagedBefore
+          ).toBe(true);
+          expect(ctx.queryAbortController.signal.aborted).toBe(false);
+          const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+            String(args[0])
+          );
+          expect(warns.some((w) => w.includes('lost session ownership; ignoring'))).toBe(true);
+        } finally {
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+        }
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      'does not abort a PRODUCING attempt when a trailing admission rejects',
+      async () => {
+        // Round-8 P2: the starved escape only fires at messageCount === 0 —
+        // aborting after the first frame would truncate a live turn and the
+        // post-loop would treat it as normal completion.
+        const kickoff = {
+          uuid: 'producing-kickoff',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+        const steer = {
+          uuid: 'producing-steer',
+          content: [{ type: 'text' as const, text: 'S' }],
+        };
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff, steer]]]);
+
+        buildSpy
+          .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+          .mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
+        // The SDK consumes the kickoff, emits one frame, and STAYS OPEN
+        // mid-production — the steer entry sits unconsumed until its TTL
+        // fires against the still-live attempt.
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => ({
+          close: () => {},
+          [Symbol.asyncIterator]: async function* () {
+            yield { type: 'assistant', message: { role: 'assistant', content: [] } };
+            await new Promise(() => {});
+          },
+        }));
+        // Kickoff admission resolves (consumed); the steer's is rejectable
+        // on demand (the trailing-admission TTL).
+        let rejectSteerAdmission: ((error: Error) => void) | null = null;
+        enqueueWithIdSpy.mockImplementation((uuid: string) =>
+          uuid === kickoff.uuid
+            ? Promise.resolve()
+            : new Promise<void>((_resolve, reject) => {
+                rejectSteerAdmission = reject;
+              })
+        );
+
+        try {
+          runner.start();
+          // Let the frame arrive (firstMessageReceived) — then reject the
+          // still-pending steer admission mid-production.
+          let deadline = Date.now() + 2000;
+          while (!ctx.firstMessageReceived && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(ctx.firstMessageReceived).toBe(true);
+          expect(rejectSteerAdmission).toBeTypeOf('function');
+
+          // Mid-production rejection: the attempt has received its first
+          // frame, so the handler must NOT abort it.
+          const ttlError = new Error('Message queue timeout');
+          ttlError.name = 'MessageQueueTimeoutError';
+          rejectSteerAdmission(ttlError);
+          // Give the handler a tick, then end the open attempt (the abort
+          // breaks the parked iterator; messageCount=1 → normal completion).
+          await new Promise((resolve) => setTimeout(resolve, 25));
+          ctx.queryAbortController?.abort();
+          await ctx.queryPromise?.catch(() => {});
+
+          // The turn completed WITHOUT an abort-driven truncation and the
+          // controller stayed live through the frame.
+          const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+            String(args[0])
+          );
+          expect(warns.some((w) => w.includes('after the first SDK frame'))).toBe(true);
+          expect(
+            warns.some((w) => w.includes('aborting attempt for a bounded startup retry'))
+          ).toBe(false);
+        } finally {
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+        }
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      'removes still-pending flushed entries when the chain is superseded',
+      async () => {
+        // Round-8 P2: restart() supersedes via stop-without-clear; entries
+        // this chain flushed would be eaten by the replacement's generator.
+        // The stale finally must remove them from the queue.
+        const kickoff = {
+          uuid: 'orphan-kickoff',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff]]]);
+
+        buildSpy
+          .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+          .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514' });
+        // Admission stays pending forever (never consumed, never TTL'd here).
+        enqueueWithIdSpy.mockImplementation(() => new Promise<void>(() => {}));
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => ({
+          close: () => {},
+          [Symbol.asyncIterator]: async function* () {
+            await new Promise(() => {});
+          },
+        }));
+
+        try {
+          runner.start();
+          let deadline = Date.now() + 2000;
+          while (enqueueWithIdSpy.mock.calls.length < 1 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(enqueueWithIdSpy.mock.calls.length).toBe(1);
+
+          // restart(): supersede the chain (generation bump), and the queue
+          // reports the flushed entry as still pending (stop-without-clear).
+          ctx.incrementQueryGeneration();
+          hasPendingOrInFlightSpy.mockImplementation((id: string) => id === kickoff.uuid);
+          // Abort the attempt so the finally runs while stale.
+          ctx.queryAbortController?.abort();
+          await new Promise((resolve) => setTimeout(resolve, 50));
+
+          expect(removeSpy).toHaveBeenCalledWith(kickoff.uuid);
         } finally {
           (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
         }

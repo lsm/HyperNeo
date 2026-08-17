@@ -2750,10 +2750,13 @@ export class AgentSession
           // job re-evaluates on its park cadence and feeds (or promotes once
           // the turn settles) after the backoff ends. Bounded by
           // MAX_STEER_PARKS (~5 min) — comfortable at the default knobs where
-          // the stall watchdog truncates the schedule well inside it, but a
-          // much raised HYPERNEO_SDK_STARTUP_RETRY_BASE_MS can outlast the
-          // bound and surface the parked follow-up failed. The ≤5 s teardown
-          // waits of the other retry paths are covered by the same gate.
+          // the schedule (60 s windows + 15–240 s sleeps) terminates inside
+          // it via the retry cap or the post-backoff cancellation paths (the
+          // stall watchdog does NOT bound the starved case — no activity ever
+          // arms it), but a much raised HYPERNEO_SDK_STARTUP_RETRY_BASE_MS
+          // can outlast the bound and surface the parked follow-up failed.
+          // The ≤5 s teardown waits of the other retry paths are covered by
+          // the same gate.
           if (!this.messageQueue.isRunning()) return { kind: 'park' as const };
           const generation = this.getQueryGeneration();
           observer?.reportStage('query_ready', { generation });
