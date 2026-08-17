@@ -145,6 +145,14 @@ export const QUESTION_CANCEL_MESSAGE =
  */
 const MAX_QUESTION_STRING_LENGTH = 2000;
 
+/**
+ * Maximum questions per AskUserQuestion call and options per question —
+ * mirrors the SDK tool schema maxItems (sdk-tools.d.ts). Hooks run before
+ * schema validation, so the counts are bounded here too.
+ */
+const MAX_QUESTIONS = 4;
+const MAX_OPTIONS = 4;
+
 /** Truncate a model-supplied string field to MAX_QUESTION_STRING_LENGTH. */
 function truncateQuestionString(value: string | undefined): string {
   if (typeof value !== 'string') return '';
@@ -195,13 +203,16 @@ export class AskUserQuestionHandler {
     const askInput = input as unknown as AskUserQuestionInput;
     const questionsWellFormed =
       Array.isArray(askInput.questions) &&
-      askInput.questions.length > 0 &&
+      askInput.questions.length >= 1 &&
+      askInput.questions.length <= MAX_QUESTIONS &&
       askInput.questions.every(
         (q) =>
           q !== null &&
           typeof q === 'object' &&
           typeof q.question === 'string' &&
+          typeof q.multiSelect === 'boolean' &&
           Array.isArray(q.options) &&
+          q.options.length <= MAX_OPTIONS &&
           q.options.every((o) => o !== null && typeof o === 'object' && typeof o.label === 'string')
       );
     if (!questionsWellFormed) {
@@ -429,9 +440,16 @@ export class AskUserQuestionHandler {
     // Capture the pending question before transitioning state
     const pendingQuestion = currentState.pendingQuestion;
 
+    // Capture the live resolver BEFORE building answers: answers must be keyed
+    // against the RAW (untruncated) question text in the tool_input — the
+    // pendingQuestion copy is truncated for the UI surface, and the live path
+    // returns updatedInput: {...resolver.input, answers}, so a truncated key
+    // would not match the text the SDK/model looks up answers by.
+    const resolver = this.pendingResolver;
+
     // Format the answers as expected by the SDK
     // Maps question text to selected option label(s)
-    const answers = this.buildAnswers(pendingQuestion, responses);
+    const answers = this.buildAnswers(pendingQuestion, responses, resolver?.input);
 
     // Track resolved question in session metadata. We do this BEFORE the
     // state transition so the metadata is durable even if the deliver step
@@ -439,10 +457,9 @@ export class AskUserQuestionHandler {
     this.trackResolvedQuestion(toolUseId, pendingQuestion, 'submitted', responses);
 
     // Happy path: a live SDK query is awaiting our resolver — resolve in-memory.
-    // Capture the resolver BEFORE the state transition: if a second
+    // The resolver was captured before the state transition: if a second
     // AskUserQuestion supersedes during the await, the post-await capture
     // would resolve the newer resolver with this older question's answers.
-    const resolver = this.pendingResolver;
     if (resolver && resolver.toolUseId === toolUseId) {
       // Transition back to processing state
       await stateManager.setProcessing(toolUseId, 'streaming');
@@ -615,23 +632,34 @@ export class AskUserQuestionHandler {
   /**
    * Build the answers map from the user's responses.
    * Maps question text → selected option label(s) or custom text.
+   *
+   * Answers are keyed by the RAW question text from the tool_input (when a
+   * live resolver is available): the `pendingQuestion` copy is truncated for
+   * the UI surface, and the live path returns `updatedInput: {...resolver.input,
+   * answers}` — a truncated key would not match the original text the
+   * SDK/model looks answers up by. Without a live resolver (post-restart), the
+   * persisted (truncated) question text is the only key available.
    */
   private buildAnswers(
     pendingQuestion: PendingUserQuestion,
-    responses: QuestionDraftResponse[]
+    responses: QuestionDraftResponse[],
+    rawInput?: Record<string, unknown>
   ): Record<string, string> {
+    const rawQuestions =
+      (rawInput?.questions as AskUserQuestionInput['questions'] | undefined) ?? [];
     const answers: Record<string, string> = {};
     for (const response of responses) {
       const question = pendingQuestion.questions[response.questionIndex];
       if (!question) continue;
+      const questionText = rawQuestions[response.questionIndex]?.question ?? question.question;
 
       if (response.customText) {
         // User provided custom text via "Other" option
-        answers[question.question] = response.customText;
+        answers[questionText] = response.customText;
       } else if (response.selectedLabels.length > 0) {
         // User selected one or more predefined options
         // Multi-select answers are comma-separated
-        answers[question.question] = response.selectedLabels.join(', ');
+        answers[questionText] = response.selectedLabels.join(', ');
       }
     }
     return answers;

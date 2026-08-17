@@ -747,7 +747,8 @@ describe('QueryRunner', () => {
       type ApplyDeferred = (
         q: QueryLike,
         m: string | undefined,
-        attemptTimeoutMs?: number
+        attemptTimeoutMs?: number,
+        backoffBaseMs?: number
       ) => Promise<void>;
 
       function applyOnRunner(r: QueryRunner): ApplyDeferred {

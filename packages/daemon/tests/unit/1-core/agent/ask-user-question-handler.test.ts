@@ -455,6 +455,90 @@ describe('AskUserQuestionHandler', () => {
       expect(setWaitingForInputSpy).not.toHaveBeenCalled();
     });
 
+    it('denies malformed tool_input (non-boolean multiSelect, over-cap counts)', async () => {
+      const hook = handler.createPreToolUseHook();
+
+      // multiSelect must be a boolean — a model-supplied string would otherwise
+      // flow untruncated into metadata + broadcast (the guard's type check is
+      // the size cap for this field).
+      const nonBooleanMultiSelect = {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'AskUserQuestion',
+        tool_input: {
+          questions: [
+            {
+              question: 'Q?',
+              header: 'H',
+              options: [
+                { label: 'A', description: 'A' },
+                { label: 'B', description: 'B' },
+              ],
+              multiSelect: 'x'.repeat(5000),
+            },
+          ],
+        },
+        tool_use_id: 'hook-bad-multiselect',
+      };
+      const denied = (await hook(nonBooleanMultiSelect, 'hook-bad-multiselect', {
+        signal: new AbortController().signal,
+      })) as {
+        hookSpecificOutput: { permissionDecision: string };
+      };
+      expect(denied.hookSpecificOutput.permissionDecision).toBe('deny');
+
+      // Questions/options counts mirror the SDK schema maxItems (4/4); hooks
+      // see pre-schema-validation input, so the caps live here.
+      const overCapQuestions = {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'AskUserQuestion',
+        tool_input: {
+          questions: Array.from({ length: 5 }, () => ({
+            question: 'Q?',
+            header: 'H',
+            options: [
+              { label: 'A', description: 'A' },
+              { label: 'B', description: 'B' },
+            ],
+            multiSelect: false,
+          })),
+        },
+        tool_use_id: 'hook-many-questions',
+      };
+      const tooMany = (await hook(overCapQuestions, 'hook-many-questions', {
+        signal: new AbortController().signal,
+      })) as {
+        hookSpecificOutput: { permissionDecision: string };
+      };
+      expect(tooMany.hookSpecificOutput.permissionDecision).toBe('deny');
+
+      const overCapOptions = {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'AskUserQuestion',
+        tool_input: {
+          questions: [
+            {
+              question: 'Q?',
+              header: 'H',
+              options: Array.from({ length: 5 }, (_, i) => ({
+                label: `O${i}`,
+                description: `O${i}`,
+              })),
+              multiSelect: false,
+            },
+          ],
+        },
+        tool_use_id: 'hook-many-options',
+      };
+      const tooManyOptions = (await hook(overCapOptions, 'hook-many-options', {
+        signal: new AbortController().signal,
+      })) as {
+        hookSpecificOutput: { permissionDecision: string };
+      };
+      expect(tooManyOptions.hookSpecificOutput.permissionDecision).toBe('deny');
+
+      expect(setWaitingForInputSpy).not.toHaveBeenCalled();
+    });
+
     it('truncates over-long question strings when building the UI structure', async () => {
       const hook = handler.createPreToolUseHook();
 
@@ -482,7 +566,9 @@ describe('AskUserQuestionHandler', () => {
 
       // The UI structure (persisted to metadata + broadcast) is capped so a
       // model-supplied multi-MB string cannot bloat the DB or amplify to every
-      // connected client.
+      // connected client. Assert the guard allowed the call through first — a
+      // guard regression would surface as a clear failure, not a TypeError.
+      expect(setWaitingForInputSpy).toHaveBeenCalled();
       const pendingQuestion = setWaitingForInputSpy.mock.calls[0]?.[0] as {
         questions: Array<{
           question: string;
@@ -499,6 +585,58 @@ describe('AskUserQuestionHandler', () => {
       // Settle the hook promise so no dangling pending resolver leaks.
       await handler.handleQuestionCancel('hook-long');
       await resultPromise;
+    });
+
+    it('keys answers by the raw question text, not the truncated UI copy', async () => {
+      const hook = handler.createPreToolUseHook();
+
+      // A >2000-char question: the UI copy is truncated, but the live path
+      // returns updatedInput: {...resolver.input, answers} where resolver.input
+      // holds the original text — the SDK looks answers up by THAT key, so the
+      // answers map must key by the raw text or the answer is silently dropped.
+      const rawQuestion = 'Q' + 'x'.repeat(3000);
+      const resultPromise = hook(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'AskUserQuestion',
+          tool_input: {
+            questions: [
+              {
+                question: rawQuestion,
+                header: 'H',
+                options: [
+                  { label: 'A', description: 'A' },
+                  { label: 'B', description: 'B' },
+                ],
+                multiSelect: false,
+              },
+            ],
+          },
+          tool_use_id: 'hook-raw',
+        },
+        'hook-raw',
+        { signal: new AbortController().signal }
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      await handler.handleQuestionResponse('hook-raw', [
+        { questionIndex: 0, selectedLabels: ['A'] },
+      ]);
+
+      const result = (await resultPromise) as {
+        hookSpecificOutput: {
+          permissionDecision: string;
+          updatedInput?: { answers: Record<string, string> };
+        };
+      };
+      expect(result.hookSpecificOutput.permissionDecision).toBe('allow');
+      // Keyed by the RAW 3000-char question text, not the 2000-char truncation.
+      expect(result.hookSpecificOutput.updatedInput?.answers).toEqual({
+        [rawQuestion]: 'A',
+      });
+      expect(result.hookSpecificOutput.updatedInput?.answers).not.toHaveProperty(
+        rawQuestion.slice(0, 2000)
+      );
     });
 
     it('settles the superseded call with a deny result when a second question arrives', async () => {
@@ -605,6 +743,80 @@ describe('AskUserQuestionHandler', () => {
 
       // race-2's resolver is still pending (NOT resolved with race-1's 'A').
       // Cancel it — its outcome is a fresh deny, proving no cross-wire.
+      await handler.handleQuestionCancel('race-2');
+      const second = (await secondPromise) as {
+        hookSpecificOutput: { permissionDecision: string };
+      };
+      expect(second.hookSpecificOutput.permissionDecision).toBe('deny');
+
+      // race-1 was superseded — its resolver was denied by the supersede block.
+      const first = (await firstPromise) as {
+        hookSpecificOutput: { permissionDecision: string; permissionDecisionReason?: string };
+      };
+      expect(first.hookSpecificOutput.permissionDecision).toBe('deny');
+      expect(first.hookSpecificOutput.permissionDecisionReason).toContain('Superseded');
+    });
+
+    it('does not cancel the newer question when a cancel is superseded mid-transition', async () => {
+      const hook = handler.createPreToolUseHook();
+
+      const askHookInput = (toolUseId: string, question: string, label: string) => ({
+        hook_event_name: 'PreToolUse' as const,
+        tool_name: 'AskUserQuestion',
+        tool_input: {
+          questions: [
+            {
+              question,
+              header: 'P',
+              options: [{ label, description: label }],
+              multiSelect: false,
+            },
+          ],
+        },
+        tool_use_id: toolUseId,
+      });
+
+      // First question is live.
+      const firstPromise = hook(askHookInput('race-1', 'Pick?', 'A'), 'race-1', {
+        signal: new AbortController().signal,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Block the processing transition so a second question can supersede
+      // mid-cancel.
+      let releaseProcessing!: () => void;
+      const processingGate = new Promise<void>((resolve) => {
+        releaseProcessing = resolve;
+      });
+      setProcessingSpy.mockImplementationOnce(async () => {
+        await processingGate;
+        currentState = { status: 'processing', messageId: 'race-1', phase: 'streaming' };
+      });
+
+      // User cancels race-1; it blocks inside the transition.
+      const cancelPromise = handler.handleQuestionCancel('race-1');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // The model issues a second question in the same turn; it supersedes
+      // race-1's resolver while the cancel is mid-transition.
+      const secondPromise = hook(askHookInput('race-2', 'Pick 2?', 'B'), 'race-2', {
+        signal: new AbortController().signal,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      releaseProcessing();
+      await cancelPromise;
+
+      // race-2's resolver must STILL be pending — the superseded cancel must
+      // not have resolved it with race-1's cancel intent.
+      let secondSettled = false;
+      secondPromise.then(() => {
+        secondSettled = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(secondSettled).toBe(false);
+
+      // race-2 is live and cancels normally.
       await handler.handleQuestionCancel('race-2');
       const second = (await secondPromise) as {
         hookSpecificOutput: { permissionDecision: string };
