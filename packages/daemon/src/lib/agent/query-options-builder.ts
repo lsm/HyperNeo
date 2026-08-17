@@ -532,7 +532,7 @@ export class QueryOptionsBuilder {
       ...this.buildPluginsFromSkills(),
       ...this.buildPluginsFromBuiltinSkills(),
     ];
-    const mergedEnv = this.getMergedEnvironmentVars();
+    const mergedEnv = this.getMergedEnvironmentVars(providerContext.sdkConfig.envVars);
     const sdkCliPath = this.getSDKCliPath();
 
     // Effective MCP servers: registry (skill-less) + skill-wrapped + runtime.
@@ -1188,7 +1188,9 @@ CRITICAL RULES:
    *
    * @returns Merged env vars (excluding provider-specific vars)
    */
-  private getMergedEnvironmentVars(): Record<string, string> | undefined {
+  private getMergedEnvironmentVars(
+    sessionProviderEnvVars: Record<string, string> = {}
+  ): Record<string, string> | undefined {
     const globalSettings = this.ctx.settingsManager.getGlobalSettings();
     const sessionEnv = this.ctx.session.config.env;
 
@@ -1247,9 +1249,23 @@ CRITICAL RULES:
         'ANTHROPIC_DEFAULT_OPUS_MODEL',
         'API_TIMEOUT_MS',
         'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
-        'CLAUDE_CODE_SUBAGENT_MODEL',
-        'ENABLE_TOOL_SEARCH',
       ];
+      // CLAUDE_CODE_SUBAGENT_MODEL and ENABLE_TOOL_SEARCH are not
+      // ANTHROPIC_*-prefixed, so the SDK subprocess also inherits them from
+      // the daemon's ambient process.env. This snapshot runs BEFORE this
+      // session's provider env is applied to process.env, so blindly copying
+      // them from process.env here can capture ANOTHER provider's leftover
+      // (e.g. a concurrent Kimi worker's CLAUDE_CODE_SUBAGENT_MODEL) — a
+      // value the post-apply refresh cannot remove, because it only manages
+      // vars this session's provider defines. Forward them only when this
+      // provider sets them, and take the provider's own value rather than
+      // the ambient snapshot so the build is race-free.
+      for (const key of ['CLAUDE_CODE_SUBAGENT_MODEL', 'ENABLE_TOOL_SEARCH'] as const) {
+        const value = sessionProviderEnvVars[key];
+        if (value !== undefined && value !== '') {
+          mergedEnv[key] = value;
+        }
+      }
       for (const key of providerVars) {
         const value = process.env[key];
         if (value !== undefined && value !== '') {

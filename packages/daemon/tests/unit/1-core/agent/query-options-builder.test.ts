@@ -532,6 +532,86 @@ describe('QueryOptionsBuilder', () => {
     });
   });
 
+  describe('subagent model env guard (CLAUDE_CODE_SUBAGENT_MODEL)', () => {
+    // Regression: the daemon's process.env carries per-provider routing vars
+    // (applied around each query, globally). getMergedEnvironmentVars() runs
+    // BEFORE this session's provider env is applied, so a leftover
+    // CLAUDE_CODE_SUBAGENT_MODEL from another provider's session (e.g. a
+    // concurrent Kimi worker) used to be copied verbatim into options.env —
+    // and since the var is not ANTHROPIC_*-prefixed, the SDK subprocess
+    // inherits it too. Subagents then sent the foreign model ID upstream and
+    // GLM rejected it with 400 code 1214 "modelCode 不存在" while main turns
+    // kept working (the var only affects subagents). Subagents otherwise
+    // inherit the main model via the CLI's own defaults, so the guard never
+    // sets the var itself — it only stops the foreign snapshot.
+    const foreignSubagentModel = 'k3-256k';
+    let savedSubagentModel: string | undefined;
+
+    function registerCompatProvider(envVars: Record<string, string>): void {
+      resetProviderRegistry();
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'glm',
+        displayName: 'Z.ai',
+        capabilities: {
+          streaming: true,
+          extendedThinking: true,
+          maxContextWindow: 1_000_000,
+          functionCalling: true,
+          vision: true,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: (modelId: string) => modelId.startsWith('glm-'),
+        buildSdkConfig: () => ({ envVars, isAnthropicCompatible: true }),
+      } as Provider);
+    }
+
+    beforeEach(() => {
+      savedSubagentModel = process.env.CLAUDE_CODE_SUBAGENT_MODEL;
+      process.env.CLAUDE_CODE_SUBAGENT_MODEL = foreignSubagentModel;
+    });
+
+    afterEach(() => {
+      if (savedSubagentModel === undefined) {
+        delete process.env.CLAUDE_CODE_SUBAGENT_MODEL;
+      } else {
+        process.env.CLAUDE_CODE_SUBAGENT_MODEL = savedSubagentModel;
+      }
+      resetProviderRegistry();
+    });
+
+    it('forwards the provider-defined subagent model over an ambient leftover', async () => {
+      registerCompatProvider({
+        ANTHROPIC_BASE_URL: 'https://open.bigmodel.cn/api/anthropic',
+        CLAUDE_CODE_SUBAGENT_MODEL: 'glm-5.3',
+      });
+      mockSession.config.provider = 'glm';
+      mockSession.config.model = 'glm-5.3';
+
+      const options = await builder.build();
+
+      expect(options.env?.CLAUDE_CODE_SUBAGENT_MODEL).toBe('glm-5.3');
+    });
+
+    it('omits the subagent model when the provider does not define one, even with an ambient leftover', async () => {
+      // Providers that never mention the var (GLM, DeepSeek, MiniMax, native
+      // Anthropic, …) must not inherit another provider's value: subagents
+      // resolve to the main model from the query env, and
+      // applyEnvVarsToProcessForSession() clears the ambient var from
+      // process.env before the subprocess spawns.
+      registerCompatProvider({
+        ANTHROPIC_BASE_URL: 'https://open.bigmodel.cn/api/anthropic',
+      });
+      mockSession.config.provider = 'glm';
+      mockSession.config.model = 'glm-5.3';
+
+      const options = await builder.build();
+
+      expect(options.env?.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
+    });
+  });
+
   describe('getCwd', () => {
     it('should return workspacePath when no worktree', () => {
       expect(builder.getCwd()).toBe('/test/workspace');
