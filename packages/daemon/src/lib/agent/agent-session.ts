@@ -2739,6 +2739,18 @@ export class AgentSession
         if (status === 'processing') {
           if (!this.messageDeliveryValid(messageUuid)) return { kind: 'aborted' as const };
           if (!this.queryPromise) return { kind: 'promote' as const };
+          // A 'processing' session whose queue is STOPPED is mid-recovery, not
+          // mid-turn: the startup-timeout retry deliberately stays 'processing'
+          // with queryPromise set through its 15–240 s backoff while the queue
+          // is stopped (restarted only post-sleep). Admitting here would park
+          // the steer in a queue nothing consumes — the 30 s admission TTL
+          // rejects it (`durable` rescues only the yielded state) and the
+          // delivery job burns its retry budget re-admitting into the still-
+          // stopped queue before dead-lettering `failed`. Park instead: the
+          // job re-evaluates on its park cadence and feeds (or promotes once
+          // the turn settles) after the backoff ends. The ≤5 s teardown waits
+          // of the other retry paths are covered by the same gate.
+          if (!this.messageQueue.isRunning()) return { kind: 'park' as const };
           const generation = this.getQueryGeneration();
           observer?.reportStage('query_ready', { generation });
           // ACP: if this steer was already admitted and is still pending subprocess

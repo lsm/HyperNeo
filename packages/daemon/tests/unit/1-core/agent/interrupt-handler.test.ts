@@ -198,6 +198,35 @@ describe('InterruptHandler', () => {
       expect(ctx.queryAbortController).toBeNull();
     });
 
+    it('nulls the controller for a NON-ITERATING chain without touching queryPromise (startup-backoff Stop pin)', async () => {
+      // Producer-side pin for QueryRunner's post-backoff cancellation guard:
+      // a startup-timeout retry chain sleeping through its backoff is NOT
+      // iterating (queryObject closed/nulled, queue stopped) but is still
+      // 'processing' with queryPromise set. The guard relies on exactly these
+      // observables after a completed Stop:
+      //   - queryAbortController NULL (the guard's controller disjunct fires)
+      //   - queryPromise UNTOUCHED (still truthy — the queryPromise disjunct
+      //     must NOT be the one that catches it)
+      // If a refactor ever stops nulling the controller for a non-iterating
+      // chain (plausible: aborting a sleeping chain looks like a no-op), the
+      // guard loses its only signal and stopped prompts resurrect — keep
+      // this pin in lockstep with the guard.
+      const abortController = new AbortController();
+      const queryPromise = Promise.resolve();
+      const ctx = createContext({
+        queryAbortController: abortController,
+        queryPromise,
+        queryObject: null,
+      });
+      handler = new InterruptHandler(ctx);
+
+      await handler.handleInterrupt();
+
+      expect(abortController.signal.aborted).toBe(true);
+      expect(ctx.queryAbortController).toBeNull();
+      expect(ctx.queryPromise).toBe(queryPromise);
+    });
+
     it('should call SDK interrupt()', async () => {
       handler = createHandler();
 

@@ -83,7 +83,8 @@ async function getSessionError(
 
 /**
  * Wait until the daemon's startup-timeout TIMER callback has logged
- * "SDK startup timeout:" (query-runner.ts:808) at least `expected` times.
+ * "SDK startup timeout:" (the startup timer callback in query-runner.ts) at least
+ * `expected` times.
  *
  * Why this is needed: the retry branch tears down the timed-out subprocess
  * (waits up to RETRY_EXIT_TIMEOUT_MS = 5 s for its exit) before running the
@@ -227,7 +228,7 @@ describe('Startup Timeout Error Surfacing', () => {
       daemon = await createDaemonServer({
         modelsReadyTimeoutMs: MODELS_READY_TIMEOUT_MS,
         // Surface warn-level daemon logs in the captured child output:
-        //   - error "SDK startup timeout"  (timer fired — query-runner.ts:808)
+        //   - error "SDK startup timeout"  (startup timer callback fired)
         //   - warn  "Auto-retrying query after startup timeout" (retry ran — :990)
         // The daemon Logger is SILENT under NODE_ENV=test by default, so LOG_LEVEL
         // must override it for these assertions to observe anything.

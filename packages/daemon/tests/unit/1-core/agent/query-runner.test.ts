@@ -17,13 +17,15 @@ import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agen
 import type { Session, MessageHub } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
-// Vitest-only: the daemon vitest config aliases the SDK specifier to
-// tests/sdk-mock.ts, whose `query` is a controllable vi.fn — importing it here
-// lets tests drive runQuery's for-await loop (the success path). Under
-// `bun test` this alias does not exist (the historical mock.module preload in
-// tests/unit/setup.ts applies instead), so this import is only meaningful in
-// the vitest harness CI uses.
+// The daemon vitest config aliases the SDK specifier to tests/sdk-mock.ts, so
+// under vitest `query` is a controllable vi.fn and tests can drive runQuery's
+// for-await loop (the success path). Under bare `bun test` (the workflow
+// documented in CLAUDE.md) no such alias applies — bunfig.toml wires no
+// [test] preload for the SDK — so this import resolves to the REAL SDK and
+// .mockImplementation would throw. Detect which one we got and skip the
+// mock-driven tests when the import is not a mock.
 import { query as mockedSdkQuery } from '@anthropic-ai/claude-agent-sdk';
+
 import type { Database } from '../../../../src/storage/database';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
@@ -31,6 +33,9 @@ import { ErrorCategory, type ErrorManager } from '../../../../src/lib/error-mana
 import type { Logger } from '../../../../src/lib/logger';
 import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder';
 import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-question-handler';
+
+const sdkQueryIsMock =
+  typeof (mockedSdkQuery as { mockImplementation?: unknown }).mockImplementation === 'function';
 
 describe('QueryRunner', () => {
   let runner: QueryRunner;
@@ -1370,11 +1375,14 @@ describe('QueryRunner', () => {
     let savedApiKey: string | undefined;
     let savedRetryBaseMs: string | undefined;
     let savedMaxStartupRetries: string | undefined;
+    let savedRetiredMaxRetries: string | undefined;
 
     beforeEach(() => {
       savedApiKey = process.env.ANTHROPIC_API_KEY;
       savedRetryBaseMs = process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS;
       savedMaxStartupRetries = process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX;
+      savedRetiredMaxRetries = process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES;
+      delete process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES;
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
       // Zero the startup-timeout backoff so retries fire immediately — the
       // default schedule (15s → 30s → …) would make every test below sleep
@@ -1403,6 +1411,11 @@ describe('QueryRunner', () => {
         delete process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX;
       } else {
         process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = savedMaxStartupRetries;
+      }
+      if (savedRetiredMaxRetries === undefined) {
+        delete process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES;
+      } else {
+        process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES = savedRetiredMaxRetries;
       }
     });
 
@@ -1840,11 +1853,14 @@ describe('QueryRunner', () => {
     let savedApiKey: string | undefined;
     let savedRetryBaseMs: string | undefined;
     let savedMaxStartupRetries: string | undefined;
+    let savedRetiredMaxRetries: string | undefined;
 
     beforeEach(() => {
       savedApiKey = process.env.ANTHROPIC_API_KEY;
       savedRetryBaseMs = process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS;
       savedMaxStartupRetries = process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX;
+      savedRetiredMaxRetries = process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES;
+      delete process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES;
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
       // Zero the backoff by default so cap tests run at full speed; individual
       // tests override the base to observe real delays. Pin the cap to 1 so
@@ -2011,6 +2027,39 @@ describe('QueryRunner', () => {
       expect(claim('msg-b')).toBe(1);
     });
 
+    it('gives a starved delivery a fresh budget once the exhausted predecessor settled failed', () => {
+      // Round-5 P3-4: claimStartupTimeoutRetry(null) must not let delivery B
+      // inherit delivery A's exhausted budget once A's durable row has
+      // settled failed — that budget is spent and its delivery is over.
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '2';
+      runner = createRunner();
+      const claim = (key: string | null) =>
+        (
+          runner as unknown as {
+            claimStartupTimeoutRetry(k: string | null): number | null;
+          }
+        ).claimStartupTimeoutRetry(key);
+
+      // A exhausts its budget and settles.
+      expect(claim('msg-a')).toBe(1);
+      expect(claim('msg-a')).toBe(2);
+      expect(claim('msg-a')).toBeNull();
+
+      // A's durable row has NOT settled yet → a starved (null) attempt still
+      // charges A's budget (conservative anti-loop default).
+      expect(claim(null)).toBeNull();
+
+      // The delivery layer marks A failed → the next starved attempt is a NEW
+      // delivery: fresh budget, retry 1 with the base delay.
+      getMessageByStatusAndUuidSpy.mockImplementation(
+        (_sessionId: string, _status: string, uuid: string) =>
+          uuid === 'msg-a' ? ({ uuid: 'msg-a' } as never) : null
+      );
+      expect(claim(null)).toBe(1);
+      expect(claim(null)).toBe(2);
+      expect(claim(null)).toBeNull();
+    });
+
     it('clears the budget once a delivery starts successfully', () => {
       // A successful first SDK frame resets the backoff state, so the next
       // turn (or a redrive) starts at retry 1 with the base delay.
@@ -2027,67 +2076,70 @@ describe('QueryRunner', () => {
       expect(internals.claimStartupTimeoutRetry('msg-a')).toBe(1);
     });
 
-    it('resets the budget on a successful first SDK frame through runQuery (regression guard)', async () => {
-      // Regression guard for the messageCount === 1 reset in runQuery: a
-      // delivery that exhausts its budget, then completes a SUCCESSFUL turn,
-      // then times out again must get a fresh retry. Deleting the
-      // clearStartupTimeoutRetryBudget() call in the for-await makes this
-      // test fail (the later timeout would settle immediately).
-      // The success turn is driven through the vitest SDK mock's query() —
-      // the pre-populated ctx.queryObject pattern cannot reach the for-await
-      // (runQuery overwrites queryObject from query()).
-      process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '1';
+    it.skipIf(!sdkQueryIsMock)(
+      'resets the budget on a successful first SDK frame through runQuery (regression guard)',
+      async () => {
+        // Regression guard for the messageCount === 1 reset in runQuery: a
+        // delivery that exhausts its budget, then completes a SUCCESSFUL turn,
+        // then times out again must get a fresh retry. Deleting the
+        // clearStartupTimeoutRetryBudget() call in the for-await makes this
+        // test fail (the later timeout would settle immediately).
+        // The success turn is driven through the vitest SDK mock's query() —
+        // the pre-populated ctx.queryObject pattern cannot reach the for-await
+        // (runQuery overwrites queryObject from query()).
+        process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '1';
 
-      const ctx = createContext();
-      runner = new QueryRunner(ctx);
-      const internals = runner as unknown as {
-        _consumedUserMessages: Map<number, unknown[]>;
-      };
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        const internals = runner as unknown as {
+          _consumedUserMessages: Map<number, unknown[]>;
+        };
 
-      // Round 1 — exhaust the budget: attempt + 1 retry, then the capped
-      // attempt settles. (Null delivery key: build rejects before any
-      // message is consumed.)
-      runner.start();
-      await ctx.queryPromise?.catch(() => {});
-      expect(buildSpy).toHaveBeenCalledTimes(2);
-
-      // Round 2 — a turn that yields ONE SDK frame and completes normally.
-      buildSpy.mockReset();
-      buildSpy.mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
-      try {
-        // NOTE: the real SDK's query() returns the query object SYNCHRONOUSLY
-        // (runQuery does not await it) — the mock implementation must not be
-        // async, or queryObject becomes a Promise without Symbol.asyncIterator.
-        (mockedSdkQuery as unknown as ReturnType<typeof mock>).mockImplementation(
-          () =>
-            ({
-              close: () => {},
-              [Symbol.asyncIterator]: async function* () {
-                yield { type: 'assistant', uuid: 'frame-1' };
-              },
-            }) as unknown as Query
-        );
+        // Round 1 — exhaust the budget: attempt + 1 retry, then the capped
+        // attempt settles. (Null delivery key: build rejects before any
+        // message is consumed.)
         runner.start();
         await ctx.queryPromise?.catch(() => {});
-        // The first frame really flowed through the for-await (not vacuous).
-        expect(onSDKMessageSpy).toHaveBeenCalledWith(
-          expect.objectContaining({ type: 'assistant', uuid: 'frame-1' })
-        );
-      } finally {
-        (mockedSdkQuery as unknown as ReturnType<typeof mock>).mockReset();
+        expect(buildSpy).toHaveBeenCalledTimes(2);
+
+        // Round 2 — a turn that yields ONE SDK frame and completes normally.
+        buildSpy.mockReset();
+        buildSpy.mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
+        try {
+          // NOTE: the real SDK's query() returns the query object SYNCHRONOUSLY
+          // (runQuery does not await it) — the mock implementation must not be
+          // async, or queryObject becomes a Promise without Symbol.asyncIterator.
+          (mockedSdkQuery as unknown as ReturnType<typeof mock>).mockImplementation(
+            () =>
+              ({
+                close: () => {},
+                [Symbol.asyncIterator]: async function* () {
+                  yield { type: 'assistant', uuid: 'frame-1' };
+                },
+              }) as unknown as Query
+          );
+          runner.start();
+          await ctx.queryPromise?.catch(() => {});
+          // The first frame really flowed through the for-await (not vacuous).
+          expect(onSDKMessageSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'assistant', uuid: 'frame-1' })
+          );
+        } finally {
+          (mockedSdkQuery as unknown as ReturnType<typeof mock>).mockReset();
+        }
+
+        // Round 3 — the budget must be fresh: the timeout retries once more
+        // (2 builds) instead of settling on the inherited exhausted budget (1).
+        buildSpy.mockReset();
+        buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+        expect(buildSpy).toHaveBeenCalledTimes(2);
+        expect(internals._consumedUserMessages.size).toBe(0);
       }
+    );
 
-      // Round 3 — the budget must be fresh: the timeout retries once more
-      // (2 builds) instead of settling on the inherited exhausted budget (1).
-      buildSpy.mockReset();
-      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
-      runner.start();
-      await ctx.queryPromise?.catch(() => {});
-      expect(buildSpy).toHaveBeenCalledTimes(2);
-      expect(internals._consumedUserMessages.size).toBe(0);
-    });
-
-    it('keys the budget by the consumed kickoff uuid and survives redrives (runQuery wiring)', async () => {
+    it('keys the budget by the consumed kickoff uuid and survives redrives (pre-seeded consumed map)', async () => {
       // Drives the delivery-key derivation (consumedForKey[0]?.uuid) with a
       // REAL consumed uuid and proves redrive survival end-to-end: the
       // delivery layer redrives the same durable message (same uuid) via a
@@ -2110,6 +2162,15 @@ describe('QueryRunner', () => {
       runner.start();
       await ctx.queryPromise?.catch(() => {});
       expect(buildSpy).toHaveBeenCalledTimes(2); // attempt + the keyed retry
+      // The budget is keyed by the CONSUMED kickoff uuid — this is what
+      // distinguishes the keyed path from the null-key path the state-machine
+      // tests cover. (The queue peek is still consulted on the retry
+      // sub-attempt — after the re-enqueue the consumed entry is deleted, and
+      // peek returns the same re-enqueued uuid, continuing the same budget.)
+      expect(
+        (runner as unknown as { _startupTimeoutRetryState: { key: string | null } })
+          ._startupTimeoutRetryState.key
+      ).toBe('durable-kickoff-uuid');
       expect(enqueueWithIdSpy).toHaveBeenCalledWith(kickoff.uuid, kickoff.content, false, {
         prepend: true,
       });
@@ -2278,6 +2339,101 @@ describe('QueryRunner', () => {
       // Both turns ended at the cap — B exhausted its OWN budget, not A's.
       expect(warns.filter((w) => w.includes('retry budget exhausted')).length).toBe(2);
     });
+
+    it('abandons the retry when a PEEK-keyed starved delivery settled failed during the backoff', async () => {
+      // Round-5 P3-9(4): the settled-failed cancellation was only tested with
+      // a consumed-uuid key. The peek-derived starved key must cancel too —
+      // nothing was consumed, the key came from the pending kickoff.
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '25';
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      peekNextUserMessageIdSpy.mockImplementation(() => 'starved-kickoff-uuid');
+      getMessageByStatusAndUuidSpy.mockImplementation(
+        (_sessionId: string, _status: string, uuid: string) =>
+          uuid === 'starved-kickoff-uuid' ? ({ uuid: 'starved-kickoff-uuid' } as never) : null
+      );
+
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+        String(args[0])
+      );
+      expect(warns.some((w) => w.includes('delivery already settled failed'))).toBe(true);
+    });
+
+    it('startup retries consume the provider-retry budget and disable the 1-shot retries (documented coupling)', async () => {
+      // Round-5 P3-9(2): startup retries bump `retryAttempt`, so later
+      // attempts get fewer provider retries and no 1-shot message-not-found
+      // retry. Pin BOTH halves of the documented coupling.
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '0';
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '2';
+      process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = '0';
+      // Default HYPERNEO_PROVIDER_MAX_RETRIES is 3.
+
+      // Half 1 — provider budget: two startup retries leave retryAttempt=2,
+      // so a persistent 529 gets exactly ONE provider retry (2 < 3) before
+      // going terminal: 1 + 2 startup retries + 1 provider retry = 4 builds.
+      // (Without the coupling the provider branch would retry 3 more times.)
+      buildSpy.mockRejectedValue(
+        new Error('529 {"type":"error","error":{"type":"overloaded_error"}}')
+      );
+      buildSpy
+        .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+        .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+        .mockRejectedValue(new Error('529 {"error":{"message":"overloaded"}}'));
+
+      let ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+      expect(buildSpy).toHaveBeenCalledTimes(4);
+
+      // Half 2 — the 1-shot message-not-found retry is disabled on a later
+      // attempt (requires retryAttempt === 0): after one startup retry the
+      // not-found error goes straight to terminal — no 3rd build.
+      buildSpy.mockReset();
+      buildSpy
+        .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+        .mockRejectedValueOnce(
+          new Error('No message found with message.uuid of: missing-message-uuid')
+        );
+      ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+      expect(buildSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('parses the new knobs and keeps the retired HYPERNEO_SDK_STARTUP_MAX_RETRIES inert', async () => {
+      // Round-5 P3-9(3): parsing garbage/negative/float inputs falls back to
+      // defaults, and the RETIRED knob name must not set the new cap.
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '15000';
+      expect(getStartupRetryDelayMs(1)).toBe(15000);
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = 'abc';
+      expect(getStartupRetryDelayMs(1)).toBe(15000);
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '-5';
+      expect(getStartupRetryDelayMs(1)).toBe(15000);
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '1500.9';
+      expect(getStartupRetryDelayMs(1)).toBe(1500);
+
+      // A stale HYPERNEO_SDK_STARTUP_MAX_RETRIES=0 (the retired
+      // silent-auto-recovery knob) must NOT disable the new retries: with the
+      // new cap at 1, one timeout still produces attempt + retry (2 builds).
+      // If the stale name were honored, this would collapse to 1 build.
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '0';
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '1';
+      process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES = '0';
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+      expect(buildSpy).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('auto-recovery removal regression guards (Task 2.3)', () => {
@@ -2304,12 +2460,14 @@ describe('QueryRunner', () => {
     // guard, a stale aborted query (from restart()/rewind) would consume the
     // pendingResumeSessionAt meant for the new query.
     //
-    // The for-await success path (where the consume runs) cannot be reached in
-    // unit tests — the SDK's `query()` import is already bound at module load
-    // and mock.module cannot intercept it. Instead, we test the guard through
-    // the isMessageNotFound retry path where consumePendingResumeSessionAt IS
-    // reachable (line ~659), and verify the guard pattern (identical to
-    // messageQueue.stop() and close() generation guards) via the finally block.
+    // The for-await success path (where the consume runs) is reachable only
+    // under the vitest SDK alias (see `mockedSdkQuery` / `sdkQueryIsMock` at
+    // the top of this file); the mock-driven success-path tests live in the
+    // startup-backoff describe and skip when the import resolved to the real
+    // SDK. Here we test the guard through the isMessageNotFound retry path,
+    // which works in every harness, and verify the guard pattern (identical to
+    // the messageQueue.stop() and close() generation guards) via the finally
+    // block.
 
     it('should consume resumeSessionAt before isMessageNotFound retry', async () => {
       // buildSpy throws "No message found" → catch block consumes the stale

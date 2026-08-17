@@ -934,6 +934,20 @@ export class QueryLifecycleManager {
     const { messageQueue, stateManager } = this.ctx;
 
     if (!messageQueue.isRunning() || !this.ctx.queryObject) {
+      // Stopped queue / no query object. For an IDLE session this stays a no-op
+      // (callers rely on that — the next start() builds fresh options anyway;
+      // see task-agent-manager's MCP refresh). But a 'processing' session with
+      // a stopped queue is a recovery window, not an idle one — most commonly
+      // the startup-timeout retry's 15–240 s backoff (the session stays
+      // 'processing' with queryPromise set while the queue is stopped).
+      // Restarting here is impossible (nothing to stop, and a start would race
+      // the sleeping chain), but DROPPING the request silently loses the
+      // settings change for the whole window. Record the deferred reason so
+      // executeDeferredRestartIfPending completes the restart when the chain
+      // resolves and the session goes idle.
+      if (stateManager.getState().status === 'processing') {
+        this.ctx.pendingRestartReason = 'settings.local.json';
+      }
       return;
     }
 

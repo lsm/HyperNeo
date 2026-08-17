@@ -4544,4 +4544,83 @@ describe('AgentSession', () => {
       expect(ensure).not.toHaveBeenCalled();
     });
   });
+
+  describe('feedDeliverySteer — startup-backoff window (park, not dead-letter)', () => {
+    // Round-5 P2 regression: during the startup-timeout retry's 15-240 s
+    // backoff the session is 'processing' with queryPromise set, but the queue
+    // is STOPPED (restarted only post-sleep). Admitting a steer there parks it
+    // in a queue nothing consumes — the 30 s admission TTL rejects it and the
+    // delivery job's retry budget drains re-admitting into the still-stopped
+    // queue before dead-lettering `failed`. The feed branch must park instead.
+    let db: Database;
+    let agentSession: AgentSession;
+    const sessionId = 'sess-backoff-steer';
+    const steerUuid = 'msg-backoff-steer';
+
+    async function setupBackoffSteer(): Promise<void> {
+      db = await createTestDb();
+      const session = createTestSession(sessionId);
+      db.createSession(session);
+      db.getSDKMessageRepo().saveUserMessage(
+        sessionId,
+        {
+          type: 'user',
+          uuid: steerUuid,
+          message: { role: 'user', content: 'follow-up' },
+        } as unknown as SDKMessage,
+        'enqueued'
+      );
+      const bus = await createTestInternalEventBus();
+      agentSession = new AgentSession(
+        db.getSession(sessionId) ?? session,
+        db,
+        {} as MessageHub,
+        bus,
+        mock(async () => 'test-api-key')
+      );
+      // Reproduce the backoff window: processing + queryPromise set + queue
+      // stopped (the real MessageQueue starts not-running).
+      await agentSession.stateManager.setProcessing('kickoff-uuid', 'initializing');
+      agentSession.queryPromise = Promise.resolve();
+    }
+
+    afterEach(() => {
+      try {
+        db?.close();
+      } catch {
+        // ignore
+      }
+    });
+
+    it('parks a steer sent while the queue is stopped instead of admitting it into a queue nothing consumes', async () => {
+      await setupBackoffSteer();
+      expect(agentSession.messageQueue.isRunning()).toBe(false);
+
+      const outcome = await agentSession.feedDeliverySteer(steerUuid, 'follow-up');
+
+      // Parked: the job re-evaluates on its park cadence and feeds (or
+      // promotes once the turn settles) after the backoff ends.
+      expect(outcome).toEqual({ outcome: 'park' });
+      // Nothing was admitted — no TTL timer armed, nothing to dead-letter.
+      expect(agentSession.messageQueue.size()).toBe(0);
+    });
+
+    it('still admits into a RUNNING queue (the gate covers only the stopped/backoff state)', async () => {
+      await setupBackoffSteer();
+      agentSession.messageQueue.start();
+      expect(agentSession.messageQueue.isRunning()).toBe(true);
+
+      // Do not await the outcome: the feed acknowledgment resolves only when a
+      // generator consumes the entry. Assert the admission itself — the entry
+      // lands in the queue — then clean up before the admission TTL arms.
+      const pending = agentSession.feedDeliverySteer(steerUuid, 'follow-up').catch(() => {});
+      for (let i = 0; i < 100 && agentSession.messageQueue.size() === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(agentSession.messageQueue.size()).toBe(1);
+      agentSession.messageQueue.clear();
+      agentSession.messageQueue.stop();
+      await pending;
+    });
+  });
 });

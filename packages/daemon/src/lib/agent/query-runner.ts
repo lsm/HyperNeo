@@ -926,9 +926,8 @@ export class QueryRunner {
           logger.error(
             `SDK startup timeout: SDK did not respond within ${elapsed}ms. ` +
               `Model: ${queryOptions.model}, ${workspaceDesc}` +
-              (isRootWorkspace
-                ? ' — running on root workspace (not a worktree); check for other Claude Code sessions using this path'
-                : '') +
+              (isRootWorkspace ? ' — running on root workspace (not a worktree)' : '') +
+              ' Likely cause: concurrent SDK starts (e.g. daemon restart recovery) loading the machine' +
               ` (Hint: set HYPERNEO_SDK_STARTUP_TIMEOUT_MS to increase timeout, currently ${STARTUP_TIMEOUT_MS}ms)`
           );
           // Delivery diagnostics: distinguish "kickoff never reached the CLI"
@@ -1100,8 +1099,9 @@ export class QueryRunner {
 
       // Startup timeout is transient — always keep sdkSessionId so resume works.
       // Never clear sdkSessionId on timeout: the session file is valid and the
-      // conversation can be resumed once the workspace lock conflict resolves.
-      // Clearing it would lose the ability to resume the conversation history.
+      // conversation can be resumed once a retry starts successfully (the usual
+      // cause, concurrent-start load, is transient). Clearing it would lose the
+      // ability to resume the conversation history.
       if (isStartupTimeout && session.sdkSessionId) {
         logger.error(
           `Startup timeout with sdkSessionId (${session.sdkSessionId}). ` +
@@ -1155,7 +1155,8 @@ export class QueryRunner {
           logger.warn(
             `Startup-timeout retry budget exhausted for this delivery ` +
               `(${this._startupTimeoutRetryState.retries} consecutive timeout(s), ` +
-              `cap ${getMaxStartupTimeoutRetries()}); settling the message as failed.`
+              `cap ${getMaxStartupTimeoutRetries()}); giving up and surfacing the failure — ` +
+              `the delivery layer settles the durable row.`
           );
         } else {
           const maxStartupRetries = getMaxStartupTimeoutRetries();
@@ -1176,12 +1177,12 @@ export class QueryRunner {
           // re-asserts 'processing' on its first yield, and the finally sets
           // 'idle' when the turn actually completes.
 
-          // Ownership check BEFORE terminating: an await point passed above
-          // (the state read), so a replacement query may already have started
-          // and registered its subprocess. Terminating now would SIGTERM/
-          // SIGKILL the replacement. The check→terminate sequence below is
-          // synchronous, so no replacement can slip in between. (Codex P1,
-          // PR #2491.)
+          // Ownership check BEFORE terminating: a replacement query may have
+          // started while the abort-driven iterator shutdown ran (before this
+          // catch was reached) and registered its own subprocess. Terminating
+          // now would SIGTERM/SIGKILL the replacement. Nothing async has run
+          // within this branch yet, so the check→terminate sequence below is
+          // airtight. (Codex P1, PR #2491.)
           if (this.retrySupersededByReplacement(queryGeneration)) {
             return;
           }
@@ -2057,11 +2058,25 @@ export class QueryRunner {
       // An identified, DIFFERENT delivery — the previous delivery's backoff
       // state must not leak into it.
       this._startupTimeoutRetryState = { key: deliveryKey, retries: 1 };
+    } else if (
+      deliveryKey === null &&
+      state.key !== null &&
+      this.ctx.db.getMessageByStatusAndUuid(this.ctx.session.id, 'failed', state.key)
+    ) {
+      // Unidentified (starved) attempt, but the in-flight budget belongs to a
+      // delivery whose durable row has already settled failed — that delivery
+      // is over, so this is a NEW starved delivery: fresh budget. Without this
+      // guard it would inherit the exhausted count and settle failed with zero
+      // retries of its own (or start deep into the backoff schedule).
+      this._startupTimeoutRetryState = { key: null, retries: 1 };
     } else {
-      // Same delivery, or an unidentified (starved) attempt: charge the
-      // in-flight budget. Charging starved attempts instead of resetting keeps
-      // a consume/no-consume flap from resetting the budget every other round
-      // (which would unbound the loop this cap exists to close).
+      // Same delivery, or a starved attempt whose predecessor has NOT settled:
+      // charge the in-flight budget. Charging (rather than resetting) keeps a
+      // consume/no-consume flap from resetting the budget every other round,
+      // which would unbound the loop this cap exists to close; the residual
+      // risk — a new starved delivery paying the remainder of a cancelled
+      // predecessor's budget — is bounded by the cap and rare (it needs an
+      // empty queue AND an empty consumed list).
       state.retries += 1;
     }
     const { retries } = this._startupTimeoutRetryState;
