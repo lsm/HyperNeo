@@ -29,8 +29,8 @@
  * Mirrors the outbound-queue reconnect-flush pattern.
  */
 
-import { effect } from '@preact/signals';
 import { generateUUID } from '@hyperneo/shared';
+import { effect } from '@preact/signals';
 import { connectionManager } from '../connection-manager';
 import { connectionState } from '../state';
 
@@ -53,7 +53,10 @@ const MAX_RETRY_DELAY_MS = 60_000; // backoff ceiling for retained-entry retries
 // heartbeats). Nothing prunes them anymore, so a one-time sweep at startup
 // keeps users' localStorage from carrying them forever.
 const LEGACY_KEY_PREFIXES = [
-  'hyperneo_voice_transcript_outbox_v1.landed.',
+  // Landing markers were keyed under the retired design's ENTRY namespace
+  // (`...v1.entry.landed.<sessionId>` — STORAGE_PREFIX + 'landed.'), so the
+  // sweep must match that full prefix, not `...v1.landed.`.
+  'hyperneo_voice_transcript_outbox_v1.entry.landed.',
   'hyperneo_voice_transcript_outbox_v1.draft.',
   'hyperneo_voice_transcript_outbox_v1.clear.',
   'hyperneo_voice_transcript_outbox_v1.superseded.',

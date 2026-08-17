@@ -604,14 +604,15 @@ export interface SessionMetadata {
    * Voice transcript staged by the daemon (session.appendVoiceDraft) for the
    * session's composer. Daemon-coordinated: reads return the COMPOSITION of
    * inputDraft + pending (when it fits the character limit whole) without
-   * mutating anything, and a draft write clears the pending exactly when the
-   * written text already contains it ("adoption" — containment, not
+   * mutating anything, and a non-empty draft write clears the pending exactly
+   * when the written text already contains it ("adoption" — containment, not
    * awareness: a composer whose saved text does not contain the transcript
    * never wipes it, but a very short transcript appearing as a coincidental
    * substring of an unrelated write is consumed too; it is not an absolute
-   * never-wipe guarantee). Consumed by adoption writes, the voice-aware
-   * send-clear, or a clear of an already-empty draft. null/absent = nothing
-   * pending.
+   * never-wipe guarantee). An EMPTY draft write never consumes the pending —
+   * it clears typing only. Consumed by adoption writes or the voice-aware
+   * send-clear (message.persisted / session.clearInputDraftIf on a composition
+   * match). null/absent = nothing pending.
    */
   inputDraftVoicePending?: string | null;
   /**

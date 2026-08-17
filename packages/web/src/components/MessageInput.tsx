@@ -785,7 +785,8 @@ export default function MessageInput({
           // Composer unmounted (user navigated away) while this transcription
           // was in flight. Deliver the transcript directly to the target session
           // — send/queue as a real message, stay staged into the pending field
-          // (merged into the draft atomically by the daemon on next get) — so it
+          // (the daemon PRESENTS draft + staging as one composition on the next
+          // session.get and consumes the staging server-side) — so it
           // is never silently lost. Await so the toast reflects the outcome.
           const delivered = await deliverUnmountedTranscript(
             targetSessionId,

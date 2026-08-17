@@ -793,25 +793,32 @@ describe('Session RPC Handlers — session.update voice adoption', () => {
     });
   });
 
-  it('clears the voice-only draft on an empty write over an already-empty draft', async () => {
-    // The visible draft was the composition of '' + pending — the user saw
-    // the transcript alone and discarded it.
+  it('keeps an UNSEEN staged transcript on an empty write over an already-empty draft', async () => {
+    // A landing deferred by typing, then a send/clear inside the composer's
+    // save debounce: the stored draft is empty because the typing was never
+    // persisted — NOT because the composer showed a voice-only draft. The
+    // empty write must clear typing only; a discard is expressed by the
+    // composer that displayed the composition via session.clearInputDraftIf.
+    // (Regression: the empty stored draft used to be read as a deliberate
+    // voice-only discard, silently dropping transcripts no composer showed.)
     existingPending = 'voice';
     existingDraft = null;
     const handler = messageHubData.handlers.get('session.update');
     await handler!({ sessionId: 's1', metadata: { inputDraft: null } }, {});
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: { inputDraft: null, inputDraftVoicePending: null },
+      metadata: { inputDraft: null },
     });
+    // And nothing else — the staging field is never touched by this write.
+    expect(sessionManager.updateSession).toHaveBeenCalledTimes(1);
   });
 
-  it('treats a whitespace-only write as a clear', async () => {
+  it('treats a whitespace-only write as a typing clear that keeps the staging', async () => {
     existingPending = 'voice';
     existingDraft = null;
     const handler = messageHubData.handlers.get('session.update');
     await handler!({ sessionId: 's1', metadata: { inputDraft: '   ' } }, {});
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: { inputDraft: '   ', inputDraftVoicePending: null },
+      metadata: { inputDraft: '   ' },
     });
   });
 
@@ -1295,5 +1302,23 @@ describe('Session RPC Handlers — session.clearInputDraftIf', () => {
       cleared: boolean;
     };
     expect(result.cleared).toBe(true);
+  });
+
+  it('clears both on a voice-only composition match (the displayed-draft discard path)', async () => {
+    // A composer that loaded the voice-only composition (empty stored draft,
+    // pending alone) and was deliberately cleared: its clearInputDraftIf
+    // matches the composition and consumes the staging atomically. This is
+    // the ONLY path that discards a transcript the user saw — a bare empty
+    // session.update clears typing only and can never wipe a staging.
+    persistedDraft = null;
+    persistedPending = 'voice';
+    const handler = messageHubData.handlers.get('session.clearInputDraftIf');
+    const result = (await handler!({ sessionId: 's1', expected: 'voice' }, {})) as {
+      cleared: boolean;
+    };
+    expect(result.cleared).toBe(true);
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: null, inputDraftVoicePending: null },
+    });
   });
 });

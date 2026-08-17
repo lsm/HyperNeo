@@ -359,7 +359,6 @@ describe('useInputDraft', () => {
 
     it('should clear draft immediately when content is empty', async () => {
       mockHub.request.mockResolvedValue({});
-      mockHub.request.mockResolvedValue({});
       vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
       const { result } = renderHook(() => useInputDraft('session-1'));
@@ -379,6 +378,16 @@ describe('useInputDraft', () => {
         result.current.setContent('');
       });
 
+      // The composer last showed 'Some content', so the clear first offers the
+      // daemon the composition-aware clearInputDraftIf; the mock answers
+      // without `cleared`, so the unconditional typing-clear follows.
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(mockHub.request).toHaveBeenCalledWith('session.clearInputDraftIf', {
+        sessionId: 'session-1',
+        expected: 'Some content',
+      });
       // Should save immediately with null (undefined is dropped by JSON-RPC serialization)
       expect(mockHub.request).toHaveBeenCalledWith('session.update', {
         sessionId: 'session-1',
@@ -1552,6 +1561,210 @@ describe('useInputDraft', () => {
       expect(updates).not.toContain('server draft');
       expect(updates).toContain('fresh keystrokes');
     });
+
+    it('routes an in-debounce typing clear through clearInputDraftIf and never writes the staging field', async () => {
+      // A staging is UNSEEN (it landed server-side; this composer shows only
+      // typing). The user clears or sends inside the save debounce, so the
+      // STORED draft is still empty: the clear must offer the last displayed
+      // content to the composition-aware clearInputDraftIf (no match — the
+      // composer never showed the composition) and then clear typing with a
+      // BARE empty write, which never consumes the staging. The client itself
+      // must never write inputDraftVoicePending.
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return { session: { metadata: { inputDraft: '' } } };
+        }
+        if (method === 'session.clearInputDraftIf') return { cleared: false };
+        return { success: true };
+      });
+      connectionState.value = 'connected';
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // Type, then clear INSIDE the debounce window — no timer advance between.
+      act(() => {
+        result.current.setContent('hello');
+      });
+      act(() => {
+        result.current.setContent('');
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(mockHub.request).toHaveBeenCalledWith('session.clearInputDraftIf', {
+        sessionId: 'session-1',
+        expected: 'hello',
+      });
+      expect(mockHub.request).toHaveBeenCalledWith('session.update', {
+        sessionId: 'session-1',
+        metadata: { inputDraft: null },
+      });
+      // The client never writes the staging field — consuming it is the
+      // daemon's decision on an adopting write or a matching clear only.
+      const stagingWrites = mockHub.request.mock.calls.filter(
+        ([m, d]) => m === 'session.update' && 'inputDraftVoicePending' in (d?.metadata ?? {})
+      );
+      expect(stagingWrites).toHaveLength(0);
+    });
+
+    it('discards a displayed voice composition atomically and skips the bare typing clear', async () => {
+      // The composer LOADED the voice-only composition ('voice' — empty stored
+      // typing, pending alone) and the user deliberately cleared it: the clear
+      // offers the displayed content to clearInputDraftIf, whose composition
+      // match consumes draft + staging together daemon-side. A confirmed
+      // clear skips the redundant bare empty write.
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return {
+            session: { metadata: { inputDraft: 'voice', inputDraftVoicePending: 'voice' } },
+          };
+        }
+        if (method === 'session.clearInputDraftIf') return { cleared: true };
+        return { success: true };
+      });
+      connectionState.value = 'connected';
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('voice');
+      act(() => {
+        result.current.setContent('');
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(mockHub.request).toHaveBeenCalledWith('session.clearInputDraftIf', {
+        sessionId: 'session-1',
+        expected: 'voice',
+      });
+      // Confirmed clear: no bare empty write follows — the atomic clear
+      // already nulled the draft daemon-side.
+      expect(mockHub.request).not.toHaveBeenCalledWith('session.update', {
+        sessionId: 'session-1',
+        metadata: { inputDraft: null },
+      });
+    });
+
+    it('re-arms the one-shot when the composition exceeds the character limit', async () => {
+      // Over-limit: the daemon returns the RAW draft (the composition would
+      // not fit whole), so the applied draft does not contain the pending.
+      // The refresh would otherwise report success and burn the one-shot
+      // re-check while the staging stays invisible; it re-arms instead, so
+      // the next empty-composer transition retries the adoption.
+      const rawDraft = 'x'.repeat(50);
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return {
+            session: { metadata: { inputDraft: rawDraft, inputDraftVoicePending: 'voice words' } },
+          };
+        }
+        return { success: true };
+      });
+      connectionState.value = 'connected';
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      const gets = () => mockHub.request.mock.calls.filter(([m]) => m === 'session.get').length;
+      const getsAfterLoad = gets();
+      const listener = captureListener();
+      act(() => {
+        listener({ sessionId: 'session-1' }, { channel: 'session:session-1' });
+      });
+      // Microtask flush ONLY — no timer advance: the raw draft was applied
+      // (the composer shows it) but the IMMEDIATE save was skipped, since it
+      // cannot contain the pending and would adopt nothing.
+      await act(async () => {
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+      });
+      expect(result.current.content).toBe(rawDraft);
+      const rawSaves = mockHub.request.mock.calls.filter(
+        ([m, d]) => m === 'session.update' && d?.metadata?.inputDraft === rawDraft
+      );
+      expect(rawSaves).toHaveLength(0);
+      expect(gets()).toBe(getsAfterLoad + 1);
+      // The composer empties: the re-armed one-shot retries the refresh —
+      // without the re-arm this get never happens and the staging stays
+      // invisible until an unrelated trigger.
+      act(() => {
+        result.current.setContent('');
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(gets()).toBe(getsAfterLoad + 2);
+    });
+
+    it('re-arms the one-shot when the immediate adoption save rejects', async () => {
+      // The adoption applied and its IMMEDIATE save rejected on a transient
+      // socket failure. If the user then clears the composer before the
+      // debounced re-save can adopt, the un-adopted staging must not go
+      // invisible: the rejection re-arms the one-shot, and the empty
+      // transition re-issues the adoption refresh.
+      let gets = 0;
+      let compositionSaves = 0;
+      mockHub.request.mockImplementation(
+        async (method: string, data?: { metadata?: { inputDraft?: string } }) => {
+          if (method === 'session.get') {
+            gets += 1;
+            return {
+              session: {
+                metadata:
+                  gets === 1
+                    ? { inputDraft: '' }
+                    : { inputDraft: 'draft voice', inputDraftVoicePending: 'voice' },
+              },
+            };
+          }
+          if (method === 'session.update' && data?.metadata?.inputDraft === 'draft voice') {
+            compositionSaves += 1;
+            if (compositionSaves === 1) throw new Error('transient');
+          }
+          return { success: true };
+        }
+      );
+      connectionState.value = 'connected';
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      const listener = captureListener();
+      act(() => {
+        listener({ sessionId: 'session-1' }, { channel: 'session:session-1' });
+      });
+      // Microtask flush ONLY: the adoption applied and its immediate save
+      // rejected (swallowed) — the marker is re-armed.
+      await act(async () => {
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+      });
+      expect(result.current.content).toBe('draft voice');
+      // Clear before any debounced re-save fires: the empty transition
+      // consumes the marker and re-issues the adoption refresh, which
+      // re-adopts and this time saves successfully.
+      act(() => {
+        result.current.setContent('');
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('draft voice');
+      const saves = mockHub.request.mock.calls.filter(
+        ([m, d]) => m === 'session.update' && d?.metadata?.inputDraft === 'draft voice'
+      );
+      expect(saves.length).toBeGreaterThanOrEqual(2);
+      expect(gets).toBe(3);
+    });
+
     it('does not flush a stale pre-adoption draft over the adoption save on session switch', async () => {
       // NOTE: keep this test LAST in the describe. Its rerender-inside-act
       // (required to switch sessions before the deferred save effect runs —

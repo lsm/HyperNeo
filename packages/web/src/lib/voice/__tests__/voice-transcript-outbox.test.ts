@@ -267,9 +267,9 @@ describe('voice transcript outbox', () => {
     enqueueTranscript('s1', 'voice');
     await flushPendingTranscripts();
     const keys = Object.keys(localStorage) as string[];
-    expect(keys.some((k) => k.startsWith('hyperneo_voice_transcript_outbox_v1.landed.'))).toBe(
-      false
-    );
+    expect(
+      keys.some((k) => k.startsWith('hyperneo_voice_transcript_outbox_v1.entry.landed.'))
+    ).toBe(false);
   });
 
   it('cleans an entry whose TTL expires in a long-lived tab on the next flush', async () => {
@@ -369,9 +369,11 @@ describe('voice transcript outbox', () => {
   it('sweeps the retired design’s localStorage namespaces at startup', () => {
     // Landing markers, draft backups, clear tombstones, supersede records,
     // and tab heartbeats from the client-coordinated design: nothing prunes
-    // them anymore, so startup removes them once.
+    // them anymore, so startup removes them once. Landing markers were keyed
+    // under the retired design's ENTRY namespace (v1.entry.landed.<sessionId>)
+    // — the sweep prefix must match that exact form.
     localStorage.setItem(
-      'hyperneo_voice_transcript_outbox_v1.landed.s1',
+      'hyperneo_voice_transcript_outbox_v1.entry.landed.s1',
       JSON.stringify({ v: 1, ts: Date.now(), n: 1, text: 'x' })
     );
     localStorage.setItem(
@@ -390,7 +392,7 @@ describe('voice transcript outbox', () => {
     // A live outbox entry must NOT be swept by the legacy cleanup.
     enqueueTranscript('s2', 'still deliverable');
     startVoiceTranscriptOutboxFlush();
-    expect(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.landed.s1')).toBeNull();
+    expect(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.entry.landed.s1')).toBeNull();
     expect(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.draft.s1.sometab')).toBeNull();
     expect(localStorage.getItem('hyperneo_voice_transcript_outbox_v1.clear.s1.sometab')).toBeNull();
     expect(

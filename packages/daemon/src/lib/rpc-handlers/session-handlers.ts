@@ -370,8 +370,8 @@ export function setupSessionHandlers(
     // (inputDraftVoicePending) is presented as the COMPOSITION of draft +
     // pending — joined exactly like appendDraftText joins them — so the client
     // sees the text it will send, while the pending itself stays staged and
-    // durable until a draft write that contains it ("adoption"), the
-    // voice-aware send-clear, or a clear of an already-empty draft consumes
+    // durable until a draft write that contains it ("adoption") or the
+    // voice-aware send-clear (message.persisted / clearInputDraftIf) consumes
     // it. When the composition would exceed the character limit, the draft is
     // returned alone: appendDraftText slices silently, and presenting a
     // truncated composition would let a client save it back and durably drop
@@ -451,9 +451,15 @@ export function setupSessionHandlers(
     //   to me") is consumed too. The words already exist in the saved text,
     //   so no distinct transcript is lost, but this is not an absolute
     //   never-wipe guarantee against coincidental substrings.
-    // - An EMPTY write clears the typing only — EXCEPT when the stored draft
-    //   was already empty: the visible draft is then the voice alone, and
-    //   clearing it is a deliberate discard of the transcript.
+    // - An EMPTY write is a TYPING CLEAR only and never consumes the pending —
+    //   even when the stored draft is empty. An empty STORED draft means the
+    //   composer's typing was not persisted yet (inside its save debounce),
+    //   not that the composer showed a voice-only draft: keying the discard
+    //   on the stored draft silently dropped transcripts whose composer never
+    //   saw them (a landing deferred by typing, then a send or clear inside
+    //   the debounce window). A DELIBERATE discard of a displayed composition
+    //   is expressed by the composer that displayed it, through the
+    //   composition-aware atomic session.clearInputDraftIf below.
     // There is no version protocol: concurrent typing is last-writer-wins,
     // exactly like every non-voice draft in the app.
     const draftWrite = (updates.metadata as Partial<SessionMetadata> | undefined)?.inputDraft;
@@ -463,21 +469,13 @@ export function setupSessionHandlers(
       const pending = meta?.inputDraftVoicePending;
       const pendingStaged = !!pending && pending.trim() !== '';
       const written = draftWrite ?? '';
-      if (pendingStaged) {
-        if (written.trim() === '') {
-          if ((meta?.inputDraft ?? '').trim() === '') {
-            // The visible (voice-only) draft was deliberately discarded.
-            (updates.metadata as Partial<SessionMetadata>).inputDraftVoicePending = null;
-          }
-          // else: clearing typing only — the transcript survives the clear.
-        } else if (written.includes((pending as string).trim())) {
-          // Adoption: the write carries the staged transcript. The needle is
-          // trimmed so a pending staged UNTRIMMED by a pre-PR daemon (before
-          // staging normalized) is still adoptable by the web's trimmed
-          // saves; freshly staged values are already trimmed, so this is
-          // equivalence for them.
-          (updates.metadata as Partial<SessionMetadata>).inputDraftVoicePending = null;
-        }
+      if (pendingStaged && written.trim() !== '' && written.includes(pending.trim())) {
+        // Adoption: the write carries the staged transcript. The needle is
+        // trimmed so a pending staged UNTRIMMED by a pre-PR daemon (before
+        // staging normalized) is still adoptable by the web's trimmed
+        // saves; freshly staged values are already trimmed, so this is
+        // equivalence for them.
+        (updates.metadata as Partial<SessionMetadata>).inputDraftVoicePending = null;
       }
     }
 
@@ -507,9 +505,9 @@ export function setupSessionHandlers(
   // inputDraft: the client's debounced draft save (useInputDraft) can still be
   // holding a stale local snapshot and would clobber an append made to
   // inputDraft. A separate field is never touched by those saves, so the
-  // transcript survives until a draft write that CONTAINS it adopts it, the
-  // voice-aware send-clear consumes it, or a clear of an already-empty draft
-  // discards it; `session.get` presents draft + staging as one composition on
+  // transcript survives until a draft write that CONTAINS it adopts it or the
+  // voice-aware send-clear (message.persisted / clearInputDraftIf) consumes
+  // it; `session.get` presents draft + staging as one composition on
   // read. The read→write is one synchronous step (getFromDB + updateSession's
   // DB write both run before the first `await`), so concurrent writers cannot
   // interleave. Returns success/failure so the client's toast is honest.
@@ -594,8 +592,8 @@ export function setupSessionHandlers(
     // coordinate through localStorage — a tab that misses the event (socket
     // down, channel not yet joined) converges on its next session.get
     // (navigation or reload) or a later landing, and the pending itself is
-    // durable until consumed. (A clear or a typing-only send deliberately
-    // leaves an unseen staging in place.) Emitted only
+    // durable until consumed. (A bare empty write or a typing-only send
+    // deliberately leaves an unseen staging in place.) Emitted only
     // for a GENUINE commit: a deduped replay already had its landing
     // announced by the original commit.
     messageHub.event('session.voiceLanded', { sessionId }, { channel: `session:${sessionId}` });
@@ -607,7 +605,12 @@ export function setupSessionHandlers(
   // then read the composed draft and its message carries the voice). The
   // unmounted voice send uses this to consume its click-time draft snapshot
   // without wiping newer edits persisted after the snapshot (the user reopened
-  // the session, or another client saved). Read+write is one synchronous step
+  // the session, or another client saved). The MOUNTED composer's deliberate
+  // clear uses it the same way: `expected` is the content the composer last
+  // displayed, so a composition match is a discard the user actually saw,
+  // while a no-match leaves any staged transcript in place (the follow-up bare
+  // empty write clears typing only and never consumes it — see session.update
+  // above). Read+write is one synchronous step
   // (getFromDB + updateSession's DB write both run before the first `await`),
   // so no concurrent draft save can land between the comparison and the clear.
   messageHub.onRequest('session.clearInputDraftIf', async (data, _ctx) => {

@@ -6,7 +6,11 @@
  * DAEMON-coordinated — session.get already presents the composition of
  * typing + staged transcript, a write containing the staged text consumes
  * it server-side (adoption), and the daemon's `session.voiceLanded` event
- * tells this composer to re-read. The hook holds no voice state of its own:
+ * tells this composer to re-read. The deliberate-clear path is
+ * composition-aware: an empty transition offers the last displayed content
+ * to `session.clearInputDraftIf`, so a composition the user saw is discarded
+ * atomically (draft + staging together) while an UNSEEN staging survives a
+ * plain typing clear. The hook holds no voice state of its own:
  * no landing markers, no save suppression, no draft backups, no version
  * protocol — concurrent typing is plain last-writer-wins, exactly like every
  * non-voice draft.
@@ -82,6 +86,16 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     content: string;
     cleared?: boolean;
   }>({ sessionId: null, content: '' });
+  // The last NON-EMPTY content this composer showed per session. A deliberate
+  // clear (empty transition) offers it to the daemon's composition-aware
+  // `session.clearInputDraftIf`: a match proves the user saw — and discarded —
+  // whatever the stored state presented (including a voice composition this
+  // composer loaded or adopted), while a no-match leaves an unseen staged
+  // transcript in place and only the typing is cleared.
+  const lastNonEmptyContentRef = useRef<{ sessionId: string | null; content: string }>({
+    sessionId: null,
+    content: '',
+  });
   // The draft value this composer last ADOPTED from a read (initial load or a
   // voiceLanded refresh). A composer still showing exactly this value has no
   // user edits, so a voiceLanded refresh may adopt over it; anything else is
@@ -118,7 +132,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     (
       targetSessionId: string,
       isCancelled: () => boolean,
-      onResult?: (ok: boolean, applied?: boolean, draft?: string) => void,
+      onResult?: (ok: boolean, applied?: boolean, draft?: string, voicePending?: string) => void,
       applyGuard?: () => boolean
     ): void => {
       const hub = connectionManager.getHubIfConnected();
@@ -128,7 +142,9 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       }
       const requestSeq = ++loadRequestSeqRef.current;
       hub
-        .request<{ session?: { metadata?: { inputDraft?: string } } }>('session.get', {
+        .request<{
+          session?: { metadata?: { inputDraft?: string; inputDraftVoicePending?: string } };
+        }>('session.get', {
           sessionId: targetSessionId,
         })
         .then((response) => {
@@ -139,8 +155,20 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           if (applied) {
             contentSignal.value = draft;
             lastLoadedDraftRef.current = draft;
+            // Recorded SYNCHRONOUSLY with the apply — the save effect that
+            // would otherwise record it is rAF-deferred, so a clear landing
+            // inside that frame gap would offer a STALE prior to the
+            // composition-aware clear below.
+            if (draft.trim() !== '') {
+              lastNonEmptyContentRef.current = { sessionId: targetSessionId, content: draft };
+            }
           }
-          onResult?.(true, applied, draft);
+          onResult?.(
+            true,
+            applied,
+            draft,
+            response.session?.metadata?.inputDraftVoicePending ?? ''
+          );
         })
         .catch(() => {
           // A stale request (session changed / hook unmounted while this get
@@ -179,7 +207,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       loadDraft(
         targetSessionId,
         () => currentSessionIdRef.current !== targetSessionId,
-        (ok, applied, draft) => {
+        (ok, applied, draft, voicePending) => {
           if (currentSessionIdRef.current !== targetSessionId) return;
           if (!ok || !applied) {
             // The refresh failed (dropped socket / transient get error) or
@@ -196,6 +224,18 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           // and the staged transcript survives server-side until an
           // adoption or the send-clear consumes it.
           if (contentSignal.peek() !== draft) {
+            deferredVoiceAdoptRef.current = targetSessionId;
+            return;
+          }
+          // Over-limit: the composition of draft + pending would exceed the
+          // character limit, so the daemon returned the draft ALONE. The
+          // immediate save below cannot contain the pending (the daemon
+          // would leave it staged), so this refresh would burn the one-shot
+          // re-check while the transcript stays invisible. Re-arm instead —
+          // the next composer-empty or connection transition retries, and
+          // room appears once the user sends or clears the long draft.
+          const pendingTrimmed = (voicePending ?? '').trim();
+          if (pendingTrimmed !== '' && !draft.includes(pendingTrimmed)) {
             deferredVoiceAdoptRef.current = targetSessionId;
             return;
           }
@@ -231,7 +271,14 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
               metadata: { inputDraft: draft },
             })
             .catch(() => {
-              /* the debounced save path retries the adoption */
+              // Transient failure of the immediate adoption save: re-arm the
+              // one-shot so the next empty-composer or connection transition
+              // re-issues the adoption. The debounced save path retries it
+              // when the composer still shows the composition, but an edit
+              // inside the debounce window would save text that no longer
+              // contains the pending — without the re-arm, the un-edited
+              // original would stay staged invisibly.
+              deferredVoiceAdoptRef.current = targetSessionId;
             });
         },
         adoptable
@@ -392,29 +439,64 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       lastSeenContentRef.current = { sessionId, content: '', cleared: true };
       const hub = connectionManager.getHubIfConnected();
       if (hub) {
-        hub
-          .request('session.update', {
-            sessionId,
-            metadata: {
-              inputDraft: null,
-            },
-          })
-          .then(() => {
-            // Deletion CONFIRMED server-side: drop the retry marker so a later
-            // switch flush cannot null a NEWER draft another client saved in
-            // the meantime. A rejected clear keeps the marker and retries.
-            if (lastSeenContentRef.current.sessionId === sessionId) {
-              lastSeenContentRef.current = { sessionId, content: '' };
-            }
-          })
-          .catch(() => {
-            /* ignore clear errors */
-          });
+        const settleCleared = (): void => {
+          // Deletion CONFIRMED server-side: drop the retry marker so a later
+          // switch flush cannot null a NEWER draft another client saved in
+          // the meantime. A rejected clear keeps the marker and retries.
+          if (lastSeenContentRef.current.sessionId === sessionId) {
+            lastSeenContentRef.current = { sessionId, content: '' };
+          }
+        };
+        const clearTyping = (): void => {
+          hub
+            .request('session.update', {
+              sessionId,
+              metadata: {
+                inputDraft: null,
+              },
+            })
+            .then(settleCleared)
+            .catch(() => {
+              /* ignore clear errors */
+            });
+        };
+        // A deliberate clear must not silently eat a staged transcript this
+        // composer never showed: a BARE empty write clears typing only (the
+        // daemon never consumes the staging on it — the stored draft being
+        // empty just means this composer's typing was inside its save
+        // debounce, not that a voice-only draft was displayed). When this
+        // composer last showed non-empty content, first offer the daemon an
+        // ATOMIC composition-aware clear: if the stored state still matches
+        // what was displayed — including a voice composition this composer
+        // loaded or adopted — the daemon clears draft + staging together, a
+        // discard the user actually saw. No match (or no prior content):
+        // clear the typing unconditionally; an unseen staging stays staged
+        // and the one-shot re-check below surfaces it.
+        const prior = lastNonEmptyContentRef.current;
+        if (prior && prior.sessionId === sessionId && prior.content.trim() !== '') {
+          hub
+            .request<{ cleared?: boolean }>('session.clearInputDraftIf', {
+              sessionId,
+              expected: prior.content,
+            })
+            .then((res) => {
+              if (res?.cleared) {
+                settleCleared();
+                return;
+              }
+              clearTyping();
+            })
+            .catch(() => {
+              clearTyping();
+            });
+        } else {
+          clearTyping();
+        }
       }
       // A landing that arrived while this composer was typing surfaces NOW
       // that the composer emptied (a send or a deliberate clear): one-shot
       // re-check, mirroring the pre-PR deferred surfacing. Issued after the
-      // clear write above so the requests stay sequenced on the socket.
+      // clear requests above so they stay sequenced on the socket.
       if (deferredVoiceAdoptRef.current === sessionId) {
         deferredVoiceAdoptRef.current = null;
         issueAdoptionRefresh(sessionId);
@@ -429,6 +511,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     // takes the empty branch above, never this one).
     initialLoadSettledRef.current = sessionId;
     lastSeenContentRef.current = { sessionId, content };
+    lastNonEmptyContentRef.current = { sessionId, content };
     draftSaveTimeoutRef.current = setTimeout(async () => {
       // A newer edit or an adoption may have advanced the signal while this
       // timer waited — the effect run that would cancel it is rAF-deferred
