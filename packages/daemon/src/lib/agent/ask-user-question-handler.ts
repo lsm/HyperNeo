@@ -21,7 +21,10 @@
  *    consulting canUseTool (warning `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`), so
  *    this channel alone silently dropped AskUserQuestion handling in
  *    default-config sessions — and even in non-bypass modes the PreToolUse
- *    hook above now satisfies the interaction before canUseTool is consulted.
+ *    hook above is expected to satisfy the interaction before canUseTool is
+ *    consulted. QA-VERIFY: that non-bypass ordering is load-bearing (if the
+ *    CLI consulted canUseTool after the hook's allow+updatedInput, the fresh
+ *    resolver would double-prompt the user) but is NOT empirically confirmed.
  *    The callback remains in use for non-AskUserQuestion permission decisions
  *    (matched-ask-rule fail-closed, allow-all) and — crucially — by the ACP
  *    query runner, which invokes it directly on ACP permission requests.
@@ -212,7 +215,12 @@ export class AskUserQuestionHandler {
           typeof q.question === 'string' &&
           typeof q.multiSelect === 'boolean' &&
           Array.isArray(q.options) &&
-          q.options.length >= 2 &&
+          // @minItems 2 is enforced on the PreToolUse hook channel (the
+          // primary one, seeing raw pre-schema input). The canUseTool channel
+          // also feeds ACP permission input, which maps params.options
+          // directly and has NO min-2 contract — a 1-option request there
+          // must not be denied (it would auto-cancel a legitimate prompt).
+          q.options.length >= (viaChannel === 'pre_tool_use_hook' ? 2 : 1) &&
           q.options.length <= MAX_OPTIONS &&
           q.options.every((o) => o !== null && typeof o === 'object' && typeof o.label === 'string')
       );

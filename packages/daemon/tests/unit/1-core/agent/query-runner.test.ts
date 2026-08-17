@@ -784,8 +784,9 @@ describe('QueryRunner', () => {
         // Transient failures are retried, then the give-up is logged at error
         // level. The reported mode stays unset — allowDangerouslySkipPermissions
         // at intake keeps permission decisions host-managed via canUseTool
-        // allow-all (NOT degraded to interactive prompting; ask-rules still
-        // denied fail-closed), and the switch is re-applied on the next spawn.
+        // allow-all (NOT degraded to interactive prompting; whether ask-rules
+        // are denied fail-closed there is unverified — QA item), and the switch
+        // is re-applied on the next spawn.
         expect(setPermissionMode.mock.calls.length).toBe(3);
         const warnSpy = mockLogger.warn as ReturnType<typeof mock>;
         expect(warnSpy.mock.calls.length).toBe(2); // attempts 1 and 2

@@ -218,6 +218,39 @@ describe('AskUserQuestionHandler', () => {
 
       await resultPromise;
     });
+
+    it('allows a single-option AskUserQuestion via the canUseTool channel (ACP has no min-2 contract)', async () => {
+      const callback = handler.createCanUseToolCallback();
+
+      // The @minItems 2 guard is enforced on the PreToolUse hook channel only;
+      // the canUseTool channel also feeds ACP permission input, which maps
+      // params.options directly and has NO min-2 contract — a 1-option request
+      // must prompt, not be denied (denial auto-cancels a legitimate prompt).
+      const resultPromise = callback(
+        'AskUserQuestion',
+        {
+          questions: [
+            {
+              question: 'Approve?',
+              header: 'ACP approval',
+              options: [{ label: 'Allow', description: 'allow' }],
+              multiSelect: false,
+            },
+          ],
+        },
+        { signal: new AbortController().signal, toolUseID: 'acp-1' }
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Not denied — the interception proceeded to prompt.
+      expect(setWaitingForInputSpy).toHaveBeenCalled();
+
+      await handler.handleQuestionResponse('acp-1', [
+        { questionIndex: 0, selectedLabels: ['Allow'] },
+      ]);
+      const result = (await resultPromise) as { behavior: string };
+      expect(result.behavior).toBe('allow');
+    });
   });
 
   describe('createPreToolUseHook', () => {
@@ -936,6 +969,171 @@ describe('AskUserQuestionHandler', () => {
       expect(second.hookSpecificOutput.updatedInput?.answers).toEqual({ 'Pick 2?': 'B' });
 
       // race-1 was superseded by race-2 — denied by the supersede block.
+      const first = (await firstPromise) as {
+        hookSpecificOutput: { permissionDecision: string; permissionDecisionReason?: string };
+      };
+      expect(first.hookSpecificOutput.permissionDecision).toBe('deny');
+      expect(first.hookSpecificOutput.permissionDecisionReason).toContain('Superseded');
+    });
+
+    it('clears the stored resolver and rethrows when setWaitingForInput fails', async () => {
+      setWaitingForInputSpy.mockImplementationOnce(async () => {
+        throw new Error('db write failed');
+      });
+      const hook = handler.createPreToolUseHook();
+
+      const input = {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'AskUserQuestion',
+        tool_input: {
+          questions: [
+            {
+              question: 'Q?',
+              header: 'H',
+              options: [
+                { label: 'A', description: 'A' },
+                { label: 'B', description: 'B' },
+              ],
+              multiSelect: false,
+            },
+          ],
+        },
+        tool_use_id: 'hook-fail',
+      };
+      await expect(
+        hook(input, 'hook-fail', { signal: new AbortController().signal })
+      ).rejects.toThrow('db write failed');
+
+      // No stale resolver: a fresh interception for the same toolUseId
+      // proceeds (prompts again) and resolves normally.
+      const second = hook(input, 'hook-fail', { signal: new AbortController().signal });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(setWaitingForInputSpy).toHaveBeenCalledTimes(2);
+      await handler.handleQuestionCancel('hook-fail');
+      const secondResult = (await second) as {
+        hookSpecificOutput: { permissionDecision: string };
+      };
+      expect(secondResult.hookSpecificOutput.permissionDecision).toBe('deny');
+    });
+
+    it('drops a submit for a question whose resolver was superseded (does not queue to restart path)', async () => {
+      const hook = handler.createPreToolUseHook();
+      const askHookInput = (toolUseId: string, question: string, label: string) => ({
+        hook_event_name: 'PreToolUse' as const,
+        tool_name: 'AskUserQuestion',
+        tool_input: {
+          questions: [
+            {
+              question,
+              header: 'P',
+              options: [
+                { label, description: label },
+                { label: 'B', description: 'B' },
+              ],
+              multiSelect: false,
+            },
+          ],
+        },
+        tool_use_id: toolUseId,
+      });
+
+      // Question A is live (state = race-1, resolver = race-1).
+      const firstPromise = hook(askHookInput('race-1', 'Pick?', 'A'), 'race-1', {
+        signal: new AbortController().signal,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // B's interception stores resolver = race-2 but its setWaitingForInput
+      // is gated and does NOT update state — so state = race-1 while the
+      // resolver = race-2 (the shifted-window state the drop branch guards).
+      let releaseWaiting!: () => void;
+      const waitingGate = new Promise<void>((resolve) => {
+        releaseWaiting = resolve;
+      });
+      setWaitingForInputSpy.mockImplementationOnce(async (pendingQuestion) => {
+        await waitingGate;
+        currentState = { status: 'waiting_for_input', pendingQuestion };
+      });
+      const secondPromise = hook(askHookInput('race-2', 'Pick 2?', 'C'), 'race-2', {
+        signal: new AbortController().signal,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Submit for race-1: a resolver exists (race-2) but does not match — the
+      // submit is DROPPED, not queued down the restart path.
+      await handler.handleQuestionResponse('race-1', [{ questionIndex: 0, selectedLabels: ['A'] }]);
+      expect(handler.getQueuedAnswersForTesting().size).toBe(0);
+
+      releaseWaiting();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // race-2 is the live question and resolves normally.
+      await handler.handleQuestionCancel('race-2');
+      const second = (await secondPromise) as {
+        hookSpecificOutput: { permissionDecision: string };
+      };
+      expect(second.hookSpecificOutput.permissionDecision).toBe('deny');
+
+      // race-1 was superseded by race-2 — denied by the supersede block.
+      const first = (await firstPromise) as {
+        hookSpecificOutput: { permissionDecision: string; permissionDecisionReason?: string };
+      };
+      expect(first.hookSpecificOutput.permissionDecision).toBe('deny');
+      expect(first.hookSpecificOutput.permissionDecisionReason).toContain('Superseded');
+    });
+
+    it('drops a cancel for a question whose resolver was superseded (does not queue to restart path)', async () => {
+      const hook = handler.createPreToolUseHook();
+      const askHookInput = (toolUseId: string, question: string, label: string) => ({
+        hook_event_name: 'PreToolUse' as const,
+        tool_name: 'AskUserQuestion',
+        tool_input: {
+          questions: [
+            {
+              question,
+              header: 'P',
+              options: [
+                { label, description: label },
+                { label: 'B', description: 'B' },
+              ],
+              multiSelect: false,
+            },
+          ],
+        },
+        tool_use_id: toolUseId,
+      });
+
+      const firstPromise = hook(askHookInput('race-1', 'Pick?', 'A'), 'race-1', {
+        signal: new AbortController().signal,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      let releaseWaiting!: () => void;
+      const waitingGate = new Promise<void>((resolve) => {
+        releaseWaiting = resolve;
+      });
+      setWaitingForInputSpy.mockImplementationOnce(async (pendingQuestion) => {
+        await waitingGate;
+        currentState = { status: 'waiting_for_input', pendingQuestion };
+      });
+      const secondPromise = hook(askHookInput('race-2', 'Pick 2?', 'C'), 'race-2', {
+        signal: new AbortController().signal,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Cancel for race-1: resolver = race-2 (mismatch) — the cancel is DROPPED.
+      await handler.handleQuestionCancel('race-1');
+      expect(handler.getQueuedAnswersForTesting().size).toBe(0);
+
+      releaseWaiting();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      await handler.handleQuestionCancel('race-2');
+      const second = (await secondPromise) as {
+        hookSpecificOutput: { permissionDecision: string };
+      };
+      expect(second.hookSpecificOutput.permissionDecision).toBe('deny');
+
       const first = (await firstPromise) as {
         hookSpecificOutput: { permissionDecision: string; permissionDecisionReason?: string };
       };
