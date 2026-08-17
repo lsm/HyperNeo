@@ -316,6 +316,10 @@ describe('Startup Timeout Error Surfacing', () => {
         expect(errorMsg).toContain('failed to start');
         expect(errorMsg).toContain('Common causes');
         expect(errorMsg).toContain('HYPERNEO_SDK_STARTUP_TIMEOUT_MS');
+        // The hint must print the EFFECTIVE value, not just the variable name —
+        // this run forces 10ms via FORCED_STARTUP_TIMEOUT_MS, pinning the
+        // override path (the 60s default is pinned in query-runner.test.ts).
+        expect(errorMsg).toContain('current: 10ms');
       } finally {
         unsubscribe();
       }

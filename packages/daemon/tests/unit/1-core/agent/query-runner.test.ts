@@ -1330,7 +1330,7 @@ describe('QueryRunner', () => {
   describe('startup timeout error surfacing', () => {
     // Integration tests: exercise the runQuery() catch block when a startup-timeout
     // error is thrown.  buildSpy throws 'SDK startup timeout - query aborted' so the
-    // test never waits for the real 15-second timer.
+    // test never waits on the real startup timer.
     // ANTHROPIC_API_KEY is set to a dummy value so the pre-query auth check passes.
 
     let savedApiKey: string | undefined;
@@ -1399,6 +1399,13 @@ describe('QueryRunner', () => {
       // Should NOT contain retry count language
       const userMessage = handleErrorSpy.mock.calls[0][3] as string;
       expect(userMessage).not.toContain('attempt(s)');
+      // The hint prints the effective startup window. The vitest preload
+      // (tests/vitest.setup.ts — the only preload automated runs load) deletes
+      // ambient overrides before imports, and every test that sets the
+      // variable restores it in finally (acp-query-runner.test.ts), so the
+      // module-load snapshot here is the 60s default. Pins both the default
+      // and the effective-value hint.
+      expect(userMessage).toContain('current: 60000ms');
     });
 
     it('should preserve sdkSessionId and surface error for conversation-not-found', async () => {
@@ -1656,6 +1663,31 @@ describe('QueryRunner', () => {
       await ctx.queryPromise?.catch(() => {});
 
       expect(startSpy.mock.calls.length).toBe(1);
+    });
+
+    it('does not respawn after a startup timeout when an interrupt raced the catch', async () => {
+      // interrupt-handler sets 'interrupted' (and aborts the controller)
+      // without bumping the query generation, so neither
+      // retrySupersededByReplacement nor isCleaningUp excludes it — the
+      // status guard on the retry condition is what stops a fresh
+      // subprocess spawning on a stopped session (spurious terminal
+      // "failed to start"). Mirrors the guard on the queue restart above.
+      const kickoff = { uuid: 'kickoff-uuid', content: [{ type: 'text' as const, text: 'K' }] };
+      getStateSpy.mockReturnValue({ status: 'interrupted' } as never);
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages = new Map([[1, [kickoff]]]);
+
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      // Exactly one build = the first attempt; no recursive retry respawn.
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).not.toHaveBeenCalledWith(kickoff.uuid, kickoff.content, false, {
+        prepend: true,
+      });
     });
 
     it('re-enqueues every consumed prompt before the startup-timeout retry', async () => {
@@ -2892,10 +2924,9 @@ describe('QueryRunner API validation error parsing', () => {
 });
 
 describe('QueryRunner startup timeout handling', () => {
-  it('should define startup timeout constant', () => {
-    const STARTUP_TIMEOUT_MS = 15000;
-    expect(STARTUP_TIMEOUT_MS).toBe(15000);
-  });
+  // The 60s default itself is pinned by the 'should pass actionable user
+  // message with timeout hint to handleError (startup timeout)' test above,
+  // which asserts the hint prints the effective default ('current: 60000ms').
 
   it('should track timeout state', () => {
     let startupTimeoutReached = false;
@@ -2918,7 +2949,7 @@ describe('QueryRunner startup timeout handling', () => {
 
   it('should clear timeout on first message', () => {
     let timerCleared = false;
-    const timer = setTimeout(() => {}, 15000);
+    const timer = setTimeout(() => {}, 60000);
 
     // Simulate clearing on first message
     clearTimeout(timer);

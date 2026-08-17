@@ -563,8 +563,9 @@ async function createInProcessDaemonServer(
     process.env.CLAUDE_CODE_OAUTH_TOKEN = '';
   }
 
-  // Online tests do real provider calls and often need longer startup windows in CI.
-  // Keep production default unchanged; override only in test daemon helper.
+  // Cap online daemons at 30s (half the 60s production default) so CI
+  // startup-hang paths stay bounded; tests needing a specific window set the
+  // env before createDaemonServer.
   process.env.NODE_ENV = 'test';
   if (!process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS) {
     process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '30000';

@@ -86,7 +86,29 @@ function defaultSpawn(opts: SpawnOptions): SpawnedProcess {
   return proc as unknown as SpawnedProcess;
 }
 
-const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
+// 60s: a cold-starting SDK subprocess (fresh worktree + resumed transcript)
+// measures ~4–5s solo, and a herd of simultaneous cold-starts (e.g. a daemon
+// restart fanning out resumed sessions) exceeded the old 15s default across
+// the board. The timer only guards silent hangs — real spawn failures exit
+// and are detected immediately — so a generous default is cheap insurance.
+// Ordering: at default settings this window stays BELOW the delivery-turn
+// stall watchdog's no-activity window (DELIVERY_TURN_NO_ACTIVITY_MS,
+// default 3min — agent-session.ts armDeliveryTurnStall) so a silently hung
+// startup is aborted here first.
+// Two 30s bounds sit BELOW this window and cap the effective tolerance for
+// a delivered kickoff at 30s: MESSAGE_QUEUE_TIMEOUT_MS (message-queue.ts —
+// splices + rejects a message the SDK never consumes, and is the
+// acknowledgment bound the delivery lane's 35s settlementGraceMs in app.ts
+// is ordered against via admitWithId's settle path in agent-session.ts) and
+// awaitDeliveryConsumption's 30s default (message-delivery.ts — a separate
+// consume-wait deliberately matched to that queue timeout). A kickoff
+// spliced at 30s recovers through the delivery/reset lane, not this timer's
+// retry: the splice rejects as MessageQueueTimeoutError, whose handler
+// (query-lifecycle-manager.ts) resets with restartAfter + re-enqueues and
+// clears the stale startup timer on the way through. Extending tolerance
+// beyond 30s for delivered kickoffs needs delivery-lane work (queued-message
+// lifetime / retry pacing), not a longer startup timer.
+const DEFAULT_STARTUP_TIMEOUT_MS = 60000;
 /** Max time to wait for subprocess exit before retrying after startup timeout. */
 const RETRY_EXIT_TIMEOUT_MS = 5000;
 
@@ -1050,8 +1072,19 @@ export class QueryRunner {
       // Auto-retry once on startup timeout — the user shouldn't have to resend.
       // This handles transient SDK startup failures (e.g., after a model switch)
       // where the second attempt succeeds reliably.
-      // Skip messageQueue.clear() so the user's pending message is preserved for the retry.
-      if (isStartupTimeout && retryAttempt === 0 && !this.ctx.isCleaningUp()) {
+      // Skip messageQueue.clear() so queued tails survive for the retry (a
+      // kickoff already spliced by MESSAGE_QUEUE_TIMEOUT_MS recovers via the
+      // delivery/reset lane instead — see DEFAULT_STARTUP_TIMEOUT_MS). An
+      // interrupt that raced this catch must not respawn: interrupt-handler
+      // sets 'interrupted' without bumping the generation, so only this
+      // status guard (not retrySupersededByReplacement / isCleaningUp) stops
+      // a fresh subprocess spawning on a stopped session.
+      if (
+        isStartupTimeout &&
+        retryAttempt === 0 &&
+        !this.ctx.isCleaningUp() &&
+        stateManager.getState().status !== 'interrupted'
+      ) {
         logger.warn('Auto-retrying query after startup timeout (1 retry).');
         await stateManager.setIdle({ suppressDeliveryWaiters: true });
 
@@ -1219,7 +1252,8 @@ export class QueryRunner {
         isTransientConnectionError &&
         !isQueryInterrupted &&
         retryAttempt === 0 &&
-        !this.ctx.isCleaningUp()
+        !this.ctx.isCleaningUp() &&
+        stateManager.getState().status !== 'interrupted'
       ) {
         logger.warn('Auto-retrying query after transient connection error (1 retry).');
         await stateManager.setIdle({ suppressDeliveryWaiters: true });

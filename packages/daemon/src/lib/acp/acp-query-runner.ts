@@ -35,6 +35,11 @@ import { AcpClient, type AcpClientOptions } from './acp-client';
 import { AcpQueryAdapter } from './acp-query-adapter';
 import { AcpMcpProxyBridge, shouldProxy } from './mcp-proxy-bridge';
 
+// Deliberately NOT synced with the SDK runner's 60s default
+// (agent/query-runner.ts): ACP agents are user-configured external processes
+// with their own startup profile — no resumed-transcript cold-start herd.
+// The shared HYPERNEO_SDK_STARTUP_TIMEOUT_MS override still wins here; see
+// .env.example before copying the SDK value.
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
 const RETRY_EXIT_TIMEOUT_MS = 5000;
 

@@ -1003,18 +1003,21 @@ describe('AcpQueryRunner', () => {
 
     const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
     process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
-    await runner.start();
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    try {
+      await runner.start();
+      await new Promise((resolve) => setTimeout(resolve, 50));
 
-    expect(ctx.startupTimeoutTimer).toBeNull();
-    expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+      expect(ctx.startupTimeoutTimer).toBeNull();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
 
-    releaseMessage?.();
-    await ctx.queryPromise;
-    if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-    else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+      releaseMessage?.();
+      await ctx.queryPromise;
 
-    expect(client.sendPrompt).toHaveBeenCalled();
+      expect(client.sendPrompt).toHaveBeenCalled();
+    } finally {
+      if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+      else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+    }
   }, 1000);
 
   test('retries ACP handshake timeout when turn is queued during startup', async () => {
@@ -1041,15 +1044,18 @@ describe('AcpQueryRunner', () => {
 
     const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
     process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
-    await runner.start();
-    await ctx.queryPromise;
-    if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-    else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+    try {
+      await runner.start();
+      await ctx.queryPromise;
 
-    expect(previousOnMessageEnqueued).toHaveBeenCalledWith('user-message-1', expect.any(Number));
-    expect(firstClient.close).toHaveBeenCalled();
-    expect(secondClient.sendPrompt).toHaveBeenCalled();
-    expect(messageQueue.onMessageEnqueued).toBe(previousOnMessageEnqueued);
+      expect(previousOnMessageEnqueued).toHaveBeenCalledWith('user-message-1', expect.any(Number));
+      expect(firstClient.close).toHaveBeenCalled();
+      expect(secondClient.sendPrompt).toHaveBeenCalled();
+      expect(messageQueue.onMessageEnqueued).toBe(previousOnMessageEnqueued);
+    } finally {
+      if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+      else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+    }
   }, 1000);
 
   test('retries ACP handshake timeout while a queued turn is waiting', async () => {
@@ -1069,13 +1075,16 @@ describe('AcpQueryRunner', () => {
 
     const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
     process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
-    await runner.start();
-    await ctx.queryPromise;
-    if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-    else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+    try {
+      await runner.start();
+      await ctx.queryPromise;
 
-    expect(firstClient.close).toHaveBeenCalled();
-    expect(secondClient.sendPrompt).toHaveBeenCalled();
+      expect(firstClient.close).toHaveBeenCalled();
+      expect(secondClient.sendPrompt).toHaveBeenCalled();
+    } finally {
+      if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+      else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+    }
   }, 1000);
 
   test('resets ACP startup timeout tracking for each prompt', async () => {
@@ -1109,19 +1118,22 @@ describe('AcpQueryRunner', () => {
 
     const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
     process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
-    await runner.start();
-    await ctx.queryPromise;
-    if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-    else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+    try {
+      await runner.start();
+      await ctx.queryPromise;
 
-    expect(firstClient.close).toHaveBeenCalled();
-    expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
-      { type: 'text', text: 'second' },
-    ]);
-    expect(secondClient.sendPrompt).toHaveBeenCalled();
-    expect(ctx.db.updateSession).not.toHaveBeenCalledWith('session-1', {
-      acpSessionId: undefined,
-    });
+      expect(firstClient.close).toHaveBeenCalled();
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'second' },
+      ]);
+      expect(secondClient.sendPrompt).toHaveBeenCalled();
+      expect(ctx.db.updateSession).not.toHaveBeenCalledWith('session-1', {
+        acpSessionId: undefined,
+      });
+    } finally {
+      if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+      else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+    }
   }, 1000);
 
   test('retries ACP startup timeout even after timeout aborts controller', async () => {
@@ -1146,17 +1158,20 @@ describe('AcpQueryRunner', () => {
 
     const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
     process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
-    await retryRunner.start();
-    await ctx.queryPromise;
-    if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-    else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+    try {
+      await retryRunner.start();
+      await ctx.queryPromise;
 
-    expect(createClient).toHaveBeenCalledTimes(2);
-    expect(firstClient.close).toHaveBeenCalled();
-    expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
-      { type: 'text', text: 'hello' },
-    ]);
-    expect(secondClient.sendPrompt).toHaveBeenCalled();
+      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(firstClient.close).toHaveBeenCalled();
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'hello' },
+      ]);
+      expect(secondClient.sendPrompt).toHaveBeenCalled();
+    } finally {
+      if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+      else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+    }
   }, 1000);
 
   test('handles ACP SDK message errors without killing query loop', async () => {
