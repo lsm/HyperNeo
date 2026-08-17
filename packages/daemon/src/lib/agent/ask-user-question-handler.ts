@@ -121,6 +121,9 @@ interface AskUserQuestionInput {
 interface PendingQuestionResolver {
   toolUseId: string;
   input: Record<string, unknown>;
+  /** The UI structure built for this question — used to restore the card if a
+   *  newer question supersedes this one mid-response-transition. */
+  pendingQuestion: PendingUserQuestion;
   resolve: (result: PermissionResult) => void;
   reject: (error: Error) => void;
 }
@@ -131,6 +134,24 @@ interface PendingQuestionResolver {
  */
 export const QUESTION_CANCEL_MESSAGE =
   'User cancelled: The user chose not to answer this question. Please proceed accordingly or ask a different question if needed.';
+
+/**
+ * Maximum length for a single AskUserQuestion string field (question, header,
+ * option label/description). The input is model-supplied and pre-schema-
+ * validation — and newly reachable in default (bypass) config where the
+ * PreToolUse hook is the primary channel — so a prompt-injected model could
+ * push multi-MB strings into session metadata and broadcast them to every
+ * connected client. Cap the size when building the UI structure.
+ */
+const MAX_QUESTION_STRING_LENGTH = 2000;
+
+/** Truncate a model-supplied string field to MAX_QUESTION_STRING_LENGTH. */
+function truncateQuestionString(value: string | undefined): string {
+  if (typeof value !== 'string') return '';
+  return value.length > MAX_QUESTION_STRING_LENGTH
+    ? value.slice(0, MAX_QUESTION_STRING_LENGTH)
+    : value;
+}
 
 export class AskUserQuestionHandler {
   private logger: Logger;
@@ -165,10 +186,12 @@ export class AskUserQuestionHandler {
   ): Promise<PermissionResult> {
     const { session, stateManager, internalEventBus } = this.ctx;
 
-    // Malformed input guard: a missing/empty questions array — or a question
-    // entry without an options array — would throw in the mapping below and
-    // abort the tool call inside the CLI. Deny with a reason instead so the
-    // model sees a recoverable error.
+    // Malformed input guard: a missing/empty questions array — a question
+    // entry without an options array, or an option entry without a label —
+    // would throw in the mapping below and abort the tool call inside the
+    // CLI (under bypass an errored hook is non-blocking, so the question
+    // would proceed with no interaction and no card). Deny with a reason
+    // instead so the model sees a recoverable error.
     const askInput = input as unknown as AskUserQuestionInput;
     const questionsWellFormed =
       Array.isArray(askInput.questions) &&
@@ -178,7 +201,8 @@ export class AskUserQuestionHandler {
           q !== null &&
           typeof q === 'object' &&
           typeof q.question === 'string' &&
-          Array.isArray(q.options)
+          Array.isArray(q.options) &&
+          q.options.every((o) => o !== null && typeof o === 'object' && typeof o.label === 'string')
       );
     if (!questionsWellFormed) {
       this.logger.warn(
@@ -219,15 +243,17 @@ export class AskUserQuestionHandler {
     }
 
     // Build the pending question structure for UI
-    // Use the SDK's toolUseID for consistency
+    // Use the SDK's toolUseID for consistency. String fields are truncated to
+    // bound what reaches session metadata and the client broadcast (the input
+    // is model-supplied and pre-schema-validation).
     const pendingQuestion: PendingUserQuestion = {
       toolUseId: toolUseID,
       questions: askInput.questions.map((q) => ({
-        question: q.question,
-        header: q.header,
+        question: truncateQuestionString(q.question),
+        header: truncateQuestionString(q.header),
         options: q.options.map((o) => ({
-          label: o.label,
-          description: o.description,
+          label: truncateQuestionString(o.label),
+          description: truncateQuestionString(o.description),
         })),
         multiSelect: q.multiSelect,
       })),
@@ -270,6 +296,7 @@ export class AskUserQuestionHandler {
       this.pendingResolver = {
         toolUseId: toolUseID,
         input,
+        pendingQuestion,
         resolve,
         reject,
       };
@@ -412,10 +439,26 @@ export class AskUserQuestionHandler {
     this.trackResolvedQuestion(toolUseId, pendingQuestion, 'submitted', responses);
 
     // Happy path: a live SDK query is awaiting our resolver — resolve in-memory.
-    if (this.pendingResolver && this.pendingResolver.toolUseId === toolUseId) {
+    // Capture the resolver BEFORE the state transition: if a second
+    // AskUserQuestion supersedes during the await, the post-await capture
+    // would resolve the newer resolver with this older question's answers.
+    const resolver = this.pendingResolver;
+    if (resolver && resolver.toolUseId === toolUseId) {
       // Transition back to processing state
       await stateManager.setProcessing(toolUseId, 'streaming');
-      const resolver = this.pendingResolver;
+      // Re-verify after the await — the supersede block already denied the
+      // old resolver, and this submit is stale. Restore the newer question's
+      // card (this transition clobbered it) so it stays answerable.
+      if (this.pendingResolver !== resolver) {
+        this.logger.warn(
+          `AskUserQuestion ${toolUseId}: submit arrived after the question was superseded; dropping it`
+        );
+        const current = this.pendingResolver;
+        if (current) {
+          await stateManager.setWaitingForInput(current.pendingQuestion);
+        }
+        return;
+      }
       this.pendingResolver = null;
       resolver.resolve({
         behavior: 'allow',
@@ -468,9 +511,22 @@ export class AskUserQuestionHandler {
     this.trackResolvedQuestion(toolUseId, pendingQuestion, 'cancelled', [], 'user_cancelled');
 
     // Happy path: a live SDK query is awaiting our resolver.
-    if (this.pendingResolver && this.pendingResolver.toolUseId === toolUseId) {
+    // Capture the resolver BEFORE the state transition and re-verify after —
+    // a second AskUserQuestion superseding during the await would otherwise
+    // cancel the newer question with this older question's intent.
+    const resolver = this.pendingResolver;
+    if (resolver && resolver.toolUseId === toolUseId) {
       await stateManager.setProcessing(toolUseId, 'streaming');
-      const resolver = this.pendingResolver;
+      if (this.pendingResolver !== resolver) {
+        this.logger.warn(
+          `AskUserQuestion ${toolUseId}: cancel arrived after the question was superseded; dropping it`
+        );
+        const current = this.pendingResolver;
+        if (current) {
+          await stateManager.setWaitingForInput(current.pendingQuestion);
+        }
+        return;
+      }
       this.pendingResolver = null;
       resolver.resolve({
         behavior: 'deny',

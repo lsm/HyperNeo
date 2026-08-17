@@ -556,7 +556,8 @@ export class QueryRunner {
   private async applyDeferredPermissionMode(
     queryObject: QueryLike,
     deferredPermissionMode: string | undefined,
-    attemptTimeoutMs = 8000
+    attemptTimeoutMs = 8000,
+    backoffBaseMs = 250
   ): Promise<void> {
     if (!deferredPermissionMode || !queryObject.setPermissionMode) return;
     const { session, logger } = this.ctx;
@@ -611,7 +612,7 @@ export class QueryRunner {
             `'${deferredPermissionMode}' for session ${session.id} failed on ` +
             `attempt ${attempt}/${maxAttempts}: ${detail}; retrying`
         );
-        await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+        await new Promise((resolve) => setTimeout(resolve, backoffBaseMs * attempt));
       }
     }
   }

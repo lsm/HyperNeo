@@ -427,6 +427,80 @@ describe('AskUserQuestionHandler', () => {
       expect(setWaitingForInputSpy).not.toHaveBeenCalled();
     });
 
+    it('denies malformed tool_input (option entry without a label)', async () => {
+      const hook = handler.createPreToolUseHook();
+
+      // q.options.map((o) => o.label) would throw on a null / non-object /
+      // label-less option — under bypass an errored hook is non-blocking, so
+      // without the guard the question would proceed with no interaction and
+      // no card (the silent-drop failure this PR fixes).
+      for (const options of [[null], [undefined], [{}], [{ label: 42 }]]) {
+        const result = (await hook(
+          {
+            hook_event_name: 'PreToolUse',
+            tool_name: 'AskUserQuestion',
+            tool_input: {
+              questions: [{ question: 'Q?', header: 'H', options, multiSelect: false }],
+            },
+            tool_use_id: 'hook-malformed-option',
+          },
+          'hook-malformed-option',
+          { signal: new AbortController().signal }
+        )) as {
+          hookSpecificOutput: { permissionDecision: string; permissionDecisionReason?: string };
+        };
+        expect(result.hookSpecificOutput.permissionDecision).toBe('deny');
+        expect(result.hookSpecificOutput.permissionDecisionReason).toContain('malformed');
+      }
+      expect(setWaitingForInputSpy).not.toHaveBeenCalled();
+    });
+
+    it('truncates over-long question strings when building the UI structure', async () => {
+      const hook = handler.createPreToolUseHook();
+
+      const long = 'x'.repeat(10_000);
+      const resultPromise = hook(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'AskUserQuestion',
+          tool_input: {
+            questions: [
+              {
+                question: long,
+                header: long,
+                options: [{ label: long, description: long }],
+                multiSelect: false,
+              },
+            ],
+          },
+          tool_use_id: 'hook-long',
+        },
+        'hook-long',
+        { signal: new AbortController().signal }
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // The UI structure (persisted to metadata + broadcast) is capped so a
+      // model-supplied multi-MB string cannot bloat the DB or amplify to every
+      // connected client.
+      const pendingQuestion = setWaitingForInputSpy.mock.calls[0]?.[0] as {
+        questions: Array<{
+          question: string;
+          header: string;
+          options: Array<{ label: string; description: string }>;
+        }>;
+      };
+      expect(pendingQuestion.questions[0].question.length).toBeLessThanOrEqual(2000);
+      expect(pendingQuestion.questions[0].question).toBe('x'.repeat(2000));
+      expect(pendingQuestion.questions[0].header).toBe('x'.repeat(2000));
+      expect(pendingQuestion.questions[0].options[0].label).toBe('x'.repeat(2000));
+      expect(pendingQuestion.questions[0].options[0].description).toBe('x'.repeat(2000));
+
+      // Settle the hook promise so no dangling pending resolver leaks.
+      await handler.handleQuestionCancel('hook-long');
+      await resultPromise;
+    });
+
     it('settles the superseded call with a deny result when a second question arrives', async () => {
       const hook = handler.createPreToolUseHook();
 
@@ -457,6 +531,92 @@ describe('AskUserQuestionHandler', () => {
         hookSpecificOutput: { permissionDecision: string };
       };
       expect(second.hookSpecificOutput.permissionDecision).toBe('deny');
+    });
+
+    it('does not cross-wire answers when a question is superseded mid-submit', async () => {
+      const hook = handler.createPreToolUseHook();
+
+      // First question is live.
+      const firstPromise = hook(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'AskUserQuestion',
+          tool_input: {
+            questions: [
+              {
+                question: 'Pick?',
+                header: 'P',
+                options: [{ label: 'A', description: 'A' }],
+                multiSelect: false,
+              },
+            ],
+          },
+          tool_use_id: 'race-1',
+        },
+        'race-1',
+        { signal: new AbortController().signal }
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Block the processing transition so a second question can supersede
+      // mid-submit.
+      let releaseProcessing!: () => void;
+      const processingGate = new Promise<void>((resolve) => {
+        releaseProcessing = resolve;
+      });
+      setProcessingSpy.mockImplementationOnce(async () => {
+        await processingGate;
+        currentState = { status: 'processing', messageId: 'race-1', phase: 'streaming' };
+      });
+
+      // User submits the answer for race-1; it blocks inside the transition.
+      const submitPromise = handler.handleQuestionResponse('race-1', [
+        { questionIndex: 0, selectedLabels: ['A'] },
+      ]);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // The model issues a second question in the same turn; it supersedes
+      // race-1's resolver while the submit is mid-transition.
+      const secondPromise = hook(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'AskUserQuestion',
+          tool_input: {
+            questions: [
+              {
+                question: 'Pick 2?',
+                header: 'P',
+                options: [{ label: 'B', description: 'B' }],
+                multiSelect: false,
+              },
+            ],
+          },
+          tool_use_id: 'race-2',
+        },
+        'race-2',
+        { signal: new AbortController().signal }
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Release the transition: handleQuestionResponse resumes and must detect
+      // the supersede instead of resolving race-2 with race-1's answers.
+      releaseProcessing();
+      await submitPromise;
+
+      // race-2's resolver is still pending (NOT resolved with race-1's 'A').
+      // Cancel it — its outcome is a fresh deny, proving no cross-wire.
+      await handler.handleQuestionCancel('race-2');
+      const second = (await secondPromise) as {
+        hookSpecificOutput: { permissionDecision: string };
+      };
+      expect(second.hookSpecificOutput.permissionDecision).toBe('deny');
+
+      // race-1 was superseded — its resolver was denied by the supersede block.
+      const first = (await firstPromise) as {
+        hookSpecificOutput: { permissionDecision: string; permissionDecisionReason?: string };
+      };
+      expect(first.hookSpecificOutput.permissionDecision).toBe('deny');
+      expect(first.hookSpecificOutput.permissionDecisionReason).toContain('Superseded');
     });
   });
 

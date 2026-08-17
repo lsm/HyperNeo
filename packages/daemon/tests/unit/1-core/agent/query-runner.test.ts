@@ -809,7 +809,8 @@ describe('QueryRunner', () => {
         ctx.queryObject = queryObject;
         runner = new QueryRunner(ctx);
 
-        await applyOnRunner(runner)(queryObject, 'bypassPermissions', 20);
+        // Small backoff keeps the 3 timed-out attempts fast (~60ms total).
+        await applyOnRunner(runner)(queryObject, 'bypassPermissions', 20, 1);
 
         expect(setPermissionMode.mock.calls.length).toBe(3);
         const errorSpy = mockLogger.error as ReturnType<typeof mock>;
