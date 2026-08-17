@@ -87,6 +87,14 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // user edits, so a voiceLanded refresh may adopt over it; anything else is
   // typing, and clobbering it is never acceptable.
   const lastLoadedDraftRef = useRef<string>('');
+  // A landing that could not surface yet — the composer was typing at event
+  // time, typing began mid-get, or the refresh get failed on a dropped
+  // socket — arms a ONE-SHOT re-check: the next transition to an empty
+  // composer (a send or clear) or the next connection transition retries the
+  // adoption refresh once. This mirrors the pre-PR client, where a landing
+  // during typing deferred until the composer cleared and a refresh that
+  // failed offline retried on reconnect.
+  const deferredVoiceAdoptRef = useRef<string | null>(null);
   // Monotonic id of the latest loadDraft REQUEST: a response applies only
   // while its request is still the newest. A slower OLDER response (the
   // mount-time get racing a voiceLanded refresh, or two refreshes) must never
@@ -101,11 +109,11 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // session may have changed or the hook unmounted while the get was in
   // flight). The daemon merges nothing on read — the response's inputDraft is
   // already the composition of typing + staged voice transcript when it fits.
-  // Two resolve-time guards: `applyGuard` (used by the voiceLanded refresh)
-  // re-checks that the composer is still idle-or-unchanged, so typing that
-  // began mid-get is never clobbered; and the request-sequence check discards
-  // responses of superseded loads, so an older get can never overwrite a
-  // newer load's applied state.
+  // Two resolve-time guards: `applyGuard` (used by the voiceLanded refresh
+  // and the initial load) re-checks that the composer is still
+  // idle-or-unchanged, so typing that began mid-get is never clobbered; and
+  // the request-sequence check discards responses of superseded loads, so an
+  // older get can never overwrite a newer load's applied state.
   const loadDraft = useCallback(
     (
       targetSessionId: string,
@@ -143,6 +151,93 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         });
     },
     [contentSignal]
+  );
+
+  // Issue the voiceLanded adoption refresh for `targetSessionId`: re-read the
+  // composed draft and, for an idle-or-unchanged composer, adopt it and save
+  // the composition IMMEDIATELY (not debounced) so the daemon's adoption rule
+  // consumes the staging in one write — editing the transcript in the
+  // debounce window cannot then leave the un-edited original staged to
+  // reappear later. Shared by the voiceLanded listener, the deferred re-check
+  // when a typing composer empties, and the post-reconnect retry.
+  const issueAdoptionRefresh = useCallback(
+    (targetSessionId: string): void => {
+      // Only an IDLE or UNCHANGED composer adopts: empty, or still showing
+      // exactly the last-read draft (no user edits since). The guard is
+      // re-checked at RESOLVE time inside loadDraft, so typing that began
+      // mid-get is never clobbered by the response.
+      const adoptable = (): boolean => {
+        const current = contentSignal.peek();
+        return current === '' || current === lastLoadedDraftRef.current;
+      };
+      if (!adoptable()) {
+        // Typing: the transcript stays durable server-side and the one-shot
+        // re-check below surfaces it when the composer empties.
+        deferredVoiceAdoptRef.current = targetSessionId;
+        return;
+      }
+      loadDraft(
+        targetSessionId,
+        () => currentSessionIdRef.current !== targetSessionId,
+        (ok, applied, draft) => {
+          if (currentSessionIdRef.current !== targetSessionId) return;
+          if (!ok || !applied) {
+            // The refresh failed (dropped socket / transient get error) or
+            // was rejected (typing began mid-get): retry once on the next
+            // empty-composer or connection transition.
+            deferredVoiceAdoptRef.current = targetSessionId;
+            return;
+          }
+          deferredVoiceAdoptRef.current = null;
+          if (!draft) return; // nothing staged — the landing is handled
+          // Typing began mid-get (the guard flipped between the apply and
+          // here): the immediate save must not push the composition over
+          // newer keystrokes — their own debounced save carries the text,
+          // and the staged transcript survives server-side until an
+          // adoption or the send-clear consumes it.
+          if (contentSignal.peek() !== draft) {
+            deferredVoiceAdoptRef.current = targetSessionId;
+            return;
+          }
+          // Record the adopted composition as the session's LAST-SEEN
+          // content before saving: a session switch in the frame before the
+          // deferred save effect runs would otherwise take the switch-flush
+          // branch with the STALE pre-adoption value (lastSeenContentRef
+          // still held it) and write it over this save — regressing the
+          // server past the staging this write just consumed.
+          lastSeenContentRef.current = { sessionId: targetSessionId, content: draft };
+          // Cancel any armed debounced save SYNCHRONOUSLY, before the
+          // immediate save below: the save effect that would normally
+          // clear it is rAF-deferred, and a timer due inside that frame
+          // gap would fire AFTER this save and write its STALE
+          // pre-adoption value — regressing the server past the staging
+          // this save just consumed (deterministically in hidden tabs,
+          // where rAF never runs while clamped timers still fire).
+          if (draftSaveTimeoutRef.current) {
+            clearTimeout(draftSaveTimeoutRef.current);
+            draftSaveTimeoutRef.current = null;
+          }
+          const hubNow = connectionManager.getHubIfConnected();
+          if (!hubNow) {
+            // Offline at resolve time: the debounced effect retries when the
+            // connection returns (and the one-shot re-check covers a retry
+            // on the next transition).
+            deferredVoiceAdoptRef.current = targetSessionId;
+            return;
+          }
+          hubNow
+            .request('session.update', {
+              sessionId: targetSessionId,
+              metadata: { inputDraft: draft },
+            })
+            .catch(() => {
+              /* the debounced save path retries the adoption */
+            });
+        },
+        adoptable
+      );
+    },
+    [contentSignal, loadDraft]
   );
 
   // Load draft on session change
@@ -199,13 +294,11 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // Voice landing refresh: the daemon announces every committed
   // session.appendVoiceDraft on the session channel. An idle-or-unchanged
   // composer re-reads and adopts the composition (typing + staged transcript);
-  // a composer with user typing is NEVER clobbered — the staged transcript is
-  // durable server-side and converges on the next re-read (navigation or
-  // reload) or a later landing; a clear or a typing-only send deliberately
-  // leaves an unseen staging staged. After adopting, the composition is saved
-  // IMMEDIATELY (not debounced): the daemon's adoption rule then consumes the
-  // staging atomically, so editing the transcript in the debounce window
-  // cannot leave the un-edited original staged to reappear later.
+  // a composer with user typing is NEVER clobbered at event time — the
+  // one-shot re-check (see deferredVoiceAdoptRef) surfaces the staging when
+  // the composer next empties or the connection cycles, and until then the
+  // staging stays durable server-side (a typing-only send-clear deliberately
+  // leaves it staged).
   useEffect(() => {
     if (!sessionId) return;
     let unsubEvent: (() => void) | null = null;
@@ -218,52 +311,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         (data: { sessionId?: string }, context?: { channel?: string }) => {
           if (context?.channel !== `session:${sessionId}`) return;
           if (currentSessionIdRef.current !== sessionId) return;
-          // Only an IDLE or UNCHANGED composer adopts: empty, or still showing
-          // exactly the last-read draft (no user edits since). The guard is
-          // re-checked at RESOLVE time inside loadDraft, so typing that began
-          // mid-get is never clobbered by the response.
-          const adoptable = (): boolean => {
-            const current = contentSignal.peek();
-            return current === '' || current === lastLoadedDraftRef.current;
-          };
-          if (!adoptable()) return;
-          loadDraft(
-            sessionId,
-            () => currentSessionIdRef.current !== sessionId,
-            (ok, applied, draft) => {
-              if (!ok || !applied) return;
-              if (currentSessionIdRef.current !== sessionId) return;
-              if (!draft) return;
-              // Typing began mid-get (the guard flipped between the apply and
-              // here): the immediate save must not push the composition over
-              // newer keystrokes — their own debounced save carries the text,
-              // and the staged transcript survives server-side until an
-              // adoption or the send-clear consumes it.
-              if (contentSignal.peek() !== draft) return;
-              // Cancel any armed debounced save SYNCHRONOUSLY, before the
-              // immediate save below: the save effect that would normally
-              // clear it is rAF-deferred, and a timer due inside that frame
-              // gap would fire AFTER this save and write its STALE
-              // pre-adoption value — regressing the server past the staging
-              // this save just consumed (deterministically in hidden tabs,
-              // where rAF never runs while clamped timers still fire).
-              if (draftSaveTimeoutRef.current) {
-                clearTimeout(draftSaveTimeoutRef.current);
-                draftSaveTimeoutRef.current = null;
-              }
-              const hubNow = connectionManager.getHubIfConnected();
-              if (!hubNow) return;
-              hubNow
-                .request('session.update', {
-                  sessionId,
-                  metadata: { inputDraft: draft },
-                })
-                .catch(() => {
-                  /* the debounced save path retries the adoption */
-                });
-            },
-            adoptable
-          );
+          issueAdoptionRefresh(sessionId);
         }
       );
     };
@@ -278,12 +326,20 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         unsubEvent = null;
       }
       register();
+      // A refresh that failed on a dropped socket (or was deferred by
+      // typing) retries ONCE here — the landing event itself was already
+      // consumed. Bounded by the one-shot marker: issueAdoptionRefresh
+      // re-arms it only on another failure/deferral.
+      if (deferredVoiceAdoptRef.current === sessionId) {
+        deferredVoiceAdoptRef.current = null;
+        issueAdoptionRefresh(sessionId);
+      }
     });
     return () => {
       unsubscribeConnection();
       if (unsubEvent) unsubEvent();
     };
-  }, [sessionId, contentSignal, loadDraft]);
+  }, [sessionId, issueAdoptionRefresh]);
 
   // Save draft with debouncing - uses useSignalEffect to react to signal changes
   useSignalEffect(() => {
@@ -354,6 +410,14 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
           .catch(() => {
             /* ignore clear errors */
           });
+      }
+      // A landing that arrived while this composer was typing surfaces NOW
+      // that the composer emptied (a send or a deliberate clear): one-shot
+      // re-check, mirroring the pre-PR deferred surfacing. Issued after the
+      // clear write above so the requests stay sequenced on the socket.
+      if (deferredVoiceAdoptRef.current === sessionId) {
+        deferredVoiceAdoptRef.current = null;
+        issueAdoptionRefresh(sessionId);
       }
       return;
     }

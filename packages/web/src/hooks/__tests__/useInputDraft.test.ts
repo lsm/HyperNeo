@@ -1331,5 +1331,275 @@ describe('useInputDraft', () => {
       });
       expect(session1Gets()).toBe(before);
     });
+
+    it('surfaces a skipped landing when the typing composer empties', async () => {
+      // A landing that arrives while the user types defers (never clobbers);
+      // the one-shot re-check surfaces it when the composer next empties —
+      // the pre-PR client's deferred surfacing parity.
+      let gets = 0;
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          gets += 1;
+          return {
+            session: {
+              metadata: { inputDraft: gets === 1 ? 'typed so far' : 'typed so far voice' },
+            },
+          };
+        }
+        return { success: true };
+      });
+      connectionState.value = 'connected';
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('typed so far');
+      // The user keeps typing; a landing arrives and is deferred — no refresh.
+      act(() => {
+        result.current.setContent('more typing');
+      });
+      const getsBefore = mockHub.request.mock.calls.filter(([m]) => m === 'session.get').length;
+      const listener = captureListener();
+      act(() => {
+        listener({ sessionId: 'session-1' }, { channel: 'session:session-1' });
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(mockHub.request.mock.calls.filter(([m]) => m === 'session.get').length).toBe(
+        getsBefore
+      );
+      // The composer empties (a send or clear): the deferred landing surfaces.
+      act(() => {
+        result.current.setContent('');
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(result.current.content).toBe('typed so far voice');
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      const saves = mockHub.request.mock.calls.filter(
+        ([m, d]) => m === 'session.update' && d?.metadata?.inputDraft === 'typed so far voice'
+      );
+      expect(saves.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('retries a failed adoption refresh once on the next connection transition', async () => {
+      let gets = 0;
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          gets += 1;
+          if (gets === 2) throw new Error('dropped socket');
+          return {
+            session: { metadata: { inputDraft: gets === 1 ? 'draft' : 'draft voice' } },
+          };
+        }
+        return { success: true };
+      });
+      connectionState.value = 'connected';
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('draft');
+      const listener = captureListener();
+      act(() => {
+        listener({ sessionId: 'session-1' }, { channel: 'session:session-1' });
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      // The refresh get failed on a dropped socket; the landing event is gone,
+      // so nothing else would retry without the one-shot marker.
+      expect(result.current.content).toBe('draft');
+      // The next connection transition retries once and adopts.
+      await act(async () => {
+        connectionState.value = 'disconnected';
+        connectionState.value = 'connected';
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('draft voice');
+      const saves = mockHub.request.mock.calls.filter(
+        ([m, d]) => m === 'session.update' && d?.metadata?.inputDraft === 'draft voice'
+      );
+      expect(saves.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('keeps the adopted composition and re-issues it debounced when the immediate save rejects', async () => {
+      let gets = 0;
+      let compositionSaveFailed = false;
+      mockHub.request.mockImplementation(
+        async (method: string, data?: { metadata?: { inputDraft?: string } }) => {
+          if (method === 'session.get') {
+            gets += 1;
+            return {
+              session: { metadata: { inputDraft: gets === 1 ? '' : 'composed draft' } },
+            };
+          }
+          if (method === 'session.update' && data?.metadata?.inputDraft === 'composed draft') {
+            if (!compositionSaveFailed) {
+              compositionSaveFailed = true;
+              throw new Error('transient');
+            }
+          }
+          return { success: true };
+        }
+      );
+      connectionState.value = 'connected';
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      const listener = captureListener();
+      act(() => {
+        listener({ sessionId: 'session-1' }, { channel: 'session:session-1' });
+      });
+      // Microtask flush: the adoption applied and its IMMEDIATE save was
+      // issued (and rejected — swallowed).
+      await act(async () => {
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+      });
+      expect(result.current.content).toBe('composed draft');
+      // The debounced save effect re-arms for the adopted value and re-issues
+      // it — the recovery the catch comment claims.
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      const saves = mockHub.request.mock.calls.filter(
+        ([m, d]) => m === 'session.update' && d?.metadata?.inputDraft === 'composed draft'
+      );
+      expect(saves.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('skips a due debounced save whose armed value the signal has advanced past', async () => {
+      // The timer-skip arm of the stale-save defense, in isolation (no
+      // adoption involved): a timer armed for D1 comes due after the signal
+      // moved to D2, inside the frame gap before the cancelling effect runs
+      // — the hidden-tab deterministic shape.
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return { session: { metadata: { inputDraft: '' } } };
+        }
+        return { success: true };
+      });
+      connectionState.value = 'connected';
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1', 20));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      act(() => {
+        result.current.setContent('first text');
+      });
+      // Let the effect arm the debounced save for the first text (due +20ms).
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      // Replace the signal and let the armed timer come due inside the SAME
+      // act — the effect run that would cancel it is deferred to act end.
+      await act(async () => {
+        result.current.setContent('second text');
+        await vi.advanceTimersByTimeAsync(30);
+      });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      const updates = mockHub.request.mock.calls
+        .filter(([m]) => m === 'session.update')
+        .map(([, d]) => d?.metadata?.inputDraft);
+      expect(updates).not.toContain('first text');
+      expect(updates).toContain('second text');
+    });
+
+    it('never clobbers typing that began while the initial load was in flight', async () => {
+      // The initial load's resolve-time applyGuard in isolation: keystrokes
+      // typed during the mount-time get survive its resolution, and no
+      // clobbering save of the stale server draft is ever issued.
+      const pendingResolvers: Array<(v: unknown) => void> = [];
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          return new Promise((resolve) => {
+            pendingResolvers.push(resolve);
+          });
+        }
+        return { success: true };
+      });
+      connectionState.value = 'connected';
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result } = renderHook(() => useInputDraft('session-1'));
+      // The mount-time get hangs; the user types.
+      act(() => {
+        result.current.setContent('fresh keystrokes');
+      });
+      await act(async () => {
+        pendingResolvers[0]?.({ session: { metadata: { inputDraft: 'server draft' } } });
+        await vi.runAllTimersAsync();
+      });
+      expect(result.current.content).toBe('fresh keystrokes');
+      const updates = mockHub.request.mock.calls
+        .filter(([m]) => m === 'session.update')
+        .map(([, d]) => d?.metadata?.inputDraft);
+      expect(updates).not.toContain('server draft');
+      expect(updates).toContain('fresh keystrokes');
+    });
+    it('does not flush a stale pre-adoption draft over the adoption save on session switch', async () => {
+      // NOTE: keep this test LAST in the describe. Its rerender-inside-act
+      // (required to switch sessions before the deferred save effect runs —
+      // the very interleave under test) leaves preact test-utils' act rAF
+      // restore wedged, which breaks signal-effect scheduling for any test
+      // that follows in the same file.
+      // The adoption records the adopted composition as the session's
+      // last-seen content BEFORE the immediate save: a session switch in the
+      // frame before the deferred save effect runs must flush the ADOPTED
+      // value, never the stale pre-adoption draft the switch-flush branch
+      // would otherwise read.
+      let gets = 0;
+      mockHub.request.mockImplementation(async (method: string) => {
+        if (method === 'session.get') {
+          gets += 1;
+          return {
+            session: {
+              metadata: { inputDraft: gets === 1 ? 'plain draft' : 'plain draft voice' },
+            },
+          };
+        }
+        return { success: true };
+      });
+      connectionState.value = 'connected';
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+      const { result, rerender } = renderHook(({ id }) => useInputDraft(id), {
+        initialProps: { id: 'session-1' },
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(result.current.content).toBe('plain draft');
+      const listener = captureListener();
+      // Adopt, then switch BEFORE the deferred save effect runs — all inside
+      // one act so the effect flush happens after the switch.
+      await act(async () => {
+        listener({ sessionId: 'session-1' }, { channel: 'session:session-1' });
+        await vi.advanceTimersByTimeAsync(0);
+        rerender({ id: 'session-2' });
+        await vi.runAllTimersAsync();
+      });
+      const s1Updates = mockHub.request.mock.calls
+        .filter(([m, d]) => m === 'session.update' && d?.sessionId === 'session-1')
+        .map(([, d]) => d?.metadata?.inputDraft);
+      const adoptedAt = s1Updates.indexOf('plain draft voice');
+      expect(adoptedAt).toBeGreaterThanOrEqual(0);
+      expect(s1Updates.slice(adoptedAt + 1)).not.toContain('plain draft');
+    });
   });
 });
