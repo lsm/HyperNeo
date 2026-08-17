@@ -228,10 +228,13 @@ describe('QueryRunner startup gate', () => {
         build: async () => ({ model: 'claude-sonnet-4-20250514' }),
         addSessionStateOptions: (options: unknown) => options,
         setCanUseTool: () => {},
+        setAskUserQuestionHook: () => {},
+        getDeferredPermissionMode: () => undefined,
         getEffectiveMcpServers: () => ({}),
       } as unknown as QueryOptionsBuilder,
       askUserQuestionHandler: {
         createCanUseToolCallback: () => async () => true,
+        createPreToolUseHook: () => async () => ({}),
       } as unknown as AskUserQuestionHandler,
       messageHandler: {} as unknown as SDKMessageHandler,
 

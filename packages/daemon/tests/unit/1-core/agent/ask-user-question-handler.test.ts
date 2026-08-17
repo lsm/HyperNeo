@@ -220,6 +220,160 @@ describe('AskUserQuestionHandler', () => {
     });
   });
 
+  describe('createPreToolUseHook', () => {
+    // The PreToolUse hook is the PRIMARY AskUserQuestion interception channel:
+    // the CLI invokes it in every permission mode — including
+    // bypassPermissions, where the canUseTool callback is shadowed by
+    // auto-approval — and an allow decision carrying updatedInput with the
+    // answers satisfies the tool's user-interaction requirement.
+    const askInput = {
+      questions: [
+        {
+          question: 'What is your favorite color?',
+          header: 'Color',
+          options: [
+            { label: 'Red', description: 'Red' },
+            { label: 'Blue', description: 'Blue' },
+          ],
+          multiSelect: false,
+        },
+      ],
+    };
+
+    function preToolUseInput(toolName: string, toolUseId: string) {
+      return {
+        hook_event_name: 'PreToolUse',
+        tool_name: toolName,
+        tool_input: toolName === 'AskUserQuestion' ? askInput : { command: 'ls' },
+        tool_use_id: toolUseId,
+      };
+    }
+
+    it('intercepts AskUserQuestion, waits for the user, and resolves with an allow+answers envelope', async () => {
+      const hook = handler.createPreToolUseHook();
+
+      const resultPromise = hook(preToolUseInput('AskUserQuestion', 'hook-tool-1'), 'hook-tool-1', {
+        signal: new AbortController().signal,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Question surfaced to the UI
+      expect(setWaitingForInputSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ toolUseId: 'hook-tool-1' })
+      );
+      expect(emitSpy).toHaveBeenCalledWith('question.asked', expect.any(Object));
+
+      // User answers; the hook resolves with the hook-shaped envelope
+      await handler.handleQuestionResponse('hook-tool-1', [
+        { questionIndex: 0, selectedLabels: ['Blue'] },
+      ]);
+
+      const result = (await resultPromise) as {
+        hookSpecificOutput: {
+          hookEventName: string;
+          permissionDecision: string;
+          updatedInput?: Record<string, unknown>;
+        };
+      };
+      expect(result.hookSpecificOutput.hookEventName).toBe('PreToolUse');
+      expect(result.hookSpecificOutput.permissionDecision).toBe('allow');
+      expect(result.hookSpecificOutput.updatedInput).toEqual(
+        expect.objectContaining({
+          answers: { 'What is your favorite color?': 'Blue' },
+        })
+      );
+      expect(setProcessingSpy).toHaveBeenCalledWith('hook-tool-1', 'streaming');
+    });
+
+    it('resolves with a deny envelope carrying the cancellation reason when the user skips', async () => {
+      const hook = handler.createPreToolUseHook();
+
+      const resultPromise = hook(preToolUseInput('AskUserQuestion', 'hook-tool-2'), 'hook-tool-2', {
+        signal: new AbortController().signal,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await handler.handleQuestionCancel('hook-tool-2');
+
+      const result = (await resultPromise) as {
+        hookSpecificOutput: { permissionDecision: string; permissionDecisionReason?: string };
+      };
+      expect(result.hookSpecificOutput.permissionDecision).toBe('deny');
+      expect(result.hookSpecificOutput.permissionDecisionReason).toContain('cancelled');
+    });
+
+    it('passes non-AskUserQuestion tools through without touching state', async () => {
+      const hook = handler.createPreToolUseHook();
+
+      const result = (await hook(preToolUseInput('Bash', 'hook-tool-3'), 'hook-tool-3', {
+        signal: new AbortController().signal,
+      })) as Record<string, unknown>;
+
+      expect(result).toEqual({});
+      expect(setWaitingForInputSpy).not.toHaveBeenCalled();
+      expect(emitSpy).not.toHaveBeenCalled();
+    });
+
+    it('ignores non-PreToolUse events', async () => {
+      const hook = handler.createPreToolUseHook();
+
+      const result = (await hook(
+        { hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion' },
+        undefined,
+        { signal: new AbortController().signal }
+      )) as Record<string, unknown>;
+
+      expect(result).toEqual({});
+      expect(setWaitingForInputSpy).not.toHaveBeenCalled();
+    });
+
+    it('consumes a queued answer without re-prompting (restart-survival fast path)', async () => {
+      // Post-restart: the persisted question was answered while no live SDK
+      // query existed, so the answer sits in queuedAnswers. When the resumed
+      // SDK re-issues AskUserQuestion, the hook must return it immediately.
+      const pendingQuestion: PendingUserQuestion = {
+        toolUseId: 'hook-replay',
+        questions: [
+          {
+            question: 'Pick?',
+            header: 'P',
+            options: [{ label: 'A', description: 'A' }],
+            multiSelect: false,
+          },
+        ],
+        askedAt: Date.now(),
+      };
+      currentState = { status: 'waiting_for_input', pendingQuestion };
+      await handler.handleQuestionResponse('hook-replay', [
+        { questionIndex: 0, selectedLabels: ['A'] },
+      ]);
+
+      currentState = { status: 'idle' };
+      emitSpy.mockClear();
+      setWaitingForInputSpy.mockClear();
+
+      const hook = handler.createPreToolUseHook();
+      const result = (await hook(preToolUseInput('AskUserQuestion', 'hook-replay'), 'hook-replay', {
+        signal: new AbortController().signal,
+      })) as {
+        hookSpecificOutput: { permissionDecision: string; updatedInput?: Record<string, unknown> };
+      };
+
+      // No re-prompt — the queued answer came straight back
+      expect(setWaitingForInputSpy).not.toHaveBeenCalled();
+      expect(result.hookSpecificOutput.permissionDecision).toBe('allow');
+      expect(result.hookSpecificOutput.updatedInput).toEqual(
+        expect.objectContaining({ answers: { 'Pick?': 'A' } })
+      );
+      expect(emitSpy).toHaveBeenCalledWith(
+        'question.injected_as_tool_result',
+        expect.objectContaining({ toolUseId: 'hook-replay', viaCanUseTool: true })
+      );
+      expect(handler.getQueuedAnswersForTesting().has('hook-replay')).toBe(false);
+    });
+  });
+
   describe('handleQuestionResponse', () => {
     it('should throw when not waiting for input', async () => {
       currentState = { status: 'idle' };

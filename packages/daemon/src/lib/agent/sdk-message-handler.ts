@@ -1357,8 +1357,9 @@ export class SDKMessageHandler {
   /**
    * Handle assistant message (track tool calls)
    *
-   * NOTE: AskUserQuestion is now handled via the canUseTool callback in
-   * AskUserQuestionHandler, not here. The SDK intercepts it BEFORE execution.
+   * NOTE: AskUserQuestion is now handled via the PreToolUse hook (and the
+   * canUseTool callback as legacy/ACP fallback) in AskUserQuestionHandler,
+   * not here. The SDK intercepts it BEFORE execution.
    */
   private async handleAssistantMessage(message: SDKMessage): Promise<void> {
     const { session, db, internalEventBus } = this.ctx;

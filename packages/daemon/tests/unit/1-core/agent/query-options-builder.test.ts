@@ -107,12 +107,13 @@ describe('QueryOptionsBuilder', () => {
       mockSession.config.permissionMode = 'acceptEdits';
       const options = await builder.build();
       expect(options.permissionMode).toBe('acceptEdits');
+      expect(options.allowDangerouslySkipPermissions).toBe(false);
+      expect(builder.getDeferredPermissionMode()).toBeUndefined();
     });
 
     it('should set allowDangerouslySkipPermissions when bypassPermissions', async () => {
       mockSession.config.permissionMode = 'bypassPermissions';
       const options = await builder.build();
-      expect(options.permissionMode).toBe('bypassPermissions');
       expect(options.allowDangerouslySkipPermissions).toBe(true);
     });
 
@@ -651,6 +652,79 @@ describe('QueryOptionsBuilder', () => {
       const options = await builder.build();
       expect(options.canUseTool).toBe(callback);
     });
+
+    it('keeps canUseTool under default-config bypass (AskUserQuestion exposure depends on it)', async () => {
+      // No permissionMode configured anywhere → Layer-3 default is
+      // bypassPermissions. canUseTool must STILL be passed: the CLI only
+      // exposes the AskUserQuestion tool when a prompting surface is
+      // registered, and the PreToolUse hook (not canUseTool) delivers the
+      // answers, so the shadowed-callback warning no longer applies.
+      const callback = mock(async () => ({ behavior: 'allow' as const }));
+      builder.setCanUseTool(callback);
+
+      const options = await builder.build();
+      expect(options.canUseTool).toBe(callback);
+    });
+  });
+
+  describe('setAskUserQuestionHook', () => {
+    it('registers an AskUserQuestion PreToolUse hook with an effectively unbounded timeout', async () => {
+      const hook: import('@anthropic-ai/claude-agent-sdk').HookCallback = async () => ({});
+      builder.setAskUserQuestionHook(hook);
+
+      const options = await builder.build();
+      const auqEntry = options.hooks?.PreToolUse?.find((e) => e.matcher === 'AskUserQuestion');
+      expect(auqEntry).toBeDefined();
+      expect(auqEntry?.hooks[0]).toBe(hook);
+      // The hook legitimately waits for a human answer — matching the
+      // unbounded wait the canUseTool channel always had.
+      expect(auqEntry?.timeout).toBe(86400);
+    });
+
+    it('does not register the hook when unset (existing hook-count tests keep their shape)', async () => {
+      const options = await builder.build();
+      expect(options.hooks?.PreToolUse?.some((e) => e.matcher === 'AskUserQuestion')).toBe(false);
+    });
+  });
+
+  describe('deferred bypassPermissions (CLAUDE_SDK_CAN_USE_TOOL_SHADOWED)', () => {
+    it('withholds permissionMode + allowedTools under the default config and defers the switch', async () => {
+      // No permissionMode in session config or global settings mock → the
+      // effective mode is bypassPermissions. The builder must NOT put that
+      // mode in the options: the SDK client emits
+      // CLAUDE_SDK_CAN_USE_TOOL_SHADOWED at intake when canUseTool is set and
+      // the mode is bypassPermissions (or bare allowedTools entries exist).
+      // The query runner applies the real mode via setPermissionMode() right
+      // after the query starts.
+      mockSession.config.allowedTools = ['Bash', 'Read'];
+      const options = await builder.build();
+
+      expect(options.permissionMode).toBeUndefined();
+      expect(options.allowedTools).toBeUndefined();
+      expect(options.allowDangerouslySkipPermissions).toBe(true);
+      expect(builder.getDeferredPermissionMode()).toBe('bypassPermissions');
+    });
+
+    it('maps an explicit default permissionMode to the deferred bypass path', async () => {
+      mockSession.config.permissionMode = 'default';
+      const options = await builder.build();
+
+      expect(options.permissionMode).toBeUndefined();
+      expect(builder.getDeferredPermissionMode()).toBe('bypassPermissions');
+    });
+
+    it('clears the deferred mode when a rebuild sees a non-bypass mode', async () => {
+      // The builder is long-lived (one per AgentSession) and build() runs on
+      // every spawn; a runtime permission-mode change must reset the deferral.
+      mockSession.config.permissionMode = 'bypassPermissions';
+      await builder.build();
+      expect(builder.getDeferredPermissionMode()).toBe('bypassPermissions');
+
+      mockSession.config.permissionMode = 'acceptEdits';
+      const options = await builder.build();
+      expect(options.permissionMode).toBe('acceptEdits');
+      expect(builder.getDeferredPermissionMode()).toBeUndefined();
+    });
   });
 
   describe('addSessionStateOptions', () => {
@@ -1076,6 +1150,8 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('should include allowedTools when configured', async () => {
+      // Non-bypass mode: the allowlist flows through to the SDK options.
+      mockSession.config.permissionMode = 'acceptEdits';
       mockSession.config.allowedTools = ['Bash', 'Read'];
       const options = await builder.build();
       expect(options.allowedTools).toEqual(['Bash', 'Read']);
@@ -1137,7 +1213,10 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('should enforce space built-in tool allowlist including Bash and subagents', async () => {
+      // acceptEdits so the allowlist reaches the SDK options (default-config
+      // bypass sessions omit allowedTools — see the deferred-bypass tests).
       mockSession.type = 'space_chat';
+      mockSession.config.permissionMode = 'acceptEdits';
       const options = await builder.build();
       expect(options.tools).toEqual([
         'Read',
@@ -1171,6 +1250,27 @@ describe('QueryOptionsBuilder', () => {
       );
     });
 
+    it('omits the space chat allowlist under bypassPermissions (allow rules are inert there)', async () => {
+      // Default config resolves to bypassPermissions, and bypass sessions do
+      // not send allowedTools: allow rules are inert under bypass (everything
+      // auto-approves except deny rules) and their bare entries would trigger
+      // CLAUDE_SDK_CAN_USE_TOOL_SHADOWED at SDK options intake. The mode
+      // itself is deferred to query.setPermissionMode() post-start.
+      mockSession.type = 'space_chat';
+      mockSession.config.mcpServers = {
+        'space-agent-tools': { command: 'space-cmd' },
+      };
+      const options = await builder.build();
+
+      expect(options.allowedTools).toBeUndefined();
+      expect(options.permissionMode).toBeUndefined();
+      expect(builder.getDeferredPermissionMode()).toBe('bypassPermissions');
+      // Deny rules stay — they are honored even under bypass.
+      expect(options.disallowedTools).toEqual(
+        expect.arrayContaining(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
+      );
+    });
+
     it('should keep file editing tools disallowed while allowing subagents', async () => {
       mockSession.type = 'space_chat';
       const options = await builder.build();
@@ -1187,7 +1287,10 @@ describe('QueryOptionsBuilder', () => {
       // The long-horizon coordinator runs in the space:chat session. Its config
       // carries the curated 24-tool preset (set at provisioning); the builder
       // must let it flow through rather than overwriting with the restricted list.
+      // acceptEdits so the allowlist reaches the SDK options (default-config
+      // bypass sessions omit allowedTools — see the deferred-bypass tests).
       mockSession.type = 'space_chat';
+      mockSession.config.permissionMode = 'acceptEdits';
       mockSession.config.sdkToolsPreset = [...LONG_HORIZON_AGENT_BUILTIN_TOOLS];
       const options = await builder.build();
 
@@ -1223,7 +1326,10 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('should auto-allow wildcards for all configured space MCP servers', async () => {
+      // acceptEdits so the wildcard allowlist reaches the SDK options
+      // (default-config bypass sessions omit allowedTools).
       mockSession.type = 'space_chat';
+      mockSession.config.permissionMode = 'acceptEdits';
       mockSession.config.mcpServers = {
         'space-agent-tools': { command: 'space-cmd' },
         'db-query': { command: 'db-cmd' },
@@ -1380,15 +1486,21 @@ describe('QueryOptionsBuilder', () => {
       expect(options.permissionMode).toBe('prompt');
     });
 
-    it('should default to bypassPermissions', async () => {
+    it('should default to bypassPermissions (deferred to post-start switch)', async () => {
+      // The bypass mode is withheld from the options and applied via
+      // query.setPermissionMode() after the query starts, so the SDK does not
+      // warn that canUseTool is shadowed while AskUserQuestion handling moved
+      // to the PreToolUse hook. See the deferred bypassPermissions describe.
       const options = await builder.build();
-      expect(options.permissionMode).toBe('bypassPermissions');
+      expect(options.permissionMode).toBeUndefined();
+      expect(builder.getDeferredPermissionMode()).toBe('bypassPermissions');
     });
 
-    it('should map default to bypassPermissions', async () => {
+    it('should map default to bypassPermissions (deferred)', async () => {
       mockSession.config.permissionMode = 'default';
       const options = await builder.build();
-      expect(options.permissionMode).toBe('bypassPermissions');
+      expect(options.permissionMode).toBeUndefined();
+      expect(builder.getDeferredPermissionMode()).toBe('bypassPermissions');
     });
   });
 
@@ -1951,6 +2063,9 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('should set allowedTools for all tools in coordinator mode', async () => {
+      // dontAsk is the mode this allowlist exists for; under bypass the
+      // allowlist is inert and withheld (see the deferred-bypass tests).
+      mockSession.config.permissionMode = 'dontAsk';
       mockSession.config.coordinatorMode = true;
       const options = await builder.build();
 
@@ -2464,6 +2579,9 @@ describe('QueryOptionsBuilder', () => {
         getEnabledSkills: mock(() => [enabledSkills[1]]),
       };
       mockSession.type = 'space_chat';
+      // acceptEdits so the wildcard allowlist reaches the options —
+      // default-config bypass sessions omit allowedTools (deferred bypass).
+      mockSession.config.permissionMode = 'acceptEdits';
       mockSession.config.mcpServers = {
         'space-agent-tools': { command: 'space-cmd' },
       };
@@ -3548,6 +3666,10 @@ describe('QueryOptionsBuilder', () => {
   describe('regression: Skill, WebSearch, WebFetch tool availability (Task 7.1)', () => {
     beforeEach(() => {
       mockSession.type = 'space_chat';
+      // acceptEdits so the allowlist assertions exercise the construction
+      // path — default-config bypass sessions omit allowedTools (deferred
+      // bypass; allow rules are inert there).
+      mockSession.config.permissionMode = 'acceptEdits';
     });
 
     it('space_chat sessions include WebSearch in tools list', async () => {

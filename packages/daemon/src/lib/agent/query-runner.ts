@@ -636,6 +636,7 @@ export class QueryRunner {
 
       // Build query options
       optionsBuilder.setCanUseTool(this.ctx.askUserQuestionHandler.createCanUseToolCallback());
+      optionsBuilder.setAskUserQuestionHook(this.ctx.askUserQuestionHandler.createPreToolUseHook());
       let queryOptions = await optionsBuilder.build();
 
       // Side-channel: propagate the session's effective thinking level to providers
@@ -893,6 +894,26 @@ export class QueryRunner {
         options: queryOptions,
       });
       this.ctx.queryObject = queryObject;
+
+      // Apply the deferred bypassPermissions switch. `build()` withheld the
+      // mode from the options (see QueryOptionsBuilder.getDeferredPermissionMode)
+      // so the SDK does not warn that canUseTool is shadowed — canUseTool must
+      // stay registered for the CLI to expose the AskUserQuestion tool, and the
+      // PreToolUse hook delivers the answers. The control request queues behind
+      // the initialize handshake, so the session runs the real mode from its
+      // first turn. Fire-and-forget: if the switch fails the session keeps the
+      // intake default ('default' mode) where canUseTool's allow-all fallback
+      // preserves effectively identical tool behavior.
+      const deferredPermissionMode = optionsBuilder.getDeferredPermissionMode();
+      if (deferredPermissionMode && queryObject.setPermissionMode) {
+        void queryObject.setPermissionMode(deferredPermissionMode).catch((err) => {
+          logger.warn(
+            `QueryRunner.start: failed to apply deferred permission mode ` +
+              `'${deferredPermissionMode}' for session ${session.id}: ` +
+              `${err instanceof Error ? err.message : String(err)}`
+          );
+        });
+      }
 
       // Drain any MCP-server change that arrived during startup. Streaming-input
       // queries run once per session (start() is a no-op while the message queue

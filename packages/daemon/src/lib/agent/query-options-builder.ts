@@ -414,6 +414,13 @@ export interface QueryOptionsBuilderContext {
 
 export class QueryOptionsBuilder {
   private canUseTool?: CanUseTool;
+  private askUserQuestionHook?: HookCallback;
+  /**
+   * Permission mode that must be applied AFTER query start via
+   * `query.setPermissionMode()` rather than at options intake. See the
+   * bypassPermissions block in `build()`.
+   */
+  private deferredPermissionMode?: PermissionMode;
   private readonly logger = new Logger('QueryOptionsBuilder');
 
   constructor(private ctx: QueryOptionsBuilderContext) {}
@@ -424,6 +431,35 @@ export class QueryOptionsBuilder {
    */
   setCanUseTool(callback: CanUseTool): void {
     this.canUseTool = callback;
+  }
+
+  /**
+   * Set the PreToolUse hook that intercepts AskUserQuestion. Registered in
+   * `buildHooks()` for every permission mode — under `bypassPermissions` the
+   * canUseTool callback is shadowed by auto-approval, so the hook is the only
+   * channel that can surface questions and deliver answers there.
+   */
+  setAskUserQuestionHook(hook: HookCallback): void {
+    this.askUserQuestionHook = hook;
+  }
+
+  /**
+   * Permission mode (if any) that `build()` deliberately withheld from the SDK
+   * options and deferred to a post-start `query.setPermissionMode()` call.
+   *
+   * For `bypassPermissions` sessions the SDK client emits
+   * `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED` at options intake when `canUseTool` is
+   * present — yet canUseTool must stay registered, because the CLI only
+   * exposes the AskUserQuestion tool to the model when a prompting surface
+   * exists (empirically verified against SDK 0.3.233: without canUseTool the
+   * CLI strips AskUserQuestion from the tool list under bypass, so the model
+   * cannot ask structured questions at all). Omitting `permissionMode` at
+   * intake and switching right after the query starts keeps BOTH: no shadow
+   * warning, and AskUserQuestion handled by the PreToolUse hook in true
+   * bypass mode.
+   */
+  getDeferredPermissionMode(): PermissionMode | undefined {
+    return this.deferredPermissionMode;
   }
 
   /**
@@ -769,6 +805,30 @@ export class QueryOptionsBuilder {
       providerId,
       this.ctx.session.type ?? 'worker'
     );
+
+    // ============ Deferred bypassPermissions ============
+    // The SDK client warns `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED` at options
+    // intake whenever canUseTool is set and the permission mode is
+    // bypassPermissions (or bare allowedTools entries exist). Under bypass the
+    // callback really is shadowed — auto-approval never consults it — but we
+    // must KEEP passing canUseTool: the CLI only exposes the AskUserQuestion
+    // tool to the model when a prompting surface is registered (verified
+    // empirically against SDK 0.3.233 — allowedTools/tools overrides do not
+    // re-enable it). So for bypass sessions we withhold `permissionMode` from
+    // the options entirely (no warning; mode is 'default' for the fraction of
+    // a second before the switch) and the query runner applies the real mode
+    // via `query.setPermissionMode('bypassPermissions')` right after the
+    // query starts. `allowedTools` is withheld too: allow rules are inert
+    // under bypass (everything is auto-approved except deny rules, which live
+    // in disallowedTools and stay), and their bare entries would trigger the
+    // same shadow warning for space_chat/coordinator sessions.
+    if (permissionMode === 'bypassPermissions') {
+      delete queryOptions.permissionMode;
+      delete queryOptions.allowedTools;
+      this.deferredPermissionMode = 'bypassPermissions';
+    } else {
+      this.deferredPermissionMode = undefined;
+    }
 
     // Remove undefined values to use SDK defaults
     const cleanedOptions = Object.fromEntries(
@@ -1381,6 +1441,22 @@ CRITICAL RULES:
   private buildHooks(): Options['hooks'] {
     const hooks: NonNullable<Options['hooks']> = {};
     const preToolUse: NonNullable<Options['hooks']>['PreToolUse'] = [];
+
+    // AskUserQuestion interception (first in the chain). The CLI runs
+    // PreToolUse hooks in every permission mode — including
+    // bypassPermissions, where canUseTool is shadowed by auto-approval — so
+    // this is the channel that keeps interactive questions working under the
+    // default configuration. The matcher restricts invocation to
+    // AskUserQuestion; the timeout is effectively unbounded because the hook
+    // legitimately waits for a human answer (same semantics the canUseTool
+    // channel always had).
+    if (this.askUserQuestionHook) {
+      preToolUse.push({
+        matcher: 'AskUserQuestion',
+        timeout: 86400,
+        hooks: [this.askUserQuestionHook],
+      });
+    }
 
     // Loop detector: NO matcher — the hooks must observe every tool call
     // so that untracked tools (Edit, Write, …) can serve as the

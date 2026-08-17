@@ -54,9 +54,12 @@ describe('QueryRunner', () => {
   let getSDKMessagesSpy: ReturnType<typeof mock>;
   let updateMessageStatusSpy: ReturnType<typeof mock>;
   let buildSpy: ReturnType<typeof mock>;
+  let setAskUserQuestionHookSpy: ReturnType<typeof mock>;
+  let getDeferredPermissionModeSpy: ReturnType<typeof mock>;
   let addSessionStateOptionsSpy: ReturnType<typeof mock>;
   let setCanUseToolSpy: ReturnType<typeof mock>;
   let createCanUseToolCallbackSpy: ReturnType<typeof mock>;
+  let createPreToolUseHookSpy: ReturnType<typeof mock>;
   let enqueueWithIdSpy: ReturnType<typeof mock>;
 
   // State variables (mutable context properties)
@@ -189,16 +192,22 @@ describe('QueryRunner', () => {
     buildSpy = mock(async () => ({ model: 'claude-sonnet-4-20250514' }));
     addSessionStateOptionsSpy = mock((options: unknown) => options);
     setCanUseToolSpy = mock(() => {});
+    setAskUserQuestionHookSpy = mock(() => {});
+    getDeferredPermissionModeSpy = mock(() => undefined);
     mockOptionsBuilder = {
       build: buildSpy,
       addSessionStateOptions: addSessionStateOptionsSpy,
       setCanUseTool: setCanUseToolSpy,
+      setAskUserQuestionHook: setAskUserQuestionHookSpy,
+      getDeferredPermissionMode: getDeferredPermissionModeSpy,
     } as unknown as QueryOptionsBuilder;
 
     // AskUserQuestionHandler spies
     createCanUseToolCallbackSpy = mock(() => async () => true);
+    createPreToolUseHookSpy = mock(() => async () => ({}));
     mockAskUserQuestionHandler = {
       createCanUseToolCallback: createCanUseToolCallbackSpy,
+      createPreToolUseHook: createPreToolUseHookSpy,
     } as unknown as AskUserQuestionHandler;
   });
 

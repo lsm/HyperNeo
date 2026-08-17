@@ -1,16 +1,35 @@
 /**
- * AskUserQuestionHandler - Handles the AskUserQuestion tool via canUseTool callback
+ * AskUserQuestionHandler - Handles the AskUserQuestion tool
  *
  * Extracted from AgentSession to reduce complexity.
  * Takes AgentSession instance directly - handlers are internal parts of AgentSession.
  *
- * The Claude Agent SDK expects AskUserQuestion to be handled via the `canUseTool`
- * callback, NOT via tool_result messages through streaming input. This handler:
+ * The interception is exposed through TWO delivery channels, both backed by the
+ * same core flow:
  *
- * 1. Intercepts AskUserQuestion in the canUseTool callback
- * 2. Transitions the agent to waiting_for_input state
- * 3. Stores a Promise that waits for user input
- * 4. When user responds via RPC, resolves the Promise with formatted answers
+ * 1. `createPreToolUseHook()` — a PreToolUse hook callback registered in SDK
+ *    options. This is the PRIMARY channel: the CLI invokes PreToolUse hooks in
+ *    every permission mode (including `bypassPermissions`), and a hook result
+ *    carrying `updatedInput` with answers satisfies the tool's user-interaction
+ *    requirement directly ("Hook satisfied user interaction for <tool> via
+ *    updatedInput, bypassing permission prompt"). Empirically verified against
+ *    SDK 0.3.233: under bypassPermissions the hook fires, its
+ *    allow+updatedInput is honored, and canUseTool is never consulted for
+ *    AskUserQuestion.
+ * 2. `createCanUseToolCallback()` — the legacy canUseTool callback. Under
+ *    `bypassPermissions` the SDK auto-approves tool calls before consulting
+ *    canUseTool (warning `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`), so this channel
+ *    alone silently dropped AskUserQuestion handling in default-config
+ *    sessions. It is still used by non-bypass modes as a fallback and —
+ *    crucially — by the ACP query runner, which invokes the callback directly
+ *    on ACP permission requests.
+ *
+ * Core flow (shared by both channels):
+ *
+ * 1. Intercept the AskUserQuestion call
+ * 2. Transition the agent to waiting_for_input state
+ * 3. Store a Promise that waits for user input
+ * 4. When user responds via RPC, resolve the Promise with formatted answers
  * 5. The SDK automatically continues with the answers
  *
  * ## Restart-survival path (task #138)
@@ -28,7 +47,7 @@
  *   `ensureQueryStarted()`. The SDK resumes the conversation with the answer
  *   delivered as a normal `tool_result` user message.
  * - On the chance the SDK re-issues the AskUserQuestion call after resume,
- *   `createCanUseToolCallback` consults `queuedAnswers` first and returns the
+ *   the interception core consults `queuedAnswers` first and returns the
  *   queued result immediately without re-prompting the user.
  *
  * ## Orphan cleanup
@@ -49,7 +68,12 @@ import type {
 } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
-import type { CanUseTool, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  CanUseTool,
+  HookCallback,
+  PermissionResult,
+  PreToolUseHookInput,
+} from '@anthropic-ai/claude-agent-sdk';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { MessageQueue } from './message-queue';
 import { Logger } from '../logger';
@@ -122,10 +146,142 @@ export class AskUserQuestionHandler {
   }
 
   /**
+   * Core interception shared by the canUseTool callback and the PreToolUse
+   * hook: prompt the user for an AskUserQuestion call and wait for their
+   * answer. Resolves with the SDK-agnostic {@link PermissionResult}; each
+   * delivery channel maps it to its own envelope shape.
+   */
+  private async interceptAskUserQuestion(
+    toolUseID: string,
+    input: Record<string, unknown>
+  ): Promise<PermissionResult> {
+    const { session, stateManager, internalEventBus } = this.ctx;
+
+    // Restart-survival fast path: if a queued answer is waiting for this
+    // toolUseId, resolve immediately and skip the user prompt entirely.
+    const queued = this.queuedAnswers.get(toolUseID);
+    if (queued) {
+      this.queuedAnswers.delete(toolUseID);
+      // If the queued PermissionResult was an `allow`, the SDK expects
+      // updatedInput to include the original input fields plus answers.
+      // Patch in any missing fields from the live `input` so we don't
+      // drop required schema fields just because the resolver was lost.
+      const merged: PermissionResult =
+        queued.behavior === 'allow'
+          ? {
+              behavior: 'allow',
+              updatedInput: { ...input, ...queued.updatedInput },
+            }
+          : queued;
+      this.logger.info(
+        `AskUserQuestion ${toolUseID}: consuming queued answer (behavior=${queued.behavior})`
+      );
+      await internalEventBus.publish('question.injected_as_tool_result', {
+        sessionId: session.id,
+        toolUseId: toolUseID,
+        mode: queued.behavior === 'allow' ? 'submitted' : 'cancelled',
+        viaCanUseTool: true,
+      });
+      return merged;
+    }
+
+    const askInput = input as unknown as AskUserQuestionInput;
+
+    // Build the pending question structure for UI
+    // Use the SDK's toolUseID for consistency
+    const pendingQuestion: PendingUserQuestion = {
+      toolUseId: toolUseID,
+      questions: askInput.questions.map((q) => ({
+        question: q.question,
+        header: q.header,
+        options: q.options.map((o) => ({
+          label: o.label,
+          description: o.description,
+        })),
+        multiSelect: q.multiSelect,
+      })),
+      askedAt: Date.now(),
+    };
+
+    // Transition to waiting_for_input state
+    // This will persist to DB and broadcast to clients
+    await stateManager.setWaitingForInput(pendingQuestion);
+
+    // Emit event for logging/debugging
+    await internalEventBus.publish('question.asked', {
+      sessionId: session.id,
+      pendingQuestion,
+    });
+
+    // Return a Promise that waits for user input
+    return new Promise<PermissionResult>((resolve, reject) => {
+      // Store the resolver so handleQuestionResponse can complete it
+      this.pendingResolver = {
+        toolUseId: toolUseID,
+        input,
+        resolve,
+        reject,
+      };
+    });
+  }
+
+  /**
+   * Create the PreToolUse hook callback that intercepts AskUserQuestion.
+   *
+   * This is the PRIMARY interception channel. The CLI runs PreToolUse hooks
+   * in every permission mode — including `bypassPermissions`, where the
+   * canUseTool callback is shadowed by auto-approval — and an `allow`
+   * decision carrying `updatedInput` with answers satisfies the tool's
+   * user-interaction requirement, so the answers flow back to the model
+   * without any permission prompt.
+   *
+   * Register with `matcher: 'AskUserQuestion'` in the SDK options (the
+   * builder does this in `buildHooks()`); the callback still guards on
+   * `tool_name` in case it is invoked without a matcher.
+   */
+  createPreToolUseHook(): HookCallback {
+    return async (input) => {
+      // Only intercept the AskUserQuestion tool; everything else passes
+      // through untouched (permission mode rules decide those).
+      if (
+        (input as PreToolUseHookInput).hook_event_name !== 'PreToolUse' ||
+        (input as PreToolUseHookInput).tool_name !== 'AskUserQuestion'
+      ) {
+        return {};
+      }
+
+      const preInput = input as PreToolUseHookInput;
+      const result = await this.interceptAskUserQuestion(
+        preInput.tool_use_id,
+        (preInput.tool_input ?? {}) as Record<string, unknown>
+      );
+
+      if (result.behavior === 'allow') {
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse' as const,
+            permissionDecision: 'allow' as const,
+            updatedInput: result.updatedInput,
+          },
+        };
+      }
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse' as const,
+          permissionDecision: 'deny' as const,
+          permissionDecisionReason: result.message,
+        },
+      };
+    };
+  }
+
+  /**
    * Create the canUseTool callback for SDK options
    *
-   * This callback intercepts AskUserQuestion and returns a Promise that
-   * waits for user input before allowing the tool to proceed.
+   * Legacy channel: under `bypassPermissions` the SDK never consults
+   * canUseTool (see `createPreToolUseHook()`), so AskUserQuestion handling
+   * here is a fallback for non-bypass modes. Also invoked directly by the
+   * ACP query runner on ACP permission requests.
    */
   createCanUseToolCallback(): CanUseTool {
     return async (
@@ -141,8 +297,6 @@ export class AskUserQuestionHandler {
         matchedAskRule?: { source: string; toolName: string; ruleContent?: string };
       }
     ): Promise<PermissionResult> => {
-      const { session, stateManager, internalEventBus } = this.ctx;
-
       // Only intercept AskUserQuestion tool
       if (toolName !== 'AskUserQuestion') {
         // A user-configured permissions.ask rule forced this prompt. In an
@@ -158,72 +312,7 @@ export class AskUserQuestionHandler {
         return { behavior: 'allow', updatedInput: input };
       }
 
-      // Restart-survival fast path: if a queued answer is waiting for this
-      // toolUseId, resolve immediately and skip the user prompt entirely.
-      const queued = this.queuedAnswers.get(options.toolUseID);
-      if (queued) {
-        this.queuedAnswers.delete(options.toolUseID);
-        // If the queued PermissionResult was an `allow`, the SDK expects
-        // updatedInput to include the original input fields plus answers.
-        // Patch in any missing fields from the live `input` so we don't
-        // drop required schema fields just because the resolver was lost.
-        const merged: PermissionResult =
-          queued.behavior === 'allow'
-            ? {
-                behavior: 'allow',
-                updatedInput: { ...input, ...queued.updatedInput },
-              }
-            : queued;
-        this.logger.info(
-          `AskUserQuestion ${options.toolUseID}: consuming queued answer (behavior=${queued.behavior})`
-        );
-        await internalEventBus.publish('question.injected_as_tool_result', {
-          sessionId: session.id,
-          toolUseId: options.toolUseID,
-          mode: queued.behavior === 'allow' ? 'submitted' : 'cancelled',
-          viaCanUseTool: true,
-        });
-        return merged;
-      }
-
-      const askInput = input as unknown as AskUserQuestionInput;
-
-      // Build the pending question structure for UI
-      // Use the SDK's toolUseID for consistency
-      const pendingQuestion: PendingUserQuestion = {
-        toolUseId: options.toolUseID,
-        questions: askInput.questions.map((q) => ({
-          question: q.question,
-          header: q.header,
-          options: q.options.map((o) => ({
-            label: o.label,
-            description: o.description,
-          })),
-          multiSelect: q.multiSelect,
-        })),
-        askedAt: Date.now(),
-      };
-
-      // Transition to waiting_for_input state
-      // This will persist to DB and broadcast to clients
-      await stateManager.setWaitingForInput(pendingQuestion);
-
-      // Emit event for logging/debugging
-      await internalEventBus.publish('question.asked', {
-        sessionId: session.id,
-        pendingQuestion,
-      });
-
-      // Return a Promise that waits for user input
-      return new Promise<PermissionResult>((resolve, reject) => {
-        // Store the resolver so handleQuestionResponse can complete it
-        this.pendingResolver = {
-          toolUseId: options.toolUseID,
-          input,
-          resolve,
-          reject,
-        };
-      });
+      return this.interceptAskUserQuestion(options.toolUseID, input);
     };
   }
 
