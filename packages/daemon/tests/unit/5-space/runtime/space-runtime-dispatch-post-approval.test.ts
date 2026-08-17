@@ -665,6 +665,130 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
     expect(final?.postApprovalBlockedReason).toMatch(/stopped during dispatch/);
   });
 
+  test('a stop committing mid-spawn: the router healthy stamp is corrected to the deferral', async () => {
+    // The window neither the hold nor the spawner's pre-kickoff assert can
+    // close: the dispatch passes both reads while the space is live, and the
+    // stop commits during the kickoff-injection await. The router then stamps
+    // `postApprovalSessionId` (pointing at the session the stop's cleanup just
+    // interrupted) and clears the reason — without the post-route correction
+    // the task wedges: every later guard counts the interrupted session alive,
+    // the resume sweep filters on the (null) reason, and the tick blocks
+    // spawns for approved tasks.
+    const workflow = ctx.workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: `Route race ${Date.now()}`,
+      description: 'Test',
+      nodes: [
+        {
+          id: 'node-build',
+          name: 'Build',
+          agents: [{ agentId: 'agent-planner', name: 'Planner' }],
+          postApproval: { targetAgent: 'Planner', instructions: 'Merge {{pr_url}}' },
+        },
+      ],
+      transitions: [],
+      startNodeId: 'node-build',
+      endNodeId: 'node-build',
+      rules: [],
+      tags: [],
+      completionAutonomyLevel: 3,
+    });
+    const run = ctx.workflowRunRepo.createRun({
+      spaceId: SPACE_ID,
+      workflowId: workflow.id,
+      title: 'Run',
+    });
+    const task = ctx.taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'Ship it',
+      description: '',
+      status: 'in_progress',
+      workflowRunId: run.id,
+    });
+    ctx.taskRepo.updateTask(task.id, { status: 'review' });
+    const tam = tamOf(ctx);
+    tam.spawnPostApprovalSubSession = async () => {
+      // The stop commits while the kickoff injection is in flight — after the
+      // dispatch hold and the spawner's pre-kickoff assert both read live.
+      ctx.db.prepare(`UPDATE spaces SET stopped = 1 WHERE id = ?`).run(SPACE_ID);
+      return { sessionId: 'session:merge-raced' };
+    };
+
+    let caught: unknown;
+    try {
+      await ctx.runtime.dispatchPostApproval(task.id, 'agent');
+    } catch (err) {
+      caught = err;
+    }
+    expect((caught as Error).name).toBe('PostApprovalDeferredError');
+    expect((caught as Error).message).toMatch(/landed while space .* stopped/);
+
+    const final = ctx.taskRepo.getTask(task.id);
+    expect(final?.status).toBe('approved');
+    // The router's healthy stamp is corrected: pointer dropped (the interrupted
+    // session must not pin the already-routed guard), reason recorded.
+    expect(final?.postApprovalSessionId).toBeNull();
+    expect(final?.postApprovalBlockedReason).toMatch(/merge session was interrupted/);
+  });
+
+  test('an injection dying under a stop converts to the deferral regardless of error type', async () => {
+    // Same window, alternate ending: the stop's cleanup interrupts the
+    // just-registered merger DURING the injection, so the spawner fails with a
+    // raw error (not a TransientSpawnError). With a stop in force at the
+    // catch's re-read, the durable deferral is the right record whatever the
+    // error was.
+    const workflow = ctx.workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: `Route inj ${Date.now()}`,
+      description: 'Test',
+      nodes: [
+        {
+          id: 'node-build',
+          name: 'Build',
+          agents: [{ agentId: 'agent-planner', name: 'Planner' }],
+          postApproval: { targetAgent: 'Planner', instructions: 'Merge {{pr_url}}' },
+        },
+      ],
+      transitions: [],
+      startNodeId: 'node-build',
+      endNodeId: 'node-build',
+      rules: [],
+      tags: [],
+      completionAutonomyLevel: 3,
+    });
+    const run = ctx.workflowRunRepo.createRun({
+      spaceId: SPACE_ID,
+      workflowId: workflow.id,
+      title: 'Run',
+    });
+    const task = ctx.taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'Ship it',
+      description: '',
+      status: 'in_progress',
+      workflowRunId: run.id,
+    });
+    ctx.taskRepo.updateTask(task.id, { status: 'review' });
+    const tam = tamOf(ctx);
+    tam.spawnPostApprovalSubSession = async () => {
+      ctx.db.prepare(`UPDATE spaces SET stopped = 1 WHERE id = ?`).run(SPACE_ID);
+      throw new Error('injection interrupted by cleanup');
+    };
+
+    let caught: unknown;
+    try {
+      await ctx.runtime.dispatchPostApproval(task.id, 'agent');
+    } catch (err) {
+      caught = err;
+    }
+    expect((caught as Error).name).toBe('PostApprovalDeferredError');
+
+    const final = ctx.taskRepo.getTask(task.id);
+    expect(final?.status).toBe('approved');
+    expect(final?.postApprovalSessionId).toBeNull();
+    expect(final?.postApprovalBlockedReason).toMatch(/stopped during dispatch/);
+  });
+
   // ---------------------------------------------------------------------------
   // Layer B regression — pending-completion fields cleared after dispatch
   // ---------------------------------------------------------------------------

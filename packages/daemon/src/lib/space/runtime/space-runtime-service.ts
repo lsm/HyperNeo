@@ -1240,21 +1240,29 @@ export class SpaceRuntimeService {
       );
     }
     for (const task of activeTasks) {
-      if (task.status !== 'approved' || !task.postApprovalSessionId) continue;
+      if (task.status !== 'approved') continue;
+      // Re-read the row: the snapshot predates the cleanup awaits, and a
+      // dispatch that raced the stop stamps its pointer only when the spawner
+      // resolves — the fresh row catches a pointer (or reason) written after
+      // the snapshot. Anything stamped after THIS read is corrected by
+      // dispatchPostApproval's post-route stop check, which runs after the
+      // router's stamp by construction.
+      const fresh = taskRepo.getTask(task.id);
+      if (!fresh || fresh.status !== 'approved' || !fresh.postApprovalSessionId) continue;
       try {
-        taskRepo.updateTask(task.id, {
+        taskRepo.updateTask(fresh.id, {
           postApprovalSessionId: null,
-          ...(task.postApprovalBlockedReason
+          ...(fresh.postApprovalBlockedReason
             ? {}
             : {
                 postApprovalBlockedReason:
-                  `post-approval session ${task.postApprovalSessionId} interrupted by space.stop; ` +
+                  `post-approval session ${fresh.postApprovalSessionId} interrupted by space.stop; ` +
                   `the dispatch re-runs automatically when the space starts`,
               }),
         });
       } catch (err) {
         log.warn(
-          `stopActiveWork: failed to record interrupted post-approval session for task ${task.id}:`,
+          `stopActiveWork: failed to record interrupted post-approval session for task ${fresh.id}:`,
           err
         );
       }
@@ -1263,11 +1271,11 @@ export class SpaceRuntimeService {
         // "re-runs automatically" promise now. Fire-and-forget: the stop RPC
         // must not wait on a merge spawn. A deferral throw means another stop
         // landed in between (the hold re-stamped the reason) — swallowed.
-        void this.dispatchPostApproval(spaceId, task.id, task.approvalSource ?? 'agent').catch(
+        void this.dispatchPostApproval(spaceId, fresh.id, fresh.approvalSource ?? 'agent').catch(
           (err: unknown) => {
             if (isPostApprovalDeferredError(err)) return;
             log.warn(
-              `stopActiveWork: failed to re-drive post-approval dispatch of task ${task.id} after a resume raced the stop:`,
+              `stopActiveWork: failed to re-drive post-approval dispatch of task ${fresh.id} after a resume raced the stop:`,
               err
             );
           }

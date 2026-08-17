@@ -275,6 +275,7 @@ describe('SpaceRuntimeService', () => {
 
       const mockTaskRepo = {
         listBySpace: () => activeTasks,
+        getTask: (id: string) => activeTasks.find((t) => t.id === id),
         updateTask: (taskId: string, updates: unknown) => {
           updateCalls.push({ taskId, updates });
         },
@@ -361,6 +362,7 @@ describe('SpaceRuntimeService', () => {
       const updateCalls: Array<{ taskId: string; updates: unknown }> = [];
       const mockTaskRepo = {
         listBySpace: () => activeTasks,
+        getTask: (id: string) => activeTasks.find((t) => t.id === id),
         updateTask: (taskId: string, updates: unknown) => {
           updateCalls.push({ taskId, updates });
         },
@@ -413,6 +415,7 @@ describe('SpaceRuntimeService', () => {
       const updateCalls: Array<{ taskId: string; updates: unknown }> = [];
       const mockTaskRepo = {
         listBySpace: () => activeTasks,
+        getTask: (id: string) => activeTasks.find((t) => t.id === id),
         updateTask: (taskId: string, updates: unknown) => {
           updateCalls.push({ taskId, updates });
         },
@@ -444,6 +447,68 @@ describe('SpaceRuntimeService', () => {
         'postApprovalBlockedReason'
       );
       expect(redrives).toHaveLength(0);
+    });
+
+    test('pointer stamped after the snapshot: step 1.5 re-reads the fresh row', async () => {
+      // A dispatch that raced the stop passes the hold and the spawner's
+      // pre-kickoff assert, and the router stamps its pointer only when the
+      // spawner resolves — possibly AFTER stopActiveWork snapshotted the task
+      // with a null pointer. The loop must act on the re-read row, not the
+      // stale snapshot, or the freshly stamped pointer is never recorded and
+      // the task wedges with a healthy-looking post-approval state.
+      const snapshotTasks = [
+        {
+          id: 't5',
+          status: 'approved' as const,
+          postApprovalSessionId: null, // snapshot taken mid-spawn
+          postApprovalBlockedReason: null,
+        },
+      ];
+      const freshRows = new Map([
+        [
+          't5',
+          {
+            id: 't5',
+            status: 'approved' as const,
+            postApprovalSessionId: 'session:merge-late', // stamped after the snapshot
+            postApprovalBlockedReason: null,
+          },
+        ],
+      ]);
+      const updateCalls: Array<{ taskId: string; updates: unknown }> = [];
+      const mockTaskRepo = {
+        listBySpace: () => snapshotTasks,
+        getTask: (id: string) => freshRows.get(id),
+        updateTask: (taskId: string, updates: unknown) => {
+          updateCalls.push({ taskId, updates });
+        },
+      } as unknown as SpaceTaskRepository;
+      const mockWorkflowRunRepo = {
+        listBySpace: () => [],
+        transitionStatus: () => {},
+      } as unknown as SpaceWorkflowRunRepository;
+
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(createMockSpaceManager({ ...mockSpace, stopped: true })),
+        taskRepo: mockTaskRepo,
+        workflowRunRepo: mockWorkflowRunRepo,
+      });
+      svc.setTaskAgentManager({
+        cleanup: async () => {},
+      } as unknown as TaskAgentManager);
+      svc.dispatchPostApproval = async () => {};
+
+      await svc.stopActiveWork('space-1');
+
+      // The FRESH pointer is the one recorded as interrupted — not skipped
+      // because the snapshot was stale.
+      expect(updateCalls).toHaveLength(1);
+      expect(updateCalls[0]!.updates).toMatchObject({
+        postApprovalSessionId: null,
+        postApprovalBlockedReason: expect.stringMatching(
+          /session:merge-late interrupted by space\.stop/
+        ),
+      });
     });
 
     test('parks in-flight and waiting_rebind node executions with the clean-recovery reset', async () => {

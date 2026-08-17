@@ -4594,10 +4594,17 @@ export class SpaceRuntime {
       routeResult = await router.route(approvedTask, workflow, routeContext);
     } catch (routeErr) {
       // A stop landing between the hold above and the merge kickoff surfaces
-      // as a transient spawn error from the spawner's own pre-kickoff stop
-      // check — same durable-deferral semantics as the hold, so the resume
+      // either as a transient spawn error from the spawner's own pre-kickoff
+      // stop check, or as a raw failure out of the spawn tail (e.g. the
+      // kickoff injection dying when the stop's cleanup interrupts the
+      // just-registered merger). Detect the latter by re-reading the space:
+      // when a stop is in force, the right record is the durable deferral
+      // whatever the error was — same semantics as the hold, so the resume
       // sweep re-drives it.
-      if (isTransientSpawnError(routeErr)) {
+      if (
+        isTransientSpawnError(routeErr) ||
+        (await this.config.spaceManager.getSpace(spaceId))?.stopped
+      ) {
         const detail =
           `post-approval dispatch of task ${taskId} aborted — space ${spaceId} stopped ` +
           `during dispatch; the dispatch re-runs automatically when the space resumes`;
@@ -4608,6 +4615,43 @@ export class SpaceRuntime {
       throw routeErr;
     } finally {
       clearPendingCompletionState(this.config.taskRepo, taskId);
+    }
+
+    // 3.5. Post-route stop correction. The spawner's pre-kickoff assert read
+    //     the space BEFORE the kickoff injection, and the router stamps
+    //     `postApprovalSessionId` only AFTER the spawner resolves — so a stop
+    //     committing inside that window (hold passed, assert passed, the
+    //     stop's cleanup interrupts the just-registered merger) leaves the
+    //     router's healthy stamp pointing at an interrupted session with no
+    //     blocked reason, and every later guard treats 'interrupted' as alive.
+    //     When a stop is in force at this post-route read, overwrite the
+    //     healthy stamp with the deferral shape — pointer nulled so the
+    //     already-routed guard cannot pin the dead session — and throw the
+    //     typed deferral so tick sites swallow it like the hold. This writer
+    //     runs after the router's stamp by construction, so it deterministically
+    //     wins the race that stopActiveWork's (snapshot-based) step 1.5 can
+    //     only narrow. Paused is deliberately excluded: pause keeps in-flight
+    //     work alive, so a spawned merger on a paused space is genuinely live.
+    if (routeResult.mode === 'spawn' || routeResult.mode === 'already-routed') {
+      const postSpace = await this.config.spaceManager.getSpace(spaceId);
+      if (postSpace?.stopped) {
+        const detail =
+          `post-approval dispatch of task ${taskId} landed while space ${spaceId} stopped — ` +
+          `the merge session was interrupted; the dispatch re-runs automatically when the space resumes`;
+        this.config.taskRepo.updateTask(taskId, {
+          postApprovalSessionId: null,
+          postApprovalBlockedReason: detail,
+        });
+        log.info(`dispatchPostApproval: ${detail}`);
+        // A start that raced between the read above and this write already
+        // fired the resume sweep and missed this stamp — re-drive now (the
+        // sweep is idempotent per task).
+        const resumed = await this.config.spaceManager.getSpace(spaceId);
+        if (!resumed?.stopped) {
+          void this.resumeDeferredPostApprovals(spaceId);
+        }
+        throw new PostApprovalDeferredError(detail);
+      }
     }
 
     // 4. Re-read and emit so UI listeners see the post-dispatch task state
