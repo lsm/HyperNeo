@@ -81,6 +81,7 @@ describe('QueryRunner', () => {
   let removeIfAdmittedNoLaterThanSpy: ReturnType<typeof mock>;
   let getMessageByStatusAndUuidSpy: ReturnType<typeof mock>;
   let markDeliveryFailedInclusiveSpy: ReturnType<typeof mock>;
+  let publishEventSpy: ReturnType<typeof mock>;
 
   // State variables (mutable context properties)
   let queryGeneration: number;
@@ -154,6 +155,10 @@ describe('QueryRunner', () => {
           taskId === 't1' ? { id: 't1', spaceId: 's1', workflowRunId: 'run-1' } : null,
       })),
     } as unknown as Database;
+
+    // InternalEventBus spy — the give-up/settled-failed steer surfacing
+    // publishes messages.statusChanged through ctx.internalEventBus.
+    publishEventSpy = mock(() => {});
 
     // MessageHub spies
     publishSpy = mock(async () => {});
@@ -257,6 +262,9 @@ describe('QueryRunner', () => {
       session: mockSession,
       db: mockDb,
       messageHub: mockMessageHub,
+      internalEventBus: {
+        publish: publishEventSpy,
+      } as unknown as QueryRunnerContext['internalEventBus'],
       messageQueue: mockMessageQueue,
       stateManager: mockStateManager,
       errorManager: mockErrorManager,
@@ -2312,6 +2320,10 @@ describe('QueryRunner', () => {
         uuid: 'settled-kickoff-uuid',
         content: [{ type: 'text' as const, text: 'K' }],
       };
+      const steer = {
+        uuid: 'settled-steer-uuid',
+        content: [{ type: 'text' as const, text: 'S' }],
+      };
       getMessageByStatusAndUuidSpy.mockImplementation(
         (_sessionId: string, _status: string, uuid: string) =>
           uuid === kickoff.uuid ? ({ uuid: kickoff.uuid } as never) : null
@@ -2321,7 +2333,7 @@ describe('QueryRunner', () => {
       runner = new QueryRunner(ctx);
       (
         runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
-      )._consumedUserMessages = new Map([[1, [kickoff]]]);
+      )._consumedUserMessages = new Map([[1, [kickoff, steer]]]);
 
       runner.start();
       await ctx.queryPromise?.catch(() => {});
@@ -2333,6 +2345,15 @@ describe('QueryRunner', () => {
         String(args[0])
       );
       expect(warns.some((w) => w.includes('delivery already settled failed'))).toBe(true);
+      // Round-13 P3: the cancellation exit surfaces the still-carried STEER
+      // (consumed carrier — the move to staging never ran) instead of letting
+      // the finally drop it with warns only; the settled kickoff is the
+      // delivery layer's row and is NOT flipped.
+      expect(markDeliveryFailedInclusiveSpy).toHaveBeenCalledTimes(1);
+      expect(markDeliveryFailedInclusiveSpy).toHaveBeenCalledWith(mockSession.id, steer.uuid);
+      expect(warns.some((w) => w.includes('retry cancelled (delivery settled)'))).toBe(true);
+      // The window closed on the cancellation exit (round-13 P3 pin).
+      expect(runner.isInStartupBackoff()).toBe(false);
     });
 
     it('cancels the retry when a COMPLETED Stop nulls the abort controller during the backoff', async () => {
@@ -2364,6 +2385,8 @@ describe('QueryRunner', () => {
         String(args[0])
       );
       expect(warns.some((w) => w.includes('Startup-timeout retry cancelled'))).toBe(true);
+      // The backoff window closed on the cancellation exit (round-13 P3 pin).
+      expect(runner.isInStartupBackoff()).toBe(false);
     });
 
     it.skipIf(!sdkQueryIsMock)(
@@ -2686,6 +2709,236 @@ describe('QueryRunner', () => {
       }
     );
 
+    it.skipIf(!sdkQueryIsMock)(
+      'the backoff window is fenced across a superseding restart (stale finally cannot close the new window)',
+      async () => {
+        // Round-13 P2: a restart during chain A's backoff starts chain B on
+        // the SAME runner — the queue is stopped, so start()'s isRunning
+        // guard passes — and B can open its OWN window while A's finally is
+        // still pending. An unfenced boolean let A's exit clear B's window
+        // mid-recovery, resurrecting the dead-letter race the flag exists to
+        // prevent. Fencing: start() closes the stale claim immediately (B's
+        // queue is live, parks charge again), and A's finally clears only its
+        // own owner token.
+        process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '250';
+        process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '3';
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        buildSpy
+          .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+          .mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
+        let queryCalls = 0;
+        let releaseChainB: (() => void) | null = null;
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => {
+          queryCalls++;
+          return {
+            close: () => {},
+            [Symbol.asyncIterator]: async function* () {
+              if (queryCalls === 1) {
+                // Chain B's attempt: parked until the test releases it, then
+                // dies as a startup timeout (opening B's own window).
+                await new Promise<void>((resolve) => {
+                  releaseChainB = resolve;
+                });
+                throw new Error('SDK startup timeout - query aborted');
+              }
+              await new Promise(() => {});
+            },
+          };
+        });
+
+        try {
+          // Chain A (generation 1): dies at build, retry opens window A.
+          runner.start();
+          let deadline = Date.now() + 2000;
+          while (!runner.isInStartupBackoff() && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(runner.isInStartupBackoff()).toBe(true);
+
+          // Restart: the real timeout escape leaves the queue STOPPED —
+          // mirror that, then start chain B (generation 2). start() must
+          // close A's stale claim immediately; B parks pre-window so the
+          // false here is deterministic.
+          stopSpy();
+          await runner.start();
+          expect(runner.isInStartupBackoff()).toBe(false);
+
+          // B times out and opens its OWN window while A's 250ms sleep is
+          // still pending.
+          // Wait for B's attempt to actually park in its iterator, then
+          // release it into the startup-timeout throw that opens B's own
+          // window (releasing before the hook arms would no-op and strand B).
+          deadline = Date.now() + 2000;
+          while (!releaseChainB && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(releaseChainB).toBeTypeOf('function');
+          releaseChainB?.();
+          deadline = Date.now() + 2000;
+          while (!runner.isInStartupBackoff() && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(runner.isInStartupBackoff()).toBe(true);
+
+          // A's sleep ends: its post-sleep guard sees the superseded
+          // generation and returns through A's finally. Wait for that warn,
+          // give the finally a tick, then pin the race: B's window must
+          // still be open.
+          deadline = Date.now() + 3000;
+          let aCancelled = false;
+          while (Date.now() < deadline) {
+            const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+              String(args[0])
+            );
+            if (warns.some((w) => w.includes('Startup-timeout retry cancelled'))) {
+              aCancelled = true;
+              break;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(aCancelled).toBe(true);
+          await new Promise((resolve) => setTimeout(resolve, 25));
+          expect(runner.isInStartupBackoff()).toBe(true); // B's window survived A's finally
+
+          // End chain B (its backoff proceeds to a parked attempt).
+          deadline = Date.now() + 3000;
+          while (queryCalls < 2 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          ctx.queryAbortController?.abort();
+          await ctx.queryPromise?.catch(() => {});
+          expect(runner.isInStartupBackoff()).toBe(false); // closed for good
+        } finally {
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+        }
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      'surfaces steers from ALL THREE carriers at give-up, deduped, with one statusChanged broadcast',
+      async () => {
+        // Round-13 P2/P3: at give-up the steers can sit in three carriers at
+        // once — pulled by the giving-up attempt's silent iterator
+        // (_consumedUserMessages; the move to staging happens at the retry
+        // site this branch skips), staged by the flush's skip/reject branch,
+        // and flushed into the queue. All three must flip, deduped by uuid
+        // (a TTL-rejected entry is both flushed and re-staged — a duplicate
+        // flip would warn a misleading "could not be marked failed"), the
+        // kickoff (deliveryKey) must be excluded, and the flipped ids must
+        // go out as ONE messages.statusChanged broadcast like every sibling
+        // flip site.
+        const kickoff = {
+          uuid: 'giveup3-kickoff',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+        const consumedSteer = {
+          uuid: 'giveup3-consumed',
+          content: [{ type: 'text' as const, text: 'C' }],
+        };
+        const stagedSteer = {
+          uuid: 'giveup3-staged',
+          content: [{ type: 'text' as const, text: 'T' }],
+        };
+        const flushedSteer = {
+          uuid: 'giveup3-flushed',
+          content: [{ type: 'text' as const, text: 'F' }],
+        };
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff, stagedSteer, flushedSteer]]]);
+        // Starved give-up keys the delivery by the PENDING kickoff (peek).
+        peekNextUserMessageIdSpy.mockReturnValue(kickoff.uuid);
+
+        buildSpy
+          .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+          .mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => ({
+          close: () => {},
+          // Parked: the admission rejection's abort (not the iterator) ends
+          // the attempt, routing it into the starved give-up.
+          [Symbol.asyncIterator]: async function* () {
+            await new Promise(() => {});
+          },
+        }));
+        // Flush duplicate-guard: the STAGED steer looks already pending
+        // (skip branch re-stages it); the FLUSHED steer's admission is a
+        // deferred TTL rejection (rejection handler re-stages it) — so it
+        // ends up in BOTH the flushed and staged carriers. Deferred so the
+        // test can seed the consumed carrier BEFORE the rejection aborts
+        // the attempt into give-up.
+        let rejectFlushedAdmission: ((error: Error) => void) | null = null;
+        hasPendingOrInFlightSpy.mockImplementation((uuid: string) => uuid === stagedSteer.uuid);
+        enqueueWithIdSpy.mockImplementation((uuid: string) =>
+          uuid === flushedSteer.uuid
+            ? new Promise<void>((_resolve, reject) => {
+                rejectFlushedAdmission = reject;
+              })
+            : Promise.resolve()
+        );
+
+        try {
+          runner.start();
+          let deadline = Date.now() + 2000;
+          while (
+            (enqueueWithIdSpy.mock.calls.length < 2 || !rejectFlushedAdmission) &&
+            Date.now() < deadline
+          ) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(enqueueWithIdSpy.mock.calls.length).toBe(2);
+          // Record the CONSUMED carrier as the giving-up attempt's silent
+          // iterator would (the recording path itself is pinned by the
+          // generator-wrapper tests — here it stands in for a live pull
+          // between the flush and the timeout).
+          (
+            runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+          )._consumedUserMessages.set(1, [kickoff, consumedSteer]);
+
+          // Fire the TTL rejection: re-stage (second carrier for the flushed
+          // steer) + abort → starved give-up with all carriers populated.
+          const ttlError = new Error('Message queue timeout');
+          ttlError.name = 'MessageQueueTimeoutError';
+          rejectFlushedAdmission?.(ttlError);
+          await ctx.queryPromise?.catch(() => {});
+
+          // Exactly the three steers flipped — kickoff excluded (delivery
+          // layer owns it), no duplicate attempts despite flushedSteer being
+          // in two carriers.
+          expect(markDeliveryFailedInclusiveSpy).toHaveBeenCalledTimes(3);
+          const flipped = markDeliveryFailedInclusiveSpy.mock.calls.map((c) => c[1]);
+          expect(new Set(flipped)).toEqual(
+            new Set([consumedSteer.uuid, stagedSteer.uuid, flushedSteer.uuid])
+          );
+          // One broadcast carries every flipped row.
+          expect(publishEventSpy).toHaveBeenCalledTimes(1);
+          expect(publishEventSpy).toHaveBeenCalledWith('messages.statusChanged', {
+            sessionId: mockSession.id,
+            messageIds: ['db-row-id', 'db-row-id', 'db-row-id'],
+            status: 'failed',
+          });
+          const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+            String(args[0])
+          );
+          expect(
+            warns.filter((w) => w.includes(flushedSteer.uuid) && w.includes('producing turn'))
+          ).toHaveLength(1);
+          expect(warns.some((w) => w.includes('could not be marked failed'))).toBe(false);
+          expect(warns.some((w) => w.includes(kickoff.uuid))).toBe(false);
+        } finally {
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+        }
+      }
+    );
+
     it('cancels the retry when the session enters cleanup during the backoff', async () => {
       // The isCleaningUp disjunct had no dedicated coverage. Daemon shutdown
       // mid-backoff must not relaunch an orphaned query after the sleep.
@@ -2708,6 +2961,8 @@ describe('QueryRunner', () => {
         String(args[0])
       );
       expect(warns.some((w) => w.includes('Startup-timeout retry cancelled'))).toBe(true);
+      // The backoff window closed on the cancellation exit (round-13 P3 pin).
+      expect(runner.isInStartupBackoff()).toBe(false);
     });
 
     it('gives a starved NEW delivery a fresh budget via the pending kickoff (peek)', async () => {

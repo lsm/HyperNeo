@@ -520,11 +520,14 @@ interface QueryRecoveryState {
    * stall-watchdog QueryLifecycleManager.stop() nulls ctx.queryAbortController
    * WITHOUT aborting it, and a completed user Stop (interrupt-handler) aborts
    * it and then nulls — an abort the recursive attempt cannot observe either
-   * way once the field is nulled. Neither bumps the generation or nulls
-   * queryPromise, so every other guard in the rebuild window (the post-sleep
-   * checks, the child's post-admission identity check, which compares against
-   * the child's own just-published controller) is blind to exactly that, and
-   * the child would spawn a fresh subprocess on a session the user stopped.
+   * way once the field is nulled. The user Stop also leaves the generation
+   * and queryPromise untouched; the lifecycle stop nulls queryPromise as well
+   * (query-lifecycle-manager step 8), but only when it lands before the
+   * post-sleep wake — which that guard's queryPromise-null disjunct already
+   * observes. What NO other guard sees is either stop landing inside the
+   * child's rebuild window (the child's post-admission identity check
+   * compares against the child's OWN just-published controller), and the
+   * child would spawn a fresh subprocess on a session the user stopped.
    * Consumed (nulled) at the verification so a LATER category's recursion —
    * whose legitimate current controller is a different object — cannot
    * false-positive against a stale handoff.
@@ -630,26 +633,33 @@ export class QueryRunner {
   private _replayAdmissionRejected = false;
 
   /**
-   * True only inside a startup-timeout retry's recovery window: from the
-   * teardown (terminate/close/exit-wait/env-restore) through the backoff
-   * sleep and the post-sleep guards, until the queue is restarted for the
-   * recursive attempt. In that window the session is 'processing' with a
-   * STOPPED queue, so follow-up steers park on exactly this state — and the
-   * window is bounded recovery, not abandonment: a full default chain sleeps
-   * 15+30+60+120+240 = 465 s, well past the delivery lane's MAX_STEER_PARKS
-   * bound (~300 s), so charging parks for it would dead-letter the steer
-   * `failed` minutes before the turn recovers and feeds it. The session
-   * surfaces this flag (AgentSession.isInStartupBackoff) and the delivery
-   * handler parks such steers with a plain requeue — no __parkCount charge,
-   * mirroring the open-human-gate exemption. Cleared on EVERY exit from the
-   * window (queue restart, cancellation return, unexpected throw) via the
-   * try/finally at the retry site. (Round-12 P2.)
+   * Owner token of the currently-open startup-backoff recovery window (null
+   * while closed): from the retry teardown (terminate/close/exit-wait/
+   * env-restore) through the backoff sleep and the post-sleep guards, until
+   * the queue is restarted for the recursive attempt. In that window the
+   * session is 'processing' with a STOPPED queue, so follow-up steers park on
+   * exactly this state — and the window is bounded recovery, not abandonment:
+   * a full default chain sleeps 15+30+60+120+240 = 465 s, well past the
+   * delivery lane's MAX_STEER_PARKS bound (~300 s), so charging parks for it
+   * would dead-letter the steer `failed` minutes before the turn recovers and
+   * feeds it. The session surfaces the token (AgentSession.isInStartupBackoff)
+   * and the delivery handler parks such steers with a plain requeue — no
+   * __parkCount charge, mirroring the open-human-gate exemption.
+   *
+   * FENCING (round-13 P2): a restart during chain A's backoff starts chain B
+   * on this same runner (the queue is stopped, so start()'s isRunning guard
+   * passes) and B can open its OWN window while A's is still open. A plain
+   * boolean would let A's post-sleep finally clear B's window mid-recovery —
+   * the exact dead-letter bug this flag exists to prevent. The window is
+   * therefore held by an owner TOKEN: each window mints one, start() clears
+   * any stale claim for a fresh turn, and the finally clears the field only
+   * if its own token is still the owner (compare-and-clear).
    */
-  private _inStartupBackoff = false;
+  private _startupBackoffOwner: object | null = null;
 
   /** True while a startup-timeout retry chain is inside its backoff window. */
   isInStartupBackoff(): boolean {
-    return this._inStartupBackoff;
+    return this._startupBackoffOwner !== null;
   }
 
   /**
@@ -718,6 +728,13 @@ export class QueryRunner {
     // stale).
     this._pendingStartupReplay = null;
     this._replayAdmissionRejected = false;
+    // ...and close any backoff window that chain left open: the queue THIS
+    // start() is about to run is live, so follow-up steers feed it normally
+    // and their parks charge from here. Clearing the claim also fences the
+    // superseded chain's finally (compare-and-clear against its stale token)
+    // from closing a window the new chain may open later.
+    // (Round-13 P2.)
+    this._startupBackoffOwner = null;
 
     // Store query promise for cleanup
     this.ctx.queryPromise = this.runQuery(currentGeneration);
@@ -1095,11 +1112,14 @@ export class QueryRunner {
       // post-sleep cancellation checks and this publication, a stall-watchdog
       // lifecycle stop NULLS ctx.queryAbortController without aborting it,
       // and a completed user Stop aborts it and then nulls — an abort nothing
-      // in this window reads, so both shapes look identical here. Neither
-      // bumps the generation or nulls queryPromise, every other guard in the
-      // window is blind to that combination, and the post-admission check
-      // below cannot catch it either (it compares against THIS controller,
-      // freshly published one line down). If the controller the retry site
+      // in this window reads, so both shapes look identical here. The user
+      // Stop leaves the generation and queryPromise untouched; the lifecycle
+      // stop nulls queryPromise too, but that is observed by the post-sleep
+      // guard's queryPromise-null disjunct when it lands before the wake.
+      // What no other guard observes is either shape landing INSIDE this
+      // window, and the post-admission check below cannot catch it either
+      // (it compares against THIS controller, freshly published one line
+      // down). If the controller the retry site
       // handed down is no longer the current one, this chain lost ownership
       // mid-rebuild: do not publish, do not spawn — surface as an abort so
       // the interrupt/stop cleanup that already ran keeps the session.
@@ -1589,47 +1609,30 @@ export class QueryRunner {
               `cap ${getMaxStartupTimeoutRetries()}); giving up and surfacing the failure — ` +
               `the delivery layer settles the durable row.`
           );
-          // Surface this chain's still-unrecovered STEERS (round-12 P3): the
-          // terminal path below clears the queue, and the retry site's
-          // fold-back only serves a NEXT flush — which never comes on
-          // give-up. Kickoffs are the delivery layer's to settle (its
-          // dead-letter lane re-opens them for retry); consumed steers have
-          // no re-drive lane, so flip their rows to `failed` here — the same
-          // inclusive flip the delivery dead-letter settlement uses for a
-          // consumed row that genuinely failed after retries — so they
-          // surface with a Retry affordance instead of vanishing silently as
-          // 'consumed'. Both carriers are checked: the flush moved entries
-          // into the queue (flushedReplayEntries) OR they never got that far
-          // and are still staged (_pendingStartupReplay — cleared by the
-          // finally on the way out).
-          const droppedSteerEntries = [
-            ...(this._pendingStartupReplay ?? []),
-            ...(flushedReplayEntries ?? []),
-          ];
-          for (const entry of droppedSteerEntries) {
-            if (entry.uuid === deliveryKey) continue; // kickoff: delivery layer owns it
-            try {
-              const flipped = this.ctx.db
-                .getSDKMessageRepo()
-                ?.markDeliveryFailedByUuidInclusive(session.id, entry.uuid);
-              if (flipped) {
-                logger.warn(
-                  `Startup-timeout budget exhausted: steer ${entry.uuid} never reached a ` +
-                    'producing turn; marked failed so it surfaces with a Retry affordance.'
-                );
-              } else {
-                logger.warn(
-                  `Startup-timeout budget exhausted: steer ${entry.uuid} could not be ` +
-                    'marked failed (row missing or already terminal); dropped.'
-                );
-              }
-            } catch {
-              logger.warn(
-                `Startup-timeout budget exhausted: failed to mark steer ${entry.uuid} ` +
-                  'failed while surfacing the loss; dropped.'
-              );
-            }
-          }
+          // Surface this chain's still-unrecovered STEERS (round-12 P3,
+          // carriers completed round-13 P2): the terminal path below clears
+          // the queue, and the retry site's fold-back only serves a NEXT
+          // flush — which never comes on give-up. Kickoffs are the delivery
+          // layer's to settle (its dead-letter lane re-opens them for retry);
+          // consumed steers have no re-drive lane, so flip their rows to
+          // `failed` (surfaceDroppedSteers) so they surface with a Retry
+          // affordance instead of vanishing silently as 'consumed'. ALL
+          // THREE carriers are swept: steers the silent iterator pulled in
+          // THIS attempt's live window (consumedForKey — recorded in
+          // _consumedUserMessages and never moved, because the move happens
+          // at the retry site this branch skips), entries the flush moved
+          // into the queue (flushedReplayEntries), and entries that never
+          // got that far (_pendingStartupReplay — cleared by the finally on
+          // the way out).
+          this.surfaceDroppedSteers(
+            [
+              ...consumedForKey,
+              ...(this._pendingStartupReplay ?? []),
+              ...(flushedReplayEntries ?? []),
+            ],
+            deliveryKey,
+            'budget exhausted'
+          );
         } else {
           const maxStartupRetries = getMaxStartupTimeoutRetries();
           const delayMs = getStartupRetryDelayMs(retryNumber);
@@ -1676,8 +1679,12 @@ export class QueryRunner {
           // handler can park those steers without charging their park budget.
           // Closed on EVERY exit below (cancellation returns included) and before
           // the recursive attempt starts — steers feed normally once the queue is
-          // running again.
-          this._inStartupBackoff = true;
+          // running again. The window is held by an owner token (round-13 P2):
+          // a restart during this sleep can start a replacement chain on this
+          // same runner whose own window must not be closed by THIS chain's
+          // finally — see _startupBackoffOwner.
+          const backoffWindowToken = {};
+          this._startupBackoffOwner = backoffWindowToken;
           try {
             this.ctx.terminateTrackedAgentProcesses?.();
 
@@ -1777,7 +1784,8 @@ export class QueryRunner {
             // before it publishes its own controller. The child re-verifies
             // this identity pre-publication; a lifecycle stop in that window
             // NULLS the field (and a user Stop aborts-then-nulls it) without
-            // tripping any other guard.
+            // tripping any other guard — the lifecycle stop's queryPromise
+            // null is only observed when it lands before this guard woke.
             // (Round-11 P1 — see QueryRecoveryState.)
             recoveryState.startupRetryOwnerController = this.ctx.queryAbortController;
 
@@ -1797,6 +1805,21 @@ export class QueryRunner {
               logger.warn(
                 'Startup-timeout retry cancelled: delivery already settled failed during backoff ' +
                   `(message ${deliveryKey}).`
+              );
+              // The chain ends here without another flush, so its still-
+              // carried steers need the same failed-flip surfacing as the
+              // give-up branch — the finally below drops the staging with
+              // warns only. The consumed map has not been moved yet (the
+              // move happens later in this window), so all three carriers
+              // are still readable here. (Round-13 P3.)
+              this.surfaceDroppedSteers(
+                [
+                  ...consumedForKey,
+                  ...(this._pendingStartupReplay ?? []),
+                  ...(flushedReplayEntries ?? []),
+                ],
+                deliveryKey,
+                'retry cancelled (delivery settled)'
               );
               return;
             }
@@ -1916,7 +1939,14 @@ export class QueryRunner {
             // retries a later 5xx gets zero provider retries). Intentional: the
             // counter bounds TOTAL retries per turn, not retries per category.
           } finally {
-            this._inStartupBackoff = false;
+            // Compare-and-clear (round-13 P2): if a restart during this
+            // window already started a replacement chain that opened its OWN
+            // window, the owner token has moved on and this exit must NOT
+            // close the live window — clearing unconditionally would re-open
+            // the mid-recovery dead-letter race the flag exists to prevent.
+            if (this._startupBackoffOwner === backoffWindowToken) {
+              this._startupBackoffOwner = null;
+            }
           }
           return await this.runQuery(queryGeneration, retryAttempt + 1, recoveryState);
         }
@@ -2724,6 +2754,67 @@ export class QueryRunner {
   /** Startup succeeded for the in-flight delivery — clear its backoff budget. */
   private clearStartupTimeoutRetryBudget(): void {
     this._startupTimeoutRetryState = { key: null, retries: 0 };
+  }
+
+  /**
+   * Flip the given dropped entries' durable rows to `failed` — steers only:
+   * the kickoff identified by `deliveryKey` is the delivery layer's to settle
+   * (its dead-letter lane re-opens it for retry), while a consumed steer has
+   * no re-drive lane and would otherwise vanish silently in the terminal
+   * queue clear. Uses the same inclusive flip as the delivery dead-letter
+   * settlement (a consumed row that genuinely failed after retries), deduped
+   * by uuid — an entry can sit in more than one carrier at once (a
+   * TTL-rejected flush entry is both flushed and re-staged), and flipping it
+   * twice would log a misleading "could not be marked failed" warn for the
+   * already-terminal row. Publishes one `messages.statusChanged` broadcast
+   * for the flipped db ids, matching the sibling flip sites' contract (the
+   * repo returns the flipped id; the caller publishes). Callers: the
+   * budget-exhausted give-up branch and the settled-failed cancellation exit.
+   * (Round-12 P3; carriers + dedupe + publish per round-13 review.)
+   */
+  private surfaceDroppedSteers(
+    entries: Array<{ uuid: string }>,
+    deliveryKey: string | null,
+    reason: string
+  ): void {
+    const { session, logger, internalEventBus } = this.ctx;
+    const seen = new Set<string>();
+    const flippedIds: Array<string> = [];
+    for (const entry of entries) {
+      if (entry.uuid === deliveryKey || seen.has(entry.uuid)) continue;
+      seen.add(entry.uuid);
+      try {
+        const flipped = this.ctx.db
+          .getSDKMessageRepo()
+          ?.markDeliveryFailedByUuidInclusive(session.id, entry.uuid);
+        if (flipped) {
+          flippedIds.push(flipped);
+          logger.warn(
+            `Startup-timeout ${reason}: steer ${entry.uuid} never reached a ` +
+              'producing turn; marked failed so it surfaces with a Retry affordance.'
+          );
+        } else {
+          logger.warn(
+            `Startup-timeout ${reason}: steer ${entry.uuid} could not be ` +
+              'marked failed (row missing or already terminal); dropped.'
+          );
+        }
+      } catch {
+        logger.warn(
+          `Startup-timeout ${reason}: failed to mark steer ${entry.uuid} ` +
+            'failed while surfacing the loss; dropped.'
+        );
+      }
+    }
+    if (flippedIds.length > 0) {
+      // One broadcast carries every flipped row (same shape as the
+      // agent-session flip sites).
+      internalEventBus.publish('messages.statusChanged', {
+        sessionId: session.id,
+        messageIds: flippedIds,
+        status: 'failed',
+      });
+    }
   }
 
   /**

@@ -15,7 +15,10 @@ import type {
   RewindMode,
   McpServerConfig,
 } from '@hyperneo/shared';
+import { AcpQueryRunner } from '../../../../src/lib/acp/acp-query-runner';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
+import { QueryRunner } from '../../../../src/lib/agent/query-runner';
+import type { QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
 import type { Database } from '../../../../src/storage/database';
 import type { MessageHub } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
@@ -1935,6 +1938,53 @@ describe('AgentSession', () => {
 
         expect(executeSelectiveRewindSpy).toHaveBeenCalledWith(messageIds, mode);
       }
+    });
+  });
+
+  describe('isInStartupBackoff', () => {
+    it('surfaces the SDK runner window and stays false for ACP runners or closed windows', () => {
+      // Round-13 P3: this accessor is the runner→session seam the delivery
+      // handler's park exemption rides on — a regression here (wrong field,
+      // dropped instanceof guard, ACP leaking through) silently kills the
+      // exemption for every real session while the handler/runner tests all
+      // stay green, so the seam gets its own pin.
+      const agentSession = new AgentSession(
+        {
+          id: 'seam-session',
+          title: 'Seam',
+          workspacePath: '/test/workspace',
+          createdAt: new Date().toISOString(),
+          lastActiveAt: new Date().toISOString(),
+          status: 'active',
+          config: { model: 'claude-sonnet-4-20250514', maxTokens: 8192, temperature: 1.0 },
+          metadata: {},
+        } as never,
+        { getSession: mock(() => null) } as never,
+        {} as never,
+        {
+          publish: mock(() => {}),
+          subscribe: mock(() => () => {}),
+        } as never,
+        mock(async () => null)
+      );
+      // No runner window yet.
+      expect(agentSession.isInStartupBackoff()).toBe(false);
+
+      // A QueryRunner with a closed window stays false; an open owner token
+      // (what the retry branch mints for the teardown+backoff span) is
+      // surfaced as true.
+      const runner = new QueryRunner({} as QueryRunnerContext);
+      (agentSession as unknown as Record<string, unknown>).queryRunner = runner;
+      expect(agentSession.isInStartupBackoff()).toBe(false);
+      (runner as unknown as Record<string, unknown>)._startupBackoffOwner = {};
+      expect(agentSession.isInStartupBackoff()).toBe(true);
+
+      // An ACP runner never reports a window — the flag is SDK-runner-only.
+      (agentSession as unknown as Record<string, unknown>).queryRunner = new AcpQueryRunner(
+        agentSession as never,
+        (() => {}) as never
+      );
+      expect(agentSession.isInStartupBackoff()).toBe(false);
     });
   });
 
