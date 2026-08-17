@@ -2744,7 +2744,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
       // the resumed callback's sweep. (A paused space resumes via
       // space.resume — startSpace is a no-op unless the space is stopped.)
       await spaceManager.resumeSpace(SPACE_ID);
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      await rt.flushResumeSweep(SPACE_ID);
 
       const final = taskRepo.getTask(tasks[0].id)!;
       expect(final.status).toBe('done');
@@ -2829,7 +2829,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
       const spawnsBeforeResume = tam._spawned.length;
 
       await rt.executeTick();
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      await rt.flushResumeSweep(SPACE_ID);
 
       // No plain node kickoff for the approved task.
       expect(tam._spawned).toHaveLength(spawnsBeforeResume);
@@ -2839,7 +2839,8 @@ describe('SpaceRuntime — tick loop correctness', () => {
       // fixture the workflow declares no postApproval route, so the no-route
       // branch closes the task and clears the reason).
       const final = taskRepo.getTask(tasks[0].id)!;
-      expect(['approved', 'done']).toContain(final.status);
+      expect(final.status).toBe('done');
+      expect(final.postApprovalBlockedReason).toBeNull();
     });
   });
 });

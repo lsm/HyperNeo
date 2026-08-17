@@ -15,6 +15,7 @@ import type {
   McpServerConfig,
   Session,
   Space,
+  SpaceApprovalSource,
   SpaceWorkerAgent,
   SpaceLongHorizonAgent,
   SpaceTask,
@@ -56,6 +57,7 @@ import {
 } from '../../agent/message-delivery';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
 import { SpaceRuntime } from './space-runtime';
+import { isPostApprovalDeferredError } from './post-approval-router';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector';
 import { selectWorkflowWithLlmDefault } from './llm-workflow-selector';
@@ -1211,27 +1213,64 @@ export class SpaceRuntimeService {
     // (a tracking field — still no task STATUS writes) gives the banner and
     // hooks `resumeDeferredPostApprovals`, whose re-dispatch re-spawns the
     // merge with full route context. The session POINTER is nulled in the same
-    // write: the interrupted session is dead as a worker, yet
-    // `isAgentSessionAlive` counts 'interrupted' as alive — a retained pointer
-    // would make the router's `already-routed` guard short-circuit the resume
-    // re-dispatch (no spawn, no injection) and the task would wedge `approved`
-    // with the banner silently cleared. Skipped when a reason is already set
-    // (a deferred dispatch from the hold — same resume path, keep the first
-    // wording).
+    // write — unconditionally, even when a reason is already set: the
+    // interrupted session is dead as a worker, yet `isAgentSessionAlive`
+    // counts 'interrupted' as alive, so a retained pointer would make the
+    // router's `already-routed` guard short-circuit the resume re-dispatch (no
+    // spawn, no injection) and the task would wedge `approved` with the banner
+    // silently cleared. The REASON is only written when unset (a deferral
+    // recorded by the hold uses the same resume path — keep its wording).
+    //
+    // The space row is RE-READ here: a `space.start` that landed during the
+    // cleanup awaits above already fired `onSpaceResumed`, whose sweep ran
+    // before this stamp existed and so missed it — a deferral written now
+    // would promise a re-drive that no future resume will deliver. When the
+    // space is no longer stopped the interruption is still recorded (the
+    // session IS dead), but the dispatch is re-driven immediately. A failed
+    // re-read keeps the deferral (conservative: the next real resume
+    // re-drives).
+    let spaceResumedDuringQuiesce = false;
+    try {
+      const spaceRow = await this.config.spaceManager.getSpace(spaceId);
+      spaceResumedDuringQuiesce = !spaceRow?.stopped;
+    } catch (err) {
+      log.warn(
+        `stopActiveWork: failed to re-read space ${spaceId} before recording interrupted merges:`,
+        err
+      );
+    }
     for (const task of activeTasks) {
       if (task.status !== 'approved' || !task.postApprovalSessionId) continue;
-      if (task.postApprovalBlockedReason) continue;
       try {
         taskRepo.updateTask(task.id, {
           postApprovalSessionId: null,
-          postApprovalBlockedReason:
-            `post-approval session ${task.postApprovalSessionId} interrupted by space.stop; ` +
-            `the dispatch re-runs automatically when the space starts`,
+          ...(task.postApprovalBlockedReason
+            ? {}
+            : {
+                postApprovalBlockedReason:
+                  `post-approval session ${task.postApprovalSessionId} interrupted by space.stop; ` +
+                  `the dispatch re-runs automatically when the space starts`,
+              }),
         });
       } catch (err) {
         log.warn(
           `stopActiveWork: failed to record interrupted post-approval session for task ${task.id}:`,
           err
+        );
+      }
+      if (spaceResumedDuringQuiesce) {
+        // The resume sweep already ran and missed this stamp — honor the
+        // "re-runs automatically" promise now. Fire-and-forget: the stop RPC
+        // must not wait on a merge spawn. A deferral throw means another stop
+        // landed in between (the hold re-stamped the reason) — swallowed.
+        void this.dispatchPostApproval(spaceId, task.id, task.approvalSource ?? 'agent').catch(
+          (err: unknown) => {
+            if (isPostApprovalDeferredError(err)) return;
+            log.warn(
+              `stopActiveWork: failed to re-drive post-approval dispatch of task ${task.id} after a resume raced the stop:`,
+              err
+            );
+          }
         );
       }
     }
@@ -1242,7 +1281,7 @@ export class SpaceRuntimeService {
     this.runtime.parkInFlightExecutionsForSpace(spaceId);
 
     log.info(
-      `stopActiveWork: interrupted ${activeTasks.length} task session(s) and parked in-flight executions for space ${spaceId} (statuses preserved)`
+      `stopActiveWork: interrupted ${activeTasks.length} task session(s) and parked in-flight executions for space ${spaceId} (task/run statuses preserved)`
     );
   }
 
@@ -2351,7 +2390,7 @@ export class SpaceRuntimeService {
   async dispatchPostApproval(
     spaceId: string,
     taskId: string,
-    approvalSource: 'human' | 'agent',
+    approvalSource: SpaceApprovalSource,
     contextExtras?: { reviewerName?: string; approvalReason?: string | null }
   ): Promise<void> {
     log.info(`dispatchPostApproval: spaceId=${spaceId} taskId=${taskId} source=${approvalSource}`);

@@ -473,6 +473,10 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
       injected.push(m);
       return 'msg-id';
     };
+    const cancelled: string[] = [];
+    (tam as unknown as { cancelBySessionId: (sid: string) => void }).cancelBySessionId = (sid) => {
+      cancelled.push(sid);
+    };
     const workflow = {
       id: 'wf-1',
       spaceId: SPACE_ID,
@@ -498,6 +502,9 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
       })
     ).rejects.toThrow(/pre-kickoff \(post-approval reuse\)/);
     expect(injected).toEqual([]);
+    // The reused session belongs to the node — an aborted merge kickoff must
+    // not cancel it (teardown is create-path only).
+    expect(cancelled).toEqual([]);
   });
 
   test('stopped space: aborts before kickoff injection on the CREATE path', async () => {
@@ -539,6 +546,10 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
       injected.push(m);
       return 'msg-id';
     };
+    const cancelled: string[] = [];
+    (tam as unknown as { cancelBySessionId: (sid: string) => void }).cancelBySessionId = (sid) => {
+      cancelled.push(sid);
+    };
     const workflow = {
       id: 'wf-1',
       spaceId: SPACE_ID,
@@ -564,5 +575,95 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
       })
     ).rejects.toThrow(/pre-kickoff \(post-approval\)/);
     expect(injected).toEqual([]);
+    // The registered-but-never-kicked-off session is torn back down — without
+    // the rollback it would leak in the SessionManager cache until restart
+    // and the resume re-spawn would never reclaim it.
+    expect(cancelled).toEqual([
+      `space:${SPACE_ID}:task:${TASK_ID}:post-approval:${REVIEWER_AGENT}`,
+    ]);
+  });
+
+  test('unreadable space state on the post-approval path fails CLOSED (durable deferral)', async () => {
+    // A transient getSpace error at the LAST gate before merge instructions
+    // are injected must abort into the already-built deferral, not proceed.
+    // Call-counting mock: the spawner's own lookup succeeds, the helper's
+    // re-check throws.
+    let getSpaceCalls = 0;
+    const tam = new TaskAgentManager({
+      db: { getDatabase: () => new BunDatabase(':memory:'), getSession: () => null },
+      sessionManager: { registerSession: () => {} },
+      internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
+      taskRepo: { getTask: () => ({ id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID }) },
+      nodeExecutionRepo: { listByWorkflowRun: () => [], listByNode: () => [] },
+      workflowRunRepo: { getRun: () => null },
+      spaceManager: {
+        getSpace: async () => {
+          if (++getSpaceCalls === 1) return { id: SPACE_ID, workspacePath: '/tmp/ws' };
+          throw new Error('db hiccup');
+        },
+      },
+      spaceAgentManager: {
+        getById: () => ({
+          id: 'agent-reviewer',
+          name: REVIEWER_AGENT,
+          customPrompt: 'merge',
+          model: 'm',
+          tools: [],
+        }),
+      },
+      spaceRuntimeService: {
+        buildMemberSpaceToolsMcpServer: () => ({ __role: 'space-agent-tools' }),
+        reattachMemberSpaceTools: async () => {},
+      },
+    } as unknown as TaskAgentManagerConfig);
+    (
+      tam as unknown as { buildNodeAgentMcpServerForSession: () => unknown }
+    ).buildNodeAgentMcpServerForSession = () => ({ __role: 'node-agent' });
+    (
+      tam as unknown as { ensureNodeAgentAttached: (...a: unknown[]) => Promise<void> }
+    ).ensureNodeAgentAttached = async () => {};
+    const injected: string[] = [];
+    (
+      tam as unknown as {
+        injectMessageIntoSession: (s: unknown, m: string) => Promise<string>;
+      }
+    ).injectMessageIntoSession = async (_s, m) => {
+      injected.push(m);
+      return 'msg-id';
+    };
+    const cancelled: string[] = [];
+    (tam as unknown as { cancelBySessionId: (sid: string) => void }).cancelBySessionId = (sid) => {
+      cancelled.push(sid);
+    };
+    const workflow = {
+      id: 'wf-1',
+      spaceId: SPACE_ID,
+      nodes: [
+        {
+          id: REVIEWER_NODE_ID,
+          name: 'Review',
+          agents: [{ agentId: 'agent-reviewer', name: REVIEWER_AGENT }],
+        },
+      ],
+      channels: [],
+      startNodeId: REVIEWER_NODE_ID,
+      endNodeId: REVIEWER_NODE_ID,
+    } as unknown as SpaceWorkflow;
+    const task = { id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID } as unknown as SpaceTask;
+
+    await expect(
+      tam.spawnPostApprovalSubSession({
+        task,
+        workflow,
+        targetAgent: REVIEWER_AGENT,
+        kickoffMessage: 'merge the PR',
+      })
+    ).rejects.toThrow(/state unreadable .*pre-kickoff \(post-approval\)/);
+    expect(injected).toEqual([]);
+    // Failing closed still rolls the registered session back.
+    expect(cancelled).toEqual([
+      `space:${SPACE_ID}:task:${TASK_ID}:post-approval:${REVIEWER_AGENT}`,
+    ]);
+    expect(getSpaceCalls).toBe(2);
   });
 });

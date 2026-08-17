@@ -296,11 +296,15 @@ describe('SpaceRuntimeService', () => {
       } as unknown as TaskAgentManager;
 
       const svc = new SpaceRuntimeService({
-        ...buildConfig(spaceManager),
+        ...buildConfig(createMockSpaceManager({ ...mockSpace, stopped: true })),
         taskRepo: mockTaskRepo,
         workflowRunRepo: mockWorkflowRunRepo,
       });
       svc.setTaskAgentManager(mockTaskAgentManager);
+      const redrives: Array<{ spaceId: string; taskId: string }> = [];
+      svc.dispatchPostApproval = async (spaceId, taskId) => {
+        redrives.push({ spaceId, taskId });
+      };
 
       await svc.stopActiveWork('space-1');
 
@@ -332,8 +336,114 @@ describe('SpaceRuntimeService', () => {
       expect(Object.keys(updateCalls[0]!.updates as Record<string, unknown>)).not.toContain(
         'status'
       );
+      // The space is still stopped, so nothing re-drives yet — the resume
+      // sweep owns that.
+      expect(redrives).toHaveLength(0);
       // Workflow runs keep their statuses — no cancellations.
       expect(transitionCalls).toHaveLength(0);
+    });
+
+    test('start racing the quiesce: records the interruption AND re-drives immediately', async () => {
+      // A space.start that lands while the cleanup awaits are settling has
+      // already fired onSpaceResumed — the resume sweep ran before this
+      // stamp existed and will never see it. The interruption is still
+      // recorded (the session IS dead), but the dispatch is re-driven
+      // immediately so the "re-runs automatically" promise holds.
+      const activeTasks = [
+        {
+          id: 't5',
+          status: 'approved' as const,
+          approvalSource: 'human' as const,
+          postApprovalSessionId: 'session:merge-1',
+          postApprovalBlockedReason: null,
+        },
+      ];
+      const updateCalls: Array<{ taskId: string; updates: unknown }> = [];
+      const mockTaskRepo = {
+        listBySpace: () => activeTasks,
+        updateTask: (taskId: string, updates: unknown) => {
+          updateCalls.push({ taskId, updates });
+        },
+      } as unknown as SpaceTaskRepository;
+      const mockWorkflowRunRepo = {
+        listBySpace: () => [],
+        transitionStatus: () => {},
+      } as unknown as SpaceWorkflowRunRepository;
+
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(createMockSpaceManager({ ...mockSpace, stopped: false })),
+        taskRepo: mockTaskRepo,
+        workflowRunRepo: mockWorkflowRunRepo,
+      });
+      svc.setTaskAgentManager({
+        cleanup: async () => {},
+      } as unknown as TaskAgentManager);
+      const redrives: Array<{ spaceId: string; taskId: string; source: string }> = [];
+      svc.dispatchPostApproval = async (spaceId, taskId, approvalSource) => {
+        redrives.push({ spaceId, taskId, source: approvalSource as string });
+      };
+
+      await svc.stopActiveWork('space-1');
+
+      // The stamp still lands — pointer nulled + reason — and the dispatch
+      // is re-driven NOW, not deferred to a resume that already happened.
+      expect(updateCalls).toHaveLength(1);
+      expect(updateCalls[0]!.updates).toMatchObject({
+        postApprovalSessionId: null,
+        postApprovalBlockedReason: expect.stringMatching(/session:merge-1 interrupted/),
+      });
+      expect(redrives).toEqual([{ spaceId: 'space-1', taskId: 't5', source: 'human' }]);
+    });
+
+    test('reason already set: nulls the stale pointer, keeps the first wording, no re-drive', async () => {
+      // The deferral was recorded by the dispatch hold (e.g. an approve that
+      // landed inside the stopped window) — same resume path. The session
+      // interruption happening NOW must still drop the pointer (a retained
+      // one wedges the resume re-dispatch in the router's already-routed
+      // guard), but the reason keeps its original wording.
+      const activeTasks = [
+        {
+          id: 't5',
+          status: 'approved' as const,
+          postApprovalSessionId: 'session:merge-1',
+          postApprovalBlockedReason:
+            'space-1 is stopped; post-approval dispatch deferred until the space resumes',
+        },
+      ];
+      const updateCalls: Array<{ taskId: string; updates: unknown }> = [];
+      const mockTaskRepo = {
+        listBySpace: () => activeTasks,
+        updateTask: (taskId: string, updates: unknown) => {
+          updateCalls.push({ taskId, updates });
+        },
+      } as unknown as SpaceTaskRepository;
+      const mockWorkflowRunRepo = {
+        listBySpace: () => [],
+        transitionStatus: () => {},
+      } as unknown as SpaceWorkflowRunRepository;
+
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(createMockSpaceManager({ ...mockSpace, stopped: true })),
+        taskRepo: mockTaskRepo,
+        workflowRunRepo: mockWorkflowRunRepo,
+      });
+      svc.setTaskAgentManager({
+        cleanup: async () => {},
+      } as unknown as TaskAgentManager);
+      const redrives: Array<{ taskId: string }> = [];
+      svc.dispatchPostApproval = async (_spaceId, taskId) => {
+        redrives.push({ taskId });
+      };
+
+      await svc.stopActiveWork('space-1');
+
+      expect(updateCalls).toHaveLength(1);
+      expect(updateCalls[0]!.updates).toMatchObject({ postApprovalSessionId: null });
+      // The reason write is skipped — first wording kept.
+      expect(Object.keys(updateCalls[0]!.updates as Record<string, unknown>)).not.toContain(
+        'postApprovalBlockedReason'
+      );
+      expect(redrives).toHaveLength(0);
     });
 
     test('parks in-flight and waiting_rebind node executions with the clean-recovery reset', async () => {

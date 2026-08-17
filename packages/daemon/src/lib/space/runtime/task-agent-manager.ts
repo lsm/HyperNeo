@@ -1370,24 +1370,47 @@ export class TaskAgentManager {
    * throw `TransientSpawnError` when the space has stopped, so the spawn
    * aborts (session torn down + execution reset to the clean-recovery shape
    * by the caller's catch) and the runtime defers it — no crash accounting,
-   * `space.start` re-drives. Fails open when the lookup itself throws: a
-   * failed read must not block a legitimate spawn (the tick loop's spawn
-   * gate re-checks the space row on every tick).
+   * `space.start` re-drives.
+   *
+   * Deliberately stopped-only (not paused): a pause keeps in-flight work
+   * alive by design, so a pause landing between the dispatch hold and this
+   * check lets the kickoff proceed — the asymmetry with the hold (which
+   * covers paused) is intentional.
+   *
+   * Failure mode on a `getSpace` throw differs by caller: node spawns fail
+   * OPEN (default) — a failed read must not block a legitimate spawn because
+   * the tick loop's spawn gate re-checks the space row on every tick.
+   * Post-approval kickoffs pass `{ failClosed: true }` — the merge kickoff is
+   * one-shot external work with no per-tick gate behind it, so a transient
+   * read error must abort into the already-built durable deferral
+   * (TransientSpawnError → PostApprovalDeferredError → resume re-drive)
+   * rather than inject merge instructions into a possibly-stopped space.
    */
-  private async assertSpaceNotStoppedForSpawn(spaceId: string, phase: string): Promise<void> {
+  private async assertSpaceNotStoppedForSpawn(
+    spaceId: string,
+    phase: string,
+    opts: { failClosed?: boolean } = {}
+  ): Promise<void> {
+    let freshSpace: Space | null | undefined;
     try {
-      const freshSpace = await this.config.spaceManager.getSpace(spaceId);
-      if (freshSpace?.stopped) {
+      freshSpace = await this.config.spaceManager.getSpace(spaceId);
+    } catch (err) {
+      if (opts.failClosed) {
         throw new TransientSpawnError(
-          `Space ${spaceId} stopped during spawn (${phase}); ` +
-            `deferring — the execution stays pending and space.start re-drives it`
+          `Space ${spaceId} state unreadable during spawn (${phase}); failing closed — ` +
+            `deferring the one-shot kickoff: ${err instanceof Error ? err.message : String(err)}`
         );
       }
-    } catch (err) {
-      if (isTransientSpawnError(err)) throw err;
       log.warn(
         `TaskAgentManager: failed to re-check stopped state for space ${spaceId} ` +
           `during spawn (${phase}): ${err instanceof Error ? err.message : String(err)}`
+      );
+      return;
+    }
+    if (freshSpace?.stopped) {
+      throw new TransientSpawnError(
+        `Space ${spaceId} stopped during spawn (${phase}); ` +
+          `deferring — the execution stays pending and space.start re-drives it`
       );
     }
   }
@@ -4131,12 +4154,13 @@ export class TaskAgentManager {
     const executions = this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId);
     for (const execution of executions) {
       // agentSessionId is normally stable once assigned during spawn, but it
-      // IS deliberately cleared by the clean-recovery resets
-      // (parkInFlightExecutionsForSpace on space stop, recoverRateLimitedTasks
-      // on a passed rate-cap reset), which blank it so the spawn path re-drives
-      // the execution without crash accounting. Pending executions that were
-      // never spawned — or that were parked — have a null agentSessionId,
-      // which this guard correctly skips.
+      // IS deliberately cleared by the clean-recovery resets — every caller
+      // of NodeExecutionRepository.resetForCleanRecovery (space-stop parking,
+      // passed rate caps, transient spawn aborts; see that helper's doc) —
+      // which blank it so the spawn path re-drives the execution without
+      // crash accounting. Pending executions that were never spawned — or
+      // that were parked — have a null agentSessionId, which this guard
+      // correctly skips.
       const subSessionId = execution.agentSessionId;
       if (!subSessionId) continue;
 
@@ -5792,7 +5816,8 @@ export class TaskAgentManager {
       // the merge (same deferral semantics as the create path below).
       await this.assertSpaceNotStoppedForSpawn(
         spaceId,
-        `pre-kickoff (post-approval reuse), task ${taskId}`
+        `pre-kickoff (post-approval reuse), task ${taskId}`,
+        { failClosed: true }
       );
       await this.injectMessageIntoSession(existing, kickoffMessage);
       log.info(
@@ -5871,47 +5896,60 @@ export class TaskAgentManager {
       nodeId: matchedNodeId,
     });
 
-    const spawned = this.getSubSession(actualSessionId);
-    if (!spawned) {
-      throw new Error(
-        `spawnPostApprovalSubSession: spawned session ${actualSessionId} not registered in memory`
+    // From registration on, any abort must tear the session back down — the
+    // same rollback shape as the node-spawn path: an idle registered session
+    // that never received its kickoff would leak in the SessionManager cache
+    // (and its DB row) until daemon restart, and the resume re-spawn never
+    // reclaims it. Most notably a stop landing in the MCP-attach window throws
+    // `TransientSpawnError`, which `dispatchPostApproval` converts into the
+    // durable post-approval deferral (banner + resume re-drive).
+    try {
+      const spawned = this.getSubSession(actualSessionId);
+      if (!spawned) {
+        throw new Error(
+          `spawnPostApprovalSubSession: spawned session ${actualSessionId} not registered in memory`
+        );
+      }
+
+      // #852: wire the Space-member MCP self-heal so a future regression (cache
+      // eviction / DB reload dropping the in-process `space-agent-tools` server)
+      // recovers via reattachMemberSpaceTools instead of tripping
+      // ensureMemberSpaceMcpInvariant. Sub-sessions are created via
+      // AgentSession.fromInit, which — unlike SessionManager.createAgentSessionFromSession
+      // — does NOT wire this callback, so attach it explicitly here, mirroring what
+      // attachSpaceToolsToMemberSession wires for normal ad-hoc members.
+      spawned.onMissingMemberSpaceMcpServers = async (sid: string) => {
+        await this.config.spaceRuntimeService.reattachMemberSpaceTools(sid);
+      };
+
+      await this.ensureNodeAgentAttached(spawned, {
+        taskId,
+        subSessionId: actualSessionId,
+        agentName: matchedSlot.name,
+        spaceId,
+        workflowRunId: workflowRunId ?? '',
+        workspacePath,
+        workflowNodeId: matchedNodeId,
+        phase: 'spawn',
+      });
+
+      // Stop synchronization for the merge kickoff: the awaits above (MCP
+      // attach, invariant wiring) opened a window after the dispatch hold in
+      // `dispatchPostApproval` passed — a stop landing there must not have the
+      // merge instructions injected into the stopped space (and a live merger
+      // here could complete an external PR merge despite the operator's stop).
+      // Throws `TransientSpawnError`, which `dispatchPostApproval` converts
+      // into a durable post-approval deferral (banner + resume re-drive).
+      await this.assertSpaceNotStoppedForSpawn(
+        spaceId,
+        `pre-kickoff (post-approval), task ${taskId}`,
+        { failClosed: true }
       );
+      await this.injectMessageIntoSession(spawned, kickoffMessage);
+    } catch (err) {
+      this.cancelBySessionId(actualSessionId);
+      throw err;
     }
-
-    // #852: wire the Space-member MCP self-heal so a future regression (cache
-    // eviction / DB reload dropping the in-process `space-agent-tools` server)
-    // recovers via reattachMemberSpaceTools instead of tripping
-    // ensureMemberSpaceMcpInvariant. Sub-sessions are created via
-    // AgentSession.fromInit, which — unlike SessionManager.createAgentSessionFromSession
-    // — does NOT wire this callback, so attach it explicitly here, mirroring what
-    // attachSpaceToolsToMemberSession wires for normal ad-hoc members.
-    spawned.onMissingMemberSpaceMcpServers = async (sid: string) => {
-      await this.config.spaceRuntimeService.reattachMemberSpaceTools(sid);
-    };
-
-    await this.ensureNodeAgentAttached(spawned, {
-      taskId,
-      subSessionId: actualSessionId,
-      agentName: matchedSlot.name,
-      spaceId,
-      workflowRunId: workflowRunId ?? '',
-      workspacePath,
-      workflowNodeId: matchedNodeId,
-      phase: 'spawn',
-    });
-
-    // Stop synchronization for the merge kickoff: the awaits above (MCP
-    // attach, invariant wiring) opened a window after the dispatch hold in
-    // `dispatchPostApproval` passed — a stop landing there must not have the
-    // merge instructions injected into the stopped space (and a live merger
-    // here could complete an external PR merge despite the operator's stop).
-    // Throws `TransientSpawnError`, which `dispatchPostApproval` converts
-    // into a durable post-approval deferral (banner + resume re-drive).
-    await this.assertSpaceNotStoppedForSpawn(
-      spaceId,
-      `pre-kickoff (post-approval), task ${taskId}`
-    );
-    await this.injectMessageIntoSession(spawned, kickoffMessage);
 
     log.info(
       `TaskAgentManager.spawnPostApprovalSubSession: spawned session ${actualSessionId} for agent "${matchedSlot.name}" (task ${taskId}, node ${matchedNodeId})`

@@ -1099,6 +1099,12 @@ export class SpaceRuntime {
    */
   private pausedSpaceIds = new Set<string>();
   /**
+   * In-flight `resumeDeferredPostApprovals` promises, keyed by space id, so
+   * `flushResumeSweep` can await the fire-and-forget sweep deterministically
+   * (tests and shutdown) instead of sleeping past it.
+   */
+  private resumeSweeps = new Map<string, Promise<void>>();
+  /**
    * Re-entrancy depth for {@link handleExternalEvent}. When > 0, a newly-created
    * PR auto-subscription must not synchronously redispatch retained events — it
    * would re-handle the in-flight event. The redispatch is deferred via
@@ -1966,7 +1972,7 @@ export class SpaceRuntime {
     }
     if (parkedCount > 0) {
       log.info(
-        `SpaceRuntime: parked ${parkedCount} in-flight node execution(s) for space ${spaceId} (statuses preserved)`
+        `SpaceRuntime: parked ${parkedCount} in-flight node execution(s) for space ${spaceId} (task/run statuses preserved)`
       );
     }
   }
@@ -4489,8 +4495,9 @@ export class SpaceRuntime {
     //
     // The deferral is made durable and resumable before throwing:
     //   - `postApprovalBlockedReason` is stamped here (not left to callers)
-    //     so the UI banner exists no matter which of the four call sites
-    //     dispatched — the tick sites have no Layer C catch of their own.
+    //     so the UI banner exists no matter which call site dispatched (RPC,
+    //     coordinator tool, either tick site, or the resume sweep itself) —
+    //     the tick sites have no Layer C catch of their own.
     //   - The typed `PostApprovalDeferredError` lets human-facing callers
     //     (RPC handler / coordinator tool) skip re-stamping, and lets the
     //     tick sites swallow the deferral instead of logging it as a tick
@@ -6140,8 +6147,14 @@ export class SpaceRuntime {
     this.pausedSpaceIds.delete(spaceId);
     // Re-drive post-approval dispatches deferred by a stop/pause (approved
     // tasks with a blocked reason). Fire-and-forget with its own error
-    // isolation — delivery requeue below must not wait on it.
-    void this.resumeDeferredPostApprovals(spaceId);
+    // isolation — delivery requeue below must not wait on it. The promise is
+    // tracked so flushResumeSweep can await it.
+    this.resumeSweeps.set(
+      spaceId,
+      this.resumeDeferredPostApprovals(spaceId).finally(() => {
+        this.resumeSweeps.delete(spaceId);
+      })
+    );
     if (!store) return;
 
     // Re-register workflow-defined static event interests for eligible runs
@@ -6279,13 +6292,30 @@ export class SpaceRuntime {
         .filter((t) => t.status === 'approved' && !!t.postApprovalBlockedReason);
       for (const task of deferred) {
         try {
-          await this.dispatchPostApproval(task.id, task.approvalSource ?? 'agent');
+          const result = await this.dispatchPostApproval(task.id, task.approvalSource ?? 'agent');
+          if (result.mode === 'skipped') {
+            // The router dispatched NOTHING (workflow missing, empty template)
+            // and wrote nothing — the deferral is unresolved. Keep the reason:
+            // the banner is the only record that manual recovery is needed.
+            log.warn(
+              `SpaceRuntime: resume dispatch of task ${task.id} came back skipped (${result.reason}) — keeping the blocked reason for banner recovery`
+            );
+            continue;
+          }
           // The router clears postApprovalBlockedReason on its spawn/no-route
-          // writes, but the `already-routed` short-circuit returns without
-          // writing — clear any residual reason so the banner drops once the
-          // dispatch is confirmed live/complete.
+          // writes, so a still-set reason here means either `already-routed`
+          // (which writes nothing) or a stop that landed DURING the dispatch
+          // await and re-recorded the interruption. Distinguish by the session
+          // pointer captured before the dispatch: `already-routed` leaves it
+          // untouched, while stopActiveWork's step 1.5 nulls it — clearing in
+          // that case would drop the banner on a freshly interrupted merger
+          // and the next resume sweep would find nothing to re-drive.
           const fresh = this.config.taskRepo.getTask(task.id);
-          if (fresh?.postApprovalBlockedReason) {
+          if (
+            fresh?.postApprovalBlockedReason &&
+            result.mode === 'already-routed' &&
+            fresh.postApprovalSessionId === task.postApprovalSessionId
+          ) {
             await this.updateTaskAndEmit(spaceId, task.id, {
               postApprovalBlockedReason: null,
             });
@@ -6305,6 +6335,17 @@ export class SpaceRuntime {
         `SpaceRuntime: failed to sweep deferred post-approval dispatches for space ${spaceId}: ${formatCommandError(err)}`
       );
     }
+  }
+
+  /**
+   * Await the resume sweep currently in flight for a space (no-op when none
+   * is). The sweep is fire-and-forget from `onSpaceResumed` so the resume
+   * callback is never blocked; this gives tests and shutdown a deterministic
+   * handle on its completion instead of sleeping past it.
+   */
+  async flushResumeSweep(spaceId: string): Promise<void> {
+    const pending = this.resumeSweeps.get(spaceId);
+    if (pending) await pending;
   }
 
   private redispatchPublishedEventsWithoutDeliveries(): void {
@@ -8680,15 +8721,18 @@ export class SpaceRuntime {
                 permanentSpawnFailureReason = err instanceof Error ? err.message : String(err);
                 continue;
               }
-              // A deferred spawn (task paused on a rate/usage cap): leave the
-              // execution `pending` and re-attempt on a later tick once
-              // recoverRateLimitedTasks restores the task. NOT a crash (don't
+              // A deferred spawn (task paused on a rate/usage cap, or a stop
+              // landing mid-spawn): leave the execution `pending` and
+              // re-attempt on a later tick once recoverRateLimitedTasks
+              // restores the task / space.start re-drives. NOT a crash (don't
               // consume a crash-retry) and NOT permanent (don't
               // cancel/unregister — a transient cooldown must not permanently
-              // remove the target agent).
+              // remove the target agent). The error message carries the cause
+              // (cap cooldown vs. stopped-during-spawn) — don't hardcode one
+              // in the log prefix.
               if (isTransientSpawnError(err)) {
                 log.warn(
-                  `SpaceRuntime: deferring spawn for limited-task execution ${execution.id}: ${err instanceof Error ? err.message : String(err)}`
+                  `SpaceRuntime: deferring transient spawn failure for execution ${execution.id}: ${err instanceof Error ? err.message : String(err)}`
                 );
                 continue;
               }

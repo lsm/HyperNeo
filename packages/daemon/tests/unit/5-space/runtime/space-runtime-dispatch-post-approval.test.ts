@@ -111,6 +111,65 @@ function buildRuntime(): Ctx {
   };
 }
 
+/**
+ * Seed an approved task that carries a post-approval ROUTE (so the router's
+ * dispatchable/guard paths run) plus a blocked reason, optionally with a
+ * session pointer — the shapes the resume sweep re-drives.
+ */
+function seedRouteDeferredTask(
+  ctx: Ctx,
+  opts: { sessionId?: string | null; instructions?: string } = {}
+): string {
+  const workflow = ctx.workflowManager.createWorkflow({
+    spaceId: SPACE_ID,
+    name: `Route ${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    description: 'Test',
+    nodes: [
+      {
+        id: 'node-build',
+        name: 'Build',
+        agents: [{ agentId: 'agent-planner', name: 'Planner' }],
+        postApproval: {
+          targetAgent: 'Planner',
+          instructions: opts.instructions ?? 'Merge {{pr_url}}',
+        },
+      },
+    ],
+    transitions: [],
+    startNodeId: 'node-build',
+    endNodeId: 'node-build',
+    rules: [],
+    tags: [],
+    completionAutonomyLevel: 3,
+  });
+  const run = ctx.workflowRunRepo.createRun({
+    spaceId: SPACE_ID,
+    workflowId: workflow.id,
+    title: 'Run',
+  });
+  const task = ctx.taskRepo.createTask({
+    spaceId: SPACE_ID,
+    title: 'Ship it',
+    description: '',
+    status: 'in_progress',
+    workflowRunId: run.id,
+  });
+  ctx.taskRepo.updateTask(task.id, {
+    status: 'approved',
+    approvalSource: 'human',
+    approvedAt: Date.now(),
+    postApprovalSessionId: opts.sessionId ?? null,
+    postApprovalBlockedReason: 'deferred by a stop; awaiting the resume sweep',
+  });
+  return task.id;
+}
+
+/** The runtime config's Task Agent stub, as a mutable record for overrides. */
+function tamOf(ctx: Ctx): Record<string, unknown> {
+  return (ctx.runtime as unknown as { config: { taskAgentManager: Record<string, unknown> } })
+    .config.taskAgentManager;
+}
+
 function seedReviewTask(taskRepo: SpaceTaskRepository): SpaceTask {
   // Start in 'in_progress' then transition to 'review' via the repo (setting
   // status directly bypasses the transition validator, which is fine for a
@@ -287,9 +346,9 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
     expect(ctx.taskRepo.getTask(task.id)?.postApprovalBlockedReason).toBeTruthy();
 
     await ctx.spaceManager.startSpace(SPACE_ID);
-    // The sweep is fired (fire-and-forget) by the resumed callback — let it
-    // settle before asserting.
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    // The sweep is fired (fire-and-forget) by the resumed callback — await it
+    // deterministically instead of sleeping past it.
+    await ctx.runtime.flushResumeSweep(SPACE_ID);
 
     const final = ctx.taskRepo.getTask(task.id);
     expect(final?.status).toBe('done');
@@ -365,9 +424,9 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
 
     await ctx.spaceManager.stopSpace(SPACE_ID);
     await ctx.spaceManager.startSpace(SPACE_ID);
-    // The sweep is fired (fire-and-forget) by the resumed callback — let it
-    // settle before asserting.
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    // The sweep is fired (fire-and-forget) by the resumed callback — await it
+    // deterministically instead of sleeping past it.
+    await ctx.runtime.flushResumeSweep(SPACE_ID);
 
     expect(spawnCalls).toHaveLength(1);
     expect(spawnCalls[0]!.targetAgent).toBe('Planner');
@@ -378,6 +437,170 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
     expect(final?.status).toBe('approved');
     expect(final?.postApprovalSessionId).toBe('session:merge-resumed');
     expect(final?.postApprovalBlockedReason).toBeNull(); // banner resolved
+  });
+
+  // -------------------------------------------------------------------------
+  // Sweep residual-clear gating — the clear must only drop the banner when
+  // the dispatch genuinely resolved the deferral. `already-routed` writes
+  // nothing, so the sweep clears it; but a stop landing DURING the dispatch
+  // await re-records the interruption (step 1.5 nulls the pointer), and a
+  // `skipped` dispatch (broken route) resolves nothing — both must KEEP the
+  // reason, or the banner silently disappears off a wedged task.
+  // -------------------------------------------------------------------------
+
+  test('already-routed with a live session: sweep clears the residual banner', async () => {
+    // The paused-hold shape: the dispatch hold deferred while the merger was
+    // LIVE (pause keeps sessions alive), so the pointer survives with the
+    // reason. On resume the guard reports the session live → already-routed
+    // → the sweep drops the banner and leaves the running merger alone.
+    const taskId = seedRouteDeferredTask(ctx, { sessionId: 'session:merge-live' });
+    const spawnCalls: string[] = [];
+    const tam = tamOf(ctx);
+    tam.isSessionAlive = () => true;
+    tam.spawnPostApprovalSubSession = async (args: { targetAgent: string }) => {
+      spawnCalls.push(args.targetAgent);
+      return { sessionId: 'should-not-happen' };
+    };
+
+    await ctx.spaceManager.stopSpace(SPACE_ID);
+    await ctx.spaceManager.startSpace(SPACE_ID);
+    await ctx.runtime.flushResumeSweep(SPACE_ID);
+
+    expect(spawnCalls).toEqual([]);
+    const final = ctx.taskRepo.getTask(taskId);
+    expect(final?.postApprovalSessionId).toBe('session:merge-live'); // left untouched
+    expect(final?.postApprovalBlockedReason).toBeNull(); // banner dropped
+  });
+
+  test('a stop landing mid-dispatch: sweep keeps the freshly stamped reason', async () => {
+    // Same shape, but a second stop lands while the dispatch await is in
+    // flight: its step 1.5 nulls the pointer (and would re-stamp the reason).
+    // The pointer captured before the dispatch no longer matches → the sweep
+    // must NOT clear, or the banner vanishes off a freshly interrupted
+    // merger with nothing left to re-drive it.
+    const taskId = seedRouteDeferredTask(ctx, { sessionId: 'session:merge-live' });
+    const tam = tamOf(ctx);
+    tam.isSessionAlive = (sid: string) => {
+      // Simulate stopActiveWork 1.5 firing inside the dispatch await.
+      ctx.taskRepo.updateTask(taskId, { postApprovalSessionId: null });
+      expect(sid).toBe('session:merge-live');
+      return true;
+    };
+    tam.spawnPostApprovalSubSession = async () => ({ sessionId: 'should-not-happen' });
+
+    await ctx.spaceManager.stopSpace(SPACE_ID);
+    await ctx.spaceManager.startSpace(SPACE_ID);
+    await ctx.runtime.flushResumeSweep(SPACE_ID);
+
+    const final = ctx.taskRepo.getTask(taskId);
+    expect(final?.postApprovalSessionId).toBeNull();
+    expect(final?.postApprovalBlockedReason).toBeTruthy(); // kept
+  });
+
+  test('skipped dispatch (empty template): reason kept for banner recovery', async () => {
+    const taskId = seedRouteDeferredTask(ctx, { instructions: '   ' }); // empty template
+    const spawnCalls: string[] = [];
+    const tam = tamOf(ctx);
+    tam.isSessionAlive = () => false;
+    tam.spawnPostApprovalSubSession = async (args: { targetAgent: string }) => {
+      spawnCalls.push(args.targetAgent);
+      return { sessionId: 'should-not-happen' };
+    };
+
+    await ctx.spaceManager.stopSpace(SPACE_ID);
+    await ctx.spaceManager.startSpace(SPACE_ID);
+    await ctx.runtime.flushResumeSweep(SPACE_ID);
+
+    expect(spawnCalls).toEqual([]);
+    const final = ctx.taskRepo.getTask(taskId);
+    expect(final?.status).toBe('approved');
+    expect(final?.postApprovalBlockedReason).toBeTruthy(); // kept — manual recovery
+  });
+
+  test('dispatch failure keeps the reason; a deferral continues to the next task', async () => {
+    // Task A: the spawner aborts transiently (as if re-stopped mid-dispatch)
+    // → converted to the typed deferral → the sweep's catch continues.
+    // Task B: standalone (no route) → the no-route branch closes it to done.
+    const { TransientSpawnError } = await import(
+      '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts'
+    );
+    const taskA = seedRouteDeferredTask(ctx);
+    const plain = seedReviewTask(ctx.taskRepo); // review → standalone approved deferral
+    ctx.taskRepo.updateTask(plain.id, {
+      status: 'approved',
+      approvalSource: 'human',
+      approvedAt: Date.now(),
+      postApprovalBlockedReason: 'deferred by a stop; awaiting the resume sweep',
+    });
+    const tam = tamOf(ctx);
+    tam.isSessionAlive = () => false;
+    tam.spawnPostApprovalSubSession = async () => {
+      throw new TransientSpawnError('space stopped during merge spawn');
+    };
+
+    await ctx.spaceManager.stopSpace(SPACE_ID);
+    await ctx.spaceManager.startSpace(SPACE_ID);
+    await ctx.runtime.flushResumeSweep(SPACE_ID);
+
+    const finalA = ctx.taskRepo.getTask(taskA);
+    expect(finalA?.status).toBe('approved');
+    expect(finalA?.postApprovalBlockedReason).toMatch(/stopped during dispatch/);
+    // B was still processed after A's deferral — the catch `continue`s.
+    const finalB = ctx.taskRepo.getTask(plain.id);
+    expect(finalB?.status).toBe('done');
+    expect(finalB?.postApprovalBlockedReason).toBeNull();
+  });
+
+  test('a genuine dispatch failure keeps the reason (no deferral rewrite)', async () => {
+    const taskId = seedRouteDeferredTask(ctx);
+    const tam = tamOf(ctx);
+    tam.isSessionAlive = () => false;
+    tam.spawnPostApprovalSubSession = async () => {
+      throw new Error('boom');
+    };
+
+    await ctx.spaceManager.stopSpace(SPACE_ID);
+    await ctx.spaceManager.startSpace(SPACE_ID);
+    await ctx.runtime.flushResumeSweep(SPACE_ID);
+
+    const final = ctx.taskRepo.getTask(taskId);
+    expect(final?.status).toBe('approved');
+    // The original wording survives — the sweep keeps it for banner recovery.
+    expect(final?.postApprovalBlockedReason).toBe('deferred by a stop; awaiting the resume sweep');
+  });
+
+  test('terminal-run reconcile: stopped-space deferral is not a reconciliation failure', async () => {
+    // The reconcileTerminalRunTasks dispatch site (sibling of the completion
+    // sweep's): with the space stopped, dispatchPostApproval commits the
+    // approval and throws the typed deferral — the catch must swallow it so
+    // the reconciliation pass treats it as deferred, not failed.
+    const createdRun = ctx.workflowRunRepo.createRun({
+      spaceId: SPACE_ID,
+      workflowId: 'wf-none',
+      title: 'Run',
+    });
+    ctx.db
+      .prepare(`UPDATE space_workflow_runs SET status = 'done' WHERE id = ?`)
+      .run(createdRun.id);
+    const task = ctx.taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'Reconcile me',
+      description: '',
+      status: 'in_progress',
+      workflowRunId: createdRun.id,
+    });
+    ctx.db.prepare(`UPDATE spaces SET stopped = 1 WHERE id = ?`).run(SPACE_ID);
+
+    const rt = ctx.runtime as unknown as {
+      reconcileTerminalRunTasks: (run: { id: string }) => Promise<void>;
+    };
+    await expect(
+      rt.reconcileTerminalRunTasks(ctx.workflowRunRepo.getRun(createdRun.id)!)
+    ).resolves.toBeUndefined();
+
+    const final = ctx.taskRepo.getTask(task.id);
+    expect(final?.status).toBe('approved');
+    expect(final?.postApprovalBlockedReason).toMatch(/stopped; post-approval dispatch deferred/);
   });
 
   test('a stop landing mid-dispatch converts to the same durable deferral', async () => {
