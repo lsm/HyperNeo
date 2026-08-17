@@ -782,8 +782,10 @@ describe('QueryRunner', () => {
         await applyOnRunner(runner)(queryObject, 'bypassPermissions', 50);
 
         // Transient failures are retried, then the give-up is logged at error
-        // level (the session keeps 'default' mode — NOT equivalent to bypass,
-        // permissions.ask rules are denied fail-closed there).
+        // level. The reported mode stays unset — allowDangerouslySkipPermissions
+        // at intake keeps permission decisions host-managed via canUseTool
+        // allow-all (NOT degraded to interactive prompting; ask-rules still
+        // denied fail-closed), and the switch is re-applied on the next spawn.
         expect(setPermissionMode.mock.calls.length).toBe(3);
         const warnSpy = mockLogger.warn as ReturnType<typeof mock>;
         expect(warnSpy.mock.calls.length).toBe(2); // attempts 1 and 2
@@ -792,7 +794,8 @@ describe('QueryRunner', () => {
         const errorText = errorSpy.mock.calls.at(-1)?.join(' ') ?? '';
         expect(errorText).toContain('bypassPermissions');
         expect(errorText).toContain('control stream closed');
-        expect(errorText).toContain("'default' permission mode");
+        expect(errorText).toContain('allowDangerouslySkipPermissions');
+        expect(errorText).toContain('re-applied on the next query spawn');
       });
 
       it('applyDeferredPermissionMode converts a never-settling switch into the retry path', async () => {

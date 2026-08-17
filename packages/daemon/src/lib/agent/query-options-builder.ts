@@ -815,12 +815,16 @@ export class QueryOptionsBuilder {
     // tool to the model when a prompting surface is registered (verified
     // empirically against SDK 0.3.233 — allowedTools/tools overrides do not
     // re-enable it). So for bypass sessions we withhold `permissionMode` from
-    // the options entirely (no warning; mode is 'default' for the fraction of
-    // a second before the switch) and the query runner applies the real mode
-    // via `query.setPermissionMode('bypassPermissions')` right after the
-    // query starts. `allowedTools` is withheld too: allow rules are inert
-    // under bypass (everything is auto-approved except deny rules, which live
-    // in disallowedTools and stay), and their bare entries would trigger the
+    // the options entirely (no warning; the switch lands right after start)
+    // and the query runner applies the real mode via
+    // `query.setPermissionMode('bypassPermissions')` right after the query
+    // starts. `allowDangerouslySkipPermissions` is intentionally KEPT — the
+    // SDK requires it for bypassPermissions — so the CLI still spawns with the
+    // skip-permissions consent flag: before the switch lands, permission
+    // decisions route to canUseTool (allow-all), NOT interactive prompting.
+    // `allowedTools` is withheld too: allow rules are inert under bypass
+    // (everything is auto-approved except deny rules, which live in
+    // disallowedTools and stay), and their bare entries would trigger the
     // same shadow warning for space_chat/coordinator sessions.
     if (permissionMode === 'bypassPermissions') {
       delete queryOptions.permissionMode;

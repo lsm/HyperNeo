@@ -234,6 +234,13 @@ export class AskUserQuestionHandler {
       // updatedInput to include the original input fields plus answers.
       // Patch in any missing fields from the live `input` so we don't
       // drop required schema fields just because the resolver was lost.
+      //
+      // Known divergence: queued answers were keyed by the PERSISTED
+      // (truncated) question text at buildAnswers time — the raw tool_input
+      // is gone after a restart — so for a >MAX_QUESTION_STRING_LENGTH
+      // question the SDK's raw-text answer lookup will not match. Accepted:
+      // the live path keys by raw text, and over-cap questions are
+      // pathological.
       const merged: PermissionResult =
         queued.behavior === 'allow'
           ? {
@@ -271,18 +278,13 @@ export class AskUserQuestionHandler {
       askedAt: Date.now(),
     };
 
-    // Transition to waiting_for_input state
-    // This will persist to DB and broadcast to clients
-    await stateManager.setWaitingForInput(pendingQuestion);
-
-    // Emit event for logging/debugging
-    await internalEventBus.publish('question.asked', {
-      sessionId: session.id,
-      pendingQuestion,
-    });
-
-    // Return a Promise that waits for user input
-    return new Promise<PermissionResult>((resolve, reject) => {
+    // Create the pending promise and store the resolver SYNCHRONOUSLY before
+    // the awaits below: no window may exist where the state already reflects
+    // this question (setWaitingForInput) but this.pendingResolver still points
+    // at the previous question — a submit/cancel landing in that window would
+    // be keyed against the wrong question's raw input and mis-routed down the
+    // restart-survival path.
+    const pending = new Promise<PermissionResult>((resolve, reject) => {
       // A previous interception can still be pending if the model issued two
       // AskUserQuestion calls in one turn (two tool_use blocks). The resolver
       // map is single-slot; settle the superseded one with a deny RESULT —
@@ -312,6 +314,27 @@ export class AskUserQuestionHandler {
         reject,
       };
     });
+
+    // Transition to waiting_for_input state
+    // This will persist to DB and broadcast to clients
+    try {
+      await stateManager.setWaitingForInput(pendingQuestion);
+
+      // Emit event for logging/debugging
+      await internalEventBus.publish('question.asked', {
+        sessionId: session.id,
+        pendingQuestion,
+      });
+    } catch (err) {
+      // The card could not be shown — drop the resolver stored above so it
+      // does not dangle against a question the user never saw.
+      if (this.pendingResolver?.toolUseId === toolUseID) {
+        this.pendingResolver = null;
+      }
+      throw err;
+    }
+
+    return pending;
   }
 
   /**
@@ -444,12 +467,18 @@ export class AskUserQuestionHandler {
     // against the RAW (untruncated) question text in the tool_input — the
     // pendingQuestion copy is truncated for the UI surface, and the live path
     // returns updatedInput: {...resolver.input, answers}, so a truncated key
-    // would not match the text the SDK/model looks up answers by.
+    // would not match the text the SDK/model looks up answers by. Only use the
+    // resolver's input when it actually belongs to this question.
     const resolver = this.pendingResolver;
+    const resolverMatches = !!resolver && resolver.toolUseId === toolUseId;
 
     // Format the answers as expected by the SDK
     // Maps question text to selected option label(s)
-    const answers = this.buildAnswers(pendingQuestion, responses, resolver?.input);
+    const answers = this.buildAnswers(
+      pendingQuestion,
+      responses,
+      resolverMatches ? resolver.input : undefined
+    );
 
     // Track resolved question in session metadata. We do this BEFORE the
     // state transition so the metadata is durable even if the deliver step
@@ -460,7 +489,7 @@ export class AskUserQuestionHandler {
     // The resolver was captured before the state transition: if a second
     // AskUserQuestion supersedes during the await, the post-await capture
     // would resolve the newer resolver with this older question's answers.
-    if (resolver && resolver.toolUseId === toolUseId) {
+    if (resolverMatches) {
       // Transition back to processing state
       await stateManager.setProcessing(toolUseId, 'streaming');
       // Re-verify after the await — the supersede block already denied the
@@ -484,6 +513,16 @@ export class AskUserQuestionHandler {
           answers,
         },
       });
+      return;
+    }
+
+    // A resolver exists but belongs to a different (newer) question: this
+    // submit is for a question that was superseded while its card was being
+    // replaced — drop it rather than mis-queueing it down the restart path.
+    if (resolver) {
+      this.logger.warn(
+        `AskUserQuestion ${toolUseId}: submit for a superseded question; dropping it`
+      );
       return;
     }
 
@@ -549,6 +588,16 @@ export class AskUserQuestionHandler {
         behavior: 'deny',
         message: QUESTION_CANCEL_MESSAGE,
       });
+      return;
+    }
+
+    // A resolver exists but belongs to a different (newer) question: this
+    // cancel is for a question that was superseded while its card was being
+    // replaced — drop it rather than mis-queueing it down the restart path.
+    if (resolver) {
+      this.logger.warn(
+        `AskUserQuestion ${toolUseId}: cancel for a superseded question; dropping it`
+      );
       return;
     }
 

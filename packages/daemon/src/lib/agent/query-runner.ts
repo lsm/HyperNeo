@@ -547,11 +547,14 @@ export class QueryRunner {
    *
    * `setPermissionMode` is idempotent, so every query (re)spawn re-applies the
    * switch via this call site, and a transient failure within one long-lived
-   * streaming query is retried here. If all attempts fail the session keeps
-   * the intake 'default' mode: canUseTool's allow-all fallback auto-approves
-   * consults there, but it is NOT identical to bypass — a permissions.ask rule
-   * that bypass would auto-approve is instead denied fail-closed by the
-   * canUseTool callback — so the final failure is logged at error level.
+   * streaming query is retried here. `allowDangerouslySkipPermissions` is passed
+   * at intake (bypassPermissions REQUIRES it), so the CLI already spawns with
+   * the skip-permissions consent flag: even before the switch lands, permission
+   * decisions route to canUseTool, whose allow-all auto-approves (user ask-rules
+   * are still denied fail-closed by the callback) — the session is NOT degraded
+   * to interactive prompting. The switch aligns the reported mode to
+   * bypassPermissions; if all attempts fail, the session keeps that intake
+   * host-managed state and the final failure is logged at error level.
    */
   private async applyDeferredPermissionMode(
     queryObject: QueryLike,
@@ -600,8 +603,9 @@ export class QueryRunner {
           logger.error(
             `QueryRunner.start: failed to apply deferred permission mode ` +
               `'${deferredPermissionMode}' for session ${session.id} after ` +
-              `${maxAttempts} attempts: ${detail}. Session continues in the ` +
-              `'default' permission mode (canUseTool allow-all fallback; ` +
+              `${maxAttempts} attempts: ${detail}. The reported mode stays ` +
+              `unset (allowDangerouslySkipPermissions at intake keeps ` +
+              `permission decisions host-managed via canUseTool allow-all; ` +
               `permissions.ask rules are denied fail-closed instead of ` +
               `bypassed). The mode is re-applied on the next query spawn.`
           );

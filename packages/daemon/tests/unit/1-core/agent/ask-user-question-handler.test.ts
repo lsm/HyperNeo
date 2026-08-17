@@ -398,6 +398,22 @@ describe('AskUserQuestionHandler', () => {
       expect(result.hookSpecificOutput.permissionDecision).toBe('deny');
       expect(result.hookSpecificOutput.permissionDecisionReason).toContain('malformed');
       expect(setWaitingForInputSpy).not.toHaveBeenCalled();
+
+      // The questions.length >= 1 branch: an empty array is equally malformed.
+      const empty = (await hook(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'AskUserQuestion',
+          tool_input: { questions: [] },
+          tool_use_id: 'hook-empty',
+        },
+        'hook-empty',
+        { signal: new AbortController().signal }
+      )) as {
+        hookSpecificOutput: { permissionDecision: string };
+      };
+      expect(empty.hookSpecificOutput.permissionDecision).toBe('deny');
+      expect(setWaitingForInputSpy).not.toHaveBeenCalled();
     });
 
     it('denies malformed tool_input (question entry without an options array)', async () => {
@@ -824,6 +840,75 @@ describe('AskUserQuestionHandler', () => {
       expect(second.hookSpecificOutput.permissionDecision).toBe('deny');
 
       // race-1 was superseded — its resolver was denied by the supersede block.
+      const first = (await firstPromise) as {
+        hookSpecificOutput: { permissionDecision: string; permissionDecisionReason?: string };
+      };
+      expect(first.hookSpecificOutput.permissionDecision).toBe('deny');
+      expect(first.hookSpecificOutput.permissionDecisionReason).toContain('Superseded');
+    });
+
+    it('stores the resolver before the state transition so a mid-transition submit is not mis-routed', async () => {
+      const hook = handler.createPreToolUseHook();
+
+      const askHookInput = (toolUseId: string, question: string, label: string) => ({
+        hook_event_name: 'PreToolUse' as const,
+        tool_name: 'AskUserQuestion',
+        tool_input: {
+          questions: [
+            {
+              question,
+              header: 'P',
+              options: [{ label, description: label }],
+              multiSelect: false,
+            },
+          ],
+        },
+        tool_use_id: toolUseId,
+      });
+
+      // Question A is live.
+      const firstPromise = hook(askHookInput('race-1', 'Pick?', 'A'), 'race-1', {
+        signal: new AbortController().signal,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Gate setWaitingForInput so B's transition is mid-flight: the state is
+      // set synchronously, the real-I/O broadcast is still pending — the exact
+      // window the resolver store used to fall in.
+      let releaseWaiting!: () => void;
+      const waitingGate = new Promise<void>((resolve) => {
+        releaseWaiting = resolve;
+      });
+      setWaitingForInputSpy.mockImplementationOnce(async (pendingQuestion) => {
+        currentState = { status: 'waiting_for_input', pendingQuestion };
+        await waitingGate;
+      });
+
+      // B's interception stores its resolver SYNCHRONOUSLY, then blocks on
+      // setWaitingForInput(B).
+      const secondPromise = hook(askHookInput('race-2', 'Pick 2?', 'B'), 'race-2', {
+        signal: new AbortController().signal,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Mid-transition: a submit for B must see resolver === B (stored before
+      // the await) — keyed by B's raw text and resolved normally, NOT dropped
+      // or routed down the restart path against A's input.
+      await handler.handleQuestionResponse('race-2', [{ questionIndex: 0, selectedLabels: ['B'] }]);
+
+      releaseWaiting();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const second = (await secondPromise) as {
+        hookSpecificOutput: {
+          permissionDecision: string;
+          updatedInput?: { answers: Record<string, string> };
+        };
+      };
+      expect(second.hookSpecificOutput.permissionDecision).toBe('allow');
+      expect(second.hookSpecificOutput.updatedInput?.answers).toEqual({ 'Pick 2?': 'B' });
+
+      // race-1 was superseded by race-2 — denied by the supersede block.
       const first = (await firstPromise) as {
         hookSpecificOutput: { permissionDecision: string; permissionDecisionReason?: string };
       };
