@@ -538,11 +538,16 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     );
     const interrupted = makeFakeSession('session-interrupted').session;
     (
+      interrupted as unknown as { getProcessingState: () => { status: string } }
+    ).getProcessingState = () => ({ status: 'interrupted' });
+    (
       tam as unknown as { agentSessionIndex: Map<string, typeof interrupted> }
     ).agentSessionIndex.set('session-interrupted', interrupted);
 
-    // live.fake status is idle → alive.
+    // idle → alive; the probe must NOT count 'interrupted' as alive (that is
+    // the exact false positive the already-routed guard wedge relied on).
     expect(tam.isSessionUsableForPostApproval('session-live')).toBe(true);
+    expect(tam.isSessionUsableForPostApproval('session-interrupted')).toBe(false);
     // Absent from both the index and the SessionManager → dead.
     expect(tam.isSessionUsableForPostApproval('session-absent')).toBe(false);
   });
