@@ -537,6 +537,14 @@ export class QueryRunner {
    * mode from its first turn. That is write-ordering on the control stream,
    * not handshake queueing; do not rely on it for correctness.
    *
+   * `Query.request()` has no internal timeout, so each attempt is raced
+   * against `attemptTimeoutMs` — a CLI that is alive but never answers the
+   * control request converts into the retry path instead of parking the loop
+   * forever. If the query object this attempt belongs to is replaced or
+   * closed (retry paths, stop(), interrupt — SDK cleanup rejects in-flight
+   * requests), the loop bails out: the replacement spawn re-applies the mode
+   * itself, so retrying the dead object would only produce noise.
+   *
    * `setPermissionMode` is idempotent, so every query (re)spawn re-applies the
    * switch via this call site, and a transient failure within one long-lived
    * streaming query is retried here. If all attempts fail the session keeps
@@ -547,17 +555,46 @@ export class QueryRunner {
    */
   private async applyDeferredPermissionMode(
     queryObject: QueryLike,
-    deferredPermissionMode: string | undefined
+    deferredPermissionMode: string | undefined,
+    attemptTimeoutMs = 8000
   ): Promise<void> {
     if (!deferredPermissionMode || !queryObject.setPermissionMode) return;
     const { session, logger } = this.ctx;
     const maxAttempts = 3;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        await queryObject.setPermissionMode(deferredPermissionMode);
+        const attemptPromise = queryObject.setPermissionMode(deferredPermissionMode);
+        // Swallow a late rejection if the timeout wins the race below — the
+        // race already converted the outcome we act on.
+        attemptPromise.catch(() => {});
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            attemptPromise,
+            new Promise<never>((_, reject) => {
+              timeoutId = setTimeout(
+                () => reject(new Error(`no response within ${attemptTimeoutMs}ms`)),
+                attemptTimeoutMs
+              );
+            }),
+          ]);
+        } finally {
+          if (timeoutId !== undefined) clearTimeout(timeoutId);
+        }
         return;
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err);
+        // The spawn this attempt belonged to is gone — its replacement (or
+        // stop()) re-applies or drops the mode itself. Retrying the dead
+        // object would log a false degraded-mode alarm.
+        if (this.ctx.queryObject !== queryObject) {
+          logger.debug(
+            `QueryRunner.start: deferred permission mode switch for session ` +
+              `${session.id} aborted on attempt ${attempt} — query object ` +
+              `replaced/closed (${detail}); the replacement spawn re-applies it.`
+          );
+          return;
+        }
         if (attempt === maxAttempts) {
           logger.error(
             `QueryRunner.start: failed to apply deferred permission mode ` +

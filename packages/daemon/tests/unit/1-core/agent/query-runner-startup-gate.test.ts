@@ -152,7 +152,10 @@ describe('QueryRunner startup gate', () => {
   let handleErrorSpy: ReturnType<typeof mock>;
   let setIdleSpy: ReturnType<typeof mock>;
 
-  function createRunner(sessionId: string): { runner: QueryRunner; ctx: QueryRunnerContext } {
+  function createRunner(
+    sessionId: string,
+    deferredMode: string | undefined = undefined
+  ): { runner: QueryRunner; ctx: QueryRunnerContext } {
     const session: Session = {
       id: sessionId,
       title: sessionId,
@@ -229,7 +232,7 @@ describe('QueryRunner startup gate', () => {
         addSessionStateOptions: (options: unknown) => options,
         setCanUseTool: () => {},
         setAskUserQuestionHook: () => {},
-        getDeferredPermissionMode: () => undefined,
+        getDeferredPermissionMode: () => deferredMode,
         getEffectiveMcpServers: () => ({}),
       } as unknown as QueryOptionsBuilder,
       askUserQuestionHandler: {
@@ -298,6 +301,34 @@ describe('QueryRunner startup gate', () => {
     delete process.env.ANTHROPIC_API_KEY;
     queryFactory = null;
     resetSdkStartupGateForTests();
+  });
+
+  it('applies the deferred bypassPermissions switch to the spawned query (call-site seam test)', async () => {
+    // Pins the runQuery call site: build() withholds permissionMode for
+    // bypass sessions and the runner must apply it on the live query object
+    // right after query() creation. Deleting the call site fails this test
+    // while every default-config (bypass) session would silently stay in
+    // SDK 'default' mode.
+    const setPermissionMode = mock(async () => {});
+    queryFactory = () => {
+      const controlled = createControlledQuery();
+      (controlled.queryObject as unknown as { setPermissionMode: unknown }).setPermissionMode =
+        setPermissionMode;
+      spawned.push(controlled);
+      return controlled.queryObject;
+    };
+
+    const { runner, ctx } = createRunner('deferred-switch-session', 'bypassPermissions');
+    runner.start();
+    await waitFor(() => spawned.length === 1);
+    await waitFor(() => setPermissionMode.mock.calls.length === 1);
+
+    expect(setPermissionMode).toHaveBeenCalledTimes(1);
+    expect(setPermissionMode).toHaveBeenCalledWith('bypassPermissions');
+
+    // Settle the runner: end the stream so the query loop finishes cleanly.
+    await completeQuery(spawned[0], waitFor);
+    await ctx.queryPromise?.catch(() => {});
   });
 
   it('bounds concurrent cold-starts at the configured cap', async () => {

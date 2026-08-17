@@ -165,17 +165,28 @@ export class AskUserQuestionHandler {
   ): Promise<PermissionResult> {
     const { session, stateManager, internalEventBus } = this.ctx;
 
-    // Malformed input guard: a missing/empty questions array would throw in
-    // the mapping below and abort the tool call inside the CLI. Deny with a
-    // reason instead so the model sees a recoverable error.
+    // Malformed input guard: a missing/empty questions array — or a question
+    // entry without an options array — would throw in the mapping below and
+    // abort the tool call inside the CLI. Deny with a reason instead so the
+    // model sees a recoverable error.
     const askInput = input as unknown as AskUserQuestionInput;
-    if (!Array.isArray(askInput.questions) || askInput.questions.length === 0) {
+    const questionsWellFormed =
+      Array.isArray(askInput.questions) &&
+      askInput.questions.length > 0 &&
+      askInput.questions.every(
+        (q) =>
+          q !== null &&
+          typeof q === 'object' &&
+          typeof q.question === 'string' &&
+          Array.isArray(q.options)
+      );
+    if (!questionsWellFormed) {
       this.logger.warn(
-        `AskUserQuestion ${toolUseID}: malformed tool_input (questions missing or empty); denying`
+        `AskUserQuestion ${toolUseID}: malformed tool_input (questions missing, empty, or ill-formed); denying`
       );
       return {
         behavior: 'deny',
-        message: 'AskUserQuestion input is malformed: no questions were provided.',
+        message: 'AskUserQuestion input is malformed: no valid questions were provided.',
       };
     }
 
@@ -237,18 +248,23 @@ export class AskUserQuestionHandler {
     return new Promise<PermissionResult>((resolve, reject) => {
       // A previous interception can still be pending if the model issued two
       // AskUserQuestion calls in one turn (two tool_use blocks). The resolver
-      // map is single-slot; reject the superseded one so its SDK-side promise
-      // settles (the CLI aborts that tool call) instead of hanging forever.
+      // map is single-slot; settle the superseded one with a deny RESULT —
+      // not a rejection — so the CLI gets an unambiguous denial for the older
+      // call. (A rejection marshals as a channel error: under
+      // bypassPermissions an errored PreToolUse hook is non-blocking, so the
+      // superseded call could proceed with no interaction; in 'default' mode
+      // the error fall-through can re-consult canUseTool for the same
+      // tool_use_id and supersede the newer question's resolver.)
       if (this.pendingResolver) {
         this.logger.warn(
           `AskUserQuestion ${this.pendingResolver.toolUseId}: superseded by a newer ` +
-            `AskUserQuestion call (${toolUseID}); rejecting the older resolver`
+            `AskUserQuestion call (${toolUseID}); denying the older question`
         );
-        try {
-          this.pendingResolver.reject(new Error('Superseded by a newer AskUserQuestion call'));
-        } catch {
-          // Ignore — best-effort settlement of a dead promise
-        }
+        this.pendingResolver.resolve({
+          behavior: 'deny',
+          message:
+            'Superseded by a newer AskUserQuestion call; that question is now awaiting the user.',
+        });
       }
       // Store the resolver so handleQuestionResponse can complete it
       this.pendingResolver = {

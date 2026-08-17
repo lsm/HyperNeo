@@ -744,16 +744,26 @@ describe('QueryRunner', () => {
         });
       });
 
+      type ApplyDeferred = (
+        q: QueryLike,
+        m: string | undefined,
+        attemptTimeoutMs?: number
+      ) => Promise<void>;
+
+      function applyOnRunner(r: QueryRunner): ApplyDeferred {
+        return (
+          r as unknown as { applyDeferredPermissionMode: ApplyDeferred }
+        ).applyDeferredPermissionMode.bind(r);
+      }
+
       it('applyDeferredPermissionMode switches the live query to the withheld mode', async () => {
         const setPermissionMode = mock(async () => {});
         const queryObject = { setPermissionMode } as unknown as QueryLike;
+        const ctx = createContext();
+        ctx.queryObject = queryObject;
+        runner = new QueryRunner(ctx);
 
-        runner = createRunner();
-        await (
-          runner as unknown as {
-            applyDeferredPermissionMode: (q: QueryLike, m: string | undefined) => Promise<void>;
-          }
-        ).applyDeferredPermissionMode(queryObject, 'bypassPermissions');
+        await applyOnRunner(runner)(queryObject, 'bypassPermissions');
 
         expect(setPermissionMode).toHaveBeenCalledTimes(1);
         expect(setPermissionMode).toHaveBeenCalledWith('bypassPermissions');
@@ -764,13 +774,11 @@ describe('QueryRunner', () => {
           throw new Error('control stream closed');
         });
         const queryObject = { setPermissionMode } as unknown as QueryLike;
+        const ctx = createContext();
+        ctx.queryObject = queryObject;
+        runner = new QueryRunner(ctx);
 
-        runner = createRunner();
-        await (
-          runner as unknown as {
-            applyDeferredPermissionMode: (q: QueryLike, m: string | undefined) => Promise<void>;
-          }
-        ).applyDeferredPermissionMode(queryObject, 'bypassPermissions');
+        await applyOnRunner(runner)(queryObject, 'bypassPermissions', 50);
 
         // Transient failures are retried, then the give-up is logged at error
         // level (the session keeps 'default' mode — NOT equivalent to bypass,
@@ -786,16 +794,59 @@ describe('QueryRunner', () => {
         expect(errorText).toContain("'default' permission mode");
       });
 
+      it('applyDeferredPermissionMode converts a never-settling switch into the retry path', async () => {
+        // Query.request has no internal timeout — a CLI that never answers
+        // the control request would park the loop on attempt 1 forever. The
+        // per-attempt timeout race converts the hang into retry + give-up.
+        const setPermissionMode = mock(
+          () =>
+            new Promise<void>(() => {
+              /* never settles */
+            })
+        );
+        const queryObject = { setPermissionMode } as unknown as QueryLike;
+        const ctx = createContext();
+        ctx.queryObject = queryObject;
+        runner = new QueryRunner(ctx);
+
+        await applyOnRunner(runner)(queryObject, 'bypassPermissions', 20);
+
+        expect(setPermissionMode.mock.calls.length).toBe(3);
+        const errorSpy = mockLogger.error as ReturnType<typeof mock>;
+        expect(errorSpy.mock.calls.length).toBe(1);
+        expect(errorSpy.mock.calls.at(-1)?.join(' ') ?? '').toContain('no response within 20ms');
+      });
+
+      it('applyDeferredPermissionMode bails out silently when its query object was replaced', async () => {
+        // Retry paths / stop() replace or close ctx.queryObject; SDK cleanup
+        // rejects in-flight requests. Retrying the dead object (and firing
+        // the degraded-mode ERROR) would be a false alarm — the replacement
+        // spawn re-applies the mode itself.
+        const setPermissionMode = mock(async () => {
+          throw new Error('Query closed before response received');
+        });
+        const queryObject = { setPermissionMode } as unknown as QueryLike;
+        const ctx = createContext();
+        ctx.queryObject = queryObject;
+        runner = new QueryRunner(ctx);
+
+        const attempt = applyOnRunner(runner)(queryObject, 'bypassPermissions', 50);
+        // Simulate the replacement closing in mid-attempt.
+        ctx.queryObject = null;
+        await attempt;
+
+        expect(setPermissionMode.mock.calls.length).toBe(1); // no dead-object retries
+        const errorSpy = mockLogger.error as ReturnType<typeof mock>;
+        expect(errorSpy).not.toHaveBeenCalled(); // no false degraded-mode alarm
+      });
+
       it('applyDeferredPermissionMode is a no-op without a deferred mode or method', () => {
         const setPermissionMode = mock(async () => {});
         const queryObject = { setPermissionMode } as unknown as QueryLike;
-
-        runner = createRunner();
-        const apply = (
-          runner as unknown as {
-            applyDeferredPermissionMode: (q: QueryLike, m: string | undefined) => void;
-          }
-        ).applyDeferredPermissionMode.bind(runner);
+        const ctx = createContext();
+        ctx.queryObject = queryObject;
+        runner = new QueryRunner(ctx);
+        const apply = applyOnRunner(runner);
 
         // No deferred mode (non-bypass session): nothing to apply.
         apply(queryObject, undefined);

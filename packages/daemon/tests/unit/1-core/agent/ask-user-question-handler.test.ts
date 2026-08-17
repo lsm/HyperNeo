@@ -363,8 +363,14 @@ describe('AskUserQuestionHandler', () => {
       // No re-prompt — the queued answer came straight back
       expect(setWaitingForInputSpy).not.toHaveBeenCalled();
       expect(result.hookSpecificOutput.permissionDecision).toBe('allow');
+      // The merge restores the live input's schema fields alongside the
+      // queued answers — on the hook channel updatedInput REPLACES the tool
+      // input, so dropping the merge would ship schema-less input.
       expect(result.hookSpecificOutput.updatedInput).toEqual(
-        expect.objectContaining({ answers: { 'Pick?': 'A' } })
+        expect.objectContaining({
+          answers: { 'Pick?': 'A' },
+          questions: expect.any(Array),
+        })
       );
       expect(emitSpy).toHaveBeenCalledWith(
         'question.injected_as_tool_result',
@@ -394,24 +400,39 @@ describe('AskUserQuestionHandler', () => {
       expect(setWaitingForInputSpy).not.toHaveBeenCalled();
     });
 
-    it('rejects the superseded resolver when a second question arrives while one is pending', async () => {
+    it('denies malformed tool_input (question entry without an options array)', async () => {
+      const hook = handler.createPreToolUseHook();
+
+      const result = (await hook(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'AskUserQuestion',
+          tool_input: {
+            questions: [
+              { question: 'Q?', header: 'H', options: 'not-an-array', multiSelect: false },
+            ],
+          },
+          tool_use_id: 'hook-malformed-options',
+        },
+        'hook-malformed-options',
+        { signal: new AbortController().signal }
+      )) as {
+        hookSpecificOutput: { permissionDecision: string; permissionDecisionReason?: string };
+      };
+
+      // q.options.map would throw one level deeper than the array guard —
+      // same deny-with-reason outcome instead of an aborted tool call.
+      expect(result.hookSpecificOutput.permissionDecision).toBe('deny');
+      expect(result.hookSpecificOutput.permissionDecisionReason).toContain('malformed');
+      expect(setWaitingForInputSpy).not.toHaveBeenCalled();
+    });
+
+    it('settles the superseded call with a deny result when a second question arrives', async () => {
       const hook = handler.createPreToolUseHook();
 
       const firstPromise = hook(preToolUseInput('AskUserQuestion', 'hook-dup-1'), 'hook-dup-1', {
         signal: new AbortController().signal,
       });
-      // Attach a handler immediately — the rejection fires synchronously when
-      // the second call's executor runs below, and an briefly-unhandled
-      // rejection would be reported by the runner before the assertion.
-      let firstError: Error | undefined;
-      const firstSettled = firstPromise.then(
-        () => {
-          firstError = new Error('expected the superseded call to reject');
-        },
-        (e: Error) => {
-          firstError = e;
-        }
-      );
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       // A second AskUserQuestion call in the same turn replaces the first.
@@ -420,9 +441,15 @@ describe('AskUserQuestionHandler', () => {
       });
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // The first call settled (rejected), not hanging forever.
-      await firstSettled;
-      expect(firstError?.message).toContain('Superseded');
+      // The first call settled with an explicit DENY (not a rejection and not
+      // a hang): a rejection marshals as a channel error — non-blocking under
+      // bypassPermissions — and can re-enter interception for the same
+      // tool_use_id in 'default' mode, superseding the newer question.
+      const first = (await firstPromise) as {
+        hookSpecificOutput: { permissionDecision: string; permissionDecisionReason?: string };
+      };
+      expect(first.hookSpecificOutput.permissionDecision).toBe('deny');
+      expect(first.hookSpecificOutput.permissionDecisionReason).toContain('Superseded');
 
       // The second question is the live one and resolves normally.
       await handler.handleQuestionCancel('hook-dup-2');
@@ -1222,6 +1249,11 @@ describe('AskUserQuestionHandler', () => {
       expect(
         (result as { updatedInput: { answers: Record<string, string> } }).updatedInput.answers
       ).toEqual({ 'Pick?': 'A' });
+      // The merge restores the live input's schema fields alongside the
+      // queued answers (the queued result only carried `answers`).
+      expect((result as { updatedInput: { questions: unknown[] } }).updatedInput.questions).toEqual(
+        expect.any(Array)
+      );
 
       // Telemetry should record via=can_use_tool on consume
       expect(emitSpy).toHaveBeenCalledWith(

@@ -134,8 +134,10 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
   };
   /**
    * Emitted when an AskUserQuestion answer is delivered after the original
-   * canUseTool resolver was lost (e.g. daemon restart). Helps verify the
-   * restart-survival path works in production.
+   * in-memory interception resolver was lost (e.g. daemon restart) — the
+   * resolver is stored by the channel-agnostic interception core (PreToolUse
+   * hook or canUseTool). Helps verify the restart-survival path works in
+   * production.
    */
   'question.injected_as_tool_result': {
     sessionId: string;
