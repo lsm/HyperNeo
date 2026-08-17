@@ -1147,7 +1147,16 @@ export class SpaceRuntimeService {
    * the space is stopped. No task or workflow-run status is written: stop is a
    * pause, not a cancellation — `space.start` resumes by re-spawning the
    * parked executions with fresh kickoff sessions (the same clean-recovery
-   * path crash restart uses).
+   * reset `recoverRateLimitedTasks` uses for passed rate caps; crash restart
+   * deliberately does NOT use this shape — it keeps the session binding and
+   * charges crash counters).
+   *
+   * Known limitation: standalone tasks (no workflowRunId) in `in_progress`
+   * keep their status but nothing re-drives them after `space.start` — the
+   * resume paths only drive workflow-run executions and `open` standalone
+   * tasks. Pre-PR stop cancelled them; post-PR they stay `in_progress` with
+   * an interrupted session until manually restarted (reachable via manual
+   * status flips in the web UI).
    *
    * Called by the `space.stop` RPC handler after the space row is already
    * marked stopped (so the delivery hold is in force).
@@ -1160,15 +1169,25 @@ export class SpaceRuntimeService {
     // misses.
     this.runtime.holdSpaceDeliveries(spaceId);
 
-    // 1. Interrupt the agent sessions of active tasks (in_progress, open, or
-    //    paused on a rate/usage cap). A paused task still owns a live session
-    //    with an armed cooldown timer; if it isn't torn down here, the timer
-    //    fires after the stop and re-enqueues work. Task status is deliberately
-    //    left untouched.
+    // 1. Interrupt the agent sessions of active tasks (in_progress, open,
+    //    paused on a rate/usage cap, review, approved). A paused task still
+    //    owns a live session with an armed cooldown timer; if it isn't torn
+    //    down here, the timer fires after the stop and re-enqueues work.
+    //    review/approved tasks also own live sessions (an end-node agent
+    //    hanging in a completion checkpoint, or an in-flight post-approval
+    //    merge sub-session) — park resets their runs' in_progress execution
+    //    rows below, so leaving their sessions running would diverge rows
+    //    from sessions (dropped results + duplicate work on resume).
+    //    Task status is deliberately left untouched.
     const activeTasks = taskRepo
       .listBySpace(spaceId)
       .filter(
-        (t) => t.status === 'in_progress' || t.status === 'open' || isRateOrUsageLimited(t.status)
+        (t) =>
+          t.status === 'in_progress' ||
+          t.status === 'open' ||
+          t.status === 'review' ||
+          t.status === 'approved' ||
+          isRateOrUsageLimited(t.status)
       );
 
     await Promise.allSettled(

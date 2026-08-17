@@ -27,6 +27,7 @@ import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-w
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { TransientSpawnError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
@@ -2534,8 +2535,10 @@ describe('SpaceRuntime — tick loop correctness', () => {
       // The live-window face of the stop/spawn race: the runtime's spawn gate
       // passed while the space was active, but the space row flipped to
       // stopped before the session registered. The real TaskAgentManager
-      // spawn must re-check the row after registration and abort BEFORE
-      // stamping the execution or injecting the kickoff.
+      // spawn must re-check the row after registration, abort before the
+      // kickoff, tear the session down, and RESET the execution row —
+      // createSubSession stamps it in_progress+session before returning, so
+      // "leave pending" is only true if the abort path actively resets it.
       const cancelled: string[] = [];
       const realTam = new TaskAgentManager({
         db: { getDatabase: () => db, getSession: () => null },
@@ -2548,11 +2551,25 @@ describe('SpaceRuntime — tick loop correctness', () => {
         nodeExecutionRepo,
       } as unknown as ConstructorParameters<typeof TaskAgentManager>[0]);
       const fakeSession = { id: 'session:race-window' };
+      let stampedByCreateSubSession = false;
+      let executionId = '';
       (
         realTam as unknown as {
           createSubSession: (taskId: string, sessionId: string) => Promise<string>;
         }
-      ).createSubSession = async (_taskId: string, sessionId: string) => sessionId;
+      ).createSubSession = async (_taskId: string, sessionId: string) => {
+        // Mirror production: createSubSession stamps the execution
+        // {in_progress, agentSessionId} for the new session before it
+        // returns (both the reuse and the new-session path do).
+        nodeExecutionRepo.update(executionId, {
+          status: 'in_progress',
+          agentSessionId: sessionId,
+          startedAt: Date.now(),
+          completedAt: null,
+        });
+        stampedByCreateSubSession = true;
+        return sessionId;
+      };
       (realTam as unknown as { getSubSession: (sessionId: string) => unknown }).getSubSession =
         () => fakeSession;
       (realTam as unknown as { cancelBySessionId: (sessionId: string) => void }).cancelBySessionId =
@@ -2566,6 +2583,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
       ]);
       const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
       const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      executionId = execution.id;
       const task = taskRepo.getTask(tasks[0].id)!;
       const space = await spaceManager.getSpace(SPACE_ID);
 
@@ -2578,12 +2596,119 @@ describe('SpaceRuntime — tick loop correctness', () => {
         })
       ).rejects.toThrow(/stopped during spawn/);
 
+      // The stamp DID land mid-spawn (the stub mirrors production), so the
+      // clean final state below proves the abort path reset the row.
+      expect(stampedByCreateSubSession).toBe(true);
       // The just-created session was torn down (DB-preserving cancel), and
-      // the execution was never stamped — it stays parked-pending.
+      // the execution is back to the parked-pending shape.
       expect(cancelled).toHaveLength(1);
       const after = nodeExecutionRepo.getById(execution.id)!;
       expect(after.status).toBe('pending');
       expect(after.agentSessionId).toBeNull();
+    });
+
+    test('spawn aborts when the space stops between registration and kickoff injection', async () => {
+      // The post-recheck window: the space was still active at the
+      // post-registration check, but stops land during the awaits before the
+      // kickoff injection (MCP attach / memory search). The second check
+      // must abort before any message is injected into the stopped space.
+      const cancelled: string[] = [];
+      const injected: string[] = [];
+      const realTam = new TaskAgentManager({
+        db: { getDatabase: () => db, getSession: () => null },
+        internalEventBus: { subscribe: () => () => {} },
+        spaceManager,
+        spaceAgentManager: agentManager,
+        spaceWorkflowManager: workflowManager,
+        taskRepo,
+        workflowRunRepo,
+        nodeExecutionRepo,
+      } as unknown as ConstructorParameters<typeof TaskAgentManager>[0]);
+      const fakeSession = { id: 'session:late-window' };
+      let executionId = '';
+      (
+        realTam as unknown as {
+          createSubSession: (taskId: string, sessionId: string) => Promise<string>;
+        }
+      ).createSubSession = async (_taskId: string, sessionId: string) => sessionId;
+      (realTam as unknown as { getSubSession: (sessionId: string) => unknown }).getSubSession =
+        () => fakeSession;
+      (
+        realTam as unknown as {
+          ensureNodeAgentAttached: () => Promise<void>;
+        }
+      ).ensureNodeAgentAttached = async () => {
+        // The stop lands inside this await window — after the first check,
+        // before the kickoff.
+        await spaceManager.stopSpace(SPACE_ID);
+      };
+      (realTam as unknown as { cancelBySessionId: (sessionId: string) => void }).cancelBySessionId =
+        (sessionId: string) => {
+          cancelled.push(sessionId);
+        };
+      (
+        realTam as unknown as {
+          injectMessageIntoSession: (session: unknown, message: string) => Promise<void>;
+        }
+      ).injectMessageIntoSession = async (_session: unknown, message: string) => {
+        injected.push(message);
+      };
+
+      const rt = new SpaceRuntime(buildConfig());
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      executionId = execution.id;
+      const task = taskRepo.getTask(tasks[0].id)!;
+      const space = await spaceManager.getSpace(SPACE_ID);
+
+      await expect(
+        realTam.spawnWorkflowNodeAgentForExecution(task, space, workflow, run, execution, {
+          kickoff: true,
+        })
+      ).rejects.toThrow(/pre-kickoff/);
+
+      // No kickoff reached the session; it was torn down and the row reset.
+      expect(injected).toEqual([]);
+      expect(cancelled).toHaveLength(1);
+      const after = nodeExecutionRepo.getById(execution.id)!;
+      expect(after.status).toBe('pending');
+      expect(after.agentSessionId).toBeNull();
+    });
+
+    test('runtime defers a transient spawn failure without crash accounting and retries next tick', async () => {
+      // Pins the runtime-side TransientSpawnError contract the stop-abort
+      // relies on: a transient rejection leaves the execution pending, never
+      // charges taskCrashCounts, and the next tick retries the spawn.
+      let spawnAttempts = 0;
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        spawnWorkflowNodeAgentForExecution: async () => {
+          spawnAttempts++;
+          throw new TransientSpawnError('simulated transient spawn failure');
+        },
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+      await rt.executeTick();
+      await rt.executeTick();
+
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      expect(execution.status).toBe('pending');
+      expect(execution.agentSessionId).toBeNull();
+      expect(spawnAttempts).toBe(2); // deferred, retried next tick
+      // No crash accounting — transient is a deferral, not a crash.
+      expect((rt as unknown as { taskCrashCounts: Map<string, number> }).taskCrashCounts.size).toBe(
+        0
+      );
+      // The canonical task is not blocked by the deferral.
+      expect(taskRepo.getTask(tasks[0].id)!.status).toBe('in_progress');
+      expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
     });
   });
 });

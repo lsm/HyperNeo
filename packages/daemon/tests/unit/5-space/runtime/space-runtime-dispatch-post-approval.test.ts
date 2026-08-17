@@ -207,34 +207,41 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Stopped-space hold — post-approval work is NEW work; a stopped space must
-  // not start it (the merge sub-session / inline Task Agent turn).
+  // Stopped/paused-space hold — post-approval work is NEW work, so the
+  // dispatch is held; but the approval DECISION commits first (Layer C) and
+  // the deferral is surfaced as a throw both callers translate into
+  // postApprovalBlockedReason (UI recovery banner with a retry).
   // ---------------------------------------------------------------------------
 
-  test('holds dispatch while the space is stopped (approved work deferred to resume)', async () => {
+  test('stopped space: approval commits, dispatch throws, deferral is surfaced', async () => {
     const task = seedReviewTask(ctx.taskRepo);
     ctx.db.prepare(`UPDATE spaces SET stopped = 1 WHERE id = ?`).run(SPACE_ID);
 
-    const result = await ctx.runtime.dispatchPostApproval(task.id, 'human', {});
+    await expect(ctx.runtime.dispatchPostApproval(task.id, 'human', {})).rejects.toThrow(
+      /stopped; post-approval dispatch deferred/
+    );
 
-    expect(result.mode).toBe('skipped');
-    expect(result.reason).toContain('stopped');
-    // Nothing was transitioned, emitted, or injected — the review status
-    // persists and a resumed tick re-dispatches.
-    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('review');
-    expect(ctx.emitted).toEqual([]);
+    // Layer C: the human decision is durable — never swallowed by the hold.
+    const final = ctx.taskRepo.getTask(task.id);
+    expect(final?.status).toBe('approved');
+    expect(final?.approvalSource).toBe('human');
+    // The pending-completion banner fields are cleared (the approval is
+    // recorded; only the post-approval WORK is deferred).
+    expect(final?.pendingCheckpointType).toBeNull();
+    // No post-approval work started.
     expect(ctx.injected).toEqual([]);
   });
 
-  test('holds dispatch while the space is paused', async () => {
+  test('paused space: same contract — approval commits, dispatch defers', async () => {
     const task = seedReviewTask(ctx.taskRepo);
     ctx.db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
 
-    const result = await ctx.runtime.dispatchPostApproval(task.id, 'human', {});
+    await expect(ctx.runtime.dispatchPostApproval(task.id, 'human', {})).rejects.toThrow(
+      /paused; post-approval dispatch deferred/
+    );
 
-    expect(result.mode).toBe('skipped');
-    expect(result.reason).toContain('paused');
-    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('review');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('approved');
+    expect(ctx.injected).toEqual([]);
   });
 
   // ---------------------------------------------------------------------------

@@ -30,16 +30,22 @@ import { isReservedWorkflowAgentName } from './space-workflow-manager';
  *
  * Lifecycle:
  *   pending     → in_progress, cancelled
- *   in_progress → idle, waiting_rebind, blocked, cancelled
+ *   in_progress → idle, waiting_rebind, blocked, pending, cancelled
  *   waiting_rebind → pending, in_progress, blocked, cancelled
  *   idle        → in_progress (reactivation)
  *   blocked     → in_progress (retry), cancelled
  *   cancelled   → in_progress (retry)
+ *
+ * `in_progress → pending` is the clean-recovery reset (blank session
+ * binding, no crash accounting): performed via direct repo updates by
+ * `recoverRateLimitedTasks` (passed rate cap) and
+ * `SpaceRuntime.parkInFlightExecutionsForSpace` (space stop), so the spawn
+ * path re-drives the execution from scratch on the next active tick.
  */
 export const VALID_NODE_EXECUTION_TRANSITIONS: Record<NodeExecutionStatus, NodeExecutionStatus[]> =
   {
     pending: ['in_progress', 'cancelled'],
-    in_progress: ['idle', 'waiting_rebind', 'blocked', 'cancelled'],
+    in_progress: ['idle', 'waiting_rebind', 'blocked', 'pending', 'cancelled'],
     waiting_rebind: ['pending', 'in_progress', 'blocked', 'cancelled'],
     idle: ['in_progress'], // Reactivation — allows re-running a completed node
     blocked: ['in_progress', 'cancelled'],

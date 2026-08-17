@@ -2052,6 +2052,51 @@ describe('space-task-handlers', () => {
       });
     });
 
+    it('records the approval and surfaces the deferral when the space is stopped', async () => {
+      // space.stop hold: dispatchPostApproval commits review → approved FIRST,
+      // then throws the deferral. The handler rides the Layer C path — the
+      // approval is durable, the deferral is captured as a blocked reason the
+      // UI renders with a retry, and the RPC resolves (never silently drops
+      // the click).
+      const reviewTask = {
+        ...mockTask,
+        status: 'review' as const,
+        pendingCheckpointType: 'task_completion' as const,
+      };
+      const approvedTask = { ...reviewTask, status: 'approved' as const };
+      const runtime = {
+        dispatchPostApproval: mock(async () => {
+          throw new Error(
+            'space space-1 is stopped; post-approval dispatch deferred until the space resumes — approval recorded, retry the dispatch after space.start'
+          );
+        }),
+      } as unknown as SpaceRuntimeService;
+      setup(mockSpace, reviewTask, runtime);
+      (taskManager.getTask as ReturnType<typeof mock>)
+        .mockResolvedValueOnce(reviewTask) // currentTask (checkpoint guard)
+        .mockResolvedValueOnce(approvedTask) // afterCommit status check in catch
+        .mockResolvedValueOnce(approvedTask); // refreshed re-read after catch
+
+      const result = await call('spaceTask.approvePendingCompletion', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        approved: true,
+      });
+
+      // The approval itself succeeded — status approved, no raw throw.
+      expect(result.status).toBe('approved');
+      // The deferral is surfaced via the blocked-reason banner mechanism.
+      expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
+        postApprovalBlockedReason: expect.stringContaining('stopped'),
+      });
+      expect(internalEventBus.publish).toHaveBeenCalledWith('space.task.updated', {
+        sessionId: 'global',
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        task: approvedTask,
+      });
+    });
+
     it('rethrows when the status transition itself failed (approval did not happen)', async () => {
       // If setTaskStatus threw inside dispatchPostApproval (e.g. invalid
       // transition), the task never reached `approved`. The handler must

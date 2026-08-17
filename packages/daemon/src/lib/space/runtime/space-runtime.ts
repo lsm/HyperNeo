@@ -3896,9 +3896,9 @@ export class SpaceRuntime {
     run: SpaceWorkflowRun,
     runTasks: SpaceTask[]
   ): boolean {
-    // A cancelled run (e.g. cancelled by space.stop) must not have its static
-    // event interests rebuilt on resume/rehydrate — the run is no longer active
-    // even if a review task on it was not cancelled. A `done` run is terminal
+    // A cancelled run (e.g. cancelled via the workflow-run cancel path) must
+    // not have its static event interests rebuilt on resume/rehydrate — the
+    // run is no longer active even if a review task on it was not cancelled. A `done` run is terminal
     // (it can no longer deliver events — every delivery fails with
     // target_task_terminal), so rebuilding its interests only causes fan-out
     // waste on every matching event; the coder re-subscribes if the run reopens.
@@ -4450,16 +4450,6 @@ export class SpaceRuntime {
 
     const spaceId = current.spaceId;
     const space = await this.config.spaceManager.getSpace(spaceId);
-    // Supervision hold: post-approval work (e.g. the merge sub-session) is NEW
-    // work — a stopped/paused space must not start it. The approved status
-    // persists, so the tick loop re-dispatches when the space resumes.
-    if (space?.paused || space?.stopped) {
-      const reason =
-        `space ${spaceId} is ${space.stopped ? 'stopped' : 'paused'}; ` +
-        `deferring post-approval dispatch of task ${taskId} until the space resumes`;
-      log.info(`dispatchPostApproval: ${reason}`);
-      return { mode: 'skipped', reason };
-    }
     // Workflow lookup goes via the run (tasks reference workflowRunId, runs
     // reference workflowId). Standalone tasks have no run → no workflow → the
     // router takes the no-route branch.
@@ -4495,6 +4485,25 @@ export class SpaceRuntime {
       log.info(
         `task.status-transition: taskId=${taskId} from=${current.status} to=approved source=${approvalSource}`
       );
+    }
+
+    // Supervision hold — DELIBERATELY after the review → approved commit.
+    // Post-approval work (e.g. the merge sub-session) is NEW work, so a
+    // stopped/paused space must not start it; but the human decision itself
+    // is durable and must never be swallowed. Throwing here (instead of
+    // returning a skip) rides the Layer C contract both callers implement:
+    // they see the task already `approved`, capture this message as
+    // `postApprovalBlockedReason` (UI recovery banner with a retry), and
+    // report the approval as recorded. Nothing re-dispatches an `approved`
+    // task on its own — the banner retry after `space.start` is the resume
+    // path (the tick's completion path treats approved as already routed).
+    if (space?.paused || space?.stopped) {
+      clearPendingCompletionState(this.config.taskRepo, taskId);
+      const detail =
+        `space ${spaceId} is ${space.stopped ? 'stopped' : 'paused'}; ` +
+        `post-approval dispatch deferred until the space resumes — approval recorded, retry the dispatch after space.start`;
+      log.info(`dispatchPostApproval: ${detail}`);
+      throw new Error(detail);
     }
 
     // 2. Resolve the post-approval route context (PR URL + template tokens).
@@ -7754,8 +7763,11 @@ export class SpaceRuntime {
     workflow: SpaceWorkflow,
     space: Space | null
   ): Promise<'none' | 'restarted' | 'blocked'> {
-    // Paused/stopped spaces keep their live sessions by design — never nag or
-    // restart a session awake while scheduling is held.
+    // Supervision hold: never nag or restart a session awake while scheduling
+    // is suspended. Paused spaces keep their live sessions by design; a
+    // stopped space interrupts them at stop time, so any in_progress row with
+    // a live-looking session here is a spawn-race remnant — either way the
+    // hold applies until the space resumes.
     if (space?.paused || space?.stopped) return 'none';
 
     const nagGraceMs = this.config.agentStuckNagGraceMs ?? DEFAULT_AGENT_STUCK_NAG_GRACE_MS;

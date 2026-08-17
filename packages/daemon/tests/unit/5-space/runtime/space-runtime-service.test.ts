@@ -256,7 +256,9 @@ describe('SpaceRuntimeService', () => {
         { id: 't1', status: 'in_progress' as const },
         { id: 't2', status: 'open' as const },
         { id: 't3', status: 'rate_limited' as const },
-        { id: 't4', status: 'done' as const }, // should be filtered out
+        { id: 't4', status: 'review' as const }, // checkpoint end-node session
+        { id: 't5', status: 'approved' as const }, // in-flight merge session
+        { id: 't6', status: 'done' as const }, // should be filtered out
       ];
 
       const cleanupCalls: Array<{ taskId: string; reason: string }> = [];
@@ -294,9 +296,11 @@ describe('SpaceRuntimeService', () => {
 
       await svc.stopActiveWork('space-1');
 
-      // in_progress / open / rate-or-usage-limited tasks are quiesced.
-      expect(cleanupCalls).toHaveLength(3);
-      expect(cleanupCalls.map((c) => c.taskId).sort()).toEqual(['t1', 't2', 't3']);
+      // in_progress / open / rate-or-usage-limited / review / approved tasks
+      // are quiesced — review/approved tasks own live sessions (checkpoint
+      // end nodes, in-flight merges) that park resets rows for.
+      expect(cleanupCalls).toHaveLength(5);
+      expect(cleanupCalls.map((c) => c.taskId).sort()).toEqual(['t1', 't2', 't3', 't4', 't5']);
       // All cleanup calls use the 'stopped' reason — the non-destructive
       // quiesce that preserves worktrees + DB rows.
       expect(cleanupCalls.every((c) => c.reason === 'stopped')).toBe(true);

@@ -1240,29 +1240,13 @@ export class TaskAgentManager {
       // registered but BEFORE stamping the execution and injecting the
       // kickoff. If the space stopped meanwhile, abort: the catch below
       // interrupts the just-created session (cancelBySessionId preserves the
-      // DB row) and the deferral leaves the execution `pending` so
+      // DB row) and resets the execution to the clean-recovery shape so
       // space.start re-drives it. This closes the live window the
       // daemon-restart rehydrate guard cannot: any session registered before
       // this check is visible to stopActiveWork's cleanup pass (which runs
       // after stopSpace committed), and any registration after it sees
       // stopped=true and self-aborts here.
-      try {
-        const freshSpace = await this.config.spaceManager.getSpace(space.id);
-        if (freshSpace?.stopped) {
-          throw new TransientSpawnError(
-            `Space ${space.id} stopped during spawn of execution ${execution.id}; ` +
-              `deferring — the execution stays pending and space.start re-drives it`
-          );
-        }
-      } catch (err) {
-        if (isTransientSpawnError(err)) throw err;
-        // A failed lookup must not block the spawn — fail open (the tick
-        // loop's spawn gate re-checks the space row on every tick).
-        log.warn(
-          `TaskAgentManager: failed to re-check stopped state for space ${space.id} ` +
-            `during spawn of execution ${execution.id}: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
+      await this.assertSpaceNotStoppedForSpawn(space.id, `post-registration, exec ${execution.id}`);
 
       const startedAt = Date.now();
       const updatedExecution = this.config.nodeExecutionRepo.update(execution.id, {
@@ -1352,6 +1336,12 @@ export class TaskAgentManager {
         const kickoffMessage = runtimeContract
           ? `${initialMessage}\n\n${runtimeContract}`
           : initialMessage;
+        // Second stop synchronization point: the awaits above (MCP attach,
+        // memory search) opened a window after the post-registration
+        // re-check — a stop landing there must not have its kickoff injected
+        // into the stopped space. Same abort semantics: the catch below
+        // tears the session down and resets the row.
+        await this.assertSpaceNotStoppedForSpawn(space.id, `pre-kickoff, exec ${execution.id}`);
         await this.injectMessageIntoSession(spawned, kickoffMessage);
       }
       return actualSessionId;
@@ -1360,9 +1350,49 @@ export class TaskAgentManager {
       if (spawnedSessionId) {
         this.cancelBySessionId(spawnedSessionId);
       }
+      // A transient deferral (space stopped mid-spawn, task paused on a
+      // rate/usage cap) must leave the execution in the clean-recovery
+      // shape: createSubSession may have already stamped it
+      // `{in_progress, agentSessionId}` for the now-cancelled session, and a
+      // row left bound to a dead session is either mis-accounted as a crash
+      // on resume or nags for tens of minutes via the alive-stuck path.
+      if (isTransientSpawnError(err)) {
+        this.config.nodeExecutionRepo.update(execution.id, {
+          status: 'pending',
+          result: null,
+          agentSessionId: null,
+        });
+      }
       throw err;
     } finally {
       this.spawningExecutionIds.delete(execution.id);
+    }
+  }
+
+  /**
+   * Stop synchronization for in-flight spawns: re-read the space row and
+   * throw `TransientSpawnError` when the space has stopped, so the spawn
+   * aborts (session torn down + execution reset to the clean-recovery shape
+   * by the caller's catch) and the runtime defers it — no crash accounting,
+   * `space.start` re-drives. Fails open when the lookup itself throws: a
+   * failed read must not block a legitimate spawn (the tick loop's spawn
+   * gate re-checks the space row on every tick).
+   */
+  private async assertSpaceNotStoppedForSpawn(spaceId: string, phase: string): Promise<void> {
+    try {
+      const freshSpace = await this.config.spaceManager.getSpace(spaceId);
+      if (freshSpace?.stopped) {
+        throw new TransientSpawnError(
+          `Space ${spaceId} stopped during spawn (${phase}); ` +
+            `deferring — the execution stays pending and space.start re-drives it`
+        );
+      }
+    } catch (err) {
+      if (isTransientSpawnError(err)) throw err;
+      log.warn(
+        `TaskAgentManager: failed to re-check stopped state for space ${spaceId} ` +
+          `during spawn (${phase}): ${err instanceof Error ? err.message : String(err)}`
+      );
     }
   }
 
