@@ -85,11 +85,11 @@ async function getSessionError(
  * Wait until the daemon's startup-timeout TIMER callback has logged
  * "SDK startup timeout:" (query-runner.ts:808) at least `expected` times.
  *
- * Why this is needed: the retry branch calls stateManager.setIdle() and waits up
- * to RETRY_EXIT_TIMEOUT_MS (5 s) for the old subprocess before starting the
- * recursive retry, so waitForIdle() can return on that INTERMEDIATE idle before
- * the retry's second attempt runs — and the test would then tear down (kill the
- * daemon) before observing the second attempt. Polling the captured output for
+ * Why this is needed: the retry branch tears down the timed-out subprocess
+ * (waits up to RETRY_EXIT_TIMEOUT_MS = 5 s for its exit) before running the
+ * recursive retry, and the session STAYS 'processing' through that window (the
+ * retry no longer idles mid-chain), so a state-based wait cannot observe the
+ * retry's second attempt starting. Polling the captured output for
  * the second timer log makes the test actually wait for the retry's second
  * attempt. Requires the daemon spawned with LOG_LEVEL=warn (it is SILENT under
  * NODE_ENV=test by default).
@@ -140,18 +140,16 @@ function assertBoundedRetrySequenceRan(daemon: DaemonServerContext): void {
  * Wait until the daemon has set the TERMINAL session error (errorManager →
  * state.session.error), polling the `state.session` RPC at a 100 ms tick.
  *
- * Why this — not waitForIdle — gates the post-retry assertions: the retry
- * branch calls stateManager.setIdle() at query-runner.ts:991 BEFORE recursing
- * into attempt 2 (:1021), and runQuery never re-asserts 'processing' on the
- * retry (setProcessing is only called when an SDK message arrives — :1642 —
- * which never happens because attempt 2 times out first). So the session is
- * ALREADY idle throughout attempt 2, and waitForIdle returns instantly without
- * bridging to attempt 2's terminal handleError (:1399) + setIdle (:1420). The
- * 2nd timer log (:808) also fires before that terminal cleanup. Polling for the
- * error directly is the only signal that attempt 2's handleError has run; until
- * it does, state.error is null and afterEach's SIGTERM can tear the daemon down
- * before handleError sets it (isCleaningUp() early-returns at :917). Under the
- * forced 10 ms both attempts time out, so the terminal error always appears.
+ * Why this — not waitForIdle — gates the post-retry assertions: the session
+ * stays 'processing' throughout the backoff window and attempt 2 (setProcessing
+ * is only re-asserted when an SDK message arrives, which never happens because
+ * attempt 2 times out first), and waitForIdle would then need to span the FULL
+ * bounded-retry sequence (both 10 ms windows + teardown + backoff) with no
+ * signal that the terminal handleError has actually run — afterEach's SIGTERM
+ * could tear the daemon down before handleError sets the error (isCleaningUp()
+ * early-returns). Polling for the error directly is the only signal that
+ * attempt 2's terminal handling has run. Under the forced 10 ms both attempts
+ * time out, so the terminal error always appears.
  */
 async function waitForSessionError(
   daemon: DaemonServerContext,
@@ -309,10 +307,8 @@ describe('Startup Timeout Error Surfacing', () => {
 
         // ── Wait for the bounded-retry sequence to fully complete: both attempts'
         //    timers fired AND attempt 2's terminal handleError has set the error.
-        //    Neither waitForIdle nor the 2nd timer log alone suffices — the session
-        //    is already idle (retry-branch setIdle at :991; the retry recursion
-        //    never re-asserts processing), and the timer log (:808) fires before
-        //    handleError (:1399). Without waiting for the error, afterEach's
+        //    The 2nd timer log alone doesn't suffice — it fires before the
+        //    terminal handleError, and without waiting for the error, afterEach's
         //    SIGTERM can tear the daemon down before handleError runs. See
         //    waitForBoundedRetryCompleted / waitForSessionError.
         await waitForBoundedRetryCompleted(daemon, sessionId);

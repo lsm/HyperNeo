@@ -516,9 +516,11 @@ export class QueryRunner {
    * (AgentSession.startStreamingQuery recreates the runner), or session
    * rehydration each start from a fresh budget; the incident-class herd
    * begins at restart and still converges within the first daemon lifetime.
-   * `key: null` means nothing was consumed yet (feed starvation) — starved
-   * attempts charge the in-flight budget so consume/no-consume flapping and
-   * persistent starvation stay bounded too (see claimStartupTimeoutRetry).
+   * `key: null` means nothing was consumed AND nothing is pending in the
+   * queue (runQuery prefers the pending kickoff's uuid for starved attempts —
+   * see the deliveryKey derivation) — residual null attempts charge the
+   * in-flight budget so persistent, unidentified starvation stays bounded
+   * (see claimStartupTimeoutRetry).
    */
   private _startupTimeoutRetryState: { key: string | null; retries: number } = {
     key: null,
@@ -1139,9 +1141,14 @@ export class QueryRunner {
         // every catch entry below must count exactly once even if the retry is
         // later cancelled mid-teardown. The kickoff of this generation's
         // consumed set identifies the delivery across redrives (redrives
-        // re-enqueue the durable message under the same uuid).
+        // re-enqueue the durable message under the same uuid). When nothing
+        // was consumed yet (feed starvation), the first message still PENDING
+        // in the queue is the delivery being started — key on it so a starved
+        // first timeout of a NEW delivery gets a fresh budget (and the
+        // settled-failed check below applies) instead of charging whatever
+        // delivery timed out before it.
         const consumedForKey = this._consumedUserMessages.get(queryGeneration) ?? [];
-        const deliveryKey = consumedForKey[0]?.uuid ?? null;
+        const deliveryKey = consumedForKey[0]?.uuid ?? messageQueue.peekNextUserMessageId() ?? null;
         const retryNumber = this.claimStartupTimeoutRetry(deliveryKey);
 
         if (retryNumber === null) {
@@ -1221,6 +1228,21 @@ export class QueryRunner {
             }
           }
 
+          // Restore provider env vars BEFORE the backoff sleep so process.env
+          // is clean during the (potentially minutes-long) wait, and so a
+          // cancelled return below cannot skip the restore — the finally block
+          // skips cleanup for stale queries. (Same rationale as the
+          // provider-retry path's pre-sleep restore; the recursive attempt
+          // re-applies fresh provider env.)
+          const envVarsToRestore = this.ctx.originalEnvVars;
+          if (Object.keys(envVarsToRestore).length > 0) {
+            const { getProviderService: getProviderServiceForBackoff } = await import(
+              '../provider-service'
+            );
+            getProviderServiceForBackoff().restoreEnvVars(envVarsToRestore);
+            this.ctx.originalEnvVars = {};
+          }
+
           // Exponential backoff before the retry attempt — immediate retries
           // are what make a concurrent-start herd self-sustaining (each retry
           // respawns an SDK subprocess into the very load that timed it out).
@@ -1237,40 +1259,47 @@ export class QueryRunner {
           // (Codex P1, PR #2491; the backoff window widened this race, so the
           // check now also runs post-sleep.)
           //
-          // The abort controller and queue-running checks used by the provider
-          // retry's post-sleep guard do NOT apply here: this attempt's
-          // controller was legitimately aborted by the startup timer, and the
-          // timeout escape intentionally left the queue stopped (restarted
-          // below). Beyond generation/cleanup/interrupt, two more cancellation
-          // signals are checked:
-          // - ctx.queryPromise === null: the delivery-turn stall watchdog
-          //   (3 min no-activity) or a lifecycle reset nulls queryPromise
-          //   WITHOUT bumping the generation or marking interrupted — without
-          //   this check the sleeping chain would wake, pass the other checks,
-          //   and respawn a live query the reset already gave up on.
-          // - delivery row settled failed: the 30s delivery-consumption
-          //   timeout (awaitDeliveryConsumption) and the dead-letter paths
-          //   terminalize the kickoff's durable row while this chain sleeps.
-          //   Retrying would respawn subprocesses for a delivery the layer
-          //   already settled failed — abandon and let the settled state stand.
-          //   (Bounds the zombie window to one round past settlement instead
-          //   of the full cap, ~9.5 min with defaults.)
-          const deliverySettledFailed =
-            deliveryKey !== null &&
-            this.ctx.db
-              .getMessagesByStatus(session.id, 'failed')
-              .some((message) => message.uuid === deliveryKey);
+          // The queue-running check used by the provider retry's post-sleep
+          // guard does NOT apply here (the timeout escape intentionally left
+          // the queue stopped — restarted below). The controller-null check
+          // DOES apply even though this attempt's controller was legitimately
+          // ABORTED by the startup timer: abort() leaves it non-null, so null
+          // can only mean handleInterrupt (a COMPLETED Stop nulls the
+          // controller without touching the generation, queryPromise, or
+          // delivery rows — the kickoff row is 'consumed', so the settled
+          // check below misses it) or the lifecycle stop (already covered by
+          // the queryPromise disjunct). Cancellation signals, all cheap:
+          // - ctx.queryPromise === null — stall-watchdog reset / lifecycle
+          //   stop gave up on this chain (no generation bump).
+          // - ctx.queryAbortController === null — a completed user Stop.
+          // - generation supersession / interrupted status / shutdown.
           if (
             this.ctx.isCleaningUp() ||
+            this.ctx.queryAbortController === null ||
             this.ctx.queryPromise === null ||
-            deliverySettledFailed ||
             this.retrySupersededByReplacement(queryGeneration) ||
             stateManager.getState().status === 'interrupted'
           ) {
             logger.warn(
-              'Startup-timeout retry cancelled: session interrupted/restarted/reset/cleaning up during backoff' +
-                (deliverySettledFailed ? ' (delivery already settled failed)' : '') +
-                '.'
+              'Startup-timeout retry cancelled: session interrupted/stopped/restarted/reset/cleaning up during backoff.'
+            );
+            return;
+          }
+
+          // Delivery row settled failed: the 30s delivery-consumption timeout
+          // (awaitDeliveryConsumption) and the dead-letter paths terminalize
+          // the kickoff's durable row while this chain sleeps. Retrying would
+          // respawn subprocesses for a delivery the layer already settled —
+          // abandon and let the settled state stand. (Bounds the zombie window
+          // to one round past settlement instead of the full cap, ~9.5 min with
+          // defaults.) Runs AFTER the cheap disjuncts and reads a single row.
+          if (
+            deliveryKey !== null &&
+            this.ctx.db.getMessageByStatusAndUuid(session.id, 'failed', deliveryKey)
+          ) {
+            logger.warn(
+              'Startup-timeout retry cancelled: delivery already settled failed during backoff ' +
+                `(message ${deliveryKey}).`
             );
             return;
           }

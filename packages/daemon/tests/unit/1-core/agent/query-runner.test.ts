@@ -17,9 +17,12 @@ import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agen
 import type { Session, MessageHub } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
-// The unit vitest config aliases the SDK to tests/sdk-mock.ts, whose `query`
-// is a vi.fn — importing it here lets tests drive runQuery's for-await loop
-// (the success path) with a controllable mock query object.
+// Vitest-only: the daemon vitest config aliases the SDK specifier to
+// tests/sdk-mock.ts, whose `query` is a controllable vi.fn — importing it here
+// lets tests drive runQuery's for-await loop (the success path). Under
+// `bun test` this alias does not exist (the historical mock.module preload in
+// tests/unit/setup.ts applies instead), so this import is only meaningful in
+// the vitest harness CI uses.
 import { query as mockedSdkQuery } from '@anthropic-ai/claude-agent-sdk';
 import type { Database } from '../../../../src/storage/database';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
@@ -63,6 +66,8 @@ describe('QueryRunner', () => {
   let setCanUseToolSpy: ReturnType<typeof mock>;
   let createCanUseToolCallbackSpy: ReturnType<typeof mock>;
   let enqueueWithIdSpy: ReturnType<typeof mock>;
+  let peekNextUserMessageIdSpy: ReturnType<typeof mock>;
+  let getMessageByStatusAndUuidSpy: ReturnType<typeof mock>;
 
   // State variables (mutable context properties)
   let queryGeneration: number;
@@ -113,12 +118,14 @@ describe('QueryRunner', () => {
     getMessagesByStatusSpy = mock(() => []);
     getSDKMessagesSpy = mock(() => ({ messages: [], hasMore: false }));
     updateMessageStatusSpy = mock(() => {});
+    getMessageByStatusAndUuidSpy = mock(() => null);
     mockDb = {
       saveSDKMessage: saveSDKMessageSpy,
       updateSession: updateSessionSpy,
       getMessagesByStatus: getMessagesByStatusSpy,
       getSDKMessages: getSDKMessagesSpy,
       updateMessageStatus: updateMessageStatusSpy,
+      getMessageByStatusAndUuid: getMessageByStatusAndUuidSpy,
       getNodeExecutionRepo: mock(() => ({
         getByAgentSessionId: (sessionId: string) =>
           sessionId === 'space:s1:task:t1:exec:e1' ? { id: 'exec-1' } : null,
@@ -150,6 +157,7 @@ describe('QueryRunner', () => {
     });
     sizeSpy = mock(() => 0);
     enqueueWithIdSpy = mock(async () => {});
+    peekNextUserMessageIdSpy = mock(() => null);
     mockMessageQueue = {
       isRunning: isRunningSpy,
       start: startSpy,
@@ -158,6 +166,7 @@ describe('QueryRunner', () => {
       size: sizeSpy,
       getGeneration: mock(() => 0),
       enqueueWithId: enqueueWithIdSpy,
+      peekNextUserMessageId: peekNextUserMessageIdSpy,
       messageGenerator: mock(async function* () {
         // Empty generator for tests
       }),
@@ -212,7 +221,7 @@ describe('QueryRunner', () => {
   });
 
   function createContext(overrides: Partial<QueryRunnerContext> = {}): QueryRunnerContext {
-    return {
+    const ctx: QueryRunnerContext = {
       // Core dependencies
       session: mockSession,
       db: mockDb,
@@ -227,7 +236,12 @@ describe('QueryRunner', () => {
       // Mutable SDK state (direct properties)
       queryObject: null,
       queryPromise: null,
-      queryAbortController: null,
+      // A live (un-aborted) controller, matching production at the moment a
+      // startup timeout fires: the timer aborts it but never nulls it, and the
+      // post-backoff guard treats null as a completed Stop / lifecycle stop.
+      // build()-rejection tests never arm a real timer, so the default here
+      // keeps the harness faithful.
+      queryAbortController: new AbortController(),
       firstMessageReceived: false,
       startupTimeoutTimer: null,
       originalEnvVars: {},
@@ -239,7 +253,17 @@ describe('QueryRunner', () => {
         this.processExitedPromise = null;
       }),
       trackAgentProcess: trackAgentProcessSpy,
-      terminateTrackedAgentProcesses: terminateTrackedAgentProcessesSpy,
+      // Harness fidelity: production arms a fresh AbortController per attempt
+      // BEFORE a startup timeout can fire (the timer is set right after the
+      // controller); a completed Stop / lifecycle stop is what NULLS it.
+      // build()-rejection tests skip the arming code, so re-arm at the retry
+      // branch's teardown hook (entered before each backoff). Tests that
+      // simulate a Stop/reset override the spy and null the controller AFTER
+      // the re-arm, preserving their cancellation semantics.
+      terminateTrackedAgentProcesses: () => {
+        ctx.queryAbortController = new AbortController();
+        terminateTrackedAgentProcessesSpy();
+      },
 
       // Methods for state coordination
       incrementQueryGeneration: () => ++queryGeneration,
@@ -254,6 +278,7 @@ describe('QueryRunner', () => {
 
       ...overrides,
     };
+    return ctx;
   }
 
   function createRunner(overrides: Partial<QueryRunnerContext> = {}): QueryRunner {
@@ -1714,6 +1739,14 @@ describe('QueryRunner', () => {
       await ctx.queryPromise?.catch(() => {});
 
       expect(startSpy.mock.calls.length).toBe(1);
+      // Guard-branch assertions (not just the queue restart): the interrupted
+      // disjunct must cancel the retry outright — no recursion, no re-enqueue.
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+        String(args[0])
+      );
+      expect(warns.some((w) => w.includes('Startup-timeout retry cancelled'))).toBe(true);
     });
 
     it('re-enqueues every consumed prompt before the startup-timeout retry', async () => {
@@ -1814,8 +1847,11 @@ describe('QueryRunner', () => {
       savedMaxStartupRetries = process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX;
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
       // Zero the backoff by default so cap tests run at full speed; individual
-      // tests override the base to observe real delays.
+      // tests override the base to observe real delays. Pin the cap to 1 so
+      // the default-dependent tests exercise the minimal bounded shape (tests
+      // that need more retries override it).
       process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '0';
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '1';
       mockSession.workspacePath = tmpdir();
       buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
     });
@@ -1871,11 +1907,18 @@ describe('QueryRunner', () => {
       await ctx.queryPromise?.catch(() => {});
 
       expect(buildSpy).toHaveBeenCalledTimes(3); // 1 initial + 2 retries
-      // Bounds carry ~20% tolerance: Date.now() is a wall clock while the
-      // sleep uses the event loop's monotonic timer, so the measured gap can
-      // read ~1ms short on CI runners (observed 49 for a 50ms sleep). The
-      // exact doubling schedule is asserted deterministically by the pure
-      // schedule test above; here we only prove the sleeps are applied.
+      // The scheduled delays themselves are pinned by the retry warn lines…
+      const retryWarns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls
+        .map((args) => String(args[0]))
+        .filter((w) => w.includes('Auto-retrying query after startup timeout'));
+      expect(retryWarns.some((w) => w.includes('in 25ms)'))).toBe(true);
+      expect(retryWarns.some((w) => w.includes('in 50ms)'))).toBe(true);
+      // …and the elapsed gaps must cover them. Bounds carry ~20% tolerance:
+      // Date.now() is a wall clock while the sleep uses the event loop's
+      // monotonic timer, so the measured gap can read ~1ms short on CI runners
+      // (observed 49 for a 50ms sleep). The exact doubling schedule is
+      // asserted deterministically by the pure schedule test above; here we
+      // prove the sleeps are actually applied between attempts.
       expect(buildTimes[1] - buildTimes[0]).toBeGreaterThanOrEqual(20);
       expect(buildTimes[2] - buildTimes[1]).toBeGreaterThanOrEqual(40);
     });
@@ -1945,10 +1988,11 @@ describe('QueryRunner', () => {
     });
 
     it('charges starved (unidentified) attempts to the in-flight budget', () => {
-      // A timeout where nothing was consumed yet (feed starvation) has no
-      // delivery key. It must charge the current budget rather than reset it —
-      // otherwise consume/no-consume flapping would reset the budget every
-      // other round and the loop would be unbounded again.
+      // A timeout where nothing was consumed AND nothing is pending (the
+      // residual null key — runQuery now derives the key from the pending
+      // kickoff when one exists) must charge the current budget rather than
+      // reset it — otherwise consume/no-consume flapping would reset the
+      // budget every other round and the loop would be unbounded again.
       process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '3';
       runner = createRunner();
       const claim = (key: string | null) =>
@@ -2124,8 +2168,9 @@ describe('QueryRunner', () => {
         uuid: 'settled-kickoff-uuid',
         content: [{ type: 'text' as const, text: 'K' }],
       };
-      getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) =>
-        status === 'failed' ? ([{ uuid: kickoff.uuid }] as never) : []
+      getMessageByStatusAndUuidSpy.mockImplementation(
+        (_sessionId: string, _status: string, uuid: string) =>
+          uuid === kickoff.uuid ? ({ uuid: kickoff.uuid } as never) : null
       );
 
       const ctx = createContext();
@@ -2144,6 +2189,94 @@ describe('QueryRunner', () => {
         String(args[0])
       );
       expect(warns.some((w) => w.includes('delivery already settled failed'))).toBe(true);
+    });
+
+    it('cancels the retry when a COMPLETED Stop nulls the abort controller during the backoff', async () => {
+      // P1 regression guard: handleInterrupt on a processing session finishes
+      // in <1s — aborts-and-nulls ctx.queryAbortController, clears the queue,
+      // deletes delivery jobs, settles at IDLE — without touching the
+      // generation, queryPromise, or the 'consumed' kickoff row. Without the
+      // controller-null disjunct every other guard passes and the chain wakes
+      // to re-enqueue and re-run the prompt the user stopped.
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '25';
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      // Mimic handleInterrupt's observable effects by the time the chain is
+      // mid-backoff: controller nulled, queue cleared/stopped.
+      terminateTrackedAgentProcessesSpy.mockImplementation(() => {
+        ctx.queryAbortController = null;
+        stopSpy();
+        clearSpy();
+      });
+
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      // No recursion and — critically — no resurrection of the stopped prompt.
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+        String(args[0])
+      );
+      expect(warns.some((w) => w.includes('Startup-timeout retry cancelled'))).toBe(true);
+    });
+
+    it('cancels the retry when the session enters cleanup during the backoff', async () => {
+      // The isCleaningUp disjunct had no dedicated coverage. Daemon shutdown
+      // mid-backoff must not relaunch an orphaned query after the sleep.
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '25';
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      let cleaningUp = false;
+      ctx.isCleaningUp = () => cleaningUp;
+      terminateTrackedAgentProcessesSpy.mockImplementation(() => {
+        cleaningUp = true;
+      });
+
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+        String(args[0])
+      );
+      expect(warns.some((w) => w.includes('Startup-timeout retry cancelled'))).toBe(true);
+    });
+
+    it('gives a starved NEW delivery a fresh budget via the pending kickoff (peek)', async () => {
+      // P2 regression guard: when nothing was consumed (feed starvation), the
+      // delivery key now comes from the first message still pending in the
+      // queue. Without it, a starved first timeout of a NEW delivery B would
+      // charge whatever delivery timed out before it (A's exhausted budget)
+      // and settle B failed with zero retries.
+      let pendingKickoffId: string | null = 'kickoff-a';
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      peekNextUserMessageIdSpy.mockImplementation(() => pendingKickoffId);
+
+      // Turn 1 — starved delivery A: key derived from the pending kickoff.
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+      expect(buildSpy).toHaveBeenCalledTimes(2); // attempt + keyed retry, then capped
+
+      // Turn 2 — a DIFFERENT delivery B is pending (redrives carry a new
+      // message): its first timeout must get a FRESH budget (retry fires)
+      // instead of inheriting A's exhausted one.
+      pendingKickoffId = 'kickoff-b';
+      buildSpy.mockClear();
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(2); // fresh budget: attempt + retry
+      const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+        String(args[0])
+      );
+      // Both turns ended at the cap — B exhausted its OWN budget, not A's.
+      expect(warns.filter((w) => w.includes('retry budget exhausted')).length).toBe(2);
     });
   });
 

@@ -267,6 +267,20 @@ export class MessageQueue {
   }
 
   /**
+   * Read-only peek at the id of the first non-internal message still waiting
+   * in the queue (admitted but not yet consumed by a generator), or null when
+   * none is pending. Used by QueryRunner to identify the delivery a
+   * startup-timeout retry belongs to when NOTHING was consumed yet (feed
+   * starvation): the pending kickoff IS the delivery being started, so the
+   * per-delivery retry budget and the settled-failed cancellation can be keyed
+   * on it instead of falling back to an unidentified key.
+   */
+  peekNextUserMessageId(): string | null {
+    const next = this.queue.find((message) => !message.internal);
+    return next?.id ?? null;
+  }
+
+  /**
    * True when `messageId` is currently in the queue, claimed by a generator, or
    * yielded to the SDK but not yet acknowledged — i.e. it was admitted and is
    * still in flight. Used by the ACP steer path to avoid re-admitting (and thus

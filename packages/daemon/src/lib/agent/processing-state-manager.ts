@@ -245,8 +245,9 @@ export class ProcessingStateManager {
   /**
    * Set state to idle. Pass `{ suppressDeliveryWaiters: true }` on a
    * NON-terminal idle — one that is immediately followed by a query re-start
-   * (e.g. QueryRunner's startup-timeout / message-not-found / transient-
-   * connection auto-retries call setIdle before recursing into runQuery).
+   * (e.g. QueryRunner's message-not-found / transient-connection auto-retries
+   * call setIdle before recursing into runQuery; the startup-timeout retry
+   * no longer idles — it backs off first and stays 'processing').
    * Resolving the delivery waiters on such a retry idle would let
    * driveDeliveryTurn complete the durable job while the same prompt is still
    * being retried, freeing the active-turn slot for a competing turn.
