@@ -43,7 +43,6 @@ import { VoiceWaveform } from './voice/VoiceWaveform.tsx';
 import {
   enqueueTranscript,
   isPermanentAppendRefusal,
-  markVoiceTranscriptLanded,
 } from '../lib/voice/voice-transcript-outbox.ts';
 import { QueuePreviewTray, type QueuePreviewMessage } from './QueuePreviewTray.tsx';
 import { ContentContainer } from './ui/ContentContainer.tsx';
@@ -616,13 +615,10 @@ export default function MessageInput({
           text: transcript,
           dedupId: outboxId,
         });
-        // Announce the landing: the user may have REOPENED the session while
-        // transcription finished, and that composer's only session.get already
-        // ran — without a landing mark the staged transcript stays invisible
-        // until the next navigation or reload. The pendingRetained and
-        // character-limit paths announce nothing extra; the mark's refresh is
-        // deferred behind a non-empty composer exactly like the replay path.
-        markVoiceTranscriptLanded(targetSessionId, transcript, outboxId);
+        // The daemon announces the landing (session.voiceLanded on the session
+        // channel): a composer the user REOPENED into this session re-reads
+        // and adopts the composed draft, and one that misses the event
+        // converges on its next get — no client-side marker needed.
       };
       // Last-resort preservation: stage the transcript into the pending draft
       // field. Used for 'stay', for a composer too full to splice into, and as
