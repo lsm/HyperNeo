@@ -5018,8 +5018,11 @@ export class TaskAgentManager {
    * the running turn keeps the old (pre-merge) tool surface and the self-heal has no
    * visible effect until the next turn boundary.
    *
-   * `restartQuery()` is safe to call even when no query is running — it is a no-op
-   * in that case — so calling it from `ensureNodeAgentAttached` (before `startStreamingQuery`)
+   * `restartQuery()` is safe to call even when no query is running: on an
+   * IDLE session it is a no-op (the next start() builds fresh options), and
+   * on a 'processing' session with a stopped queue (a startup-retry backoff
+   * window) it records a deferred restart that fires when the session idles —
+   * so calling it from `ensureNodeAgentAttached` (before `startStreamingQuery`)
    * is harmless.
    */
   async reinjectNodeAgentMcpServer(
@@ -5051,8 +5054,10 @@ export class TaskAgentManager {
     });
 
     // Restart the running query so the SDK mounts the fresh node-agent server.
-    // If no query is running this is a no-op (restartQuery returns early when
-    // messageQueue.isRunning() is false).
+    // If no query is running this is a no-op for idle sessions (restartQuery
+    // returns early when messageQueue.isRunning() is false); a 'processing'
+    // session in a startup-retry backoff window records a deferred restart
+    // instead, which fires when the session next goes idle.
     await session.restartQuery();
   }
 

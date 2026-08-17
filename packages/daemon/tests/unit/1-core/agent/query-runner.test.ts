@@ -13,6 +13,10 @@ import {
   refreshQueryEnvFromProcess,
   type QueryRunnerContext,
 } from '../../../../src/lib/agent/query-runner';
+import {
+  getSdkStartupGate,
+  resetSdkStartupGateForTests,
+} from '../../../../src/lib/agent/sdk-startup-gate';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
 import type { Session, MessageHub } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
@@ -1375,14 +1379,11 @@ describe('QueryRunner', () => {
     let savedApiKey: string | undefined;
     let savedRetryBaseMs: string | undefined;
     let savedMaxStartupRetries: string | undefined;
-    let savedRetiredMaxRetries: string | undefined;
 
     beforeEach(() => {
       savedApiKey = process.env.ANTHROPIC_API_KEY;
       savedRetryBaseMs = process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS;
       savedMaxStartupRetries = process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX;
-      savedRetiredMaxRetries = process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES;
-      delete process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES;
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
       // Zero the startup-timeout backoff so retries fire immediately — the
       // default schedule (15s → 30s → …) would make every test below sleep
@@ -1411,11 +1412,6 @@ describe('QueryRunner', () => {
         delete process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX;
       } else {
         process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = savedMaxStartupRetries;
-      }
-      if (savedRetiredMaxRetries === undefined) {
-        delete process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES;
-      } else {
-        process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES = savedRetiredMaxRetries;
       }
     });
 
@@ -1794,37 +1790,63 @@ describe('QueryRunner', () => {
       });
     });
 
-    it('re-enqueues every consumed prompt before the startup-timeout retry', async () => {
-      // Codex P1 (PR #2499): if the old SDK pulled prompts out of the queue via
-      // messageGenerator() before going silent, restarting the queue leaves the
-      // retry with no input and it times out again at zero messages. A silent
-      // iterator can pull the kickoff AND trailing steers, so replay the full
-      // ordered set — not just the last message.
-      const kickoff = { uuid: 'kickoff-uuid', content: [{ type: 'text' as const, text: 'K' }] };
-      const steer = { uuid: 'steer-uuid', content: [{ type: 'text' as const, text: 'S' }] };
+    it.skipIf(!sdkQueryIsMock)(
+      'stages every consumed prompt at the retry and flushes them after startup-gate admission',
+      async () => {
+        // Codex P1 (PR #2499): if the old SDK pulled prompts out of the queue via
+        // messageGenerator() before going silent, restarting the queue leaves the
+        // retry with no input and it times out again at zero messages. A silent
+        // iterator can pull the kickoff AND trailing steers, so replay the full
+        // ordered set — not just the last message. Round-6: the replay is STAGED
+        // at the retry decision and enqueued only after the recursive attempt
+        // clears the startup gate (a pre-gate enqueue can TTL out during the
+        // gate wait), so the first attempt here stages without enqueuing…
+        const kickoff = { uuid: 'kickoff-uuid', content: [{ type: 'text' as const, text: 'K' }] };
+        const steer = { uuid: 'steer-uuid', content: [{ type: 'text' as const, text: 'S' }] };
 
-      const ctx = createContext();
-      runner = new QueryRunner(ctx);
-      // start() bumps the generation to 1, so the replay list lives under key 1.
-      (
-        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
-      )._consumedUserMessages = new Map([[1, [kickoff, steer]]]);
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        // start() bumps the generation to 1, so the replay list lives under key 1.
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff, steer]]]);
 
-      runner.start();
-      await ctx.queryPromise?.catch(() => {});
+        // Attempt 2 must reach the gate: resolve options and give the mocked
+        // SDK query an immediately-complete iterator so the attempt exits
+        // cleanly after the flush.
+        buildSpy.mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'));
+        buildSpy.mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => ({
+          close: () => {},
+          [Symbol.asyncIterator]: async function* () {},
+        }));
 
-      expect(enqueueWithIdSpy).toHaveBeenCalledWith(kickoff.uuid, kickoff.content, false, {
-        prepend: true,
-      });
-      expect(enqueueWithIdSpy).toHaveBeenCalledWith(steer.uuid, steer.content, false, {
-        prepend: true,
-      });
-      // Prepend in reverse so the consumed prefix lands ahead of any untouched
-      // queue tail: the calls fire steer-then-kickoff, leaving the queue in
-      // kickoff-then-steer order. (Codex P1, PR #2499.)
-      const calls = enqueueWithIdSpy.mock.calls as unknown as Array<[string, unknown]>;
-      expect(calls.map(([uuid]) => uuid)).toEqual([steer.uuid, kickoff.uuid]);
-    });
+        try {
+          runner.start();
+          await ctx.queryPromise?.catch(() => {});
+
+          // …and the flush enqueues the full ordered set with prepend, in
+          // reverse so the consumed prefix lands ahead of any untouched queue
+          // tail: steer-then-kickoff, leaving kickoff-then-steer order.
+          expect(enqueueWithIdSpy).toHaveBeenCalledWith(kickoff.uuid, kickoff.content, false, {
+            prepend: true,
+          });
+          expect(enqueueWithIdSpy).toHaveBeenCalledWith(steer.uuid, steer.content, false, {
+            prepend: true,
+          });
+          const calls = enqueueWithIdSpy.mock.calls as unknown as Array<[string, unknown]>;
+          expect(calls.map(([uuid]) => uuid)).toEqual([steer.uuid, kickoff.uuid]);
+          // The staged replay is spent.
+          expect(
+            (runner as unknown as { _pendingStartupReplay: unknown[] | null })._pendingStartupReplay
+          ).toBeNull();
+        } finally {
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+        }
+      }
+    );
 
     it('should abandon the retry when a replacement query took ownership during the exit wait', async () => {
       // Codex P1 (PR #2491): the retry's recursive runQuery() bypasses
@@ -1919,6 +1941,11 @@ describe('QueryRunner', () => {
         delete process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX;
       } else {
         process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = savedMaxStartupRetries;
+      }
+      if (savedRetiredMaxRetries === undefined) {
+        delete process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES;
+      } else {
+        process.env.HYPERNEO_SDK_STARTUP_MAX_RETRIES = savedRetiredMaxRetries;
       }
     });
 
@@ -2189,7 +2216,9 @@ describe('QueryRunner', () => {
         _consumedUserMessages: Map<number, unknown[]>;
       };
 
-      // Turn 1 — kickoff consumed, timeout, keyed retry re-enqueues it.
+      // Turn 1 — kickoff consumed, timeout, keyed retry. The replay is only
+      // STAGED here (the retry attempt dies at build(), before the gate), so
+      // nothing is enqueued on this turn.
       internals._consumedUserMessages = new Map([[1, [kickoff]]]);
       runner.start();
       await ctx.queryPromise?.catch(() => {});
@@ -2197,15 +2226,13 @@ describe('QueryRunner', () => {
       // The budget is keyed by the CONSUMED kickoff uuid — this is what
       // distinguishes the keyed path from the null-key path the state-machine
       // tests cover. (The queue peek is still consulted on the retry
-      // sub-attempt — after the re-enqueue the consumed entry is deleted, and
-      // peek returns the same re-enqueued uuid, continuing the same budget.)
+      // sub-attempt — after staging, the consumed entry is deleted, and the
+      // peek falls back to null; the budget keeps the consumed key.)
       expect(
         (runner as unknown as { _startupTimeoutRetryState: { key: string | null } })
           ._startupTimeoutRetryState.key
       ).toBe('durable-kickoff-uuid');
-      expect(enqueueWithIdSpy).toHaveBeenCalledWith(kickoff.uuid, kickoff.content, false, {
-        prepend: true,
-      });
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
 
       // Turn 2 — same durable message redriven under a new generation: the
       // first timeout settles immediately (no retry, no re-enqueue).
@@ -2215,7 +2242,7 @@ describe('QueryRunner', () => {
       await ctx.queryPromise?.catch(() => {});
 
       expect(buildSpy).toHaveBeenCalledTimes(3);
-      expect(enqueueWithIdSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled(); // replay never flushed (builds throw)
       const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
         String(args[0])
       );
@@ -2410,9 +2437,6 @@ describe('QueryRunner', () => {
       // so a persistent 529 gets exactly ONE provider retry (2 < 3) before
       // going terminal: 1 + 2 startup retries + 1 provider retry = 4 builds.
       // (Without the coupling the provider branch would retry 3 more times.)
-      buildSpy.mockRejectedValue(
-        new Error('529 {"type":"error","error":{"type":"overloaded_error"}}')
-      );
       buildSpy
         .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
         .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
@@ -2440,6 +2464,85 @@ describe('QueryRunner', () => {
       expect(buildSpy).toHaveBeenCalledTimes(2);
     });
 
+    it.skipIf(!sdkQueryIsMock)(
+      'holds the replay out of the queue while the retry waits at the startup gate (no TTL exposure)',
+      async () => {
+        // Round-6 P2-1 regression: under herd congestion the retry attempt
+        // queues at the startup gate behind K-1 silent 60s holds — longer
+        // than the 30s MESSAGE_QUEUE_TIMEOUT_MS. A pre-gate enqueue would
+        // TTL out mid-wait (rejection swallowed) and the attempt would burn
+        // a window against an empty queue. The replay must be flushed only
+        // after admission.
+        const savedMaxConcurrent = process.env.HYPERNEO_SDK_STARTUP_MAX_CONCURRENT;
+        process.env.HYPERNEO_SDK_STARTUP_MAX_CONCURRENT = '1';
+        resetSdkStartupGateForTests();
+        const gate = getSdkStartupGate();
+        const blocker = await gate.acquire({ sessionId: 'gate-blocker' });
+        let blockerReleased = false;
+
+        const kickoff = {
+          uuid: 'ttl-kickoff-uuid',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff]]]);
+
+        // Attempt 1 dies at build (startup timeout); the retry attempt
+        // resolves options and then BLOCKS at the gate behind `blocker`.
+        buildSpy.mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'));
+        buildSpy.mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => ({
+          close: () => {},
+          [Symbol.asyncIterator]: async function* () {},
+        }));
+
+        try {
+          runner.start();
+          // Wait until the retry attempt is genuinely queued at the gate.
+          const deadline = Date.now() + 2000;
+          while (gate.getStats().queued < 1 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(gate.getStats().queued).toBe(1);
+          // Mid-wait: the replay is staged, NOT enqueued — nothing sits in
+          // the queue for the TTL to expire.
+          expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+          expect(
+            (
+              runner as unknown as {
+                _pendingStartupReplay: Array<{ uuid: string }> | null;
+              }
+            )._pendingStartupReplay?.[0]?.uuid
+          ).toBe('ttl-kickoff-uuid');
+
+          // Admission releases the flush: the replay lands only now, with the
+          // generator attaching microseconds later.
+          blockerReleased = true;
+          blocker.release();
+          await ctx.queryPromise?.catch(() => {});
+
+          expect(enqueueWithIdSpy).toHaveBeenCalledWith(kickoff.uuid, kickoff.content, false, {
+            prepend: true,
+          });
+        } finally {
+          if (!blockerReleased) blocker.release();
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+          if (savedMaxConcurrent === undefined) {
+            delete process.env.HYPERNEO_SDK_STARTUP_MAX_CONCURRENT;
+          } else {
+            process.env.HYPERNEO_SDK_STARTUP_MAX_CONCURRENT = savedMaxConcurrent;
+          }
+          resetSdkStartupGateForTests();
+        }
+      }
+    );
+
     it('parses the new knobs and keeps the retired HYPERNEO_SDK_STARTUP_MAX_RETRIES inert', async () => {
       // Round-5 P3-9(3): parsing garbage/negative/float inputs falls back to
       // defaults, and the RETIRED knob name must not set the new cap.
@@ -2451,6 +2554,13 @@ describe('QueryRunner', () => {
       expect(getStartupRetryDelayMs(1)).toBe(15000);
       process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '1500.9';
       expect(getStartupRetryDelayMs(1)).toBe(1500);
+
+      // setTimeout's domain is [0, 2^31-1] ms; beyond it the delay inverts to
+      // an ~1ms immediate fire. An extreme base must clamp, not overflow into
+      // a hot retry loop.
+      process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '99999999999999';
+      expect(getStartupRetryDelayMs(1)).toBe(2_147_483_647);
+      expect(getStartupRetryDelayMs(9)).toBe(2_147_483_647);
 
       // A stale HYPERNEO_SDK_STARTUP_MAX_RETRIES=0 (the retired
       // silent-auto-recovery knob) must NOT disable the new retries: with the

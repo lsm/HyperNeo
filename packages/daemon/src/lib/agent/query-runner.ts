@@ -201,11 +201,19 @@ function getMaxStartupTimeoutRetries(): number {
 }
 
 /**
+ * setTimeout's delay domain is [0, 2^31−1] ms; beyond that it degrades to an
+ * ~1 ms immediate fire, which would invert a deliberately long backoff into
+ * a hot retry loop. Clamp scheduled delays to the representable maximum.
+ */
+const MAX_SETTABLE_DELAY_MS = 2_147_483_647;
+
+/**
  * Exponential backoff delay for startup-timeout retries (exported for tests).
- * retryNumber is 1-indexed: 1 → base, 2 → 2×base, 3 → 4×base, …
+ * retryNumber is 1-indexed: 1 → base, 2 → 2×base, 3 → 4×base, … Clamped to
+ * setTimeout's maximum so an extreme base cannot overflow into immediacy.
  */
 export function getStartupRetryDelayMs(retryNumber: number): number {
-  return getStartupRetryBaseMs() * 2 ** (retryNumber - 1);
+  return Math.min(getStartupRetryBaseMs() * 2 ** (retryNumber - 1), MAX_SETTABLE_DELAY_MS);
 }
 
 /**
@@ -552,6 +560,27 @@ export class QueryRunner {
   };
 
   /**
+   * Consumed messages a startup-timeout retry must replay into the queue,
+   * held back until the recursive attempt has PASSED the startup gate.
+   *
+   * Re-enqueueing before the recursion exposes the replay to the gate wait:
+   * the recursive attempt sits behind up to K−1 other sessions each holding a
+   * permit for a full silent startup window (60 s default), so a late-in-FIFO
+   * replay can wait well past MESSAGE_QUEUE_TIMEOUT_MS (30 s). The TTL
+   * rejection is swallowed (`.catch(() => {})`) and the attempt then burns a
+   * whole startup window against an empty queue while charging a budget
+   * round — a delivery could settle failed from gate latency alone. Holding
+   * the replay until just after gate admission (immediately before the
+   * generator attaches; see the flush in runQuery) keeps the enqueue-to-
+   * consume gap microseconds. Cleared on start() and in the finally so an
+   * aborted chain cannot leak a stale replay into the next turn.
+   */
+  private _pendingStartupReplay: Array<{
+    uuid: string;
+    content: string | MessageContent[];
+  }> | null = null;
+
+  /**
    * Public accessor for the last consumed user message.
    * Used by RateLimitWatchdog to re-enqueue on auto-retry.
    */
@@ -587,6 +616,10 @@ export class QueryRunner {
 
     // Reset firstMessageReceived flag for new query
     this.ctx.firstMessageReceived = false;
+    // A fresh turn owns its own inputs — discard any replay staged by a
+    // superseded startup-retry chain (its finally may have been skipped as
+    // stale).
+    this._pendingStartupReplay = null;
 
     // Store query promise for cleanup
     this.ctx.queryPromise = this.runQuery(currentGeneration);
@@ -962,6 +995,29 @@ export class QueryRunner {
         const gateAbort = new Error('SDK startup gate: query aborted while awaiting admission');
         gateAbort.name = 'AbortError';
         throw gateAbort;
+      }
+
+      // Flush a startup-timeout retry's deferred replay NOW: the permit is
+      // held and the generator attaches at the query() call directly below,
+      // so the enqueue-to-consume gap is microseconds and the 30 s queue TTL
+      // cannot expire it mid-wait (the pre-gate enqueue this replaces let a
+      // gate-queued attempt's replay TTL out against the #2552 herd — see
+      // _pendingStartupReplay). Generation-guarded: a stale attempt must not
+      // feed a replacement's queue.
+      if (this._pendingStartupReplay) {
+        const replay = this._pendingStartupReplay;
+        this._pendingStartupReplay = null;
+        if (this.ctx.getQueryGeneration() === queryGeneration) {
+          logger.warn(
+            `Re-enqueueing ${replay.length} consumed user message(s) after startup-gate admission.`
+          );
+          for (let i = replay.length - 1; i >= 0; i--) {
+            const message = replay[i];
+            messageQueue
+              .enqueueWithId(message.uuid, message.content, false, { prepend: true })
+              .catch(() => {});
+          }
+        }
       }
 
       // Create query with AsyncGenerator
@@ -1397,8 +1453,10 @@ export class QueryRunner {
           // the kickoff's durable row while this chain sleeps. Retrying would
           // respawn subprocesses for a delivery the layer already settled —
           // abandon and let the settled state stand. (Bounds the zombie window
-          // to one round past settlement instead of the full cap, ~9.5 min with
-          // defaults.) Runs AFTER the cheap disjuncts and reads a single row.
+          // to one round past settlement instead of the full cap — with the
+          // 60 s default startup window, the full 5-round schedule runs
+          // ~13 min: 5 windows × 60 s + 15+30+60+120+240 s of sleeps, plus
+          // teardown waits.) Runs AFTER the cheap disjuncts and reads a single row.
           if (
             deliveryKey !== null &&
             this.ctx.db.getMessageByStatusAndUuid(session.id, 'failed', deliveryKey)
@@ -1429,29 +1487,20 @@ export class QueryRunner {
           // The old SDK may have pulled prompts out of the queue via
           // messageGenerator() before going silent; restarting the queue above
           // alone leaves the retry with no input, so it times out again at zero
-          // messages. Re-enqueue every recorded consumed message IN ORDER (a silent
-          // iterator can pull the kickoff AND trailing steers — replaying only the
-          // last would silently drop the earlier prompts whose durable rows are
-          // already consumed). Mirror the transient-connection retry's feed.
-          // (Codex P1, PR #2499.) Enqueue AFTER the backoff (not before
-          // teardown) so the replay does not expire in the queue
-          // (enqueueWithId has a ~30s TTL) during a long backoff window.
+          // messages. Stage every recorded consumed message for replay IN ORDER
+          // (a silent iterator can pull the kickoff AND trailing steers —
+          // replaying only the last would silently drop the earlier prompts
+          // whose durable rows are already consumed). The actual enqueue is
+          // DEFERRED until the recursive attempt clears the startup gate
+          // (flushed immediately before its generator attaches): enqueuing here
+          // would expose the replay to the gate wait — behind up to K−1
+          // 60-second silent-startup holds — and the 30 s queue TTL would
+          // expire it mid-wait, burning the attempt against an empty queue.
+          // See _pendingStartupReplay and the flush in runQuery.
+          // (Codex P1, PR #2499; gate-wait deferral per round-6 review.)
           const consumed = this._consumedUserMessages.get(queryGeneration) ?? [];
           if (consumed.length > 0) {
-            logger.warn(
-              `Re-enqueueing ${consumed.length} consumed user message(s) for startup-timeout retry.`
-            );
-            // Prepend in reverse order so the consumed prefix lands AHEAD of any
-            // still-queued tail: the SDK may have pulled only a prefix (kickoff +
-            // a steer) before going silent, leaving later messages untouched. A
-            // plain enqueue would append the replay behind that tail and change
-            // prompt order. (Codex P1, PR #2499.)
-            for (let i = consumed.length - 1; i >= 0; i--) {
-              const message = consumed[i];
-              messageQueue
-                .enqueueWithId(message.uuid, message.content, false, { prepend: true })
-                .catch(() => {});
-            }
+            this._pendingStartupReplay = consumed;
             this._consumedUserMessages.delete(queryGeneration);
             this._lastConsumedUserMessage = null;
           }
@@ -2025,6 +2074,10 @@ export class QueryRunner {
         // the previous turn's already-completed message.
         this._lastConsumedUserMessage = null;
         this._consumedUserMessages.delete(queryGeneration);
+        // A staged replay the chain never flushed (cancelled before/at the
+        // gate) must not leak into the next turn — the durable redrive path
+        // re-enqueues those rows on its own.
+        this._pendingStartupReplay = null;
 
         // Null queryPromise last so callers awaiting it see queryObject=null.
         this.ctx.queryPromise = null;

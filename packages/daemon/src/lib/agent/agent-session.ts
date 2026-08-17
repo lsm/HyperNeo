@@ -2748,8 +2748,12 @@ export class AgentSession
           // delivery job burns its retry budget re-admitting into the still-
           // stopped queue before dead-lettering `failed`. Park instead: the
           // job re-evaluates on its park cadence and feeds (or promotes once
-          // the turn settles) after the backoff ends. The ≤5 s teardown waits
-          // of the other retry paths are covered by the same gate.
+          // the turn settles) after the backoff ends. Bounded by
+          // MAX_STEER_PARKS (~5 min) — comfortable at the default knobs where
+          // the stall watchdog truncates the schedule well inside it, but a
+          // much raised HYPERNEO_SDK_STARTUP_RETRY_BASE_MS can outlast the
+          // bound and surface the parked follow-up failed. The ≤5 s teardown
+          // waits of the other retry paths are covered by the same gate.
           if (!this.messageQueue.isRunning()) return { kind: 'park' as const };
           const generation = this.getQueryGeneration();
           observer?.reportStage('query_ready', { generation });

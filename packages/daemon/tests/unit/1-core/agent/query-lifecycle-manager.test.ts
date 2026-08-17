@@ -1356,6 +1356,75 @@ describe('QueryLifecycleManager', () => {
 
       expect(startStreamingCalled).toBe(true);
     });
+
+    test('records the deferred restart when processing with a stopped queue (startup-backoff window)', async () => {
+      // Round-6 P2-2: the startup-timeout retry keeps the session
+      // 'processing' with queryPromise set while the queue is STOPPED for its
+      // backoff window. A settings change arriving in that window must be
+      // recorded, not silently dropped — executeDeferredRestartIfPending
+      // completes it once the chain resolves and the session idles.
+      mockContext = createMockContext({
+        queryObject: null,
+        pendingRestartReason: null,
+      });
+      getStateSpy = mock(() => ({ status: 'processing' }));
+      mockContext.stateManager = {
+        setIdle: setIdleSpy,
+        setQueued: setQueuedSpy,
+        getState: getStateSpy,
+      } as unknown as ProcessingStateManager;
+      manager = new QueryLifecycleManager(mockContext);
+
+      await manager.restartQuery();
+
+      expect(mockContext.pendingRestartReason).toBe('settings.local.json');
+      expect(startStreamingCalled).toBe(false);
+    });
+
+    test('the recorded deferral fires a restart when the session later idles', async () => {
+      mockContext = createMockContext({
+        queryObject: null,
+        pendingRestartReason: null,
+      });
+      getStateSpy = mock(() => ({ status: 'processing' }));
+      mockContext.stateManager = {
+        setIdle: setIdleSpy,
+        setQueued: setQueuedSpy,
+        getState: getStateSpy,
+      } as unknown as ProcessingStateManager;
+      manager = new QueryLifecycleManager(mockContext);
+      await manager.restartQuery();
+      expect(startStreamingCalled).toBe(false);
+
+      // The chain resolves; the idle transition drives the deferred restart.
+      await manager.executeDeferredRestartIfPending();
+
+      expect(mockContext.pendingRestartReason).toBeNull();
+      expect(startStreamingCalled).toBe(true);
+    });
+
+    test('stays a no-op for an IDLE session with a stopped queue', async () => {
+      // task-agent-manager documents restartQuery as safe to call with no
+      // query running (MCP refreshes on idle sessions) — the recording must
+      // not turn those calls into surprise restarts after the next turn.
+      mockContext = createMockContext({
+        queryObject: null,
+        pendingRestartReason: null,
+      });
+      getStateSpy = mock(() => ({ status: 'idle' }));
+      mockContext.stateManager = {
+        setIdle: setIdleSpy,
+        setQueued: setQueuedSpy,
+        getState: getStateSpy,
+      } as unknown as ProcessingStateManager;
+      manager = new QueryLifecycleManager(mockContext);
+
+      await manager.restartQuery();
+      expect(mockContext.pendingRestartReason).toBeNull();
+
+      await manager.executeDeferredRestartIfPending();
+      expect(startStreamingCalled).toBe(false);
+    });
   });
 
   describe('executeDeferredRestartIfPending', () => {

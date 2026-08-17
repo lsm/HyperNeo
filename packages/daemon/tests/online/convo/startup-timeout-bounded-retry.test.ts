@@ -229,7 +229,7 @@ describe('Startup Timeout Error Surfacing', () => {
         modelsReadyTimeoutMs: MODELS_READY_TIMEOUT_MS,
         // Surface warn-level daemon logs in the captured child output:
         //   - error "SDK startup timeout"  (startup timer callback fired)
-        //   - warn  "Auto-retrying query after startup timeout" (retry ran — :990)
+        //   - warn  "Auto-retrying query after startup timeout" (retry ran)
         // The daemon Logger is SILENT under NODE_ENV=test by default, so LOG_LEVEL
         // must override it for these assertions to observe anything.
         env: { LOG_LEVEL: 'warn' },

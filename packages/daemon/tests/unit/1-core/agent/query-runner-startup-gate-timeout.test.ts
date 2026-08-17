@@ -6,8 +6,9 @@
  * env BEFORE dynamically importing the module under test. Vitest isolates
  * each file's module registry, so the short timeout is guaranteed; when
  * running with `bun test`, run this file on its own (a same-process earlier
- * import of query-runner would have captured the default 15s — same
- * constraint as tests/online/convo/startup-timeout-no-retry.test.ts).
+ * import of query-runner would have captured whatever default was current at
+ * that import — same constraint as
+ * tests/online/convo/startup-timeout-bounded-retry.test.ts).
  *
  * Verifies that a startup-timeout abort releases the admission slot, that the
  * single auto-retry re-queues through the gate instead of inheriting the

@@ -10,7 +10,7 @@
  *
  * The SDK `query()` is replaced with a controllable factory whose async
  * iterator only advances when a test resolves a deferred `next()`. This file
- * keeps the default 15s startup timeout; the timer-driven timeout path is
+ * keeps the module-load startup-timeout default; the timer-driven timeout path is
  * covered separately in query-runner-startup-gate-timeout.test.ts (which must
  * load query-runner with a short timeout env before import).
  */
