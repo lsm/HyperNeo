@@ -4,7 +4,7 @@ import type { MessageContent, MessageHub, Session } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { Database } from '../../../../src/storage/database';
 import type { ErrorManager } from '../../../../src/lib/error-manager';
-import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { Logger } from '../../../../src/lib/logger';
 import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder';
@@ -2380,6 +2380,159 @@ describe('AcpQueryRunner startup-timeout bounded retry', () => {
           }
         ).message
       ).toContain('second failure B');
+    } finally {
+      restoreStartupRetryEnv();
+    }
+  }, 1000);
+
+  test('resets startup-phase state at the transient-retry recursion (stale flag survives otherwise)', async () => {
+    // Round-5 P2: the transient-connection recursion must apply the same
+    // startup-phase resets as the startup-retry site. A mid-stream drop
+    // after a received frame leaves firstMessageReceived=true; the re-spawn
+    // inheriting it would have its catch classification suppressed, so a
+    // handler-set flag round bypasses the bounded machine and terminalizes
+    // raw. Deleting the resets at the transient site fails this test.
+    const restoreStartupRetryEnv = pinStartupRetryEnv({ base: '60', max: '1' });
+    try {
+      const transientClient = createMockClient();
+      transientClient.sendPrompt.mockImplementation(async function* () {
+        yield {
+          sessionId: 'acp-session-1',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'partial' },
+          },
+        };
+        throw new Error('TypeError: fetch failed');
+      });
+      // Attempt 2 hangs in its handshake until released, so the flag poke
+      // lands while it is still starting (not after it already failed).
+      let releaseAttemptTwo: ((error: Error) => void) | undefined;
+      const heldHandshake = createMockClient();
+      heldHandshake.initialize.mockImplementation(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            releaseAttemptTwo = (error: Error) => reject(error);
+          })
+      );
+      const resumableOk = createMockClient();
+      resumableOk.canLoadSession.mockImplementation(() => true);
+      const clients = [transientClient, heldHandshake, resumableOk];
+      const { ctx } = createRunnerFixture({ client: clients[0] });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      await runner.start();
+      expect(await waitForWarn(ctx, 'transient connection error')).toBe(true);
+      // A replay-admission rejection from an earlier round of this chain
+      // armed the classification flag while the recursion spawns.
+      (runner as unknown as { _replayAdmissionRejected: boolean })._replayAdmissionRejected = true;
+      for (let attempt = 0; attempt < 200 && !releaseAttemptTwo; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 2));
+      }
+      expect(releaseAttemptTwo).toBeTypeOf('function');
+      releaseAttemptTwo(new Error('spawn failed'));
+
+      await ctx.queryPromise;
+
+      // With the resets, attempt 2 starts with firstMessageReceived=false:
+      // the flag reclassifies its plain failure into the bounded machine
+      // (retry granted, attempt 3 completes). Without them the stale true
+      // suppresses the classification and the raw failure terminalizes.
+      expect(createClient).toHaveBeenCalledTimes(3);
+      expect(warnLines(ctx).some((line) => line.includes('retry 1/1'))).toBe(true);
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    } finally {
+      restoreStartupRetryEnv();
+    }
+  }, 1000);
+
+  test('stale purge is fenced on the REAL queue — the later re-admission survives', async () => {
+    // Round-5 P2: the mocked purge test cannot discriminate fence read-
+    // ordering or later-re-admission survival. Drive the chain against a
+    // REAL MessageQueue: this chain's re-fed admission is purged through
+    // removeIfAdmittedNoLaterThan with the fence captured at the re-feed,
+    // while a delivery-layer re-admission of the same uuid admitted AFTER
+    // the fence survives the stale unwind.
+    const restoreStartupRetryEnv = pinStartupRetryEnv({ base: '60' });
+    try {
+      const queue = new MessageQueue();
+      // Attempt 2 hangs in its handshake (never claims the admissions) until
+      // the test fails it — the re-fed entry must still be queue-resident at
+      // the stale purge, and a resolving sendPrompt would consume it.
+      let releaseAttemptTwo: ((error: Error) => void) | undefined;
+      const heldHandshake = createMockClient();
+      heldHandshake.initialize.mockImplementation(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            releaseAttemptTwo = (error: Error) => reject(error);
+          })
+      );
+      const clients = [createHangingClient(), heldHandshake];
+      const { ctx } = createRunnerFixture({ client: clients[0] });
+      ctx.messageQueue = queue;
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      const purgeCalls: Array<[string, number]> = [];
+      const realRemove = queue.removeIfAdmittedNoLaterThan.bind(queue);
+      queue.removeIfAdmittedNoLaterThan = (id: string, seq: number): boolean => {
+        purgeCalls.push([id, seq]);
+        return realRemove(id, seq);
+      };
+      let refeedFenceSeq = 0;
+      let enqueueCalls = 0;
+      const realEnqueueWithId = queue.enqueueWithId.bind(queue);
+      queue.enqueueWithId = ((
+        id: string,
+        content: string | MessageContent[],
+        internal?: boolean,
+        options?: { durable?: boolean; prepend?: boolean }
+      ) => {
+        const admission = queue.admitWithId(id, content, internal, options);
+        enqueueCalls += 1;
+        // Call #2 is the retry branch's re-feed (call #1 is the test's
+        // initial delivery-layer admission).
+        if (enqueueCalls === 2) refeedFenceSeq = queue.getAdmissionSeq();
+        return admission;
+      }) as MessageQueue['enqueueWithId'];
+
+      // The delivery-layer admission of the kickoff (consumed by attempt 1).
+      void queue.enqueueWithId('user-message-1', [{ type: 'text', text: 'hello' }]).catch(() => {});
+
+      await runner.start();
+      // Wait for the retry round's re-feed (the fence point).
+      for (let attempt = 0; attempt < 200 && !refeedFenceSeq; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 2));
+      }
+      expect(refeedFenceSeq).toBeGreaterThan(0);
+
+      // A replacement takes over, and the delivery layer re-admits the same
+      // uuid AFTER this chain's re-feed (seq beyond the fence).
+      ctx.incrementQueryGeneration();
+      void queue
+        .enqueueWithId('user-message-1', [{ type: 'text', text: 'hello' }], false, {
+          durable: true,
+        })
+        .catch(() => {});
+      // Wait for the retry attempt to hang in its handshake, then fail it —
+      // the generation bump sends both the catch and the unwinds stale.
+      for (let attempt = 0; attempt < 200 && !releaseAttemptTwo; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 2));
+      }
+      expect(releaseAttemptTwo).toBeTypeOf('function');
+      ctx.queryAbortController?.abort();
+      releaseAttemptTwo(new Error('replaced'));
+      await ctx.queryPromise;
+
+      // The stale unwind purged exactly this chain's own admission, fenced
+      // on the re-feed's sequence — and the LATER re-admission survived it.
+      expect(purgeCalls).toEqual([['user-message-1', refeedFenceSeq]]);
+      expect(queue.hasPendingOrInFlight('user-message-1')).toBe(true);
+      const lines = warnLines(ctx);
+      expect(
+        lines.some((line) => line.includes('Removed superseded ACP replay entry user-message-1'))
+      ).toBe(true);
     } finally {
       restoreStartupRetryEnv();
     }

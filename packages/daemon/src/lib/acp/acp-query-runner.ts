@@ -1038,6 +1038,17 @@ export class AcpQueryRunner {
             `Removed superseded ACP replay entry ${refeedTracking.uuid} from the queue ` +
               '(the chain was replaced before the retry consumed it).'
           );
+        } else {
+          // Mirrors QueryRunner's stale-branch else-log: still pending but
+          // not ours to remove — admitted after this chain's re-feed (a
+          // delivery-layer redrive owns it) or already yielded to the
+          // replacement.
+          logger.warn(
+            `Left pending entry ${refeedTracking.uuid} in place while unwinding stale ` +
+              `generation ${queryGeneration}: it was admitted after this chain's ` +
+              're-feed (a delivery-layer redrive owns it) or already yielded to ' +
+              'the replacement.'
+          );
         }
       }
     }
@@ -1187,8 +1198,9 @@ export class AcpQueryRunner {
         // read at wake can only mean the delivery layer (consumption timeout /
         // dead-letter) or an interrupt settled it while we slept.
         // Prefer a STAGED replay (set when the previous round's re-feed was
-        // admission-TTL-rejected — the entry-null below already cleared
-        // _lastConsumedUserMessage for that round); otherwise the prompt this
+        // admission-TTL-rejected — runQuery's ENTRY null of
+        // _lastConsumedUserMessage already cleared it for the recursive
+        // attempt); otherwise the prompt this
         // attempt consumed is the replay. QueryRunner MERGES the consumed set
         // with its staging here (round-9 P1) and folds its flushed entries
         // back in (round-10 P3) because its replay can hold a kickoff plus
@@ -1398,6 +1410,16 @@ export class AcpQueryRunner {
                 ) {
                   return;
                 }
+                // Guarded writes + abort: only the chain's own, still-live
+                // generation. The generation check excludes a replacement
+                // query that took over while the admission sat unconsumed
+                // (its start() retires the staging) — checked BEFORE the
+                // warn so a superseded chain does not log an abort that
+                // never happens; the aborted check makes the timer-driven
+                // abort of the same attempt a no-op.
+                if (this.ctx.getQueryGeneration() !== queryGeneration) {
+                  return;
+                }
                 // The admission TTL fired: the retry attempt did not consume
                 // the replay in time (slow ACP handshake) — a
                 // startup-timeout-class failure, so route it into the bounded
@@ -1414,14 +1436,6 @@ export class AcpQueryRunner {
                     `${rejectionError instanceof Error ? rejectionError.message : String(rejectionError)} — ` +
                     'aborting attempt for a bounded startup retry.'
                 );
-                // Guarded writes + abort: only the chain's own, still-live
-                // generation. The generation check excludes a replacement
-                // query that took over while the admission sat unconsumed
-                // (its start() retires the staging); the aborted check makes
-                // the timer-driven abort of the same attempt a no-op.
-                if (this.ctx.getQueryGeneration() !== queryGeneration) {
-                  return;
-                }
                 this._pendingStartupReplay = retryMessage;
                 this._replayAdmissionRejected = true;
                 if (
@@ -1506,6 +1520,16 @@ export class AcpQueryRunner {
         ]);
         this.ctx.resetProcessExitedPromise();
       }
+
+      // Reset the startup-phase state for the recursive attempt — same
+      // justification as the startup-retry site above (round-5 P2): a
+      // mid-stream drop leaves firstMessageReceived=true, and the re-spawned
+      // attempt inheriting that stale flag would have its catch-timeout
+      // classification suppressed (the failure bypasses the bounded machine
+      // and terminalizes raw). Drop the (fired) timer handle too so the
+      // retry arms a fresh one. (Mirrors QueryRunner's transient site.)
+      this.clearStartupTimer();
+      this.ctx.firstMessageReceived = false;
 
       return await this.runQuery(queryGeneration, true, recoveryState);
     }

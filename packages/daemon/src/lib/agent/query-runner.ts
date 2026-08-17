@@ -1274,13 +1274,9 @@ export class QueryRunner {
                 if (!(error instanceof Error) || error.name !== 'MessageQueueTimeoutError') {
                   return;
                 }
-                const isTtlRejection =
-                  error instanceof Error && error.name === 'MessageQueueTimeoutError';
-                const reasonText = isTtlRejection
-                  ? 'admission TTL'
-                  : error instanceof Error
-                    ? error.message
-                    : String(error);
+                // The gate above guarantees the TTL rejection, so the reason
+                // is constant here — the old non-TTL legs are dead behind it.
+                const reasonText = 'admission TTL';
                 // Merge, order-preserving by this flush's replay order: a
                 // multi-message replay's TTLs fire back-to-back and a plain
                 // assignment would drop the earlier ones — trailing steers
