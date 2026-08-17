@@ -19,7 +19,7 @@ import type {
   MessageOrigin,
   MessageImage,
 } from '@hyperneo/shared';
-import { appendDraftText, generateUUID } from '@hyperneo/shared';
+import { composeDraftWhole, generateUUID } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import {
@@ -372,7 +372,13 @@ export class SessionManager {
     const unsubMessagePersisted = this.internalEventBus.subscribe(
       'message.persisted',
       async (data) => {
-        const { sessionId, userMessageText, needsWorkspaceInit, hasDraftToClear } = data;
+        const {
+          sessionId,
+          userMessageText,
+          needsWorkspaceInit,
+          hasDraftToClear,
+          voicePendingSent,
+        } = data;
 
         try {
           // STEP 1: Enqueue title generation job (if needed)
@@ -393,7 +399,9 @@ export class SessionManager {
           // composed draft and the voice went out in the message, so the
           // staging is consumed too. A typing-only sender never saw the
           // staged transcript and must not wipe it: it stays for the next
-          // draft. No match → write nothing (a newer draft intervened).
+          // draft. No match at the fresh read → write nothing (a newer draft
+          // intervened) — EXCEPT the voicePendingSent fallback below, for the
+          // sender's own optimistic clear.
           if (hasDraftToClear) {
             const beforeClear = this.getSessionFromDB(sessionId);
             const draft = beforeClear?.metadata?.inputDraft ?? '';
@@ -401,10 +409,9 @@ export class SessionManager {
             const directMatch = draft.trim() === (userMessageText ?? '').trim();
             let compositionMatch = false;
             if (!directMatch && pending.trim() !== '') {
-              const composed = appendDraftText(draft, pending);
-              const fitsWhole =
-                composed === `${draft}${pending}` || composed === `${draft} ${pending}`;
-              compositionMatch = fitsWhole && composed.trim() === (userMessageText ?? '').trim();
+              const composed = composeDraftWhole(draft, pending);
+              compositionMatch =
+                composed !== null && composed.trim() === (userMessageText ?? '').trim();
             }
             if (directMatch || compositionMatch) {
               await this.sessionLifecycle.update(sessionId, {
@@ -412,6 +419,24 @@ export class SessionManager {
                   inputDraft: null,
                   ...(compositionMatch ? { inputDraftVoicePending: null } : {}),
                 },
+              } as Partial<Session>);
+            } else if (
+              voicePendingSent !== undefined &&
+              pending.trim() !== '' &&
+              pending.trim() === voicePendingSent.trim()
+            ) {
+              // The sender's composer clears its input OPTIMISTICALLY right
+              // after dispatching message.send, and that empty write can
+              // commit during persistence — the fresh read above then no
+              // longer matches, but the PRE-SEND snapshot proved this exact
+              // staging went out in the message. Consume the staging WITHOUT
+              // touching inputDraft: whatever the latest writer left (the
+              // emptied typing, or a newer edit that arrived meanwhile)
+              // must survive. The exact-pending equality also protects a
+              // staging that a LATER landing extended mid-send: its unsent
+              // tail must stay staged.
+              await this.sessionLifecycle.update(sessionId, {
+                metadata: { inputDraftVoicePending: null },
               } as Partial<Session>);
             }
           }

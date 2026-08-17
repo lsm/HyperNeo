@@ -90,8 +90,10 @@ function suppressLeadingSpace(before: string): boolean {
  * join-suppressing character. CJK scripts need no inter-character space
  * (你好 + 世界 -> 你好世界). Capped to the shared draft character limit.
  *
- * Shared so the daemon's atomic draft append and the client's pending-voice
- * merge apply identical spacing rules.
+ * Daemon-only callers: the staged-voice append, the `session.get`
+ * composition, and the voice-aware send-clear matching all route through it —
+ * and through `composeDraftWhole` — so every join in the voice-draft protocol
+ * applies identical spacing rules.
  */
 export function appendDraftText(existing: string, text: string): string {
   const needsSpace =
@@ -101,4 +103,21 @@ export function appendDraftText(existing: string, text: string): string {
     !CJK_SCRIPT.test(existing.slice(-1)) &&
     !(text.length > 0 && CJK_SCRIPT.test(text[0] ?? ''));
   return `${existing}${needsSpace ? ' ' : ''}${text}`.slice(0, DRAFT_CHAR_LIMIT);
+}
+
+/**
+ * Compose `draft` + `pending` with `appendDraftText`, returning the joined
+ * string ONLY when it carries both whole — the join equals a plain (optionally
+ * space-separated) concatenation and nothing was sliced off at the draft
+ * character limit. Returns null when the composition would be truncated.
+ *
+ * This is the load-bearing predicate of the daemon-coordinated voice draft
+ * protocol: it decides when `session.get` presents the staged transcript,
+ * when `session.appendVoiceDraft` accepts a new entry, and when the send-clear
+ * paths may consume the staging. Its two comparison literals encode
+ * `appendDraftText`'s separator rules — keep them in lockstep.
+ */
+export function composeDraftWhole(draft: string, pending: string): string | null {
+  const composed = appendDraftText(draft, pending);
+  return composed === `${draft}${pending}` || composed === `${draft} ${pending}` ? composed : null;
 }

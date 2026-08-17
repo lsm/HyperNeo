@@ -1505,6 +1505,104 @@ describe('SessionManager', () => {
 
         expect(mockDb.updateSession).not.toHaveBeenCalled();
       });
+
+      it("consumes only the staging when the sender's optimistic clear already emptied the draft", async () => {
+        // The composer clears its input right after dispatching message.send;
+        // that empty write commits during persistence, so the fresh read sees
+        // the typing gone and matches neither directly nor by composition.
+        // The pre-send snapshot (voicePendingSent) proves this exact staging
+        // went out in the message — consume it WITHOUT touching the draft.
+        const handler = eventHandlers.get('message.persisted');
+
+        (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+          id: 'test-id',
+          metadata: { inputDraft: null, inputDraftVoicePending: 'voice' },
+        });
+
+        await handler?.({
+          sessionId: 'test-id',
+          userMessageText: 'typing voice',
+          needsWorkspaceInit: false,
+          hasDraftToClear: true,
+          voicePendingSent: 'voice',
+        });
+
+        expect(mockDb.updateSession).toHaveBeenCalledWith('test-id', {
+          metadata: { inputDraftVoicePending: null },
+        });
+        const call = mockDb.updateSession.mock.calls[0]?.[1] as {
+          metadata: Record<string, unknown>;
+        };
+        // The (already-emptied) draft is never rewritten by the fallback.
+        expect(call.metadata.inputDraft).toBeUndefined();
+      });
+
+      it('keeps a staging that a later landing extended mid-send', async () => {
+        // A NEW transcript appended during persistence grew the staging; only
+        // the pre-send part went out in the message. Consuming the field
+        // would drop the unsent extension — write nothing instead.
+        const handler = eventHandlers.get('message.persisted');
+
+        (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+          id: 'test-id',
+          metadata: { inputDraft: null, inputDraftVoicePending: 'voice more' },
+        });
+
+        await handler?.({
+          sessionId: 'test-id',
+          userMessageText: 'typing voice',
+          needsWorkspaceInit: false,
+          hasDraftToClear: true,
+          voicePendingSent: 'voice',
+        });
+
+        expect(mockDb.updateSession).not.toHaveBeenCalled();
+      });
+
+      it('clears both the empty draft and the staging on a voice-only composition send', async () => {
+        // inputDraft empty, pending alone equals the sent text: the fresh
+        // composition match consumes the staging with the (empty) draft.
+        const handler = eventHandlers.get('message.persisted');
+
+        (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+          id: 'test-id',
+          metadata: { inputDraft: null, inputDraftVoicePending: 'voice' },
+        });
+
+        await handler?.({
+          sessionId: 'test-id',
+          userMessageText: 'voice',
+          needsWorkspaceInit: false,
+          hasDraftToClear: true,
+        });
+
+        expect(mockDb.updateSession).toHaveBeenCalledWith('test-id', {
+          metadata: { inputDraft: null, inputDraftVoicePending: null },
+        });
+      });
+
+      it("writes nothing when a voice-only send's empty write already discarded the staging", async () => {
+        // Voice-only flow raced with the composer's optimistic clear: the
+        // empty write landed over an ALREADY-EMPTY stored draft, which by the
+        // empty-write rule discards the staging. The end state is already
+        // correct — the fallback must not fire on an absent staging.
+        const handler = eventHandlers.get('message.persisted');
+
+        (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+          id: 'test-id',
+          metadata: { inputDraft: null, inputDraftVoicePending: null },
+        });
+
+        await handler?.({
+          sessionId: 'test-id',
+          userMessageText: 'voice',
+          needsWorkspaceInit: false,
+          hasDraftToClear: true,
+          voicePendingSent: 'voice',
+        });
+
+        expect(mockDb.updateSession).not.toHaveBeenCalled();
+      });
     });
 
     describe('MCP registry / skills change handlers', () => {

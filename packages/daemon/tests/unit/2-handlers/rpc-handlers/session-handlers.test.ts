@@ -825,6 +825,33 @@ describe('Session RPC Handlers — session.update voice adoption', () => {
     expect(result).toEqual({ success: true });
   });
 
+  it('leaves the staged transcript untouched on a metadata-only write (no inputDraft key)', async () => {
+    // An unrelated metadata write (title, cost tracking, …) must never enter
+    // the voice logic: the draftWrite gate is `!== undefined`, so a write
+    // without an inputDraft key skips it entirely.
+    existingPending = 'voice';
+    existingDraft = 'typing';
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!({ sessionId: 's1', metadata: { title: 'New title' } }, {});
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { title: 'New title' },
+    });
+  });
+
+  it('adopts a trailing-whitespace transcript through a trimmed save', async () => {
+    // appendVoiceDraft normalizes staging by trimming (STT output often
+    // carries trailing whitespace), so the web's TRIMMED debounced saves can
+    // still adopt: without the staging trim, '...hello' would never contain
+    // 'hello ' and the transcript would duplicate on every read, unadoptable.
+    existingPending = 'hello';
+    existingDraft = 'typed';
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!({ sessionId: 's1', metadata: { inputDraft: 'typed hello' } }, {});
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: 'typed hello', inputDraftVoicePending: null },
+    });
+  });
+
   it('no longer registers the retired reconciliation RPCs', async () => {
     expect(messageHubData.handlers.get('session.stripVoiceBaseline')).toBeUndefined();
     expect(messageHubData.handlers.get('session.mergeVoiceDraftBackup')).toBeUndefined();
@@ -925,6 +952,68 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
       'Pending voice draft is at the character limit'
     );
     expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('stages whole at exactly the character limit and rejects one character over', async () => {
+    // 99_994 + 1 separator + 5 = 100_000 exactly: the boundary itself fits.
+    existingPending = 'p'.repeat(99_994);
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    const result = (await handler!({ sessionId: 's1', text: 'hello' }, {})) as {
+      success: boolean;
+    };
+    expect(result.success).toBe(true);
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraftVoicePending: `${'p'.repeat(99_994)} hello` },
+    });
+    // One more character cannot fit whole.
+    existingPending = 'p'.repeat(99_995);
+    await expect(handler!({ sessionId: 's1', text: 'hello' }, {})).rejects.toThrow(
+      'Pending voice draft is at the character limit'
+    );
+  });
+
+  it('normalizes a trailing-whitespace transcript at staging', async () => {
+    // STT output routinely carries trailing whitespace; the staging is
+    // trimmed so the web's trimmed debounced saves can still adopt it.
+    existingPending = null;
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    await handler!({ sessionId: 's1', text: 'hello  ' }, {});
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraftVoicePending: 'hello' },
+    });
+  });
+
+  it('prunes expired dedup-log entries on the next append', async () => {
+    // The TTL filter keeps the metadata-resident append log bounded; deleting
+    // it would grow the log without bound with nothing failing.
+    const ttlMs = 24 * 60 * 60 * 1000 + 5 * 60 * 1000;
+    existingAppendLog = [
+      { id: 'expired', ts: Date.now() - ttlMs - 1_000 },
+      { id: 'fresh', ts: Date.now() },
+    ];
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    await handler!({ sessionId: 's1', text: 'hello', dedupId: 'entry-2' }, {});
+    const updates = sessionManager.updateSession.mock.calls[0]?.[1] as {
+      metadata: { inputDraftVoiceAppendLog: Array<{ id: string; ts: number }> };
+    };
+    const ids = updates.metadata.inputDraftVoiceAppendLog.map((entry) => entry.id);
+    expect(ids).toContain('fresh');
+    expect(ids).toContain('entry-2');
+    expect(ids).not.toContain('expired');
+  });
+
+  it('does not match a replayed dedupId whose log entry expired', async () => {
+    // Outside the outbox retry lifetime (24h + slack), a replayed id is
+    // unknown again: it appends rather than dedups.
+    const ttlMs = 24 * 60 * 60 * 1000 + 5 * 60 * 1000;
+    existingAppendLog = [{ id: 'entry-1', ts: Date.now() - ttlMs - 1_000 }];
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    const result = (await handler!({ sessionId: 's1', text: 'hello', dedupId: 'entry-1' }, {})) as {
+      success: boolean;
+      deduped?: boolean;
+    };
+    expect(result.deduped).toBeUndefined();
+    expect(sessionManager.updateSession).toHaveBeenCalled();
   });
 
   it('records the outbox dedupId alongside the append and announces the landing', async () => {
@@ -1050,6 +1139,24 @@ describe('Session RPC Handlers — session.get voice composition', () => {
     expect(result.session.metadata.inputDraft).toBe(fullDraft);
     expect(result.session.metadata.inputDraftVoicePending).toBe('hello');
     expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('presents the composition at exactly the character limit and raw one over', async () => {
+    // 99_995 + 1 separator + 4 = 100_000 exactly: the boundary composes whole.
+    const draft = 'x'.repeat(99_995);
+    const handler = await setup({ inputDraft: draft, inputDraftVoicePending: 'abcd' });
+    const result = (await handler!({ sessionId: 's1' }, {})) as {
+      session: { metadata: { inputDraft: string } };
+    };
+    expect(result.session.metadata.inputDraft).toBe(`${draft} abcd`);
+    expect(result.session.metadata.inputDraft.length).toBe(100_000);
+
+    // One character more would slice the tail off — the raw draft is returned.
+    const overHandler = await setup({ inputDraft: `${draft}x`, inputDraftVoicePending: 'abcd' });
+    const overResult = (await overHandler!({ sessionId: 's1' }, {})) as {
+      session: { metadata: { inputDraft: string } };
+    };
+    expect(overResult.session.metadata.inputDraft).toBe(`${draft}x`);
   });
 });
 

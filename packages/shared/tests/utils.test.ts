@@ -1,5 +1,11 @@
 import { describe, test, expect } from 'bun:test';
-import { appendDraftText, generateUUID, parseJson, parseJsonOptional } from '../src/utils.ts';
+import {
+  appendDraftText,
+  composeDraftWhole,
+  generateUUID,
+  parseJson,
+  parseJsonOptional,
+} from '../src/utils.ts';
 
 describe('generateUUID', () => {
   test('generates valid UUID format', () => {
@@ -204,5 +210,33 @@ describe('appendDraftText', () => {
     const big = 'a'.repeat(100_000);
     expect(appendDraftText(big, 'more').length).toBe(100_000);
     expect(appendDraftText('x', 'y'.repeat(200_000)).length).toBe(100_000);
+  });
+});
+
+describe('composeDraftWhole', () => {
+  test('returns the joined string when both parts fit whole (with separator)', () => {
+    expect(composeDraftWhole('hello', 'world')).toBe('hello world');
+  });
+
+  test('returns the joined string with no separator across a CJK boundary', () => {
+    expect(composeDraftWhole('你好', '世界')).toBe('你好世界');
+  });
+
+  test('returns the pending alone when the draft is empty', () => {
+    expect(composeDraftWhole('', 'voice')).toBe('voice');
+  });
+
+  test('returns null when the join would be sliced at the character limit', () => {
+    expect(composeDraftWhole('a'.repeat(100_000), 'more')).toBeNull();
+  });
+
+  test('accepts a composition of exactly the character limit', () => {
+    // 99_995 + 1 separator + 4 = 100_000 exactly: fits whole.
+    const draft = 'x'.repeat(99_995);
+    const composed = composeDraftWhole(draft, 'abcd');
+    expect(composed).toBe(`${draft} abcd`);
+    expect(composed?.length).toBe(100_000);
+    // One character more cannot fit whole.
+    expect(composeDraftWhole(`${draft}x`, 'abcd')).toBeNull();
   });
 });

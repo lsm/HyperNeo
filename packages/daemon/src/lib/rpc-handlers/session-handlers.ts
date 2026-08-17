@@ -23,7 +23,7 @@ import type {
 } from '@hyperneo/shared';
 import { normalizeThinkingLevel } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
-import { appendDraftText, generateUUID } from '@hyperneo/shared';
+import { composeDraftWhole, generateUUID } from '@hyperneo/shared';
 import type { SessionManager } from '../session-manager';
 import type { CreateSessionRequest, UpdateSessionRequest } from '@hyperneo/shared';
 import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
@@ -380,10 +380,8 @@ export function setupSessionHandlers(
     const voicePending = session.metadata?.inputDraftVoicePending;
     if (voicePending && voicePending.trim()) {
       const draft = session.metadata?.inputDraft ?? '';
-      const composed = appendDraftText(draft, voicePending);
-      const fitsWhole =
-        composed === `${draft}${voicePending}` || composed === `${draft} ${voicePending}`;
-      if (fitsWhole && session.metadata) {
+      const composed = composeDraftWhole(draft, voicePending);
+      if (composed !== null && session.metadata) {
         session = { ...session, metadata: { ...session.metadata, inputDraft: composed } };
       }
     }
@@ -446,9 +444,13 @@ export function setupSessionHandlers(
     //   Clearing the pending here makes the adoption durable in one write.
     //   (A writer that merely typed the same words clears it too — the texts
     //   are identical, so nothing is visibly lost.)
-    // - A write WITHOUT the pending keeps it staged: a tab that never re-read
-    //   the draft (continuously typing since before the landing) must never
-    //   be able to wipe a transcript it never saw.
+    // - A write WITHOUT the pending keeps it staged: a composer whose saved
+    //   text does not contain the transcript never wipes it. The check is
+    //   CONTAINMENT, not awareness — a short transcript appearing as a
+    //   coincidental substring of an unrelated write ("ok" inside "looks ok
+    //   to me") is consumed too. The words already exist in the saved text,
+    //   so no distinct transcript is lost, but this is not an absolute
+    //   never-wipe guarantee against coincidental substrings.
     // - An EMPTY write clears the typing only — EXCEPT when the stored draft
     //   was already empty: the visible draft is then the voice alone, and
     //   clearing it is a deliberate discard of the transcript.
@@ -501,8 +503,10 @@ export function setupSessionHandlers(
   // inputDraft: the client's debounced draft save (useInputDraft) can still be
   // holding a stale local snapshot and would clobber an append made to
   // inputDraft. A separate field is never touched by those saves, so the
-  // transcript survives until useInputDraft merges it into the draft once on
-  // load. The read→write is one synchronous step (getFromDB + updateSession's
+  // transcript survives until a draft write that CONTAINS it adopts it, the
+  // voice-aware send-clear consumes it, or a clear of an already-empty draft
+  // discards it; `session.get` presents draft + staging as one composition on
+  // read. The read→write is one synchronous step (getFromDB + updateSession's
   // DB write both run before the first `await`), so concurrent writers cannot
   // interleave. Returns success/failure so the client's toast is honest.
   messageHub.onRequest('session.appendVoiceDraft', async (data, _ctx) => {
@@ -542,13 +546,18 @@ export function setupSessionHandlers(
       return { success: true, deduped: true };
     }
     const existingPending = metadata.inputDraftVoicePending ?? '';
-    const pending = appendDraftText(existingPending, text);
+    // Normalize at staging: trim the transcript before joining. STT output
+    // routinely carries trailing whitespace, and the web's debounced saves
+    // persist TRIMMED text — an untrimmed staging could never be found by the
+    // adoption containment check once only trimmed writes remain (immediate
+    // adoption save offline or skipped), leaving a transcript that duplicates
+    // in every read and can never be adopted away.
+    const stagedText = text.trim();
     // Reject (rather than silently truncate) when the staged value is at the
     // character limit and the new transcript cannot fit whole — the client
     // reports the failure instead of claiming a save that dropped its tail.
-    const fits =
-      pending === `${existingPending}${text}` || pending === `${existingPending} ${text}`;
-    if (!fits) throw new Error('Pending voice draft is at the character limit');
+    const pending = composeDraftWhole(existingPending, stagedText);
+    if (pending === null) throw new Error('Pending voice draft is at the character limit');
     const metadataUpdate: Partial<SessionMetadata> = { inputDraftVoicePending: pending };
     if (dedupId) {
       // Append after the TTL filter above prunes expired ids. NO count cap:
@@ -571,8 +580,10 @@ export function setupSessionHandlers(
     // it re-reads and shows the composed draft. The event is the daemon's
     // replacement for every client-side landing marker: tabs no longer
     // coordinate through localStorage — a tab that misses the event (socket
-    // down, channel not yet joined) converges on its next get, clear, or
-    // send, and the pending itself is durable until consumed. Emitted only
+    // down, channel not yet joined) converges on its next session.get
+    // (navigation or reload) or a later landing, and the pending itself is
+    // durable until consumed. (A clear or a typing-only send deliberately
+    // leaves an unseen staging in place.) Emitted only
     // for a GENUINE commit: a deduped replay already had its landing
     // announced by the original commit.
     messageHub.event('session.voiceLanded', { sessionId }, { channel: `session:${sessionId}` });
@@ -597,9 +608,8 @@ export function setupSessionHandlers(
     const directMatch = draft.trim() === expected.trim();
     let compositionMatch = false;
     if (!directMatch && pending.trim() !== '') {
-      const composed = appendDraftText(draft, pending);
-      const fitsWhole = composed === `${draft}${pending}` || composed === `${draft} ${pending}`;
-      compositionMatch = fitsWhole && composed.trim() === expected.trim();
+      const composed = composeDraftWhole(draft, pending);
+      compositionMatch = composed !== null && composed.trim() === expected.trim();
     }
     if (!directMatch && !compositionMatch) {
       return { cleared: false };

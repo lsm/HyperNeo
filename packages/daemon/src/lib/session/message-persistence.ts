@@ -20,7 +20,7 @@ import type {
   ReferenceMetadata,
   Session,
 } from '@hyperneo/shared';
-import { appendDraftText } from '@hyperneo/shared';
+import { composeDraftWhole } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import type { Database } from '../../storage/database';
@@ -169,6 +169,22 @@ export class MessagePersistence {
         `[MessagePersistence] Session ${sessionId} is archived; cannot accept new messages.`
       );
     }
+
+    // Draft-state snapshot taken SYNCHRONOUSLY at entry, before any await:
+    // the sending composer clears its input optimistically right after
+    // dispatching message.send, and that empty session.update can commit
+    // during the async yields below (the live session object is mutated in
+    // place by then). The send-clear gate must see the PRE-SEND draft, or a
+    // mixed draft's staged transcript would survive the send of its own
+    // composition and re-present as a phantom draft.
+    const preSendDraft = persistedSession?.metadata?.inputDraft ?? '';
+    const preSendPending = persistedSession?.metadata?.inputDraftVoicePending ?? '';
+    const preSendComposed = preSendPending.trim()
+      ? composeDraftWhole(preSendDraft, preSendPending)
+      : null;
+    // The staging verifiably carried in the sent message: the pre-send
+    // composition joined to exactly the sent text.
+    const compositionAtSend = preSendComposed !== null && preSendComposed.trim() === content.trim();
 
     const agentSession = await this.sessionCache.getAsync(sessionId);
     if (!agentSession) {
@@ -384,19 +400,14 @@ export class MessagePersistence {
             // directly OR through the voice composition: a sender whose
             // composer showed draft + staged transcript (session.get presents
             // the composition) sent both, so the subscriber consumes the
-            // staging on that path. Computed from this pre-send snapshot as a
-            // GATE only — the subscriber re-decides the exact match from a
-            // fresh read.
-            hasDraftToClear: (() => {
-              const draft = session.metadata?.inputDraft ?? '';
-              if (draft.trim() === content.trim()) return true;
-              const pending = session.metadata?.inputDraftVoicePending;
-              if (!pending || pending.trim() === '') return false;
-              const composed = appendDraftText(draft, pending);
-              const fitsWhole =
-                composed === `${draft}${pending}` || composed === `${draft} ${pending}`;
-              return fitsWhole && composed.trim() === content.trim();
-            })(),
+            // staging on that path. Computed from the synchronous pre-send
+            // snapshot as a GATE only — the subscriber re-decides the exact
+            // match from a fresh read (and falls back to voicePendingSent
+            // when this send's own optimistic clear already altered it).
+            hasDraftToClear: preSendDraft.trim() === content.trim() || compositionAtSend,
+            // Set only when the pre-send COMPOSITION matched: the exact
+            // staging that verifiably went out in the message.
+            ...(compositionAtSend ? { voicePendingSent: preSendPending } : {}),
             sendStatus,
             deliveryMode: effectiveDeliveryMode,
             // The outbox already owns delivery (job enqueued + queued marker

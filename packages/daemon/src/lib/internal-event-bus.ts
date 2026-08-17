@@ -668,6 +668,14 @@ interface AgentControlEvents {
     userMessageText: string;
     needsWorkspaceInit: boolean;
     hasDraftToClear: boolean;
+    /**
+     * The staged voice transcript verifiably carried in the sent message —
+     * set when the PRE-SEND composition of inputDraft + inputDraftVoicePending
+     * joined to exactly the sent text. The send-clear subscriber consumes
+     * exactly this staging when the sender's own optimistic composer clear
+     * has already emptied or replaced the stored draft by re-read time.
+     */
+    voicePendingSent?: string;
     sendStatus: 'deferred' | 'enqueued' | 'consumed';
     deliveryMode: import('@hyperneo/shared').MessageDeliveryMode;
     skipQueryStart?: boolean;
