@@ -16,6 +16,10 @@ import {
   QueryOptionsBuilder,
   type QueryOptionsBuilderContext,
 } from '../../../../src/lib/agent/query-options-builder';
+import {
+  SDK_TRANSCRIPT_RETENTION_DAYS,
+  withSdkTranscriptRetention,
+} from '../../../../src/lib/agent/sdk-transcript-retention';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../../../../src/lib/space/agents/long-horizon-agent-tools';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
@@ -316,9 +320,31 @@ describe('QueryOptionsBuilder', () => {
     );
 
     it('should not override SDK auto-compaction settings for native anthropic provider', async () => {
-      // Default provider is anthropic — SDK already knows correct context window
+      // Default provider is anthropic — SDK already knows correct context window.
+      // Transcript retention is the only settings key the daemon still sets.
       const options = await builder.build();
-      expect(options.settings).toBeUndefined();
+      expect(options.settings).toEqual({ cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS });
+    });
+
+    it('should pin SDK transcript retention for every session', async () => {
+      // The SDK subprocess purges transcripts idle > cleanupPeriodDays (default
+      // 30) on startup, wedging long-idle resumable sessions. Retention must be
+      // pinned regardless of provider settings.
+      const options = await builder.build();
+      expect(options.settings?.cleanupPeriodDays).toBe(SDK_TRANSCRIPT_RETENTION_DAYS);
+    });
+
+    it('withSdkTranscriptRetention merges over caller settings without dropping them', () => {
+      // Direct query() launches (title generation, workflow selection, model
+      // discovery, GitHub agents, evolution services) pass their own settings
+      // through this helper; existing keys must survive.
+      expect(withSdkTranscriptRetention()).toEqual({
+        cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS,
+      });
+      expect(withSdkTranscriptRetention({ autoCompactWindow: 1000 })).toEqual({
+        autoCompactWindow: 1000,
+        cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS,
+      });
     });
 
     it('should remove undefined values from options', async () => {
@@ -481,6 +507,7 @@ describe('QueryOptionsBuilder', () => {
       expect(options.settings).toEqual({
         autoCompactEnabled: true,
         autoCompactWindow: 1_000_000,
+        cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS,
       });
     });
 
@@ -491,15 +518,109 @@ describe('QueryOptionsBuilder', () => {
       mockSession.config.provider = 'openrouter';
       mockSession.config.model = 'unknown-model';
       const options = await builder.build();
-      // Returning undefined lets the SDK use its built-in auto-compact instead
-      // of creating a dead zone (no SDK compact, no HyperNeo fallback).
-      expect(options.settings).toBeUndefined();
+      // No provider settings lets the SDK use its built-in auto-compact instead
+      // of creating a dead zone (no SDK compact, no HyperNeo fallback). Only the
+      // daemon-owned retention key remains.
+      expect(options.settings).toEqual({ cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS });
     });
 
-    it('should leave settings undefined for native anthropic provider', async () => {
-      // Default mockSession uses anthropic provider
+    it('should leave provider settings empty for native anthropic provider', async () => {
+      // Default mockSession uses anthropic provider — only the daemon-owned
+      // retention key is present.
       const options = await builder.build();
-      expect(options.settings).toBeUndefined();
+      expect(options.settings).toEqual({ cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS });
+    });
+  });
+
+  describe('subagent model env guard (CLAUDE_CODE_SUBAGENT_MODEL)', () => {
+    // Regression: the daemon's process.env carries per-provider routing vars
+    // (applied around each query, globally). getMergedEnvironmentVars() runs
+    // BEFORE this session's provider env is applied, so a leftover
+    // CLAUDE_CODE_SUBAGENT_MODEL from another provider's session (e.g. a
+    // concurrent Kimi worker) used to be copied verbatim into options.env —
+    // and since the SDK spawns with env = {...options.env} (replace, not
+    // merge), that snapshot becomes the complete subprocess env. Subagents
+    // then sent the foreign model ID upstream and GLM rejected it with 400
+    // code 1214 "modelCode 不存在" while main turns kept working (the var
+    // only affects subagents). Subagents otherwise inherit the main model
+    // via the CLI's own defaults, so the guard never sets the var itself —
+    // it only stops the foreign snapshot.
+    const foreignSubagentModel = 'k3-256k';
+    let savedSubagentModel: string | undefined;
+    let savedToolSearch: string | undefined;
+
+    function registerCompatProvider(envVars: Record<string, string>): void {
+      resetProviderRegistry();
+      const registry = getProviderRegistry();
+      registry.register({
+        id: 'glm',
+        displayName: 'Z.ai',
+        capabilities: {
+          streaming: true,
+          extendedThinking: true,
+          maxContextWindow: 1_000_000,
+          functionCalling: true,
+          vision: true,
+        },
+        isAvailable: () => true,
+        getModels: async () => [],
+        ownsModel: (modelId: string) => modelId.startsWith('glm-'),
+        buildSdkConfig: () => ({ envVars, isAnthropicCompatible: true }),
+      } as Provider);
+    }
+
+    beforeEach(() => {
+      savedSubagentModel = process.env.CLAUDE_CODE_SUBAGENT_MODEL;
+      savedToolSearch = process.env.ENABLE_TOOL_SEARCH;
+      process.env.CLAUDE_CODE_SUBAGENT_MODEL = foreignSubagentModel;
+      process.env.ENABLE_TOOL_SEARCH = 'true';
+    });
+
+    afterEach(() => {
+      if (savedSubagentModel === undefined) {
+        delete process.env.CLAUDE_CODE_SUBAGENT_MODEL;
+      } else {
+        process.env.CLAUDE_CODE_SUBAGENT_MODEL = savedSubagentModel;
+      }
+      if (savedToolSearch === undefined) {
+        delete process.env.ENABLE_TOOL_SEARCH;
+      } else {
+        process.env.ENABLE_TOOL_SEARCH = savedToolSearch;
+      }
+      resetProviderRegistry();
+    });
+
+    it('forwards the provider-defined subagent model over an ambient leftover', async () => {
+      registerCompatProvider({
+        ANTHROPIC_BASE_URL: 'https://open.bigmodel.cn/api/anthropic',
+        CLAUDE_CODE_SUBAGENT_MODEL: 'glm-5.3',
+        ENABLE_TOOL_SEARCH: 'false',
+      });
+      mockSession.config.provider = 'glm';
+      mockSession.config.model = 'glm-5.3';
+
+      const options = await builder.build();
+
+      expect(options.env?.CLAUDE_CODE_SUBAGENT_MODEL).toBe('glm-5.3');
+      expect(options.env?.ENABLE_TOOL_SEARCH).toBe('false');
+    });
+
+    it('omits the subagent model when the provider does not define one, even with an ambient leftover', async () => {
+      // Providers that never mention the var (GLM, DeepSeek, MiniMax, native
+      // Anthropic, …) must not inherit another provider's value: subagents
+      // resolve to the main model from the query env, and
+      // applyEnvVarsToProcessForSession() clears the ambient var from
+      // process.env before the subprocess spawns.
+      registerCompatProvider({
+        ANTHROPIC_BASE_URL: 'https://open.bigmodel.cn/api/anthropic',
+      });
+      mockSession.config.provider = 'glm';
+      mockSession.config.model = 'glm-5.3';
+
+      const options = await builder.build();
+
+      expect(options.env?.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
+      expect(options.env?.ENABLE_TOOL_SEARCH).toBeUndefined();
     });
   });
 

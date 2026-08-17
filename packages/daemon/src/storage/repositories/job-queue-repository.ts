@@ -263,22 +263,50 @@ export class JobQueueRepository {
 
   /**
    * Requeue EVERY `processing` job in a lane back to `pending` (`run_at = runAt`),
-   * WITHOUT a retry bump. Used on daemon shutdown so an in-flight message_delivery
-   * turn — whose handler is still awaiting the SDK turn — is immediately
-   * reclaimable on the next boot's eager `reclaimStale`, instead of staying
-   * `processing` with a fresh heartbeat and blocking reclamation for the 5-minute
-   * stale window (which would also leave the active-turn index pointing at a turn
-   * no live handler is driving). The still-running handler's later
-   * `complete()`/`fail()` is a no-op (the row is no longer `processing`). See
-   * message-delivery-v2.md §10 + Codex (#2593).
+   * WITHOUT a retry bump, returning the re-enqueued job IDs (count = length) so
+   * the caller can spread a restart herd's claims with the stale-reclaim jitter
+   * (see `reschedulePending` + `staleReclaimJitterDelays`). Used on daemon
+   * shutdown so an in-flight message_delivery turn — whose handler is still
+   * awaiting the SDK turn — is reclaimable on the next boot, instead of staying
+   * `processing` with a fresh heartbeat and blocking reclamation for the
+   * 5-minute stale window (which would also leave the active-turn index
+   * pointing at a turn no live handler is driving). The still-running
+   * handler's later `complete()`/`fail()` is a no-op (the row is no longer
+   * `processing`). See message-delivery-v2.md §10 + Codex (#2593).
    */
-  requeueAllProcessing(queue: string, runAt: number): number {
+  requeueAllProcessing(queue: string, runAt: number): string[] {
+    return this.db.transaction(() => {
+      const rows = this.db
+        .prepare(`SELECT id FROM job_queue WHERE queue = ? AND status = 'processing'`)
+        .all(queue) as Array<{ id: string }>;
+      const requeued: string[] = [];
+      for (const row of rows) {
+        const res = this.db
+          .prepare(
+            `UPDATE job_queue SET status = 'pending', run_at = ?, started_at = NULL, heartbeat_at = NULL
+              WHERE id = ? AND status = 'processing'`
+          )
+          .run(runAt, row.id);
+        if (res.changes > 0) requeued.push(row.id);
+      }
+      return requeued;
+    })();
+  }
+
+  /**
+   * Reschedule a PENDING job's run_at. The processor's stale-reclaim pass uses
+   * this to spread a re-enqueued herd's replacement claims over time (see
+   * staleReclaimJitterDelays) so they don't all cold-start in the same
+   * instant. The reclaim→reschedule block is synchronous, so nothing can
+   * interleave today; the pending-only guard is defense-in-depth for future
+   * callers rescheduling from an async context — a re-claimed or settled row
+   * keeps its own schedule instead of being yanked.
+   */
+  reschedulePending(jobId: string, runAt: number): boolean {
     const res = this.db
-      .prepare(
-        `UPDATE job_queue SET status = 'pending', run_at = ?, started_at = NULL, heartbeat_at = NULL WHERE queue = ? AND status = 'processing'`
-      )
-      .run(runAt, queue);
-    return res.changes;
+      .prepare(`UPDATE job_queue SET run_at = ? WHERE id = ? AND status = 'pending'`)
+      .run(runAt, jobId);
+    return res.changes > 0;
   }
 
   /** Renew the lease for one exact processing claim without changing its start time. */

@@ -25,6 +25,7 @@ import type {
   HookCallback,
   Options,
   PreToolUseHookInput,
+  Settings,
 } from '@anthropic-ai/claude-agent-sdk';
 import type {
   AgentDefinition,
@@ -62,6 +63,7 @@ import {
   initializeProviders,
   waitForOptionalProviderRegistration,
 } from '../providers/factory.js';
+import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service';
 import type { SettingsManager } from '../settings-manager';
 import type { SkillsManager } from '../skills-manager';
 import {
@@ -71,6 +73,7 @@ import {
 import { getCoordinatorAgents } from './coordinator-agents';
 import { createLoopDetectorHooks } from './loop-detector-hook';
 import { isMessageDeliveryV2Enabled } from './message-delivery';
+import { withSdkTranscriptRetention } from './sdk-transcript-retention';
 import {
   createOutputLimiterPostHook,
   createOutputLimiterPreHook,
@@ -326,7 +329,7 @@ export function buildProviderSettings(
   providerId: string,
   contextWindow?: number | null,
   modelId?: string | null
-): Options['settings'] {
+): Settings | undefined {
   if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) {
     return undefined;
   }
@@ -530,7 +533,7 @@ export class QueryOptionsBuilder {
       ...this.buildPluginsFromSkills(),
       ...this.buildPluginsFromBuiltinSkills(),
     ];
-    const mergedEnv = this.getMergedEnvironmentVars();
+    const mergedEnv = this.getMergedEnvironmentVars(providerContext.sdkConfig.envVars);
     const sdkCliPath = this.getSDKCliPath();
 
     // Effective MCP servers: registry (skill-less) + skill-wrapped + runtime.
@@ -623,10 +626,13 @@ export class QueryOptionsBuilder {
       // output style, CLAUDE.md content, etc.).
       settingSources:
         config.settingSources ?? this.ctx.settingsManager.getGlobalSettings().settingSources,
-      settings: buildProviderSettings(
-        providerId,
-        modelInfo?.contextWindow,
-        this.ctx.session.config.model
+      // Inline `settings` is the SDK's flag-settings layer — it takes precedence
+      // over the on-disk user/project settings, so the daemon's transcript
+      // retention cannot be narrowed by ~/.claude/settings.json. Retention is
+      // set for every provider (provider overrides still apply to their own
+      // keys, but nothing overrides retention).
+      settings: withSdkTranscriptRetention(
+        buildProviderSettings(providerId, modelInfo?.contextWindow, this.ctx.session.config.model)
       ),
 
       // ============ Streaming ============
@@ -1169,8 +1175,11 @@ CRITICAL RULES:
   /**
    * Get merged environment variables for SDK subprocess
    *
-   * IMPORTANT: Provider env vars (GLM, etc.) are now applied to process.env
-   * before SDK query creation, NOT passed via options.env.
+   * IMPORTANT: Most provider env vars (GLM, etc.) are applied to process.env
+   * before SDK query creation, NOT passed via options.env. Two exceptions —
+   * CLAUDE_CODE_SUBAGENT_MODEL and ENABLE_TOOL_SEARCH — ARE forwarded via
+   * options.env for non-Anthropic providers, but only with this session's
+   * provider-defined value (see the forwarding loop below).
    *
    * This method merges:
    * 1. Global settings env vars (from ~/.Claude/settings.json)
@@ -1181,9 +1190,12 @@ CRITICAL RULES:
    *
    * Priority: Session env vars override global env vars.
    *
-   * @returns Merged env vars (excluding provider-specific vars)
+   * @returns Merged env vars (excluding provider-specific vars, except the
+   *   two provider-defined vars explicitly forwarded for non-Anthropic sessions)
    */
-  private getMergedEnvironmentVars(): Record<string, string> | undefined {
+  private getMergedEnvironmentVars(
+    sessionProviderEnvVars: Record<string, string> = {}
+  ): Record<string, string> | undefined {
     const globalSettings = this.ctx.settingsManager.getGlobalSettings();
     const sessionEnv = this.ctx.session.config.env;
 
@@ -1242,9 +1254,26 @@ CRITICAL RULES:
         'ANTHROPIC_DEFAULT_OPUS_MODEL',
         'API_TIMEOUT_MS',
         'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
-        'CLAUDE_CODE_SUBAGENT_MODEL',
-        'ENABLE_TOOL_SEARCH',
       ];
+      // CLAUDE_CODE_SUBAGENT_MODEL and ENABLE_TOOL_SEARCH are not
+      // ANTHROPIC_*-prefixed, so they fall outside the provider-managed set
+      // and are snapshotted from the daemon's ambient process.env below —
+      // which runs BEFORE this session's provider env is applied. A leftover
+      // from another provider's session (e.g. a concurrent Kimi worker's
+      // CLAUDE_CODE_SUBAGENT_MODEL) would then be copied verbatim into
+      // options.env; since the SDK spawns with env = {...options.env}
+      // (replace, not merge), that snapshot becomes the complete subprocess
+      // env and the foreign value wins. The post-apply refresh cannot remove
+      // it because it only manages vars this session's provider defines.
+      // Forward them only when this provider sets them, and take the
+      // provider's own value rather than the ambient snapshot so the build
+      // is race-free.
+      for (const key of NON_ANTHROPIC_PREFIX_PROVIDER_VARS) {
+        const value = sessionProviderEnvVars[key];
+        if (value !== undefined && value !== '') {
+          mergedEnv[key] = value;
+        }
+      }
       for (const key of providerVars) {
         const value = process.env[key];
         if (value !== undefined && value !== '') {

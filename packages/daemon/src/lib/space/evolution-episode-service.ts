@@ -43,6 +43,7 @@ import { normalizeMeaningfulTaskResult } from './task-result-utils';
 import { KimiProvider } from '../providers/kimi-provider.js';
 import { getAvailableModels } from '../model-service';
 import { inferProviderForModel } from '../providers/registry';
+import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention';
 
 const log = new Logger('evolution-episode-service');
 
@@ -778,6 +779,7 @@ async function judgeEpisodeWithModel(
         tools: [],
         pathToClaudeCodeExecutable: resolveSDKCliPath(),
         executable: isRunningUnderBun() ? 'bun' : undefined,
+        settings: withSdkTranscriptRetention(),
         env: mergeProviderEnvVars(providerEnvVars),
         // Kimi K3 rejects `thinking.type` and K2.7 requires enabled thinking.
         // Only apply the Kimi-specific override for the Kimi provider; other

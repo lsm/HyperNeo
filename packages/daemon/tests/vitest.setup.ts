@@ -215,3 +215,10 @@ delete process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
 delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
 delete process.env.ANTHROPIC_BASE_URL;
 delete process.env.API_TIMEOUT_MS;
+// Delete the SDK startup-timeout override: query-runner.ts snapshots it at
+// module load, and this is the only preload automated runs load
+// (vitest.config.ts setupFiles; online and real-API runs load none) — a
+// developer-shell export of HYPERNEO_SDK_STARTUP_TIMEOUT_MS must not leak
+// into the pinned 'current: 60000ms' default assertion. Tests needing the
+// override set it after preload and restore in finally.
+delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;

@@ -16,6 +16,7 @@ import type {
 } from '@hyperneo/shared/provider';
 import type { ModelInfo } from '@hyperneo/shared';
 import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.js';
+import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention';
 
 /**
  * Canonical SDK model IDs (short-form IDs preferred by the SDK)
@@ -231,6 +232,7 @@ export class AnthropicProvider implements Provider {
           maxTurns: 0,
           pathToClaudeCodeExecutable: resolveSDKCliPath(),
           executable: isRunningUnderBun() ? 'bun' : undefined,
+          settings: withSdkTranscriptRetention(),
         },
       });
 

@@ -158,3 +158,13 @@ delete process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
 delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
 delete process.env.ANTHROPIC_BASE_URL;
 delete process.env.API_TIMEOUT_MS;
+// query-runner.ts snapshots HYPERNEO_SDK_STARTUP_TIMEOUT_MS at module load.
+// NOTE: no automated runner loads this preload — test-daemon.sh (and its
+// test:unit alias) run vitest, whose equivalent delete lives in
+// tests/vitest.setup.ts, and bunfig.toml intentionally has no [test] preload
+// (it would hit online runs). This delete only covers manual
+// `--preload tests/unit/setup.ts` bun runs, where Bun auto-loading
+// packages/daemon/.env would otherwise leak an ambient override into the
+// pinned 'current: 60000ms' assertion. Tests that need the override set it
+// AFTER this preload runs.
+delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
