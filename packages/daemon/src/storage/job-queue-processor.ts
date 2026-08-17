@@ -224,14 +224,15 @@ export function staleReclaimJitterDelays(count: number, random: () => number): n
  * Per-job isolation: one failed UPDATE (disk-full / I/O error) leaves THAT row
  * at its original — past, immediately claimable — run_at (the pre-jitter
  * behavior) while the rest of the herd keeps its jitter, and the failure is
- * surfaced through `onRescheduleError` (the processor emits a
- * `stale_reclaim_jitter_failed` lifecycle event; the shutdown path logs).
- * Errors never propagate, so this can never skip the caller's remaining
- * reclaim work (predecessor aborts, settling deferrals). A throw from the
- * reclaim transaction itself — before any row flipped — still propagates from
- * the caller; that rejects tick()'s promise and exits the daemon on the
- * unhandled rejection, and recovery is a restart whose eager reclaim re-sweeps
- * (and re-jitters) the herd.
+ * surfaced through `onRescheduleError` with the thrown error (the processor
+ * folds it into a `stale_reclaim_jitter_failed` lifecycle event; the shutdown
+ * path logs it). Neither the UPDATE errors nor a throwing observer propagate,
+ * so this can never skip the caller's remaining reclaim work (predecessor
+ * aborts, settling deferrals). A throw from the reclaim transaction itself —
+ * before any row flipped — still propagates from the caller; that rejects
+ * tick()'s promise and exits the daemon on the unhandled rejection, and
+ * recovery is a restart whose eager reclaim re-sweeps (and re-jitters) the
+ * herd.
  *
  * @returns how many rows were successfully rescheduled.
  */
@@ -249,7 +250,13 @@ export function applyStaleReclaimJitter(
     try {
       if (repo.reschedulePending(jobIds[i], jitteredAt + delays[i])) applied++;
     } catch (error) {
-      onRescheduleError?.(jobIds[i], error);
+      try {
+        onRescheduleError?.(jobIds[i], error);
+      } catch {
+        // The observer is diagnostics (a lifecycle emit / a shutdown log); a
+        // throwing callback must not skip the remaining reschedules nor the
+        // caller's reclaim work — same hardening class as the draw clamp.
+      }
     }
   }
   return applied;
@@ -666,15 +673,18 @@ export class JobQueueProcessor {
         this.repo,
         claims.map((claim) => claim.jobId),
         this.jitterRandom,
-        (jobId) => {
+        (jobId, error) => {
           const claim = claimByJobId.get(jobId);
           if (claim) {
+            // The cause rides in `reason` (disk-full vs locked vs …) so a
+            // recurrence is diagnosable, not just detectable.
+            const cause = error instanceof Error ? error.message : String(error);
             this.emitLifecycle(
               'stale_reclaim_jitter_failed',
               jobFromReclaimedClaim(claim),
               undefined,
               {
-                reason: 'reschedule_failed',
+                reason: `reschedule_failed: ${cause}`,
               }
             );
           }

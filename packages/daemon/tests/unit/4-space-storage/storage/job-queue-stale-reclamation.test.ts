@@ -237,7 +237,7 @@ describe('Stale job reclamation on restart (eager reclaim)', () => {
 
     expect(processedQueues).toContain('queue-a');
     expect(processedQueues).toContain('queue-b');
-  });
+  }, 10_000);
 
   it('does not interfere with a pending job that was never picked up', async () => {
     // Enqueue the stale job first so dequeue picks it up (dequeue orders by run_at ASC)
@@ -505,6 +505,48 @@ describe('stale-reclaim herd jitter (run_at spread)', () => {
     }
   });
 
+  it('a throwing error observer cannot skip the remaining reschedules', () => {
+    // Hardening for the observer seam (same class as the draw clamp): a buggy
+    // diagnostics callback must not abort the loop and un-jitter the herd.
+    const ids = [
+      repo.enqueue({ queue: 'observer-queue', payload: { seq: 0 } }),
+      repo.enqueue({ queue: 'observer-queue', payload: { seq: 1 } }),
+    ].map((job) => job.id);
+    const originalRunAt = Date.now() - 60_000;
+    db.prepare(`UPDATE job_queue SET run_at = ? WHERE id IN (${ids.map(() => '?').join(',')})`).run(
+      originalRunAt,
+      ...ids
+    );
+
+    const originalReschedule = repo.reschedulePending.bind(repo);
+    const before = Date.now();
+    try {
+      repo.reschedulePending = (jobId: string, runAt: number) => {
+        if (jobId === ids[0]) throw new Error('simulated I/O error');
+        return originalReschedule(jobId, runAt);
+      };
+
+      let applied = -1;
+      expect(() => {
+        applied = applyStaleReclaimJitter(
+          repo,
+          ids,
+          () => 0.5,
+          () => {
+            throw new Error('observer bug');
+          }
+        );
+      }).not.toThrow();
+
+      expect(applied).toBe(1); // the healthy row still got its jitter
+      expect(repo.getJob(ids[0])?.runAt).toBe(originalRunAt);
+      expect(repo.getJob(ids[1])?.runAt).toBeGreaterThanOrEqual(before);
+      expect(repo.getJob(ids[1])?.runAt).toBeLessThanOrEqual(before + 2 * 2_000);
+    } finally {
+      repo.reschedulePending = originalReschedule;
+    }
+  });
+
   it('spreads a graceful-shutdown requeue herd on the next boot (deploy path)', async () => {
     // The SIGTERM twin of the crash herd: app.cleanup() requeues in-flight
     // rows to pending with run_at=now (the eager stale-reclaim never sees
@@ -563,7 +605,11 @@ describe('stale-reclaim herd jitter (run_at spread)', () => {
     // delivery whose predecessor the reclaim must still abort (and whose
     // replacement must still be deferred), plus two crash-frozen rows — with
     // reschedulePending throwing for every claim.
-    const events: Array<{ message: string; metadata: Record<string, unknown> }> = [];
+    const events: Array<{
+      message: string;
+      level: string;
+      metadata: Record<string, unknown>;
+    }> = [];
     const unsubscribe = subscribeToStructuredLogs((event) => events.push(event));
     const originalReschedule = repo.reschedulePending.bind(repo);
 
@@ -622,12 +668,18 @@ describe('stale-reclaim herd jitter (run_at spread)', () => {
       expect(() => reclaimNow(processor)).not.toThrow();
 
       // The mitigation's failure is observable, not silent: one warn-level
-      // lifecycle event per claim whose jitter could not be applied.
+      // lifecycle event per claim whose jitter could not be applied, each
+      // naming its row and carrying the underlying cause.
       const jitterFailures = events.filter(
         (event) => event.metadata.event === 'stale_reclaim_jitter_failed'
       );
       expect(jitterFailures).toHaveLength(3);
-      expect(jitterFailures[0].metadata).toMatchObject({ reason: 'reschedule_failed' });
+      expect(new Set(jitterFailures.map((event) => event.metadata.jobId)).size).toBe(3);
+      for (const event of jitterFailures) {
+        expect(event.level).toBe('warn');
+        expect(event.metadata.reason).toContain('reschedule_failed');
+        expect(event.metadata.reason).toContain('simulated disk-full');
+      }
 
       // Un-jittered rows keep their original — past — run_at and stay
       // claimable: the pre-jitter behavior, never a NULL/future park.

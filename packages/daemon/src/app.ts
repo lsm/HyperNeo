@@ -1447,8 +1447,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             // the graceful-shutdown twin of the crash herd, with every
             // replacement cold-starting its SDK subprocess at once. A single
             // requeued job keeps zero delay (#2593's instant recovery).
-            applyStaleReclaimJitter(jobQueue, requeued, Math.random, (jobId) => {
-              logInfo(`[Daemon] stale-reclaim jitter reschedule failed for job ${jobId}`);
+            applyStaleReclaimJitter(jobQueue, requeued, Math.random, (jobId, error) => {
+              // Error-level to match the crash twin's warn lifecycle event —
+              // the jitter mitigation was lost for this row.
+              logError(`[Daemon] stale-reclaim jitter reschedule failed for job ${jobId}`, error);
             });
           }
         } catch {
