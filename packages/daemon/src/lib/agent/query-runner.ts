@@ -1312,13 +1312,6 @@ export class QueryRunner {
         // replacement spawn would sit in the for-await forever — never
         // reaching a permit release site and permanently holding its
         // startup-gate slot, stalling every later cold-start behind it.
-        // Clear the startup timer from THIS attempt and reset
-        // firstMessageReceived so the retry's startup timer is effective
-        // (mirror of the provider-retry path below). This retry fires
-        // mid-stream, so the flag is stale-true; without the reset a silent
-        // replacement spawn would sit in the for-await forever — never
-        // reaching a permit release site and permanently holding its
-        // startup-gate slot, stalling every later cold-start behind it.
         const staleStartupTimer = this.ctx.startupTimeoutTimer;
         if (staleStartupTimer) {
           clearTimeout(staleStartupTimer);
