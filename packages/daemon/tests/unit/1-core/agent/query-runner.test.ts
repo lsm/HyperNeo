@@ -76,6 +76,7 @@ describe('QueryRunner', () => {
   let createCanUseToolCallbackSpy: ReturnType<typeof mock>;
   let enqueueWithIdSpy: ReturnType<typeof mock>;
   let peekNextUserMessageIdSpy: ReturnType<typeof mock>;
+  let hasPendingOrInFlightSpy: ReturnType<typeof mock>;
   let getMessageByStatusAndUuidSpy: ReturnType<typeof mock>;
 
   // State variables (mutable context properties)
@@ -167,6 +168,7 @@ describe('QueryRunner', () => {
     sizeSpy = mock(() => 0);
     enqueueWithIdSpy = mock(async () => {});
     peekNextUserMessageIdSpy = mock(() => null);
+    hasPendingOrInFlightSpy = mock(() => false);
     mockMessageQueue = {
       isRunning: isRunningSpy,
       start: startSpy,
@@ -176,6 +178,7 @@ describe('QueryRunner', () => {
       getGeneration: mock(() => 0),
       enqueueWithId: enqueueWithIdSpy,
       peekNextUserMessageId: peekNextUserMessageIdSpy,
+      hasPendingOrInFlight: hasPendingOrInFlightSpy,
       messageGenerator: mock(async function* () {
         // Empty generator for tests
       }),
@@ -1832,9 +1835,11 @@ describe('QueryRunner', () => {
           // tail: steer-then-kickoff, leaving kickoff-then-steer order.
           expect(enqueueWithIdSpy).toHaveBeenCalledWith(kickoff.uuid, kickoff.content, false, {
             prepend: true,
+            durable: true,
           });
           expect(enqueueWithIdSpy).toHaveBeenCalledWith(steer.uuid, steer.content, false, {
             prepend: true,
+            durable: true,
           });
           const calls = enqueueWithIdSpy.mock.calls as unknown as Array<[string, unknown]>;
           expect(calls.map(([uuid]) => uuid)).toEqual([steer.uuid, kickoff.uuid]);
@@ -2427,41 +2432,52 @@ describe('QueryRunner', () => {
     it('startup retries consume the provider-retry budget and disable the 1-shot retries (documented coupling)', async () => {
       // Round-5 P3-9(2): startup retries bump `retryAttempt`, so later
       // attempts get fewer provider retries and no 1-shot message-not-found
-      // retry. Pin BOTH halves of the documented coupling.
+      // retry. Pin BOTH halves of the documented coupling. The provider-base
+      // env is saved/restored HERE rather than in the describe hooks — the
+      // later provider-retry describe pins its own values and a leaked '0'
+      // would silently change its timing (round-7 P3-1).
+      const savedProviderBaseMs = process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS;
       process.env.HYPERNEO_SDK_STARTUP_RETRY_BASE_MS = '0';
       process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '2';
       process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = '0';
       // Default HYPERNEO_PROVIDER_MAX_RETRIES is 3.
+      try {
+        // Half 1 — provider budget: two startup retries leave retryAttempt=2,
+        // so a persistent 529 gets exactly ONE provider retry (2 < 3) before
+        // going terminal: 1 + 2 startup retries + 1 provider retry = 4 builds.
+        // (Without the coupling the provider branch would retry 3 more times.)
+        buildSpy
+          .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+          .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+          .mockRejectedValue(new Error('529 {"error":{"message":"overloaded"}}'));
 
-      // Half 1 — provider budget: two startup retries leave retryAttempt=2,
-      // so a persistent 529 gets exactly ONE provider retry (2 < 3) before
-      // going terminal: 1 + 2 startup retries + 1 provider retry = 4 builds.
-      // (Without the coupling the provider branch would retry 3 more times.)
-      buildSpy
-        .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
-        .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
-        .mockRejectedValue(new Error('529 {"error":{"message":"overloaded"}}'));
+        let ctx = createContext();
+        runner = new QueryRunner(ctx);
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+        expect(buildSpy).toHaveBeenCalledTimes(4);
 
-      let ctx = createContext();
-      runner = new QueryRunner(ctx);
-      runner.start();
-      await ctx.queryPromise?.catch(() => {});
-      expect(buildSpy).toHaveBeenCalledTimes(4);
-
-      // Half 2 — the 1-shot message-not-found retry is disabled on a later
-      // attempt (requires retryAttempt === 0): after one startup retry the
-      // not-found error goes straight to terminal — no 3rd build.
-      buildSpy.mockReset();
-      buildSpy
-        .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
-        .mockRejectedValueOnce(
-          new Error('No message found with message.uuid of: missing-message-uuid')
-        );
-      ctx = createContext();
-      runner = new QueryRunner(ctx);
-      runner.start();
-      await ctx.queryPromise?.catch(() => {});
-      expect(buildSpy).toHaveBeenCalledTimes(2);
+        // Half 2 — the 1-shot message-not-found retry is disabled on a later
+        // attempt (requires retryAttempt === 0): after one startup retry the
+        // not-found error goes straight to terminal — no 3rd build.
+        buildSpy.mockReset();
+        buildSpy
+          .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+          .mockRejectedValueOnce(
+            new Error('No message found with message.uuid of: missing-message-uuid')
+          );
+        ctx = createContext();
+        runner = new QueryRunner(ctx);
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+        expect(buildSpy).toHaveBeenCalledTimes(2);
+      } finally {
+        if (savedProviderBaseMs === undefined) {
+          delete process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS;
+        } else {
+          process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = savedProviderBaseMs;
+        }
+      }
     });
 
     it.skipIf(!sdkQueryIsMock)(
@@ -2529,6 +2545,7 @@ describe('QueryRunner', () => {
 
           expect(enqueueWithIdSpy).toHaveBeenCalledWith(kickoff.uuid, kickoff.content, false, {
             prepend: true,
+            durable: true,
           });
         } finally {
           if (!blockerReleased) blocker.release();
@@ -2539,6 +2556,224 @@ describe('QueryRunner', () => {
             process.env.HYPERNEO_SDK_STARTUP_MAX_CONCURRENT = savedMaxConcurrent;
           }
           resetSdkStartupGateForTests();
+        }
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      'drops the staged replay when a stall-reset nulls the controller mid-gate-wait (no duplicate feed)',
+      async () => {
+        // Round-7 P2-1 regression: the stall watchdog fires while the retry
+        // attempt is gate-queued → QueryLifecycleManager.stop() nulls
+        // ctx.queryAbortController WITHOUT aborting it and WITHOUT bumping the
+        // generation. When the permit frees, the post-admission stale check
+        // must reject the dead chain via the controller-identity disjunct —
+        // otherwise it would flush the replay, consume it, and the delivery
+        // redrive would re-feed the same uuid (duplicate prompt).
+        const savedMaxConcurrent = process.env.HYPERNEO_SDK_STARTUP_MAX_CONCURRENT;
+        process.env.HYPERNEO_SDK_STARTUP_MAX_CONCURRENT = '1';
+        resetSdkStartupGateForTests();
+        const gate = getSdkStartupGate();
+        const blocker = await gate.acquire({ sessionId: 'gate-blocker-reset' });
+        let blockerReleased = false;
+
+        const kickoff = {
+          uuid: 'reset-kickoff-uuid',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff]]]);
+
+        buildSpy.mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'));
+        buildSpy.mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => ({
+          close: () => {},
+          [Symbol.asyncIterator]: async function* () {},
+        }));
+
+        try {
+          runner.start();
+          const deadline = Date.now() + 2000;
+          while (gate.getStats().queued < 1 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(gate.getStats().queued).toBe(1);
+
+          // Simulate the stall-watchdog reset's observable effects on a
+          // gate-blocked chain: controller nulled (no abort), queryPromise
+          // given up on, generation NOT bumped, status idle.
+          ctx.queryAbortController = null;
+          ctx.queryPromise = null;
+
+          blockerReleased = true;
+          blocker.release();
+          await new Promise((resolve) => setTimeout(resolve, 50));
+
+          // The dead chain must NOT have flushed the replay, and the permit
+          // must be back (the gateAbort path released it).
+          expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+          expect(gate.getStats().active).toBe(0);
+        } finally {
+          if (!blockerReleased) blocker.release();
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+          if (savedMaxConcurrent === undefined) {
+            delete process.env.HYPERNEO_SDK_STARTUP_MAX_CONCURRENT;
+          } else {
+            process.env.HYPERNEO_SDK_STARTUP_MAX_CONCURRENT = savedMaxConcurrent;
+          }
+          resetSdkStartupGateForTests();
+        }
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      'skips replay entries a redrive already re-admitted (duplicate guard)',
+      async () => {
+        // Round-7 P2-1 second half: if reopenDeliveryForRetry re-admitted the
+        // uuid while the chain was gate-queued, the flush must not feed it a
+        // second time (admitWithId is not idempotent by uuid).
+        const kickoff = {
+          uuid: 'dup-kickoff-uuid',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff]]]);
+
+        buildSpy.mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'));
+        buildSpy.mockResolvedValue({ model: 'claude-sonnet-4-20250514' });
+        // The redrive already re-admitted the kickoff.
+        hasPendingOrInFlightSpy.mockImplementation((id: string) => id === kickoff.uuid);
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => ({
+          close: () => {},
+          [Symbol.asyncIterator]: async function* () {},
+        }));
+
+        try {
+          runner.start();
+          await ctx.queryPromise?.catch(() => {});
+
+          expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+          const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+            String(args[0])
+          );
+          expect(warns.some((w) => w.includes('already pending or in-flight'))).toBe(true);
+        } finally {
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
+        }
+      }
+    );
+
+    it.skipIf(!sdkQueryIsMock)(
+      'routes a TTL-rejected replay admission into the bounded startup retry',
+      async () => {
+        // Round-7 P2-2: the flush's enqueue can be rejected by the 30s
+        // admission TTL during a slow cold start. The rejection must re-stage
+        // the prompt, abort the attempt, and surface as a startup timeout so
+        // the retry state machine (budget-capped, backoff) owns the recovery —
+        // not the silent catch the chain used to have. RETRY_MAX=2: the
+        // describe default of 1 would exhaust the budget on the routed retry
+        // before the third attempt could run.
+        process.env.HYPERNEO_SDK_STARTUP_RETRY_MAX = '2';
+        const kickoff = {
+          uuid: 'ttl-reject-uuid',
+          content: [{ type: 'text' as const, text: 'K' }],
+        };
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([[1, [kickoff]]]);
+
+        buildSpy
+          .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'))
+          .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514' })
+          .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514' })
+          .mockRejectedValueOnce(new Error('stop after retry'));
+        (
+          mockedSdkQuery as unknown as { mockImplementation: (impl: unknown) => unknown }
+        ).mockImplementation(() => ({
+          close: () => {},
+          // Never yields on its own: the abort (from the rejection handler)
+          // is what ends the attempt.
+          [Symbol.asyncIterator]: async function* () {
+            await new Promise(() => {});
+          },
+        }));
+        // Controllable admission promise: reject on demand like the queue TTL.
+        let rejectAdmission: ((error: Error) => void) | null = null;
+        enqueueWithIdSpy.mockImplementation(
+          () =>
+            new Promise<void>((_resolve, reject) => {
+              rejectAdmission = reject;
+            })
+        );
+
+        try {
+          runner.start();
+          // Wait until the retry attempt flushed the replay (admission armed).
+          let deadline = Date.now() + 2000;
+          while (!rejectAdmission && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(rejectAdmission).toBeTypeOf('function');
+
+          rejectAdmission(
+            new Error(
+              'Message queue timeout: SDK did not consume message ttl-reject-uuid within 30s.'
+            )
+          );
+
+          // The rejection re-staged the prompt: the next attempt (retry 2)
+          // flushes it again. Wait for the second admission, reject it the
+          // same way — the budget (MAX=2) is now exhausted, so the chain
+          // terminates instead of retrying, and the query promise settles.
+          deadline = Date.now() + 2000;
+          while (enqueueWithIdSpy.mock.calls.length < 2 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          expect(enqueueWithIdSpy.mock.calls.length).toBe(2);
+          rejectAdmission?.(
+            new Error(
+              'Message queue timeout: SDK did not consume message ttl-reject-uuid within 30s.'
+            )
+          );
+          await ctx.queryPromise?.catch(() => {});
+
+          // The rejection was routed into the retry machine: warn logged,
+          // prompt re-staged and re-fed on the next attempt (2 admissions),
+          // attempt aborted as a startup timeout (retry ran — 3 builds).
+          const warns = (mockLogger.warn as ReturnType<typeof mock>).mock.calls.map((args) =>
+            String(args[0])
+          );
+          expect(warns.some((w) => w.includes('admission rejected for message'))).toBe(true);
+          expect(warns.some((w) => w.includes('Auto-retrying query after startup timeout'))).toBe(
+            true
+          );
+          expect(buildSpy).toHaveBeenCalledTimes(3);
+          expect(enqueueWithIdSpy).toHaveBeenCalledTimes(2);
+          expect(warns.some((w) => w.includes('retry budget exhausted'))).toBe(true);
+          expect(enqueueWithIdSpy).toHaveBeenNthCalledWith(
+            1,
+            kickoff.uuid,
+            kickoff.content,
+            false,
+            { prepend: true, durable: true }
+          );
+        } finally {
+          (mockedSdkQuery as unknown as { mockReset: () => void }).mockReset?.();
         }
       }
     );

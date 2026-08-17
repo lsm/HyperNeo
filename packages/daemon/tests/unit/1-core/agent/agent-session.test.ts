@@ -4612,7 +4612,7 @@ describe('AgentSession', () => {
 
       // Do not await the outcome: the feed acknowledgment resolves only when a
       // generator consumes the entry. Assert the admission itself — the entry
-      // lands in the queue — then clean up before the admission TTL arms.
+      // lands in the queue — then clean up before the admission TTL fires.
       const pending = agentSession.feedDeliverySteer(steerUuid, 'follow-up').catch(() => {});
       for (let i = 0; i < 100 && agentSession.messageQueue.size() === 0; i++) {
         await new Promise((resolve) => setTimeout(resolve, 5));

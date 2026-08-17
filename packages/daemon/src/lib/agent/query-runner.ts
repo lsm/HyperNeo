@@ -581,6 +581,15 @@ export class QueryRunner {
   }> | null = null;
 
   /**
+   * True when the current attempt's replay admission was rejected by the
+   * queue's 30 s TTL (slow cold start) and the handler aborted the attempt.
+   * The post-loop escape folds this into the startup-timeout throw so the
+   * catch's retry state machine — not the ~3-min stall watchdog — owns the
+   * recovery. Attempt-scoped: reset in start() and in the finally.
+   */
+  private _replayAdmissionRejected = false;
+
+  /**
    * Public accessor for the last consumed user message.
    * Used by RateLimitWatchdog to re-enqueue on auto-retry.
    */
@@ -620,6 +629,7 @@ export class QueryRunner {
     // superseded startup-retry chain (its finally may have been skipped as
     // stale).
     this._pendingStartupReplay = null;
+    this._replayAdmissionRejected = false;
 
     // Store query promise for cleanup
     this.ctx.queryPromise = this.runQuery(currentGeneration);
@@ -985,9 +995,17 @@ export class QueryRunner {
       // The wait can straddle a stop/interrupt/restart. An abort wins via the
       // signal, a replacement query via the generation check; either way
       // release the slot and surface as an abort so the existing cleanup paths
-      // run — never spawn into a session that has moved on.
+      // run — never spawn into a session that has moved on. The controller-
+      // IDENTITY check catches the abandonment that neither of the other two
+      // signals observes: QueryLifecycleManager.stop() on a gate-blocked
+      // queryPromise (stall-watchdog reset) nulls ctx.queryAbortController
+      // WITHOUT aborting it and WITHOUT bumping the generation — without this
+      // disjunct the queued acquire would still admit after the permit frees
+      // and a dead chain could spawn and consume a prompt the delivery layer
+      // is about to re-feed (duplicate turn).
       if (
         abortController.signal.aborted ||
+        this.ctx.queryAbortController !== abortController ||
         this.ctx.isCleaningUp() ||
         this.ctx.getQueryGeneration() !== queryGeneration
       ) {
@@ -997,13 +1015,16 @@ export class QueryRunner {
         throw gateAbort;
       }
 
-      // Flush a startup-timeout retry's deferred replay NOW: the permit is
-      // held and the generator attaches at the query() call directly below,
-      // so the enqueue-to-consume gap is microseconds and the 30 s queue TTL
-      // cannot expire it mid-wait (the pre-gate enqueue this replaces let a
-      // gate-queued attempt's replay TTL out against the #2552 herd — see
-      // _pendingStartupReplay). Generation-guarded: a stale attempt must not
-      // feed a replacement's queue.
+      // Flush a startup-timeout retry's deferred replay NOW, after gate
+      // admission — a pre-gate enqueue would TTL out (30 s MESSAGE_QUEUE_
+      // TIMEOUT_MS) while the attempt waits behind other permits under the
+      // #2552 herd shape. Admission only bounds the QUEUE-side wait: the
+      // generator attaches at the query() call directly below, but the SDK
+      // subprocess still has a full cold-start ahead of it before it consumes
+      // the prompt, so the 30 s admission TTL can legitimately fire during a
+      // slow start — the rejection handler below routes that into the
+      // startup-retry state machine instead of dropping the prompt.
+      // Generation-guarded: a stale attempt must not feed a replacement's queue.
       if (this._pendingStartupReplay) {
         const replay = this._pendingStartupReplay;
         this._pendingStartupReplay = null;
@@ -1013,10 +1034,52 @@ export class QueryRunner {
           );
           for (let i = replay.length - 1; i >= 0; i--) {
             const message = replay[i];
+            // Duplicate guard (mirrors the steer re-admission guard): if a
+            // delivery-layer redrive already re-admitted this uuid while this
+            // chain was gate-queued, feeding it again would hand the SDK the
+            // same prompt twice — admitWithId is not idempotent by uuid.
+            if (messageQueue.hasPendingOrInFlight(message.uuid)) {
+              logger.warn(
+                `Startup replay skip: message ${message.uuid} is already pending or ` +
+                  'in-flight (a redrive re-admitted it); not feeding it twice.'
+              );
+              continue;
+            }
             messageQueue
-              .enqueueWithId(message.uuid, message.content, false, { prepend: true })
-              .catch(() => {});
+              // Durable, matching feedDeliverySteer's re-admission: the entry
+              // survives the queue's claimed/yielded abort states. The in-queue
+              // TTL still applies — by design, see the catch below.
+              .enqueueWithId(message.uuid, message.content, false, {
+                prepend: true,
+                durable: true,
+              })
+              .catch((error) => {
+                // The admission TTL fired: the subprocess did not consume the
+                // replay in time (slow cold start) — a startup-timeout-class
+                // failure, so route it into the bounded retry state machine
+                // rather than silently losing the prompt to the ~3-min stall
+                // watchdog: re-stage the message for the next attempt's flush
+                // and abort this attempt; the post-loop escape converts the
+                // abort into a 'SDK startup timeout' error so the catch claims
+                // a budget round and backs off before retrying.
+                logger.warn(
+                  `Startup replay admission rejected for message ${message.uuid} ` +
+                    `(SDK did not consume it within the admission TTL): ` +
+                    `${error instanceof Error ? error.message : String(error)} — ` +
+                    'aborting attempt for a bounded startup retry.'
+                );
+                this._pendingStartupReplay = [message];
+                this._replayAdmissionRejected = true;
+                if (!abortController.signal.aborted) {
+                  abortController.abort();
+                }
+              });
           }
+        } else {
+          logger.warn(
+            `Dropping staged startup replay for generation ${queryGeneration}: ` +
+              'a newer query owns the session (the delivery layer will redrive the message).'
+          );
         }
       }
 
@@ -1161,6 +1224,14 @@ export class QueryRunner {
         }
       }
 
+      // Starved-before-first-message: the startup timer fired, or the replay
+      // admission was TTL-rejected (see the flush's rejection handler — the
+      // handler aborted the controller, which breaks the for-await normally,
+      // so this throw is where that failure surfaces). Either way the attempt
+      // produced nothing and must re-enter the bounded startup-retry machine.
+      const attemptStarvedBeforeFirstMessage =
+        messageCount === 0 && (startupTimeoutReached || this._replayAdmissionRejected);
+
       // Consume the one-shot resumeSessionAt now that the query completed
       // successfully. Peek was used in addSessionStateOptions so options had
       // the value; consuming only on success preserves it for startup retries.
@@ -1169,15 +1240,12 @@ export class QueryRunner {
       // execution reaches here — but the RewindHandler may have already set a
       // new pendingResumeSessionAt for the restarted query. Without this guard
       // the stale old query consumes the value the new query needs.
-      // The startup-timeout escape below ALSO reaches this block "normally"
+      // The starved escape below ALSO reaches this block "normally"
       // (the abort-driven iterator shutdown breaks the for-await, not throws)
       // — a timeout is not a success, so its retry must keep the requested
       // resume-at cutoff instead of silently running against latest history.
       // (Codex P2, PR #2499.)
-      if (
-        this.ctx.getQueryGeneration() === queryGeneration &&
-        !(startupTimeoutReached && messageCount === 0)
-      ) {
+      if (this.ctx.getQueryGeneration() === queryGeneration && !attemptStarvedBeforeFirstMessage) {
         this.ctx.consumePendingResumeSessionAt?.();
       }
 
@@ -1190,9 +1258,10 @@ export class QueryRunner {
         messageQueue.stop();
       }
 
-      // If startup timed out before first message, surface as timeout error
-      // (after abort-driven iterator shutdown) so error state is visible.
-      if (startupTimeoutReached && messageCount === 0) {
+      // If the attempt starved before its first message, surface as a startup
+      // timeout error (after abort-driven iterator shutdown) so error state is
+      // visible and the catch's bounded retry branch owns the recovery.
+      if (attemptStarvedBeforeFirstMessage) {
         throw new Error('SDK startup timeout - query aborted');
       }
     } catch (error) {
@@ -2078,6 +2147,7 @@ export class QueryRunner {
         // gate) must not leak into the next turn — the durable redrive path
         // re-enqueues those rows on its own.
         this._pendingStartupReplay = null;
+        this._replayAdmissionRejected = false;
 
         // Null queryPromise last so callers awaiting it see queryObject=null.
         this.ctx.queryPromise = null;
