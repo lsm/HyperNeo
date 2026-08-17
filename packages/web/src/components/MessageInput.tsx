@@ -574,8 +574,9 @@ export default function MessageInput({
   //  - send/queue: send straight to the session as a real message. No draft is
   //    involved, so there is nothing for a stale client snapshot to clobber —
   //    this is the reported "I clicked Send then switched sessions" case.
-  //  - stay: stage in the `inputDraftVoicePending` field; the daemon merges it
-  //    into the draft atomically on the next session.get.
+  //  - stay: stage in the `inputDraftVoicePending` field; the daemon PRESENTS
+  //    draft + staging as one composition on the next session.get and the
+  //    staging is consumed server-side (adoption or voice-aware send-clear).
   // Reports success/failure so the toast never claims a delivery that did not
   // happen.
   const deliverUnmountedTranscript = useCallback(

@@ -87,14 +87,25 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // user edits, so a voiceLanded refresh may adopt over it; anything else is
   // typing, and clobbering it is never acceptable.
   const lastLoadedDraftRef = useRef<string>('');
+  // Monotonic id of the latest loadDraft REQUEST: a response applies only
+  // while its request is still the newest. A slower OLDER response (the
+  // mount-time get racing a voiceLanded refresh, or two refreshes) must never
+  // overwrite what a newer request already applied — the initial get resolving
+  // after an adoption would otherwise regress the composer and its next save
+  // to the pre-transcript draft, durably dropping an already-consumed staging.
+  // A superseding request that FAILS simply never applies anything; the
+  // composer then converges on its next event rather than regressing.
+  const loadRequestSeqRef = useRef(0);
 
   // Fetch the server draft into the signal, guarded against staleness (the
   // session may have changed or the hook unmounted while the get was in
   // flight). The daemon merges nothing on read — the response's inputDraft is
   // already the composition of typing + staged voice transcript when it fits.
-  // `applyGuard` (used by the voiceLanded refresh) re-checks at RESOLVE time
-  // that the composer is still idle-or-unchanged, so typing that began
-  // mid-get is never clobbered by the response.
+  // Two resolve-time guards: `applyGuard` (used by the voiceLanded refresh)
+  // re-checks that the composer is still idle-or-unchanged, so typing that
+  // began mid-get is never clobbered; and the request-sequence check discards
+  // responses of superseded loads, so an older get can never overwrite a
+  // newer load's applied state.
   const loadDraft = useCallback(
     (
       targetSessionId: string,
@@ -107,6 +118,7 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         onResult?.(false);
         return;
       }
+      const requestSeq = ++loadRequestSeqRef.current;
       hub
         .request<{ session?: { metadata?: { inputDraft?: string } } }>('session.get', {
           sessionId: targetSessionId,
@@ -114,7 +126,8 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
         .then((response) => {
           if (isCancelled()) return;
           const draft = response.session?.metadata?.inputDraft ?? '';
-          const applied = applyGuard ? applyGuard() : true;
+          const applied =
+            (applyGuard ? applyGuard() : true) && loadRequestSeqRef.current === requestSeq;
           if (applied) {
             contentSignal.value = draft;
             lastLoadedDraftRef.current = draft;
@@ -155,15 +168,28 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     // get is in flight, the cleanup flips `cancelled` so the resolved draft is
     // not written into a signal now backing a different session.
     let cancelled = false;
+    // Apply-guard, re-checked at RESOLVE time: the composer must still be
+    // pre-load ('') or unchanged since the last read. Typing that began while
+    // the mount-time get was in flight is NEVER clobbered by its response —
+    // the same rule as the voiceLanded refresh — and the server draft it
+    // raced converges on the next re-read.
+    const adoptable = (): boolean => {
+      const current = contentSignal.peek();
+      return current === '' || current === lastLoadedDraftRef.current;
+    };
     loadDraft(
       sessionId,
       () => cancelled,
-      () => {
+      (_ok, applied) => {
         if (cancelled) return; // session changed / unmounted — not our load
-        // Only a load that was NOT cancelled (session still current) marks the
-        // initial load settled; a stale rejection must not settle a newer load.
+        // Only a load that actually APPLIED marks the initial load settled. A
+        // load discarded as superseded (a voiceLanded refresh's get was newer)
+        // must not open the empty-clear guard while the signal still shows the
+        // transient pre-load '' — that write would wipe the server draft.
+        if (!applied) return;
         initialLoadSettledRef.current = sessionId;
-      }
+      },
+      adoptable
     );
     return () => {
       cancelled = true;
@@ -174,11 +200,12 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   // session.appendVoiceDraft on the session channel. An idle-or-unchanged
   // composer re-reads and adopts the composition (typing + staged transcript);
   // a composer with user typing is NEVER clobbered — the staged transcript is
-  // durable server-side and converges at the next clear, send, or navigation.
-  // After adopting, the composition is saved IMMEDIATELY (not debounced): the
-  // daemon's adoption rule then consumes the staging atomically, so editing
-  // the transcript in the debounce window cannot leave the un-edited original
-  // staged to reappear later.
+  // durable server-side and converges on the next re-read (navigation or
+  // reload) or a later landing; a clear or a typing-only send deliberately
+  // leaves an unseen staging staged. After adopting, the composition is saved
+  // IMMEDIATELY (not debounced): the daemon's adoption rule then consumes the
+  // staging atomically, so editing the transcript in the debounce window
+  // cannot leave the un-edited original staged to reappear later.
   useEffect(() => {
     if (!sessionId) return;
     let unsubEvent: (() => void) | null = null;
@@ -213,6 +240,17 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
               // and the staged transcript survives server-side until an
               // adoption or the send-clear consumes it.
               if (contentSignal.peek() !== draft) return;
+              // Cancel any armed debounced save SYNCHRONOUSLY, before the
+              // immediate save below: the save effect that would normally
+              // clear it is rAF-deferred, and a timer due inside that frame
+              // gap would fire AFTER this save and write its STALE
+              // pre-adoption value — regressing the server past the staging
+              // this save just consumed (deterministically in hidden tabs,
+              // where rAF never runs while clamped timers still fire).
+              if (draftSaveTimeoutRef.current) {
+                clearTimeout(draftSaveTimeoutRef.current);
+                draftSaveTimeoutRef.current = null;
+              }
               const hubNow = connectionManager.getHubIfConnected();
               if (!hubNow) return;
               hubNow
@@ -320,9 +358,21 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       return;
     }
 
-    // Non-empty content: debounce save
+    // Non-empty content: debounce save. Reaching here with content means the
+    // composer is past its transient pre-load state, so the load is de-facto
+    // settled — any LATER empty signal is a deliberate user deletion, not the
+    // pre-load transient (this cannot open the wipe window: that transient
+    // takes the empty branch above, never this one).
+    initialLoadSettledRef.current = sessionId;
     lastSeenContentRef.current = { sessionId, content };
     draftSaveTimeoutRef.current = setTimeout(async () => {
+      // A newer edit or an adoption may have advanced the signal while this
+      // timer waited — the effect run that would cancel it is rAF-deferred
+      // and can lose the race (deterministically in hidden tabs, where rAF
+      // never runs but clamped timers still fire). Writing the armed value
+      // then would regress the server past a newer save; skip instead; the
+      // newer content arms (or already armed) its own save.
+      if (contentSignal.peek() !== content) return;
       const hub = connectionManager.getHubIfConnected();
       if (!hub) return;
 
