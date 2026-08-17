@@ -1251,17 +1251,11 @@ export class SpaceRuntimeService {
     // space is no longer stopped the interruption is still recorded (the
     // session IS interrupted), but the dispatch is re-driven immediately. A
     // failed re-read keeps the deferral (conservative: the next real resume
-    // re-drives).
-    let spaceResumedDuringQuiesce = false;
-    try {
-      const spaceRow = await this.config.spaceManager.getSpace(spaceId);
-      spaceResumedDuringQuiesce = !spaceRow?.stopped;
-    } catch (err) {
-      log.warn(
-        `stopActiveWork: failed to re-read space ${spaceId} before recording interrupted merges:`,
-        err
-      );
-    }
+    // re-drives). The space is re-read PER TASK at the re-drive decision (not
+    // sampled once before the loop): a `space.start` landing between a
+    // pre-loop sample and a later task's stamp would have run the resume
+    // sweep before the reason existed (missed) — the stale-false flag would
+    // skip the re-drive and the task would wait for the next stop/start.
     for (const task of activeTasks) {
       if (task.status !== 'approved') continue;
       const fresh = taskRepo.getTask(task.id);
@@ -1295,11 +1289,21 @@ export class SpaceRuntimeService {
           err
         );
       }
-      if (spaceResumedDuringQuiesce) {
-        // The resume sweep already ran and missed this stamp — honor the
-        // "re-runs automatically" promise now. Fire-and-forget: the stop RPC
-        // must not wait on a merge spawn. A deferral throw means another stop
-        // landed in between (the hold re-stamped the reason) — swallowed.
+      // Fresh per-task space read: a start landing between this loop and the
+      // stamp above (or earlier in the loop) already fired the resume sweep,
+      // which missed this reason — honor the "re-runs automatically" promise
+      // now. Fire-and-forget: the stop RPC must not wait on a merge spawn. A
+      // deferral throw means another stop landed in between (the hold
+      // re-stamped the reason) — swallowed. A failed re-read keeps the
+      // deferral (conservative).
+      let spaceActiveNow = false;
+      try {
+        const spaceRow = await this.config.spaceManager.getSpace(spaceId);
+        spaceActiveNow = !spaceRow?.stopped;
+      } catch {
+        spaceActiveNow = false;
+      }
+      if (spaceActiveNow) {
         void this.dispatchPostApproval(spaceId, fresh.id, fresh.approvalSource ?? 'agent').catch(
           (err: unknown) => {
             if (isPostApprovalDeferredError(err)) return;

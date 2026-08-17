@@ -195,7 +195,7 @@ export class SpaceManager {
 
   /**
    * Stop a space (marks stopped=true and pauses scheduling; the runtime
-   * quiesce the RPC handler invokes after this — stopActiveWork —
+   * quiesce that the RPC handler invokes after this — stopActiveWork —
    * interrupts active agent sessions non-destructively. Task/run statuses are
    * preserved; no auto-start on daemon restart)
    */
