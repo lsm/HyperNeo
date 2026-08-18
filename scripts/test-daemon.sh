@@ -31,7 +31,6 @@ SHARDS=(
 )
 RESULTS_DIR="$REPO_ROOT/test-results/daemon"
 FAILURES_FILE="$RESULTS_DIR/failures.txt"
-PRELOAD="$REPO_ROOT/packages/daemon/tests/unit/setup.ts"
 TEST_ROOT="$REPO_ROOT/packages/daemon/tests/unit"
 
 # Reusable directory sharding by stable hash (no hand-listed file lists).
