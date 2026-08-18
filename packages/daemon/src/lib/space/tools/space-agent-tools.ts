@@ -2040,6 +2040,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
           },
         });
+      const transitionAuditParams = {
+        title: args.title,
+        description: args.description,
+        priority: args.priority,
+        depends_on: args.depends_on,
+        status: args.status,
+        previousStatus: task.status,
+      };
 
       try {
         if (args.status !== undefined && args.status !== task.status) {
@@ -2071,6 +2079,16 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
                 `preserves the run, sessions, and task provenance.`,
             });
           }
+          if (args.status === 'done' && task.status === 'review') {
+            return jsonResult({
+              success: false,
+              error:
+                `update_task cannot transition a task from 'review' to 'done' directly. ` +
+                `Use approve_task (subject to the workflow's completion autonomy level) ` +
+                `or submit_for_approval so a human can approve via the UI — both stamp ` +
+                `the approval metadata and dispatch the configured post-approval step.`,
+            });
+          }
           if (
             args.status === 'archived' &&
             task.workflowRunId &&
@@ -2092,18 +2110,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
               args.status
             );
             const updated = hasFieldUpdates ? await applyFieldUpdates() : recovered;
-            logAudit(
-              'update_task',
-              {
-                title: args.title,
-                description: args.description,
-                priority: args.priority,
-                depends_on: args.depends_on,
-                status: args.status,
-                previousStatus: task.status,
-              },
-              args.task_id
-            );
+            logAudit('update_task', transitionAuditParams, args.task_id);
             if (hasFieldUpdates) emitTaskUpdated(updated);
             return jsonResult({ success: true, task: updated });
           }
@@ -2124,18 +2131,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             if (!stopped) {
               return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
             }
-            logAudit(
-              'update_task',
-              {
-                title: args.title,
-                description: args.description,
-                priority: args.priority,
-                depends_on: args.depends_on,
-                status: args.status,
-                previousStatus: task.status,
-              },
-              args.task_id
-            );
+            logAudit('update_task', transitionAuditParams, args.task_id);
             return jsonResult({ success: true, task: stopped });
           }
 
@@ -2148,18 +2144,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             updated = await applyFieldUpdates();
           }
 
-          logAudit(
-            'update_task',
-            {
-              title: args.title,
-              description: args.description,
-              priority: args.priority,
-              depends_on: args.depends_on,
-              status: args.status,
-              previousStatus: task.status,
-            },
-            args.task_id
-          );
+          logAudit('update_task', transitionAuditParams, args.task_id);
 
           emitTaskUpdated(updated);
 
@@ -4198,7 +4183,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
     ),
     tool(
       'update_task',
-      "Edit an existing task's title, description, priority, dependencies, or status. The task must belong to this space. Only the fields you provide are updated. Status changes follow the same transition table as the UI, with the same restrictions: invalid transitions are rejected with the allowed list, 'review' and 'approved' cannot be set here, and archiving a task on an active workflow run is rejected.",
+      "Edit an existing task's title, description, priority, dependencies, or status. The task must belong to this space. Only the fields you provide are updated. Status changes follow the same transition table as the UI, with the same restrictions: invalid transitions are rejected with the allowed list, 'review' and 'approved' cannot be set here, review→done is owned by the approval pipeline, and archiving a task on an active workflow run is rejected.",
       {
         task_id: z.string().describe('UUID of the task to update'),
         title: z.string().min(1).optional().describe('New title for the task'),

@@ -137,6 +137,8 @@ describe('UpdateTaskSchema', () => {
     const description = UpdateTaskSchema.shape.status.description ?? '';
     expect(description).toContain('submit_for_approval');
     expect(description).toContain('approved');
+    expect(description).toContain('review→done');
+    expect(description).toContain('stopped');
   });
 });
 

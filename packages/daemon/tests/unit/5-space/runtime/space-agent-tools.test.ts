@@ -8169,6 +8169,17 @@ describe('createSpaceAgentToolHandlers — update_task status parameter (task #1
     expect(ctx.taskRepo.getTask(task.id)?.status).toBe('in_progress');
   });
 
+  test('rejects review → done (owned by the approval pipeline)', async () => {
+    const task = createTaskWithStatus('review');
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: task.id, status: 'done' })
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("cannot transition a task from 'review' to 'done' directly");
+    expect(result.error).toContain('approve_task');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('review');
+  });
+
   test('rejects archiving a task belonging to an active workflow run', async () => {
     const runId = createRun();
     const task = createTaskWithStatus('cancelled', runId);
