@@ -18,6 +18,7 @@ interface Props {
   toShort?: string;
   deliveryState?: DeliveryBadgeState | null;
   onOpenSession?: () => void;
+  openSessionTitle?: string;
   sessionInit?: SystemInitMessage;
   renderAsPlainText?: boolean;
   emptyMessageLabel?: string;
@@ -53,6 +54,7 @@ export function SyntheticMessageBlock({
   toShort,
   deliveryState,
   onOpenSession,
+  openSessionTitle,
   sessionInit,
   renderAsPlainText = false,
   emptyMessageLabel = '(empty message)',
@@ -282,6 +284,7 @@ export function SyntheticMessageBlock({
           copyText={copyText}
           align="right"
           onOpenSession={onOpenSession}
+          openSessionTitle={openSessionTitle}
           sessionInit={sessionInit}
         />
       </div>

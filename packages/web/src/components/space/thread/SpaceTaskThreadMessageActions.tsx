@@ -18,6 +18,7 @@ interface SpaceTaskThreadMessageActionsProps {
   copyText: string;
   align?: 'left' | 'right';
   onOpenSession?: () => void;
+  openSessionTitle?: string;
   sessionInit?: SystemInitMessage;
   resultInfo?: ResultMessage;
 }
@@ -38,6 +39,7 @@ export function SpaceTaskThreadMessageActions({
   copyText,
   align = 'left',
   onOpenSession,
+  openSessionTitle,
   sessionInit,
   resultInfo,
 }: SpaceTaskThreadMessageActionsProps) {
@@ -107,7 +109,7 @@ export function SpaceTaskThreadMessageActions({
       </IconButton>
 
       {onOpenSession && (
-        <IconButton size="md" onClick={onOpenSession} title="Open in session">
+        <IconButton size="md" onClick={onOpenSession} title={openSessionTitle ?? 'Open in session'}>
           <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path
               strokeLinecap="round"

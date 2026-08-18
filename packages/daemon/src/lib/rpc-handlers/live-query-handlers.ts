@@ -1456,6 +1456,21 @@ contributing_sessions AS (
   WHERE tt.task_agent_session_id IS NOT NULL
     AND s.type = 'space_task_agent'
   UNION
+  -- Task Agent after pause/cancel: stopActiveWorkflowTaskAgents clears
+  -- task_agent_session_id (severing the pointer arm above), and the worker
+  -- arms below only admit sessions.type = 'worker'. Recover it from durable
+  -- task_id-stamped messages so the orchestrator's history stays in the feed.
+  -- Redundant while the pointer is live; UNION dedupes by session_id.
+  SELECT DISTINCT
+    sm.session_id AS session_id,
+    tt.id AS task_id,
+    tt.title AS task_title,
+    tt.status AS task_status
+  FROM target_task tt
+  JOIN sdk_messages sm ON sm.task_id = tt.id
+  JOIN sessions s ON s.id = sm.session_id
+  WHERE s.type = 'space_task_agent'
+  UNION
   SELECT
     ne.agent_session_id AS session_id,
     tt.id AS task_id,
@@ -1633,6 +1648,7 @@ SELECT
     WHEN json_extract(s.processing_state, '$.status') = 'waiting_for_input' THEN 'waiting_for_input'
     WHEN json_extract(s.processing_state, '$.status') = 'rate_limit_cooldown' THEN 'cooldown'
     WHEN json_extract(s.processing_state, '$.status') = 'interrupted' THEN 'interrupted'
+    WHEN json_extract(s.processing_state, '$.status') = 'idle' THEN 'idle'
     WHEN ase.task_status = 'open' THEN 'queued'
     ELSE 'idle'
   END AS state,

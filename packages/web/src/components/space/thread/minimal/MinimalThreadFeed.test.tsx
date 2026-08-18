@@ -529,6 +529,74 @@ describe('MinimalThreadFeed', () => {
     expect(mockPushOverlayHistory).toHaveBeenCalledWith('session-task', 'Task Agent', 'task-a1');
   });
 
+  it('opens node-agent feed turns read-only when the task overlay is marked read-only', () => {
+    const t = Date.now();
+    const nodeRows = [
+      makeRow({
+        id: 'node-ro-1',
+        label: 'Coder Agent',
+        kind: 'node_agent',
+        role: 'coder',
+        nodeExecutionId: 'exec-coder-ro',
+        createdAt: t,
+        message: assistantText('node-ro-1', 'done'),
+        sessionId: 'session-node-ro',
+      }),
+    ];
+
+    const { unmount } = render(
+      <MinimalThreadFeed parsedRows={nodeRows} overlayTaskId="task-1" overlayTaskReadonly />
+    );
+    fireEvent.click(screen.getByTestId('minimal-thread-agent-open'));
+    expect(mockPushOverlayHistory).toHaveBeenCalledWith(
+      'session-node-ro',
+      'Coder Agent',
+      'node-ro-1',
+      {
+        taskId: 'task-1',
+        agentName: 'coder',
+        sessionId: 'session-node-ro',
+        readonly: true,
+      }
+    );
+
+    unmount();
+    mockPushOverlayHistory.mockClear();
+    const taskRows = [
+      makeRow({
+        id: 'task-ro-1',
+        label: 'Task Agent',
+        kind: 'task_agent',
+        role: 'task',
+        createdAt: t,
+        message: assistantText('task-ro-1', 'done'),
+        sessionId: 'session-task-ro',
+      }),
+    ];
+    render(<MinimalThreadFeed parsedRows={taskRows} overlayTaskId="task-1" overlayTaskReadonly />);
+    fireEvent.click(screen.getByTestId('minimal-thread-agent-open'));
+    expect(mockPushOverlayHistory).toHaveBeenCalledWith(
+      'session-task-ro',
+      'Task Agent',
+      'task-ro-1',
+      {
+        taskId: 'task-1',
+        agentName: 'task',
+        sessionId: 'session-task-ro',
+        readonly: true,
+      }
+    );
+    expect(screen.getByTestId('minimal-thread-agent-open').getAttribute('title')).toBe(
+      'Opens read-only — resume the task to chat'
+    );
+    expect(screen.getAllByTitle('Opens read-only — resume the task to chat')).toHaveLength(2);
+    expect(
+      screen
+        .getAllByTitle('Opens read-only — resume the task to chat')
+        .every((el) => el.getAttribute('aria-label')?.includes('read-only'))
+    ).toBe(true);
+  });
+
   it('renders the last assistant text of a completed block as its message body', async () => {
     const t = Date.now();
     const rows = [

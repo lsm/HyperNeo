@@ -796,6 +796,158 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(node!.role).toBe('coder');
     });
 
+    test('paused task keeps the Task Agent member after task_agent_session_id is cleared', () => {
+      const taskAgentSessionId = 'space:test-space:task:orch-paused';
+      const taskId = insertSpaceTask({ workflowRunId: 'wr-paused-ta', status: 'open' });
+      insertSession(
+        taskAgentSessionId,
+        'space_task_agent',
+        '{"status":"idle"}',
+        JSON.stringify({ spaceId, taskId })
+      );
+      sessionTaskIds.set(taskAgentSessionId, taskId);
+      insertSdkMessage('sdk-paused-ta-1', taskAgentSessionId);
+      insertSdkMessage('sdk-paused-ta-2', taskAgentSessionId);
+
+      const rows = queryAndMap(taskId);
+      const taskAgentRow = rows.find((r) => r.kind === 'task_agent');
+      expect(taskAgentRow).toBeDefined();
+      expect(taskAgentRow!.sessionId).toBe(taskAgentSessionId);
+      expect(taskAgentRow!.label).toBe('Task Agent');
+      expect(taskAgentRow!.role).toBe('task-agent');
+      expect(taskAgentRow!.state).toBe('idle');
+      expect(taskAgentRow!.messageCount).toBe(2);
+      expect(taskAgentRow!.taskId).toBe(taskId);
+    });
+
+    test('paused task keeps node-agent members after node-execution pointers are nulled', () => {
+      const workflowRunId = 'wr-paused-node';
+      const coderSessionId = 'space:test-space:task:paused:exec:ne-paused';
+      const taskId = insertSpaceTask({ workflowRunId, status: 'open' });
+
+      db.prepare(
+        `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, processing_state, type, session_context)
+         VALUES (?, 'Coder', '/tmp', ?, ?, 'active', '{}', ?, 0, '{"status":"idle"}', 'worker', ?)`
+      ).run(
+        coderSessionId,
+        nowIso,
+        nowIso,
+        JSON.stringify({
+          promptProvenance: {
+            source: 'space_agent_custom_prompt',
+            hash: 'h',
+            agentId: 'agent-coder',
+            agentName: 'coder',
+            workflowRunId,
+            nodeId: 'node-coder',
+            nodeName: 'Coding',
+          },
+        }),
+        JSON.stringify({ spaceId, taskId })
+      );
+      sessionTaskIds.set(coderSessionId, taskId);
+      insertSdkMessage('sdk-paused-node-1', coderSessionId);
+
+      insertNodeExecution({
+        id: 'ne-paused',
+        workflowRunId,
+        workflowNodeId: 'node-coder',
+        agentName: 'coder',
+        agentSessionId: null,
+        status: 'cancelled',
+      });
+
+      const rows = queryAndMap(taskId);
+      const coderRow = rows.find((r) => r.sessionId === coderSessionId);
+      expect(coderRow).toBeDefined();
+      expect(coderRow!.kind).toBe('node_agent');
+      expect(coderRow!.agentName).toBe('coder');
+      expect(coderRow!.workflowNodeId).toBe('node-coder');
+      expect(coderRow!.nodeExecutionId).toBeNull();
+      expect(coderRow!.state).toBe('idle');
+      expect(coderRow!.messageCount).toBe(1);
+    });
+
+    test('cancelled task keeps members with history and reports them as interrupted', () => {
+      const workflowRunId = 'wr-cancelled-members';
+      const taskAgentSessionId = 'space:test-space:task:cancelled:ta';
+      const reviewerSessionId = 'space:test-space:task:cancelled:review';
+      const taskId = insertSpaceTask({ workflowRunId, status: 'cancelled' });
+
+      insertSession(
+        taskAgentSessionId,
+        'space_task_agent',
+        '{"status":"idle"}',
+        JSON.stringify({ spaceId, taskId })
+      );
+      sessionTaskIds.set(taskAgentSessionId, taskId);
+      insertSdkMessage('sdk-cancelled-ta', taskAgentSessionId);
+
+      db.prepare(
+        `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, processing_state, type, session_context)
+         VALUES (?, 'Reviewer', '/tmp', ?, ?, 'active', '{}', ?, 0, '{"status":"idle"}', 'worker', ?)`
+      ).run(
+        reviewerSessionId,
+        nowIso,
+        nowIso,
+        JSON.stringify({
+          promptProvenance: {
+            source: 'space_agent_custom_prompt',
+            hash: 'h',
+            agentId: 'agent-reviewer',
+            agentName: 'reviewer',
+            workflowRunId,
+            nodeId: 'node-review',
+            nodeName: 'Review',
+          },
+        }),
+        JSON.stringify({ spaceId, taskId })
+      );
+      sessionTaskIds.set(reviewerSessionId, taskId);
+      insertSdkMessage('sdk-cancelled-reviewer', reviewerSessionId);
+
+      insertNodeExecution({
+        id: 'ne-cancelled',
+        workflowRunId,
+        workflowNodeId: 'node-review',
+        agentName: 'reviewer',
+        agentSessionId: null,
+        status: 'cancelled',
+      });
+
+      const rows = queryAndMap(taskId);
+      expect(rows).toHaveLength(2);
+      const taskAgentRow = rows.find((r) => r.kind === 'task_agent');
+      expect(taskAgentRow!.sessionId).toBe(taskAgentSessionId);
+      expect(taskAgentRow!.state).toBe('interrupted');
+      const reviewerRow = rows.find((r) => r.sessionId === reviewerSessionId);
+      expect(reviewerRow!.kind).toBe('node_agent');
+      expect(reviewerRow!.agentName).toBe('reviewer');
+      expect(reviewerRow!.state).toBe('interrupted');
+    });
+
+    test('Task Agent durable arm does not pull in sessions whose messages belong to another task', () => {
+      const taskId = insertSpaceTask({ workflowRunId: 'wr-paused-other', status: 'open' });
+      const otherTaskId = insertSpaceTask({
+        workflowRunId: 'wr-paused-other',
+        status: 'in_progress',
+      });
+      const taskAgentSessionId = 'space:test-space:task:other-task:ta';
+      insertSession(
+        taskAgentSessionId,
+        'space_task_agent',
+        '{"status":"idle"}',
+        JSON.stringify({ spaceId, taskId: otherTaskId })
+      );
+      sessionTaskIds.set(taskAgentSessionId, otherTaskId);
+      insertSdkMessage('sdk-other-task-ta', taskAgentSessionId);
+
+      const rows = queryAndMap(taskId);
+      expect(rows.find((r) => r.sessionId === taskAgentSessionId)).toBeUndefined();
+      const otherRows = queryAndMap(otherTaskId);
+      expect(otherRows.find((r) => r.sessionId === taskAgentSessionId)).toBeDefined();
+    });
+
     function insertPendingAgentMessage(overrides: Record<string, unknown>): void {
       db.exec(`
 				INSERT INTO pending_agent_messages (

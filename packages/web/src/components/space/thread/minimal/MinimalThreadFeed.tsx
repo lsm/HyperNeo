@@ -42,6 +42,7 @@ interface MinimalThreadFeedProps {
   activeAgentLabels?: ReadonlySet<string>;
   activeTurnSummaries?: ActiveTurnSummary[];
   overlayTaskId?: string;
+  overlayTaskReadonly?: boolean;
 }
 
 interface RosterToolEntry {
@@ -1711,27 +1712,63 @@ function getResultErrorSummary(result: ResultMessage): string {
   return RESULT_ERROR_SUBTYPE_LABELS[result.subtype] ?? 'Run failed';
 }
 
+function openTurnSessionOverlay(args: {
+  sessionId: string;
+  agent: string;
+  highlightMessageUuid?: string;
+  overlayTaskId?: string;
+  overlayTaskReadonly?: boolean;
+  agentKind: string;
+  agentRole: string;
+  nodeExecutionId?: string | null;
+}): void {
+  if (args.overlayTaskId && args.agentKind === 'node_agent') {
+    pushOverlayHistory(args.sessionId, args.agent, args.highlightMessageUuid, {
+      taskId: args.overlayTaskId,
+      agentName: args.agentRole,
+      ...(args.nodeExecutionId && !args.overlayTaskReadonly
+        ? { nodeExecutionId: args.nodeExecutionId }
+        : {}),
+      ...(args.overlayTaskReadonly ? { sessionId: args.sessionId, readonly: true } : {}),
+    });
+    return;
+  }
+  if (args.overlayTaskId && args.overlayTaskReadonly && args.agentKind === 'task_agent') {
+    pushOverlayHistory(args.sessionId, args.agent, args.highlightMessageUuid, {
+      taskId: args.overlayTaskId,
+      agentName: args.agentRole,
+      sessionId: args.sessionId,
+      readonly: true,
+    });
+    return;
+  }
+  pushOverlayHistory(args.sessionId, args.agent, args.highlightMessageUuid);
+}
+
 function CompletedBody({
   turn,
   overlayTaskId,
+  overlayTaskReadonly,
 }: {
   turn: CompletedFeedTurn;
   overlayTaskId?: string;
+  overlayTaskReadonly?: boolean;
 }) {
   const isTerminalError = isInlineTerminalResultError(turn.resultInfo);
   const errorSummary =
     isTerminalError && turn.resultInfo ? getResultErrorSummary(turn.resultInfo) : null;
   const openSession = turn.sessionId
     ? () => {
-        if (overlayTaskId && turn.agentKind === 'node_agent') {
-          pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid, {
-            taskId: overlayTaskId,
-            agentName: turn.agentRole,
-            ...(turn.agentNodeExecutionId ? { nodeExecutionId: turn.agentNodeExecutionId } : {}),
-          });
-        } else {
-          pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid);
-        }
+        openTurnSessionOverlay({
+          sessionId: turn.sessionId as string,
+          agent: turn.agent,
+          highlightMessageUuid: turn.highlightMessageUuid,
+          overlayTaskId,
+          overlayTaskReadonly,
+          agentKind: turn.agentKind,
+          agentRole: turn.agentRole,
+          nodeExecutionId: turn.agentNodeExecutionId,
+        });
       }
     : undefined;
   const isErrorBubble = isTerminalError || turn.hasError;
@@ -1817,6 +1854,9 @@ function CompletedBody({
         copyText={turn.lastMessage}
         align="left"
         onOpenSession={openSession}
+        openSessionTitle={
+          overlayTaskReadonly ? 'Opens read-only — resume the task to chat' : undefined
+        }
         resultInfo={turn.resultInfo}
       />
     </div>
@@ -1870,25 +1910,26 @@ function ActiveBody({ turn, color }: { turn: ActiveFeedTurn; color: string }) {
 function AgentTurnRow({
   turn,
   overlayTaskId,
+  overlayTaskReadonly,
 }: {
   turn: CompletedFeedTurn | ActiveFeedTurn;
   overlayTaskId?: string;
+  overlayTaskReadonly?: boolean;
 }) {
   const color = getAgentColor(turn.agent);
   const initial = agentInitial(turn.agent);
   const openSession = turn.sessionId
     ? () => {
-        const highlightMessageUuid =
-          turn.state === 'completed' ? turn.highlightMessageUuid : undefined;
-        if (overlayTaskId && turn.agentKind === 'node_agent') {
-          pushOverlayHistory(turn.sessionId as string, turn.agent, highlightMessageUuid, {
-            taskId: overlayTaskId,
-            agentName: turn.agentRole,
-            ...(turn.agentNodeExecutionId ? { nodeExecutionId: turn.agentNodeExecutionId } : {}),
-          });
-        } else {
-          pushOverlayHistory(turn.sessionId as string, turn.agent, highlightMessageUuid);
-        }
+        openTurnSessionOverlay({
+          sessionId: turn.sessionId as string,
+          agent: turn.agent,
+          highlightMessageUuid: turn.state === 'completed' ? turn.highlightMessageUuid : undefined,
+          overlayTaskId,
+          overlayTaskReadonly,
+          agentKind: turn.agentKind,
+          agentRole: turn.agentRole,
+          nodeExecutionId: turn.agentNodeExecutionId,
+        });
       }
     : undefined;
   const headerContent = (
@@ -1940,8 +1981,8 @@ function AgentTurnRow({
           type="button"
           class="-m-1 flex min-h-11 max-w-full items-center gap-3 rounded-lg p-1 pr-2 text-left transition-colors hover:bg-dark-800/55 active:bg-dark-800/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
           onClick={openSession}
-          title="Open session"
-          aria-label={`Open ${turn.agent} session`}
+          title={overlayTaskReadonly ? 'Opens read-only — resume the task to chat' : 'Open session'}
+          aria-label={`Open ${turn.agent} session${overlayTaskReadonly ? ' read-only' : ''}`}
           data-testid="minimal-thread-agent-open"
         >
           {headerContent}
@@ -1952,7 +1993,11 @@ function AgentTurnRow({
       {turn.state === 'active' ? (
         <ActiveBody turn={turn} color={color} />
       ) : (
-        <CompletedBody turn={turn} overlayTaskId={overlayTaskId} />
+        <CompletedBody
+          turn={turn}
+          overlayTaskId={overlayTaskId}
+          overlayTaskReadonly={overlayTaskReadonly}
+        />
       )}
     </div>
   );
@@ -2005,9 +2050,11 @@ function HumanMessageTurn({ turn }: { turn: MessageFeedTurn }) {
 function CompactBoundaryTurn({
   turn,
   overlayTaskId,
+  overlayTaskReadonly,
 }: {
   turn: CompactBoundaryFeedTurn;
   overlayTaskId?: string;
+  overlayTaskReadonly?: boolean;
 }) {
   const color = getAgentColor(turn.agent);
   const tokenDelta =
@@ -2015,15 +2062,16 @@ function CompactBoundaryTurn({
   const tokenSummary = `${turn.preTokens.toLocaleString()} → ${turn.postTokens?.toLocaleString() ?? '—'} tokens`;
   const openSession = turn.sessionId
     ? () => {
-        if (overlayTaskId && turn.agentKind === 'node_agent') {
-          pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid, {
-            taskId: overlayTaskId,
-            agentName: turn.agentRole,
-            ...(turn.agentNodeExecutionId ? { nodeExecutionId: turn.agentNodeExecutionId } : {}),
-          });
-        } else {
-          pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid);
-        }
+        openTurnSessionOverlay({
+          sessionId: turn.sessionId as string,
+          agent: turn.agent,
+          highlightMessageUuid: turn.highlightMessageUuid,
+          overlayTaskId,
+          overlayTaskReadonly,
+          agentKind: turn.agentKind,
+          agentRole: turn.agentRole,
+          nodeExecutionId: turn.agentNodeExecutionId,
+        });
       }
     : undefined;
   const card = (
@@ -2069,8 +2117,10 @@ function CompactBoundaryTurn({
           type="button"
           class="w-full rounded-lg text-left transition-colors hover:bg-yellow-400/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-300/60"
           onClick={openSession}
-          title="Open session"
-          aria-label={`Open ${turn.agent} session at compact boundary`}
+          title={overlayTaskReadonly ? 'Opens read-only — resume the task to chat' : 'Open session'}
+          aria-label={`Open ${turn.agent} session at compact boundary${
+            overlayTaskReadonly ? ' read-only' : ''
+          }`}
           data-testid="minimal-thread-compact-boundary"
         >
           {card}
@@ -2082,19 +2132,28 @@ function CompactBoundaryTurn({
   );
 }
 
-function SystemTurn({ turn, overlayTaskId }: { turn: SystemFeedTurn; overlayTaskId?: string }) {
+function SystemTurn({
+  turn,
+  overlayTaskId,
+  overlayTaskReadonly,
+}: {
+  turn: SystemFeedTurn;
+  overlayTaskId?: string;
+  overlayTaskReadonly?: boolean;
+}) {
   const color = getAgentColor(turn.agent);
   const openSession = turn.sessionId
     ? () => {
-        if (overlayTaskId && turn.agentKind === 'node_agent') {
-          pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid, {
-            taskId: overlayTaskId,
-            agentName: turn.agentRole,
-            ...(turn.agentNodeExecutionId ? { nodeExecutionId: turn.agentNodeExecutionId } : {}),
-          });
-        } else {
-          pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid);
-        }
+        openTurnSessionOverlay({
+          sessionId: turn.sessionId as string,
+          agent: turn.agent,
+          highlightMessageUuid: turn.highlightMessageUuid,
+          overlayTaskId,
+          overlayTaskReadonly,
+          agentKind: turn.agentKind,
+          agentRole: turn.agentRole,
+          nodeExecutionId: turn.agentNodeExecutionId,
+        });
       }
     : undefined;
   const card = (
@@ -2125,8 +2184,10 @@ function SystemTurn({ turn, overlayTaskId }: { turn: SystemFeedTurn; overlayTask
           type="button"
           class="rounded-lg text-left transition-colors hover:bg-slate-800/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/60"
           onClick={openSession}
-          title="Open session"
-          aria-label={`Open ${turn.agent} session at ${turn.title}`}
+          title={overlayTaskReadonly ? 'Opens read-only — resume the task to chat' : 'Open session'}
+          aria-label={`Open ${turn.agent} session at ${turn.title}${
+            overlayTaskReadonly ? ' read-only' : ''
+          }`}
           data-testid="minimal-thread-system"
         >
           {card}
@@ -2141,9 +2202,11 @@ function SystemTurn({ turn, overlayTaskId }: { turn: SystemFeedTurn; overlayTask
 function SyntheticMessageTurn({
   turn,
   overlayTaskId,
+  overlayTaskReadonly,
 }: {
   turn: MessageFeedTurn;
   overlayTaskId?: string;
+  overlayTaskReadonly?: boolean;
 }) {
   const fromColor = getAgentColor(turn.fromLabel);
   const toColor = getAgentColor(turn.toLabel);
@@ -2168,27 +2231,24 @@ function SyntheticMessageTurn({
       renderAsPlainText={turn.bodyIsFallback}
       sessionInit={turn.sessionInit}
       widthClass={TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS}
+      openSessionTitle={
+        overlayTaskReadonly && turn.sessionId
+          ? 'Opens read-only — resume the task to chat'
+          : undefined
+      }
       onOpenSession={
         turn.sessionId
           ? () => {
-              if (overlayTaskId && turn.toKind === 'node_agent') {
-                pushOverlayHistory(
-                  turn.sessionId as string,
-                  turn.toLabel,
-                  turn.highlightMessageUuid,
-                  {
-                    taskId: overlayTaskId,
-                    agentName: turn.toRole,
-                    ...(turn.toNodeExecutionId ? { nodeExecutionId: turn.toNodeExecutionId } : {}),
-                  }
-                );
-              } else {
-                pushOverlayHistory(
-                  turn.sessionId as string,
-                  turn.toLabel,
-                  turn.highlightMessageUuid
-                );
-              }
+              openTurnSessionOverlay({
+                sessionId: turn.sessionId as string,
+                agent: turn.toLabel,
+                highlightMessageUuid: turn.highlightMessageUuid,
+                overlayTaskId,
+                overlayTaskReadonly,
+                agentKind: turn.toKind,
+                agentRole: turn.toRole,
+                nodeExecutionId: turn.toNodeExecutionId,
+              });
             }
           : undefined
       }
@@ -2219,21 +2279,51 @@ function SyntheticMessageTurn({
   );
 }
 
-function MinimalTurnRow({ turn, overlayTaskId }: { turn: FeedTurn; overlayTaskId?: string }) {
+function MinimalTurnRow({
+  turn,
+  overlayTaskId,
+  overlayTaskReadonly,
+}: {
+  turn: FeedTurn;
+  overlayTaskId?: string;
+  overlayTaskReadonly?: boolean;
+}) {
   if (turn.state === 'compact_boundary') {
-    return <CompactBoundaryTurn turn={turn} overlayTaskId={overlayTaskId} />;
+    return (
+      <CompactBoundaryTurn
+        turn={turn}
+        overlayTaskId={overlayTaskId}
+        overlayTaskReadonly={overlayTaskReadonly}
+      />
+    );
   }
   if (turn.state === 'system') {
-    return <SystemTurn turn={turn} overlayTaskId={overlayTaskId} />;
+    return (
+      <SystemTurn
+        turn={turn}
+        overlayTaskId={overlayTaskId}
+        overlayTaskReadonly={overlayTaskReadonly}
+      />
+    );
   }
   if (turn.state === 'message') {
     return turn.isSynthetic ? (
-      <SyntheticMessageTurn turn={turn} overlayTaskId={overlayTaskId} />
+      <SyntheticMessageTurn
+        turn={turn}
+        overlayTaskId={overlayTaskId}
+        overlayTaskReadonly={overlayTaskReadonly}
+      />
     ) : (
       <HumanMessageTurn turn={turn} />
     );
   }
-  return <AgentTurnRow turn={turn} overlayTaskId={overlayTaskId} />;
+  return (
+    <AgentTurnRow
+      turn={turn}
+      overlayTaskId={overlayTaskId}
+      overlayTaskReadonly={overlayTaskReadonly}
+    />
+  );
 }
 
 const EMPTY_ACTIVE_AGENT_LABELS: ReadonlySet<string> = new Set();
@@ -2243,6 +2333,7 @@ export function MinimalThreadFeed({
   activeAgentLabels = EMPTY_ACTIVE_AGENT_LABELS,
   activeTurnSummaries = [],
   overlayTaskId,
+  overlayTaskReadonly,
 }: MinimalThreadFeedProps) {
   const turns = buildFeedTurns(parsedRows, activeAgentLabels, activeTurnSummaries);
   if (turns.length === 0) return null;
@@ -2252,7 +2343,12 @@ export function MinimalThreadFeed({
       <style>{ANIMATIONS_CSS}</style>
       <div class="px-4 py-4 space-y-6" data-testid="space-task-event-feed-minimal">
         {turns.map((turn) => (
-          <MinimalTurnRow key={turn.id} turn={turn} overlayTaskId={overlayTaskId} />
+          <MinimalTurnRow
+            key={turn.id}
+            turn={turn}
+            overlayTaskId={overlayTaskId}
+            overlayTaskReadonly={overlayTaskReadonly}
+          />
         ))}
       </div>
     </>
