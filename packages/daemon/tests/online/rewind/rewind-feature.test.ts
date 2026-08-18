@@ -16,8 +16,8 @@ const TMP_DIR = process.env.TMPDIR || '/tmp';
 const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 const MODEL = IS_MOCK ? 'haiku' : 'haiku-4.5';
 const IDLE_TIMEOUT = IS_MOCK ? 10000 : 60000;
-const SETUP_TIMEOUT = IS_MOCK ? 15000 : 30000;
-const TEST_TIMEOUT = IS_MOCK ? 30000 : 300000;
+const SETUP_TIMEOUT = IS_MOCK ? 20000 : 30000;
+const TEST_TIMEOUT = IS_MOCK ? 90000 : 300000;
 
 describe('Rewind Feature', () => {
   let daemon: DaemonServerContext;

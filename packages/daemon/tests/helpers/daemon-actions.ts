@@ -126,12 +126,21 @@ async function waitForProcessingState(
   });
 }
 
+const SDK_STARTUP_TIMEOUT_DEFAULT_MS = 30000;
+const IDLE_WAIT_SETTLE_MARGIN_MS = 10000;
+
+function minimumIdleWaitMs(): number {
+  const raw = Number.parseInt(process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS ?? '', 10);
+  const startupBoundMs = Number.isFinite(raw) && raw > 0 ? raw : SDK_STARTUP_TIMEOUT_DEFAULT_MS;
+  return startupBoundMs + IDLE_WAIT_SETTLE_MARGIN_MS;
+}
+
 export async function waitForIdle(
   daemon: DaemonServerContext,
   sessionId: string,
   timeout = 90000
 ): Promise<void> {
-  return waitForProcessingState(daemon, sessionId, 'idle', timeout);
+  return waitForProcessingState(daemon, sessionId, 'idle', Math.max(timeout, minimumIdleWaitMs()));
 }
 
 export async function getProcessingState(
