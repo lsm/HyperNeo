@@ -7808,6 +7808,25 @@ export class SpaceRuntime {
     return this.getOrCreateTaskManager(spaceId);
   }
 
+  parkInFlightExecutionsForSpace(spaceId: string): void {
+    for (const run of this.config.workflowRunRepo.listBySpace(spaceId)) {
+      const inFlightExecutions = this.config.nodeExecutionRepo
+        .listByWorkflowRun(run.id)
+        .filter((execution) => execution.status === 'in_progress');
+      if (inFlightExecutions.length === 0) continue;
+      for (const execution of inFlightExecutions) {
+        this.config.nodeExecutionRepo.update(execution.id, {
+          status: 'pending',
+          result: null,
+          agentSessionId: null,
+        });
+        this.taskCrashCounts.delete(`${run.id}:${execution.id}`);
+      }
+      this.clearAgentStuckStateForRun(run.id);
+      this.blockedRetryCounts.delete(run.id);
+    }
+  }
+
   private async recoverRateLimitedTasks(): Promise<void> {
     const spaces = await this.listActiveSpaces();
     const now = Date.now();
