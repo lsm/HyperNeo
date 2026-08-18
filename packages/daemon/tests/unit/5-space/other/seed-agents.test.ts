@@ -81,6 +81,21 @@ describe('seedPresetAgents', () => {
     expect(reviewer?.customPrompt).toContain('addPullRequestReview');
   });
 
+  it('reviewer round model pins broad reviews to rounds 1-2 and delta reviews to rounds 3+', async () => {
+    const { seeded } = await seedPresetAgents('space-1', manager);
+    const reviewer = seeded.find((a) => a.name === 'Reviewer');
+
+    expect(reviewer?.customPrompt).toContain(
+      'Round model: broad review in rounds 1–2, delta review in rounds 3+'
+    );
+    expect(reviewer?.customPrompt).toContain(
+      'WHOLE-PR review — the full diff plus its integration surface'
+    );
+    expect(reviewer?.customPrompt).toContain('second independent whole-PR sweep');
+    expect(reviewer?.customPrompt).toContain('the delta diff in rounds 3+');
+    expect(reviewer?.customPrompt).not.toContain('the delta diff in rounds 2+');
+  });
+
   it('Reviewer is the designated inspection-and-review agent (Bash present, no Write/Edit)', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
