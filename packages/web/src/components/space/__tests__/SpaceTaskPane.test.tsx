@@ -1632,7 +1632,7 @@ describe('SpaceTaskPane — activity members actions', () => {
     expect(getByText('Open Coder (Queued)')).toBeTruthy();
   });
 
-  it('keeps members with a cancelled node execution openable (paused task)', () => {
+  it('keeps members with a cancelled node execution openable read-only (paused task)', () => {
     mockTasks.value = [makeTask({ status: 'open', taskAgentSessionId: 'session-abc' })];
     mockTaskActivity.value = new Map([
       [
@@ -1642,6 +1642,7 @@ describe('SpaceTaskPane — activity members actions', () => {
             id: 'm1',
             sessionId: 'sess-cancelled-exec',
             label: 'Coder',
+            role: 'coder',
             state: 'interrupted',
             nodeExecution: {
               nodeExecutionId: 'ne-1',
@@ -1656,8 +1657,74 @@ describe('SpaceTaskPane — activity members actions', () => {
     const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
     fireEvent.click(getByTestId('task-actions-menu-trigger'));
     fireEvent.click(getByText('Open Coder (Interrupted)'));
-    expect(mockSpaceOverlaySessionIdSignal.value).toBe('sess-cancelled-exec');
-    expect(mockSpaceOverlayAgentNameSignal.value).toBe('Coder');
+    expect(mockPushOverlayHistory).toHaveBeenCalledWith('sess-cancelled-exec', 'Coder', undefined, {
+      taskId: 'task-1',
+      agentName: 'coder',
+      sessionId: 'sess-cancelled-exec',
+      readonly: true,
+    });
+  });
+
+  it('opens a paused Task Agent member read-only instead of a live composer context', () => {
+    mockTasks.value = [makeTask({ status: 'open', taskAgentSessionId: null })];
+    mockTaskActivity.value = new Map([
+      [
+        'task-1',
+        [
+          makeActivityMember({
+            id: 'm1',
+            sessionId: 'sess-paused-ta',
+            kind: 'task_agent',
+            label: 'Task Agent',
+            role: 'task-agent',
+            state: 'idle',
+          }),
+        ],
+      ],
+    ]);
+    const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    fireEvent.click(getByText('Open Task Agent (Idle)'));
+    expect(mockPushOverlayHistory).toHaveBeenCalledWith('sess-paused-ta', 'Task Agent', undefined, {
+      taskId: 'task-1',
+      agentName: 'task-agent',
+      sessionId: 'sess-paused-ta',
+      readonly: true,
+    });
+  });
+
+  it('keeps a live node agent on a running task openable with its live context', () => {
+    mockTasks.value = [makeTask({ status: 'in_progress', taskAgentSessionId: 'session-abc' })];
+    mockTaskActivity.value = new Map([
+      [
+        'task-1',
+        [
+          makeActivityMember({
+            id: 'm1',
+            sessionId: 'sess-live-coder',
+            label: 'Coder',
+            role: 'coder',
+            state: 'active',
+            nodeExecution: {
+              nodeExecutionId: 'ne-live',
+              nodeId: 'node-coder',
+              agentName: 'coder',
+              status: 'in_progress',
+            },
+          }),
+        ],
+      ],
+    ]);
+    const { getByTestId, getByText } = render(<SpaceTaskPane taskId="task-1" />);
+    fireEvent.click(getByTestId('task-actions-menu-trigger'));
+    fireEvent.click(getByText('Open Coder (Active)'));
+    expect(mockPushOverlayHistory).toHaveBeenCalledWith('sess-live-coder', 'Coder', undefined, {
+      taskId: 'task-1',
+      agentName: 'coder',
+      sessionId: 'sess-live-coder',
+      workflowNodeId: 'node-coder',
+      nodeExecutionId: 'ne-live',
+    });
   });
 
   it('still hides members whose node execution is pending', () => {
@@ -1892,7 +1959,7 @@ describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
     expect(getByText('Open reviewer (Not started)')).toBeTruthy();
   });
 
-  it('does not offer cancelled/pending dead-session members as an "Open" chat', async () => {
+  it('hides pending members, opens cancelled ones read-only, and keeps their slot unduplicated', async () => {
     mockTasks.value = [
       makeTask({
         workflowRunId: 'run-1',
@@ -1938,13 +2005,21 @@ describe('SpaceTaskPane — workflow-declared agents in dropdown', () => {
         ],
       ],
     ]);
-    const { getByTestId, queryByText } = render(
+    const { getByTestId, getByText, queryByText } = render(
       <SpaceTaskPane taskId="task-1" spaceId="space-1" />
     );
     await waitFor(() => expect(getByTestId('task-actions-menu-trigger')).toBeTruthy());
     fireEvent.click(getByTestId('task-actions-menu-trigger'));
-    expect(queryByText('Open Coder (Active)')).toBeNull();
-    expect(queryByText('Open Reviewer (Active)')).toBeNull();
+    expect(queryByText('Open Reviewer (Idle)')).toBeNull();
+    expect(queryByText('Open coder (Not started)')).toBeNull();
+    expect(getByText('Open reviewer (Not started)')).toBeTruthy();
+    fireEvent.click(getByText('Open Coder (Idle)'));
+    expect(mockPushOverlayHistory).toHaveBeenCalledWith('sess-cancelled', 'Coder', undefined, {
+      taskId: 'task-1',
+      agentName: 'coder',
+      sessionId: 'sess-cancelled',
+      readonly: true,
+    });
   });
 
   it('does not render workflow-declared entries for tasks with no workflow run', () => {

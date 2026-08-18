@@ -1648,6 +1648,7 @@ SELECT
     WHEN json_extract(s.processing_state, '$.status') = 'waiting_for_input' THEN 'waiting_for_input'
     WHEN json_extract(s.processing_state, '$.status') = 'rate_limit_cooldown' THEN 'cooldown'
     WHEN json_extract(s.processing_state, '$.status') = 'interrupted' THEN 'interrupted'
+    WHEN json_extract(s.processing_state, '$.status') = 'idle' THEN 'idle'
     WHEN ase.task_status = 'open' THEN 'queued'
     ELSE 'idle'
   END AS state,

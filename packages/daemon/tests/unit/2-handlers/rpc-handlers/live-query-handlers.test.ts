@@ -799,7 +799,12 @@ describe('NAMED_QUERY_REGISTRY', () => {
     test('paused task keeps the Task Agent member after task_agent_session_id is cleared', () => {
       const taskAgentSessionId = 'space:test-space:task:orch-paused';
       const taskId = insertSpaceTask({ workflowRunId: 'wr-paused-ta', status: 'open' });
-      insertSession(taskAgentSessionId, 'space_task_agent', '{"status":"idle"}');
+      insertSession(
+        taskAgentSessionId,
+        'space_task_agent',
+        '{"status":"idle"}',
+        JSON.stringify({ spaceId, taskId })
+      );
       sessionTaskIds.set(taskAgentSessionId, taskId);
       insertSdkMessage('sdk-paused-ta-1', taskAgentSessionId);
       insertSdkMessage('sdk-paused-ta-2', taskAgentSessionId);
@@ -810,6 +815,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(taskAgentRow!.sessionId).toBe(taskAgentSessionId);
       expect(taskAgentRow!.label).toBe('Task Agent');
       expect(taskAgentRow!.role).toBe('task-agent');
+      expect(taskAgentRow!.state).toBe('idle');
       expect(taskAgentRow!.messageCount).toBe(2);
       expect(taskAgentRow!.taskId).toBe(taskId);
     });
@@ -858,6 +864,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(coderRow!.agentName).toBe('coder');
       expect(coderRow!.workflowNodeId).toBe('node-coder');
       expect(coderRow!.nodeExecutionId).toBeNull();
+      expect(coderRow!.state).toBe('idle');
       expect(coderRow!.messageCount).toBe(1);
     });
 
@@ -867,7 +874,12 @@ describe('NAMED_QUERY_REGISTRY', () => {
       const reviewerSessionId = 'space:test-space:task:cancelled:review';
       const taskId = insertSpaceTask({ workflowRunId, status: 'cancelled' });
 
-      insertSession(taskAgentSessionId, 'space_task_agent', '{"status":"idle"}');
+      insertSession(
+        taskAgentSessionId,
+        'space_task_agent',
+        '{"status":"idle"}',
+        JSON.stringify({ spaceId, taskId })
+      );
       sessionTaskIds.set(taskAgentSessionId, taskId);
       insertSdkMessage('sdk-cancelled-ta', taskAgentSessionId);
 
@@ -921,7 +933,12 @@ describe('NAMED_QUERY_REGISTRY', () => {
         status: 'in_progress',
       });
       const taskAgentSessionId = 'space:test-space:task:other-task:ta';
-      insertSession(taskAgentSessionId, 'space_task_agent', '{"status":"idle"}');
+      insertSession(
+        taskAgentSessionId,
+        'space_task_agent',
+        '{"status":"idle"}',
+        JSON.stringify({ spaceId, taskId: otherTaskId })
+      );
       sessionTaskIds.set(taskAgentSessionId, otherTaskId);
       insertSdkMessage('sdk-other-task-ta', taskAgentSessionId);
 

@@ -491,6 +491,9 @@ export function SpaceTaskPane({
 
   const isTerminalTask =
     task.status === 'done' || task.status === 'cancelled' || task.status === 'archived';
+  const taskAgentsLive =
+    !isTerminalTask &&
+    ['in_progress', 'review', 'approved', 'rate_limited', 'usage_limited'].includes(task.status);
 
   useEffect(() => {
     if (isTerminalTask && showEditTaskModal) {
@@ -1044,7 +1047,6 @@ export function SpaceTaskPane({
         (m) =>
           m.kind === 'node_agent' &&
           m.nodeExecution?.nodeId &&
-          m.nodeExecution?.status !== 'cancelled' &&
           m.nodeExecution?.status !== 'pending'
       )
       .map((m) => `${m.nodeExecution?.nodeId}|${m.role}`)
@@ -1072,16 +1074,24 @@ export function SpaceTaskPane({
   const openableActivityMembers = activityMembers.filter(
     (m) => m.nodeExecution?.status !== 'pending'
   );
+  const memberIsLive = (member: SpaceTaskActivityMember): boolean => {
+    if (!taskAgentsLive) return false;
+    if (member.kind === 'task_agent') return member.sessionId === task.taskAgentSessionId;
+    if (member.nodeExecution?.status === 'cancelled') return false;
+    if (member.nodeExecution?.nodeExecutionId) return true;
+    return member.nodeExecution?.isCurrentPostApproval === true;
+  };
   if (openableActivityMembers.length > 0) {
     taskActionItems.push(
       ...openableActivityMembers.map((member) => ({
         label: `Open ${member.label} (${ACTIVITY_STATE_LABELS[member.state]})`,
         onClick: () => {
+          const readOnly = isTerminalTask || !memberIsLive(member);
           pushOverlayHistory(
             member.sessionId,
             member.label,
             undefined,
-            isTerminalTask
+            readOnly
               ? {
                   taskId: task.id,
                   agentName: member.role ?? '',
