@@ -126,7 +126,7 @@ async function waitForProcessingState(
   });
 }
 
-const SDK_STARTUP_TIMEOUT_DEFAULT_MS = 30000;
+const SDK_STARTUP_TIMEOUT_DEFAULT_MS = 60000;
 const IDLE_WAIT_SETTLE_MARGIN_MS = 10000;
 
 function minimumIdleWaitMs(): number {

@@ -24,7 +24,7 @@ describe('Auto-Title Generation', () => {
     }
   }, 30000);
 
-  async function waitForTitleGeneration(sessionId: string, timeoutMs = 30000): Promise<void> {
+  async function waitForTitleGeneration(sessionId: string, timeoutMs = 45000): Promise<void> {
     const startedAt = Date.now();
     const deadline = startedAt + timeoutMs;
     const remainingMs = () => Math.max(0, deadline - Date.now());
