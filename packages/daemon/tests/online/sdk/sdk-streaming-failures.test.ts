@@ -1,19 +1,3 @@
-/**
- * SDK Streaming Behavior Tests
- *
- * These tests verify SDK behavior through the WebSocket daemon API:
- * - Permission mode handling
- * - Message processing
- * - Session state consistency
- *
- * MODES:
- * - Real API (default): Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
- * - Dev Proxy: Set HYPERNEO_USE_DEV_PROXY=1 for offline testing with mocked responses
- *
- * Run with Dev Proxy:
- *   cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/sdk/sdk-streaming-failures.test.ts
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
@@ -24,20 +8,14 @@ import {
   getSession,
 } from '../../helpers/daemon-actions';
 
-// Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
-// Detect mock mode for faster timeouts (Dev Proxy)
 const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 const MODEL = IS_MOCK ? 'haiku' : 'haiku-4.5';
-// Mock-mode idle timeout accommodates MCP subprocess spawn (e.g. the
-// `fetch-mcp` built-in runs `npx -y @tokenizin/mcp-npx-fetch` which can
-// take ~5s even with the package cached).
 const IDLE_TIMEOUT = IS_MOCK ? 15000 : 30000;
 const SETUP_TIMEOUT = IS_MOCK ? 10000 : 30000;
 const TEST_TIMEOUT = IS_MOCK ? 30000 : 90000;
 
-// Tests will FAIL if no credentials are available
 describe('SDK Streaming Behavior', () => {
   let daemon: DaemonServerContext;
 
@@ -63,14 +41,13 @@ describe('SDK Streaming Behavior', () => {
           title: 'Accept Edits Test',
           config: {
             model: MODEL,
-            permissionMode: 'acceptEdits', // Works on root and non-root
+            permissionMode: 'acceptEdits',
           },
         })) as { sessionId: string };
 
         const { sessionId } = createResult;
         daemon.trackSession(sessionId);
 
-        // Send a message
         const result = await sendMessage(
           daemon,
           sessionId,
@@ -79,10 +56,8 @@ describe('SDK Streaming Behavior', () => {
 
         expect(result.messageId).toBeString();
 
-        // Wait for processing to complete
         await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-        // Verify session is idle
         const state = await getProcessingState(daemon, sessionId);
         expect(state.status).toBe('idle');
 
@@ -110,7 +85,6 @@ describe('SDK Streaming Behavior', () => {
         const { sessionId } = createResult;
         daemon.trackSession(sessionId);
 
-        // Send multiple messages
         const msg1 = await sendMessage(daemon, sessionId, 'What is 1+1? Just the number.');
         await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
@@ -120,12 +94,10 @@ describe('SDK Streaming Behavior', () => {
         const msg3 = await sendMessage(daemon, sessionId, 'What is 3+3? Just the number.');
         await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-        // All should have unique message IDs
         expect(msg1.messageId).not.toBe(msg2.messageId);
         expect(msg2.messageId).not.toBe(msg3.messageId);
         expect(msg1.messageId).not.toBe(msg3.messageId);
 
-        // Session should be idle and functional
         const state = await getProcessingState(daemon, sessionId);
         expect(state.status).toBe('idle');
 
@@ -151,7 +123,6 @@ describe('SDK Streaming Behavior', () => {
         const { sessionId } = createResult;
         daemon.trackSession(sessionId);
 
-        // Simple prompt pattern (same as other passing tests)
         const result = await sendMessage(
           daemon,
           sessionId,
@@ -160,10 +131,8 @@ describe('SDK Streaming Behavior', () => {
 
         expect(result.messageId).toBeString();
 
-        // Wait for processing to complete
         await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-        // Verify session is idle
         const state = await getProcessingState(daemon, sessionId);
         expect(state.status).toBe('idle');
 
@@ -191,23 +160,18 @@ describe('SDK Streaming Behavior', () => {
         const { sessionId } = createResult;
         daemon.trackSession(sessionId);
 
-        // Initial state check
         let session = await getSession(daemon, sessionId);
         expect(session.id).toBe(sessionId);
         expect(session.workspacePath).toBe(workspacePath);
 
-        // Send a message
         await sendMessage(daemon, sessionId, 'What is 1+1? Just the number.');
 
-        // Wait for SDK to process and return to idle
         await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-        // Session should still be consistent
         session = await getSession(daemon, sessionId);
         expect(session.id).toBe(sessionId);
         expect(session.workspacePath).toBe(workspacePath);
 
-        // Agent should be in idle state
         const state = await getProcessingState(daemon, sessionId);
         expect(state.status).toBe('idle');
 
@@ -235,7 +199,6 @@ describe('SDK Streaming Behavior', () => {
         const { sessionId } = createResult;
         daemon.trackSession(sessionId);
 
-        // Send a message to the real SDK
         const result = await sendMessage(
           daemon,
           sessionId,
@@ -244,22 +207,18 @@ describe('SDK Streaming Behavior', () => {
 
         expect(result.messageId).toBeString();
 
-        // Wait for processing to complete
         await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-        // Get session data - should be consistent
         const session = await getSession(daemon, sessionId);
         expect(session.id).toBe(sessionId);
         expect(session.workspacePath).toBe(workspacePath);
 
-        // Send another message to verify session still works
         const result2 = await sendMessage(daemon, sessionId, 'What is 3+3? Just the number.');
         expect(result2.messageId).toBeString();
         expect(result2.messageId).not.toBe(result.messageId);
 
         await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-        // Session should still be functional
         const state = await getProcessingState(daemon, sessionId);
         expect(state.status).toBe('idle');
 

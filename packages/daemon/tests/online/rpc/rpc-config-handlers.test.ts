@@ -1,20 +1,3 @@
-/**
- * SDK Config RPC Handlers Tests
- *
- * Tests for SDK configuration RPC handlers via WebSocket:
- * - config.model.get/update
- * - config.systemPrompt.get/update
- * - config.tools.get/update
- * - config.permissions.get/update
- * - config.getAll / config.updateBulk
- * - config.agents.get/update
- * - config.sandbox.get/update
- * - config.betas.get/update
- * - config.outputFormat.get/update
- * - config.mcp.get/update/addServer/removeServer
- * - config.env.get/update
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 
@@ -155,7 +138,7 @@ describe('SDK Config RPC Handlers', () => {
 
       const result = (await daemon.messageHub.request('config.tools.update', {
         sessionId,
-        settings: { allowedTools: 'Bash' }, // Should be an array
+        settings: { allowedTools: 'Bash' },
       })) as { success: boolean; error?: string };
 
       expect(result.success).toBe(false);
@@ -271,7 +254,7 @@ describe('SDK Config RPC Handlers', () => {
         sessionId,
         agents: {
           explorer: {
-            description: '', // Empty description should fail
+            description: '',
             prompt: 'You are a code explorer',
           },
         },
@@ -445,14 +428,12 @@ describe('SDK Config RPC Handlers', () => {
     test('should remove MCP server', async () => {
       const sessionId = await createSession('/test/config-mcp-remove');
 
-      // First add a server
       await daemon.messageHub.request('config.mcp.addServer', {
         sessionId,
         name: 'temp-server',
         config: { command: 'test', args: [] },
       });
 
-      // Then remove it
       const result = (await daemon.messageHub.request('config.mcp.removeServer', {
         sessionId,
         name: 'temp-server',

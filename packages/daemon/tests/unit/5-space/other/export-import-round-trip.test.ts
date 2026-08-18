@@ -1,16 +1,3 @@
-/**
- * Export/Import Round-Trip Integration Tests
- *
- * Tests the full pipeline: exportWorkflow → validateExportBundle →
- * buildWorkflowCreateParams → SpaceWorkflowManager.createWorkflow → DB read-back.
- *
- * Verifies that per-slot override fields (role, model, systemPrompt, instructions) survive the
- * complete export → import cycle and are persisted correctly in the database.
- *
- * Also verifies backward compatibility: exports without per-slot override fields
- * (old format) import cleanly.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -24,13 +11,7 @@ import {
 import { buildWorkflowCreateParams } from '../../../../src/lib/rpc-handlers/space-export-import-handlers.ts';
 import type { SpaceWorkerAgent, SpaceWorkflow, ExportedSpaceWorkflow } from '@hyperneo/shared';
 
-// ---------------------------------------------------------------------------
-// DB setup helpers
-// ---------------------------------------------------------------------------
-
 function makeDb(): BunDatabase {
-  // Use in-memory SQLite — faster than file-based DB and avoids filesystem
-  // I/O contention that caused beforeEach hook timeouts in CI.
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
@@ -52,10 +33,6 @@ function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: stri
   ).run(agentId, spaceId, name, Date.now(), Date.now());
 }
 
-// ---------------------------------------------------------------------------
-// Test fixtures
-// ---------------------------------------------------------------------------
-
 function makeTestAgent(
   id: string,
   name: string,
@@ -72,9 +49,6 @@ function makeTestAgent(
   };
 }
 
-// End nodes must have exactly 1 agent (validator rule). Tests that exercise
-// multi-agent steps append a downstream single-agent end node so the
-// multi-agent step remains an intermediate node.
 const SYNTHETIC_END_NODE = {
   id: '__test_end__',
   name: 'Synthetic End',
@@ -104,7 +78,6 @@ function makeWorkflowWithOverrides(): SpaceWorkflow {
           {
             agentId: 'agent-1',
             name: 'coder',
-            // no overrides — uses agent defaults
           },
         ],
       },
@@ -142,10 +115,6 @@ function makeWorkflowWithoutOverrides(): SpaceWorkflow {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe('buildWorkflowCreateParams — per-slot overrides', () => {
   const agent1 = makeTestAgent('agent-1', 'Coder Agent');
   const agent2 = makeTestAgent('agent-2', 'Reviewer Agent');
@@ -173,17 +142,14 @@ describe('buildWorkflowCreateParams — per-slot overrides', () => {
     const nodeAgents = params.nodes[0].agents!;
     expect(nodeAgents).toHaveLength(3);
 
-    // strict-reviewer slot has customPrompt
     const strictReviewer = nodeAgents.find((a) => a.name === 'strict-reviewer');
     expect(strictReviewer).toBeDefined();
     expect(strictReviewer!.customPrompt).toBeDefined();
 
-    // quick-reviewer slot has customPrompt
     const quickReviewer = nodeAgents.find((a) => a.name === 'quick-reviewer');
     expect(quickReviewer).toBeDefined();
     expect(quickReviewer!.customPrompt).toBeDefined();
 
-    // coder slot has no overrides
     const coder = nodeAgents.find((a) => a.name === 'coder');
     expect(coder).toBeDefined();
     expect(coder!.customPrompt).toBeUndefined();
@@ -243,7 +209,6 @@ describe('buildWorkflowCreateParams — per-slot overrides', () => {
     const nodeAgents = params.nodes[0].agents!;
     expect(nodeAgents).toHaveLength(2);
 
-    // No overrides — model and customPrompt must be absent
     for (const a of nodeAgents) {
       expect(a.model).toBeUndefined();
       expect(a.customPrompt).toBeUndefined();
@@ -295,7 +260,6 @@ describe('buildWorkflowCreateParams — per-slot overrides', () => {
     expect(warnings).toHaveLength(0);
     const nodeAgents = params.nodes[0].agents!;
 
-    // Both agents resolve to their new UUIDs
     for (const a of nodeAgents) {
       expect(a.agentId).toBeTruthy();
       expect(a.agentId).not.toBe('');
@@ -316,13 +280,11 @@ describe('buildWorkflowCreateParams — per-slot overrides', () => {
             {
               agentId: 'agent-1',
               name: 'coder',
-              // Use customPrompt directly (new format)
               customPrompt: { value: 'Focus on auth module only.' },
             },
             {
               agentId: 'agent-2',
               name: 'reviewer',
-              // no overrides
             },
           ],
         },
@@ -364,7 +326,6 @@ describe('buildWorkflowCreateParams — per-slot overrides', () => {
     const workflow = makeWorkflowWithoutOverrides();
     const exported = exportWorkflow(workflow, agents);
 
-    // Only provide one agent — the other will be unresolvable
     const importedNameToId = new Map([['Coder Agent', 'uuid-1']]);
     const existingNameToId = new Map<string, string>();
 
@@ -380,10 +341,6 @@ describe('buildWorkflowCreateParams — per-slot overrides', () => {
     expect(warnings[0]).toContain('Reviewer Agent');
   });
 });
-
-// -------------------------------------------------------------------------
-// legacy plain-string overrides — import normalization
-// -------------------------------------------------------------------------
 
 test('normalizes legacy plain-string systemPrompt to { value } on import (maps to customPrompt)', () => {
   const legacyExported: ExportedSpaceWorkflow = {
@@ -413,7 +370,6 @@ test('normalizes legacy plain-string systemPrompt to { value } on import (maps t
 
   expect(warnings).toHaveLength(0);
   const nodeAgents = params.nodes[0].agents!;
-  // Legacy plain-string systemPrompt is normalized to { value } and mapped to customPrompt
   expect(nodeAgents[0].customPrompt).toEqual({ value: 'Be strict.' });
 });
 
@@ -447,7 +403,6 @@ test('normalizes legacy plain-string instructions to { value } on import (maps t
 
   expect(warnings).toHaveLength(0);
   const nodeAgents = params.nodes[0].agents!;
-  // Legacy plain-string instructions is normalized to { value } and mapped to customPrompt
   expect(nodeAgents[0].customPrompt).toEqual({ value: 'Review carefully.' });
 });
 
@@ -486,7 +441,6 @@ test('{ value } objects (systemPrompt) pass through to customPrompt', () => {
 
   expect(warnings).toHaveLength(0);
   const nodeAgents = params.nodes[0].agents!;
-  // systemPrompt + instructions both map to customPrompt (combined with \n\n)
   expect(nodeAgents[0].customPrompt).toEqual({ value: 'Extra context.\n\nFollow these rules.' });
 });
 
@@ -533,18 +487,12 @@ test('mix of plain strings and { value } objects in the same node normalize to c
   expect(warnings).toHaveLength(0);
   const nodeAgents = params.nodes[0].agents!;
 
-  // coder: plain string systemPrompt normalized to { value }
   const coder = nodeAgents.find((a) => a.name === 'coder')!;
   expect(coder.customPrompt).toEqual({ value: 'Plain string prompt' });
 
-  // reviewer: { value } systemPrompt passed through unchanged
   const reviewer = nodeAgents.find((a) => a.name === 'reviewer')!;
   expect(reviewer.customPrompt).toEqual({ value: 'Modern prompt' });
 });
-
-// ---------------------------------------------------------------------------
-// Full round-trip: export → validate → import → DB read-back
-// ---------------------------------------------------------------------------
 
 describe('full round-trip: export → import → DB read-back', () => {
   let db: BunDatabase;
@@ -574,16 +522,13 @@ describe('full round-trip: export → import → DB read-back', () => {
     const originalWorkflow = makeWorkflowWithOverrides();
     originalWorkflow.spaceId = SPACE_ID;
 
-    // Export
     const exported = exportWorkflow(originalWorkflow, agents);
     const bundle = exportBundle(agents, [originalWorkflow], 'Test Bundle');
 
-    // Validate (simulates the import pipeline's validation step)
     const validation = validateExportBundle(bundle);
     expect(validation.ok).toBe(true);
     if (!validation.ok) return;
 
-    // Build import params with the exported workflow
     const importedNameToId = new Map([
       ['Coder Agent', 'agent-1'],
       ['Reviewer Agent', 'agent-2'],
@@ -599,10 +544,8 @@ describe('full round-trip: export → import → DB read-back', () => {
     );
     expect(warnings).toHaveLength(0);
 
-    // Create workflow via manager (same path as spaceImport.execute)
     const created = manager.createWorkflow(params);
 
-    // Read back from DB and verify per-slot overrides are persisted
     const readBack = repo.getWorkflow(created.id);
     expect(readBack).not.toBeNull();
     const nodeAgents = readBack!.nodes[0].agents!;
@@ -631,15 +574,12 @@ describe('full round-trip: export → import → DB read-back', () => {
     const originalWorkflow = makeWorkflowWithoutOverrides();
     originalWorkflow.spaceId = SPACE_ID;
 
-    // Simulate an old export: export normally (no overrides in source)
     const exported = exportWorkflow(originalWorkflow, agents);
 
-    // Verify exported format has no model/systemPrompt
     const entry0 = exported.nodes[0].agents![0] as Record<string, unknown>;
     expect('model' in entry0).toBe(false);
     expect('systemPrompt' in entry0).toBe(false);
 
-    // Build import params
     const importedNameToId = new Map([
       ['Coder Agent', 'agent-1'],
       ['Reviewer Agent', 'agent-2'],
@@ -655,7 +595,6 @@ describe('full round-trip: export → import → DB read-back', () => {
     );
     expect(warnings).toHaveLength(0);
 
-    // Import and read back — should succeed without errors
     const created = manager.createWorkflow(params);
     const readBack = repo.getWorkflow(created.id);
     expect(readBack).not.toBeNull();
@@ -663,7 +602,6 @@ describe('full round-trip: export → import → DB read-back', () => {
     const nodeAgents = readBack!.nodes[0].agents!;
     expect(nodeAgents).toHaveLength(2);
 
-    // No overrides stored — customPrompt should be absent/undefined
     for (const a of nodeAgents) {
       expect(a.customPrompt).toBeUndefined();
     }
@@ -673,7 +611,6 @@ describe('full round-trip: export → import → DB read-back', () => {
     const agent1 = makeTestAgent('agent-1', 'Coder Agent', { spaceId: SPACE_ID });
     const agents = [agent1];
 
-    // Same agent twice in one node, different per-slot configs
     const workflow: SpaceWorkflow = {
       id: 'wf-same-agent',
       spaceId: SPACE_ID,
@@ -706,7 +643,6 @@ describe('full round-trip: export → import → DB read-back', () => {
 
     const exported = exportWorkflow(workflow, agents);
 
-    // Verify both slots exported with distinct overrides
     const exportedAgents = exported.nodes[0].agents!;
     expect(exportedAgents).toHaveLength(2);
     expect(exportedAgents[0].agentRef).toBe('Coder Agent');
@@ -720,7 +656,6 @@ describe('full round-trip: export → import → DB read-back', () => {
       value: 'Write quick code.',
     });
 
-    // Build import params and persist
     const importedNameToId = new Map([['Coder Agent', 'agent-1']]);
     const existingNameToId = new Map<string, string>();
 
@@ -771,7 +706,6 @@ describe('full round-trip: export → import → DB read-back', () => {
             {
               agentId: 'agent-2',
               name: 'reviewer',
-              // no overrides
             },
           ],
         },
@@ -816,12 +750,7 @@ describe('full round-trip: export → import → DB read-back', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// validateExportBundle — duplicate handle detection
-// ---------------------------------------------------------------------------
-
 describe('validateExportBundle — duplicate handle within bundle', () => {
-  /** Minimal valid exported workflow fixture with an optional handle. */
   function makeExportedWf(name: string, handle?: string): ExportedSpaceWorkflow {
     return {
       version: 1,
@@ -837,7 +766,6 @@ describe('validateExportBundle — duplicate handle within bundle', () => {
 
   test('rejects two workflows in the same bundle that share a handle', () => {
     const bundle = exportBundle([], [], 'Collision Bundle');
-    // Manually inject two workflows with the same handle
     (bundle as Record<string, unknown>).workflows = [
       makeExportedWf('Workflow A', 'shared-handle'),
       makeExportedWf('Workflow B', 'shared-handle'),
@@ -864,8 +792,8 @@ describe('validateExportBundle — duplicate handle within bundle', () => {
     const bundle = exportBundle([], [], 'Partial Handles Bundle');
     (bundle as Record<string, unknown>).workflows = [
       makeExportedWf('Workflow A', 'handle-a'),
-      makeExportedWf('Workflow B'), // no handle
-      makeExportedWf('Workflow C'), // no handle — no conflict since null is not unique-checked
+      makeExportedWf('Workflow B'),
+      makeExportedWf('Workflow C'),
     ];
     const result = validateExportBundle(bundle);
     expect(result.ok).toBe(true);

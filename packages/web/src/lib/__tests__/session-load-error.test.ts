@@ -1,13 +1,3 @@
-/**
- * Tests for session-load-error classification (task #873).
- *
- * The classifier must preserve the backend's distinct failure modes instead of
- * collapsing every load failure into "Failed to load session". A definitive
- * server reply (e.g. "Session not found") wins even when the transport reports
- * reconnecting; only connection-shaped / generic errors fall back to the
- * transport-derived "disconnected" kind.
- */
-
 import { describe, it, expect } from 'vitest';
 import {
   classifySessionLoadError,
@@ -27,7 +17,6 @@ const CONN = {
 
 describe('classifySessionLoadError', () => {
   it('classifies a "Session not found" reply as not-found even while reconnecting', () => {
-    // The server actually responded — don't mistake it for a transient blip.
     const r = classifySessionLoadError(new Error('Session not found'), CONN.reconnecting);
     expect(r.kind).toBe('not-found');
     expect(r.message).toBe(loadErrorMessage('not-found'));
@@ -55,8 +44,6 @@ describe('classifySessionLoadError', () => {
   });
 
   it('falls back to the transport state for a generic error', () => {
-    // No recognizable message + transport down → transient disconnected, not a
-    // hard not-found that would wipe the cached transcript.
     const r = classifySessionLoadError(new Error('something broke'), CONN.reconnecting);
     expect(r.kind).toBe('disconnected');
   });
@@ -112,7 +99,6 @@ describe('describeUnavailable', () => {
     const unauthorized = describeUnavailable('unauthorized');
     expect(notFound.heading).not.toBe(archived.heading);
     expect(archived.heading).not.toBe(unauthorized.heading);
-    // None collapse to the legacy "Failed to load session" wording.
     for (const kind of [
       'not-found',
       'archived',

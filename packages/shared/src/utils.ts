@@ -19,10 +19,6 @@ export function isUUID(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
-/**
- * Safely parse a JSON string, returning a fallback value on failure.
- * Use this for reading DB columns that should be JSON but may be corrupted.
- */
 export function parseJson<T>(raw: string | null | undefined, fallback: T): T {
   if (raw == null) return fallback;
   try {
@@ -32,10 +28,6 @@ export function parseJson<T>(raw: string | null | undefined, fallback: T): T {
   }
 }
 
-/**
- * Safely parse a JSON string, returning undefined on failure or null input.
- * Use this for reading optional DB columns that should be JSON but may be corrupted.
- */
 export function parseJsonOptional<T>(raw: string | null | undefined): T | undefined {
   if (raw == null) return undefined;
   try {
@@ -45,17 +37,11 @@ export function parseJsonOptional<T>(raw: string | null | undefined): T | undefi
   }
 }
 
-/**
- * Generate a UUID v4 (browser and Node.js compatible)
- * Uses crypto.randomUUID() if available, otherwise falls back to a polyfill
- */
 export function generateUUID(): string {
-  // Try to use the native crypto.randomUUID() if available
   if (typeof globalThis.crypto?.randomUUID === 'function') {
     return globalThis.crypto.randomUUID();
   }
 
-  // Fallback for older browsers and environments (UUID v4 format)
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
     const v = c === 'x' ? r : (r & 0x3) | 0x8;
@@ -63,15 +49,11 @@ export function generateUUID(): string {
   });
 }
 
-/** Composer/draft character cap shared by the web input and daemon draft writes. */
 export const DRAFT_CHAR_LIMIT = 100_000;
 
 const CJK_SCRIPT = /[\p{sc=Han}\p{sc=Hiragana}\p{sc=Katakana}\p{sc=Hangul}]/u;
 const ASCII_QUOTE = /['"`]/;
 
-// Suppress a separating space when the preceding text ends in whitespace or an
-// opening bracket/quote (ASCII straight quotes count as opening only when they
-// follow whitespace or start-of-text).
 function suppressLeadingSpace(before: string): boolean {
   if (before.length === 0) return false;
   const last = before.slice(-1);
@@ -84,15 +66,6 @@ function suppressLeadingSpace(before: string): boolean {
   return false;
 }
 
-/**
- * Append `text` to an existing draft string, inserting a single separating
- * space only when both sides are non-empty and neither boundary is CJK or a
- * join-suppressing character. CJK scripts need no inter-character space
- * (你好 + 世界 -> 你好世界). Capped to the shared draft character limit.
- *
- * Shared so the daemon's atomic draft append and the client's pending-voice
- * merge apply identical spacing rules.
- */
 export function appendDraftText(existing: string, text: string): string {
   const needsSpace =
     existing.length > 0 &&

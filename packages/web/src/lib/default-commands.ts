@@ -1,10 +1,3 @@
-/**
- * Default commands registered for the global command palette.
- *
- * Each command must be side-effect free at module load time. The `run` handler
- * is invoked only when the user activates the command.
- */
-
 import { commandRegistry, type CommandDescriptor } from './command-registry.ts';
 import {
   commandPaletteModeSignal,
@@ -47,7 +40,6 @@ async function runCreateSession() {
       toast.error('No sessionId in response');
       return;
     }
-    // router import is async-safe; navigate dynamically to avoid a cycle
     const { navigateToSession } = await import('./router.ts');
     navigateToSession(response.sessionId);
     toast.success('Session created');
@@ -230,20 +222,14 @@ export const DEFAULT_COMMANDS: readonly CommandDescriptor[] = [
 
 let registered = false;
 
-/** Idempotently register the default command set. Safe to call multiple times. */
 export function registerDefaultCommands(): void {
   if (registered) return;
   commandRegistry.registerAll(DEFAULT_COMMANDS);
   registered = true;
 }
 
-/** Test-only reset. */
 export function _resetDefaultCommandRegistration(): void {
   registered = false;
 }
 
-// Register at module load so the registry is populated before the palette can
-// be rendered. Importing this module is the public API for "turn on defaults";
-// the explicit `registerDefaultCommands()` call exists for tests that need to
-// re-register after a clear() and to make the side effect discoverable.
 registerDefaultCommands();

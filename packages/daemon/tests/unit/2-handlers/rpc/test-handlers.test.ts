@@ -1,21 +1,11 @@
-/**
- * Tests for Test RPC Handlers
- *
- * Tests the RPC handlers for test operations (only available in test mode):
- * - test.injectSDKMessage - Inject an SDK message directly into the database
- * - test.broadcastDelta - Broadcast a delta update directly to a state channel
- */
-
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import { setupTestHandlers } from '../../../../src/lib/rpc-handlers/test-handlers';
 import type { Database } from '../../../../src/storage/database';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 
-// Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
-// Helper to create a minimal mock MessageHub that captures handlers
 function createMockMessageHub(): {
   hub: MessageHub;
   handlers: Map<string, RequestHandler>;
@@ -46,7 +36,6 @@ function createMockMessageHub(): {
   return { hub, handlers };
 }
 
-// Helper to create mock Database
 function createMockDatabase(): {
   db: Database;
   mocks: {
@@ -73,7 +62,6 @@ describe('Test RPC Handlers', () => {
     messageHubData = createMockMessageHub();
     dbData = createMockDatabase();
 
-    // Setup handlers with mocked dependencies
     setupTestHandlers(messageHubData.hub, dbData.db);
   });
 
@@ -223,7 +211,6 @@ describe('Test RPC Handlers', () => {
 
       const afterTime = Date.now();
 
-      // Get the call arguments
       const eventCall = (messageHubData.hub.event as ReturnType<typeof mock>).mock.calls[0];
       const deltaData = eventCall[1] as { added: Array<{ timestamp: number }> };
 

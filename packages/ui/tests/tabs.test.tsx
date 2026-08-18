@@ -106,7 +106,6 @@ describe('TabGroup', () => {
 
   it('should set role=tabpanel on TabPanel', () => {
     render(<BasicTabs />);
-    // Only the selected panel is rendered by default
     const panels = screen.getAllByRole('tabpanel');
     expect(panels).toHaveLength(1);
   });
@@ -149,7 +148,6 @@ describe('TabGroup', () => {
     render(<BasicTabs />);
     const tabs = screen.getAllByRole('tab');
 
-    // Focus the first tab and press ArrowRight
     fireEvent.keyDown(tabs[0], { key: 'ArrowRight' });
 
     expect(tabs[0].getAttribute('aria-selected')).toBe('false');
@@ -170,7 +168,6 @@ describe('TabGroup', () => {
     render(<BasicTabs defaultIndex={2} />);
     const tabs = screen.getAllByRole('tab');
 
-    // From last tab, ArrowRight wraps to first
     fireEvent.keyDown(tabs[2], { key: 'ArrowRight' });
 
     expect(tabs[0].getAttribute('aria-selected')).toBe('true');
@@ -192,7 +189,6 @@ describe('TabGroup', () => {
     render(<TabsWithDisabled />);
     const tabs = screen.getAllByRole('tab');
 
-    // Tab 1 is selected (index 0), ArrowRight should skip disabled Tab 2, land on Tab 3
     fireEvent.keyDown(tabs[0], { key: 'ArrowRight' });
 
     expect(tabs[0].getAttribute('aria-selected')).toBe('false');
@@ -223,7 +219,6 @@ describe('TabGroup', () => {
   it('should show only selected TabPanel (unmount mode)', () => {
     render(<BasicTabs />);
 
-    // Only first panel visible
     expect(screen.getByText('Panel 1')).toBeTruthy();
     expect(screen.queryByText('Panel 2')).toBeNull();
     expect(screen.queryByText('Panel 3')).toBeNull();
@@ -247,14 +242,11 @@ describe('TabGroup', () => {
     render(<BasicTabs manual />);
     const tabs = screen.getAllByRole('tab');
 
-    // ArrowRight should focus next tab but not select it in manual mode
     fireEvent.keyDown(tabs[0], { key: 'ArrowRight' });
 
-    // Selection stays on first tab
     expect(tabs[0].getAttribute('aria-selected')).toBe('true');
     expect(tabs[1].getAttribute('aria-selected')).toBe('false');
 
-    // Enter on focused tab (tabs[1] would be focused, simulate keyDown on it)
     fireEvent.keyDown(tabs[1], { key: 'Enter' });
     expect(tabs[1].getAttribute('aria-selected')).toBe('true');
   });
@@ -334,7 +326,6 @@ describe('TabGroup', () => {
   it('should handle unknown keydown on Tab (default case)', () => {
     render(<BasicTabs />);
     const tabs = screen.getAllByRole('tab');
-    // Send an unhandled key - should not change selection
     fireEvent.keyDown(tabs[0], { key: 'a' });
     expect(tabs[0].getAttribute('aria-selected')).toBe('true');
   });
@@ -355,9 +346,7 @@ describe('TabGroup', () => {
       </TabGroup>
     );
     const tabs = screen.getAllByRole('tab');
-    // With all disabled, ArrowRight should stay on same index
     fireEvent.keyDown(tabs[0], { key: 'ArrowRight' });
-    // No error thrown - the function returns `from` when all disabled
     expect(tabs[0]).not.toBeNull();
   });
 
@@ -377,7 +366,6 @@ describe('TabGroup', () => {
       </TabGroup>
     );
     const tabs = screen.getAllByRole('tab');
-    // Tab 2 is disabled - pressing Enter should not select it
     fireEvent.keyDown(tabs[1], { key: 'Enter' });
     expect(tabs[1].getAttribute('aria-selected')).toBe('false');
   });
@@ -412,7 +400,6 @@ describe('TabGroup', () => {
         </TabPanels>
       </TabGroup>
     );
-    // Both panels in DOM, Panel 2 hidden
     expect(screen.getByText('Panel 1')).not.toBeNull();
     const panel2 = screen.getByText('Panel 2').closest('[role="tabpanel"]');
     expect(panel2?.getAttribute('hidden')).toBe('');

@@ -25,7 +25,6 @@ export function useInteractionState(
       return;
     }
 
-    // Hover tracking (ignore on touch devices)
     const onPointerEnter = (e: PointerEvent) => {
       if (e.pointerType === 'touch') return;
       setHover(true);
@@ -36,7 +35,6 @@ export function useInteractionState(
       setActive(false);
     };
 
-    // Focus tracking (focus-visible heuristic)
     let hadKeyboardEvent = false;
     const onKeyDown = () => {
       hadKeyboardEvent = true;
@@ -51,7 +49,6 @@ export function useInteractionState(
       hadKeyboardEvent = false;
     };
 
-    // Active tracking
     const onPointerDown = () => setActive(true);
     const onPointerUp = () => setActive(false);
 
@@ -77,7 +74,6 @@ export function useInteractionState(
   return { hover, focus, active };
 }
 
-// Build data attribute props from slot state
 export function dataAttributes(slot: Record<string, unknown>): Record<string, string | undefined> {
   const attrs: Record<string, string | undefined> = {};
   for (const [key, value] of Object.entries(slot)) {

@@ -32,13 +32,9 @@ import {
 } from '../../internal/use-anchor-props.ts';
 import { useResolveButtonType } from '../../internal/use-resolve-button-type.ts';
 import { useScrollLock } from '../../internal/use-scroll-lock.ts';
-// Note: We don't use useSlice for stack machine - using ref + effect pattern instead
-// to avoid type compatibility issues between StackMachine and the generic Machine type
 import { useSyncRefs } from '../../internal/use-sync-refs.ts';
 import { useTextValue } from '../../internal/use-text-value.ts';
 import { useTrackedPointer } from '../../internal/use-tracked-pointer.ts';
-
-// --- Types ---
 
 interface MenuItemData {
   id: string;
@@ -65,8 +61,6 @@ interface MenuState {
   setActivationTrigger: (trigger: ActivationTrigger) => void;
 }
 
-// --- Context ---
-
 const MenuContext = createContext<MenuState | null>(null);
 MenuContext.displayName = 'MenuContext';
 
@@ -77,8 +71,6 @@ function useMenuContext(component: string): MenuState {
   }
   return ctx;
 }
-
-// --- Transition attributes helper ---
 
 function useTransitionAttrs(open: boolean, transition: boolean) {
   const [transitionAttrs, setTransitionAttrs] = useState<Record<string, ''>>({});
@@ -121,8 +113,6 @@ function useTransitionAttrs(open: boolean, transition: boolean) {
   return transitionAttrs;
 }
 
-// --- Menu (root) ---
-
 interface MenuProps {
   as?: ElementType;
   children?: unknown;
@@ -143,16 +133,13 @@ function MenuFn({ as: Tag = Fragment, children, ...rest }: MenuProps) {
   const buttonRef = useRef<HTMLElement | null>(null);
   const itemsRef = useRef<HTMLElement | null>(null);
 
-  // Stack machine integration - register/unregister this menu
   const stackMachine = stackMachines.get(null);
 
-  // Check if this menu is the top layer using ref + effect pattern (like dialog.tsx)
   const isTopLayerRef = useRef(true);
   useIsoMorphicEffect(() => {
     isTopLayerRef.current = stackMachine.selectors.isTop(stackMachine.state, id);
   });
 
-  // Register with stack machine when open changes
   useIsoMorphicEffect(() => {
     if (open) {
       stackMachine.actions.push(id);
@@ -169,7 +156,6 @@ function MenuFn({ as: Tag = Fragment, children, ...rest }: MenuProps) {
 
   const registerItem = useEvent((item: MenuItemData) => {
     setItems((prev) => {
-      // Insert in DOM order
       if (item.ref.current && itemsRef.current) {
         const allItems = Array.from(
           itemsRef.current.querySelectorAll<HTMLElement>('[role="menuitem"]')
@@ -209,7 +195,6 @@ function MenuFn({ as: Tag = Fragment, children, ...rest }: MenuProps) {
 
   const slot = { open, close };
 
-  // Ref forwarding for the menu root
   const menuRef = useSyncRefs(
     rest.ref as RefObject<HTMLElement | null> | ((instance: HTMLElement) => void) | null
   );
@@ -238,8 +223,6 @@ function MenuFn({ as: Tag = Fragment, children, ...rest }: MenuProps) {
 MenuFn.displayName = 'Menu';
 export const Menu = MenuFn;
 
-// --- MenuButton ---
-
 interface MenuButtonProps {
   as?: ElementType;
   disabled?: boolean;
@@ -265,14 +248,11 @@ function MenuButtonFn({
     itemsRef,
   } = useMenuContext('MenuButton');
 
-  // Internal ref for element access
   const internalRef = useRef<HTMLElement | null>(null);
 
-  // Floating UI reference
   const setFloatingReference = useFloatingReference();
   const getFloatingReferenceProps = useFloatingReferenceProps();
 
-  // Combined ref: context ref + floating ref + internal ref
   const buttonRef = useSyncRefs(
     contextButtonRef,
     setFloatingReference,
@@ -280,16 +260,11 @@ function MenuButtonFn({
     rest.ref as RefObject<HTMLElement | null> | ((instance: HTMLElement) => void) | null
   );
 
-  // Resolve button type (auto-add type="button" for native buttons)
   const resolvedType = useResolveButtonType(
     { as: Tag, type: rest.type as string | undefined },
     internalRef.current
   );
 
-  // Stack machine - check if this menu is on top (not used in MenuButton currently)
-  // but included for consistency with Headless UI v2 pattern
-
-  // State for hover/focus/active
   const [hover, setHover] = useState(false);
   const [focus, setFocus] = useState(false);
   const [active, setActive] = useState(false);
@@ -307,14 +282,11 @@ function MenuButtonFn({
       if (!open) {
         toggle();
       }
-      // Focus first item after opening
       requestAnimationFrame(() => {
         const el = itemsRef.current;
         if (el) {
           el.focus();
         }
-        // Dispatch a synthetic ArrowDown or nothing — the MenuItems keydown handler
-        // will handle focusing first/last item. We signal via a custom event.
         el?.dispatchEvent(
           new CustomEvent('menu:openkey', {
             detail: { key: e.key === 'ArrowUp' ? 'ArrowUp' : 'ArrowDown' },
@@ -348,7 +320,6 @@ function MenuButtonFn({
     }
   });
 
-  // Firefox Space key fix - prevent Space from triggering click after keydown preventDefault
   const handleKeyUp = useEvent((e: KeyboardEvent) => {
     if (e.key === ' ') {
       e.preventDefault();
@@ -392,8 +363,6 @@ function MenuButtonFn({
 MenuButtonFn.displayName = 'MenuButton';
 export const MenuButton = MenuButtonFn;
 
-// --- MenuItems ---
-
 interface MenuItemsProps {
   as?: ElementType;
   transition?: boolean;
@@ -431,17 +400,13 @@ function MenuItemsFn({
     setActivationTrigger,
   } = useMenuContext('MenuItems');
 
-  // Resolve anchor configuration
   const anchor = useResolvedAnchor(rawAnchor);
 
-  // Internal ref for element access
   const internalRef = useRef<HTMLElement | null>(null);
 
-  // Floating UI panel positioning
   const [floatingRef, floatingStyles] = useFloatingPanel(anchor);
   const getFloatingPanelProps = useFloatingPanelProps();
 
-  // Combined ref: context ref + floating ref (if anchor is set) + internal ref
   const itemsRef = useSyncRefs(
     contextItemsRef,
     anchor ? floatingRef : null,
@@ -449,22 +414,18 @@ function MenuItemsFn({
     rest.ref as RefObject<HTMLElement | null> | ((instance: HTMLElement) => void) | null
   );
 
-  // Stack machine - check if this menu is on top using ref + effect pattern
   const stackMachine = stackMachines.get(null);
   const isTopLayerRef = useRef(true);
   useIsoMorphicEffect(() => {
     isTopLayerRef.current = stackMachine.selectors.isTop(stackMachine.state, menuId);
   });
 
-  // Determine if we should handle events (same pattern as dialog.tsx)
   const shouldHandleEvents =
     open && (isTopLayerRef.current || !stackMachine.selectors.inStack(stackMachine.state, menuId));
 
-  // Search buffer for typeahead
   const searchBufferRef = useRef('');
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Close on outside click - only if we should handle events
   useOutsideClick(
     shouldHandleEvents ? [buttonRef, internalRef] : [],
     useCallback(() => {
@@ -475,7 +436,6 @@ function MenuItemsFn({
     open
   );
 
-  // Close on escape - only if we should handle events
   useEscape(
     useCallback(
       (e: KeyboardEvent) => {
@@ -491,13 +451,10 @@ function MenuItemsFn({
     open && shouldHandleEvents
   );
 
-  // Scroll lock when modal and open and we should handle events
   useScrollLock(modal && open && shouldHandleEvents);
 
-  // Mark other elements inert when modal and open and we should handle events
   useInert(internalRef, modal && open && shouldHandleEvents);
 
-  // Focus the items container when menu opens
   useEffect(() => {
     if (open) {
       requestAnimationFrame(() => {
@@ -508,7 +465,6 @@ function MenuItemsFn({
     }
   }, [open, setActiveItemIndex]);
 
-  // Listen to the custom event dispatched by MenuButton to focus first/last item
   useEffect(() => {
     const el = internalRef.current;
     if (!el) return;
@@ -632,7 +588,6 @@ function MenuItemsFn({
         case 'Tab': {
           e.preventDefault();
           close();
-          // Let natural tab proceed after closing
           requestAnimationFrame(() => {
             const focusableElements = document.querySelectorAll<HTMLElement>(
               'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
@@ -649,7 +604,6 @@ function MenuItemsFn({
           break;
         }
         default: {
-          // Typeahead: single printable character
           if (e.key.length === 1 && e.key.match(/\S/)) {
             e.preventDefault();
             searchBufferRef.current += e.key.toLowerCase();
@@ -664,7 +618,6 @@ function MenuItemsFn({
             const query = searchBufferRef.current;
             const matchIndex = items.findIndex((item, index) => {
               if (item.disabled) return false;
-              // Start search after current active item
               if (activeItemIndex !== null && index <= activeItemIndex) return false;
               return item.textValue().startsWith(query);
             });
@@ -673,7 +626,6 @@ function MenuItemsFn({
               setActiveItemIndex(matchIndex);
               setActivationTrigger(ActivationTrigger.Other);
             } else {
-              // Wrap around from beginning
               const wrapIndex = items.findIndex((item) => {
                 if (item.disabled) return false;
                 return item.textValue().startsWith(query);
@@ -696,10 +648,8 @@ function MenuItemsFn({
   const activeItemId =
     activeItemIndex !== null && items[activeItemIndex] ? items[activeItemIndex].id : undefined;
 
-  // Get floating panel props if anchor is set
   const floatingPanelProps = anchor ? getFloatingPanelProps() : {};
 
-  // Always enable portal when anchor is set
   if (anchor) {
     portal = true;
   }
@@ -745,8 +695,6 @@ function MenuItemsFn({
 MenuItemsFn.displayName = 'MenuItems';
 export const MenuItems = MenuItemsFn;
 
-// --- MenuItem ---
-
 interface MenuItemProps {
   as?: ElementType;
   disabled?: boolean;
@@ -772,21 +720,17 @@ function MenuItemFn({ as: Tag = Fragment, disabled = false, children, ...rest }:
   const getTextValue = useTextValue(internalRef);
   const pointer = useTrackedPointer();
 
-  // Combined ref for forwarding
   const ref = useSyncRefs(
     internalRef,
     rest.ref as RefObject<HTMLElement | null> | ((instance: HTMLElement) => void) | null
   );
 
-  // State for hover/focus
   const [hover, setHover] = useState(false);
   const [focus, setFocus] = useState(false);
 
-  // Compute active state
   const activeItem = activeItemIndex !== null ? items[activeItemIndex] : null;
   const isActive = activeItem ? activeItem.id === id : false;
 
-  // Scroll active item into view when activated via keyboard
   const shouldScrollIntoView = isActive;
   const prevIsActiveRef = useRef(false);
 
@@ -796,7 +740,6 @@ function MenuItemFn({ as: Tag = Fragment, disabled = false, children, ...rest }:
       return;
     }
 
-    // Only scroll when becoming active (not when already active)
     if (prevIsActiveRef.current) return;
     prevIsActiveRef.current = true;
 
@@ -805,7 +748,6 @@ function MenuItemFn({ as: Tag = Fragment, disabled = false, children, ...rest }:
     });
   }, [shouldScrollIntoView]);
 
-  // Register/unregister with menu context on mount/unmount
   useEffect(() => {
     const itemData: MenuItemData = {
       id,
@@ -817,7 +759,6 @@ function MenuItemFn({ as: Tag = Fragment, disabled = false, children, ...rest }:
     };
     registerItem(itemData);
     return () => unregisterItem(id);
-    // Only run on mount/unmount
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -832,7 +773,6 @@ function MenuItemFn({ as: Tag = Fragment, disabled = false, children, ...rest }:
   const handleFocus = useEvent(() => {
     if (disabled) return;
     setFocus(true);
-    // Find this item's index and set active
     setActiveItemIndex((currentIndex) => {
       const idx = items.findIndex((item) => item.id === id);
       if (idx === -1) return currentIndex;
@@ -850,7 +790,6 @@ function MenuItemFn({ as: Tag = Fragment, disabled = false, children, ...rest }:
     if (!pointer.wasMoved(e)) return;
     if (disabled) return;
     setHover(true);
-    // Find this item's index and set active
     setActiveItemIndex((currentIndex) => {
       const idx = items.findIndex((item) => item.id === id);
       if (idx === -1) return currentIndex;
@@ -902,8 +841,6 @@ function MenuItemFn({ as: Tag = Fragment, disabled = false, children, ...rest }:
 MenuItemFn.displayName = 'MenuItem';
 export const MenuItem = MenuItemFn;
 
-// --- MenuSectionContext ---
-
 interface MenuSectionContextValue {
   headingId: string | null;
   setHeadingId: (id: string | null) => void;
@@ -915,8 +852,6 @@ MenuSectionContext.displayName = 'MenuSectionContext';
 function useMenuSectionContext(): MenuSectionContextValue | null {
   return useContext(MenuSectionContext);
 }
-
-// --- MenuSection ---
 
 interface MenuSectionProps {
   as?: ElementType;
@@ -956,8 +891,6 @@ function MenuSectionFn({ as: Tag = 'div', children, ...rest }: MenuSectionProps)
 MenuSectionFn.displayName = 'MenuSection';
 export const MenuSection = MenuSectionFn;
 
-// --- MenuHeading ---
-
 interface MenuHeadingProps {
   as?: ElementType;
   children?: unknown;
@@ -994,8 +927,6 @@ function MenuHeadingFn({ as: Tag = 'header', children, ...rest }: MenuHeadingPro
 
 MenuHeadingFn.displayName = 'MenuHeading';
 export const MenuHeading = MenuHeadingFn;
-
-// --- MenuSeparator ---
 
 interface MenuSeparatorProps {
   as?: ElementType;

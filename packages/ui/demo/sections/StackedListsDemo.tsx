@@ -378,9 +378,6 @@ export function StackedListsDemo() {
         </ul>
       </div>
 
-      {/* ============================================================ */}
-      {/* 13 - Narrow with Actions */}
-      {/* ============================================================ */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Narrow with actions</h3>
         <div class="overflow-hidden bg-surface-0 shadow-sm outline outline-1 outline-black/5 dark:bg-surface-0/50 dark:shadow-none dark:outline-white/10 sm:rounded-xl">
@@ -421,9 +418,6 @@ export function StackedListsDemo() {
         </div>
       </div>
 
-      {/* ============================================================ */}
-      {/* 14 - Narrow with Truncated Content */}
-      {/* ============================================================ */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Narrow with truncated content</h3>
         <ul role="list" class="divide-y divide-surface-border dark:divide-white/5">
@@ -481,9 +475,6 @@ export function StackedListsDemo() {
         </ul>
       </div>
 
-      {/* ============================================================ */}
-      {/* 15 - Narrow with Small Avatars */}
-      {/* ============================================================ */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Narrow with small avatars</h3>
         <ul role="list" class="divide-y divide-surface-border dark:divide-white/5">
@@ -520,9 +511,6 @@ export function StackedListsDemo() {
         </ul>
       </div>
 
-      {/* ============================================================ */}
-      {/* 16 - Activity with Icons */}
-      {/* ============================================================ */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Activity with icons</h3>
         <ul role="list" class="divide-y divide-surface-border dark:divide-white/5">
@@ -588,9 +576,6 @@ export function StackedListsDemo() {
         </ul>
       </div>
 
-      {/* ============================================================ */}
-      {/* 17 - Narrow with Badges */}
-      {/* ============================================================ */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Narrow with badges</h3>
         <ul role="list" class="divide-y divide-surface-border dark:divide-white/5">
@@ -650,9 +635,6 @@ export function StackedListsDemo() {
         </ul>
       </div>
 
-      {/* ============================================================ */}
-      {/* 18 - Simple List */}
-      {/* ============================================================ */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Simple list</h3>
         <ul role="list" class="divide-y divide-surface-border dark:divide-white/5">
@@ -699,9 +681,6 @@ export function StackedListsDemo() {
         </ul>
       </div>
 
-      {/* ============================================================ */}
-      {/* 19 - With Inline Links and Actions Menu */}
-      {/* ============================================================ */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">
           With inline links and actions menu
@@ -808,9 +787,6 @@ export function StackedListsDemo() {
         </ul>
       </div>
 
-      {/* ============================================================ */}
-      {/* 20 - With Badges, Button and Actions Menu */}
-      {/* ============================================================ */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">
           With badges, button and actions menu

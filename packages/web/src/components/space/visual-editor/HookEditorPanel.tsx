@@ -10,9 +10,7 @@ export interface HookEditorPanelProps {
   hook: WorkflowHook;
   onChange: (hook: WorkflowHook) => void;
   onBack: () => void;
-  /** List of node names available for source/target selection. */
   nodeNames: string[];
-  /** When true, renders just the content without the outer panel chrome. */
   embedded?: boolean;
 }
 
@@ -265,7 +263,6 @@ export function HookEditorPanel({
         </div>
       )}
 
-      {/* Enabled toggle */}
       <div class="flex items-center justify-between">
         <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">Enabled</label>
         <button
@@ -286,7 +283,6 @@ export function HookEditorPanel({
         </button>
       </div>
 
-      {/* Section tabs */}
       <div class="flex gap-1.5">
         {sections.map((s) => (
           <button
@@ -303,10 +299,8 @@ export function HookEditorPanel({
         ))}
       </div>
 
-      {/* Basic section */}
       {expandedSection === 'basic' && (
         <div class="space-y-3" data-testid="hook-editor-basic-section">
-          {/* Hook ID */}
           <div class="space-y-1">
             <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">Hook ID</label>
             <div class="text-xs font-mono bg-dark-800 rounded px-2 py-1.5 text-gray-400 border border-dark-700 truncate">
@@ -314,7 +308,6 @@ export function HookEditorPanel({
             </div>
           </div>
 
-          {/* Label */}
           <div class="space-y-1">
             <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">Label</label>
             <input
@@ -332,7 +325,6 @@ export function HookEditorPanel({
             {labelError && <p class="text-[10px] text-red-400">{labelError}</p>}
           </div>
 
-          {/* Source Node */}
           <div class="space-y-1">
             <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">Source Node</label>
             <select
@@ -354,7 +346,6 @@ export function HookEditorPanel({
             {sourceNodeError && <p class="text-[10px] text-red-400">{sourceNodeError}</p>}
           </div>
 
-          {/* Target Node */}
           <div class="space-y-1">
             <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">
               Target Node <span class="text-gray-500">(optional)</span>
@@ -379,7 +370,6 @@ export function HookEditorPanel({
             </select>
           </div>
 
-          {/* MCP Method */}
           <div class="space-y-1">
             <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">MCP Method</label>
             <select
@@ -401,7 +391,6 @@ export function HookEditorPanel({
             {methodError && <p class="text-[10px] text-red-400">{methodError}</p>}
           </div>
 
-          {/* Template Data */}
           <div class="space-y-1">
             <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">
               Template Data <span class="text-gray-500">(JSON)</span>
@@ -421,7 +410,6 @@ export function HookEditorPanel({
             {templateDataError && <p class="text-[10px] text-red-400">{templateDataError}</p>}
           </div>
 
-          {/* Classification + Order */}
           <div class="grid grid-cols-2 gap-2">
             <div class="space-y-1">
               <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">
@@ -465,10 +453,8 @@ export function HookEditorPanel({
         </div>
       )}
 
-      {/* Validator section */}
       {expandedSection === 'validator' && (
         <div class="space-y-3" data-testid="hook-editor-validator-section">
-          {/* Validator kind toggle */}
           <div class="flex items-center gap-2">
             <button
               type="button"
@@ -613,7 +599,6 @@ export function HookEditorPanel({
         </div>
       )}
 
-      {/* Authorized Callers section */}
       {expandedSection === 'callers' && (
         <div class="space-y-3" data-testid="hook-editor-callers-section">
           {(hook.authorizedCallers ?? []).length === 0 && (
@@ -698,7 +683,6 @@ export function HookEditorPanel({
         </div>
       )}
 
-      {/* Retry / Poll section */}
       {expandedSection === 'retry' && (
         <div class="space-y-3" data-testid="hook-editor-retry-section">
           <div class="space-y-2">

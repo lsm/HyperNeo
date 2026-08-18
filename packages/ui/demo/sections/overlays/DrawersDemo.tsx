@@ -1,21 +1,3 @@
-/**
- * DrawersDemo.tsx
- *
- * 12 drawer examples ported from Tailwind Application UI v4 reference:
- * 1. Empty drawer
- * 2. Empty wide drawer
- * 3. With background overlay
- * 4. With close button on outside
- * 5. With branded header
- * 6. With sticky footer
- * 7. Create project form
- * 8. Wide create project form
- * 9. User profile
- * 10. Wide user profile
- * 11. Contact list
- * 12. File details
- */
-
 import { useState } from 'preact/hooks';
 import {
   Dialog,
@@ -84,7 +66,7 @@ function EmptyDrawer() {
                       </div>
                     </div>
                   </div>
-                  <div class="relative mt-6 flex-1 px-4 sm:px-6">{/* Your content */}</div>
+                  <div class="relative mt-6 flex-1 px-4 sm:px-6"></div>
                 </div>
               </DialogPanel>
             </div>
@@ -137,7 +119,7 @@ function EmptyWideDrawer() {
                       </div>
                     </div>
                   </div>
-                  <div class="relative mt-6 flex-1 px-4 sm:px-6">{/* Your content */}</div>
+                  <div class="relative mt-6 flex-1 px-4 sm:px-6"></div>
                 </div>
               </DialogPanel>
             </div>
@@ -193,7 +175,7 @@ function DrawerWithOverlay() {
                       </div>
                     </div>
                   </div>
-                  <div class="relative mt-6 flex-1 px-4 sm:px-6">{/* Your content */}</div>
+                  <div class="relative mt-6 flex-1 px-4 sm:px-6"></div>
                 </div>
               </DialogPanel>
             </div>
@@ -249,7 +231,7 @@ function DrawerWithCloseButtonOutside() {
                       Panel title
                     </DialogTitle>
                   </div>
-                  <div class="relative mt-6 flex-1 px-4 sm:px-6">{/* Your content */}</div>
+                  <div class="relative mt-6 flex-1 px-4 sm:px-6"></div>
                 </div>
               </DialogPanel>
             </div>
@@ -308,7 +290,7 @@ function DrawerWithBrandedHeader() {
                       </p>
                     </div>
                   </div>
-                  <div class="relative flex-1 px-4 py-6 sm:px-6">{/* Your content */}</div>
+                  <div class="relative flex-1 px-4 py-6 sm:px-6"></div>
                 </div>
               </DialogPanel>
             </div>
@@ -362,7 +344,7 @@ function DrawerWithStickyFooter() {
                         </div>
                       </div>
                     </div>
-                    <div class="relative mt-6 flex-1 px-4 sm:px-6">{/* Your content */}</div>
+                    <div class="relative mt-6 flex-1 px-4 sm:px-6"></div>
                   </div>
                   <div class="flex shrink-0 justify-end px-4 py-4">
                     <button
@@ -452,7 +434,6 @@ function CreateProjectFormDrawer() {
               >
                 <form class="relative flex h-full flex-col overflow-y-auto bg-white shadow-xl dark:bg-gray-800 dark:after:absolute dark:after:inset-y-0 dark:after:left-0 dark:after:w-px dark:after:bg-white/10">
                   <div class="flex-1">
-                    {/* Header */}
                     <div class="bg-gray-50 px-4 py-6 sm:px-6 dark:bg-gray-800/50">
                       <div class="flex items-start justify-between space-x-3">
                         <div class="space-y-1">
@@ -478,9 +459,7 @@ function CreateProjectFormDrawer() {
                       </div>
                     </div>
 
-                    {/* Divider container */}
                     <div class="space-y-6 py-6 sm:space-y-0 sm:divide-y sm:divide-gray-200 sm:py-0 dark:sm:divide-white/10">
-                      {/* Project name */}
                       <div class="space-y-2 px-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:space-y-0 sm:px-6 sm:py-5">
                         <div>
                           <label
@@ -500,7 +479,6 @@ function CreateProjectFormDrawer() {
                         </div>
                       </div>
 
-                      {/* Project description */}
                       <div class="space-y-2 px-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:space-y-0 sm:px-6 sm:py-5">
                         <div>
                           <label
@@ -520,7 +498,6 @@ function CreateProjectFormDrawer() {
                         </div>
                       </div>
 
-                      {/* Team members */}
                       <div class="space-y-2 px-4 sm:grid sm:grid-cols-3 sm:items-center sm:gap-4 sm:space-y-0 sm:px-6 sm:py-5">
                         <div>
                           <h3 class="text-sm/6 font-medium text-gray-900 dark:text-white">
@@ -555,7 +532,6 @@ function CreateProjectFormDrawer() {
                         </div>
                       </div>
 
-                      {/* Privacy */}
                       <fieldset class="space-y-2 px-4 sm:grid sm:grid-cols-3 sm:items-start sm:gap-4 sm:space-y-0 sm:px-6 sm:py-5">
                         <legend class="sr-only">Privacy</legend>
                         <div
@@ -671,7 +647,6 @@ function CreateProjectFormDrawer() {
                     </div>
                   </div>
 
-                  {/* Action buttons */}
                   <div class="shrink-0 border-t border-gray-200 px-4 py-5 sm:px-6 dark:border-white/10">
                     <div class="flex justify-end space-x-3">
                       <button
@@ -988,7 +963,6 @@ function UserProfileDrawer() {
                       </div>
                     </div>
                   </div>
-                  {/* Main */}
                   <div>
                     <div class="pb-1 sm:pb-6">
                       <div>
@@ -1302,7 +1276,6 @@ function FileDetailsSlideOver() {
   );
 }
 
-// Helper for contact list
 function cn(...classes: (string | boolean | undefined)[]) {
   return classes.filter(Boolean).join(' ');
 }
@@ -1554,7 +1527,6 @@ function FileDetailsDrawer() {
                   </div>
 
                   <div class="flex-1 px-4 sm:px-6 space-y-6">
-                    {/* File preview */}
                     <div class="rounded-lg bg-gray-100 border-2 border-dashed border-gray-300 dark:bg-gray-800 dark:border-gray-600 aspect-video flex items-center justify-center">
                       <div class="text-center">
                         <File class="size-12 mx-auto text-gray-400" />
@@ -1564,7 +1536,6 @@ function FileDetailsDrawer() {
                       </div>
                     </div>
 
-                    {/* File info */}
                     <div class="space-y-4">
                       <div>
                         <h3 class="text-sm font-medium text-gray-900 dark:text-white">
@@ -1586,7 +1557,6 @@ function FileDetailsDrawer() {
                         </dl>
                       </div>
 
-                      {/* Actions */}
                       <div class="flex gap-3">
                         <button
                           type="button"

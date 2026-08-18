@@ -1,11 +1,3 @@
-/**
- * MCP Audit Log Repository
- *
- * Records MCP write operations for observability and audit trail.
- * Each entry captures: timestamp, agent identity, tool name, params summary,
- * and optional context (space_id, task_id, workflow_run_id).
- */
-
 import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
 
@@ -34,9 +26,6 @@ export interface CreateMcpAuditLogParams {
 export class McpAuditLogRepository {
   constructor(private db: BunDatabase) {}
 
-  /**
-   * Create a new audit log entry
-   */
   createEntry(params: CreateMcpAuditLogParams): McpAuditLogEntry {
     const id = generateUUID();
     const now = Date.now();
@@ -71,10 +60,6 @@ export class McpAuditLogRepository {
     };
   }
 
-  /**
-   * List audit log entries for a space, ordered by timestamp desc, id desc
-   * (id is the tie-breaker for deterministic ordering when timestamps collide).
-   */
   listBySpace(spaceId: string, limit = 100, offset = 0): McpAuditLogEntry[] {
     const rows = this.db
       .prepare(
@@ -84,9 +69,6 @@ export class McpAuditLogRepository {
     return rows.map((r) => this.rowToEntry(r));
   }
 
-  /**
-   * List audit log entries for a task within a space, ordered by timestamp desc, id desc.
-   */
   listByTask(taskId: string, limit = 100, offset = 0): McpAuditLogEntry[] {
     const rows = this.db
       .prepare(
@@ -96,9 +78,6 @@ export class McpAuditLogRepository {
     return rows.map((r) => this.rowToEntry(r));
   }
 
-  /**
-   * List audit log entries for a task scoped to a specific space.
-   */
   listByTaskAndSpace(taskId: string, spaceId: string, limit = 100, offset = 0): McpAuditLogEntry[] {
     const rows = this.db
       .prepare(
@@ -108,9 +87,6 @@ export class McpAuditLogRepository {
     return rows.map((r) => this.rowToEntry(r));
   }
 
-  /**
-   * List audit log entries for a session, ordered by timestamp desc, id desc.
-   */
   listBySession(sessionId: string, limit = 100, offset = 0): McpAuditLogEntry[] {
     const rows = this.db
       .prepare(
@@ -120,9 +96,6 @@ export class McpAuditLogRepository {
     return rows.map((r) => this.rowToEntry(r));
   }
 
-  /**
-   * List audit log entries for a session scoped to a specific space.
-   */
   listBySessionAndSpace(
     sessionId: string,
     spaceId: string,
@@ -137,9 +110,6 @@ export class McpAuditLogRepository {
     return rows.map((r) => this.rowToEntry(r));
   }
 
-  /**
-   * Count audit log entries for a space.
-   */
   countBySpace(spaceId: string): number {
     const row = this.db
       .prepare(`SELECT COUNT(*) as count FROM mcp_audit_log WHERE space_id = ?`)
@@ -147,9 +117,6 @@ export class McpAuditLogRepository {
     return row?.count ?? 0;
   }
 
-  /**
-   * Count audit log entries for a task.
-   */
   countByTask(taskId: string): number {
     const row = this.db
       .prepare(`SELECT COUNT(*) as count FROM mcp_audit_log WHERE task_id = ?`)
@@ -157,9 +124,6 @@ export class McpAuditLogRepository {
     return row?.count ?? 0;
   }
 
-  /**
-   * Count audit log entries for a task within a specific space.
-   */
   countByTaskAndSpace(taskId: string, spaceId: string): number {
     const row = this.db
       .prepare(`SELECT COUNT(*) as count FROM mcp_audit_log WHERE task_id = ? AND space_id = ?`)
@@ -167,9 +131,6 @@ export class McpAuditLogRepository {
     return row?.count ?? 0;
   }
 
-  /**
-   * Count audit log entries for a session.
-   */
   countBySession(sessionId: string): number {
     const row = this.db
       .prepare(`SELECT COUNT(*) as count FROM mcp_audit_log WHERE session_id = ?`)
@@ -177,9 +138,6 @@ export class McpAuditLogRepository {
     return row?.count ?? 0;
   }
 
-  /**
-   * Count audit log entries for a session within a specific space.
-   */
   countBySessionAndSpace(sessionId: string, spaceId: string): number {
     const row = this.db
       .prepare(`SELECT COUNT(*) as count FROM mcp_audit_log WHERE session_id = ? AND space_id = ?`)

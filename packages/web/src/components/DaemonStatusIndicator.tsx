@@ -1,21 +1,9 @@
 import { connectionState } from '../lib/state.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 
-/**
- * Daemon Status Indicator
- *
- * Shows connection status to the daemon with a colored dot:
- * - Green + pulsing: connected
- * - Yellow + pulse: connecting/reconnecting
- * - Gray: disconnected
- * - Red: error/failed
- *
- * Click to reconnect when not connected.
- */
 export function DaemonStatusIndicator({ showLabel = false }: { showLabel?: boolean }) {
   const state = connectionState.value;
 
-  // Determine status color and label
   let dotColor: string;
   let statusLabel: string;
   let displayLabel: string;
@@ -79,9 +67,7 @@ export function DaemonStatusIndicator({ showLabel = false }: { showLabel?: boole
       title={statusLabel}
     >
       <div class="relative flex items-center justify-center">
-        {/* Main dot */}
         <span class={`w-3 h-3 ${dotColor} rounded-full block`} />
-        {/* Pulse animation for connected/connecting states */}
         {showPulse && (
           <span
             class={`absolute inset-0 w-3 h-3 ${dotColor} rounded-full ${isConnected ? 'animate-ping opacity-75' : 'animate-pulse'}`}

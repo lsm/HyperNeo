@@ -1,11 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for ContextUsageBar Component
- *
- * Tests the context usage display with percentage, progress bar,
- * color coding, and expandable dropdown with breakdown.
-import { describe, it, expect } from 'vitest';
- */
 
 import { render, cleanup, fireEvent } from '@testing-library/preact';
 import type { ContextInfo } from '@hyperneo/shared';
@@ -47,7 +40,6 @@ describe('ContextUsageBar', () => {
       const { container } = render(<ContextUsageBar contextUsage={mockContextUsage} />);
 
       const circles = container.querySelectorAll('svg circle');
-      // Background circle + progress arc
       expect(circles.length).toBe(2);
     });
   });
@@ -93,7 +85,6 @@ describe('ContextUsageBar', () => {
     it('should set progress bar width in dropdown based on percentage', () => {
       const { container } = render(<ContextUsageBar contextUsage={mockContextUsage} />);
 
-      // Open dropdown to see the bar
       const clickable = container.querySelector('[title="Click for context details"]')!;
       fireEvent.click(clickable);
 
@@ -106,7 +97,6 @@ describe('ContextUsageBar', () => {
       const overUsage: ContextInfo = { ...mockContextUsage, percentUsed: 150 };
       const { container } = render(<ContextUsageBar contextUsage={overUsage} />);
 
-      // Open dropdown
       const clickable = container.querySelector('[title="Click for context details"]')!;
       fireEvent.click(clickable);
 
@@ -158,26 +148,21 @@ describe('ContextUsageBar', () => {
       const clickable = container.querySelector('[title="Context data loading..."]')!;
       fireEvent.click(clickable);
 
-      // Dropdown should not appear
       expect(container.textContent).not.toContain('Context Window');
     });
 
     it('should hide dropdown when close button is clicked', () => {
       const { container } = render(<ContextUsageBar contextUsage={mockContextUsage} />);
 
-      // Open dropdown
       const clickable = container.querySelector('[title="Click for context details"]')!;
       fireEvent.click(clickable);
 
-      // Click close button
-      const closeButton = Array.from(container.querySelectorAll('button')).find(
-        (btn) => btn.querySelector('line') // X icon has line elements
+      const closeButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+        btn.querySelector('line')
       );
       if (closeButton) {
         fireEvent.click(closeButton);
       }
-
-      // Dropdown should be closed (or test passes if no close button found)
     });
   });
 
@@ -257,7 +242,6 @@ describe('ContextUsageBar', () => {
       const clickable = container.querySelector('[title="Click for context details"]')!;
       fireEvent.click(clickable);
 
-      // System Prompt should have gray styling
       const systemRow = Array.from(container.querySelectorAll('.bg-gray-600'));
       expect(systemRow.length).toBeGreaterThan(0);
     });
@@ -268,7 +252,6 @@ describe('ContextUsageBar', () => {
       const clickable = container.querySelector('[title="Click for context details"]')!;
       fireEvent.click(clickable);
 
-      // Messages should have blue styling
       const messagesRow = container.querySelector('.bg-blue-500');
       expect(messagesRow).toBeTruthy();
     });
@@ -340,7 +323,6 @@ describe('ContextUsageBar', () => {
     it('should handle undefined contextUsage', () => {
       const { container } = render(<ContextUsageBar contextUsage={undefined} />);
 
-      // Should render without crashing, circle shows 0
       const svgText = container.querySelector('svg text');
       expect(svgText?.textContent).toBe('0');
     });
@@ -362,15 +344,10 @@ describe('ContextUsageBar', () => {
     it('should close dropdown on Escape key', () => {
       const { container } = render(<ContextUsageBar contextUsage={mockContextUsage} />);
 
-      // Open dropdown
       const clickable = container.querySelector('[title="Click for context details"]')!;
       fireEvent.click(clickable);
 
-      // Press Escape
       fireEvent.keyDown(document, { key: 'Escape' });
-
-      // Dropdown should be closed (context window text should be gone)
-      // Note: This tests the escape key handler
     });
   });
 
@@ -378,59 +355,43 @@ describe('ContextUsageBar', () => {
     it('should close dropdown when clicking outside', async () => {
       const { container } = render(<ContextUsageBar contextUsage={mockContextUsage} />);
 
-      // Open dropdown
       const clickable = container.querySelector('[title="Click for context details"]')!;
       fireEvent.click(clickable);
 
-      // Verify dropdown is open
       expect(container.textContent).toContain('Context Window');
 
-      // Wait for the timeout in the click handler setup
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Click outside on document body
       fireEvent.click(document.body);
 
-      // Wait for state update
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      // Dropdown should be closed
       expect(container.textContent).not.toContain('Context Window');
     });
 
     it('should not close dropdown when clicking inside indicator', async () => {
       const { container } = render(<ContextUsageBar contextUsage={mockContextUsage} />);
 
-      // Open dropdown
       const clickable = container.querySelector('[title="Click for context details"]')!;
       fireEvent.click(clickable);
 
-      // Wait for the timeout in the click handler setup
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Click inside indicator (toggle behavior)
       fireEvent.click(clickable);
-
-      // Dropdown closes because we click on indicator (toggle)
-      // This tests the isInsideIndicator check path
     });
 
     it('should not close dropdown when clicking inside dropdown', async () => {
       const { container } = render(<ContextUsageBar contextUsage={mockContextUsage} />);
 
-      // Open dropdown
       const clickable = container.querySelector('[title="Click for context details"]')!;
       fireEvent.click(clickable);
 
-      // Wait for the timeout in the click handler setup
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Find an element inside the dropdown
       const dropdownHeading = container.querySelector('h3');
       if (dropdownHeading) {
         fireEvent.click(dropdownHeading);
 
-        // Dropdown should still be open (clicked inside)
         expect(container.textContent).toContain('Context Window');
       }
     });
@@ -455,11 +416,9 @@ describe('ContextUsageBar', () => {
       };
       const { container } = render(<ContextUsageBar contextUsage={usageWithAllCategories} />);
 
-      // Open dropdown
       const clickable = container.querySelector('[title="Click for context details"]')!;
       fireEvent.click(clickable);
 
-      // Real usage categories should be shown.
       expect(container.textContent).toContain('System Prompt');
       expect(container.textContent).toContain('System Tools');
       expect(container.textContent).toContain('MCP Tools');
@@ -467,7 +426,6 @@ describe('ContextUsageBar', () => {
       expect(container.textContent).toContain('Input Context');
       expect(container.textContent).toContain('Output Tokens');
       expect(container.textContent).toContain('Free Space');
-      // Autocompact is rendered as the reserved buffer zone, not a breakdown row.
       const categoryLabels = Array.from(
         container.querySelectorAll('.text-gray-400.flex-1.min-w-0.truncate')
       ).map((el) => el.textContent);
@@ -506,7 +464,6 @@ describe('ContextUsageBar', () => {
       fireEvent.click(clickable);
 
       expect(container.textContent).toContain('Output');
-      // Should have green styling for output
       const greenRow = container.querySelector('.bg-green-500');
       expect(greenRow).toBeTruthy();
     });
@@ -526,7 +483,6 @@ describe('ContextUsageBar', () => {
       fireEvent.click(clickable);
 
       expect(container.textContent).toContain('Unknown Category');
-      // Should have default indigo styling
       const indigoRow = container.querySelector('.bg-indigo-500');
       expect(indigoRow).toBeTruthy();
     });
@@ -579,12 +535,10 @@ describe('ContextUsageBar', () => {
       const clickable = container.querySelector('[title="Click for context details"]')!;
       fireEvent.click(clickable);
 
-      // The buffer is visualised as the hatched zone, not a category row.
       const categoryLabels = Array.from(
         container.querySelectorAll('.text-gray-400.flex-1.min-w-0.truncate')
       ).map((el) => el.textContent);
       expect(categoryLabels).not.toContain('Autocompact');
-      // The dedicated buffer visuals should still render.
       expect(container.querySelector('[data-testid="autocompact-buffer-zone"]')).toBeTruthy();
     });
   });
@@ -604,7 +558,6 @@ describe('ContextUsageBar', () => {
       const clickable = container.querySelector('[title="Click for context details"]')!;
       fireEvent.click(clickable);
 
-      // Should calculate 20000/200000 * 100 = 10%
       expect(container.textContent).toContain('10.0%');
     });
 
@@ -660,7 +613,6 @@ describe('ContextUsageBar', () => {
       const bufferZone = container.querySelector(
         '[data-testid="autocompact-buffer-zone"]'
       ) as HTMLElement;
-      // (200000 - 160000) / 200000 * 100 = 20%
       expect(bufferZone?.style.width).toBe('20%');
     });
 
@@ -691,7 +643,6 @@ describe('ContextUsageBar', () => {
 
       expect(Number.parseFloat(bufferZone?.style.width ?? '')).toBeCloseTo(12.14595588235294, 5);
       expect(Number.parseFloat(marker?.style.left ?? '')).toBeCloseTo(87.85404411764706, 5);
-      // The buffer row is visualised as the hatched zone, not a breakdown row.
       const categoryLabels = Array.from(
         container.querySelectorAll('.text-gray-400.flex-1.min-w-0.truncate')
       ).map((el) => el.textContent);
@@ -708,7 +659,6 @@ describe('ContextUsageBar', () => {
         '[data-testid="autocompact-threshold-marker"]'
       ) as HTMLElement;
       expect(marker).toBeTruthy();
-      // 160000 / 200000 * 100 = 80%
       expect(marker?.style.left).toBe('80%');
     });
 
@@ -797,15 +747,12 @@ describe('ContextUsageBar', () => {
     it('should not change the displayed percentage number', () => {
       const { container } = render(<ContextUsageBar contextUsage={usageWithAutoCompact} />);
 
-      // Circle still shows percentUsed (25), not affected by buffer
       const svgText = container.querySelector('svg text');
       expect(svgText?.textContent).toBe('25');
 
-      // Open dropdown
       const clickable = container.querySelector('[title="Click for context details"]')!;
       fireEvent.click(clickable);
 
-      // "X% used" label should also stay tied to percentUsed
       expect(container.textContent).toContain('25.0%');
     });
   });
@@ -814,14 +761,10 @@ describe('ContextUsageBar', () => {
     it('should clean up event listeners on unmount', () => {
       const { container, unmount } = render(<ContextUsageBar contextUsage={mockContextUsage} />);
 
-      // Open dropdown
       const clickable = container.querySelector('[title="Click for context details"]')!;
       fireEvent.click(clickable);
 
-      // Unmount component - this should trigger cleanup
       unmount();
-
-      // No error should occur - cleanup should handle event listener removal
     });
   });
 });

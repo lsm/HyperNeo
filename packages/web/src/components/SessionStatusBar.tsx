@@ -1,17 +1,3 @@
-/**
- * SessionStatusBar Component
- *
- * Container component that displays connection status, interactive controls, and context usage
- * in a horizontal bar above the message input.
- *
- * Layout:
- * - Left: ConnectionStatus (Online/Offline/Connecting/Processing status)
- * - Center: Interactive controls (Model switcher, Auto-scroll, Thinking level)
- * - Right: ContextUsageBar (percentage + progress bar + dropdown)
- *
- * Uses the global connectionState signal directly for guaranteed reactivity.
- */
-
 import type { ContextInfo, ModelInfo, ThinkingLevel } from '@hyperneo/shared';
 import { getThinkingOptionsForProvider, THINKING_LEVEL_LABELS } from '@hyperneo/shared';
 import type { ProviderAuthStatus } from '@hyperneo/shared/provider';
@@ -43,20 +29,7 @@ import { Spinner } from './ui/Spinner.tsx';
 import { StatusDot } from './ui/StatusDot.tsx';
 import { Tooltip } from './ui/Tooltip.tsx';
 
-// Provider brand colors + logos live in lib/provider-brand.ts and
-// components/ProviderLogo.tsx (shared with the model picker).
-
-/**
- * ThinkingLevelIcon - Lightbulb icon with progressive lighting based on thinking level
- *
- * - off: Dim (gray) - no glow
- * - think8k: 1/4 lit (amber glow, dim bulb)
- * - think16k: 1/2 lit (amber glow, medium bulb)
- * - think24k: 3/4 lit (amber glow, bright medium bulb)
- * - think32k: Full lit (bright amber glow, bright bulb)
- */
 function ThinkingLevelIcon({ level }: { level: ThinkingLevel }) {
-  // Map level to brightness: 0 = off, 1 = 1/4, 2 = 1/2, 3 = 3/4, 4 = full
   const brightnessMap: Record<ThinkingLevel, number> = {
     off: 0,
     think8k: 1,
@@ -66,8 +39,6 @@ function ThinkingLevelIcon({ level }: { level: ThinkingLevel }) {
   };
   const brightness = brightnessMap[level];
 
-  // Color based on brightness level
-  // off: slightly brighter white, non-off: progressive amber
   const strokeColor =
     brightness === 0
       ? 'text-gray-400'
@@ -79,7 +50,6 @@ function ThinkingLevelIcon({ level }: { level: ThinkingLevel }) {
             ? 'text-amber-400'
             : 'text-amber-300';
 
-  // Fill opacity for the bulb (glow effect)
   const fillOpacity =
     brightness === 0
       ? 0
@@ -93,7 +63,6 @@ function ThinkingLevelIcon({ level }: { level: ThinkingLevel }) {
 
   return (
     <svg class={`w-4 h-4 ${strokeColor}`} viewBox="0 0 24 24">
-      {/* Glow effect behind the bulb */}
       {brightness > 0 && (
         <circle
           cx="12"
@@ -103,7 +72,6 @@ function ThinkingLevelIcon({ level }: { level: ThinkingLevel }) {
           opacity={fillOpacity}
         />
       )}
-      {/* Lightbulb outline */}
       <path
         fill="none"
         stroke="currentColor"
@@ -116,25 +84,14 @@ function ThinkingLevelIcon({ level }: { level: ThinkingLevel }) {
   );
 }
 
-/**
- * ThinkingBorderRing - SVG ring that shows partial border lighting
- *
- * Uses stroke-dasharray to create partial circle effect:
- * - think8k: 1/4 of circle lit (90 degrees)
- * - think16k: 1/2 of circle lit (180 degrees)
- * - think24k: 3/4 of circle lit (270 degrees)
- * - think32k: Full circle lit (360 degrees)
- */
 function ThinkingBorderRing({ level }: { level: ThinkingLevel }) {
   if (level === 'off') return null;
 
-  // Circle parameters (matches w-8 h-8 = 32px button)
   const size = 32;
   const strokeWidth = 2;
-  const radius = (size - strokeWidth) / 2; // 15
-  const circumference = 2 * Math.PI * radius; // ~94.25
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
 
-  // Calculate dash length based on level
   const dashPercentMap: Record<ThinkingLevel, number> = {
     off: 0,
     think8k: 0.25,
@@ -145,7 +102,6 @@ function ThinkingBorderRing({ level }: { level: ThinkingLevel }) {
   const dashPercent = dashPercentMap[level];
   const dashLength = circumference * dashPercent;
 
-  // Color based on level
   const strokeColor =
     level === 'think8k'
       ? '#d97706'
@@ -153,7 +109,7 @@ function ThinkingBorderRing({ level }: { level: ThinkingLevel }) {
         ? '#f59e0b'
         : level === 'think24k'
           ? '#fbbf24'
-          : '#fde68a'; // amber-600, amber-500, amber-400, amber-300
+          : '#fde68a';
 
   return (
     <svg class="absolute inset-0 w-full h-full pointer-events-none" viewBox={`0 0 ${size} ${size}`}>
@@ -165,7 +121,7 @@ function ThinkingBorderRing({ level }: { level: ThinkingLevel }) {
         stroke={strokeColor}
         stroke-width={strokeWidth}
         stroke-dasharray={`${dashLength} ${circumference - dashLength}`}
-        stroke-dashoffset={circumference * 0.25} // Start from top (rotate -90deg)
+        stroke-dashoffset={circumference * 0.25}
         stroke-linecap="round"
       />
     </svg>
@@ -179,27 +135,17 @@ interface SessionStatusBarProps {
   streamingPhase?: 'initializing' | 'thinking' | 'streaming' | 'finalizing' | null;
   contextUsage?: ContextInfo;
   maxContextTokens?: number;
-  // Model switcher
   currentModel: string;
   currentModelInfo: ModelInfo | null;
   availableModels: ModelInfo[];
   modelSwitching: boolean;
   modelLoading: boolean;
   onModelSwitch: (model: ModelInfo) => void;
-  // Auto-scroll
   autoScroll: boolean;
   onAutoScrollChange: (enabled: boolean) => void;
-  // Thinking level
   thinkingLevel?: ThinkingLevel;
   onThinkingLevelChange?: (level: ThinkingLevel) => Promise<void> | void;
-  // Coordinator switching guard for the model pill
   coordinatorSwitching?: boolean;
-  /**
-   * Per-session recovery flag (distinct from the global transport state). While
-   * true THIS session is rejoining its channel and re-syncing — the connection
-   * dot must read "Reconnecting…" (not "Ready") to match the recovery banner,
-   * and model controls stay disabled so the user can't switch models mid-sync.
-   */
   isRecovering?: boolean;
 }
 
@@ -223,18 +169,14 @@ export default function SessionStatusBar({
   coordinatorSwitching = false,
   isRecovering = false,
 }: SessionStatusBarProps) {
-  // Use useState + useSignalEffect to ensure component re-renders on signal change
-  // This is more explicit than relying on implicit signal tracking
   const [connState, setConnState] = useState<ConnectionState>(connectionState.value);
 
   useSignalEffect(() => {
     setConnState(connectionState.value);
   });
 
-  // Get MessageHub for RPC calls
   const { callIfConnected } = useMessageHub();
 
-  // Provider auth statuses for availability dots and model filtering in model picker
   const [providerAuthStatuses, setProviderAuthStatuses] = useState<Map<string, ProviderAuthStatus>>(
     new Map()
   );
@@ -264,7 +206,6 @@ export default function SessionStatusBar({
     return loadAuthStatuses();
   }, [loadAuthStatuses]);
 
-  // Refresh auth statuses when providers change so the picker filter stays current.
   useEffect(() => {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) return;
@@ -276,7 +217,6 @@ export default function SessionStatusBar({
     };
   }, [loadAuthStatuses, connectionState.value]);
 
-  // Dropdowns - only one can be open at a time
   const modelDropdown = useModal();
   const thinkingDropdown = useModal();
   const modelDropdownRef = useRef<HTMLDivElement>(null);
@@ -284,7 +224,6 @@ export default function SessionStatusBar({
   useClickOutside(modelDropdownRef, modelDropdown.close, modelDropdown.isOpen);
   useClickOutside(thinkingDropdownRef, thinkingDropdown.close, thinkingDropdown.isOpen);
 
-  // Helper to toggle dropdown and close the other one
   const toggleModelDropdown = useCallback(() => {
     if (modelDropdown.isOpen) {
       modelDropdown.close();
@@ -304,10 +243,6 @@ export default function SessionStatusBar({
     }
   }, [modelDropdown, thinkingDropdown]);
 
-  // Close any open dropdown the moment this session enters recovery — otherwise
-  // disabling only the trigger leaves the model/thinking options mounted and
-  // clickable (their buttons gate solely on modelSwitching), letting the user
-  // start a model switch while the session is rejoining and re-syncing.
   useEffect(() => {
     if (isRecovering) {
       modelDropdown.close();
@@ -315,28 +250,21 @@ export default function SessionStatusBar({
     }
   }, [isRecovering, modelDropdown, thinkingDropdown]);
 
-  // Thinking level state (synced from session config)
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(thinkingLevelProp || 'off');
 
-  // Sync thinking level with session config changes
   useEffect(() => {
     setThinkingLevel(thinkingLevelProp || 'off');
   }, [thinkingLevelProp]);
 
-  // Provider-aware thinking options — prefer runtime model thinkingModes (set by
-  // providers whose capability depends on runtime config, e.g. bridge adapter)
-  // falling back to the static PROVIDER_THINKING_MODES map.
   const thinkingOptions = getThinkingOptionsForProvider(
     currentModelInfo?.provider,
     currentModelInfo?.thinkingModes
   );
 
-  // Auto-scroll toggle handler
   const handleAutoScrollToggle = useCallback(() => {
     onAutoScrollChange(!autoScroll);
   }, [autoScroll, onAutoScrollChange]);
 
-  // Model switch handler
   const handleModelSwitch = useCallback(
     async (model: ModelInfo) => {
       await onModelSwitch(model);
@@ -352,7 +280,6 @@ export default function SessionStatusBar({
     }
   }, [modelDropdown.isOpen]);
 
-  // Thinking level change handler with persistence
   const handleThinkingLevelChange = useCallback(
     async (level: ThinkingLevel) => {
       setThinkingLevel(level);
@@ -363,7 +290,6 @@ export default function SessionStatusBar({
         return;
       }
 
-      // Persist to session config via RPC
       await callIfConnected('session.thinking.set', {
         sessionId: _sessionId,
         level,
@@ -372,9 +298,6 @@ export default function SessionStatusBar({
     [_sessionId, callIfConnected, thinkingDropdown, onThinkingLevelChange]
   );
 
-  // Brand-tinted model pill: the provider logo carries identity (color + mark),
-  // the tier label carries the model. The separate identity dot is gone — the
-  // logo IS the provider now.
   const activeProvider = currentModelInfo?.provider;
   const pillStyle = providerPillStyle(activeProvider);
   const tierLabel = currentModelInfo ? shortenModelName(currentModelInfo.name, activeProvider) : '';
@@ -390,15 +313,6 @@ export default function SessionStatusBar({
 
   return (
     <ContentContainer className="pb-2 flex items-center gap-4 justify-between">
-      {/* Left: Connection status.
-          Harmonized with per-session recovery (task #873): when the transport
-          is connected but THIS session is still rejoining its channel, show
-          "Reconnecting…" instead of a contradictory "Ready". The global
-          disconnected/reconnecting/failed states pass through unchanged.
-          Mask the (stale) processing inputs while recovering — resolveStatus
-          prioritizes isProcessing/currentAction over connectionState, so a
-          cached processing state would otherwise show the agent's last action
-          during the exact recovery window this labels "Reconnecting…". */}
       <ConnectionStatus
         connectionState={isRecovering && connState === 'connected' ? 'reconnecting' : connState}
         isProcessing={isRecovering ? false : isProcessing}
@@ -406,9 +320,7 @@ export default function SessionStatusBar({
         streamingPhase={isRecovering ? undefined : streamingPhase}
       />
 
-      {/* Right: Interactive controls and context usage */}
       <div class="flex min-w-0 items-center gap-3 sm:gap-4">
-        {/* Model Switcher + Provider Badge */}
         <div class="flex min-w-0 items-center gap-1.5">
           <div class="relative" ref={modelDropdownRef}>
             <Tooltip
@@ -459,7 +371,6 @@ export default function SessionStatusBar({
               </button>
             </Tooltip>
 
-            {/* Model Dropdown */}
             {modelDropdown.isOpen && (
               <div
                 data-testid="model-dropdown"
@@ -482,9 +393,6 @@ export default function SessionStatusBar({
                       const authStatus = providerAuthStatuses.get(provider);
                       const isAuthenticated = authStatus?.isAuthenticated;
                       const needsRefresh = authStatus?.needsRefresh ?? false;
-                      // Availability dot tone: neutral = unknown, success = ok,
-                      // warning = expiring, danger = unauthenticated. Drives the
-                      // dot from the unified indicator foundation.
                       const availabilityTone: IndicatorTone =
                         isAuthenticated === undefined
                           ? 'neutral'
@@ -556,7 +464,6 @@ export default function SessionStatusBar({
           </div>
         </div>
 
-        {/* Thinking Level — hidden when provider doesn't support thinking */}
         {thinkingOptions.length > 0 && (
           <div class="relative" ref={thinkingDropdownRef}>
             <Tooltip
@@ -569,10 +476,6 @@ export default function SessionStatusBar({
                   thinkingLevel === 'off' ? 'border-dark-600/80' : 'border-transparent'
                 }`}
                 onClick={toggleThinkingDropdown}
-                // Disabled during recovery, matching the model trigger — the
-                // close-on-recovery effect only fires on the isRecovering
-                // transition, so without this the dropdown could be reopened in
-                // steady-state recovery and fire session.thinking.set mid-sync.
                 disabled={isRecovering}
                 title={`Thinking: ${THINKING_LEVEL_LABELS[thinkingLevel]}`}
               >
@@ -581,7 +484,6 @@ export default function SessionStatusBar({
               </button>
             </Tooltip>
 
-            {/* Thinking Dropdown */}
             {thinkingDropdown.isOpen && (
               <div
                 class={`absolute bottom-full mb-2 left-0 bg-dark-800 border ${borderColors.ui.secondary} rounded-lg shadow-xl w-40 py-1 z-50 animate-slideIn`}
@@ -606,7 +508,6 @@ export default function SessionStatusBar({
           </div>
         )}
 
-        {/* Auto-scroll Toggle - Highlighted border and icon when active */}
         <Tooltip
           content={`Auto-scroll (${autoScroll ? 'enabled' : 'disabled'})`}
           position="top"
@@ -635,10 +536,8 @@ export default function SessionStatusBar({
           </button>
         </Tooltip>
 
-        {/* Separator */}
         <div class="h-6 w-px bg-gray-600" />
 
-        {/* Context usage */}
         <ContextUsageBar contextUsage={contextUsage} maxContextTokens={maxContextTokens} />
       </div>
     </ContentContainer>

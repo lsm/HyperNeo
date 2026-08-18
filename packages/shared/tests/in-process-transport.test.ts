@@ -1,10 +1,3 @@
-/**
- * InProcessTransport Unit Tests
- *
- * Tests for in-process MessageHub transport that enables
- * component communication within the same process.
- */
-
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { MessageHub } from '../src/message-hub/message-hub.ts';
 import {
@@ -45,7 +38,6 @@ describe('InProcessTransport', () => {
 
       await client.send(testMessage);
 
-      // Wait for microtask
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(receivedMessages.length).toBe(1);
@@ -87,7 +79,6 @@ describe('InProcessTransport', () => {
       client.onMessage((msg) => clientReceived.push(msg));
       server.onMessage((msg) => serverReceived.push(msg));
 
-      // Client -> Server
       await client.send({
         id: 'c2s',
         type: MessageType.REQUEST,
@@ -96,7 +87,6 @@ describe('InProcessTransport', () => {
         timestamp: new Date().toISOString(),
       });
 
-      // Server -> Client
       await server.send({
         id: 's2c',
         type: MessageType.EVENT,
@@ -168,7 +158,6 @@ describe('InProcessTransport', () => {
       await client.send(testMessage);
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Same reference
       expect(receivedMsg!.data).toBe(sentData);
     });
 
@@ -196,7 +185,6 @@ describe('InProcessTransport', () => {
       await client.send(testMessage);
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Different reference but same content
       expect(receivedMsg!.data).not.toBe(sentData);
       expect(receivedMsg!.data).toEqual(sentData);
     });
@@ -224,11 +212,10 @@ describe('InProcessTransport', () => {
         timestamp: new Date().toISOString(),
       });
 
-      // Wait for message
       await new Promise((resolve) => setTimeout(resolve, latencyMs + 20));
 
       const actualLatency = receivedAt - sentAt;
-      expect(actualLatency).toBeGreaterThanOrEqual(latencyMs - 5); // Allow small tolerance
+      expect(actualLatency).toBeGreaterThanOrEqual(latencyMs - 5);
     });
   });
 
@@ -271,13 +258,10 @@ describe('InProcessTransport', () => {
         data: {},
       };
 
-      // Should not throw despite handler error
       await client.send(testMessage);
 
-      // Wait for message delivery
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Handler was called and threw, but send() didn't throw
       expect(handlerCalled).toBe(true);
     });
 
@@ -290,10 +274,9 @@ describe('InProcessTransport', () => {
         throw new Error('Connection handler error');
       });
 
-      // The initialize should complete despite handler throwing
       await client.initialize();
       expect(client.getState()).toBe('connected');
-      expect(errorThrown).toBe(true); // Handler was called and threw
+      expect(errorThrown).toBe(true);
     });
   });
 
@@ -343,7 +326,6 @@ describe('InProcessTransport', () => {
 
     it('should return false for client that is not ready', async () => {
       const [client, server] = InProcessTransport.createPair();
-      // Don't initialize client - it won't be ready
 
       const testMessage: HubMessage = {
         id: 'not-ready-test',
@@ -367,7 +349,6 @@ describe('InProcessTransport', () => {
       const client2 = new InProcessTransport({ name: 'client2' });
       const client3 = new InProcessTransport({ name: 'client3' });
 
-      // Manually set up peer relationships
       client1['peer'] = server;
       client2['peer'] = server;
       client3['peer'] = server;
@@ -377,7 +358,6 @@ describe('InProcessTransport', () => {
       await client2.initialize();
       await client3.initialize();
 
-      // Register clients with server
       server['connectedClients'].set(client1.getClientId(), client1);
       server['connectedClients'].set(client2.getClientId(), client2);
       server['connectedClients'].set(client3.getClientId(), client3);
@@ -419,15 +399,12 @@ describe('InProcessTransport', () => {
       const client1 = new InProcessTransport({ name: 'client1' });
       const client2 = new InProcessTransport({ name: 'client2' });
 
-      // Set up peer relationships
       client1['peer'] = server;
       client2['peer'] = server;
       server['peer'] = client1;
 
       await client1.initialize();
-      // Don't initialize client2
 
-      // Register clients with server
       server['connectedClients'].set(client1.getClientId(), client1);
       server['connectedClients'].set(client2.getClientId(), client2);
 
@@ -476,7 +453,7 @@ describe('InProcessTransport', () => {
       const t2 = new InProcessTransport();
 
       expect(t1.getClientId()).not.toBe(t2.getClientId());
-      expect(t1.getClientId()).toMatch(/^[0-9a-f-]+$/); // UUID format
+      expect(t1.getClientId()).toMatch(/^[0-9a-f-]+$/);
     });
 
     it('should track connected client count', async () => {
@@ -498,18 +475,16 @@ describe('InProcessTransport', () => {
         callCount++;
       });
 
-      // Unsubscribe after first close
       await client.close();
       expect(callCount).toBe(1);
 
-      // Re-create and close - should not increment since unsubscribed
       const [client2] = InProcessTransport.createPair();
       await client2.initialize();
 
       unsubscribe();
 
       await client2.close();
-      expect(callCount).toBe(1); // Still 1, not 2
+      expect(callCount).toBe(1);
     });
 
     it('should handle multiple disconnect handlers', async () => {
@@ -590,7 +565,6 @@ describe('InProcessTransportBus', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    // Both receivers should get the message
     expect(t2Received.length).toBe(1);
     expect(t3Received.length).toBe(1);
     expect(t2Received[0].id).toBe('broadcast-test');
@@ -614,7 +588,6 @@ describe('InProcessTransportBus', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    // Sender should not receive its own message
     expect(received.length).toBe(0);
   });
 
@@ -641,12 +614,10 @@ describe('MessageHub with InProcessTransport', () => {
 
     await clientTransport.initialize();
 
-    // Server handles RPC
     serverHub.onRequest('math.add', async (data: { a: number; b: number }) => {
       return { result: data.a + data.b };
     });
 
-    // Client calls server
     const response = await clientHub.request<{ result: number }>('math.add', {
       a: 5,
       b: 3,
@@ -671,13 +642,10 @@ describe('MessageHub with InProcessTransport', () => {
 
     const receivedEvents: unknown[] = [];
 
-    // Client subscribes to events
     clientHub.onEvent('session.created', (data) => {
       receivedEvents.push(data);
     });
 
-    // Server publishes directly to client transport
-    // (In real setup, server would use MessageHub.publish which routes via Router)
     await serverTransport.send({
       id: 'event-1',
       type: MessageType.EVENT,
@@ -687,7 +655,6 @@ describe('MessageHub with InProcessTransport', () => {
       data: { sessionId: 'new-session' },
     });
 
-    // Wait for event delivery
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     expect(receivedEvents.length).toBe(1);

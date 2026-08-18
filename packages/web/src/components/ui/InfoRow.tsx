@@ -7,11 +7,6 @@ interface InfoRowProps {
   copyLabel?: string;
 }
 
-/**
- * Key/value row with an optional copy affordance. Returns `null` when there is
- * no value, so callers can declare rows unconditionally and let them drop out.
- * Shared between the merged session info panel and any future metadata surface.
- */
 export function InfoRow({ label, value, copyLabel }: InfoRowProps) {
   if (!value) return null;
 
@@ -29,9 +24,6 @@ interface InfoSectionProps {
   children: preact.ComponentChildren;
 }
 
-/**
- * Titled metadata section (uppercase header). Pairs with {@link InfoRow}.
- */
 export function InfoSection({ title, children }: InfoSectionProps) {
   return (
     <div class="mb-4">

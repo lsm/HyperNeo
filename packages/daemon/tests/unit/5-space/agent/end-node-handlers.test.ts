@@ -1,15 +1,3 @@
-/**
- * Unit tests for createEndNodeHandlers() — the Design v2 two-tool contract
- * for end-node agents.
- *
- * Covers:
- *   - approve_task        — autonomy-gated self-close
- *   - submit_for_approval — always-available human sign-off request
- *
- * These handlers were extracted from task-agent-manager.ts so they can be
- * unit-tested directly with a real SQLite DB and no live agent sessions.
- */
-
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -34,13 +22,7 @@ import type {
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus.ts';
 
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
-
 function makeDb(): BunDatabase {
-  // Use in-memory SQLite — faster than file-based DB and avoids filesystem
-  // I/O contention that caused beforeEach hook timeouts in CI.
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
@@ -131,9 +113,6 @@ function makeCtx(autonomyLevel = 1): TestCtx {
     db,
     spaceId,
     taskRepo,
-    // Real SpaceTaskManager so the centralised transition validator runs
-    // inside `submitTaskForReview` — exercises the same code path that the
-    // production wiring takes from `task-agent-manager.ts`.
     taskManager: new SpaceTaskManager(db, spaceId),
     goalEventRepo,
     goalService: new SpaceGoalService({
@@ -147,7 +126,6 @@ function makeCtx(autonomyLevel = 1): TestCtx {
   };
 }
 
-/** Build deps with sensible defaults + overrides. */
 function makeDeps(
   ctx: TestCtx,
   taskId: string,
@@ -167,10 +145,6 @@ function makeDeps(
     ...overrides,
   };
 }
-
-// ===========================================================================
-// mark_complete — post-approval completion
-// ===========================================================================
 
 describe('createMarkCompleteHandler', () => {
   let ctx: TestCtx;
@@ -309,7 +283,6 @@ describe('createMarkCompleteHandler', () => {
     const parsed = JSON.parse(out.content[0].text);
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain('still OPEN');
-    // The task stays approved — completion is blocked, not faked.
     expect(ctx.taskRepo.getTask(task.id)?.status).toBe('approved');
   });
 
@@ -366,7 +339,6 @@ describe('createMarkCompleteHandler', () => {
       description: '',
       status: 'approved',
     });
-    // No assertPrMerged dep → the gate is a no-op.
     const handler = createMarkCompleteHandler({
       taskId: task.id,
       spaceId: ctx.spaceId,
@@ -509,10 +481,6 @@ describe('createMarkCompleteHandler', () => {
   });
 });
 
-// ===========================================================================
-// createPrMergedGate — the merge-completion gate factory
-// ===========================================================================
-
 describe('createPrMergedGate', () => {
   const PR_URL = 'https://github.com/lsm/HyperNeo/pull/1234';
 
@@ -587,10 +555,6 @@ describe('createPrMergedGate', () => {
   });
 });
 
-// ===========================================================================
-// approve_task — autonomy-gated self-close
-// ===========================================================================
-
 describe('createEndNodeHandlers — approve_task', () => {
   let ctx: TestCtx;
   beforeEach(() => {
@@ -622,7 +586,6 @@ describe('createEndNodeHandlers — approve_task', () => {
     expect(parsed.error).toContain('space autonomy level 1');
     expect(parsed.error).toContain('completionAutonomyLevel 3');
 
-    // task unchanged
     const t = ctx.taskRepo.getTask(task.id);
     expect(t?.reportedStatus).toBeFalsy();
   });
@@ -699,7 +662,6 @@ describe('createEndNodeHandlers — approve_task', () => {
       description: '',
       status: 'review',
     });
-    // Prime the pending-completion fields as if submit_for_approval ran first.
     ctx.taskRepo.updateTask(task.id, {
       pendingCheckpointType: 'task_completion',
       pendingCompletionSubmittedByNodeId: 'end-node',
@@ -746,8 +708,6 @@ describe('createEndNodeHandlers — approve_task', () => {
     const t = ctx.taskRepo.getTask(task.id);
     expect(t?.reportedStatus).toBe('done');
     expect(t?.pendingCompletionSubmittedByNodeId).toBe('validation-node');
-    // The router/dispatch read this durable field (not the pending-completion
-    // fields, which are cleared on entering `approved`) — task #851.
     expect(t?.postApprovalSourceNodeId).toBe('validation-node');
   });
 
@@ -812,10 +772,6 @@ describe('createEndNodeHandlers — approve_task', () => {
   });
 });
 
-// ===========================================================================
-// submit_for_approval — always available
-// ===========================================================================
-
 describe('createEndNodeHandlers — submit_for_approval', () => {
   let ctx: TestCtx;
   beforeEach(() => {
@@ -867,7 +823,6 @@ describe('createEndNodeHandlers — submit_for_approval', () => {
     const parsed = JSON.parse(out.content[0].text);
 
     expect(parsed.success).toBe(true);
-    // Message omits the "(reason: ...)" suffix when reason is missing.
     expect(parsed.message).not.toContain('(reason:');
 
     const t = ctx.taskRepo.getTask(task.id);
@@ -876,7 +831,6 @@ describe('createEndNodeHandlers — submit_for_approval', () => {
   });
 
   test('succeeds regardless of space autonomy level', async () => {
-    // submit_for_approval must work even at level 1 (the most restrictive).
     const task = ctx.taskRepo.createTask({
       spaceId: ctx.spaceId,
       title: 'T',
@@ -969,10 +923,6 @@ describe('createEndNodeHandlers — submit_for_approval', () => {
     expect(parsed.error).toContain('ghost');
   });
 });
-
-// ===========================================================================
-// daemonHub is optional
-// ===========================================================================
 
 describe('createEndNodeHandlers — daemonHub is optional', () => {
   let ctx: TestCtx;

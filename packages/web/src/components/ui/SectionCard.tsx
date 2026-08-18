@@ -1,18 +1,9 @@
-/**
- * SectionCard — the rounded, bordered section wrapper with an uppercase label
- * header shared by the third-column inspect panels (task / goal / scope).
- *
- * Replaces the per-panel `PanelSection` / loose `<section>` re-implementations.
- */
 import type { ComponentChildren } from 'preact';
 import { cn } from '../../lib/utils';
 
 export interface SectionCardProps {
-  /** Uppercase section label. */
   title: ComponentChildren;
-  /** Section body. */
   children?: ComponentChildren;
-  /** Extra classes on the card wrapper. */
   class?: string;
 }
 

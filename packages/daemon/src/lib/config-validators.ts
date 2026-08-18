@@ -1,10 +1,3 @@
-/**
- * SDK Configuration Validators
- *
- * Validates SDK configuration before applying changes.
- * Each validator returns a ValidationResult with valid/error.
- */
-
 import type {
   SystemPromptConfig,
   ToolsSettings,
@@ -19,16 +12,7 @@ import type {
   ToolsPresetConfig,
 } from '@hyperneo/shared';
 
-// ============================================================================
-// System Prompt Validation
-// ============================================================================
-
-/**
- * Validate system prompt configuration
- * Accepts either a string or { type: 'preset', preset: 'claude_code', append?: string }
- */
 export function validateSystemPromptConfig(config: SystemPromptConfig): ValidationResult {
-  // String prompt
   if (typeof config === 'string') {
     if (config.length > 100000) {
       return { valid: false, error: 'System prompt too long (max 100KB)' };
@@ -36,7 +20,6 @@ export function validateSystemPromptConfig(config: SystemPromptConfig): Validati
     return { valid: true };
   }
 
-  // Preset configuration
   if (typeof config === 'object' && config !== null) {
     if (config.type !== 'preset') {
       return {
@@ -64,16 +47,7 @@ export function validateSystemPromptConfig(config: SystemPromptConfig): Validati
   return { valid: false, error: 'Invalid system prompt configuration' };
 }
 
-// ============================================================================
-// Tools Validation
-// ============================================================================
-
-/**
- * Validate tools preset configuration
- * Accepts either string[] or { type: 'preset', preset: 'claude_code' }
- */
 export function validateToolsPresetConfig(config: ToolsPresetConfig): ValidationResult {
-  // Array of tool names
   if (Array.isArray(config)) {
     for (const tool of config) {
       if (typeof tool !== 'string' || tool.length === 0) {
@@ -89,7 +63,6 @@ export function validateToolsPresetConfig(config: ToolsPresetConfig): Validation
     return { valid: true };
   }
 
-  // Preset configuration
   if (typeof config === 'object' && config !== null) {
     if (config.type !== 'preset') {
       return { valid: false, error: 'Tools object must have type: "preset"' };
@@ -106,11 +79,7 @@ export function validateToolsPresetConfig(config: ToolsPresetConfig): Validation
   return { valid: false, error: 'Invalid tools configuration' };
 }
 
-/**
- * Validate tools settings (tools, allowedTools, disallowedTools)
- */
 export function validateToolsConfig(config: Partial<ToolsSettings>): ValidationResult {
-  // Validate tools preset
   if (config.tools !== undefined) {
     const toolsResult = validateToolsPresetConfig(config.tools);
     if (!toolsResult.valid) {
@@ -118,7 +87,6 @@ export function validateToolsConfig(config: Partial<ToolsSettings>): ValidationR
     }
   }
 
-  // Validate allowedTools
   if (config.allowedTools !== undefined) {
     if (!Array.isArray(config.allowedTools)) {
       return { valid: false, error: 'allowedTools must be an array' };
@@ -130,7 +98,6 @@ export function validateToolsConfig(config: Partial<ToolsSettings>): ValidationR
     }
   }
 
-  // Validate disallowedTools
   if (config.disallowedTools !== undefined) {
     if (!Array.isArray(config.disallowedTools)) {
       return { valid: false, error: 'disallowedTools must be an array' };
@@ -145,13 +112,6 @@ export function validateToolsConfig(config: Partial<ToolsSettings>): ValidationR
   return { valid: true };
 }
 
-// ============================================================================
-// Agent Validation
-// ============================================================================
-
-/**
- * Validate agent definition
- */
 export function validateAgentDefinition(name: string, agent: AgentDefinition): ValidationResult {
   if (!name || name.length === 0) {
     return { valid: false, error: 'Agent name is required' };
@@ -226,9 +186,6 @@ export function validateAgentDefinition(name: string, agent: AgentDefinition): V
   return { valid: true };
 }
 
-/**
- * Validate agents configuration (map of name -> AgentDefinition)
- */
 export function validateAgentsConfig(agents: Record<string, AgentDefinition>): ValidationResult {
   for (const [name, agent] of Object.entries(agents)) {
     const result = validateAgentDefinition(name, agent);
@@ -239,13 +196,6 @@ export function validateAgentsConfig(agents: Record<string, AgentDefinition>): V
   return { valid: true };
 }
 
-// ============================================================================
-// Sandbox Validation
-// ============================================================================
-
-/**
- * Validate sandbox configuration
- */
 export function validateSandboxConfig(config: SandboxSettings): ValidationResult {
   if (config.excludedCommands !== undefined) {
     if (!Array.isArray(config.excludedCommands)) {
@@ -360,13 +310,6 @@ export function validateSandboxConfig(config: SandboxSettings): ValidationResult
   return { valid: true };
 }
 
-// ============================================================================
-// MCP Server Validation
-// ============================================================================
-
-/**
- * Check if a string is a valid URL
- */
 function isValidUrl(url: string): boolean {
   try {
     new URL(url);
@@ -376,9 +319,6 @@ function isValidUrl(url: string): boolean {
   }
 }
 
-/**
- * Validate MCP server configuration
- */
 export function validateMcpServerConfig(name: string, config: McpServerConfig): ValidationResult {
   if (!name || name.length === 0) {
     return { valid: false, error: 'MCP server name is required' };
@@ -391,7 +331,6 @@ export function validateMcpServerConfig(name: string, config: McpServerConfig): 
     };
   }
 
-  // Stdio server (default type)
   if (!config.type || config.type === 'stdio') {
     const stdioConfig = config as McpStdioServerConfig;
     if (!stdioConfig.command || stdioConfig.command.length === 0) {
@@ -438,7 +377,6 @@ export function validateMcpServerConfig(name: string, config: McpServerConfig): 
     return { valid: true };
   }
 
-  // SSE/HTTP server
   if (config.type === 'sse' || config.type === 'http') {
     if (!config.url || !isValidUrl(config.url)) {
       return {
@@ -473,9 +411,6 @@ export function validateMcpServerConfig(name: string, config: McpServerConfig): 
   };
 }
 
-/**
- * Validate MCP servers configuration (map of name -> McpServerConfig)
- */
 export function validateMcpServersConfig(
   servers: Record<string, McpServerConfig>
 ): ValidationResult {
@@ -488,13 +423,6 @@ export function validateMcpServersConfig(
   return { valid: true };
 }
 
-// ============================================================================
-// Output Format Validation
-// ============================================================================
-
-/**
- * Validate output format configuration
- */
 export function validateOutputFormat(config: OutputFormatConfig): ValidationResult {
   if (config.type !== 'json_schema') {
     return { valid: false, error: 'Output format type must be "json_schema"' };
@@ -507,7 +435,6 @@ export function validateOutputFormat(config: OutputFormatConfig): ValidationResu
     };
   }
 
-  // Basic JSON Schema validation - check it's serializable
   try {
     const serialized = JSON.stringify(config.schema);
     if (serialized.length > 100000) {
@@ -523,16 +450,8 @@ export function validateOutputFormat(config: OutputFormatConfig): ValidationResu
   return { valid: true };
 }
 
-// ============================================================================
-// Beta Features Validation
-// ============================================================================
-
-/** Valid beta feature flags */
 const VALID_BETAS: SdkBeta[] = ['context-1m-2025-08-07'];
 
-/**
- * Validate beta features configuration
- */
 export function validateBetasConfig(betas: SdkBeta[]): ValidationResult {
   if (!Array.isArray(betas)) {
     return { valid: false, error: 'Betas must be an array' };
@@ -550,16 +469,7 @@ export function validateBetasConfig(betas: SdkBeta[]): ValidationResult {
   return { valid: true };
 }
 
-// ============================================================================
-// Environment Settings Validation
-// ============================================================================
-
-/**
- * Validate environment settings configuration
- */
 export function validateEnvConfig(config: Partial<EnvironmentSettings>): ValidationResult {
-  // cwd validation requires async, so we just check type here
-  // Use validatePath separately for path validation
   if (config.cwd !== undefined) {
     if (typeof config.cwd !== 'string' || config.cwd.length === 0) {
       return { valid: false, error: 'cwd must be a non-empty string' };

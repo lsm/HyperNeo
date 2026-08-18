@@ -1,41 +1,3 @@
-/**
- * Mock API Server Test Helper
- *
- * Creates a local HTTP server that mocks the Anthropic API responses.
- * This is simpler than using Dev Proxy because we just set ANTHROPIC_BASE_URL
- * to point to this server, avoiding all the proxy environment variable issues.
- *
- * ## Usage
- *
- * ```ts
- * import { createMockApiServer, type MockApiServer } from './mock-api-server';
- *
- * describe('My API tests', () => {
- *   let server: MockApiServer;
- *
- *   beforeEach(async () => {
- *     server = await createMockApiServer();
- *     await server.start();
- *   });
- *
- *   afterEach(async () => {
- *     await server.stop();
- *   });
- *
- *   it('should mock API response', async () => {
- *     // server automatically sets ANTHROPIC_BASE_URL
- *     // ... test code
- *   });
- * });
- * ```
- *
- * ## Environment Variables
- *
- * The helper automatically sets:
- * - ANTHROPIC_BASE_URL: Points to the mock server
- * - Stores original value for restoration
- */
-
 import {
   createServer,
   type Server as HttpServer,
@@ -45,67 +7,28 @@ import {
 import { readdir, readFile } from 'fs/promises';
 import path from 'path';
 
-/**
- * Configuration options for the mock API server
- */
 export interface MockApiServerOptions {
-  /**
-   * Port to run the server on
-   * Default: 8000
-   */
   port?: number;
 
-  /**
-   * Path to the directory containing mock response files
-   * Default: <repo-root>/.devproxy/
-   */
   mockDir?: string;
 
-  /**
-   * Log level
-   * Default: 'warning'
-   */
   logLevel?: 'debug' | 'info' | 'warning' | 'error';
 }
 
-/**
- * Controller interface for managing the mock API server
- */
 export interface MockApiServer {
-  /**
-   * Start the mock API server
-   */
   start(): Promise<void>;
 
-  /**
-   * Stop the mock API server
-   */
   stop(): Promise<void>;
 
-  /**
-   * Check if the server is currently running
-   */
   isRunning(): boolean;
 
-  /**
-   * Get the server URL (e.g., http://127.0.0.1:8000)
-   */
   readonly serverUrl: string;
 
-  /**
-   * Get the server port
-   */
   readonly port: number;
 
-  /**
-   * Restore original environment variables
-   */
   restoreEnv(): void;
 }
 
-/**
- * Standard Anthropic API mock response
- */
 const DEFAULT_MOCK_RESPONSE = {
   id: 'msg_mock123',
   type: 'message',
@@ -128,9 +51,6 @@ const DEFAULT_MOCK_RESPONSE = {
   },
 };
 
-/**
- * Find the repository root directory by looking for package.json with workspaces
- */
 function findRepoRoot(startDir: string): string | null {
   let dir = startDir;
   while (dir !== path.dirname(dir)) {
@@ -148,28 +68,17 @@ function findRepoRoot(startDir: string): string | null {
   return null;
 }
 
-/**
- * Check if mock API server is available (node:http is always available under Node)
- */
 async function isMockApiServerAvailable(): Promise<boolean> {
-  // node:http is always available under Node.
   return true;
 }
 
-/**
- * Read mock response from a JSON file
- */
 async function readMockResponse(mockDir: string, requestBody: any): Promise<any> {
   try {
-    // Try to find a matching mock file based on the request
-    // For now, use a simple approach - check for basic patterns
     const userMessage = requestBody?.messages?.[0]?.content?.toLowerCase() || '';
 
-    let mockFile = 'mocks.json'; // Default
+    let mockFile = 'mocks.json';
 
-    // Check for specific patterns
     if (userMessage.includes('what is') && userMessage.includes('+')) {
-      // Math question - try to extract the answer
       const match = userMessage.match(/what is\s+(\d+)\s*\+\s*(\d+)/i);
       if (match) {
         const result = parseInt(match[1]) + parseInt(match[2]);
@@ -195,12 +104,10 @@ async function readMockResponse(mockDir: string, requestBody: any): Promise<any>
       };
     }
 
-    // Try to read from mock file
     const mockFilePath = path.join(mockDir, mockFile);
     const mockContent = await readFile(mockFilePath, 'utf-8');
     const mockData = JSON.parse(mockContent);
 
-    // Return the first mock response
     if (mockData.mocks && mockData.mocks.length > 0) {
       return mockData.mocks[0].response.body;
     }
@@ -211,20 +118,15 @@ async function readMockResponse(mockDir: string, requestBody: any): Promise<any>
   }
 }
 
-/**
- * Create a mock API server instance
- */
 export async function createMockApiServer(
   options: MockApiServerOptions = {}
 ): Promise<MockApiServer> {
   const { port = 8000, mockDir: userMockDir, logLevel = 'warning' } = options;
 
-  // Check if Bun's serve is available
   if (!(await isMockApiServerAvailable())) {
     throw new Error('Mock API server requires Bun runtime (serve function not available)');
   }
 
-  // Resolve paths
   const repoRoot = findRepoRoot(__dirname);
   if (!repoRoot) {
     throw new Error('Could not find repository root directory');
@@ -232,12 +134,10 @@ export async function createMockApiServer(
 
   const finalMockDir = userMockDir || path.join(repoRoot, '.devproxy');
 
-  // State
   let server: HttpServer | null = null;
   let originalEnv: Record<string, string | undefined> = {};
   let originalBaseUrl: string | undefined;
 
-  // Logger
   const log = {
     debug: (...args: any[]) => {
       if (logLevel === 'debug') console.log('[MOCK API]', ...args);
@@ -271,29 +171,24 @@ export async function createMockApiServer(
         throw new Error('Mock API server is already running');
       }
 
-      // Save original ANTHROPIC_BASE_URL
       originalBaseUrl = process.env.ANTHROPIC_BASE_URL;
       originalEnv.ANTHROPIC_BASE_URL = originalBaseUrl;
 
-      // Set ANTHROPIC_BASE_URL to point to our mock server
       process.env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${port}`;
 
       log.info(`Starting mock API server on port ${port}`);
       log.info(`ANTHROPIC_BASE_URL set to: ${process.env.ANTHROPIC_BASE_URL}`);
 
-      // Start the server (node:http; bridges IncomingMessage→Request→Response).
       const fetchHandler = async (req: Request): Promise<Response> => {
         const url = new URL(req.url);
 
         log.debug(`${req.method} ${url.pathname}`);
 
-        // Handle Anthropic API messages endpoint
         if (url.pathname === '/v1/messages' && req.method === 'POST') {
           try {
             const requestBody = await req.json();
             log.debug('Request body:', requestBody);
 
-            // Read mock response
             const mockResponse = await readMockResponse(finalMockDir, requestBody);
 
             log.info('Returning mock response for /v1/messages');
@@ -321,7 +216,6 @@ export async function createMockApiServer(
           }
         }
 
-        // Return 404 for other paths
         return new Response('Not Found', { status: 404 });
       };
 
@@ -350,7 +244,6 @@ export async function createMockApiServer(
       });
       server.listen(port, '127.0.0.1');
 
-      // Wait a bit for server to be ready
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       log.info('Mock API server started');
@@ -363,13 +256,11 @@ export async function createMockApiServer(
 
       log.info('Stopping mock API server');
 
-      // Stop the server
       await new Promise<void>((resolve) => {
         server!.close(() => resolve());
       });
       server = null;
 
-      // Restore original ANTHROPIC_BASE_URL
       if (originalBaseUrl !== undefined) {
         process.env.ANTHROPIC_BASE_URL = originalBaseUrl;
       } else {
@@ -392,14 +283,8 @@ export async function createMockApiServer(
   return controller;
 }
 
-/**
- * Global mock API server controller for shared use across tests
- */
 let globalController: MockApiServer | null = null;
 
-/**
- * Start a global mock API server instance
- */
 export async function startGlobalMockApiServer(
   options?: MockApiServerOptions
 ): Promise<MockApiServer> {
@@ -411,9 +296,6 @@ export async function startGlobalMockApiServer(
   return globalController;
 }
 
-/**
- * Stop the global mock API server instance
- */
 export async function stopGlobalMockApiServer(): Promise<void> {
   if (globalController) {
     await globalController.stop();
@@ -422,9 +304,6 @@ export async function stopGlobalMockApiServer(): Promise<void> {
   }
 }
 
-/**
- * Get the global mock API server controller (if started)
- */
 export function getGlobalMockApiServer(): MockApiServer | null {
   return globalController;
 }

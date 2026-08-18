@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for Design Tokens
- *
- * Tests the centralized design system tokens for spacing, sizing, and styling.
- */
 
 import {
   messageSpacing,
@@ -186,7 +181,6 @@ describe('borderColors', () => {
       expect(borderColors.tool.system).toContain('border-cyan');
     });
 
-    // All tool colors should have dark mode variants
     const toolCategories = [
       'file',
       'search',
@@ -263,7 +257,6 @@ describe('borderColors', () => {
         expect(borderColors.special.toast.info).toContain('border-blue');
       });
 
-      // Toast colors should use opacity
       const toastTypes = ['success', 'error', 'warning', 'info'] as const;
       toastTypes.forEach((type) => {
         it(`should use opacity for ${type} toast`, () => {
@@ -286,12 +279,10 @@ describe('borderColors', () => {
 
 describe('Token consistency', () => {
   it('should use consistent Tailwind class format', () => {
-    // All border colors should start with 'border-'
     const checkBorderFormat = (obj: Record<string, unknown>, path = ''): void => {
       for (const [key, value] of Object.entries(obj)) {
         const currentPath = path ? `${path}.${key}` : key;
         if (typeof value === 'string') {
-          // Check that it starts with border- or contains it after a space/prefix
           expect(value).toMatch(/border-/);
         } else if (typeof value === 'object' && value !== null) {
           checkBorderFormat(value as Record<string, unknown>, currentPath);
@@ -303,7 +294,6 @@ describe('Token consistency', () => {
   });
 
   it('should use consistent color naming', () => {
-    // Colors should follow Tailwind naming convention
     const tailwindColors = [
       'dark',
       'blue',
@@ -342,8 +332,6 @@ describe('Token consistency', () => {
 
 describe('Type safety', () => {
   it('should be readonly (const assertion)', () => {
-    // These should be readonly objects - attempting to modify should fail in TypeScript
-    // At runtime, we can verify the object structure exists
     expect(typeof messageSpacing).toBe('object');
     expect(typeof borderRadius).toBe('object');
     expect(typeof messageColors).toBe('object');
@@ -352,7 +340,6 @@ describe('Type safety', () => {
   });
 
   it('should export all expected tokens', () => {
-    // Verify all expected exports are present
     expect(messageSpacing).toBeDefined();
     expect(borderRadius).toBeDefined();
     expect(messageColors).toBeDefined();

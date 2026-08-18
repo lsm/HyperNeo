@@ -4,9 +4,8 @@ import { type ClientConnection, MessageHubRouter } from '../src/message-hub/rout
 import type { HubMessage } from '../src/message-hub/types';
 import { generateUUID } from '../src/utils';
 
-// Mock WebSocket
 class MockWebSocket {
-  public readyState = 1; // WebSocket.OPEN
+  public readyState = 1;
   public sentMessages: string[] = [];
 
   send(data: string): void {
@@ -14,11 +13,10 @@ class MockWebSocket {
   }
 
   close(): void {
-    this.readyState = 3; // WebSocket.CLOSED
+    this.readyState = 3;
   }
 }
 
-// Helper to create ClientConnection from MockWebSocket
 function createMockConnection(ws: MockWebSocket, id?: string): ClientConnection {
   return {
     id: id || generateUUID(),
@@ -199,15 +197,14 @@ describe('MessageHubRouter', () => {
     test('should route event to global room by default', () => {
       const conn1 = createMockConnection(mockWs1);
       const conn2 = createMockConnection(mockWs2);
-      router.registerConnection(conn1); // Auto-joins global
-      router.registerConnection(conn2); // Auto-joins global
+      router.registerConnection(conn1);
+      router.registerConnection(conn2);
 
       const eventMessage = createEventMessage({
         method: 'system.update',
         data: { version: '1.0.0' },
         sessionId: 'global',
       });
-      // No room specified - should default to global
 
       const result = router.routeEvent(eventMessage);
 
@@ -223,7 +220,7 @@ describe('MessageHubRouter', () => {
       const clientId2 = router.registerConnection(conn2);
 
       router.joinChannel(clientId1, 'session1');
-      router.joinChannel(clientId2, 'session2'); // Different room
+      router.joinChannel(clientId2, 'session2');
 
       const eventMessage = createEventMessage({
         method: 'user.created',
@@ -235,7 +232,7 @@ describe('MessageHubRouter', () => {
       router.routeEvent(eventMessage);
 
       expect(mockWs1.sentMessages.length).toBe(1);
-      expect(mockWs2.sentMessages.length).toBe(0); // Not in room
+      expect(mockWs2.sentMessages.length).toBe(0);
     });
 
     test('should skip clients with closed connections', () => {
@@ -314,7 +311,6 @@ describe('MessageHubRouter', () => {
       router.joinChannel(clientId2, 'session1');
       router.joinChannel(clientId3, 'session1');
 
-      // Close one websocket to create a failure
       mockWs3.close();
 
       const eventMessage = createEventMessage({
@@ -326,8 +322,8 @@ describe('MessageHubRouter', () => {
 
       const result = router.routeEventToChannel(eventMessage);
 
-      expect(result.sent).toBe(2); // mockWs1 and mockWs2
-      expect(result.failed).toBe(1); // mockWs3 is closed
+      expect(result.sent).toBe(2);
+      expect(result.failed).toBe(1);
       expect(result.totalSubscribers).toBe(3);
       expect(result.sessionId).toBe('session1');
       expect(result.method).toBe('user.created');
@@ -453,8 +449,8 @@ describe('MessageHubRouter', () => {
 
       const result = router.broadcast(message);
 
-      expect(result.sent).toBe(2); // mockWs1 and mockWs2
-      expect(result.failed).toBe(1); // mockWs3 is closed
+      expect(result.sent).toBe(2);
+      expect(result.failed).toBe(1);
     });
   });
 
@@ -496,7 +492,6 @@ describe('MessageHubRouter', () => {
       const conn1 = createMockConnection(mockWs1);
       const clientId = router.registerConnection(conn1);
 
-      // Create a circular reference to cause serialization error
       const circular: { data: unknown } = { data: {} };
       circular.data = circular;
 
@@ -520,7 +515,6 @@ describe('MessageHubRouter', () => {
       router.registerConnection(conn1);
       router.registerConnection(conn2);
 
-      // Create a circular reference
       const circular: { data: unknown } = { data: {} };
       circular.data = circular;
 
@@ -590,7 +584,6 @@ describe('MessageHubRouter', () => {
       const conn1 = createMockConnection(mockWs1);
       customRouter.registerConnection(conn1);
 
-      // Debug logging is disabled - only errors are logged
       expect(mockLogger.log).not.toHaveBeenCalled();
     });
 
@@ -609,7 +602,6 @@ describe('MessageHubRouter', () => {
       const conn1 = createMockConnection(mockWs1);
       customRouter.registerConnection(conn1);
 
-      // Should not call debug logs
       expect(mockLogger.log).toHaveBeenCalledTimes(0);
     });
   });
@@ -648,7 +640,6 @@ describe('MessageHubRouter', () => {
 
       router.leaveChannel(clientId, 'temp-room');
 
-      // Empty room should still exist but be empty
       expect(roomManager.getChannelMembers('temp-room').size).toBe(0);
     });
   });
@@ -660,7 +651,7 @@ describe('MessageHubRouter', () => {
       const conn2 = createMockConnection(mockWs2);
       const conn3: ClientConnection = {
         ...createMockConnection(mockWs3),
-        canAccept: () => false, // Simulate backpressure
+        canAccept: () => false,
       };
 
       router.registerConnection(conn1);
@@ -678,8 +669,8 @@ describe('MessageHubRouter', () => {
 
       const result = router.broadcast(message);
 
-      expect(result.sent).toBe(2); // conn1 and conn2
-      expect(result.skipped).toBe(1); // conn3 skipped due to backpressure
+      expect(result.sent).toBe(2);
+      expect(result.skipped).toBe(1);
       expect(result.failed).toBe(0);
     });
   });

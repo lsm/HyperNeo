@@ -1,7 +1,4 @@
 // @ts-nocheck
-/**
- * Unit tests for SpaceTasks.
- */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
@@ -12,14 +9,11 @@ let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
 const mockSchedules = signal<unknown[]>([]);
 const mockListSchedules = vi.fn(async () => {});
 
-// Bridge pattern: hoisted bridge objects allow mockNavigateToSpaceTasks to update
-// the real Preact signals (which are created after import).
 const { filterTabBridge, idBridge } = vi.hoisted(() => ({
   filterTabBridge: { signal: null as ReturnType<typeof signal<string>> | null },
   idBridge: { signal: null as ReturnType<typeof signal<string | null>> | null },
 }));
 
-// Hoisted mock for navigateToSpaceTasks — updates the real signal at call time
 const { mockNavigateToSpaceTasks } = vi.hoisted(() => ({
   mockNavigateToSpaceTasks: vi.fn((_spaceId: string, tab: string) => {
     if (filterTabBridge.signal) {
@@ -28,23 +22,16 @@ const { mockNavigateToSpaceTasks } = vi.hoisted(() => ({
   }),
 }));
 
-// Plain holders for non-reactive signals (only read, not render)
 const { mockCurrentSpaceIdSignal } = vi.hoisted(() => ({
   mockCurrentSpaceIdSignal: { value: null as string | null },
 }));
 
-// Hoisted spy for `fetchTaskGroup` so individual tests can override behaviour
-// (e.g. simulate a transient RPC failure) and assert call counts. The default
-// implementation mirrors the daemon repository pagination semantics so the
-// component renders the same subset it would in production.
 const { mockFetchTaskGroup } = vi.hoisted(() => ({
   mockFetchTaskGroup: vi.fn(),
 }));
 
-// Real Preact signal for the filter tab (read during render — needs reactivity)
 const mockCurrentSpaceTasksFilterTabSignal = signal<string>('active');
 
-// Wire bridge so mockNavigateToSpaceTasks can update the real signal
 filterTabBridge.signal = mockCurrentSpaceTasksFilterTabSignal;
 idBridge.signal = mockCurrentSpaceIdSignal;
 
@@ -76,9 +63,6 @@ vi.mock('../../../lib/space-store', () => ({
   },
 }));
 
-// Default implementation: filter `mockTasks` to mirror the daemon repository
-// pagination semantics. Individual tests can override via
-// `mockFetchTaskGroup.mockImplementationOnce(...)` to simulate failures.
 function defaultFetchTaskGroupImpl(
   status: SpaceTask['status'],
   options?: {
@@ -105,8 +89,6 @@ function defaultFetchTaskGroupImpl(
       }
       return true;
     })
-    // Match the repository's `ORDER BY updated_at DESC` so tests that
-    // rely on sort order see the same view as production.
     .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   return Promise.resolve({ tasks: all.slice(offset, offset + limit), total: all.length });
 }
@@ -187,7 +169,6 @@ describe('SpaceTasks', () => {
 
   afterEach(() => {
     cleanup();
-    // Reset viewport width in case a test narrowed it for mobile overflow testing.
     Object.defineProperty(window, 'innerWidth', {
       value: 1024,
       configurable: true,
@@ -240,9 +221,6 @@ describe('SpaceTasks', () => {
     mockCurrentSpaceTasksFilterTabSignal.value = 'archived';
     mockTasks.value = [makeTask('t1', 'archived')];
     const { findByText, getAllByText } = render(<SpaceTasks spaceId="space-1" />);
-    // Completed may render inline (wide strip) or as the More overflow's active
-    // label (compact strip) depending on draft count; assert the actual tab
-    // button is pressed rather than relying on match order.
     const completedButtons = getAllByText('Completed');
     expect(
       completedButtons.some((el) => el.closest('button')?.getAttribute('aria-pressed') === 'true')
@@ -260,11 +238,6 @@ describe('SpaceTasks', () => {
   });
 
   it("surfaces 'approved' tasks inside the active tab (post-approval running)", async () => {
-    // `approved` is a transient state between `approve_task` and
-    // `mark_complete`. When stuck (post-approval dispatch fails and
-    // `postApprovalBlockedReason` is populated), the task must remain
-    // visible — routing it to Active keeps it in sight and the
-    // PendingPostApprovalBanner on the detail pane surfaces the error.
     mockTasks.value = [makeTask('t1', 'approved')];
     const { findByText } = render(<SpaceTasks spaceId="space-1" />);
     expect(await findByText('Task t1')).toBeTruthy();
@@ -323,7 +296,6 @@ describe('SpaceTasks', () => {
     mockSchedules.value = [makeSchedule('s1')];
     const { getByLabelText, findByRole, getAllByText } = render(<SpaceTasks spaceId="space-1" />);
 
-    // Action, Active, and Drafts fit inline; Completed stays in More.
     expect(getAllByText('Drafts').length).toBeGreaterThan(0);
     expect(getAllByText('Scheduled').length).toBeGreaterThan(0);
     fireEvent.click(getByLabelText('More task tabs'));
@@ -343,7 +315,6 @@ describe('SpaceTasks', () => {
       makeTask('t3', 'open', { updatedAt: now - 120_000 }),
     ];
     const { container } = render(<SpaceTasks spaceId="space-1" />);
-    // Task items are inside TaskGroup cards
     await waitFor(() => {
       const taskItems = container.querySelectorAll('.divide-y > div');
       expect(taskItems.length).toBe(3);
@@ -393,24 +364,19 @@ describe('SpaceTasks', () => {
   it('does not show count badge when count is 0', () => {
     mockTasks.value = [];
     const { container } = render(<SpaceTasks spaceId="space-1" />);
-    // The tab strip is always visible (so users can reach the Scheduled tab
-    // even when no tasks exist yet), but the Active tab should not have a
-    // count badge when its count is zero.
     const activeButtons = Array.from(container.querySelectorAll('button'));
     const activeTab = activeButtons.find((b) => b.textContent?.includes('Active'));
     expect(activeTab).toBeTruthy();
-    expect(activeTab!.textContent).toBe('Active'); // no "(0)" suffix
+    expect(activeTab!.textContent).toBe('Active');
   });
 
   it('switches tabs and shows filtered tasks', async () => {
     mockTasks.value = [makeTask('t1', 'open'), makeTask('t2', 'done')];
     const { getAllByText, findByText, queryByText } = render(<SpaceTasks spaceId="space-1" />);
 
-    // Active tab shows t1
     expect(await findByText('Task t1')).toBeTruthy();
     expect(queryByText('Task t2')).toBeNull();
 
-    // Switch to completed
     fireEvent.click(getAllByText('Completed')[0]);
     expect(await findByText('Task t2')).toBeTruthy();
     expect(queryByText('Task t1')).toBeNull();
@@ -420,7 +386,6 @@ describe('SpaceTasks', () => {
     mockTasks.value = [makeTask('t1', 'in_progress'), makeTask('t2', 'open')];
     const { getByText } = render(<SpaceTasks spaceId="space-1" />);
 
-    // Active tab should show two groups: "In Progress" and "Open"
     expect(getByText(/In Progress \(1\)/)).toBeTruthy();
     expect(getByText(/Open \(1\)/)).toBeTruthy();
   });
@@ -429,9 +394,7 @@ describe('SpaceTasks', () => {
     mockTasks.value = [makeTask('t1', 'in_progress')];
     const { getByText, queryByText } = render(<SpaceTasks spaceId="space-1" />);
 
-    // In Progress group shown
     expect(getByText(/In Progress \(1\)/)).toBeTruthy();
-    // Open group not shown (no open tasks)
     expect(queryByText(/Open \(/)).toBeNull();
   });
 
@@ -452,7 +415,6 @@ describe('SpaceTasks', () => {
       expect(badges).toHaveLength(1);
       expect(badges[0].textContent).toContain('#1');
       expect(badges[0].getAttribute('data-dep-status')).toBe('open');
-      // Gray color classes applied (bg-dark-700 / text-gray-300)
       expect(badges[0].className).toContain('text-gray-300');
       expect(badges[0].className).not.toContain('text-green-300');
     });
@@ -479,7 +441,6 @@ describe('SpaceTasks', () => {
       expect(badges[0].textContent).toContain('⚠');
       expect(badges[0].textContent).toContain('#?');
       expect((badges[0] as HTMLButtonElement).disabled).toBe(true);
-      // Disabled badges should not carry hover: classes.
       expect(badges[0].className).not.toMatch(/\bhover:/);
     });
 
@@ -505,9 +466,7 @@ describe('SpaceTasks', () => {
       const badges = await findAllByTestId('task-dependency-badge');
       fireEvent.click(badges[0]);
       expect(onSelectTask).toHaveBeenCalledWith('t1');
-      // Must not also select the parent row (stopPropagation)
       expect(onSelectTask).toHaveBeenCalledTimes(1);
-      // Interactive badges carry hover: classes for feedback.
       expect(badges[0].className).toMatch(/\bhover:/);
     });
 
@@ -536,7 +495,6 @@ describe('SpaceTasks', () => {
       ];
       const { findAllByTestId, getByTestId } = render(<SpaceTasks spaceId="space-1" />);
       const badges = await findAllByTestId('task-dependency-badge');
-      // Only the first 3 deps render as badges
       expect(badges).toHaveLength(3);
       expect(badges.map((b) => b.textContent)).toEqual(['#1', '#2', '#3']);
       const overflow = getByTestId('task-dependency-overflow');
@@ -570,7 +528,6 @@ describe('SpaceTasks', () => {
       expect(badges[0].getAttribute('data-dep-status')).toBe('in_progress');
       expect(badges[0].className).toContain('text-gray-300');
 
-      // Dependency completes → the badge should flip to green
       mockTasks.value = [
         makeTask('t1', 'done', { taskNumber: 1 }),
         makeTask('t2', 'open', { taskNumber: 2, dependsOn: ['t1'] }),
@@ -585,12 +542,6 @@ describe('SpaceTasks', () => {
   });
 
   describe("Active-tab parity with sidebar's isActiveTask", () => {
-    // The sidebar in `SpaceDetailPanel` calls `isActiveTask` directly;
-    // the tasks-view here goes through `TAB_PREDICATES.active`. This
-    // suite asserts those two paths agree across every `SpaceTaskStatus`,
-    // so a future re-inlining of the predicate in `SpaceTasks.tsx` (the
-    // shape the original bug took) would fail loudly here rather than
-    // silently shipping diverging Active lists.
     const ALL_STATUSES: SpaceTask['status'][] = [
       'open',
       'in_progress',
@@ -613,8 +564,6 @@ describe('SpaceTasks', () => {
     });
 
     it('produces the same set of task IDs as the sidebar over a heterogeneous fixture', () => {
-      // Mirrors the bug scenario: a mixed list including approved
-      // rows. Both consumers must select the exact same IDs.
       const fixture: SpaceTask[] = [
         makeTask('t-open-1', 'open'),
         makeTask('t-open-2', 'open'),
@@ -646,10 +595,6 @@ describe('SpaceTasks', () => {
 
   describe('Paginated group refresh & error/loading semantics', () => {
     it('does NOT refetch when only updatedAt advances (running-task step churn)', async () => {
-      // A running task steps: only `updatedAt` advances while title/status/
-      // blockReason/etc. are unchanged. Previously `contentSig` included
-      // `updatedAt` and re-fetched every visible group's page on each step.
-      // The sig now excludes `updatedAt`, so a pure step must not refetch.
       const now = Date.now();
       mockTasks.value = [
         makeTask('t1', 'in_progress', { taskNumber: 1, updatedAt: now - 1000 }),
@@ -663,7 +608,6 @@ describe('SpaceTasks', () => {
       const callsAfterMount = mockFetchTaskGroup.mock.calls.length;
       expect(callsAfterMount).toBeGreaterThan(0);
 
-      // Step t1 — only `updatedAt` changes; every sig field is identical.
       mockTasks.value = [
         makeTask('t1', 'in_progress', { taskNumber: 1, updatedAt: now }),
         makeTask('t2', 'in_progress', { taskNumber: 2, updatedAt: now - 2000 }),
@@ -674,9 +618,6 @@ describe('SpaceTasks', () => {
     });
 
     it('refetches when a displayed field is edited within the same status', async () => {
-      // A count-stable title edit changes `contentSig` (title is a sig field),
-      // so the page re-fetches and the edited row/title lands live. This is
-      // the live-refresh behaviour the `updatedAt`-excluding sig preserves.
       const now = Date.now();
       mockTasks.value = [
         makeTask('t1', 'in_progress', { taskNumber: 1, updatedAt: now - 1000 }),
@@ -704,10 +645,6 @@ describe('SpaceTasks', () => {
     });
 
     it('refetches when a task result changes (blocked-row reason refresh)', async () => {
-      // `result` is a sig field — TaskItem renders it as the blocked-row
-      // reason. The daemon writes `result` only on discrete lifecycle
-      // transitions, never during in_progress stepping, so including it can't
-      // reintroduce the step-churn; a change must refresh the page.
       const now = Date.now();
       mockTasks.value = [
         makeTask('t1', 'in_progress', { taskNumber: 1, updatedAt: now - 1000, result: null }),
@@ -735,11 +672,6 @@ describe('SpaceTasks', () => {
     });
 
     it('refetches when the active spaceId changes', async () => {
-      // Render under space-1 with two tasks. Switch the signal to
-      // space-2 and assert the fetch effect re-ran. Without `spaceId`
-      // in the group key, a stable (title, status, blockReason,
-      // localCount, offset) tuple across spaces would silently leak
-      // rows from the previous space.
       mockCurrentSpaceIdSignal.value = 'space-1';
       mockTasks.value = [
         makeTask('t1', 'in_progress', { taskNumber: 1 }),
@@ -757,27 +689,20 @@ describe('SpaceTasks', () => {
     });
 
     it('preserves pagination footer and surfaces a Retry banner on fetch error', async () => {
-      // Seed >10 tasks so pagination would render. First call resolves
-      // (mount succeeds → footer rendered), second call rejects
-      // (simulated transient RPC failure on Next click). The footer
-      // must still be in the DOM and the body must show a Retry button.
       const tasks: SpaceTask[] = [];
       for (let i = 0; i < 15; i++) {
         tasks.push(makeTask(`t${i}`, 'in_progress', { taskNumber: i }));
       }
       mockTasks.value = tasks;
 
-      // First call (mount) uses the default impl. Second call rejects.
       mockFetchTaskGroup.mockImplementationOnce(defaultFetchTaskGroupImpl);
       mockFetchTaskGroup.mockImplementationOnce(() => Promise.reject(new Error('network')));
 
       const { findByTestId, getByTestId } = render(<SpaceTasks spaceId="space-1" />);
-      // Pagination footer renders after the initial fetch.
       await findByTestId('task-group-pagination');
 
       fireEvent.click(getByTestId('task-group-next'));
 
-      // Error banner appears and the footer survives the failure.
       await findByTestId('task-group-error');
       expect(getByTestId('task-group-pagination')).toBeTruthy();
       expect(getByTestId('task-group-retry')).toBeTruthy();
@@ -792,7 +717,6 @@ describe('SpaceTasks', () => {
 
       mockFetchTaskGroup.mockImplementationOnce(defaultFetchTaskGroupImpl);
       mockFetchTaskGroup.mockImplementationOnce(() => Promise.reject(new Error('network')));
-      // Third call (Retry) succeeds.
       mockFetchTaskGroup.mockImplementationOnce(defaultFetchTaskGroupImpl);
 
       const { findByTestId, getByTestId, queryByTestId } = render(<SpaceTasks spaceId="space-1" />);
@@ -807,10 +731,6 @@ describe('SpaceTasks', () => {
     });
 
     it('clears visible rows and shows a loading placeholder on Prev/Next click', async () => {
-      // 15 in_progress tasks → pagination renders (limit=10, total=15).
-      // Stage the second fetch (Next click) on a deferred promise so we
-      // can observe the in-between state where rows are cleared and the
-      // loading placeholder is visible.
       const tasks: SpaceTask[] = [];
       for (let i = 0; i < 15; i++) {
         tasks.push(
@@ -834,19 +754,13 @@ describe('SpaceTasks', () => {
       const { findByText, getByTestId, findByTestId, queryByText } = render(
         <SpaceTasks spaceId="space-1" />
       );
-      // First page rendered.
       expect(await findByText('Task t00')).toBeTruthy();
 
       fireEvent.click(getByTestId('task-group-next'));
 
-      // While the Next request is pending, the previous page's rows
-      // must be hidden and a loading placeholder shown — otherwise the
-      // user could click into a row that no longer belongs to the
-      // "Showing 11–20" range now reflected in the footer.
       await findByTestId('task-group-loading');
       expect(queryByText('Task t00')).toBeNull();
 
-      // Resolve the deferred fetch with the next page.
       resolveNext({ tasks: tasks.slice(10, 15), total: 15 });
       expect(await findByText('Task t10')).toBeTruthy();
     });

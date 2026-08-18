@@ -1,9 +1,3 @@
-/**
- * QueryRunner Tests
- *
- * Tests for SDK query execution with streaming input.
- */
-
 import { describe, expect, it, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { tmpdir } from 'node:os';
 import {
@@ -36,7 +30,6 @@ describe('QueryRunner', () => {
   let mockOptionsBuilder: QueryOptionsBuilder;
   let mockAskUserQuestionHandler: AskUserQuestionHandler;
 
-  // Spy functions
   let isRunningSpy: ReturnType<typeof mock>;
   let startSpy: ReturnType<typeof mock>;
   let clearSpy: ReturnType<typeof mock>;
@@ -59,7 +52,6 @@ describe('QueryRunner', () => {
   let createCanUseToolCallbackSpy: ReturnType<typeof mock>;
   let enqueueWithIdSpy: ReturnType<typeof mock>;
 
-  // State variables (mutable context properties)
   let queryGeneration: number;
   let onSDKMessageSpy: ReturnType<typeof mock>;
   let onSlashCommandsFetchedSpy: ReturnType<typeof mock>;
@@ -91,10 +83,8 @@ describe('QueryRunner', () => {
       },
     };
 
-    // Reset state
     queryGeneration = 0;
 
-    // Create callback spies
     trackAgentProcessSpy = mock(() => {});
     terminateTrackedAgentProcessesSpy = mock(() => {});
     onSDKMessageSpy = mock(async () => {});
@@ -102,7 +92,6 @@ describe('QueryRunner', () => {
     onModelsFetchedSpy = mock(async () => {});
     onMarkApiSuccessSpy = mock(async () => {});
 
-    // Database spies
     saveSDKMessageSpy = mock(() => {});
     updateSessionSpy = mock(() => {});
     getMessagesByStatusSpy = mock(() => []);
@@ -124,7 +113,6 @@ describe('QueryRunner', () => {
       })),
     } as unknown as Database;
 
-    // MessageHub spies
     publishSpy = mock(async () => {});
     mockMessageHub = {
       event: publishSpy,
@@ -133,8 +121,6 @@ describe('QueryRunner', () => {
       command: mock(async () => {}),
     } as unknown as MessageHub;
 
-    // MessageQueue spies — start/stop toggle isRunning so retry re-checks that
-    // gate on messageQueue.isRunning() work correctly in tests.
     isRunningSpy = mock(() => false);
     startSpy = mock(() => {
       isRunningSpy.mockReturnValue(true);
@@ -158,7 +144,6 @@ describe('QueryRunner', () => {
       }),
     } as unknown as MessageQueue;
 
-    // StateManager spies
     getStateSpy = mock(() => ({ status: 'idle' }));
     setIdleSpy = mock(async () => {});
     setProcessingSpy = mock(async () => {});
@@ -170,13 +155,11 @@ describe('QueryRunner', () => {
       beginTerminalIdle: beginTerminalIdleSpy,
     } as unknown as ProcessingStateManager;
 
-    // ErrorManager spies
     handleErrorSpy = mock(async () => {});
     mockErrorManager = {
       handleError: handleErrorSpy,
     } as unknown as ErrorManager;
 
-    // Logger spies
     mockLogger = {
       log: mock(() => {}),
       warn: mock(() => {}),
@@ -185,7 +168,6 @@ describe('QueryRunner', () => {
       info: mock(() => {}),
     } as unknown as Logger;
 
-    // OptionsBuilder spies
     buildSpy = mock(async () => ({ model: 'claude-sonnet-4-20250514' }));
     addSessionStateOptionsSpy = mock((options: unknown) => options);
     setCanUseToolSpy = mock(() => {});
@@ -195,7 +177,6 @@ describe('QueryRunner', () => {
       setCanUseTool: setCanUseToolSpy,
     } as unknown as QueryOptionsBuilder;
 
-    // AskUserQuestionHandler spies
     createCanUseToolCallbackSpy = mock(() => async () => true);
     mockAskUserQuestionHandler = {
       createCanUseToolCallback: createCanUseToolCallbackSpy,
@@ -204,7 +185,6 @@ describe('QueryRunner', () => {
 
   function createContext(overrides: Partial<QueryRunnerContext> = {}): QueryRunnerContext {
     return {
-      // Core dependencies
       session: mockSession,
       db: mockDb,
       messageHub: mockMessageHub,
@@ -215,7 +195,6 @@ describe('QueryRunner', () => {
       optionsBuilder: mockOptionsBuilder,
       askUserQuestionHandler: mockAskUserQuestionHandler,
 
-      // Mutable SDK state (direct properties)
       queryObject: null,
       queryPromise: null,
       queryAbortController: null,
@@ -232,12 +211,10 @@ describe('QueryRunner', () => {
       trackAgentProcess: trackAgentProcessSpy,
       terminateTrackedAgentProcesses: terminateTrackedAgentProcessesSpy,
 
-      // Methods for state coordination
       incrementQueryGeneration: () => ++queryGeneration,
       getQueryGeneration: () => queryGeneration,
       isCleaningUp: () => false,
 
-      // Callbacks for message handling
       onSDKMessage: onSDKMessageSpy,
       onSlashCommandsFetched: onSlashCommandsFetchedSpy,
       onModelsFetched: onModelsFetchedSpy,
@@ -286,9 +263,7 @@ describe('QueryRunner', () => {
       isRunningSpy.mockReturnValue(false);
       runner = createRunner();
 
-      // Start but don't wait for completion
       runner.start();
-      // Allow start to complete
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(startSpy).toHaveBeenCalled();
@@ -589,7 +564,6 @@ describe('QueryRunner', () => {
         mockSession.context = {};
         mockSession.config.mcpServers = {};
         buildSpy.mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} });
-        // Force early exit: make message generator throw so the query fails fast.
         mockMessageQueue.messageGenerator = mock(async function* () {
           throw new Error('generator abort for test');
         });
@@ -785,7 +759,6 @@ describe('QueryRunner', () => {
     it('should yield messages from queue and call onSent', async () => {
       const sentCount = { value: 0 };
 
-      // Create a mock message generator
       async function* mockMessageGenerator() {
         yield {
           message: { uuid: 'msg-1', content: 'Hello' },
@@ -929,8 +902,6 @@ describe('QueryRunner', () => {
         // Consume the generator
       }
 
-      // After consuming a non-internal message, the runner should have tracked it
-      // for potential re-enqueue on transient connection error retry.
       const tracked = (
         runner as unknown as {
           lastConsumedUserMessage: { uuid: string; content: unknown } | null;
@@ -969,7 +940,6 @@ describe('QueryRunner', () => {
         // Consume the generator
       }
 
-      // Internal messages should NOT be tracked for re-enqueue
       const tracked = (
         runner as unknown as {
           lastConsumedUserMessage: { uuid: string } | null;
@@ -979,9 +949,6 @@ describe('QueryRunner', () => {
     });
 
     it('does not accumulate startup replay after the first SDK frame', async () => {
-      // Codex P2 (PR #2499): once the generation has produced its first frame,
-      // the startup timer is disabled and later prompts/steers must not rebuild
-      // the replay list (unbounded full-content retention in long sessions).
       async function* mockMessageGenerator() {
         yield {
           message: {
@@ -1010,8 +977,6 @@ describe('QueryRunner', () => {
         // Consume the generator
       }
 
-      // `_lastConsumedUserMessage` is still tracked for the transient/rate-limit
-      // retries (mid-stream drops), but the startup-replay list stays empty.
       expect(
         (runner as unknown as { lastConsumedUserMessage: unknown }).lastConsumedUserMessage
       ).not.toBeNull();
@@ -1108,7 +1073,7 @@ describe('QueryRunner', () => {
       runner = createRunner();
 
       const abortController = new AbortController();
-      abortController.abort(); // Pre-abort
+      abortController.abort();
 
       const mockQuery = {
         [Symbol.asyncIterator]: () => ({
@@ -1141,7 +1106,6 @@ describe('QueryRunner', () => {
           next: async () => {
             callCount++;
             if (callCount === 2) {
-              // Abort after first yield
               abortController.abort();
             }
             return { value: { type: `msg${callCount}` }, done: false };
@@ -1158,7 +1122,7 @@ describe('QueryRunner', () => {
       const results: unknown[] = [];
       for await (const msg of generator) {
         results.push(msg);
-        if (results.length > 5) break; // Safety limit
+        if (results.length > 5) break;
       }
 
       expect(results.length).toBeLessThanOrEqual(2);
@@ -1256,12 +1220,6 @@ describe('QueryRunner', () => {
   });
 
   describe('runQuery() finally block close() behaviour', () => {
-    // Integration tests: exercise the actual QueryRunner.start() → runQuery() finally block.
-    // In unit tests, no credentials are configured (setup.ts clears all API keys), so
-    // runQuery() fails at the auth check before creating a new queryObject. This means
-    // ctx.queryObject stays as whatever was pre-set, and the finally block (non-stale path)
-    // calls close() on it and nulls it — exactly the natural-completion cleanup path.
-
     it('should call close() on pre-existing queryObject in finally block', async () => {
       const closeSpy = mock(() => {});
       const ctx = createContext({
@@ -1272,9 +1230,6 @@ describe('QueryRunner', () => {
       });
       runner = new QueryRunner(ctx);
 
-      // start() launches runQuery() asynchronously; wait for it to settle.
-      // runQuery() fails at the auth check (no credentials in unit tests),
-      // but the finally block still runs and should close + null ctx.queryObject.
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
@@ -1293,11 +1248,9 @@ describe('QueryRunner', () => {
       });
       runner = new QueryRunner(ctx);
 
-      // start() launches runQuery() asynchronously; wait for it to settle.
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      // queryObject is still nulled after error is caught
       expect(ctx.queryObject).toBeNull();
     });
 
@@ -1310,35 +1263,25 @@ describe('QueryRunner', () => {
       } as unknown as Query;
       const ctx = createContext({
         queryObject: originalQueryObject,
-        // incrementQueryGeneration returns gen 1, but getQueryGeneration returns 2
-        // → isStaleQuery = true → finally block skips all cleanup
-        incrementQueryGeneration: () => ++gen, // returns 1
-        getQueryGeneration: () => 2, // current gen is 2, query ran as gen 1
+        incrementQueryGeneration: () => ++gen,
+        getQueryGeneration: () => 2,
       });
       runner = new QueryRunner(ctx);
 
-      // start() launches runQuery() asynchronously; wait for it to settle.
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
       expect(closeSpy).not.toHaveBeenCalled();
-      // ctx.queryObject is not nulled — it belongs to the current (gen 2) query
       expect(ctx.queryObject).toBe(originalQueryObject);
     });
   });
 
   describe('startup timeout error surfacing', () => {
-    // Integration tests: exercise the runQuery() catch block when a startup-timeout
-    // error is thrown.  buildSpy throws 'SDK startup timeout - query aborted' so the
-    // test never waits on the real startup timer.
-    // ANTHROPIC_API_KEY is set to a dummy value so the pre-query auth check passes.
-
     let savedApiKey: string | undefined;
 
     beforeEach(() => {
       savedApiKey = process.env.ANTHROPIC_API_KEY;
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
-      // Use a real directory so fs.mkdir() succeeds (reached after auth passes)
       mockSession.workspacePath = tmpdir();
       buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
     });
@@ -1391,20 +1334,13 @@ describe('QueryRunner', () => {
       expect(handleErrorSpy).toHaveBeenCalledWith(
         'test-session-id',
         expect.any(Error),
-        expect.any(String), // category
-        expect.stringContaining('HYPERNEO_SDK_STARTUP_TIMEOUT_MS'), // timeout hint for startup failure
+        expect.any(String),
+        expect.stringContaining('HYPERNEO_SDK_STARTUP_TIMEOUT_MS'),
         expect.anything(),
         expect.objectContaining({ isRootWorkspace: expect.any(Boolean) })
       );
-      // Should NOT contain retry count language
       const userMessage = handleErrorSpy.mock.calls[0][3] as string;
       expect(userMessage).not.toContain('attempt(s)');
-      // The hint prints the effective startup window. The vitest preload
-      // (tests/vitest.setup.ts — the only preload automated runs load) deletes
-      // ambient overrides before imports, and every test that sets the
-      // variable restores it in finally (acp-query-runner.test.ts), so the
-      // module-load snapshot here is the 60s default. Pins both the default
-      // and the effective-value hint.
       expect(userMessage).toContain('current: 60000ms');
     });
 
@@ -1416,7 +1352,6 @@ describe('QueryRunner', () => {
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      // Do NOT auto-clear sdkSessionId — let the user choose via sdkResumeChoice prompt
       expect(mockSession.sdkSessionId).toBe('sdk-session-id');
       expect(updateSessionSpy).not.toHaveBeenCalledWith(
         'test-session-id',
@@ -1428,14 +1363,12 @@ describe('QueryRunner', () => {
         'test-session-id',
         expect.any(Error),
         expect.any(String),
-        expect.stringContaining('session could not be resumed'), // actionable hint
+        expect.stringContaining('session could not be resumed'),
         expect.anything(),
         expect.objectContaining({ isRootWorkspace: expect.any(Boolean) })
       );
-      // HYPERNEO_SDK_STARTUP_TIMEOUT_MS is irrelevant to a missing session file
       const userMessage = handleErrorSpy.mock.calls[0][3] as string;
       expect(userMessage).not.toContain('HYPERNEO_SDK_STARTUP_TIMEOUT_MS');
-      // Should NOT contain retry count language
       expect(userMessage).not.toContain('attempt(s)');
     });
 
@@ -1547,12 +1480,6 @@ describe('QueryRunner', () => {
     });
 
     it('should close queryObject before retrying to prevent MCP "Already connected to a transport" crash', async () => {
-      // Regression test for the race condition where auto-retry after startup timeout
-      // would call runQuery() while the previous query's finally{} block had not yet
-      // run, leaving MCP transports open and causing "Already connected" crashes.
-      //
-      // The fix explicitly closes ctx.queryObject in the catch block BEFORE the
-      // recursive retry call, ensuring MCP transports are released first.
       let closeCalled = false;
       const mockQueryObject = {
         close: () => {
@@ -1561,39 +1488,26 @@ describe('QueryRunner', () => {
         [Symbol.asyncIterator]: function* () {},
       } as unknown as import('@anthropic-ai/claude-agent-sdk').Query;
 
-      // Pre-populate queryObject to simulate a lingering open query (e.g. with open
-      // MCP transports) that existed when the startup timeout fired.
       const ctx = createContext({ queryObject: mockQueryObject });
       runner = new QueryRunner(ctx);
 
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      // close() must have been called on the pre-existing queryObject before the retry.
       expect(closeCalled).toBe(true);
-      // After the close, queryObject should be null (cleaned up by the fix).
-      // The finally block may re-check it, but it will see null and skip redundant close.
       expect(ctx.queryObject).toBeNull();
     });
 
     it('should force-terminate orphaned SDK processes before retrying after startup timeout', async () => {
-      // Clean-slate guard: a startup-timeout spawn may be orphaned (spawned but
-      // never fed, or hung past cooperative close()) and collide with the retry's
-      // fresh spawn. The retry must force-kill the tracked set first so the retry
-      // starts from a clean process slate.
       const ctx = createContext();
       runner = new QueryRunner(ctx);
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      // The auto-retry path must have asked to terminate tracked subprocesses
-      // (SIGTERM + scheduled SIGKILL), not just cooperatively close queryObject.
       expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalled();
     });
 
     it('should await processExitedPromise before retrying after startup timeout', async () => {
-      // Verify the retry path waits for the old subprocess to exit
-      // before spawning a replacement.
       const callOrder: string[] = [];
       let resolveExit: () => void;
       const exitPromise = new Promise<void>((resolve) => {
@@ -1603,7 +1517,6 @@ describe('QueryRunner', () => {
       const mockQueryObject = {
         close: () => {
           callOrder.push('close');
-          // Simulate subprocess exit after a delay
           setTimeout(() => {
             callOrder.push('process-exited');
             resolveExit!();
@@ -1621,21 +1534,12 @@ describe('QueryRunner', () => {
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      // close() and process-exited should both have been called
-      // before the retry attempt proceeded
       expect(callOrder).toContain('close');
       expect(callOrder).toContain('process-exited');
-      // processExitedPromise should be cleared after the wait
       expect(ctx.processExitedPromise).toBeNull();
     });
 
     it('restarts a stopped message queue before the startup-timeout retry', async () => {
-      // Codex P1 (PR #2499): the timeout escape returns the iterator normally,
-      // so the post-loop code stops the queue BEFORE the timeout throw reaches
-      // the catch. The recursive retry must restart it — messageGenerator exits
-      // immediately while the queue is stopped, so the preserved prompt would
-      // never feed the retry and it would time out again. Simulate the
-      // timeout-path stop at the top of the retry block (setIdle hook).
       setIdleSpy.mockImplementation(async () => {
         stopSpy();
       });
@@ -1645,13 +1549,10 @@ describe('QueryRunner', () => {
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      // start() once + the retry's restart.
       expect(startSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
 
     it('does not restart the message queue for a startup-timeout retry when interrupted', async () => {
-      // A stop by interrupt is not the timeout path's own stop — restarting
-      // would re-arm a queue the user cancelled.
       setIdleSpy.mockImplementation(async () => {
         stopSpy();
         getStateSpy.mockReturnValue({ status: 'interrupted' } as never);
@@ -1666,12 +1567,6 @@ describe('QueryRunner', () => {
     });
 
     it('does not respawn after a startup timeout when an interrupt raced the catch', async () => {
-      // interrupt-handler sets 'interrupted' (and aborts the controller)
-      // without bumping the query generation, so neither
-      // retrySupersededByReplacement nor isCleaningUp excludes it — the
-      // status guard on the retry condition is what stops a fresh
-      // subprocess spawning on a stopped session (spurious terminal
-      // "failed to start"). Mirrors the guard on the queue restart above.
       const kickoff = { uuid: 'kickoff-uuid', content: [{ type: 'text' as const, text: 'K' }] };
       getStateSpy.mockReturnValue({ status: 'interrupted' } as never);
       const ctx = createContext();
@@ -1683,7 +1578,6 @@ describe('QueryRunner', () => {
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      // Exactly one build = the first attempt; no recursive retry respawn.
       expect(buildSpy).toHaveBeenCalledTimes(1);
       expect(enqueueWithIdSpy).not.toHaveBeenCalledWith(kickoff.uuid, kickoff.content, false, {
         prepend: true,
@@ -1691,17 +1585,11 @@ describe('QueryRunner', () => {
     });
 
     it('re-enqueues every consumed prompt before the startup-timeout retry', async () => {
-      // Codex P1 (PR #2499): if the old SDK pulled prompts out of the queue via
-      // messageGenerator() before going silent, restarting the queue leaves the
-      // retry with no input and it times out again at zero messages. A silent
-      // iterator can pull the kickoff AND trailing steers, so replay the full
-      // ordered set — not just the last message.
       const kickoff = { uuid: 'kickoff-uuid', content: [{ type: 'text' as const, text: 'K' }] };
       const steer = { uuid: 'steer-uuid', content: [{ type: 'text' as const, text: 'S' }] };
 
       const ctx = createContext();
       runner = new QueryRunner(ctx);
-      // start() bumps the generation to 1, so the replay list lives under key 1.
       (
         runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
       )._consumedUserMessages = new Map([[1, [kickoff, steer]]]);
@@ -1715,19 +1603,11 @@ describe('QueryRunner', () => {
       expect(enqueueWithIdSpy).toHaveBeenCalledWith(steer.uuid, steer.content, false, {
         prepend: true,
       });
-      // Prepend in reverse so the consumed prefix lands ahead of any untouched
-      // queue tail: the calls fire steer-then-kickoff, leaving the queue in
-      // kickoff-then-steer order. (Codex P1, PR #2499.)
       const calls = enqueueWithIdSpy.mock.calls as unknown as Array<[string, unknown]>;
       expect(calls.map(([uuid]) => uuid)).toEqual([steer.uuid, kickoff.uuid]);
     });
 
     it('should abandon the retry when a replacement query took ownership during the exit wait', async () => {
-      // Codex P1 (PR #2491): the retry's recursive runQuery() bypasses
-      // start()'s queue-running guard. If a replacement query started while
-      // the retry awaited the old subprocess's exit, recursing with the stale
-      // generation would spawn a competing query overwriting the
-      // replacement's queryObject. The retry must be abandoned instead.
       buildSpy.mockClear();
       let resolveExit: () => void;
       const exitPromise = new Promise<void>((resolve) => {
@@ -1741,8 +1621,6 @@ describe('QueryRunner', () => {
         processExitedPromise: exitPromise,
       });
       runner = new QueryRunner(ctx);
-      // start() bumps the generation to 1; the superseded generation's entry
-      // (key 1) must be cleared when the replacement takes ownership.
       (
         runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
       )._consumedUserMessages = new Map([
@@ -1750,19 +1628,12 @@ describe('QueryRunner', () => {
       ]);
 
       runner.start();
-      // Let the first attempt reach the catch block (build rejects with the
-      // timeout error), then simulate: (1) a replacement start bumping the
-      // query generation, (2) the old subprocess exiting.
       await new Promise((resolve) => setTimeout(resolve, 10));
       ctx.incrementQueryGeneration();
       resolveExit!();
       await ctx.queryPromise?.catch(() => {});
 
-      // The retry was abandoned — runQuery must not have been re-entered
-      // (options build runs exactly once, for the first attempt only).
       expect(buildSpy).toHaveBeenCalledTimes(1);
-      // The superseded generation's replay history is cleared so the
-      // replacement does not inherit (and duplicate) it. (Codex P2, PR #2499.)
       expect(
         (
           runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
@@ -1772,13 +1643,7 @@ describe('QueryRunner', () => {
   });
 
   describe('auto-recovery removal regression guards (Task 2.3)', () => {
-    // Regression guards: verify that auto-recovery fields removed in Task 2.1 are absent
-    // from QueryRunnerContext.  If any are reintroduced, TypeScript will catch callers
-    // that omit the field; these runtime checks provide belt-and-suspenders coverage.
-
     it('should not have onStartupTimeoutAutoRecover in QueryRunnerContext', () => {
-      // createContext() returns a full QueryRunnerContext built from all known fields.
-      // A reintroduced onStartupTimeoutAutoRecover would appear as a defined property.
       const ctx = createContext();
       expect((ctx as Record<string, unknown>).onStartupTimeoutAutoRecover).toBeUndefined();
     });
@@ -1790,26 +1655,11 @@ describe('QueryRunner', () => {
   });
 
   describe('generation-gated consumePendingResumeSessionAt', () => {
-    // Verify that the consumePendingResumeSessionAt call after the for-await
-    // loop is gated on getQueryGeneration() === queryGeneration. Without this
-    // guard, a stale aborted query (from restart()/rewind) would consume the
-    // pendingResumeSessionAt meant for the new query.
-    //
-    // The for-await success path (where the consume runs) cannot be reached in
-    // unit tests — the SDK's `query()` import is already bound at module load
-    // and mock.module cannot intercept it. Instead, we test the guard through
-    // the isMessageNotFound retry path where consumePendingResumeSessionAt IS
-    // reachable (line ~659), and verify the guard pattern (identical to
-    // messageQueue.stop() and close() generation guards) via the finally block.
-
     it('should consume resumeSessionAt before isMessageNotFound retry', async () => {
-      // buildSpy throws "No message found" → catch block consumes the stale
-      // resumeSessionAt before retrying (line ~659). Verifies the spy is called.
-      // ANTHROPIC_API_KEY must be set so the auth check passes and buildSpy is reached.
       const savedApiKey = process.env.ANTHROPIC_API_KEY;
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
       try {
-        mockSession.workspacePath = tmpdir(); // real dir for fs.mkdir
+        mockSession.workspacePath = tmpdir();
         mockSession.sdkSessionId = 'sdk-session-id';
         mockSession.sdkOriginPath = mockSession.workspacePath;
         const consumeSpy = mock(() => 'consumed-uuid');
@@ -1832,10 +1682,6 @@ describe('QueryRunner', () => {
     });
 
     it('should use same generation guard pattern as messageQueue.stop() and close()', async () => {
-      // All three guards use: if (getQueryGeneration() === queryGeneration)
-      // This test verifies the pattern works correctly via the messageQueue.stop()
-      // guard (reachable through the finally block on auth failure, same guard
-      // condition as the consume guard at line ~553).
       const closeSpy = mock(() => {});
       let gen = 0;
       const ctx = createContext({
@@ -1843,7 +1689,6 @@ describe('QueryRunner', () => {
           interrupt: mock(async () => {}),
           close: closeSpy,
         } as unknown as Query,
-        // Same generation → guard passes → cleanup runs
         incrementQueryGeneration: () => ++gen,
         getQueryGeneration: () => gen,
       });
@@ -1851,15 +1696,11 @@ describe('QueryRunner', () => {
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      // Guard passed: close() called, queryObject nulled
       expect(closeSpy).toHaveBeenCalled();
       expect(ctx.queryObject).toBeNull();
     });
 
     it('should skip consume on generation mismatch (same pattern as close() guard)', async () => {
-      // When restart()/rewind increments the generation after setting
-      // pendingResumeSessionAt, the stale old query's guard fails.
-      // Verified via the finally block's close() guard (identical pattern).
       const closeSpy = mock(() => {});
       let gen = 0;
       const originalQueryObject = {
@@ -1868,26 +1709,19 @@ describe('QueryRunner', () => {
       } as unknown as Query;
       const ctx = createContext({
         queryObject: originalQueryObject,
-        incrementQueryGeneration: () => ++gen, // returns 1
-        getQueryGeneration: () => 2, // current gen is 2, query ran as gen 1
+        incrementQueryGeneration: () => ++gen,
+        getQueryGeneration: () => 2,
       });
       runner = new QueryRunner(ctx);
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      // Guard failed: close() NOT called, queryObject NOT nulled
       expect(closeSpy).not.toHaveBeenCalled();
       expect(ctx.queryObject).toBe(originalQueryObject);
     });
   });
 
   describe('transient connection error handling', () => {
-    // Integration tests: exercise the runQuery() catch block when a transient
-    // connection error is thrown during the SDK query.  buildSpy is set to throw
-    // connection errors so the retry path is triggered without needing a real
-    // subprocess or network.  ANTHROPIC_API_KEY is set to a dummy value so the
-    // pre-query auth check passes.
-
     let savedApiKey: string | undefined;
 
     beforeEach(() => {
@@ -1918,9 +1752,7 @@ describe('QueryRunner', () => {
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      // buildSpy was called twice: original + retry
       expect(buildSpy).toHaveBeenCalledTimes(2);
-      // The retry path should show a sanitized message via displayErrorAsAssistantMessage
       expect(saveSDKMessageSpy).toHaveBeenCalledWith(
         'test-session-id',
         expect.objectContaining({
@@ -1948,16 +1780,11 @@ describe('QueryRunner', () => {
     });
 
     it('does not setIdle or retry from the catch when the query is stale (superseded by a generation bump)', async () => {
-      // A restart/cancel/model-switch bumps the generation; tearing down the old
-      // subprocess can surface as a transient connection error in the catch. The
-      // retry branches (which call setIdle) must be gated on the generation so a
-      // stale query neither publishes an idle nor retries — otherwise the
-      // completion callback fires before the superseding turn is enqueued.
       buildSpy.mockRejectedValueOnce(new Error('TypeError: fetch failed'));
       let gen = 0;
       const ctx = createContext({
-        incrementQueryGeneration: () => ++gen, // returns 1 (the query's generation)
-        getQueryGeneration: () => 2, // current generation is 2 → stale
+        incrementQueryGeneration: () => ++gen,
+        getQueryGeneration: () => 2,
       });
       runner = new QueryRunner(ctx);
       setIdleSpy.mockClear();
@@ -1966,7 +1793,7 @@ describe('QueryRunner', () => {
       await ctx.queryPromise?.catch(() => {});
 
       expect(setIdleSpy).not.toHaveBeenCalled();
-      expect(buildSpy).toHaveBeenCalledTimes(1); // no retry
+      expect(buildSpy).toHaveBeenCalledTimes(1);
     });
 
     it('should surface error via handleError on exhausted transient connection retry', async () => {
@@ -2006,7 +1833,6 @@ describe('QueryRunner', () => {
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      // The exhausted retry message must NOT contain raw fetch internals
       const userMessage = handleErrorSpy.mock.calls[0][3] as string;
       expect(userMessage).toContain('Could not get a response');
       expect(userMessage).toContain('connection was interrupted');
@@ -2033,8 +1859,6 @@ describe('QueryRunner', () => {
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      // Exactly 2 calls: initial + 1 retry. A third call would mean a
-      // double-retry, which is wrong (isRetry flag guards against it).
       expect(buildSpy).toHaveBeenCalledTimes(2);
     });
 
@@ -2063,8 +1887,6 @@ describe('QueryRunner', () => {
     });
 
     it('should not re-enqueue when no user message was consumed (error before for-await)', async () => {
-      // buildSpy throws immediately (before the message generator is consumed),
-      // so lastConsumedUserMessage is never set and no re-enqueue should happen.
       buildSpy.mockRejectedValue(new Error('TypeError: fetch failed'));
 
       const ctx = createContext();
@@ -2076,14 +1898,6 @@ describe('QueryRunner', () => {
     });
 
     it('should re-enqueue tracked user message on transient connection error retry', async () => {
-      // Simulates the scenario where the SDK drops mid-stream AFTER consuming a user
-      // message from the queue.  Since the SDK's query() can't be mocked in unit tests
-      // (it's imported at module load), we pre-set lastConsumedUserMessage on the runner
-      // and then trigger the transient error via buildSpy to verify the re-enqueue.
-      //
-      // In production, lastConsumedUserMessage is set by createMessageGeneratorWrapper()
-      // when yielding non-internal messages to the SDK (verified by the tracking test
-      // in the createMessageGeneratorWrapper describe block).
       const consumedUuid = 'consumed-msg-uuid';
       const consumedContent = [{ type: 'text' as const, text: 'Hello, Claude!' }];
 
@@ -2098,8 +1912,6 @@ describe('QueryRunner', () => {
       const ctx = createContext();
       runner = new QueryRunner(ctx);
 
-      // Pre-set the tracked message (simulates createMessageGeneratorWrapper having
-      // consumed a user message before the transient error occurred).
       (runner as unknown as { _lastConsumedUserMessage: unknown })._lastConsumedUserMessage = {
         uuid: consumedUuid,
         content: consumedContent,
@@ -2108,7 +1920,6 @@ describe('QueryRunner', () => {
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      // The tracked message should have been re-enqueued before the retry
       expect(enqueueWithIdSpy).toHaveBeenCalledWith(consumedUuid, consumedContent);
     });
 
@@ -2131,24 +1942,11 @@ describe('QueryRunner', () => {
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      // After re-enqueue, the tracking field should be cleared
       expect(
         (runner as unknown as { _lastConsumedUserMessage: unknown })._lastConsumedUserMessage
       ).toBeNull();
     });
 
-    // NOTE: The "retry succeeds" happy path (build rejects once, resolves on retry)
-    // cannot be tested in unit tests because query-runner.ts:461 calls the real
-    // (unmocked) SDK query() after build() resolves.  In the test environment,
-    // this either hangs (timing out) or throws (flaky depending on env).
-    //
-    // The retry path is adequately covered by the tests above that verify:
-    //  - buildSpy.toHaveBeenCalledTimes(2) proves retry fires exactly once
-    //  - saveSDKMessageSpy proves the retry message is displayed
-    //  - re-enqueue tests prove consumed messages are restored before retry
-    //  - handleErrorSpy tests prove exhausted retries surface sanitized errors
-
-    // Test each transient pattern that previously had no dedicated coverage.
     const untestedPatterns = [
       'ReadableStream is locked',
       'network down',
@@ -2168,10 +1966,8 @@ describe('QueryRunner', () => {
         runner.start();
         await ctx.queryPromise?.catch(() => {});
 
-        // Should have retried once (2 calls total)
         expect(buildSpy).toHaveBeenCalledTimes(2);
 
-        // Should show the retry message
         expect(saveSDKMessageSpy).toHaveBeenCalledWith(
           'test-session-id',
           expect.objectContaining({
@@ -2190,13 +1986,6 @@ describe('QueryRunner', () => {
   });
 
   describe('bounded provider error retry (5xx / overloaded / unavailable)', () => {
-    // Integration tests: exercise the runQuery() catch block when a 5xx /
-    // overloaded / provider-unavailable error escapes the SDK. buildSpy is set
-    // to throw the provider error so the bounded retry path fires without
-    // needing a real subprocess. ANTHROPIC_API_KEY is set to a dummy value so
-    // the pre-query auth check passes. Backoff delay is zeroed via env var so
-    // tests don't sleep for real.
-
     let savedApiKey: string | undefined;
     let savedBaseDelay: string | undefined;
     let savedMaxRetries: string | undefined;
@@ -2206,7 +1995,6 @@ describe('QueryRunner', () => {
       savedBaseDelay = process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS;
       savedMaxRetries = process.env.HYPERNEO_PROVIDER_MAX_RETRIES;
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
-      // Zero the backoff delay so retries fire immediately.
       process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = '0';
       mockSession.workspacePath = tmpdir();
     });
@@ -2239,7 +2027,6 @@ describe('QueryRunner', () => {
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      // 1 initial + 3 retries = 4 calls total
       expect(buildSpy).toHaveBeenCalledTimes(4);
     });
 
@@ -2284,7 +2071,6 @@ describe('QueryRunner', () => {
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      // No retry — exactly 1 call
       expect(buildSpy).toHaveBeenCalledTimes(1);
     });
 
@@ -2311,7 +2097,6 @@ describe('QueryRunner', () => {
     });
 
     it('should NOT retry a 5xx that also contains a 401 auth signal', async () => {
-      // Belt-and-suspenders: even though "500" is present, the auth guard wins.
       buildSpy.mockRejectedValue(new Error('500 error: invalid_api_key'));
 
       const ctx = createContext();
@@ -2363,7 +2148,6 @@ describe('QueryRunner', () => {
       );
       const userMessage = handleErrorSpy.mock.calls[0][3] as string;
       expect(userMessage).toContain('retried');
-      // Must NOT leak raw error internals
       expect(userMessage).not.toContain('529');
     });
 
@@ -2375,8 +2159,6 @@ describe('QueryRunner', () => {
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      // 3 retries → 3 retry notices (plus the final exhausted terminal error
-      // which goes through handleError, not displayErrorAsAssistantMessage).
       const retryNotices = saveSDKMessageSpy.mock.calls.filter(([, msg]) => {
         const content = (msg as { message?: { content?: Array<{ text?: string }> } }).message
           ?.content;
@@ -2425,7 +2207,6 @@ describe('QueryRunner', () => {
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      // 1 initial + 1 retry = 2 calls
       expect(buildSpy).toHaveBeenCalledTimes(2);
     });
 
@@ -2451,8 +2232,6 @@ describe('QueryRunner', () => {
     });
 
     it('should NOT retry transient connection errors via the bounded path (stays 1-shot)', async () => {
-      // Transient connection patterns (e.g. "TypeError: fetch failed") must
-      // still be handled by the 1-shot transient path, not the bounded path.
       buildSpy.mockRejectedValue(new Error('TypeError: fetch failed'));
 
       const ctx = createContext();
@@ -2460,7 +2239,6 @@ describe('QueryRunner', () => {
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      // Transient path: exactly 2 calls (1 + 1 retry), NOT 4.
       expect(buildSpy).toHaveBeenCalledTimes(2);
     });
 
@@ -2476,7 +2254,6 @@ describe('QueryRunner', () => {
     });
 
     it('should NOT retry errors where digits are embedded in longer numbers (5000ms)', async () => {
-      // "5000ms" must not false-positive as a 500 status code.
       buildSpy.mockRejectedValue(new Error('Request timed out after 5000ms'));
 
       const ctx = createContext();
@@ -2488,23 +2265,18 @@ describe('QueryRunner', () => {
     });
 
     it('should not retry after backoff if interrupted during the backoff window', async () => {
-      // Use a non-zero delay so the abort can fire DURING the sleep.
       process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = '100';
       const abortController = new AbortController();
       buildSpy.mockRejectedValue(new Error('503 Service Unavailable'));
 
-      // Pre-set the abort controller; buildSpy throws before runQuery creates
-      // its own, so ctx.queryAbortController stays as this one.
       const ctx = createContext({ queryAbortController: abortController });
       runner = new QueryRunner(ctx);
 
-      // Abort during the 100ms backoff sleep (well after the retry path entered).
       setTimeout(() => abortController.abort(), 20);
 
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      // Only 1 call — the retry was cancelled by the post-backoff re-check.
       expect(buildSpy).toHaveBeenCalledTimes(1);
     });
 
@@ -2515,13 +2287,10 @@ describe('QueryRunner', () => {
       let gen = 0;
       const ctx = createContext({
         incrementQueryGeneration: () => ++gen,
-        // Generation starts at 1 (matching the query). After the backoff, we
-        // bump it to 2 to simulate a restart during the sleep window.
         getQueryGeneration: () => gen,
       });
       runner = new QueryRunner(ctx);
 
-      // Bump generation during the 100ms backoff (simulates restart()).
       setTimeout(() => {
         gen = 2;
       }, 20);
@@ -2529,14 +2298,10 @@ describe('QueryRunner', () => {
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      // Only 1 call — the retry was cancelled because the generation changed.
       expect(buildSpy).toHaveBeenCalledTimes(1);
     });
 
     it('should clear the stale startup timer before retrying a provider error', async () => {
-      // Pre-set a startup timer (simulates firstMessageReceived=false when the
-      // 5xx hit). The retry path must clear it so it cannot fire during a
-      // later retry and abort that retry's controller.
       const fakeTimer = setTimeout(() => {}, 999999);
       buildSpy.mockRejectedValue(new Error('503 Service Unavailable'));
 
@@ -2545,15 +2310,10 @@ describe('QueryRunner', () => {
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      // The timer should have been cleared by the retry path (set to null),
-      // not left armed for a later retry's controller.
       expect(ctx.startupTimeoutTimer).toBeNull();
     });
 
     it('should restore originalEnvVars before recursive retry (env-leak guard)', async () => {
-      // Pre-set non-empty originalEnvVars. The retry path must restore+clear
-      // them before recursing so the next attempt captures the true originals
-      // instead of this attempt's provider overrides.
       buildSpy.mockRejectedValue(new Error('503 Service Unavailable'));
 
       const ctx = createContext({
@@ -2563,13 +2323,10 @@ describe('QueryRunner', () => {
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      // originalEnvVars should have been cleared by the retry path's restore.
       expect(ctx.originalEnvVars).toEqual({});
     });
 
     it('should restore env vars even when retry is cancelled during backoff', async () => {
-      // Env restore must run BEFORE the post-sleep re-check so a cancellation
-      // return (e.g. restart bumping generation) doesn't skip the restore.
       process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = '100';
       const abortController = new AbortController();
       buildSpy.mockRejectedValue(new Error('503 Service Unavailable'));
@@ -2580,28 +2337,22 @@ describe('QueryRunner', () => {
       });
       runner = new QueryRunner(ctx);
 
-      // Abort during the 100ms backoff to trigger cancellation.
       setTimeout(() => abortController.abort(), 20);
 
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      // Env should have been restored+cleared BEFORE the cancellation return.
       expect(ctx.originalEnvVars).toEqual({});
-      // Only 1 build call — the retry was cancelled.
       expect(buildSpy).toHaveBeenCalledTimes(1);
     });
 
     it('should not retry after backoff if the queue was stopped (restart/stop)', async () => {
-      // QueryLifecycleManager.stop() stops the queue without bumping generation
-      // or marking interrupted — the re-check must catch it via isRunning().
       process.env.HYPERNEO_PROVIDER_RETRY_BASE_DELAY_MS = '100';
       buildSpy.mockRejectedValue(new Error('503 Service Unavailable'));
 
       const ctx = createContext();
       runner = new QueryRunner(ctx);
 
-      // Simulate stop() stopping the queue during the backoff window.
       setTimeout(() => {
         isRunningSpy.mockReturnValue(false);
       }, 20);
@@ -2609,7 +2360,6 @@ describe('QueryRunner', () => {
       runner.start();
       await ctx.queryPromise?.catch(() => {});
 
-      // Only 1 call — the retry was cancelled because the queue was stopped.
       expect(buildSpy).toHaveBeenCalledTimes(1);
     });
 
@@ -2707,9 +2457,6 @@ describe('QueryRunner', () => {
     });
 
     it('should clear _lastConsumedUserMessage on terminal error to prevent stale replay', async () => {
-      // Use a non-retryable error (401) so no retry path is entered. The finally
-      // block must clear _lastConsumedUserMessage so a stale value from a
-      // previous completed turn can't be replayed on the next turn's retry.
       buildSpy.mockRejectedValue(new Error('401 Unauthorized'));
 
       const ctx = createContext();
@@ -2824,7 +2571,6 @@ describe('QueryRunner error categorization', () => {
   it('should default to system category for unknown errors', () => {
     const category = 'system';
     const _message = 'some unknown error';
-    // None of the conditions match
     expect(category).toBe('system');
   });
 });
@@ -2891,7 +2637,6 @@ describe('QueryRunner API validation error parsing', () => {
     const errorMessage = '400 {invalid json}';
     const match = errorMessage.match(/^(?:API Error:\s*)?(4\d{2})\s+(\{.+\})$/s);
 
-    // Match exists but JSON parsing will fail
     expect(match).not.toBeNull();
     expect(() => JSON.parse(match![2])).toThrow();
   });
@@ -2924,25 +2669,18 @@ describe('QueryRunner API validation error parsing', () => {
 });
 
 describe('QueryRunner startup timeout handling', () => {
-  // The 60s default itself is pinned by the 'should pass actionable user
-  // message with timeout hint to handleError (startup timeout)' test above,
-  // which asserts the hint prints the effective default ('current: 60000ms').
-
   it('should track timeout state', () => {
     let startupTimeoutReached = false;
     const queryStartTime = Date.now();
 
-    // Simulate timeout callback
     const timeoutCallback = () => {
       startupTimeoutReached = true;
       const elapsed = Date.now() - queryStartTime;
       expect(elapsed).toBeGreaterThanOrEqual(0);
     };
 
-    // Before timeout
     expect(startupTimeoutReached).toBe(false);
 
-    // After timeout triggers
     timeoutCallback();
     expect(startupTimeoutReached).toBe(true);
   });
@@ -2951,7 +2689,6 @@ describe('QueryRunner startup timeout handling', () => {
     let timerCleared = false;
     const timer = setTimeout(() => {}, 60000);
 
-    // Simulate clearing on first message
     clearTimeout(timer);
     timerCleared = true;
 
@@ -2989,7 +2726,6 @@ describe('QueryRunner abortable query iterator', () => {
 
     let messagesProcessed = 0;
 
-    // Simulate the check at start of createAbortableQuery
     if (!abortController.signal.aborted) {
       messagesProcessed++;
     }
@@ -3019,15 +2755,12 @@ describe('QueryRunner abortable query iterator', () => {
     const abortController = new AbortController();
     const abortError = new Error('Query aborted');
 
-    // Create abort promise
     const abortPromise = new Promise<never>((_, reject) => {
       abortController.signal.addEventListener('abort', () => reject(abortError), { once: true });
     });
 
-    // Simulate abort
     abortController.abort();
 
-    // Abort promise should reject
     await expect(abortPromise).rejects.toThrow('Query aborted');
   });
 
@@ -3059,7 +2792,6 @@ describe('QueryRunner abortable query iterator', () => {
       },
     };
 
-    // Simulate cleanup
     await mockIterator.return?.();
 
     expect(returnCalled).toBe(true);
@@ -3194,7 +2926,6 @@ describe('QueryRunner environment variable handling', () => {
   it('should store original env vars', () => {
     const originalEnvVars: Record<string, string | undefined> = {};
 
-    // Simulate storing
     originalEnvVars.ANTHROPIC_AUTH_TOKEN = 'original-token';
     originalEnvVars.ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
 
@@ -3215,7 +2946,6 @@ describe('QueryRunner environment variable handling', () => {
       ANTHROPIC_AUTH_TOKEN: 'original',
     };
 
-    // Simulate restoration
     const _emptyVars: Record<string, string | undefined> = {};
     Object.assign(originalEnvVars, {});
     Object.keys(originalEnvVars).forEach((key) => delete originalEnvVars[key]);
@@ -3428,9 +3158,6 @@ describe('QueryRunner cleaning up state', () => {
   });
 });
 
-// 429 rate-limit errors must bypass handleApiValidationError so they reach the
-// rate-limit recovery branch (fallback chain / reset-aware cooldown) instead of
-// being rendered as a terminal validation error.
 describe('looksLikeRateLimit429', () => {
   it('matches bare, API Error, and Error-wrapped 429 shapes', () => {
     expect(looksLikeRateLimit429('429 rate limited')).toBe(true);

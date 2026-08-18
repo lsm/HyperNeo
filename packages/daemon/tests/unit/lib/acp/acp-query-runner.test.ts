@@ -577,10 +577,6 @@ describe('AcpQueryRunner', () => {
   });
 
   test('publishes query.trigger on normal turn completion to replay deferred rows', async () => {
-    // The automatic deferred-row replay in SDKMessageHandler.finishTurn is
-    // specific to the Claude SDK path; without an equivalent trigger on ACP
-    // turn completion, a row persisted as 'deferred' while the ACP node was
-    // processing (e.g. an external event in 'defer' mode) is never replayed.
     const { runner, ctx } = createRunnerFixture();
     const publishAsync = ctx.internalEventBus.publishAsync as unknown as ReturnType<typeof mock>;
 
@@ -591,11 +587,6 @@ describe('AcpQueryRunner', () => {
   });
 
   test('does not publish query.trigger after a terminal turn failure', async () => {
-    // The replay lives in run()'s finally; after handleRunError handles a
-    // terminal failure (auth rejection, provider unavailable, exhausted
-    // startup retries), replaying would promote deferred rows to enqueued
-    // and immediately drive another turn that is likely to fail too. Deferred
-    // rows must stay deferred and available for after recovery.
     const failingClient = createMockClient();
     failingClient.initialize = mock(async () => {
       throw new Error('authentication rejected');
@@ -622,11 +613,6 @@ describe('AcpQueryRunner', () => {
   });
 
   test('does not publish query.trigger for an interrupted ACP run', async () => {
-    // An interrupted ACP turn breaks out of the abortable loop and returns
-    // NORMALLY (no catch) — so reaching the end of try is not proof of
-    // success. The gate must classify by the live processing state:
-    // replaying an interrupted run would restart deferred work the user or
-    // teardown just stopped.
     const { runner, ctx } = createRunnerFixture();
     const publishAsync = ctx.internalEventBus.publishAsync as unknown as ReturnType<typeof mock>;
     (ctx.stateManager as unknown as { getState: () => { status: string } }).getState = () => ({
@@ -640,18 +626,12 @@ describe('AcpQueryRunner', () => {
   });
 
   test('does not publish query.trigger when an interrupt starts during cleanup', async () => {
-    // The success classification is snapshotted at try-end; an interrupt that
-    // starts while the finally block awaits cleanup (proxyBridge.close())
-    // must still suppress the replay — checked live at publish time, not
-    // just from the stale snapshot.
     const { runner, ctx } = createRunnerFixture();
     const publishAsync = ctx.internalEventBus.publishAsync as unknown as ReturnType<typeof mock>;
     let status = 'processing';
     (ctx.stateManager as unknown as { getState: () => { status: string } }).getState = () => ({
       status,
     });
-    // Simulate the interrupt landing mid-cleanup: the finally block stops the
-    // message queue before publishing — flip the state there.
     (ctx.messageQueue as unknown as { stop: () => void }).stop = () => {
       status = 'interrupted';
     };
@@ -663,9 +643,6 @@ describe('AcpQueryRunner', () => {
   });
 
   test('does not publish query.trigger when cleanup starts during the exit wait', async () => {
-    // Between the turn-end snapshot and the process-exit resolution, teardown
-    // can begin (isCleaningUp flips) — the fire-time recheck must suppress
-    // the replay so no delivery jobs are inserted for a dying session.
     let signalProcessExit!: () => void;
     const processExitedPromise = new Promise<void>((resolve) => {
       signalProcessExit = resolve;
@@ -685,9 +662,6 @@ describe('AcpQueryRunner', () => {
   });
 
   test('does not publish query.trigger when a newer turn started during the exit wait', async () => {
-    // Mirrors the interrupt replay path: the exit promise is the OLD child's
-    // (up to ~5s under SIGTERM→SIGKILL); a newer turn starting in that window
-    // must not have the old deferred rows steered into it — require idle.
     let signalProcessExit!: () => void;
     const processExitedPromise = new Promise<void>((resolve) => {
       signalProcessExit = resolve;
@@ -699,7 +673,6 @@ describe('AcpQueryRunner', () => {
 
     await runner.start();
     await ctx.queryPromise;
-    // A newer turn starts while the old child is still exiting.
     (ctx.stateManager as unknown as { getState: () => { status: string } }).getState = () => ({
       status: 'processing',
     });
@@ -742,9 +715,6 @@ describe('AcpQueryRunner', () => {
       callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
     ) {
       callbacks?.onSubmitted?.();
-      // No onAccepted: the run ended (interrupt / adapter close) after the
-      // stdin write completed but before any session/update or prompt
-      // response arrived. The submitted row must not stay hidden+nonterminal.
       return;
     });
     const { runner, ctx } = createRunnerFixture({ client });
@@ -763,11 +733,6 @@ describe('AcpQueryRunner', () => {
   });
 
   test('preserves env-only Anthropic auth for ACP subprocesses', async () => {
-    // Auth tokens are read live from process.env at ACP env build time so that
-    // credential discovery (which runs after provider-service module load) still
-    // flows into the ACP child env. Base URL / model overrides come from the
-    // module-load startup snapshot in provider-service and are covered by the
-    // clearProviderRoutingEnvVars tests there.
     process.env.ANTHROPIC_AUTH_TOKEN = 'sk-ant-oat-acp-token';
     process.env.CLAUDE_CODE_OAUTH_TOKEN = 'acp-oauth-token';
     const { runner, ctx, constructorOptions } = createRunnerFixture();

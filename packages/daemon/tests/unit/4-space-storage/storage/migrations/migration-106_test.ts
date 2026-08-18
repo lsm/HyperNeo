@@ -1,27 +1,3 @@
-/**
- * Migration 106 Tests — Backfill preset agent template tracking.
- *
- * Migration 106 walks every `space_agents` row whose `template_name IS NULL`
- * and, when the row's normalized name matches a known preset (case-insensitive),
- * stamps:
- *   - `template_name` = canonical preset name ("Coder", "Reviewer", ...)
- *   - `template_hash` = SHA-256 of the row's CURRENT field values
- *
- * Hashing the row (not the live preset) preserves user customisations: the
- * row's stored hash differs from the live preset's hash, so drift detection
- * surfaces the row as "out of sync" rather than silently overwriting local
- * edits.
- *
- * Covers:
- *   - Canonical preset name (exact match) → backfilled
- *   - Lowercase / surrounding whitespace → matched + canonicalised
- *   - User-created agent (no preset name match) → untouched
- *   - Hash captures the row's current state (preserves customisation)
- *   - Idempotency: running twice is a no-op
- *   - Pre-existing template_name on a row → not overwritten
- *   - Empty `space_agents` table → safe
- */
-
 import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll } from 'bun:test';
 import { rmSync, mkdirSync, copyFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -227,7 +203,7 @@ describe('Migration 106: backfill preset agent template tracking', () => {
       spaceId: 'sp-1',
       name: 'Coder',
       description: 'd',
-      tools: ['Write', 'Read'], // different ordering — hash should still match
+      tools: ['Write', 'Read'],
       customPrompt: 'p',
     });
 
@@ -324,10 +300,6 @@ describe('Migration 106: backfill preset agent template tracking', () => {
     const beforeRestart = readAgent(db, 'reviewer-agent')!;
     const beforeTimestamps = readAgentTimestamps(db, 'reviewer-agent')!;
 
-    // Simulate daemon restart/bootstrap: run the full migration stack again on
-    // an already-modern schema. This used to re-add legacy columns, trigger M74's
-    // table rebuild, drop custom_prompt, and let M80 repopulate from stale
-    // system_prompt/instructions data.
     runMigrations(db, () => {});
 
     const afterRestart = readAgent(db, 'reviewer-agent')!;

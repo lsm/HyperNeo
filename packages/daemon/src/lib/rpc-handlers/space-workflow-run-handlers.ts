@@ -1,24 +1,3 @@
-/**
- * Space Workflow Run RPC Handlers
- *
- * RPC handlers for SpaceWorkflowRun lifecycle:
- * - spaceWorkflowRun.start          - Creates a run and triggers first step task creation
- * - spaceWorkflowRun.list           - Lists runs for a space (optional status filter)
- * - spaceWorkflowRun.get            - Gets a run by ID
- * - spaceWorkflowRun.cancel         - Cancels a run and all pending tasks
- * - spaceWorkflowRun.markFailed     - Marks a run as blocked with a specific failure reason
- * - spaceWorkflowRun.getGateArtifacts   - Returns uncommitted files and diff summary for a run's worktree
- * - spaceWorkflowRun.getFileDiff        - Returns unified diff for a specific uncommitted file
- * - spaceWorkflowRun.getCommits         - Returns git commits between branch point and HEAD with per-commit stats
- * - spaceWorkflowRun.getCommitFileDiff  - Returns unified diff for a specific file in a specific commit
- *
- * Artifact-git RPCs (`getGateArtifacts`, `getFileDiff`, `getCommits`,
- * `getCommitFileDiff`) are cache-first: the handler reads the most recent row
- * from `workflow_run_artifact_cache` and returns it synchronously; if the row
- * is missing or stale, a background sync job is enqueued that refreshes the
- * cache and emits `space.artifactCache.updated` for the frontend.
- */
-
 import { isAbsolute } from 'node:path';
 import type { MessageHub } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
@@ -69,19 +48,8 @@ function workflowRunAttemptLabel(status: WorkflowRunStatus): string {
   return getWorkflowRunExecutionStatusLabel(status).toLowerCase();
 }
 
-/**
- * Cache freshness window. Anything older is treated as stale and triggers a
- * refresh enqueue (but the old data is still returned synchronously so the UI
- * has something to render).
- */
 const CACHE_STALE_AFTER_MS = 30_000;
 
-/**
- * Best-effort enqueue helper. We look for an existing pending OR processing job
- * for the same queue + payload shape before enqueuing, so repeated panel opens
- * don't stack dozens of duplicate sync jobs — including the case where a sync
- * is already in-flight (status `processing`) when the panel re-opens.
- */
 function enqueueSyncOnce(
   jobQueue: JobQueueRepository,
   queue: string,
@@ -110,17 +78,6 @@ function isCacheFresh(syncedAt: number, now: number = Date.now()): boolean {
   return now - syncedAt < CACHE_STALE_AFTER_MS;
 }
 
-/**
- * Resolve the git worktree path for a workflow run.
- *
- * Resolution order:
- * 1. If `taskId` is provided, use that task's worktree directly.
- * 2. Otherwise, look up all tasks for the run and use the first one's worktree.
- *    (Logs a warning when a run has multiple tasks — only first task is shown.)
- * 3. Falls back to the space's root `workspacePath` when no task worktree exists.
- *
- * @returns The resolved path, or null if no path can be determined.
- */
 async function resolveWorktreePath(
   runId: string,
   spaceId: string,
@@ -129,7 +86,6 @@ async function resolveWorktreePath(
   spaceWorktreeManager: SpaceWorktreeManager,
   taskId?: string
 ): Promise<string | null> {
-  // If the caller provided a specific taskId, use that task's worktree directly.
   if (taskId) {
     const taskWorktreePath = await spaceWorktreeManager.getTaskWorktreePath(spaceId, taskId);
     if (taskWorktreePath) {
@@ -139,7 +95,6 @@ async function resolveWorktreePath(
       `resolveWorktreePath: no worktree found for taskId=${taskId}, falling back to root workspace`
     );
   } else {
-    // No taskId provided: look up tasks for the run and use the first one's worktree.
     const tasks = spaceTaskRepo.listByWorkflowRun(runId);
     if (tasks.length > 0) {
       if (tasks.length > 1) {
@@ -164,12 +119,10 @@ async function resolveWorktreePath(
     }
   }
 
-  // Fallback: use the root workspace path from the space.
   const space = await spaceManager.getSpace(spaceId);
   return space?.workspacePath ?? null;
 }
 
-/** Factory that creates a SpaceTaskManager bound to a specific spaceId. */
 export type SpaceWorkflowRunTaskManagerFactory = (spaceId: string) => SpaceTaskManager;
 
 export function setupSpaceWorkflowRunHandlers(
@@ -187,7 +140,6 @@ export function setupSpaceWorkflowRunHandlers(
   jobQueue: JobQueueRepository,
   hookStateRepo: WorkflowHookStateRepository
 ): void {
-  // ─── spaceWorkflowRun.start ──────────────────────────────────────────────
   messageHub.onRequest('spaceWorkflowRun.start', async (data) => {
     const params = data as {
       spaceId: string;
@@ -199,18 +151,9 @@ export function setupSpaceWorkflowRunHandlers(
     if (!params.spaceId) throw new Error('spaceId is required');
     if (!params.title || params.title.trim() === '') throw new Error('title is required');
 
-    // Early space validation — ensures "Space not found" surfaces before workflow
-    // resolution. Without this check, listWorkflows() would return [] for a
-    // nonexistent spaceId, yielding a misleading "No workflows found" error.
     const space = await spaceManager.getSpace(params.spaceId);
     if (!space) throw new Error(`Space not found: ${params.spaceId}`);
 
-    // Resolve workflow: explicit workflowId or auto-select. Prefer a
-    // `default`-tagged workflow (the stable Coding template) so upgraded spaces
-    // — where the new stable template is seeded after the historical rows —
-    // switch their auto-started runs to it rather than staying on the oldest
-    // row by created_at. Fall back to the first workflow for spaces without a
-    // default-tagged workflow.
     let workflowId = params.workflowId;
     if (!workflowId) {
       const workflows = spaceWorkflowManager
@@ -219,10 +162,6 @@ export function setupSpaceWorkflowRunHandlers(
       if (workflows.length === 0) {
         throw new Error(`No workflows found for space: ${params.spaceId}`);
       }
-      // Prefer a `default`-tagged workflow; when several exist (e.g. duplicate
-      // legacy rows awaiting cleanup), tie-break by most-recently-updated — the
-      // same deterministic scoring as selectDeterministicWorkflowFallback — so an
-      // auto-start does not silently pick an obsolete/customized oldest duplicate.
       const canonicalDefaults = workflows.filter(
         (w) => w.templateName === 'Coding' && (w.tags ?? []).includes('default')
       );
@@ -236,17 +175,14 @@ export function setupSpaceWorkflowRunHandlers(
           : workflows[0];
       workflowId = preferred.id;
     } else {
-      // Validate provided workflow exists and belongs to this space
       const workflow = spaceWorkflowManager.getWorkflow(workflowId);
       if (!workflow) throw new Error(`Workflow not found: ${workflowId}`);
       if (workflow.spaceId !== params.spaceId) throw new Error(`Workflow not found: ${workflowId}`);
       if (workflow.disabled) throw new Error(`Workflow is disabled: ${workflowId}`);
     }
 
-    // Get or create the runtime for this space (validates space, starts runtime if needed)
     const runtime = await spaceRuntimeService.createOrGetRuntime(params.spaceId);
 
-    // Create the run and initial task via the runtime
     const { run } = await runtime.startWorkflowRun(
       params.spaceId,
       workflowId,
@@ -257,7 +193,6 @@ export function setupSpaceWorkflowRunHandlers(
     return { run };
   });
 
-  // ─── spaceWorkflowRun.list ───────────────────────────────────────────────
   messageHub.onRequest('spaceWorkflowRun.list', async (data) => {
     const params = data as { spaceId: string; status?: WorkflowRunStatus };
 
@@ -274,7 +209,6 @@ export function setupSpaceWorkflowRunHandlers(
     return { runs };
   });
 
-  // ─── spaceWorkflowRun.get ────────────────────────────────────────────────
   messageHub.onRequest('spaceWorkflowRun.get', async (data) => {
     const params = data as { id: string; spaceId?: string };
 
@@ -283,7 +217,6 @@ export function setupSpaceWorkflowRunHandlers(
     const run = workflowRunRepo.getRun(params.id);
     if (!run) throw new Error(`WorkflowRun not found: ${params.id}`);
 
-    // Optional ownership check — if spaceId is provided, reject cross-space access
     if (params.spaceId && run.spaceId !== params.spaceId) {
       throw new Error(`WorkflowRun not found: ${params.id}`);
     }
@@ -291,11 +224,6 @@ export function setupSpaceWorkflowRunHandlers(
     return { run };
   });
 
-  // ─── spaceWorkflowRun.resume ─────────────────────────────────────────────
-  //
-  // Resumes a run that is in blocked state after a human has resolved the
-  // blocking issue. Transitions blocked → in_progress so the tick loop
-  // will resume processing on the next cycle.
   messageHub.onRequest('spaceWorkflowRun.resume', async (data) => {
     const params = data as { id: string };
 
@@ -310,11 +238,7 @@ export function setupSpaceWorkflowRunHandlers(
       );
     }
 
-    // blocked → in_progress (human resolved the blocking issue)
     const updated = workflowRunRepo.transitionStatus(params.id, 'in_progress');
-    // Sweep the PR-event auto-subscription so subsequent PR events do not
-    // keep re-evaluating gates for an active run that only needed the
-    // subscription while it was blocked.
     spaceRuntimeService.notifyRunResumed(params.id);
 
     internalEventBus
@@ -331,13 +255,6 @@ export function setupSpaceWorkflowRunHandlers(
     return { run: updated };
   });
 
-  // ─── spaceWorkflowRun.markFailed ─────────────────────────────────────────
-  //
-  // Transitions a run to blocked with a specific failureReason.
-  // Production RPC called by the Space Agent when it detects an unrecoverable
-  // failure in a task agent session: e.g. agentCrash (unexpected termination),
-  // maxIterationsReached, or nodeTimeout. Also used in integration tests to
-  // exercise the blocked path without a real LLM session.
   messageHub.onRequest('spaceWorkflowRun.markFailed', async (data) => {
     const params = data as {
       id: string;
@@ -357,7 +274,6 @@ export function setupSpaceWorkflowRunHandlers(
       );
     }
     if (run.status === 'blocked') {
-      // Already in blocked — just update failureReason
       const updated =
         workflowRunRepo.updateRun(params.id, { failureReason: params.failureReason }) ?? run;
 
@@ -375,7 +291,6 @@ export function setupSpaceWorkflowRunHandlers(
       return { run: updated };
     }
 
-    // Transition to blocked then set failureReason
     workflowRunRepo.transitionStatus(params.id, 'blocked');
     const updated =
       workflowRunRepo.updateRun(params.id, { failureReason: params.failureReason }) ?? run;
@@ -394,7 +309,6 @@ export function setupSpaceWorkflowRunHandlers(
     return { run: updated };
   });
 
-  // ─── spaceWorkflowRun.cancel ─────────────────────────────────────────────
   messageHub.onRequest('spaceWorkflowRun.cancel', async (data) => {
     const params = data as { id: string };
 
@@ -415,12 +329,6 @@ export function setupSpaceWorkflowRunHandlers(
     return { success: true };
   });
 
-  // ─── spaceWorkflowRun.getGateArtifacts ───────────────────────────────────
-  //
-  // Cache-first: returns the most recent cache row for CACHE_KEY_GATE_ARTIFACTS
-  // immediately and enqueues a background sync job if the row is missing or
-  // stale. Frontend receives `space.artifactCache.updated` when the refresh
-  // completes.
   messageHub.onRequest('spaceWorkflowRun.getGateArtifacts', async (data) => {
     const params = data as { runId: string; taskId?: string };
 
@@ -448,9 +356,6 @@ export function setupSpaceWorkflowRunHandlers(
       };
     }
 
-    // Cache miss or previous failure — fall back to a synchronous probe so the
-    // panel has something to render on first-load. The background job will
-    // overwrite with the authoritative row shortly.
     const worktreePath = await resolveWorktreePath(
       run.id,
       run.spaceId,
@@ -478,12 +383,6 @@ export function setupSpaceWorkflowRunHandlers(
     return { ...summary, worktreePath, isGitRepo: true };
   });
 
-  // ─── spaceWorkflowRun.getFileDiff ────────────────────────────────────────
-  //
-  // Cache-first: returns the cached file diff (up to FILE_DIFF_SIZE_LIMIT_BYTES)
-  // and enqueues a background sync if the row is missing or stale. Large diffs
-  // are stored truncated; callers can detect `truncated: true` and request a
-  // full-file read if needed.
   messageHub.onRequest('spaceWorkflowRun.getFileDiff', async (data) => {
     const params = data as { runId: string; filePath: string; taskId?: string };
 
@@ -556,10 +455,6 @@ export function setupSpaceWorkflowRunHandlers(
     };
   });
 
-  // ─── spaceWorkflowRun.getCommits ─────────────────────────────────────────
-  //
-  // Cache-first: returns the cached CACHE_KEY_COMMITS row and enqueues a
-  // background sync if stale/missing.
   messageHub.onRequest('spaceWorkflowRun.getCommits', async (data) => {
     const params = data as { runId: string; taskId?: string };
     if (!params.runId) throw new Error('runId is required');
@@ -620,11 +515,6 @@ export function setupSpaceWorkflowRunHandlers(
     return { commits, baseRef: baseRef || null, isGitRepo: true, repoUrl };
   });
 
-  // ─── spaceWorkflowRun.getCommitFiles ─────────────────────────────────────
-  //
-  // Cache-first: reads from the commitFiles:<sha> cache key. Falls back to a
-  // sync probe on cache miss since these rows are only refreshed on demand
-  // (commit history is immutable — no background sync job needed).
   messageHub.onRequest('spaceWorkflowRun.getCommitFiles', async (data) => {
     const params = data as { runId: string; taskId?: string; commitSha: string };
     if (!params.runId) throw new Error('runId is required');
@@ -668,7 +558,6 @@ export function setupSpaceWorkflowRunHandlers(
 
     const summary = parseNumstat(numstatOutput);
     const payload = { files: summary.files };
-    // Commit file lists are immutable — cache indefinitely on first read.
     try {
       artifactCacheRepo.upsert({
         runId: params.runId,
@@ -683,11 +572,6 @@ export function setupSpaceWorkflowRunHandlers(
     return payload;
   });
 
-  // ─── spaceWorkflowRun.getCommitFileDiff ──────────────────────────────────
-  //
-  // Cache-first: reads from the commitFileDiff:<sha>:<path> cache key. Commit
-  // contents are immutable so there's no staleness concern — the row is
-  // populated lazily on first request and reused forever.
   messageHub.onRequest('spaceWorkflowRun.getCommitFileDiff', async (data) => {
     const params = data as {
       runId: string;
@@ -762,7 +646,6 @@ export function setupSpaceWorkflowRunHandlers(
     return payload;
   });
 
-  // ─── spaceWorkflowRun.listArtifacts ─────────────────────────────────────
   messageHub.onRequest('spaceWorkflowRun.listArtifacts', async (data) => {
     const params = data as {
       runId: string;
@@ -779,10 +662,6 @@ export function setupSpaceWorkflowRunHandlers(
     return { artifacts };
   });
 
-  // ─── spaceWorkflowRun.listHookStates ────────────────────────────────────
-  //
-  // Returns all hook state snapshots for a workflow run, paired with the
-  // workflow's hook definitions so the UI can render labels and configs.
   messageHub.onRequest('spaceWorkflowRun.listHookStates', async (data) => {
     const params = data as { runId: string };
     if (!params.runId) throw new Error('runId is required');
@@ -790,8 +669,6 @@ export function setupSpaceWorkflowRunHandlers(
     const run = workflowRunRepo.getRun(params.runId);
     if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
-    // Run-scoped: hook-definition banners must reflect the run's pinned definition, so a
-    // live hook edit can't leave a blocked pinned hook without UI resume controls.
     const workflow = spaceWorkflowManager.getWorkflowForRun(run);
     const hookStates = hookStateRepo.listByRun(params.runId);
 
@@ -801,11 +678,6 @@ export function setupSpaceWorkflowRunHandlers(
     };
   });
 
-  // ─── spaceWorkflowRun.approveHook ───────────────────────────────────────
-  //
-  // Writes a human approval decision into a hook's local state.
-  // Idempotent: repeated approvals are no-ops. Rejection stamps
-  // `humanApproved: false` so validators can surface the reason.
   messageHub.onRequest('spaceWorkflowRun.approveHook', async (data) => {
     const params = data as {
       runId: string;
@@ -875,10 +747,6 @@ export function setupSpaceWorkflowRunHandlers(
     return { hookState: updateResult };
   });
 
-  // ─── spaceWorkflowRun.retryHook ─────────────────────────────────────────
-  //
-  // Clears retry backoff for a retryable_block hook so the next action
-  // re-executes the hook chain immediately.
   messageHub.onRequest('spaceWorkflowRun.retryHook', async (data) => {
     const params = data as { runId: string; hookId: string };
 

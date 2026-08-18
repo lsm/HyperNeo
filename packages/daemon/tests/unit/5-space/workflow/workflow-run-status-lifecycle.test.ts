@@ -1,37 +1,3 @@
-/**
- * Unit tests for the workflow run status lifecycle (Task 4.3).
- *
- * Covers:
- *   Status machine (pure function layer):
- *   1.  canTransition: pending → in_progress — valid
- *   2.  canTransition: pending → cancelled — valid
- *   3.  canTransition: in_progress → completed — valid
- *   4.  canTransition: in_progress → needs_attention — valid
- *   5.  canTransition: in_progress → cancelled — valid
- *   6.  canTransition: needs_attention → in_progress — valid
- *   7.  canTransition: needs_attention → cancelled — valid
- *   8.  canTransition: completed → in_progress — valid (reopen); all other targets invalid
- *   9.  canTransition: cancelled → in_progress — valid (reopen); all other targets invalid
- *   10. canTransition: pending → completed — invalid
- *   11. canTransition: pending → needs_attention — invalid
- *   12. assertValidTransition: throws with run ID in message
- *   13. assertValidTransition: throws with "in_progress" allow-list when invalid reopen target
- *
- *   Repository (transitionStatus):
- *   14. transitionStatus: persists the new status on a valid transition
- *   15. transitionStatus: sets completed_at when transitioning to completed
- *   16. transitionStatus: sets completed_at when transitioning to cancelled
- *   17. transitionStatus: throws on not-found run
- *   18. transitionStatus: throws on invalid transition (in_progress → pending)
- *   19. transitionStatus: allows reopen transition (completed → in_progress)
- *
- *   Rehydration integration:
- *   20. getRehydratableRuns: returns in_progress runs
- *   21. getRehydratableRuns: returns needs_attention runs (rehydrated after restart)
- *   22. getRehydratableRuns: excludes pending, completed, cancelled
- *   23. needs_attention → in_progress via transitionStatus: re-activates run for tick processing
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -44,13 +10,7 @@ import {
 } from '../../../../src/lib/space/runtime/workflow-run-status-machine.ts';
 import type { WorkflowRunStatus } from '@hyperneo/shared';
 
-// ---------------------------------------------------------------------------
-// DB helpers
-// ---------------------------------------------------------------------------
-
 function makeDb(): BunDatabase {
-  // Use in-memory SQLite — faster than file-based DB and avoids filesystem
-  // I/O contention that caused beforeEach hook timeouts in CI.
   const db = new BunDatabase(':memory:');
   runMigrations(db, () => {});
   db.exec('PRAGMA foreign_keys = OFF');
@@ -82,10 +42,6 @@ function createWorkflowAndRun(db: BunDatabase, spaceId: string): { runId: string
   return { runId: run.id };
 }
 
-// ---------------------------------------------------------------------------
-// Test state
-// ---------------------------------------------------------------------------
-
 const SPACE = 'space-lifecycle-1';
 let db: BunDatabase;
 let runRepo: SpaceWorkflowRunRepository;
@@ -99,10 +55,6 @@ beforeEach(() => {
 afterEach(() => {
   db.close();
 });
-
-// ---------------------------------------------------------------------------
-// Status machine: canTransition
-// ---------------------------------------------------------------------------
 
 describe('canTransition', () => {
   test('1. pending → in_progress is valid', () => {
@@ -134,9 +86,6 @@ describe('canTransition', () => {
   });
 
   test('8. done → in_progress is valid (reopen); all other targets are invalid', () => {
-    // Archive is the only task tombstone; a `done` run can be reopened back
-    // to `in_progress` when new inbound activity arrives before the parent
-    // task is archived.
     expect(canTransition('done', 'in_progress')).toBe(true);
     for (const to of ['pending', 'done', 'cancelled', 'blocked'] as WorkflowRunStatus[]) {
       expect(canTransition('done', to)).toBe(false);
@@ -144,8 +93,6 @@ describe('canTransition', () => {
   });
 
   test('9. cancelled → in_progress is valid (reopen); all other targets are invalid', () => {
-    // Same reopen policy as `done`: a cancelled run can still be reopened
-    // until the parent task is archived.
     expect(canTransition('cancelled', 'in_progress')).toBe(true);
     for (const to of ['pending', 'done', 'cancelled', 'blocked'] as WorkflowRunStatus[]) {
       expect(canTransition('cancelled', to)).toBe(false);
@@ -171,19 +118,12 @@ describe('canTransition', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Status machine: assertValidTransition
-// ---------------------------------------------------------------------------
-
 describe('assertValidTransition', () => {
   test('12. includes run ID in error message when provided', () => {
-    // done → cancelled is invalid (only `in_progress` is allowed from done).
     expect(() => assertValidTransition('done', 'cancelled', 'run-abc')).toThrow(/run run-abc/);
   });
 
   test('13. error lists the allowed set when the target is not permitted', () => {
-    // cancelled → pending is invalid; the only allowed transition from
-    // `cancelled` is `in_progress`. The error should enumerate the allowed set.
     expect(() => assertValidTransition('cancelled', 'pending')).toThrow(/in_progress/);
   });
 
@@ -191,20 +131,14 @@ describe('assertValidTransition', () => {
     expect(() => assertValidTransition('pending', 'in_progress')).not.toThrow();
     expect(() => assertValidTransition('in_progress', 'done')).not.toThrow();
     expect(() => assertValidTransition('blocked', 'in_progress')).not.toThrow();
-    // Reopen transitions
     expect(() => assertValidTransition('done', 'in_progress')).not.toThrow();
     expect(() => assertValidTransition('cancelled', 'in_progress')).not.toThrow();
   });
 });
 
-// ---------------------------------------------------------------------------
-// Repository: transitionStatus
-// ---------------------------------------------------------------------------
-
 describe('SpaceWorkflowRunRepository.transitionStatus', () => {
   test('14. persists the new status on a valid transition', () => {
     const { runId } = createWorkflowAndRun(db, SPACE);
-    // pending → in_progress
     const updated = runRepo.transitionStatus(runId, 'in_progress');
     expect(updated.status).toBe('in_progress');
     expect(runRepo.getRun(runId)?.status).toBe('in_progress');
@@ -243,15 +177,10 @@ describe('SpaceWorkflowRunRepository.transitionStatus', () => {
     expect(() => runRepo.transitionStatus(runId, 'pending')).toThrow(
       /Invalid workflow run status transition/
     );
-    // Status must remain unchanged after the failed transition
     expect(runRepo.getRun(runId)?.status).toBe('in_progress');
   });
 
   test('19. allows reopen transition completed → in_progress', () => {
-    // `done` is a soft terminal state — the run can be reopened to
-    // `in_progress` when new inbound activity arrives before the parent
-    // task is archived. The only disallowed targets from `done` are the
-    // other lifecycle statuses (pending, done, cancelled, blocked).
     const { runId } = createWorkflowAndRun(db, SPACE);
     runRepo.transitionStatus(runId, 'in_progress');
     runRepo.transitionStatus(runId, 'done');
@@ -260,17 +189,12 @@ describe('SpaceWorkflowRunRepository.transitionStatus', () => {
     expect(reopened.status).toBe('in_progress');
     expect(runRepo.getRun(runId)?.status).toBe('in_progress');
 
-    // But other transitions out of `done` remain invalid.
-    runRepo.transitionStatus(runId, 'done'); // back to done
+    runRepo.transitionStatus(runId, 'done');
     expect(() => runRepo.transitionStatus(runId, 'cancelled')).toThrow(
       /Invalid workflow run status transition/
     );
   });
 });
-
-// ---------------------------------------------------------------------------
-// Rehydration: getRehydratableRuns
-// ---------------------------------------------------------------------------
 
 describe('getRehydratableRuns', () => {
   test('20. returns in_progress runs', () => {
@@ -290,7 +214,6 @@ describe('getRehydratableRuns', () => {
 
   test('22. excludes pending, completed, and cancelled runs', () => {
     const { runId: pendingId } = createWorkflowAndRun(db, SPACE);
-    // pendingId stays as 'pending'
 
     const { runId: completedId } = createWorkflowAndRun(db, SPACE);
     runRepo.transitionStatus(completedId, 'in_progress');
@@ -311,13 +234,11 @@ describe('getRehydratableRuns', () => {
     runRepo.transitionStatus(runId, 'in_progress');
     runRepo.transitionStatus(runId, 'blocked');
 
-    // Human resolves the blocking issue
     runRepo.transitionStatus(runId, 'in_progress');
 
     const run = runRepo.getRun(runId);
     expect(run?.status).toBe('in_progress');
 
-    // getRehydratableRuns returns the resumed run (tick loop will pick it up)
     const runs = runRepo.getRehydratableRuns(SPACE);
     expect(runs.map((r) => r.id)).toContain(runId);
   });

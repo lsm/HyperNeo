@@ -376,7 +376,6 @@ describe('SpaceGoalDialog schedule editing', () => {
     const cronInput = await screen.findByPlaceholderText('@daily or 0 9 * * 1');
     await waitFor(() => expect((cronInput as HTMLInputElement).value).toBe('0 9 * * 1'));
 
-    // Edit only the summary, leave the cron as-is.
     fireEvent.input(screen.getByPlaceholderText('Rolling state summary'), {
       target: { value: 'Updated summary' },
     });
@@ -422,10 +421,8 @@ describe('SpaceGoalDialog schedule editing', () => {
     render(<SpaceGoalDialog isOpen goal={makeGoal()} onClose={() => {}} />);
 
     const cronInput = await screen.findByPlaceholderText('@daily or 0 9 * * 1');
-    // Type a cron BEFORE the fetch resolves.
     fireEvent.input(cronInput, { target: { value: '@hourly' } });
 
-    // Resolving the fetch with a different cadence must NOT clobber the edit.
     resolveFetch({ id: 'schedule-1', cronExpression: '0 9 * * 1', timezone: 'UTC' });
     await waitFor(() => expect((cronInput as HTMLInputElement).value).toBe('@hourly'));
 
@@ -448,11 +445,8 @@ describe('SpaceGoalDialog schedule editing', () => {
     );
 
     render(<SpaceGoalDialog isOpen goal={makeGoal()} onClose={() => {}} />);
-    // Let the mount effect run (it starts the schedule fetch and resets fields)
-    // before interacting, so its state reset cannot clobber the edit below.
     await waitFor(() => expect(mockGetSchedule).toHaveBeenCalledTimes(1));
 
-    // Change ONLY the timezone before the fetch resolves.
     const timezoneSelect = screen
       .getAllByRole('combobox')
       .find((el) => (el as HTMLSelectElement).value === 'UTC') as HTMLSelectElement;
@@ -460,7 +454,6 @@ describe('SpaceGoalDialog schedule editing', () => {
     timezoneSelect.dispatchEvent(new Event('change', { bubbles: true }));
 
     resolveFetch({ id: 'schedule-1', cronExpression: '0 9 * * 1', timezone: 'UTC' });
-    // The cron is pre-filled (untouched); the timezone edit is preserved.
     await waitFor(() =>
       expect((screen.getByPlaceholderText('@daily or 0 9 * * 1') as HTMLInputElement).value).toBe(
         '0 9 * * 1'
@@ -472,7 +465,6 @@ describe('SpaceGoalDialog schedule editing', () => {
 
     await waitFor(() => expect(mockUpdateGoal).toHaveBeenCalled());
     const [, params] = mockUpdateGoal.mock.calls[0];
-    // Timezone change is sent; cron is unchanged so it is omitted.
     expect(params).toEqual(expect.objectContaining({ checkInTimezone: 'Asia/Tokyo' }));
     expect(params).not.toHaveProperty('checkInCronExpression');
   });
@@ -490,20 +482,15 @@ describe('SpaceGoalDialog schedule editing', () => {
     await waitFor(() => expect(mockGetSchedule).toHaveBeenCalledTimes(1));
 
     const cronInput = screen.getByPlaceholderText('@daily or 0 9 * * 1') as HTMLInputElement;
-    // Mark the cron dirty (empty) before the fetch resolves — simulates
-    // clearing the existing cron while the cadence is still loading.
     fireEvent.input(cronInput, '');
 
     resolveFetch({ id: 'schedule-1', cronExpression: '0 9 * * 1', timezone: 'UTC' });
-    // Let the fetch resolution (which records originalCron) flush before submit.
     await new Promise((resolve) => {
       setTimeout(resolve, 0);
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save Goal' }));
 
     await waitFor(() => expect(mockUpdateGoal).toHaveBeenCalled());
-    // The fetched cron is recorded as the original, so the cleared field is
-    // treated as a removal (null), not a no-op.
     expect(mockUpdateGoal).toHaveBeenCalledWith(
       'goal-1',
       expect.objectContaining({ checkInCronExpression: null })
@@ -524,8 +511,6 @@ describe('SpaceGoalDialog schedule editing', () => {
     const saveButton = (await screen.findByRole('button', {
       name: 'Save Goal',
     })) as HTMLButtonElement;
-    // The baseline has not arrived yet — saving is blocked so cadence edits
-    // cannot be silently dropped.
     await waitFor(() => expect(saveButton.disabled).toBe(true));
 
     resolveFetch({ id: 'schedule-1', cronExpression: '0 9 * * 1', timezone: 'UTC' });
@@ -540,8 +525,6 @@ describe('SpaceGoalDialog schedule editing', () => {
     const saveButton = (await screen.findByRole('button', {
       name: 'Save Goal',
     })) as HTMLButtonElement;
-    // Transient failure leaves the baseline unknown: saving stays unavailable
-    // (rather than mimicking an empty schedule and silently dropping an edit).
     await waitFor(() => expect(saveButton.disabled).toBe(true));
     expect(await screen.findByText(/Could not load the check-in schedule/)).toBeTruthy();
   });
@@ -555,8 +538,6 @@ describe('SpaceGoalDialog schedule editing', () => {
 
     render(<SpaceGoalDialog isOpen goal={makeGoal()} onClose={() => {}} />);
 
-    // The fetched timezone is outside COMMON_TIMEZONES, but is included as an
-    // option so the select shows the active cadence instead of no selection.
     const select = (await screen.findByDisplayValue('America/Denver')) as HTMLSelectElement;
     expect(select.value).toBe('America/Denver');
   });

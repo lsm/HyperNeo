@@ -1,16 +1,3 @@
-/**
- * Unit tests for Space MCP RPC handlers (space-mcp-handlers.ts)
- *
- * Covers:
- *   - space.mcp.list           — resolves override + global and builds entries[]
- *   - space.mcp.setEnabled     — writes upsert override + emits changed event
- *   - space.mcp.clearOverride  — deletes override + emits when a row changed
- *   - mcp.imports.refresh      — builds scan paths, runs scanner, emits on diff
- *
- * Uses an in-memory SQLite DB for real repository interactions and mocks
- * MessageHub/DaemonHub/SpaceManager at the edges.
- */
-
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -122,9 +109,6 @@ describe('space-mcp-handlers', () => {
     } as unknown as Database;
 
     tmpRoot = mkdtempSync(join(tmpdir(), 'space-mcp-handlers-'));
-    // The mcp.imports.refresh handler also scans `~/.claude/.mcp.json`; point
-    // HOME at the temp dir so a real user-level file on the machine running
-    // the tests can't leak extra servers into the import counts.
     originalHome = process.env.HOME;
     process.env.HOME = tmpRoot;
   });
@@ -138,10 +122,6 @@ describe('space-mcp-handlers', () => {
     }
     rmSync(tmpRoot, { recursive: true, force: true });
   });
-
-  // ---------------------------------------------------------------------------
-  // space.mcp.list
-  // ---------------------------------------------------------------------------
 
   describe('space.mcp.list', () => {
     test('returns one entry per registry row with resolved enabled state', async () => {
@@ -160,7 +140,6 @@ describe('space-mcp-handlers', () => {
         source: 'user',
       });
 
-      // Override: disable global-on for space-A
       enablementRepo.setOverride('space', 'space-A', globalOn.id, false);
 
       const { hub, handlers } = createMockHub();
@@ -221,10 +200,6 @@ describe('space-mcp-handlers', () => {
       await expect(handler({ spaceId: 'nope' })).rejects.toThrow('Space not found');
     });
   });
-
-  // ---------------------------------------------------------------------------
-  // space.mcp.setEnabled
-  // ---------------------------------------------------------------------------
 
   describe('space.mcp.setEnabled', () => {
     test('upserts an override row and emits mcp.registry.changed', async () => {
@@ -324,10 +299,6 @@ describe('space-mcp-handlers', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // space.mcp.clearOverride
-  // ---------------------------------------------------------------------------
-
   describe('space.mcp.clearOverride', () => {
     test('removes the override row and emits changed', async () => {
       const srv = appMcpRepo.create({
@@ -388,10 +359,6 @@ describe('space-mcp-handlers', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // mcp.imports.refresh
-  // ---------------------------------------------------------------------------
-
   describe('mcp.imports.refresh', () => {
     test('scans the given workspace and imports new rows', async () => {
       const wsPath = join(tmpRoot, 'ws');
@@ -399,7 +366,6 @@ describe('space-mcp-handlers', () => {
         join(tmpRoot, 'mcp.json'),
         JSON.stringify({ mcpServers: { foo: { command: 'x' } } })
       );
-      // put .mcp.json inside wsPath
       const fs = await import('node:fs');
       fs.mkdirSync(wsPath, { recursive: true });
       writeFileSync(
@@ -457,7 +423,6 @@ describe('space-mcp-handlers', () => {
       const wsPath = join(tmpRoot, 'empty-ws');
       const fs = await import('node:fs');
       fs.mkdirSync(wsPath, { recursive: true });
-      // No .mcp.json at all — scanner should return zero changes.
 
       const { hub, handlers } = createMockHub();
       const { emit } = createMockDaemonHub();

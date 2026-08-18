@@ -1,14 +1,3 @@
-/**
- * ACP Message Translator
- *
- * Pure translation functions that bridge ACP protocol notifications
- * to HyperNeo's internal SDKMessage types.
- *
- * Accumulates streaming chunks (agent_message_chunk, agent_thought_chunk)
- * into complete assistant messages, flushing on tool_call boundaries or
- * result boundaries.
- */
-
 import type { UUID } from 'crypto';
 import type {
   SDKAssistantMessage,
@@ -68,10 +57,6 @@ function zeroUsage(): {
   };
 }
 
-/**
- * Stateful translator that buffers ACP streaming chunks and emits
- * complete SDKMessage objects on boundaries.
- */
 export class AcpMessageTranslator {
   private textBuffer = '';
   private thinkingBuffer = '';
@@ -93,10 +78,6 @@ export class AcpMessageTranslator {
     this.inputTokenEstimate = initialInputTokenEstimate;
   }
 
-  /**
-   * Process a single ACP session update, accumulating chunks and
-   * emitting SDKMessages when boundaries are hit.
-   */
   processUpdate(update: AcpSessionUpdate): SDKMessage[] {
     switch (update.sessionUpdate) {
       case 'agent_message_chunk':
@@ -141,10 +122,6 @@ export class AcpMessageTranslator {
     }
   }
 
-  /**
-   * Flush any accumulated text/thinking chunks into a complete
-   * assistant message. Returns empty array if nothing accumulated.
-   */
   flush(): SDKMessage[] {
     const blocks: ContentBlock[] = [];
 
@@ -165,10 +142,6 @@ export class AcpMessageTranslator {
     return [this.buildAssistantMessage(blocks)];
   }
 
-  /**
-   * Translate a tool_call notification into an SDK assistant message
-   * containing a tool_use content block.
-   */
   translateToolCall(call: AcpToolCallUpdateNotification): SDKAssistantMessage {
     this.contextUsageEstimate += estimateTokens(
       JSON.stringify({ name: call.title, input: call.rawInput ?? {} })
@@ -193,9 +166,6 @@ export class AcpMessageTranslator {
     } as SDKAssistantMessage;
   }
 
-  /**
-   * Translate a tool_call_update notification into an SDK tool_progress message.
-   */
   translateToolCallUpdate(update: AcpToolCallUpdateUpdate): SDKToolProgressMessage {
     return {
       type: 'tool_progress',
@@ -208,10 +178,6 @@ export class AcpMessageTranslator {
     };
   }
 
-  /**
-   * Translate a tool_call_update with output into a synthetic SDK user message
-   * carrying the tool result so it is visible in the transcript.
-   */
   translateToolResult(update: AcpToolCallUpdateUpdate): SDKUserMessage {
     const output = update.rawOutput ?? update.content;
     const text = typeof output === 'string' ? output : JSON.stringify(output);
@@ -232,9 +198,6 @@ export class AcpMessageTranslator {
     } as SDKUserMessage;
   }
 
-  /**
-   * Translate a stop reason into an SDK result message.
-   */
   translateResult(stopReason: AcpStopReason, isError = false): SDKResultMessage {
     const base = {
       type: 'result' as const,

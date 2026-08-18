@@ -1,7 +1,3 @@
-/**
- * Tests for GitBranchIcon Component
- */
-
 import { render } from '@testing-library/preact';
 import { GitBranchIcon } from '../GitBranchIcon';
 import { describe, it, expect } from 'vitest';
@@ -77,15 +73,12 @@ describe('GitBranchIcon', () => {
     it('should render three circle shapes for branch nodes', () => {
       const { container } = render(<GitBranchIcon />);
       const paths = container.querySelectorAll('path');
-      // The icon has circles for the two branch points and the merge point
-      // Plus connecting lines
       expect(paths.length).toBeGreaterThanOrEqual(4);
     });
 
     it('should render connecting lines between nodes', () => {
       const { container } = render(<GitBranchIcon />);
       const paths = container.querySelectorAll('path');
-      // Check that stroke-linecap="round" is used for smooth lines
       const roundLinecapPaths = Array.from(paths).filter(
         (path) => path.getAttribute('stroke-linecap') === 'round'
       );
@@ -102,7 +95,6 @@ describe('GitBranchIcon', () => {
       );
       const svg = container.querySelector('svg');
       const paths = container.querySelectorAll('path');
-      // All strokes use currentColor, so they inherit from parent
       paths.forEach((path) => {
         expect(path.getAttribute('stroke')).toBe('currentColor');
       });
@@ -112,11 +104,8 @@ describe('GitBranchIcon', () => {
 
   describe('Accessibility', () => {
     it('should be aria-hidden by default (decorative icon)', () => {
-      // The icon doesn't have aria-label, so it's treated as decorative
-      // Parent should provide accessible name if needed
       const { container } = render(<GitBranchIcon />);
       const svg = container.querySelector('svg');
-      // Icon should be present but is decorative
       expect(svg).toBeTruthy();
     });
   });

@@ -1,11 +1,3 @@
-/**
- * ProvidersSettings — Unified provider registry view
- *
- * Replaces both the old ProvidersSettings (auth-only) and CustomEndpointsSettings.
- * Shows all providers from the unified `providers.list` RPC with health, enablement,
- * default-star, and inline detail panels for auth/config/health.
- */
-
 import { useEffect, useState } from 'preact/hooks';
 import { useSignalEffect } from '@preact/signals';
 import type { ProviderRecord, CredentialStoreStatus } from '@hyperneo/shared';
@@ -42,10 +34,6 @@ interface EnrichedProvider extends ProviderRecord {
   authStatus?: ProviderAuthStatus;
 }
 
-/**
- * Parse the region out of a Kimi provider record's configJson blob.
- * Returns 'china' for missing/invalid values (backward compatibility).
- */
 function readKimiRegion(provider: EnrichedProvider): 'china' | 'global' {
   if (!provider.configJson) return 'china';
   try {
@@ -99,7 +87,6 @@ export function ProvidersSettings() {
         authStatus: authById.get(r.providerId),
       }));
       setProviders(enriched);
-      // Seed region state for any Kimi rows from their persisted configJson.
       const nextRegions: Record<string, 'china' | 'global'> = {};
       for (const p of enriched) {
         if (p.providerId === 'kimi') {
@@ -107,7 +94,6 @@ export function ProvidersSettings() {
         }
       }
       setKimiRegions((prev) => ({ ...nextRegions, ...prev }));
-      // If an OAuth flow is active and the provider was deleted, stop polling.
       if (oauthFlow && !enriched.some((p) => p.providerId === oauthFlow.providerId)) {
         setOauthFlow(null);
       }
@@ -122,7 +108,6 @@ export function ProvidersSettings() {
     loadProviders();
   }, []);
 
-  // Poll for auth completion when OAuth flow is active
   useEffect(() => {
     if (!oauthFlow) return;
     const pollInterval = setInterval(async () => {
@@ -451,18 +436,15 @@ export function ProvidersSettings() {
                     key={provider.id}
                     class="rounded-lg border border-white/[0.08] bg-white/[0.025] overflow-hidden"
                   >
-                    {/* Row header */}
                     <div
                       class="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-white/[0.02] transition-colors"
                       onClick={() => setExpandedId(isExpanded ? null : provider.id)}
                     >
-                      {/* Health dot */}
                       <div
                         class={`w-2 h-2 rounded-full flex-shrink-0 ${healthDotClass(provider.healthStatus)}`}
                         title={`Health: ${provider.healthStatus}`}
                       />
 
-                      {/* Name */}
                       <div class="flex-1 min-w-0">
                         <div class="flex items-center gap-2 flex-wrap">
                           <span class="text-sm font-medium text-gray-100">
@@ -497,9 +479,7 @@ export function ProvidersSettings() {
                         </div>
                       </div>
 
-                      {/* Controls */}
                       <div class="flex items-center gap-2 flex-shrink-0">
-                        {/* Default star */}
                         <button
                           type="button"
                           onClick={(e) => {
@@ -529,7 +509,6 @@ export function ProvidersSettings() {
                           </svg>
                         </button>
 
-                        {/* Enabled toggle */}
                         <button
                           type="button"
                           role="switch"
@@ -550,7 +529,6 @@ export function ProvidersSettings() {
                           />
                         </button>
 
-                        {/* Expand chevron */}
                         <svg
                           class={`w-4 h-4 text-gray-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
                           fill="none"
@@ -567,10 +545,8 @@ export function ProvidersSettings() {
                       </div>
                     </div>
 
-                    {/* Expanded detail panel */}
                     {isExpanded && (
                       <div class="px-4 pb-4 border-t border-white/[0.06] space-y-4">
-                        {/* Auth section */}
                         <div class="pt-3">
                           <h5 class="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">
                             Authentication
@@ -641,7 +617,6 @@ export function ProvidersSettings() {
                           )}
                         </div>
 
-                        {/* Config section */}
                         {isCustom && provider.baseUrl && (
                           <div>
                             <h5 class="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">
@@ -651,7 +626,6 @@ export function ProvidersSettings() {
                           </div>
                         )}
 
-                        {/* Kimi region selector — only for built-in Kimi rows. */}
                         {provider.providerId === 'kimi' && !isCustom && (
                           <div>
                             <label
@@ -695,7 +669,6 @@ export function ProvidersSettings() {
                           </div>
                         )}
 
-                        {/* Health section */}
                         <div>
                           <h5 class="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">
                             Health
@@ -724,7 +697,6 @@ export function ProvidersSettings() {
                           </div>
                         </div>
 
-                        {/* Actions */}
                         <div class="flex gap-2 pt-1">
                           {isCustom && (
                             <Button

@@ -33,7 +33,6 @@ describe('useOutsideClick', () => {
     render(<TestComponent />);
     await act(async () => {});
 
-    // Advance the setTimeout(0) delay
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
     });
@@ -131,14 +130,12 @@ describe('useOutsideClick', () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
     });
 
-    // Click inside container2 — should NOT trigger callback
     const container2 = document.getElementById('container2');
     await act(async () => {
       firePointerDown(container2 as Element);
     });
     expect(callback).not.toHaveBeenCalled();
 
-    // Click outside both — SHOULD trigger callback
     const outside = document.getElementById('truly-outside');
     await act(async () => {
       firePointerDown(outside as Element);
@@ -207,7 +204,6 @@ describe('useOutsideClick', () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
     });
 
-    // Disable the hook
     rerender(<TestComponent enabled={false} />);
     await act(async () => {});
     await act(async () => {
@@ -219,7 +215,6 @@ describe('useOutsideClick', () => {
       firePointerDown(outside as Element);
     });
 
-    // After disabling, callback should not be called
     expect(callback).not.toHaveBeenCalled();
   });
 });

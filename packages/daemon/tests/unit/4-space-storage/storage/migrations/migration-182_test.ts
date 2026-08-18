@@ -1,18 +1,3 @@
-/**
- * Migration 182 tests — `uq_message_delivery_active_turn` (message-delivery v2).
- *
- * The index is the atomic "one active turn per session" guard AND the
- * turn-vs-steer arbiter. It must exist on BOTH schema paths:
- *   - existing DB upgrade → `runMigration182` (job_queue already exists when
- *     migrations run);
- *   - fresh install → `createIndexes` (createTables), because `runMigrations`
- *     runs BEFORE `createTables` (database-core.ts), so on a fresh DB migration
- *     181 early-returns (no job_queue yet) and would otherwise leave the index
- *     absent — every turn insert would succeed, nothing classified as a steer.
- *
- * See docs/features/message-delivery-v2.md §6 + Codex (#3742693688).
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { createTables } from '../../../../../src/storage/schema';
@@ -81,15 +66,12 @@ describe('Migration 181: uq_message_delivery_active_turn', () => {
   afterEach(() => db.close());
 
   test('FRESH-DB path: createTables creates the index (#3742693688)', () => {
-    // A brand-new install runs runMigrations (181 early-returns: no job_queue
-    // yet) THEN createTables. The index must come from createIndexes here.
     createTables(db);
     expect(indexExists(db, 'uq_message_delivery_active_turn')).toBe(true);
 
-    // And it enforces one active turn per session (turn-vs-steer arbiter).
     const repo = new JobQueueRepository(db as never);
-    deliverMessage(repo, 'sess-fresh', 'msg-a', { origin: 'chat' }); // turn
-    deliverMessage(repo, 'sess-fresh', 'msg-b', { origin: 'chat' }); // → steer
+    deliverMessage(repo, 'sess-fresh', 'msg-a', { origin: 'chat' });
+    deliverMessage(repo, 'sess-fresh', 'msg-b', { origin: 'chat' });
     const roles = repo
       .listJobs({ queue: MESSAGE_DELIVERY, limit: 10 })
       .map((j) => (j.payload as { role: string }).role)
@@ -112,7 +94,6 @@ describe('Migration 181: uq_message_delivery_active_turn', () => {
   });
 
   test('runMigration182 is a guarded no-op before the table exists (fresh-DB migration order)', () => {
-    // No job_queue yet — the migration must not throw (createTables hasn't run).
     expect(() => runMigration182(db)).not.toThrow();
     expect(indexExists(db, 'uq_message_delivery_active_turn')).toBe(false);
   });

@@ -1,17 +1,12 @@
 // @ts-nocheck
-/**
- * Tests for ToastItem Component
- */
 
 import { render, cleanup } from '@testing-library/preact';
 import { describe, it, expect, vi } from 'vitest';
 import { ToastItem } from '../Toast';
 import type { Toast } from '../../../lib/toast';
 
-// Mock the dismissToast function
 const mockDismissToast = vi.fn(() => {});
 
-// We need to mock the toast module
 const originalModule = await import('../../../lib/toast');
 const _mockToastModule = {
   ...originalModule,
@@ -155,7 +150,6 @@ describe('ToastItem', () => {
     it('should render progress bar when duration is set', () => {
       const toast = createToast({ duration: 5000 });
       const { container } = render(<ToastItem toast={toast} />);
-      // Progress bar container has bg-white/10 class
       const progressContainer = container.querySelector('.bg-white\\/10');
       expect(progressContainer).toBeTruthy();
     });
@@ -210,10 +204,9 @@ describe('ToastItem', () => {
     });
 
     it('should decrease progress over time', async () => {
-      const toast = createToast({ duration: 500 }); // Short duration for testing
+      const toast = createToast({ duration: 500 });
       const { container } = render(<ToastItem toast={toast} />);
 
-      // Wait a bit for progress to decrease
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       const progressBar = container.querySelector('.bg-blue-500') as HTMLElement;
@@ -222,10 +215,9 @@ describe('ToastItem', () => {
     });
 
     it('should complete progress and reach 0%', async () => {
-      const toast = createToast({ duration: 200 }); // Very short duration for testing
+      const toast = createToast({ duration: 200 });
       const { container } = render(<ToastItem toast={toast} />);
 
-      // Wait for progress to complete
       await new Promise((resolve) => setTimeout(resolve, 300));
 
       const progressBar = container.querySelector('.bg-blue-500') as HTMLElement;
@@ -242,11 +234,9 @@ describe('ToastItem', () => {
       const dismissButton = container.querySelector('button[aria-label="Dismiss notification"]');
       dismissButton?.click();
 
-      // After clicking, should have exit animation classes
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       const alert = container.querySelector('[role="alert"]');
-      // Should have opacity-0 and translate-x-full for exit animation
       expect(alert?.className).toContain('opacity-0');
       expect(alert?.className).toContain('translate-x-full');
     });
@@ -256,7 +246,6 @@ describe('ToastItem', () => {
       const { container } = render(<ToastItem toast={toast} />);
 
       const alert = container.querySelector('[role="alert"]');
-      // Should NOT have opacity-0 (exit state)
       expect(alert?.className).not.toContain('opacity-0');
     });
   });

@@ -1,22 +1,3 @@
-/**
- * OpenAI Responses Bridge Online Integration Tests
- *
- * Exercises the full OpenAI Responses bridge pipeline end-to-end:
- *   AnthropicToCodexBridgeProvider.buildSdkConfig → HTTP bridge server → OpenAI Responses API
- *
- * REQUIREMENTS:
- * - OPENAI_API_KEY must be set, or OpenAI OAuth credentials must be available in ~/.hyperneo/auth.json
- *
- * NOTE: Dev Proxy (HYPERNEO_USE_DEV_PROXY=1) does NOT apply to these tests.
- * The bridge uses its own random-port HTTP server; Anthropic API traffic
- * interception at port 8000 has no effect here.  Tests always hit the real
- * OpenAI Responses API.
- *
- * Run with:
- *   cd packages/daemon && OPENAI_API_KEY=sk-xxx bun test \
- *     ./tests/online/providers/anthropic-to-codex-bridge-provider.test.ts
- */
-
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -35,13 +16,8 @@ const IDLE_TIMEOUT = 120_000;
 const SETUP_TIMEOUT = 60_000;
 const TEST_TIMEOUT = IDLE_TIMEOUT + 30_000;
 
-// ---------------------------------------------------------------------------
-// SSE parsing helpers
-// ---------------------------------------------------------------------------
-
 type SseEvent = { event: string; data: Record<string, unknown> };
 
-/** Parse a raw SSE text body into an array of typed events. */
 function parseSseEvents(text: string): SseEvent[] {
   const events: SseEvent[] = [];
   for (const chunk of text.split('\n\n')) {
@@ -65,7 +41,6 @@ function parseSseEvents(text: string): SseEvent[] {
   return events;
 }
 
-/** Concatenate all text_delta fragments from the SSE stream. */
 function extractText(events: SseEvent[]): string {
   return events
     .filter((e) => e.event === 'content_block_delta')
@@ -76,7 +51,6 @@ function extractText(events: SseEvent[]): string {
     .join('');
 }
 
-/** Return the stop_reason from the message_delta event, or null if not found. */
 function getStopReason(events: SseEvent[]): string | null {
   for (const e of events) {
     if (e.event === 'message_delta') {
@@ -93,11 +67,6 @@ type ToolUseBlock = {
   input: Record<string, unknown>;
 };
 
-/**
- * Extract the first tool_use block from a stream.
- * Accumulates input_json_delta fragments and parses the final JSON.
- * Only the first tool_use block is returned; subsequent blocks are ignored.
- */
 function getToolUseBlock(events: SseEvent[]): ToolUseBlock | null {
   let id = '';
   let name = '';
@@ -107,8 +76,6 @@ function getToolUseBlock(events: SseEvent[]): ToolUseBlock | null {
     if (e.event === 'content_block_start') {
       const cb = (e.data as { content_block?: { type?: string; id?: string; name?: string } })
         .content_block;
-      // Only capture the first tool_use block — stop updating id/name once set
-      // so that a second tool_use block does not overwrite the first one's state.
       if (cb?.type === 'tool_use' && cb.id && !id) {
         id = cb.id;
         name = cb.name ?? '';
@@ -132,10 +99,6 @@ function getToolUseBlock(events: SseEvent[]): ToolUseBlock | null {
   return { id, name, input };
 }
 
-// ---------------------------------------------------------------------------
-// Bridge HTTP helper
-// ---------------------------------------------------------------------------
-
 type BridgeMessage = {
   role: 'user' | 'assistant';
   content: string | unknown[];
@@ -147,7 +110,6 @@ type BridgeTool = {
   input_schema: Record<string, unknown>;
 };
 
-/** POST to the bridge /v1/messages endpoint, return parsed SSE events. */
 async function callBridge(
   bridgeUrl: string,
   messages: BridgeMessage[],
@@ -176,8 +138,6 @@ async function callBridge(
 
   const text = await response.text();
   const events = parseSseEvents(text);
-  // Diagnostic: log raw SSE bytes only when the stream looks empty or malformed,
-  // to avoid flooding CI logs on successful requests.
   if (events.length === 0) {
     console.log(
       `[codex-bridge-test] raw-sse (${text.length} bytes, no events):`,
@@ -187,7 +147,6 @@ async function callBridge(
   return events;
 }
 
-/** Return the output_tokens from the message_delta event, or 0 if not found. */
 function getOutputTokens(events: SseEvent[]): number {
   for (const e of events) {
     if (e.event === 'message_delta') {
@@ -198,10 +157,6 @@ function getOutputTokens(events: SseEvent[]): number {
   return 0;
 }
 
-// ---------------------------------------------------------------------------
-// Test suite
-// ---------------------------------------------------------------------------
-
 describe('Codex Bridge (Online)', () => {
   let provider: AnthropicToCodexBridgeProvider;
   let bridgeUrl: string;
@@ -210,9 +165,6 @@ describe('Codex Bridge (Online)', () => {
   beforeAll(async () => {
     provider = new AnthropicToCodexBridgeProvider();
 
-    // Hard-fail if credentials are absent per CLAUDE.md policy: tests must FAIL,
-    // not silently skip. isAvailable() checks all runtime auth sources (OPENAI_API_KEY
-    // env var and auth.json OAuth) rather than isAuthenticated which is UI-only.
     if (!(await provider.isAvailable())) {
       throw new Error(
         'anthropic-codex provider is not available. ' +
@@ -223,7 +175,6 @@ describe('Codex Bridge (Online)', () => {
     const cfg = provider.buildSdkConfig('gpt-5.4-mini', { workspacePath: process.cwd() });
     bridgeUrl = cfg.envVars.ANTHROPIC_BASE_URL as string;
 
-    // Start a daemon server for provider-session and daemon-level tests.
     daemon = await createDaemonServer();
   }, SETUP_TIMEOUT);
 
@@ -235,9 +186,6 @@ describe('Codex Bridge (Online)', () => {
     }
   }, SETUP_TIMEOUT);
 
-  // -------------------------------------------------------------------------
-  // Test 1: Basic conversation
-  // -------------------------------------------------------------------------
   test('basic conversation: user message → assistant text reply', async () => {
     const events = await callBridge(bridgeUrl, [
       { role: 'user', content: 'Reply with exactly: PONG' },
@@ -252,13 +200,8 @@ describe('Codex Bridge (Online)', () => {
     expect(text.toUpperCase()).toContain('PONG');
   }, 120_000);
 
-  // -------------------------------------------------------------------------
-  // Test 2: Tool use round-trip
-  // -------------------------------------------------------------------------
   test('tool use: bridge routes tool call and model uses result in reply', async () => {
-    // Use the established mini tier for tool-use tests to avoid depending on newly released models.
     const TOOL_MODEL = 'gpt-5.4-mini';
-    // System prompt that forces tool use even with models that prefer self-answering.
     const TOOL_SYSTEM =
       'When the user asks you to call a tool, you MUST call that tool. ' +
       'Never answer the question yourself without first calling the requested tool.';
@@ -275,7 +218,6 @@ describe('Codex Bridge (Online)', () => {
       },
     };
 
-    // Turn 1 — expect the model to call the tool
     const turn1 = await callBridge(
       bridgeUrl,
       [
@@ -300,11 +242,9 @@ describe('Codex Bridge (Online)', () => {
     expect(toolUse).not.toBeNull();
     expect(toolUse!.name).toBe('get_greeting');
 
-    // Execute the tool locally
     const personName = String(toolUse!.input.person_name ?? 'Alice');
     const toolResult = `Hello, ${personName}! Pleased to meet you.`;
 
-    // Turn 2 — send the tool result continuation
     const turn2 = await callBridge(
       bridgeUrl,
       [
@@ -341,22 +281,15 @@ describe('Codex Bridge (Online)', () => {
     );
 
     expect(getStopReason(turn2)).toBe('end_turn');
-    // The model should reference Alice or the greeting in its final reply
     expect(extractText(turn2).toLowerCase()).toMatch(/alice|greeting|hello|pleased/);
   }, 180_000);
 
-  // -------------------------------------------------------------------------
-  // Test 3: MCP-style tool (in-process mock MCP server)
-  // -------------------------------------------------------------------------
   test('mcp tool: bridge handles MCP-style tool naming and call round-trip', async () => {
-    // Use the established mini tier for tool-use tests to avoid depending on newly released models.
     const TOOL_MODEL = 'gpt-5.4-mini';
     const TOOL_SYSTEM =
       'When the user asks you to call a tool, you MUST call that tool. ' +
       'Never answer the question yourself without first calling the requested tool.';
 
-    // MCP tools use the naming convention: mcp__<server-name>__<tool-name>
-    // This simulates a tool registered by a (mock) in-process MCP server.
     const mcpEchoTool: BridgeTool = {
       name: 'mcp__mockserver__echo',
       description: 'Echo a message back unchanged. Use this to repeat any text.',
@@ -371,7 +304,6 @@ describe('Codex Bridge (Online)', () => {
 
     const SECRET = 'BRIDGE_MCP_TEST_42';
 
-    // Turn 1 — expect the model to call the MCP echo tool
     const turn1 = await callBridge(
       bridgeUrl,
       [
@@ -395,10 +327,8 @@ describe('Codex Bridge (Online)', () => {
     expect(toolUse).not.toBeNull();
     expect(toolUse!.name).toBe('mcp__mockserver__echo');
 
-    // In-process MCP handler: echo the input message
     const toolResult = String(toolUse!.input.message ?? SECRET);
 
-    // Turn 2 — send the MCP tool result back as a continuation
     const turn2 = await callBridge(
       bridgeUrl,
       [
@@ -434,20 +364,15 @@ describe('Codex Bridge (Online)', () => {
     );
 
     expect(getStopReason(turn2)).toBe('end_turn');
-    // The model should repeat the SECRET string in its final response
     expect(extractText(turn2)).toContain(SECRET);
   }, 180_000);
 
-  // -------------------------------------------------------------------------
-  // Test 4: Provider-aware session creation via daemon
-  // -------------------------------------------------------------------------
   test(
     'provider session: session.create with explicit config.provider uses codex backend',
     async () => {
       const workspacePath = join(TMP_DIR, `codex-provider-session-${Date.now()}`);
       mkdirSync(workspacePath, { recursive: true });
 
-      // Create session with explicit provider — must route to anthropic-codex.
       const { sessionId } = (await daemon.messageHub.request('session.create', {
         workspacePath,
         title: 'Codex Explicit Provider Test',
@@ -459,13 +384,11 @@ describe('Codex Bridge (Online)', () => {
       })) as { sessionId: string };
       daemon.trackSession(sessionId);
 
-      // Query the session metadata to confirm the stored provider is 'anthropic-codex'.
       const { session } = (await daemon.messageHub.request('session.get', {
         sessionId,
       })) as { session: { config?: { provider?: string } } };
       expect(session.config?.provider).toBe('anthropic-codex');
 
-      // Send a message and verify the codex backend responds with the expected token.
       await sendMessage(daemon, sessionId, 'Reply with exactly: CODEX_OK');
       await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
@@ -491,19 +414,12 @@ describe('Codex Bridge (Online)', () => {
           return '';
         })
         .join('');
-      // The model must echo the token back -- a bare truthiness check would pass
-      // even for error messages or refusals from a wrong backend.
       expect(text.toUpperCase()).toContain('CODEX_OK');
     },
     TEST_TIMEOUT
   );
 
-  // -------------------------------------------------------------------------
-  // Test 5: Error envelope — invalid request returns Anthropic JSON error format
-  // -------------------------------------------------------------------------
   test('error envelope: unknown route returns Anthropic JSON error body', async () => {
-    // Hit a non-existent endpoint on the bridge server — the bridge must respond
-    // with the Anthropic JSON error envelope rather than a plain-text error.
     const response = await fetch(`${bridgeUrl}/v1/unknown-endpoint`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -515,21 +431,14 @@ describe('Codex Bridge (Online)', () => {
       type?: string;
       error?: { type?: string; message?: string };
     };
-    // Must be Anthropic JSON error envelope format
     expect(body.type).toBe('error');
     expect(typeof body.error?.type).toBe('string');
     expect(typeof body.error?.message).toBe('string');
   }, 30_000);
 
-  // -------------------------------------------------------------------------
-  // Test 6: Token usage — SSE stream has non-zero output_tokens
-  // -------------------------------------------------------------------------
   test('token usage: SSE stream contains non-zero output_tokens', async () => {
     const events = await callBridge(bridgeUrl, [{ role: 'user', content: 'Say hello.' }]);
 
-    // The codex bridge hard-codes input_tokens to 0 in the message_start event
-    // because thread/tokenUsage/updated arrives after streaming starts and the
-    // message_start event has already been sent by then.  Only assert output_tokens.
     const outputTokens = getOutputTokens(events);
 
     expect(outputTokens).toBeGreaterThan(0);

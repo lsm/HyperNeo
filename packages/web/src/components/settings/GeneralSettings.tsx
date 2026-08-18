@@ -51,7 +51,6 @@ export function GeneralSettings() {
   );
   const [isUpdating, setIsUpdating] = useState(false);
 
-  // Sync local state when global settings change
   useEffect(() => {
     if (settings) {
       setLocalModel(settings.model ?? 'sonnet');
@@ -71,7 +70,6 @@ export function GeneralSettings() {
       await updateGlobalSettings({ model: value });
     } catch {
       toast.error('Failed to update model setting');
-      // Revert on error
       setLocalModel(settings?.model ?? 'sonnet');
     } finally {
       setIsUpdating(false);
@@ -86,7 +84,6 @@ export function GeneralSettings() {
       await updateGlobalSettings({ permissionMode: mode });
     } catch {
       toast.error('Failed to update permission mode');
-      // Revert on error
       setLocalPermissionMode(settings?.permissionMode ?? 'default');
     } finally {
       setIsUpdating(false);
@@ -100,7 +97,6 @@ export function GeneralSettings() {
       await updateGlobalSettings({ autoScroll: value });
     } catch {
       toast.error('Failed to update auto-scroll setting');
-      // Revert on error
       setLocalAutoScroll(settings?.autoScroll ?? true);
     } finally {
       setIsUpdating(false);

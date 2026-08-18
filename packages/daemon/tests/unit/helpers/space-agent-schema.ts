@@ -1,12 +1,3 @@
-/**
- * Shared test schema helpers for Space Agent tests.
- *
- * Used by both space-agent-repository.test.ts and space-agent-manager.test.ts
- * to avoid duplicating schema setup and fixture insertion code.
- *
- * Keep in sync with the fully-migrated production schema (after M74).
- */
-
 import type { Database } from '../../../src/storage/sqlite-compat';
 
 export function createSpaceAgentSchema(db: Database): void {
@@ -34,8 +25,6 @@ export function createSpaceAgentSchema(db: Database): void {
 	`);
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_spaces_slug ON spaces(slug)`);
 
-  // Keep in sync with space-test-db.ts (post-M116 schema — thinking_level
-  // column added for per-agent thinking overrides).
   db.exec(`
 		CREATE TABLE space_agents (
 			id TEXT PRIMARY KEY,
@@ -212,9 +201,6 @@ export function createSpaceAgentSchema(db: Database): void {
 		)
 	`);
 
-  // node_executions still required by tests that exercise the repo's
-  // agent-name update path (which used to refresh denormalised labels and
-  // is now a no-op — kept here so the schema parity is obvious).
   db.exec(`
 		CREATE TABLE IF NOT EXISTS node_executions (
 			id TEXT PRIMARY KEY,
@@ -255,7 +241,6 @@ export function insertWorkflowNode(
   agentId: string | null
 ): void {
   const now = Date.now();
-  // config stores JSON: { agents?: [{ agentId, name }] }
   const configJson = agentId ? JSON.stringify({ agents: [{ agentId, name: `Node ${id}` }] }) : null;
   db.prepare(
     `INSERT INTO space_workflow_nodes (id, workflow_id, name, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`

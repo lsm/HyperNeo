@@ -21,12 +21,10 @@ export default function CommandAutocomplete({
   const selectedItemRef = useRef<HTMLButtonElement>(null);
   const [isMobile, setIsMobile] = useState(false);
 
-  // Detect touch device on mount
   useEffect(() => {
     setIsMobile(window.matchMedia('(pointer: coarse)').matches);
   }, []);
 
-  // Scroll selected item into view
   useEffect(() => {
     if (selectedItemRef.current) {
       selectedItemRef.current.scrollIntoView({
@@ -36,7 +34,6 @@ export default function CommandAutocomplete({
     }
   }, [selectedIndex, isMobile]);
 
-  // Close on click or touch outside
   useEffect(() => {
     const handleOutside = (e: MouseEvent | TouchEvent) => {
       if (listRef.current && !listRef.current.contains(e.target as Node)) {
@@ -74,7 +71,6 @@ export default function CommandAutocomplete({
         maxWidth: isMobile ? undefined : '400px',
       }}
     >
-      {/* Header */}
       <div class={`px-3 py-2 border-b ${borderColors.ui.default} bg-dark-850/50`}>
         <div class="flex items-center gap-2">
           <svg class="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -89,7 +85,6 @@ export default function CommandAutocomplete({
         </div>
       </div>
 
-      {/* Command List */}
       <div class="py-1">
         {commands.map((command, index) => (
           <button
@@ -109,7 +104,6 @@ export default function CommandAutocomplete({
         ))}
       </div>
 
-      {/* Footer hint */}
       <div class={`px-3 py-2 border-t ${borderColors.ui.default} bg-dark-850/50`}>
         {isMobile ? (
           <p class="text-xs text-gray-500">Tap to select</p>

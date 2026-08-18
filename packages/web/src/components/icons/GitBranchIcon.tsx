@@ -1,7 +1,3 @@
-/**
- * Git Branch Icon for Worktree indicator
- * Icon from: https://www.svgrepo.com/svg/507713/git-branch
- */
 export function GitBranchIcon({ className }: { className?: string }) {
   return (
     <svg class={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">

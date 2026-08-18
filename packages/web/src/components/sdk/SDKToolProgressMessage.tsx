@@ -1,10 +1,3 @@
-/**
- * SDKToolProgressMessage Renderer
- *
- * Displays real-time tool execution progress with elapsed time
- * Now uses the new ToolProgressCard component
- */
-
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import { ToolProgressCard } from './tools/index.ts';
 
@@ -12,7 +5,7 @@ type ToolProgressMessage = Extract<SDKMessage, { type: 'tool_progress' }>;
 
 interface Props {
   message: ToolProgressMessage;
-  toolInput?: unknown; // Tool input parameters (e.g., file_path for Write/Edit tools)
+  toolInput?: unknown;
 }
 
 export function SDKToolProgressMessage({ message, toolInput }: Props) {

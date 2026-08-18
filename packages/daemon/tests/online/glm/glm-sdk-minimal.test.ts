@@ -1,49 +1,11 @@
-/**
- * Minimal GLM SDK Test
- *
- * Direct test of Claude Agent SDK with GLM using minimal settings.
- * Tests transparent provider mapping for all model tiers:
- * - 'haiku' model → GLM-5
- * - 'default' (sonnet) model → GLM-5
- * - 'opus' model → GLM-5
- *
- * Run with: cd packages/daemon && GLM_API_KEY=xxx bun test ./tests/online/glm/glm-sdk-minimal.test.ts
- *
- * KEY FINDINGS:
- * 1. SDK works with GLM via ANTHROPIC_AUTH_TOKEN env var (in parent process)
- * 2. Model tier mapping via ANTHROPIC_DEFAULT_*_MODEL env vars
- * 3. Response text is in `assistant` message's `message.content[0].text`
- * 4. The `result` message also contains the final result text in `result` field
- *
- * STABILITY IMPROVEMENTS:
- * - Promise.race timeout (120s internal, 150s test) for slower CI networks
- * - Helper function to reduce code duplication
- * - Proper env var restoration
- *
- * NOTE: SDK's abortSignal option doesn't properly terminate subprocess,
- * so we use Promise.race for timeout handling instead.
- *
- * REQUIREMENTS:
- * - GLM_API_KEY environment variable (or ZHIPU_API_KEY)
- * - Makes real API calls (costs money, uses rate limits)
- * - Tests will FAIL if credentials are not available (per hard-fail rule)
- */
-
 import { describe, test, expect } from 'bun:test';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-// Get API keys from env
 const GLM_API_KEY = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY;
 
-/**
- * Helper: Run SDK query with timeout via Promise.race
- *
- * NOTE: SDK's abortSignal doesn't properly terminate subprocess.
- * We use Promise.race for timeout handling instead.
- */
 async function runQueryWithTimeout(
   prompt: string,
   model: string,
@@ -120,9 +82,6 @@ async function runQueryWithTimeout(
   return Promise.race([messagesPromise, timeoutPromise]);
 }
 
-/**
- * Helper: Store and restore environment variables
- */
 function setGlmEnvVars(
   apiKey: string,
   haikuModel?: string,
@@ -140,12 +99,10 @@ function setGlmEnvVars(
     'ANTHROPIC_DEFAULT_OPUS_MODEL',
   ];
 
-  // Store originals
   for (const key of varsToSet) {
     originals.set(key, process.env[key]);
   }
 
-  // Set new values
   process.env.ANTHROPIC_AUTH_TOKEN = apiKey;
   process.env.ANTHROPIC_BASE_URL = 'https://open.bigmodel.cn/api/anthropic';
   process.env.API_TIMEOUT_MS = '3000000';
@@ -157,9 +114,6 @@ function setGlmEnvVars(
   return originals;
 }
 
-/**
- * Helper: Restore environment variables from a Map
- */
 function restoreEnvVars(originals: Map<string, string | undefined>): void {
   for (const [key, value] of originals.entries()) {
     if (value !== undefined) {
@@ -195,14 +149,13 @@ describe('GLM SDK - Stable Tests with Promise.race', () => {
         tempDir
       );
 
-      // Verify we got a response from GLM
       expect(responseText.length).toBeGreaterThan(0);
       console.log('[GLM Test] SUCCESS - GLM works with default (sonnet) model!');
     } finally {
       restoreEnvVars(originals);
       rmSync(tempDir, { recursive: true, force: true });
     }
-  }, 150000); // 150s test timeout for GLM API on CI
+  }, 150000);
 
   test('should work with GLM via default/sonnet model (glm-5)', async () => {
     if (!GLM_API_KEY) {
@@ -232,7 +185,7 @@ describe('GLM SDK - Stable Tests with Promise.race', () => {
       restoreEnvVars(originals);
       rmSync(tempDir, { recursive: true, force: true });
     }
-  }, 150000); // 150s test timeout for GLM API on CI
+  }, 150000);
 
   test('should work with GLM via opus model (glm-5)', async () => {
     if (!GLM_API_KEY) {
@@ -262,5 +215,5 @@ describe('GLM SDK - Stable Tests with Promise.race', () => {
       restoreEnvVars(originals);
       rmSync(tempDir, { recursive: true, force: true });
     }
-  }, 150000); // 150s test timeout for GLM API on CI
+  }, 150000);
 });

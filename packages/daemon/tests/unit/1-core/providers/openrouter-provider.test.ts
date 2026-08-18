@@ -314,10 +314,10 @@ describe('OpenRouterProvider', () => {
     const byAlias = Object.fromEntries(
       OpenRouterProvider.FALLBACK_MODELS.map((m) => [m.alias, m.contextWindow])
     );
-    expect(byAlias['openrouter-auto']).toBe(1_000_000); // routing — any model
-    expect(byAlias['openrouter-sonnet']).toBe(200_000); // Claude Sonnet ~200K
-    expect(byAlias['openrouter-opus']).toBe(200_000); // Claude Opus ~200K
-    expect(byAlias['openrouter-haiku']).toBe(200_000); // Claude Haiku ~200K
+    expect(byAlias['openrouter-auto']).toBe(1_000_000);
+    expect(byAlias['openrouter-sonnet']).toBe(200_000);
+    expect(byAlias['openrouter-opus']).toBe(200_000);
+    expect(byAlias['openrouter-haiku']).toBe(200_000);
   });
 
   it('capabilities.maxContextWindow is 1M for unknown models with large contexts', () => {

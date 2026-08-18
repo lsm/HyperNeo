@@ -385,10 +385,6 @@ describe('SpaceForge', () => {
     });
 
     it('merges cross-page preflight context so a paged-in run keeps its artifact context', async () => {
-      // Two evidence pages both reference run-1. Each page's preflightContext
-      // only knows its own page's evidenceIds for run-1, so selecting a page-1
-      // row after Load more only resolves run-1's artifacts if the two contexts
-      // were merged (unioning ev-0 into run-1's evidenceIds).
       const runArtifact = {
         id: 'art-1',
         runId: 'run-1',
@@ -447,23 +443,17 @@ describe('SpaceForge', () => {
       renderScopeDetail();
       fireEvent.click(await screen.findByRole('button', { name: 'episodes' }));
       fireEvent.click(await screen.findByRole('button', { name: 'Load more evidence' }));
-      // Page 2 appended and its preflight context merged in.
       await screen.findByText('Evidence row 50');
 
-      // Select the PAGE-1 evidence referencing run-1.
       const page1Card = (await screen.findByText('Evidence row 0')).closest('label')!;
       fireEvent.click(within(page1Card).getByRole('checkbox'));
 
-      // run-1's "merged PR" artifact only yields outcome tokens when the run
-      // survives the preflight filter — which requires ev-0 to be in run-1's
-      // merged evidenceIds. Absent the merge, this reason would not appear.
       await waitFor(() => expect(screen.getByText(/concrete outcomes such as PR/i)).toBeTruthy());
     });
   });
 
   describe('ScopeDetail evidence pagination', () => {
     const PAGE_SIZE = 50;
-    // Build N evidence rows with stable, distinguishable summaries.
     const makePage = (count: number, offset: number) =>
       Array.from({ length: count }, (_, index) => ({
         id: `ev-${offset + index}`,
@@ -486,7 +476,6 @@ describe('SpaceForge', () => {
         if (method === 'evolution.review.get') return { episodes: [], lessons: [], proposals: [] };
         if (method === 'evolution.evidence.list') {
           const offset = (data as { offset?: number })?.offset ?? 0;
-          // Page 1 is full (50 rows) so "Load more" shows; page 2 is partial.
           const count = offset === 0 ? PAGE_SIZE : 3;
           return { evidence: makePage(count, offset) };
         }
@@ -497,18 +486,15 @@ describe('SpaceForge', () => {
       renderScopeDetail();
       fireEvent.click(await screen.findByRole('button', { name: 'evidence' }));
 
-      // First page rendered, and the pager is offered because the page was full.
       await screen.findByText('Evidence row 0');
       const loadMore = await screen.findByRole('button', { name: 'Load more evidence' });
       fireEvent.click(loadMore);
 
-      // Second page (offset 50) appended; the pager disappears once exhausted.
       await screen.findByText('Evidence row 50');
       await waitFor(() =>
         expect(screen.queryByRole('button', { name: 'Load more evidence' })).toBeNull()
       );
 
-      // The evidence.list calls carried limit/offset pagination params.
       const listCalls = mockRequest.mock.calls.filter(
         (call) => call[0] === 'evolution.evidence.list'
       );

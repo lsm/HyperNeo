@@ -1,9 +1,3 @@
-/**
- * AskUserQuestion Type Guards Tests
- *
- * Tests for AskUserQuestion-related type guard functions
- */
-
 import { describe, test, expect } from 'bun:test';
 import {
   isAskUserQuestionToolUse,
@@ -13,13 +7,11 @@ import {
 import type { AskUserQuestionInput } from '../src/sdk/type-guards';
 import type { SDKMessage } from '../src/sdk/sdk';
 
-// Helper to create base message properties
 const baseProps = {
   uuid: 'test-uuid',
   session_id: 'test-session',
 };
 
-// Sample AskUserQuestion tool input
 const sampleAskUserQuestionInput: AskUserQuestionInput = {
   questions: [
     {

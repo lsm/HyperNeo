@@ -12,10 +12,6 @@ import {
   type GitHubPollingRepo,
 } from '../../../../src/lib/external-events/github/github-normalizer';
 
-// ============================================================================
-// Factory for GitHub `/repos/{owner}/{repo}/pulls` rows (dedupe-on-head-sha).
-// ============================================================================
-
 const watched: GitHubPollingRepo = { owner: 'Acme', repo: 'Widgets' };
 const HEAD_SHA_INITIAL = 'aaa111bbb222ccc333';
 const HEAD_SHA_PUSHED = 'ddd444eee555fff666';
@@ -35,10 +31,6 @@ function makePullRow(overrides: Record<string, unknown> = {}): Record<string, un
     ...overrides,
   };
 }
-
-// ============================================================================
-// Webhook payloads for reply/resolve handle extraction.
-// ============================================================================
 
 function reviewCommentWebhook(overrides: Record<string, unknown> = {}): unknown {
   return {
@@ -127,9 +119,6 @@ function pullRequestWebhook(overrides: Record<string, unknown> = {}): unknown {
   };
 }
 
-// `pull_request_review_thread` webhook (resolved/unresolved). Unlike review-
-// comment events, this payload carries the review-THREAD node id directly at
-// `thread.node_id` (the `PullRequestReviewThread.id` resolveReviewThread needs).
 function reviewThreadWebhook(overrides: Record<string, unknown> = {}): unknown {
   return {
     action: 'resolved',
@@ -140,8 +129,6 @@ function reviewThreadWebhook(overrides: Record<string, unknown> = {}): unknown {
       node_id: 'PR_kwAAA_pull',
       html_url: 'https://github.com/acme/widgets/pull/7',
       user: { login: 'dev', type: 'User' },
-      // Resolution bumps the PR's updated_at, so it is the latest timestamp and
-      // the closest proxy for when the thread was actually resolved.
       updated_at: '2026-01-01T00:10:00Z',
     },
     thread: {
@@ -171,9 +158,6 @@ function reviewThreadWebhook(overrides: Record<string, unknown> = {}): unknown {
   };
 }
 
-// A repo-scoped branch_protection_rule webhook (created/edited/deleted). There
-// is NO pull request. Per the merge-blocking spec row 7, the topic entity is the
-// protected branch NAME (rule.name), resource = `repo`, action = `branch_protection_{action}`.
 function branchProtectionRuleWebhook(overrides: Record<string, unknown> = {}): unknown {
   return {
     action: 'created',
@@ -207,8 +191,6 @@ describe('normalizeGitHubPollingRow — renamed repo uses payload URL, not stale
       node_id: 'PRRC_kwAAA_renamed',
       pull_request_review_id: 99,
       body: 'nit on renamed repo',
-      // The watched config is stale (neokai), but the API payload URL carries the
-      // current canonical repo name (HyperNeo).
       url: 'https://api.github.com/repos/lsm/HyperNeo/pulls/comments/12345',
       html_url: 'https://github.com/lsm/HyperNeo/pull/2236#discussion_r12345',
       user: { login: 'reviewer', type: 'User' },
@@ -333,7 +315,6 @@ describe('normalizeGitHubPollingRow — pulls dedupe key', () => {
   it('keys the dedupe suffix on the head sha, not the volatile updated_at', () => {
     const event = normalizeGitHubPollingRow(watched, makePullRow(), 'pulls')!;
     expect(event).not.toBeNull();
-    // eventType for the pulls endpoint is `pull_request`; owner/repo lowercased.
     expect(event.dedupeKey).toBe(`acme/widgets:pull_request:1001:${HEAD_SHA_INITIAL}`);
     expect(event.deliveryId).toBe(`poll:pull_request:1001:${HEAD_SHA_INITIAL}`);
     expect(event.externalId).toBe(`pull_request:1001:${HEAD_SHA_INITIAL}`);
@@ -341,7 +322,6 @@ describe('normalizeGitHubPollingRow — pulls dedupe key', () => {
 
   it('keeps the same dedupeKey when only updated_at advanced (e.g. a comment/check)', () => {
     const first = normalizeGitHubPollingRow(watched, makePullRow(), 'pulls');
-    // A comment or check_run bumped updated_at but did NOT push a new commit.
     const second = normalizeGitHubPollingRow(
       watched,
       makePullRow({ updated_at: '2026-06-24T15:10:00Z' }),
@@ -350,11 +330,9 @@ describe('normalizeGitHubPollingRow — pulls dedupe key', () => {
 
     expect(first).not.toBeNull();
     expect(second).not.toBeNull();
-    // Same dedupe key → the store collapses both rows, no duplicate delivery.
     expect(second!.dedupeKey).toBe(first!.dedupeKey);
     expect(second!.deliveryId).toBe(first!.deliveryId);
     expect(second!.externalId).toBe(first!.externalId);
-    // occurredAt still reflects the (advanced) updated_at.
     expect(second!.occurredAt).toBeGreaterThan(first!.occurredAt);
   });
 
@@ -375,12 +353,10 @@ describe('normalizeGitHubPollingRow — pulls dedupe key', () => {
   it('falls back to updatedAt when head.sha is missing (deleted-head PR)', () => {
     const row = makePullRow({ head: {} });
     const first = normalizeGitHubPollingRow(watched, row, 'pulls');
-    // Within a single cycle the identical row dedupes against itself.
     const secondSame = normalizeGitHubPollingRow(watched, row, 'pulls');
 
     expect(first).not.toBeNull();
     expect(secondSame!.dedupeKey).toBe(first!.dedupeKey);
-    // When updated_at advances, the fallback key advances (no stale head to pin).
     const advanced = normalizeGitHubPollingRow(
       watched,
       makePullRow({ head: {}, updated_at: '2026-06-24T15:10:00Z' }),
@@ -398,16 +374,11 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
         'delivery-1',
         reviewCommentWebhook()
       )!;
-      // REST numeric id (the handle .../comments/{comment_id}/replies needs):
       expect(normalized.commentId).toBe('4242');
-      // GraphQL node id of the COMMENT (≠ its thread node id):
       expect(normalized.nodeId).toBe('PRRC_kwAAA_reviewcomment');
     });
 
     test('review comment that is a reply yields the ROOT comment id, not the reply id', () => {
-      // GitHub's reply endpoint requires a top-level comment id; a reply carries
-      // the root id in `in_reply_to_id` (review threads are flat). See
-      // https://docs.github.com/rest/pulls/comments.
       const normalized = normalizeGitHubWebhook(
         'pull_request_review_comment',
         'delivery-1',
@@ -423,11 +394,8 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
           },
         })
       )!;
-      // commentId must be the ROOT id (4242), not the reply's own id (5000).
       expect(normalized.commentId).toBe('4242');
-      // nodeId still references the triggering (reply) comment, by design.
       expect(normalized.nodeId).toBe('PRRC_kwAAA_reply');
-      // external identity must stay keyed by the actual delivered comment id.
       expect(normalized.externalId).toBe('review_comment:5000:created');
       expect(normalized.dedupeKey).toBe('acme/widgets:review_comment:5000:created');
     });
@@ -477,7 +445,6 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
       )!;
       expect(normalized.commentId).toBe('');
       expect(normalized.nodeId).toBe('');
-      // externalId still falls back to the delivery id when no REST id is present
       expect(normalized.externalId).toBe('review_comment:delivery-1:created');
     });
 
@@ -727,8 +694,6 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
   });
 
   describe('normalizeGitHubDeploymentStatus', () => {
-    // `deployment` is a top-level sibling of `deployment_status` in the real
-    // webhook payload — the handler passes it in explicitly (not nested).
     const deploymentForStatus = (overrides: Record<string, unknown> = {}) => ({
       id: 321,
       ref: 'feat/deploy',
@@ -761,7 +726,6 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
         prNumber: 7,
       })!;
       expect(normalized.eventType).toBe('deployment_status');
-      // action carries the state so the topic suffix reflects it.
       expect(normalized.action).toBe('success');
       expect(normalized.dedupeKey).toBe('acme/widgets:deployment_status:654:success:7');
       expect(mapEventType(normalized.eventType, normalized.action, normalized.entityId)).toEqual({
@@ -780,13 +744,10 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
       expect(event.payload.ref).toBe('feat/deploy');
       expect(event.payload.sha).toBe('abc123def456');
       expect(event.payload.deploymentId).toBe(321);
-      // The status's target_url is the most useful external link.
       expect(event.externalUrl).toBe('https://example.com/deploy/654');
     });
 
     test('emits a distinct topic per status state', () => {
-      // `inactive` is deliberately excluded — it is dropped (no event) per the
-      // spec; see the dedicated 'drops an inactive status' test below.
       for (const state of ['failure', 'error', 'in_progress', 'queued', 'pending']) {
         const normalized = normalizeGitHubDeploymentStatus({
           repo: watched,
@@ -804,11 +765,6 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
     });
 
     test('drops an inactive status (no event) per the merge-blocking spec', () => {
-      // docs/design/github-events-merge-blocking-spec.md row 4 (#2324):
-      // `deployment_status` fires no event for inactive states. An
-      // auto-inactivated deploy (e.g. an ephemeral environment torn down) is a
-      // teardown, not a merge-relevant signal — publishing would wake any
-      // subscriber matching `pull_request/<id>.*` for nothing.
       expect(
         normalizeGitHubDeploymentStatus({
           repo: watched,
@@ -938,10 +894,6 @@ describe('NormalizedGitHubEvent reply/resolve handles', () => {
   });
 });
 
-// ============================================================================
-// normalizeGitHubStatus — commit-status (external/legacy CI) webhook.
-// ============================================================================
-
 const STATUS_REPO: GitHubPollingRepo = { owner: 'Acme', repo: 'Widgets' };
 
 function statusPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -985,7 +937,6 @@ describe('normalizeGitHubStatus', () => {
       sha: 'abc123def456',
       statusId: 555,
     });
-    // externalUrl falls back to the target_url when present.
     expect(event.externalUrl).toBe('https://jenkins.example.com/job/widgets/42');
   });
 
@@ -1017,11 +968,9 @@ describe('normalizeGitHubStatus', () => {
     };
     const forPr7 = normalizeGitHubStatus({ ...base, prNumber: 7 })!;
     const forPr9 = normalizeGitHubStatus({ ...base, prNumber: 9 })!;
-    // Same commit status, different PRs → distinct keys (no cross-PR collapse).
     expect(forPr7.dedupeKey).not.toBe(forPr9.dedupeKey);
     expect(forPr7.dedupeKey).toBe('acme/widgets:status:555:failure:7');
     expect(forPr9.dedupeKey).toBe('acme/widgets:status:555:failure:9');
-    // Re-delivering the same status for the same PR dedupes.
     expect(normalizeGitHubStatus({ ...base, prNumber: 7 })!.dedupeKey).toBe(forPr7.dedupeKey);
   });
 
@@ -1036,7 +985,6 @@ describe('normalizeGitHubStatus', () => {
     });
     const jenkins = normalizeGitHubStatus(base('ci/jenkins'))!;
     const travis = normalizeGitHubStatus(base('ci/travis'))!;
-    // Same SHA + state + PR, different CI context → distinct keys (no collision).
     expect(jenkins.dedupeKey).not.toBe(travis.dedupeKey);
     expect(jenkins.dedupeKey).toBe('acme/widgets:status:abc123def456:ci/jenkins:failure:7');
   });
@@ -1109,22 +1057,17 @@ describe('normalizeGitHubWebhook — pull_request_review_thread', () => {
       reviewThreadWebhook()
     )!;
     expect(normalized).not.toBeNull();
-    // The thread node id (the primary entity) is captured directly from the payload.
     expect(normalized.nodeId).toBe('PRRT_kwAAA_thread');
-    // The root comment REST id powers the reply endpoint.
     expect(normalized.commentId).toBe('4242');
     expect(normalized.prNumber).toBe(7);
     expect(normalized.actor).toBe('reviewer');
     expect(normalized.body).toBe('nit: rename this');
-    // occurredAt tracks the PR's updated_at (resolution time), NOT the root
-    // comment's updated_at (last text edit) — which is older here (00:05 < 00:10).
     expect(normalized.occurredAt).toBe(Date.parse('2026-01-01T00:10:00Z'));
     expect(normalized.payload).toMatchObject({
       title: 'PR #7 review thread resolved',
       threadId: 'PRRT_kwAAA_thread',
       resolveHandle: { kind: 'pull_request_review_thread', threadId: 'PRRT_kwAAA_thread' },
       replyHandle: { kind: 'pull_request_review_comment', commentId: '4242' },
-      // Full diff location is projected, matching the review-comment branch.
       path: 'packages/daemon/src/file.ts',
       line: 12,
       side: 'RIGHT',
@@ -1151,7 +1094,6 @@ describe('normalizeGitHubWebhook — pull_request_review_thread', () => {
     )!;
     const event = toExternalEvent('space-1', normalized);
     expect(event.topic).toBe('github/acme/widgets/pull_request/7.thread_unresolved');
-    // resolveHandle still identifies the thread regardless of transition direction.
     expect(event.payload.resolveHandle).toEqual({
       kind: 'pull_request_review_thread',
       threadId: 'PRRT_kwAAA_thread',
@@ -1159,9 +1101,6 @@ describe('normalizeGitHubWebhook — pull_request_review_thread', () => {
   });
 
   test('distinct resolution transitions of the same thread do not dedupe', () => {
-    // A thread can be resolved, un-resolved, then resolved again. Each transition
-    // is a separate GitHub delivery, so the two `resolved` events must keep
-    // distinct dedupe keys (keyed by delivery id, like `pull_request` actions).
     const first = normalizeGitHubWebhook(
       'pull_request_review_thread',
       'delivery-resolve-1',
@@ -1173,7 +1112,6 @@ describe('normalizeGitHubWebhook — pull_request_review_thread', () => {
       reviewThreadWebhook()
     )!;
     expect(second.dedupeKey).not.toBe(first.dedupeKey);
-    // Redelivering the same delivery id collapses to one event.
     const redelivery = normalizeGitHubWebhook(
       'pull_request_review_thread',
       'delivery-resolve-1',
@@ -1192,16 +1130,11 @@ describe('normalizeGitHubWebhook — pull_request_review_thread', () => {
     expect(normalized.nodeId).toBe('');
     expect(normalized.commentId).toBe('');
     const event = toExternalEvent('space-1', normalized);
-    // No thread id → no resolveHandle, but the event still publishes.
     expect(event.payload.resolveHandle).toBeUndefined();
     expect(event.topic).toBe('github/acme/widgets/pull_request/7.thread_resolved');
   });
 
   test('outdated thread (line null) preserves the original diff location', () => {
-    // When a thread refers to a line that has since changed/disappeared, GitHub
-    // returns `line`/`side` as null but retains the last-valid location in
-    // `original_line`/`original_side`. The event must keep that context so the
-    // conversation-resolution rule can still locate the thread.
     const normalized = normalizeGitHubWebhook(
       'pull_request_review_thread',
       'delivery-outdated',
@@ -1243,8 +1176,6 @@ describe('normalizeGitHubWebhook — pull_request_review_thread', () => {
   });
 
   test('occurredAt falls back to the root comment timestamp when the PR object is thin', () => {
-    // A minimal webhook (no pr.updated_at) must still source a sensible time from
-    // the root comment rather than defaulting to the receive time.
     const normalized = normalizeGitHubWebhook(
       'pull_request_review_thread',
       'delivery-4',
@@ -1266,10 +1197,8 @@ describe('normalizeGitHubWebhook — branch_protection_rule (repo-scoped, resour
     expect(normalized).not.toBeNull();
     expect(normalized.eventType).toBe('branch_protection_rule');
     expect(normalized.action).toBe('created');
-    // Repo-scoped sentinel: prNumber = 0 (no PR); prUrl is the REPO url, not /pull/N.
     expect(normalized.prNumber).toBe(0);
     expect(normalized.prUrl).toBe('https://github.com/Acme/widgets');
-    // entityId is the protected branch NAME, not the numeric rule id.
     expect(normalized.entityId).toBe('main');
     expect(normalized.actor).toBe('admin');
     expect(normalized.externalUrl).toBe('https://github.com/Acme/widgets/settings/branches');

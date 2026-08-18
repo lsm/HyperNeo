@@ -1,14 +1,3 @@
-/**
- * Migration 171 Tests — Backfill Post-Approval ↔ Review channels.
- *
- * Covers:
- *   - Adds Post-Approval → Review and Review → Post-Approval to each built-in
- *     merge-capable workflow (Coding / Research / Coding with QA) that lacks them.
- *   - Idempotent: running twice leaves channels unchanged (no duplicates).
- *   - Custom (non-built-in) workflows are never touched.
- *   - No-op on a DB without space_workflows.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -21,7 +10,6 @@ interface ChannelRow {
   to?: string | string[];
 }
 
-// Pre-redesign Coding/Research channels (no Post-Approval ↔ Review).
 const OLD_CHANNELS: ChannelRow[] = [
   { from: 'Coding', to: 'Review' },
   { from: 'Review', to: 'Coding' },
@@ -127,7 +115,6 @@ describe('Migration 171: backfill Post-Approval ↔ Review channels', () => {
       const channels = getChannels(db, id);
       expect(hasChannel(channels, 'Post-Approval', 'Review')).toBe(true);
       expect(hasChannel(channels, 'Review', 'Post-Approval')).toBe(true);
-      // Original channels are preserved.
       expect(hasChannel(channels, 'Coding', 'Review')).toBe(true);
     }
   });
@@ -149,17 +136,12 @@ describe('Migration 171: backfill Post-Approval ↔ Review channels', () => {
 
     expect(afterSecond).toHaveLength(afterFirst.length);
     expect(hasChannel(afterSecond, 'Post-Approval', 'Review')).toBe(true);
-    // Exactly one Post-Approval → Review entry.
     expect(afterSecond.filter((c) => c.from === 'Post-Approval' && c.to === 'Review')).toHaveLength(
       1
     );
   });
 
   test('does not touch custom workflows, even one reusing a built-in display name', () => {
-    // template_name is NULL → not a confirmed built-in, even though the display
-    // name matches 'Coding Workflow' (e.g. the real built-in was renamed and a
-    // custom workflow took the freed name). Strict template_name matching must
-    // skip it.
     insertSpace(db, 'sp-1');
     insertWorkflow(db, {
       id: 'wf-custom',
@@ -197,9 +179,6 @@ describe('Migration 171: backfill Post-Approval ↔ Review channels', () => {
   });
 
   test('remaps endpoints to renamed persisted nodes via agent slots', () => {
-    // A user renamed the built-in nodes but the agent slots are stable. The
-    // backfilled channels must use the persisted (renamed) node names, not the
-    // canonical literals, or they'd point at no node and the merger would stall.
     insertSpace(db, 'sp-1');
     insertWorkflow(db, {
       id: 'wf-coding',
@@ -208,8 +187,6 @@ describe('Migration 171: backfill Post-Approval ↔ Review channels', () => {
       templateName: 'Coding Workflow',
       channels: OLD_CHANNELS,
     });
-    // Persist renamed nodes (agent slots 'reviewer' / 'merger' unchanged) into
-    // space_workflow_nodes, where nodes actually live.
     const insertNode = db.prepare(
       `INSERT INTO space_workflow_nodes (id, workflow_id, name, description, config, created_at, updated_at)
        VALUES (?, ?, ?, '', ?, ?, ?)`
@@ -243,19 +220,13 @@ describe('Migration 171: backfill Post-Approval ↔ Review channels', () => {
     runMigration171(db);
 
     const channels = getChannels(db, 'wf-coding');
-    // Endpoints resolved via slots: 'reviewer' → "Code Review", 'merger' → "Merge Step".
     expect(hasChannel(channels, 'Merge Step', 'Code Review')).toBe(true);
     expect(hasChannel(channels, 'Code Review', 'Merge Step')).toBe(true);
-    // Canonical literals must NOT appear (they'd name no node).
     expect(hasChannel(channels, 'Post-Approval', 'Review')).toBe(false);
     expect(hasChannel(channels, 'Review', 'Post-Approval')).toBe(false);
   });
 
   test('does not throw on a partial schema lacking space_workflow_nodes', () => {
-    // A partial DB can have the full space_workflows columns without
-    // space_workflow_nodes. The migration must take its no-op/fallback path
-    // (canonical names) rather than eagerly preparing a statement against a
-    // missing table and aborting.
     insertSpace(db, 'sp-1');
     insertWorkflow(db, {
       id: 'wf-coding',
@@ -268,7 +239,6 @@ describe('Migration 171: backfill Post-Approval ↔ Review channels', () => {
 
     expect(() => runMigration171(db)).not.toThrow();
 
-    // Falls back to canonical endpoint names (no node resolution possible).
     const channels = getChannels(db, 'wf-coding');
     expect(hasChannel(channels, 'Post-Approval', 'Review')).toBe(true);
     expect(hasChannel(channels, 'Review', 'Post-Approval')).toBe(true);

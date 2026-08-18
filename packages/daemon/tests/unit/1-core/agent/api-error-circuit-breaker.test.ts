@@ -19,7 +19,7 @@ describe('ApiErrorCircuitBreaker', () => {
       };
 
       const tripped = await circuitBreaker.checkMessage(message);
-      expect(tripped).toBe(false); // First error doesn't trip
+      expect(tripped).toBe(false);
     });
 
     it('should trip after threshold errors', async () => {
@@ -34,12 +34,10 @@ describe('ApiErrorCircuitBreaker', () => {
         },
       };
 
-      // First two errors don't trip
       await circuitBreaker.checkMessage(message);
       await circuitBreaker.checkMessage(message);
       expect(circuitBreaker.isTripped()).toBe(false);
 
-      // Third error trips
       const tripped = await circuitBreaker.checkMessage(message);
       expect(tripped).toBe(true);
       expect(circuitBreaker.isTripped()).toBe(true);
@@ -103,7 +101,6 @@ describe('ApiErrorCircuitBreaker', () => {
         },
       };
 
-      // Send 3 errors to trip
       await circuitBreaker.checkMessage(message);
       await circuitBreaker.checkMessage(message);
       const tripped = await circuitBreaker.checkMessage(message);
@@ -119,7 +116,6 @@ describe('ApiErrorCircuitBreaker', () => {
         },
       };
 
-      // Send 3 errors to trip
       await circuitBreaker.checkMessage(message);
       await circuitBreaker.checkMessage(message);
       const tripped = await circuitBreaker.checkMessage(message);
@@ -135,7 +131,6 @@ describe('ApiErrorCircuitBreaker', () => {
         },
       };
 
-      // Send 3 errors to trip
       await circuitBreaker.checkMessage(message);
       await circuitBreaker.checkMessage(message);
       const tripped = await circuitBreaker.checkMessage(message);
@@ -152,7 +147,6 @@ describe('ApiErrorCircuitBreaker', () => {
         },
       };
 
-      // Trip the circuit breaker
       await circuitBreaker.checkMessage(message);
       await circuitBreaker.checkMessage(message);
       await circuitBreaker.checkMessage(message);
@@ -173,14 +167,11 @@ describe('ApiErrorCircuitBreaker', () => {
         },
       };
 
-      // Accumulate some errors
       await circuitBreaker.checkMessage(message);
       await circuitBreaker.checkMessage(message);
 
-      // Reset
       circuitBreaker.reset();
 
-      // Should need 3 new errors to trip
       await circuitBreaker.checkMessage(message);
       await circuitBreaker.checkMessage(message);
       expect(circuitBreaker.isTripped()).toBe(false);
@@ -198,14 +189,11 @@ describe('ApiErrorCircuitBreaker', () => {
         },
       };
 
-      // Accumulate some errors
       await circuitBreaker.checkMessage(message);
       await circuitBreaker.checkMessage(message);
 
-      // Mark success
       circuitBreaker.markSuccess();
 
-      // Should need 3 new errors to trip
       await circuitBreaker.checkMessage(message);
       await circuitBreaker.checkMessage(message);
       expect(circuitBreaker.isTripped()).toBe(false);
@@ -222,7 +210,6 @@ describe('ApiErrorCircuitBreaker', () => {
         },
       };
 
-      // Trip the breaker
       await circuitBreaker.checkMessage(message);
       await circuitBreaker.checkMessage(message);
       await circuitBreaker.checkMessage(message);
@@ -258,7 +245,6 @@ describe('ApiErrorCircuitBreaker', () => {
         },
       };
 
-      // Trip the breaker
       await circuitBreaker.checkMessage(message);
       await circuitBreaker.checkMessage(message);
       await circuitBreaker.checkMessage(message);
@@ -270,23 +256,20 @@ describe('ApiErrorCircuitBreaker', () => {
 
   describe('per-agent rapid-fire isolation', () => {
     it('should track rapid-fire independently for main agent and subagents', async () => {
-      // Create a circuit breaker with a low threshold for testing
       const cb = new ApiErrorCircuitBreaker('test-session', {
         rapidFireThreshold: 5,
         rapidFireWindowMs: 3000,
       });
 
-      // Send 4 messages from main agent (below threshold)
       for (let i = 0; i < 4; i++) {
         await cb.checkMessage({
           type: 'user',
           message: { content: 'main message' },
-          parent_tool_use_id: null, // main agent
+          parent_tool_use_id: null,
         });
       }
       expect(cb.isTripped()).toBe(false);
 
-      // Send 4 messages from subagent-1 (below threshold)
       for (let i = 0; i < 4; i++) {
         await cb.checkMessage({
           type: 'user',
@@ -295,9 +278,6 @@ describe('ApiErrorCircuitBreaker', () => {
         });
       }
       expect(cb.isTripped()).toBe(false);
-
-      // Total is 8 messages, but neither agent hit the threshold of 5
-      // If this was global, it would have tripped
     });
 
     it('should trip when single agent exceeds threshold', async () => {
@@ -306,7 +286,6 @@ describe('ApiErrorCircuitBreaker', () => {
         rapidFireWindowMs: 3000,
       });
 
-      // Send 3 messages from main agent
       for (let i = 0; i < 3; i++) {
         await cb.checkMessage({
           type: 'user',
@@ -315,7 +294,6 @@ describe('ApiErrorCircuitBreaker', () => {
         });
       }
 
-      // Send 5 messages from subagent - this should trip
       for (let i = 0; i < 4; i++) {
         await cb.checkMessage({
           type: 'user',
@@ -325,7 +303,6 @@ describe('ApiErrorCircuitBreaker', () => {
       }
       expect(cb.isTripped()).toBe(false);
 
-      // 5th subagent message triggers trip
       const tripped = await cb.checkMessage({
         type: 'user',
         message: { content: 'subagent' },
@@ -341,8 +318,6 @@ describe('ApiErrorCircuitBreaker', () => {
         rapidFireWindowMs: 3000,
       });
 
-      // Send 2 messages from each of 3 different subagents (6 total)
-      // Each subagent is below threshold of 3
       for (const subagentId of ['sub-1', 'sub-2', 'sub-3']) {
         for (let i = 0; i < 2; i++) {
           await cb.checkMessage({
@@ -353,7 +328,6 @@ describe('ApiErrorCircuitBreaker', () => {
         }
       }
 
-      // None should trip since each subagent only sent 2 messages
       expect(cb.isTripped()).toBe(false);
     });
   });
@@ -368,7 +342,6 @@ describe('ApiErrorCircuitBreaker', () => {
         },
       };
 
-      // First trip
       await circuitBreaker.checkMessage(message);
       await circuitBreaker.checkMessage(message);
       await circuitBreaker.checkMessage(message);
@@ -376,7 +349,6 @@ describe('ApiErrorCircuitBreaker', () => {
       const state1 = circuitBreaker.getState();
       expect(state1.tripCount).toBe(1);
 
-      // Reset and trip again
       circuitBreaker.reset();
       await circuitBreaker.checkMessage(message);
       await circuitBreaker.checkMessage(message);
@@ -389,7 +361,6 @@ describe('ApiErrorCircuitBreaker', () => {
 
   describe('transient connection error filtering', () => {
     it('should NOT count transient fetch errors as connection errors', async () => {
-      // "socket connection was closed" is a transient blip, not a persistent failure
       const message = {
         type: 'user',
         message: {
@@ -398,7 +369,6 @@ describe('ApiErrorCircuitBreaker', () => {
         },
       };
 
-      // Send 5 messages — should NOT trip even with 3-threshold
       for (let i = 0; i < 5; i++) {
         const tripped = await circuitBreaker.checkMessage(message);
         expect(tripped).toBe(false);
@@ -437,7 +407,6 @@ describe('ApiErrorCircuitBreaker', () => {
     });
 
     it('should still count genuine repeated Connection errors (stderr format)', async () => {
-      // Only true repeated "Connection error" in stderr should trip
       const message = {
         type: 'user',
         message: {
@@ -445,23 +414,16 @@ describe('ApiErrorCircuitBreaker', () => {
         },
       };
 
-      // First two don't trip
       await circuitBreaker.checkMessage(message);
       await circuitBreaker.checkMessage(message);
       expect(circuitBreaker.isTripped()).toBe(false);
 
-      // Third trips
       const tripped = await circuitBreaker.checkMessage(message);
       expect(tripped).toBe(true);
       expect(circuitBreaker.isTripped()).toBe(true);
     });
 
     it('should count fatal Connection errors even when transient substring is present', async () => {
-      // When a stderr error contains both a fatal "Connection error" marker
-      // AND a transient substring like "connection reset", the fatal marker
-      // must take precedence — the ordering fix ensures extractErrorPattern
-      // runs before the transient skip, preventing persistent outages from
-      // being masked by transient substrings.
       const message = {
         type: 'user',
         message: {
@@ -470,12 +432,10 @@ describe('ApiErrorCircuitBreaker', () => {
         },
       };
 
-      // First two messages should be counted but not trip
       await circuitBreaker.checkMessage(message);
       await circuitBreaker.checkMessage(message);
       expect(circuitBreaker.isTripped()).toBe(false);
 
-      // Third message should trip the breaker — fatal pattern wins over transient
       const tripped = await circuitBreaker.checkMessage(message);
       expect(tripped).toBe(true);
       expect(circuitBreaker.isTripped()).toBe(true);

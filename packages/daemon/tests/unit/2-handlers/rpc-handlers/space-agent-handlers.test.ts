@@ -1,17 +1,3 @@
-/**
- * Space Agent RPC Handlers Unit Tests
- *
- * Tests for CRUD RPC handlers:
- * - spaceAgent.create
- * - spaceAgent.list
- * - spaceAgent.get
- * - spaceAgent.update
- * - spaceAgent.delete
- *
- * Uses in-memory SQLite to exercise the real SpaceAgentManager and
- * SpaceAgentRepository, so the full business-logic path is covered.
- */
-
 import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import type { MessageHub, SDKMessage, Session } from '@hyperneo/shared';
@@ -36,8 +22,6 @@ import {
   insertWorkflow,
   insertWorkflowNode,
 } from '../../helpers/space-agent-schema';
-
-// ─── minimal mock types ────────────────────────────────────────────────────
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
@@ -95,8 +79,6 @@ function createMockSpaceManager(): {
   } as unknown as SpaceManager;
   return { spaceManager, getSpaceMock };
 }
-
-// ─── helpers ───────────────────────────────────────────────────────────────
 
 function createTestDatabaseFacade(db: Database) {
   const sessionRepo = new SessionRepository(db as any);
@@ -156,7 +138,6 @@ function insertMessage(db: Database, sessionId: string, id: string, message: SDK
   );
 }
 
-/** Call a registered handler and cast the result */
 async function call<T>(
   handlers: Map<string, RequestHandler>,
   method: string,
@@ -166,8 +147,6 @@ async function call<T>(
   if (!handler) throw new Error(`Handler not registered: ${method}`);
   return (await handler(params, {})) as T;
 }
-
-// ─── tests ─────────────────────────────────────────────────────────────────
 
 describe('Space Agent RPC Handlers', () => {
   let db: Database;
@@ -187,7 +166,6 @@ describe('Space Agent RPC Handlers', () => {
     daemonData = createMockInternalEventBus();
     spaceManagerData = createMockSpaceManager();
 
-    // Disable model validation (no models in cache)
     setModelsCache(new Map());
 
     setupSpaceAgentHandlers(
@@ -204,8 +182,6 @@ describe('Space Agent RPC Handlers', () => {
     setModelsCache(new Map());
     mock.restore();
   });
-
-  // ── spaceAgent.create ────────────────────────────────────────────────────
 
   describe('spaceAgent.listBuiltInTemplates', () => {
     it('registers the handler', () => {
@@ -523,7 +499,6 @@ describe('Space Agent RPC Handlers', () => {
         name: 'EventAgent',
       });
 
-      // Allow microtask queue to flush
       await new Promise((r) => setTimeout(r, 0));
 
       expect(daemonData.publishMock).toHaveBeenCalled();
@@ -572,8 +547,6 @@ describe('Space Agent RPC Handlers', () => {
     });
   });
 
-  // ── spaceAgent.list ──────────────────────────────────────────────────────
-
   describe('spaceAgent.list', () => {
     it('registers the handler', () => {
       expect(hubData.handlers.has('spaceAgent.list')).toBe(true);
@@ -613,8 +586,6 @@ describe('Space Agent RPC Handlers', () => {
     });
   });
 
-  // ── spaceAgent.get ───────────────────────────────────────────────────────
-
   describe('spaceAgent.get', () => {
     it('registers the handler', () => {
       expect(hubData.handlers.has('spaceAgent.get')).toBe(true);
@@ -646,8 +617,6 @@ describe('Space Agent RPC Handlers', () => {
       ).rejects.toThrow('Agent not found');
     });
   });
-
-  // ── spaceAgent.update ────────────────────────────────────────────────────
 
   describe('spaceAgent.update', () => {
     let agentId: string;
@@ -707,9 +676,6 @@ describe('Space Agent RPC Handlers', () => {
     });
 
     it('clears the session provider when the override is explicitly cleared (P2)', async () => {
-      // provider: null is an explicit clear (vs absent = don't touch). The
-      // session's persisted provider must be dropped or wake-time retention
-      // would restore the stale override and make the clear a no-op.
       const runtimeService = {
         removeLongHorizonAgentSubscriptions: mock(() => {}),
         clearLongTermAgentSessionProvider: mock(async () => {}),
@@ -910,8 +876,6 @@ describe('Space Agent RPC Handlers', () => {
     });
   });
 
-  // ── spaceAgent.delete ────────────────────────────────────────────────────
-
   describe('spaceAgent.delete', () => {
     let agentId: string;
 
@@ -1015,7 +979,6 @@ describe('Space Agent RPC Handlers', () => {
     });
 
     it('emits spaceAgent.deleted event', async () => {
-      // delete handler awaits the emit, so the mock is called before call() returns
       await call(hubData.handlers, 'spaceAgent.delete', { id: agentId });
 
       expect(daemonData.publishMock).toHaveBeenCalled();
@@ -1061,7 +1024,6 @@ describe('Space Agent RPC Handlers', () => {
       insertWorkflow(db, 'wf-3', 'space-1', 'Temp Workflow');
       insertWorkflowNode(db, 'node-3', 'wf-3', agentId);
 
-      // Remove the node reference by clearing the agents in the config JSON
       db.prepare(`UPDATE space_workflow_nodes SET config = '{}' WHERE id = 'node-3'`).run();
 
       const result = await call<{ success: boolean }>(hubData.handlers, 'spaceAgent.delete', {
@@ -1070,8 +1032,6 @@ describe('Space Agent RPC Handlers', () => {
       expect(result.success).toBe(true);
     });
   });
-
-  // ── spaceAgent.getDriftReport ────────────────────────────────────────────
 
   describe('spaceAgent.getDriftReport', () => {
     it('registers the handler', () => {
@@ -1091,8 +1051,6 @@ describe('Space Agent RPC Handlers', () => {
     });
 
     it('reports an updateAvailable+customized entry when stored hash differs and row was edited', async () => {
-      // Insert a preset-tracked agent directly via the manager so we can
-      // supply a stale hash without relying on the seeding pipeline.
       await manager.create({
         spaceId: 'space-1',
         name: 'Coder',
@@ -1135,8 +1093,6 @@ describe('Space Agent RPC Handlers', () => {
     });
   });
 
-  // ── spaceAgent.syncFromTemplate ──────────────────────────────────────────
-
   describe('spaceAgent.syncFromTemplate', () => {
     it('registers the handler', () => {
       expect(hubData.handlers.has('spaceAgent.syncFromTemplate')).toBe(true);
@@ -1173,8 +1129,6 @@ describe('Space Agent RPC Handlers', () => {
     });
 
     it('throws when agent belongs to a different space (cross-space attack)', async () => {
-      // Create a second space and an agent in it. Then attempt to "sync" that
-      // agent while claiming spaceId of the *other* space.
       insertSpace(db, 'space-2');
       spaceManagerData.getSpaceMock.mockImplementation(async (id: string) => {
         if (id === 'space-1' || id === 'space-2') return { id } as never;
@@ -1264,8 +1218,6 @@ describe('Space Agent RPC Handlers', () => {
       expect(payload.agent.id).toBe(created.value.id);
     });
   });
-
-  // ── spaceAgent.previewTemplateSync ───────────────────────────────────────
 
   describe('spaceAgent.previewTemplateSync', () => {
     it('registers the handler', () => {
@@ -1366,7 +1318,6 @@ describe('Space Agent RPC Handlers', () => {
       expect(result.preview.diff.customPrompt?.before).toBe('old prompt');
       expect(result.preview.diff.customPrompt?.after.length).toBeGreaterThan(0);
 
-      // Preview must NOT write — the row is unchanged.
       expect(manager.getById(created.value.id)?.customPrompt).toBe('old prompt');
     });
 

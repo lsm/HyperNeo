@@ -1,9 +1,3 @@
-/**
- * Settings Repository Tests
- *
- * Tests for global tools configuration and global settings management.
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SettingsRepository } from '../../../../src/storage/repositories/settings-repository';
@@ -106,9 +100,7 @@ describe('SettingsRepository', () => {
 
       const config = repository.getGlobalToolsConfig();
 
-      // Should have custom value
       expect(config.systemPrompt.claudeCodePreset.allowed).toBe(false);
-      // Should fall back to defaults for missing fields
       expect(config.settingSources.project.allowed).toBe(
         DEFAULT_GLOBAL_TOOLS_CONFIG.settingSources.project.allowed
       );
@@ -130,10 +122,8 @@ describe('SettingsRepository', () => {
 
       const config = repository.getGlobalToolsConfig();
 
-      // Old preset.claudeCode should map to new systemPrompt.claudeCodePreset
       expect(config.systemPrompt.claudeCodePreset.allowed).toBe(false);
       expect(config.systemPrompt.claudeCodePreset.defaultEnabled).toBe(false);
-      // Should also map to settingSources.project for consistency
       expect(config.settingSources.project.allowed).toBe(false);
       expect(config.settingSources.project.defaultEnabled).toBe(false);
     });
@@ -159,7 +149,6 @@ describe('SettingsRepository', () => {
 
       const config = repository.getGlobalToolsConfig();
 
-      // New format should take precedence
       expect(config.systemPrompt.claudeCodePreset.allowed).toBe(true);
       expect(config.systemPrompt.claudeCodePreset.defaultEnabled).toBe(true);
     });
@@ -390,7 +379,6 @@ describe('SettingsRepository', () => {
         },
       });
 
-      // Create new repository instance with same database
       const newRepository = new SettingsRepository(db as any);
 
       expect(newRepository.getGlobalSettings().model).toBe('custom-model');
@@ -402,15 +390,12 @@ describe('SettingsRepository', () => {
     it('should have correct default tools config', () => {
       const config = repository.getGlobalToolsConfig();
 
-      // Claude Code preset should be allowed and enabled by default
       expect(config.systemPrompt.claudeCodePreset.allowed).toBe(true);
       expect(config.systemPrompt.claudeCodePreset.defaultEnabled).toBe(true);
 
-      // Project settings should be allowed and enabled by default
       expect(config.settingSources.project.allowed).toBe(true);
       expect(config.settingSources.project.defaultEnabled).toBe(true);
 
-      // MCP should be allowed but not enabled by default
       expect(config.mcp.allowProjectMcp).toBe(true);
       expect(config.mcp.defaultProjectMcp).toBe(false);
     });

@@ -1,13 +1,3 @@
-/**
- * Daemon App Cleanup Tests
- *
- * Tests for the daemon app cleanup logic, specifically:
- * - Pending RPC calls timeout behavior
- * - setInterval cleanup to prevent hangs on exit
- *
- * OFFLINE TESTS - No API calls required
- */
-
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -21,9 +11,6 @@ import {
   subscribeToStructuredLogs,
 } from '../../../../src/lib/logger';
 
-// The daemon's createDaemonApp calls `Bun.serve(...)` at startup. Under
-// Node/Vitest there is no Bun global, so install a minimal stub — the
-// beforeEach spy replaces `serve` anyway, so no real socket is ever bound.
 if (typeof (globalThis as { Bun?: unknown }).Bun === 'undefined') {
   (globalThis as { Bun?: unknown }).Bun = {
     serve: () => ({ stop() {} }),
@@ -44,8 +31,6 @@ describe('Daemon App Cleanup', () => {
   const logs: string[] = [];
 
   beforeEach(() => {
-    // Force unauthenticated startup for deterministic unit timing.
-    // This avoids model initialization paths that can hit SDK/network timeouts in CI.
     originalAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
     originalClaudeCodeOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
     originalAnthropicAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
@@ -62,13 +47,11 @@ describe('Daemon App Cleanup', () => {
 
     process.env.TEST_USER_SETTINGS_DIR = join(tmpdir(), `hyperneo-test-settings-${Date.now()}`);
 
-    // Capture console output for verification
     originalConsoleLog = console.log;
     originalConsoleError = console.error;
     console.log = (...args) => logs.push(args.join(' '));
     console.error = (...args) => logs.push(args.join(' '));
 
-    // Avoid real socket binding in unit tests.
     bunServeSpy = spyOn(Bun, 'serve').mockImplementation(
       (_opts: Parameters<typeof Bun.serve>[0]) =>
         ({
@@ -76,10 +59,9 @@ describe('Daemon App Cleanup', () => {
         }) as never
     );
 
-    // Use in-memory database for tests
     config = {
       host: 'localhost',
-      port: 0, // Random port
+      port: 0,
       defaultModel: 'claude-sonnet-4-5-20250929',
       maxTokens: 8192,
       temperature: 1.0,
@@ -95,7 +77,6 @@ describe('Daemon App Cleanup', () => {
   });
 
   afterEach(() => {
-    // Restore auth env vars
     if (originalAnthropicApiKey !== undefined) {
       process.env.ANTHROPIC_API_KEY = originalAnthropicApiKey;
     } else {
@@ -127,7 +108,6 @@ describe('Daemon App Cleanup', () => {
       delete process.env.HYPERNEO_ACP_COMMAND;
     }
 
-    // Restore console
     console.log = originalConsoleLog;
     console.error = originalConsoleError;
     if (bunServeSpy) {
@@ -150,19 +130,14 @@ describe('Daemon App Cleanup', () => {
 
       const messageHub = daemonContext.messageHub;
 
-      // Verify no pending calls
       expect(messageHub.getPendingCallCount()).toBe(0);
 
-      // Cleanup should complete quickly
       const cleanupStart = Date.now();
       await daemonContext.cleanup();
       const cleanupDuration = Date.now() - cleanupStart;
 
-      // Session cleanup includes a 1s drain sleep per active session,
-      // so the total is ~2s (Neo session + session pool drain).
       expect(cleanupDuration).toBeLessThan(3500);
 
-      // Verify success message
       const successLog = logs.find((log) => log.includes('Graceful shutdown complete'));
       expect(successLog).toBeTruthy();
     });
@@ -185,10 +160,6 @@ describe('Daemon App Cleanup', () => {
     test('should timeout and complete cleanup when pending calls never resolve', {
       timeout: 10_000,
     }, async () => {
-      // This test specifically verifies the bug fix:
-      // The setInterval must be cleared when the timeout fires first
-      // Otherwise the process will hang on exit
-
       const daemonContext = await createDaemonApp({
         config,
         verbose: true,
@@ -197,44 +168,32 @@ describe('Daemon App Cleanup', () => {
 
       const messageHub = daemonContext.messageHub;
 
-      // Manually inject a mock pending call count
-      // We'll monkey-patch getPendingCallCount to simulate hanging calls
       const originalGetPendingCallCount = messageHub.getPendingCallCount.bind(messageHub);
-      const callCount = 5; // Simulate 5 hanging calls
+      const callCount = 5;
       let callCountReturns = 0;
 
       messageHub.getPendingCallCount = () => {
         callCountReturns++;
-        // Always return > 0 to simulate hanging calls
         return callCount;
       };
 
-      // Run cleanup - this should timeout after 3 seconds
-      // The critical bug fix: the setInterval must be cleared
       const cleanupStart = Date.now();
       await daemonContext.cleanup();
       const cleanupDuration = Date.now() - cleanupStart;
 
-      // Restore original method
       messageHub.getPendingCallCount = originalGetPendingCallCount;
 
-      // Cleanup should complete within ~3.5 seconds (3s timeout + overhead)
-      // The bug would cause this to hang forever because the setInterval never clears
-      expect(cleanupDuration).toBeGreaterThan(2500); // At least 2.5s (timeout period)
-      expect(cleanupDuration).toBeLessThan(7000); // 3s timeout + 2s session cleanup + overhead
+      expect(cleanupDuration).toBeGreaterThan(2500);
+      expect(cleanupDuration).toBeLessThan(7000);
 
-      // Verify the timeout message was logged
       const timeoutLog = logs.find(
         (log) => log.includes('Timeout:') && log.includes('calls still pending')
       );
       expect(timeoutLog).toBeTruthy();
 
-      // Verify cleanup completed despite timeout
       const completeLog = logs.find((log) => log.includes('Graceful shutdown complete'));
       expect(completeLog).toBeTruthy();
 
-      // Verify the interval was checked multiple times before timeout
-      // This proves the setInterval was running
       expect(callCountReturns).toBeGreaterThan(10);
     });
 
@@ -247,36 +206,28 @@ describe('Daemon App Cleanup', () => {
 
       const messageHub = daemonContext.messageHub;
 
-      // Monkey-patch to simulate calls that resolve quickly
       const originalGetPendingCallCount = messageHub.getPendingCallCount.bind(messageHub);
       let checkCount = 0;
 
       messageHub.getPendingCallCount = () => {
         checkCount++;
-        // Return 5 for first few checks, then 0
         if (checkCount < 5) {
           return 5;
         }
-        return 0; // Calls resolved
+        return 0;
       };
 
-      // Run cleanup
       const cleanupStart = Date.now();
       await daemonContext.cleanup();
       const cleanupDuration = Date.now() - cleanupStart;
 
-      // Restore original method
       messageHub.getPendingCallCount = originalGetPendingCallCount;
 
-      // Should complete quickly since calls "resolved", but session cleanup
-      // adds ~2s (1s drain sleep per active session in QueryLifecycleManager).
       expect(cleanupDuration).toBeLessThan(4000);
 
-      // Verify success message (all calls completed)
       const completeLog = logs.find((log) => log.includes('All pending calls completed'));
       expect(completeLog).toBeTruthy();
 
-      // Verify we didn't check many times (stopped when count hit 0)
       expect(checkCount).toBeLessThan(10);
     });
   });
@@ -288,7 +239,6 @@ describe('Daemon App Cleanup', () => {
     let savedGlmKey: string | undefined;
 
     beforeEach(() => {
-      // Save and clear all credential env vars
       savedApiKey = process.env.ANTHROPIC_API_KEY;
       savedOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
       savedAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
@@ -301,7 +251,6 @@ describe('Daemon App Cleanup', () => {
     });
 
     afterEach(() => {
-      // Restore credential env vars
       if (savedApiKey !== undefined) process.env.ANTHROPIC_API_KEY = savedApiKey;
       if (savedOAuthToken !== undefined) process.env.CLAUDE_CODE_OAUTH_TOKEN = savedOAuthToken;
       if (savedAuthToken !== undefined) process.env.ANTHROPIC_AUTH_TOKEN = savedAuthToken;
@@ -309,7 +258,6 @@ describe('Daemon App Cleanup', () => {
     });
 
     test('should start without credentials and log guidance', async () => {
-      // Create config without any API key
       const unauthConfig = { ...config };
       delete unauthConfig.anthropicApiKey;
       delete unauthConfig.claudeCodeOAuthToken;
@@ -334,12 +282,10 @@ describe('Daemon App Cleanup', () => {
         expect(skipModelLog).toBeTruthy();
       }
 
-      // Should still have basic components
       expect(daemonContext.server).toBeDefined();
       expect(daemonContext.authManager).toBeDefined();
       expect(daemonContext.messageHub).toBeDefined();
 
-      // Cleanup
       await daemonContext.cleanup();
     });
   });
@@ -366,10 +312,6 @@ describe('Daemon App Cleanup', () => {
     });
 
     test('a failed startup strands a reclaimable file-log capture, not a leak', async () => {
-      // The failure path keeps the sink subscribed so the caller's fatal
-      // handler can persist the startup error — but the capture must be
-      // reclaimable (releaseStartupFileLogCapture / next createDaemonApp)
-      // instead of leaking the global subscriber forever. (Codex P2, PR #2499.)
       const directory = join(tmpdir(), `hyperneo-file-log-${Date.now()}`);
       const path = join(directory, 'daemon.jsonl');
       try {
@@ -384,13 +326,11 @@ describe('Daemon App Cleanup', () => {
           })
         ).rejects.toThrow('bind failed');
 
-        // Sink still subscribed post-failure: an emitted record is captured...
         emitStructuredLogEvent({
           level: 'error',
           args: ['stranded startup capture flush check'],
           source: 'process',
         });
-        // ...and releasing the stranded capture flushes + closes the sink.
         await releaseStartupFileLogCapture();
         const records = readFileSync(path, 'utf8')
           .trim()
@@ -400,8 +340,6 @@ describe('Daemon App Cleanup', () => {
           records.some((record) => record.message.includes('stranded startup capture flush check'))
         ).toBe(true);
 
-        // The stash is cleared: a second release is a no-op and a subsequent
-        // startup attempt does not accumulate a second stranded capture.
         await releaseStartupFileLogCapture();
         bunServeSpy?.mockImplementationOnce(() => {
           throw new Error('bind failed again');
@@ -475,7 +413,6 @@ describe('Daemon App Cleanup', () => {
         standalone: false,
       });
 
-      // Core context components must be present
       expect(daemonContext.server).toBeDefined();
       expect(daemonContext.authManager).toBeDefined();
       expect(daemonContext.messageHub).toBeDefined();
@@ -483,10 +420,8 @@ describe('Daemon App Cleanup', () => {
       expect(daemonContext.settingsManager).toBeDefined();
       expect(daemonContext.fileIndex).toBeDefined();
 
-      // FileIndex should be ready=false (no workspace path provided)
       expect(daemonContext.fileIndex.isReady()).toBe(false);
 
-      // Cleanup
       await daemonContext.cleanup();
     });
   });
@@ -525,13 +460,10 @@ describe('Daemon App Cleanup', () => {
         standalone: false,
       });
 
-      // Lock file must exist while the daemon is running
       expect(existsSync(lockPath)).toBe(true);
 
-      // Graceful shutdown
       await daemonContext.cleanup();
 
-      // Lock file must be removed after cleanup
       expect(existsSync(lockPath)).toBe(false);
     });
 
@@ -552,10 +484,8 @@ describe('Daemon App Cleanup', () => {
         standalone: false,
       });
 
-      // At least one 'exit' listener should have been added by DatabaseLock
       expect(process.listenerCount('exit')).toBeGreaterThan(exitListenersBefore);
 
-      // After cleanup the listener should be removed
       await daemonContext.cleanup();
 
       expect(process.listenerCount('exit')).toBe(exitListenersBefore);

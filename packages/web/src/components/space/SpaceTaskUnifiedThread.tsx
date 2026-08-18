@@ -7,12 +7,6 @@ import { MinimalThreadFeed } from './thread/minimal/MinimalThreadFeed';
 import { parseThreadRow } from './thread/space-task-thread-events';
 import { RateLimitCooldownBanner } from '../sdk/RateLimitCooldownBanner';
 
-/**
- * A worker whose session is in rate-limit cooldown. Surfaced as a pinned
- * banner above the feed (countdown + Retry/Cancel) so the user can act on it
- * without opening the session in the chat container. Mirrors the
- * RateLimitCooldownBanner placement in ChatContainer.
- */
 export interface CooldownBannerMember {
   sessionId: string;
   label: string;
@@ -21,11 +15,6 @@ export interface CooldownBannerMember {
   retryAt: number;
 }
 
-/**
- * A worker whose session has an active provider auth error. Surfaced as a
- * pinned banner above the feed with a re-authenticate affordance — same action
- * wiring as ChatContainer's structured-error action button.
- */
 export interface AuthErrorBannerMember {
   sessionId: string;
   label: string;
@@ -38,32 +27,10 @@ interface SpaceTaskUnifiedThreadProps {
   bottomInsetClass?: string;
   bottomScrollPaddingClass?: string;
   bottomInsetPx?: number;
-  /**
-   * Top padding applied to the scroll container so the first message clears
-   * any floating overlay (e.g. SpaceTaskPane's tab pill) at scroll-top. Older
-   * messages still scroll under the overlay's frosted-glass background; only
-   * the resting position is adjusted.
-   */
   topInsetClass?: string;
-  /**
-   * Labels of agents whose underlying sessions are currently active. Forwarded
-   * to `MinimalThreadFeed` so the trailing non-terminal block of each
-   * still-running agent renders its own active rail. Per-agent (rather than a
-   * single boolean) so a Reviewer terminal `result` row landing after Coder's
-   * last row can't suppress Coder's still-running rail.
-   */
   activeAgentLabels?: ReadonlySet<string>;
-  /** Task id forwarded to overlay open affordances for node-agent send routing. */
   overlayTaskId?: string;
-  /**
-   * Worker members currently in rate-limit cooldown. Each renders a pinned
-   * countdown + Retry/Cancel banner above the feed.
-   */
   cooldownBannerMembers?: CooldownBannerMember[];
-  /**
-   * Worker members with an active provider auth error. Each renders a pinned
-   * re-authenticate banner above the feed.
-   */
   authErrorBannerMembers?: AuthErrorBannerMember[];
   autoScrollEnabled?: boolean;
   onShowScrollButtonChange?: (showScrollButton: boolean) => void;
@@ -98,18 +65,7 @@ export function SpaceTaskUnifiedThread({
     containerRef,
     endRef: messagesEndRef,
     enabled: autoScrollEnabled,
-    // While the placeholder is showing (loading/reconnecting), the scroller is
-    // unmounted (containerRef is null) but `rows` can still hold the PREVIOUS
-    // task until the subscription effect clears it. Passing that stale non-zero
-    // length with the new `resetKey` would consume the reset and latch the
-    // mount-scroll against the old count before the new thread DOM exists — so
-    // a same/fewer-row task then wouldn't snap to the bottom. Feed 0 during the
-    // placeholder so the real `0 → M` transition fires the mount-scroll when the
-    // scroller appears.
     messageCount: isLoading || isReconnecting ? 0 : rows.length,
-    // This thread renders without a `key`, so switching tasks keeps the
-    // component mounted while rows swap in place. Treat each task as a fresh
-    // scroll context so it snaps to the latest thread row.
     resetKey: taskId,
   });
 
@@ -220,12 +176,6 @@ export function SpaceTaskUnifiedThread({
   );
 }
 
-/**
- * Pinned provider auth-error banner for the Space task thread. Surfaces the
- * agent label, the error message, and a "Re-authenticate {Provider}" action
- * that routes to Settings → Providers — the same wiring ChatContainer uses
- * for its structured-error action button.
- */
 function ProviderAuthErrorBanner({ member }: { member: AuthErrorBannerMember }) {
   const providerLabel = member.providerId ? getProviderLabel(member.providerId) : 'Provider';
   return (

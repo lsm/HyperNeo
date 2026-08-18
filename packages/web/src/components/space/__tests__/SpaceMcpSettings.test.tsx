@@ -1,24 +1,6 @@
-/**
- * Tests for SpaceMcpSettings component
- *
- * Covers:
- * - Subscribes to spaceMcpStore on mount and unsubscribes on unmount
- * - Renders entries grouped by source (builtin/user/imported)
- * - Clicking a toggle calls space.mcp.setEnabled RPC with the new value
- * - Clicking reset calls space.mcp.clearOverride
- * - Clicking "Refresh imports" calls mcp.imports.refresh
- * - Shows override badge when entry is overridden
- * - Shows "disabled globally" badge when appropriate
- * - Handles empty state + loading spinner
- */
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, fireEvent, waitFor } from '@testing-library/preact';
 import type { SpaceMcpEntry } from '@hyperneo/shared';
-
-// ---------------------------------------------------------------------------
-// Hoisted mocks
-// ---------------------------------------------------------------------------
 
 const mockEntriesMap = vi.hoisted(() => new Map<string, SpaceMcpEntry>());
 const mockSubscribe = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
@@ -61,10 +43,6 @@ vi.mock('../../../lib/toast.ts', () => ({
 
 import { SpaceMcpSettings } from '../SpaceMcpSettings';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function makeEntry(name: string, overrides: Partial<SpaceMcpEntry> = {}): SpaceMcpEntry {
   return {
     serverId: `srv-${name}`,
@@ -82,10 +60,6 @@ function setEntries(entries: SpaceMcpEntry[]): void {
   mockEntriesMap.clear();
   for (const e of entries) mockEntriesMap.set(e.serverId, e);
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe('SpaceMcpSettings', () => {
   beforeEach(() => {
@@ -139,7 +113,6 @@ describe('SpaceMcpSettings', () => {
     setEntries([makeEntry('plain'), makeEntry('overridden', { overridden: true, enabled: false })]);
     const { container } = render(<SpaceMcpSettings spaceId="space-1" />);
     const text = container.textContent ?? '';
-    // Only one occurrence of "space override"
     expect((text.match(/space override/g) ?? []).length).toBe(1);
   });
 

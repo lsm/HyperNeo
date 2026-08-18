@@ -1,20 +1,8 @@
-/**
- * ScrollToBottomButton Component
- *
- * Floating button that appears when user scrolls up from bottom.
- * Clicking scrolls smoothly to the bottom of the container.
- * Extracted from ChatContainer.tsx for better separation of concerns.
- */
-
 import { borderColors } from '../lib/design-tokens';
 
 export interface ScrollToBottomButtonProps {
   onClick: () => void;
-  /** Tailwind bottom-* class controlling vertical offset. Defaults to 'bottom-36'
-   *  (sized for ChatContainer's large floating footer). Pass a smaller value like
-   *  'bottom-4' when there is no large footer below the scroll container. */
   bottomClass?: string;
-  /** When true, renders a cycling gradient border to indicate auto-scroll is active. */
   autoScroll?: boolean;
 }
 
@@ -28,7 +16,6 @@ export function ScrollToBottomButton({
       class={`absolute ${bottomClass} left-1/2 -translate-x-1/2 z-20`}
       data-bottom-class={bottomClass}
     >
-      {/* Spinning gradient ring when auto-scroll is active */}
       <div class="relative w-10 h-10 animate-slideIn">
         {autoScroll && (
           <div

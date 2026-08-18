@@ -1,13 +1,3 @@
-/**
- * GitHub Event Filter
- *
- * Filters incoming GitHub events based on configurable rules:
- * - Repository matching (supports owner/* wildcards)
- * - Author filtering (allowlist/blocklist with permission checks)
- * - Label filtering (require_any/require_all/exclude modes)
- * - Event type filtering (specific actions)
- */
-
 import type { GitHubEvent, GitHubFilterConfig, FilterResult } from '@hyperneo/shared';
 import { Logger } from '../logger';
 import type { FilterConfigManager } from './filter-config-manager';
@@ -16,9 +6,6 @@ const log = new Logger('github-event-filter');
 
 const GITHUB_API_BASE = 'https://api.github.com';
 
-/**
- * Permission level hierarchy for comparison
- */
 const PERMISSION_LEVELS: Record<string, number> = {
   none: 0,
   read: 1,
@@ -27,33 +14,17 @@ const PERMISSION_LEVELS: Record<string, number> = {
   admin: 4,
 };
 
-/**
- * Cache entry for permission checks
- */
 interface PermissionCacheEntry {
   permission: string | null;
   cachedAt: number;
 }
 
-/**
- * Options for creating a GitHubEventFilter
- */
 export interface GitHubEventFilterOptions {
-  /** GitHub personal access token for permission API calls */
   githubToken?: string;
-  /** Permission cache TTL in milliseconds */
   cacheTtl?: number;
-  /** FilterConfigManager for dynamic config lookups (optional) */
   configManager?: FilterConfigManager;
 }
 
-/**
- * GitHub Event Filter
- *
- * Filters events based on repository, author, labels, and event type.
- * Can be initialized with a static config or use a FilterConfigManager
- * for dynamic per-repository config lookups.
- */
 export class GitHubEventFilter {
   private config: GitHubFilterConfig;
   private configManager?: FilterConfigManager;
@@ -61,7 +32,6 @@ export class GitHubEventFilter {
   private permissionCache: Map<string, PermissionCacheEntry> = new Map();
   private cacheTtl: number;
 
-  // Default TTL is 5 minutes
   private static readonly DEFAULT_CACHE_TTL = 5 * 60 * 1000;
 
   constructor(config: GitHubFilterConfig, options?: GitHubEventFilterOptions) {
@@ -76,17 +46,11 @@ export class GitHubEventFilter {
     });
   }
 
-  /**
-   * Update the filter configuration
-   */
   setConfig(config: GitHubFilterConfig): void {
     this.config = config;
     log.debug('Filter config updated');
   }
 
-  /**
-   * Main filter method - checks if an event passes all filter rules
-   */
   async filter(event: GitHubEvent): Promise<FilterResult> {
     log.debug('Filtering event', {
       eventId: event.id,
@@ -96,10 +60,8 @@ export class GitHubEventFilter {
       sender: event.sender.login,
     });
 
-    // Get the effective config for this repository
     const effectiveConfig = this.getEffectiveConfig(event.repository.fullName);
 
-    // Check repository
     if (!this.checkRepository(event, effectiveConfig)) {
       return {
         passed: false,
@@ -107,7 +69,6 @@ export class GitHubEventFilter {
       };
     }
 
-    // Check event type
     if (!this.checkEventType(event, effectiveConfig)) {
       return {
         passed: false,
@@ -115,13 +76,11 @@ export class GitHubEventFilter {
       };
     }
 
-    // Check author (async for permission API calls)
     const authorResult = await this.checkAuthor(event, effectiveConfig);
     if (!authorResult.passed) {
       return authorResult;
     }
 
-    // Check labels
     if (!this.checkLabels(event, effectiveConfig)) {
       return {
         passed: false,
@@ -133,10 +92,6 @@ export class GitHubEventFilter {
     return { passed: true };
   }
 
-  /**
-   * Get effective config for a repository
-   * Uses FilterConfigManager if available, otherwise uses static config
-   */
   private getEffectiveConfig(repository: string): GitHubFilterConfig {
     if (this.configManager) {
       return this.configManager.getFilterForRepository(repository);
@@ -144,36 +99,24 @@ export class GitHubEventFilter {
     return this.config;
   }
 
-  /**
-   * Set the GitHub token (for permission checks)
-   */
   setGitHubToken(token: string): void {
     this.githubToken = token;
   }
 
-  /**
-   * Clear the permission cache
-   */
   clearCache(): void {
     this.permissionCache.clear();
     log.debug('Permission cache cleared');
   }
 
-  /**
-   * Check if event repository matches configured repositories
-   * Supports wildcards: "owner/*" matches all repos under that owner
-   */
   private checkRepository(event: GitHubEvent, config: GitHubFilterConfig): boolean {
     const fullName = event.repository.fullName;
     const owner = event.repository.owner;
     const repositories = config.repositories;
 
-    // Check for exact match or owner wildcard
     for (const repo of repositories) {
       if (repo === fullName) {
         return true;
       }
-      // Check owner/* wildcard
       if (repo === `${owner}/*`) {
         return true;
       }
@@ -182,14 +125,10 @@ export class GitHubEventFilter {
     return false;
   }
 
-  /**
-   * Check if event type/action is allowed
-   */
   private checkEventType(event: GitHubEvent, config: GitHubFilterConfig): boolean {
     const eventFilter = config.events;
     const { eventType, action } = event;
 
-    // Get allowed actions for this event type
     let allowedActions: string[] | undefined;
     if (eventType === 'issues') {
       allowedActions = eventFilter.issues;
@@ -199,7 +138,6 @@ export class GitHubEventFilter {
       allowedActions = eventFilter.pull_request;
     }
 
-    // If no filter configured for this event type, allow all
     if (!allowedActions) {
       return true;
     }
@@ -207,16 +145,11 @@ export class GitHubEventFilter {
     return allowedActions.includes(action as never);
   }
 
-  /**
-   * Check if event author passes the author filter
-   */
   private async checkAuthor(event: GitHubEvent, config: GitHubFilterConfig): Promise<FilterResult> {
     const authorFilter = config.authors;
     const sender = event.sender;
 
-    // Mode: all - pass all users
     if (authorFilter.mode === 'all') {
-      // Still check minPermission if set
       if (authorFilter.minPermission && this.githubToken) {
         const permission = await this.checkUserPermission(
           event.repository.owner,
@@ -233,9 +166,7 @@ export class GitHubEventFilter {
       return { passed: true };
     }
 
-    // Check if user is a bot - bots are typically allowed
     if (sender.type === 'Bot') {
-      // Bots pass through unless explicitly blocked
       if (authorFilter.mode === 'blocklist') {
         const blockedUsers = authorFilter.users ?? [];
         if (blockedUsers.includes(sender.login)) {
@@ -248,19 +179,12 @@ export class GitHubEventFilter {
       return { passed: true };
     }
 
-    // Mode: allowlist - only allow users/teams in the list
     if (authorFilter.mode === 'allowlist') {
       const allowedUsers = authorFilter.users ?? [];
-      // Note: Team support not yet implemented
-      // const allowedTeams = authorFilter.teams ?? [];
 
-      // Check if user is in allowlist
       const userAllowed = allowedUsers.includes(sender.login);
 
-      // Check teams (requires API call and team membership check)
-      // For now, we only support user-level allowlist; team checks would need
-      // additional API calls to /orgs/{org}/teams/{team}/memberships/{username}
-      const teamAllowed = false; // TODO: Implement team checks
+      const teamAllowed = false;
 
       if (!userAllowed && !teamAllowed) {
         return {
@@ -270,7 +194,6 @@ export class GitHubEventFilter {
       }
     }
 
-    // Mode: blocklist - block users in the list
     if (authorFilter.mode === 'blocklist') {
       const blockedUsers = authorFilter.users ?? [];
 
@@ -282,7 +205,6 @@ export class GitHubEventFilter {
       }
     }
 
-    // Check minPermission if configured
     if (authorFilter.minPermission && this.githubToken) {
       const permission = await this.checkUserPermission(
         event.repository.owner,
@@ -301,37 +223,30 @@ export class GitHubEventFilter {
     return { passed: true };
   }
 
-  /**
-   * Check if event labels pass the label filter
-   */
   private checkLabels(event: GitHubEvent, config: GitHubFilterConfig): boolean {
     const labelFilter = config.labels;
     const eventLabels = event.issue?.labels ?? [];
 
-    // Mode: any - any labels allowed (no filtering)
     if (labelFilter.mode === 'any') {
       return true;
     }
 
-    // Mode: require_any - must have at least one of the specified labels
     if (labelFilter.mode === 'require_any') {
       const requiredLabels = labelFilter.labels ?? [];
       if (requiredLabels.length === 0) {
-        return true; // No labels required
+        return true;
       }
       return eventLabels.some((label) => requiredLabels.includes(label));
     }
 
-    // Mode: require_all - must have all specified labels
     if (labelFilter.mode === 'require_all') {
       const requiredLabels = labelFilter.labels ?? [];
       if (requiredLabels.length === 0) {
-        return true; // No labels required
+        return true;
       }
       return requiredLabels.every((label) => eventLabels.includes(label));
     }
 
-    // Mode: exclude - must not have any of specified labels
     if (labelFilter.mode === 'exclude') {
       const excludedLabels = labelFilter.labels ?? [];
       return !eventLabels.some((label) => excludedLabels.includes(label));
@@ -340,10 +255,6 @@ export class GitHubEventFilter {
     return true;
   }
 
-  /**
-   * Check user's permission level in the repository via GitHub API
-   * Uses caching to reduce API calls
-   */
   private async checkUserPermission(
     owner: string,
     repo: string,
@@ -351,14 +262,12 @@ export class GitHubEventFilter {
   ): Promise<string | null> {
     const cacheKey = `${owner}/${repo}:${username}`;
 
-    // Check cache
     const cached = this.permissionCache.get(cacheKey);
     if (cached && Date.now() - cached.cachedAt < this.cacheTtl) {
       log.debug('Permission cache hit', { cacheKey, permission: cached.permission });
       return cached.permission;
     }
 
-    // No token - can't check permission
     if (!this.githubToken) {
       log.debug('No GitHub token, skipping permission check');
       return null;
@@ -377,7 +286,6 @@ export class GitHubEventFilter {
         }
       );
 
-      // Handle rate limiting
       if (response.status === 403) {
         const remaining = response.headers.get('X-RateLimit-Remaining');
         const reset = response.headers.get('X-RateLimit-Reset');
@@ -388,7 +296,6 @@ export class GitHubEventFilter {
         return null;
       }
 
-      // User not a collaborator
       if (response.status === 404) {
         this.cachePermission(cacheKey, null);
         return null;
@@ -418,9 +325,6 @@ export class GitHubEventFilter {
     }
   }
 
-  /**
-   * Cache a permission result
-   */
   private cachePermission(cacheKey: string, permission: string | null): void {
     this.permissionCache.set(cacheKey, {
       permission,
@@ -428,9 +332,6 @@ export class GitHubEventFilter {
     });
   }
 
-  /**
-   * Check if a permission level meets the minimum required
-   */
   private hasMinPermission(
     actual: string,
     required: 'admin' | 'maintain' | 'write' | 'read' | 'none'
@@ -441,9 +342,6 @@ export class GitHubEventFilter {
   }
 }
 
-/**
- * Create a GitHub event filter instance
- */
 export function createEventFilter(
   config: GitHubFilterConfig,
   options?: GitHubEventFilterOptions

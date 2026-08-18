@@ -1,10 +1,3 @@
-/**
- * Multi-tenant isolation tests for short ID counters
- *
- * Proves that short ID counters are scoped per room and do not bleed across rooms.
- * Each (entity_type, scope_id) pair has its own independent counter row.
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { TaskRepository } from '../../../../src/storage/repositories/task-repository';
@@ -120,12 +113,10 @@ describe('Multi-tenant short ID isolation', () => {
       const tB1 = taskRepo.createTask({ roomId: ROOM_B, title: 'B-Task-1', description: 'D' });
       const tB2 = taskRepo.createTask({ roomId: ROOM_B, title: 'B-Task-2', description: 'D' });
 
-      // Room A has t-1, t-2, t-3
       expect(tA1.shortId).toBe('t-1');
       expect(tA2.shortId).toBe('t-2');
       expect(tA3.shortId).toBe('t-3');
 
-      // Room B independently has t-1, t-2
       expect(tB1.shortId).toBe('t-1');
       expect(tB2.shortId).toBe('t-2');
     });
@@ -136,14 +127,12 @@ describe('Multi-tenant short ID isolation', () => {
 
       expect(tA1.shortId).toBe('t-1');
       expect(tB1.shortId).toBe('t-1');
-      // Same short ID, but different underlying UUIDs
       expect(tA1.id).not.toBe(tB1.id);
     });
 
     it('cross-room lookup: Room B getTaskByShortId cannot find Room A t-1', () => {
       taskRepo.createTask({ roomId: ROOM_A, title: 'A-Task-1', description: 'D' });
 
-      // Room B has no tasks — looking up t-1 in Room B must return null
       const result = taskRepo.getTaskByShortId(ROOM_B, 't-1');
       expect(result).toBeNull();
     });
@@ -156,19 +145,15 @@ describe('Multi-tenant short ID isolation', () => {
       const tB1 = taskRepo.createTask({ roomId: ROOM_B, title: 'B-Task-1', description: 'D' });
       const tB2 = taskRepo.createTask({ roomId: ROOM_B, title: 'B-Task-2', description: 'D' });
 
-      // Room A lookups resolve to Room A's tasks
       expect(taskRepo.getTaskByShortId(ROOM_A, 't-1')!.id).toBe(tA1.id);
       expect(taskRepo.getTaskByShortId(ROOM_A, 't-2')!.id).toBe(tA2.id);
       expect(taskRepo.getTaskByShortId(ROOM_A, 't-3')!.id).toBe(tA3.id);
 
-      // Room B lookups resolve to Room B's tasks
       expect(taskRepo.getTaskByShortId(ROOM_B, 't-1')!.id).toBe(tB1.id);
       expect(taskRepo.getTaskByShortId(ROOM_B, 't-2')!.id).toBe(tB2.id);
 
-      // Room A t-1 is not accessible via Room B
       expect(taskRepo.getTaskByShortId(ROOM_B, 't-1')!.id).not.toBe(tA1.id);
 
-      // Room A has no t-4 (Room B's task count doesn't affect Room A)
       expect(taskRepo.getTaskByShortId(ROOM_A, 't-4')).toBeNull();
     });
 
@@ -185,9 +170,7 @@ describe('Multi-tenant short ID isolation', () => {
       expect(roomATasks.length).toBe(3);
       expect(roomBTasks.length).toBe(2);
 
-      // All Room A tasks belong to Room A
       expect(roomATasks.every((t) => t.roomId === ROOM_A)).toBe(true);
-      // All Room B tasks belong to Room B
       expect(roomBTasks.every((t) => t.roomId === ROOM_B)).toBe(true);
     });
   });
@@ -199,7 +182,6 @@ describe('Multi-tenant short ID isolation', () => {
 
       expect(gA1.shortId).toBe('g-1');
       expect(gB1.shortId).toBe('g-1');
-      // Same short ID, but different UUIDs
       expect(gA1.id).not.toBe(gB1.id);
     });
 
@@ -218,22 +200,18 @@ describe('Multi-tenant short ID isolation', () => {
       const gA1 = goalRepo.createGoal({ roomId: ROOM_A, title: 'A-Goal-1' });
       goalRepo.createGoal({ roomId: ROOM_B, title: 'B-Goal-1' });
 
-      // Room A g-1 is found in Room A
       expect(goalRepo.getGoalByShortId(ROOM_A, 'g-1')!.id).toBe(gA1.id);
 
-      // Room A g-1 is NOT accessible via Room B (different record)
       const roomBResult = goalRepo.getGoalByShortId(ROOM_B, 'g-1');
       expect(roomBResult).not.toBeNull();
       expect(roomBResult!.id).not.toBe(gA1.id);
     });
 
     it('cross-room lookup returns null for short IDs that exist only in another room', () => {
-      // Room A has g-1 and g-2; Room B has only g-1
       goalRepo.createGoal({ roomId: ROOM_A, title: 'A-Goal-1' });
       goalRepo.createGoal({ roomId: ROOM_A, title: 'A-Goal-2' });
       goalRepo.createGoal({ roomId: ROOM_B, title: 'B-Goal-1' });
 
-      // Room A g-2 is inaccessible via Room B
       expect(goalRepo.getGoalByShortId(ROOM_B, 'g-2')).toBeNull();
     });
   });
@@ -266,7 +244,6 @@ describe('Multi-tenant short ID isolation', () => {
       goalRepo.createGoal({ roomId: ROOM_A, title: 'G1' });
       goalRepo.createGoal({ roomId: ROOM_B, title: 'G1' });
 
-      // Query the counters table directly
       const rows = db
         .prepare(
           `SELECT entity_type, scope_id, counter
@@ -275,7 +252,6 @@ describe('Multi-tenant short ID isolation', () => {
         )
         .all() as { entity_type: string; scope_id: string; counter: number }[];
 
-      // Expect 4 distinct rows: task/room-a, task/room-b, goal/room-a, goal/room-b
       expect(rows.length).toBe(4);
 
       const taskRoomA = rows.find((r) => r.entity_type === 'task' && r.scope_id === ROOM_A);
@@ -300,7 +276,6 @@ describe('Multi-tenant short ID isolation', () => {
       taskRepo.createTask({ roomId: ROOM_A, title: 'T', description: 'D' });
       taskRepo.createTask({ roomId: ROOM_B, title: 'T', description: 'D' });
 
-      // Attempting to insert a duplicate PK must fail (proves PK constraint enforces isolation)
       expect(() => {
         db.prepare(
           `INSERT INTO short_id_counters (entity_type, scope_id, counter)
@@ -316,7 +291,6 @@ describe('Multi-tenant short ID isolation', () => {
 
       expect(allocator.getCounter('task', ROOM_A)).toBe(2);
       expect(allocator.getCounter('task', ROOM_B)).toBe(1);
-      // Room C was never used
       expect(allocator.getCounter('task', 'room-c-uuid-0003')).toBe(0);
     });
   });

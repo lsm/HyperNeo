@@ -6,10 +6,6 @@ import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-
 import type { MessageDeliveryMode } from '@hyperneo/shared';
 import type { SessionFactory } from '../../../../src/lib/space/runtime/types';
 
-// ---------------------------------------------------------------------------
-// Mock SessionFactory
-// ---------------------------------------------------------------------------
-
 interface InjectedCall {
   sessionId: string;
   message: string;
@@ -32,10 +28,6 @@ function makeMockSessionFactory(opts?: {
 
   return factory;
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 const SESSION_ID = 'spaces:global:session-1';
 const SPACE_ID = 'space-abc';
@@ -69,10 +61,6 @@ function makeService(
   const unsubscribe = service.subscribe();
   return { service, factory, bus, unsubscribe };
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe('SpaceAgentNotificationService', () => {
   describe('space.task.blocked event', () => {
@@ -215,7 +203,7 @@ describe('SpaceAgentNotificationService', () => {
         sessionId: 'global',
         spaceId: SPACE_ID,
         taskId: 'task-slow',
-        elapsedMs: 3600000, // 60 minutes
+        elapsedMs: 3600000,
         timestamp: TIMESTAMP,
       });
 
@@ -312,9 +300,6 @@ describe('SpaceAgentNotificationService', () => {
     });
 
     it('propagates injection failure so the router can retry (unlike fire-and-forget events)', async () => {
-      // The dead-loop subscriber uses notifyStrict: a failed injection must
-      // surface as a publish rejection so ChannelRouter.notifyDeadLoop skips its
-      // dedupe timestamp and retries on the next blocked send.
       const { bus } = makeService({ injectError: new Error('session unavailable') });
       await expect(
         bus.publish('space.workflowRun.deadLoop', {
@@ -443,7 +428,6 @@ describe('SpaceAgentNotificationService', () => {
       expect(json.actionType).toBe('script');
       expect(json.requiredLevel).toBe(4);
       expect(json.spaceLevel).toBe(2);
-      // Service-level autonomy (default 1) is used, not event.autonomyLevel
       expect(json.autonomyLevel).toBe(1);
     });
   });
@@ -452,7 +436,6 @@ describe('SpaceAgentNotificationService', () => {
     it('logs warning and does not throw when injectMessage fails', async () => {
       const { factory, bus } = makeService({ injectError: new Error('Session not found') });
 
-      // Should not throw despite injectMessage failing
       await expect(
         bus.publish('space.task.blocked', {
           sessionId: 'global',
@@ -469,7 +452,6 @@ describe('SpaceAgentNotificationService', () => {
     it('stops receiving events after unsubscribe', async () => {
       const { factory, bus, unsubscribe } = makeService();
 
-      // First event should be received
       await bus.publish('space.task.blocked', {
         sessionId: 'global',
         spaceId: SPACE_ID,
@@ -479,10 +461,8 @@ describe('SpaceAgentNotificationService', () => {
       });
       expect(factory.calls).toHaveLength(1);
 
-      // Unsubscribe
       unsubscribe();
 
-      // Second event should NOT be received
       await bus.publish('space.task.blocked', {
         sessionId: 'global',
         spaceId: SPACE_ID,
@@ -498,7 +478,6 @@ describe('SpaceAgentNotificationService', () => {
     it('ignores events for other spaces', async () => {
       const { factory, bus } = makeService();
 
-      // Event for the correct space
       await bus.publish('space.task.blocked', {
         sessionId: 'global',
         spaceId: SPACE_ID,
@@ -507,7 +486,6 @@ describe('SpaceAgentNotificationService', () => {
         timestamp: TIMESTAMP,
       });
 
-      // Event for a different space
       await bus.publish('space.task.blocked', {
         sessionId: 'global',
         spaceId: 'other-space',
@@ -521,10 +499,6 @@ describe('SpaceAgentNotificationService', () => {
     });
   });
 });
-
-// ---------------------------------------------------------------------------
-// Test utility: extract the first JSON block from a message
-// ---------------------------------------------------------------------------
 
 function extractJson(message: string): Record<string, unknown> {
   const match = message.match(/```json\n([\s\S]*?)```/);

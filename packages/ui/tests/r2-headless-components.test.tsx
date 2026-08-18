@@ -28,8 +28,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// --- Alert Tests ---
-
 describe('Alert', () => {
   it('should render with default variant (info)', () => {
     render(<Alert>Alert content</Alert>);
@@ -193,8 +191,6 @@ describe('AlertIcon', () => {
   });
 });
 
-// --- Badge Tests ---
-
 describe('Badge', () => {
   it('should render a badge by default', () => {
     render(<Badge>Badge</Badge>);
@@ -207,7 +203,6 @@ describe('Badge', () => {
     expect(screen.getByText('Label')).not.toBeNull();
   });
 
-  // Variant tests
   it('should render with subtle variant by default', () => {
     render(<Badge>Subtle</Badge>);
     expect(document.querySelector('span')?.getAttribute('data-variant')).toBe('subtle');
@@ -223,7 +218,6 @@ describe('Badge', () => {
     expect(document.querySelector('span')?.getAttribute('data-variant')).toBe('solid');
   });
 
-  // Color tests
   it('should render with gray color by default', () => {
     render(<Badge>Gray</Badge>);
     expect(document.querySelector('span')?.getAttribute('data-color')).toBe('gray');
@@ -264,7 +258,6 @@ describe('Badge', () => {
     expect(document.querySelector('span')?.getAttribute('data-color')).toBe('pink');
   });
 
-  // Size tests
   it('should render with md size by default', () => {
     render(<Badge>Medium</Badge>);
     expect(document.querySelector('span')?.getAttribute('data-size')).toBe('md');
@@ -275,7 +268,6 @@ describe('Badge', () => {
     expect(document.querySelector('span')?.getAttribute('data-size')).toBe('sm');
   });
 
-  // Shape tests
   it('should render with rounded shape by default', () => {
     render(<Badge>Rounded</Badge>);
     expect(document.querySelector('span')?.getAttribute('data-shape')).toBe('rounded');
@@ -291,7 +283,6 @@ describe('Badge', () => {
     expect(document.querySelector('span')?.getAttribute('data-shape')).toBe('square');
   });
 
-  // Dot indicator
   it('should not have data-dot when dot is false', () => {
     render(<Badge dot={false}>No Dot</Badge>);
     expect(document.querySelector('span')?.getAttribute('data-dot')).toBeNull();
@@ -308,7 +299,6 @@ describe('Badge', () => {
     expect(dot).not.toBeNull();
   });
 
-  // Removable state
   it('should not have data-removable when removable is false', () => {
     render(<Badge removable={false}>Not Removable</Badge>);
     expect(document.querySelector('span')?.getAttribute('data-removable')).toBeNull();
@@ -341,7 +331,6 @@ describe('Badge', () => {
     expect(onRemove).toHaveBeenCalledTimes(1);
   });
 
-  // Interaction states
   it('should set data-hover on mouse enter', async () => {
     render(<Badge>Hover</Badge>);
     const badge = document.querySelector('span') as HTMLElement;
@@ -408,15 +397,12 @@ describe('Badge', () => {
     expect(badge.getAttribute('data-active')).toBeNull();
   });
 
-  // Custom element
   it('should render as custom element when as prop is provided', () => {
     render(<Badge as="div">Div Badge</Badge>);
     const div = document.querySelector('div[data-variant="subtle"]');
     expect(div).not.toBeNull();
   });
 });
-
-// --- ProgressBar Tests ---
 
 describe('ProgressBar', () => {
   it('should render with role="progressbar"', () => {
@@ -478,7 +464,6 @@ describe('ProgressBar', () => {
   it('should calculate percentage with custom min and max', () => {
     render(<ProgressBar value={75} min={0} max={200} />);
     const progressbar = screen.getByRole('progressbar');
-    // 75/200 * 100 = 37.5 -> rounded to 38%
     expect(progressbar.getAttribute('aria-valuetext')).toBe('38%');
   });
 
@@ -512,7 +497,6 @@ describe('ProgressBar', () => {
     expect(progressbar.getAttribute('data-size')).toBe('lg');
   });
 
-  // Indeterminate state
   it('should not have data-indeterminate when value is provided', () => {
     render(<ProgressBar value={50} />);
     const progressbar = screen.getByRole('progressbar');
@@ -543,7 +527,6 @@ describe('ProgressBar', () => {
     expect(progressbar.getAttribute('aria-valuetext')).toBeNull();
   });
 
-  // Show value
   it('should not render value element when showValue is false', () => {
     render(<ProgressBar value={50} showValue={false} />);
     const valueElement = document.querySelector('[data-progress-value]');
@@ -557,7 +540,6 @@ describe('ProgressBar', () => {
     expect(valueElement?.textContent).toBe('50%');
   });
 
-  // Fill element
   it('should render fill element with correct width', () => {
     render(<ProgressBar value={75} />);
     const fill = document.querySelector('[data-progress-fill]') as HTMLElement;
@@ -565,7 +547,6 @@ describe('ProgressBar', () => {
     expect(fill.style.width).toBe('75%');
   });
 
-  // Custom element
   it('should render as custom element when as prop is provided', () => {
     render(<ProgressBar value={50} as="section" />);
     const section = document.querySelector('section');
@@ -573,15 +554,12 @@ describe('ProgressBar', () => {
     expect(section?.getAttribute('role')).toBe('progressbar');
   });
 
-  // Color
   it('should apply color style when color is provided', () => {
     render(<ProgressBar value={50} color="#ff0000" />);
     const fill = document.querySelector('[data-progress-fill]') as HTMLElement;
     expect(fill.style.backgroundColor).toBe('#ff0000');
   });
 });
-
-// --- Stepper Tests ---
 
 describe('Stepper', () => {
   it('should render with role="list"', () => {
@@ -767,7 +745,7 @@ describe('StepperIcon', () => {
     );
     const number = document.querySelector('[data-status="current"] [data-step-number]');
     expect(number).not.toBeNull();
-    expect(number?.textContent).toBe('2'); // stepIndex + 1
+    expect(number?.textContent).toBe('2');
   });
 
   it('should render step number for upcoming status', () => {
@@ -780,7 +758,7 @@ describe('StepperIcon', () => {
     );
     const number = document.querySelector('[data-status="upcoming"] [data-step-number]');
     expect(number).not.toBeNull();
-    expect(number?.textContent).toBe('2'); // stepIndex + 1
+    expect(number?.textContent).toBe('2');
   });
 
   it('should render custom children when provided', () => {
@@ -894,8 +872,6 @@ describe('StepperSeparator', () => {
   });
 });
 
-// --- Avatar Tests ---
-
 describe('Avatar', () => {
   it('should render with default size (md)', () => {
     render(
@@ -985,7 +961,6 @@ describe('AvatarImage', () => {
         <AvatarImage src="https://example.com/avatar.jpg" alt="User avatar" />
       </Avatar>
     );
-    // The image won't actually load in tests, so we test initial state
     const img = document.querySelector('img[alt="User avatar"]');
     expect(img).not.toBeNull();
   });
@@ -1009,7 +984,6 @@ describe('AvatarImage', () => {
       </Avatar>
     );
     const img = document.querySelector('img') as HTMLImageElement;
-    // Simulate load event
     act(() => {
       fireEvent.load(img);
     });
@@ -1024,7 +998,6 @@ describe('AvatarImage', () => {
       </Avatar>
     );
     const img = document.querySelector('img') as HTMLImageElement;
-    // Simulate error event
     act(() => {
       fireEvent.error(img);
     });
@@ -1149,7 +1122,6 @@ describe('AvatarGroupOverflow', () => {
         <AvatarGroupOverflow>+3</AvatarGroupOverflow>
       </AvatarGroup>
     );
-    // Wait for useEffect to count children
     await act(async () => {
       await new Promise((r) => setTimeout(r, 0));
     });
@@ -1171,7 +1143,6 @@ describe('AvatarGroupOverflow', () => {
         <AvatarGroupOverflow>+3</AvatarGroupOverflow>
       </AvatarGroup>
     );
-    // Wait for useEffect to count children
     await act(async () => {
       await new Promise((r) => setTimeout(r, 0));
     });

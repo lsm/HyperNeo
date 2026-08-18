@@ -1,15 +1,9 @@
 // @ts-nocheck
-/**
- * Tests for Toast System
- *
- * Tests toast creation, auto-dismissal, and convenience methods
- */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { toast, dismissToast, toastsSignal } from '../toast';
 
 describe('toast', () => {
   beforeEach(() => {
-    // Clear all toasts and reset mock timers
     toastsSignal.value = [];
     vi.useFakeTimers();
   });
@@ -88,7 +82,6 @@ describe('toast', () => {
 
       expect(toastsSignal.value).toHaveLength(1);
 
-      // Fast-forward time by 5000ms
       vi.advanceTimersByTime(5000);
 
       expect(toastsSignal.value).toHaveLength(0);
@@ -99,10 +92,8 @@ describe('toast', () => {
 
       expect(toastsSignal.value).toHaveLength(1);
 
-      // Fast-forward time
       vi.advanceTimersByTime(10000);
 
-      // Toast should still be there
       expect(toastsSignal.value).toHaveLength(1);
     });
 
@@ -112,13 +103,11 @@ describe('toast', () => {
 
       expect(toastsSignal.value).toHaveLength(2);
 
-      // Fast-forward by 3000ms - first should be dismissed
       vi.advanceTimersByTime(3000);
 
       expect(toastsSignal.value).toHaveLength(1);
       expect(toastsSignal.value[0].message).toBe('Second');
 
-      // Fast-forward by 2000ms more - second should be dismissed
       vi.advanceTimersByTime(2000);
 
       expect(toastsSignal.value).toHaveLength(0);
@@ -177,7 +166,6 @@ describe('toast', () => {
       const id1 = toast.success('First');
       const id2 = toast.success('Second');
 
-      // IDs should be incrementing numbers
       const num1 = parseInt(id1.replace('toast-', ''));
       const num2 = parseInt(id2.replace('toast-', ''));
 
@@ -229,10 +217,8 @@ describe('toast', () => {
     it('should handle negative duration (treated as 0)', () => {
       toast.success('Test', -1000);
 
-      // With negative duration, setTimeout check fails, so no auto-dismiss
       vi.advanceTimersByTime(10000);
 
-      // Toast should still be there since -1000 <= 0
       expect(toastsSignal.value).toHaveLength(1);
     });
   });

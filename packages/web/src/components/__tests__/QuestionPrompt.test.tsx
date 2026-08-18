@@ -1,20 +1,10 @@
 // @ts-nocheck
-/**
- * Tests for QuestionPrompt Component
- *
- * Tests the question prompt with options selection, custom input,
- * submit/cancel actions, and resolved states.
- *
- * Note: Tests UI behavior without mocking useMessageHub.
- * The component renders correctly without network calls.
- */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { QuestionPrompt } from '../QuestionPrompt';
 import type { PendingUserQuestion, QuestionDraftResponse } from '@hyperneo/shared';
 
-// Mock useMessageHub to test error scenarios
 const mockCallIfConnected = vi.fn();
 vi.mock('../../hooks/useMessageHub', () => ({
   useMessageHub: () => ({
@@ -147,7 +137,6 @@ describe('QuestionPrompt', () => {
       )!;
       fireEvent.click(editButton);
 
-      // Button should have selected styling
       expect(editButton.className).toContain('bg-rose-900/60');
     });
 
@@ -166,7 +155,6 @@ describe('QuestionPrompt', () => {
       fireEvent.click(editButton);
       fireEvent.click(deleteButton);
 
-      // Delete should be selected, Edit should not
       expect(deleteButton.className).toContain('bg-rose-900/60');
       expect(editButton.className).not.toContain('bg-rose-900/60');
     });
@@ -186,7 +174,6 @@ describe('QuestionPrompt', () => {
       fireEvent.click(editButton);
       fireEvent.click(otherButton);
 
-      // Edit should be deselected
       expect(editButton.className).not.toContain('bg-rose-900/60');
     });
   });
@@ -207,7 +194,6 @@ describe('QuestionPrompt', () => {
       fireEvent.click(darkModeBtn);
       fireEvent.click(notificationsBtn);
 
-      // Both should be selected
       expect(darkModeBtn.className).toContain('bg-rose-900/60');
       expect(notificationsBtn.className).toContain('bg-rose-900/60');
     });
@@ -333,9 +319,6 @@ describe('QuestionPrompt', () => {
     });
 
     it('should show "agent session ended" header when cancelReason=agent_session_terminated', () => {
-      // Task #138: orphaned questions (session died before user answered)
-      // must render distinctly from a user-initiated Skip so users know
-      // the card was cleaned up by the runtime, not by them.
       const { container } = render(
         <QuestionPrompt
           sessionId="session-1"
@@ -347,7 +330,6 @@ describe('QuestionPrompt', () => {
       );
 
       expect(container.textContent).toContain('Question cancelled — agent session ended');
-      // And does NOT collapse to the generic Skip wording
       expect(container.textContent).not.toContain('Question skipped');
     });
 
@@ -390,8 +372,6 @@ describe('QuestionPrompt', () => {
         />
       );
 
-      // Resolved questions are collapsed by default, so buttons won't be visible
-      // Just verify the resolved state is shown in the header
       expect(container.textContent).toContain('Response submitted');
     });
 
@@ -405,8 +385,6 @@ describe('QuestionPrompt', () => {
         />
       );
 
-      // Resolved questions are collapsed by default
-      // Just verify the resolved state is shown in the header
       expect(container.textContent).toContain('Response submitted');
     });
   });
@@ -505,7 +483,6 @@ describe('QuestionPrompt', () => {
         <QuestionPrompt sessionId="session-1" pendingQuestion={multiQuestionPrompt} />
       );
 
-      // Select only first question
       const optionA = Array.from(container.querySelectorAll('button')).find((btn) =>
         btn.textContent?.includes('A')
       )!;
@@ -515,7 +492,6 @@ describe('QuestionPrompt', () => {
         btn.textContent?.includes('Submit Response')
       )! as HTMLButtonElement;
 
-      // Submit should still be disabled because second question is not answered
       expect(submitButton.disabled).toBe(true);
     });
   });
@@ -526,7 +502,6 @@ describe('QuestionPrompt', () => {
         <QuestionPrompt sessionId="session-1" pendingQuestion={mockPendingQuestion} />
       );
 
-      // Content should be visible (question options)
       expect(container.textContent).toContain('Edit');
       expect(container.textContent).toContain('Delete');
     });
@@ -536,12 +511,10 @@ describe('QuestionPrompt', () => {
         <QuestionPrompt sessionId="session-1" pendingQuestion={mockPendingQuestion} />
       );
 
-      // Form content should always be visible
       expect(container.textContent).toContain('Edit');
       expect(container.textContent).toContain('Delete');
       expect(container.textContent).toContain('Other...');
 
-      // Header should not be a clickable button (no collapse functionality)
       const headerButtons = Array.from(container.querySelectorAll('button')).filter((btn) =>
         btn.textContent?.includes('Claude needs your input')
       );
@@ -599,14 +572,11 @@ describe('QuestionPrompt', () => {
         />
       );
 
-      // Header should show a check icon (not a button, no chevron)
       const headerDiv = container.querySelector('div');
       expect(headerDiv).toBeTruthy();
 
-      // Should show "Response submitted" text
       expect(container.textContent).toContain('Response submitted');
 
-      // Form content should still be visible
       expect(container.textContent).toContain('Edit');
     });
 
@@ -620,13 +590,11 @@ describe('QuestionPrompt', () => {
         />
       );
 
-      // Header should not be a button in resolved state
       const headerButtons = Array.from(container.querySelectorAll('button')).filter((btn) =>
         btn.textContent?.includes('Response submitted')
       );
       expect(headerButtons.length).toBe(0);
 
-      // Header text should still be present
       expect(container.textContent).toContain('Response submitted');
     });
   });
@@ -644,14 +612,11 @@ describe('QuestionPrompt', () => {
         btn.textContent?.includes('Other...')
       )!;
 
-      // Select Dark Mode first
       fireEvent.click(darkModeBtn);
       expect(darkModeBtn.className).toContain('bg-rose-900/60');
 
-      // Click Other - should NOT clear Dark Mode selection in multi-select
       fireEvent.click(otherBtn);
 
-      // Dark Mode should still be selected
       expect(darkModeBtn.className).toContain('bg-rose-900/60');
     });
 
@@ -670,24 +635,20 @@ describe('QuestionPrompt', () => {
         <QuestionPrompt sessionId="session-1" pendingQuestion={mockPendingQuestion} />
       );
 
-      // Click Other first
       const otherBtn = Array.from(container.querySelectorAll('button')).find((btn) =>
         btn.textContent?.includes('Other...')
       )!;
       fireEvent.click(otherBtn);
 
-      // Enter custom text
       const textarea = container.querySelector('textarea')!;
       fireEvent.input(textarea, { target: { value: 'Custom answer' } });
       expect((textarea as HTMLTextAreaElement).value).toBe('Custom answer');
 
-      // Now click a regular option
       const editBtn = Array.from(container.querySelectorAll('button')).find((btn) =>
         btn.textContent?.includes('Edit')
       )!;
       fireEvent.click(editBtn);
 
-      // Textarea should no longer be visible
       expect(container.querySelector('textarea')).toBeFalsy();
     });
   });
@@ -698,17 +659,14 @@ describe('QuestionPrompt', () => {
         <QuestionPrompt sessionId="session-1" pendingQuestion={mockPendingQuestion} />
       );
 
-      // Click Other
       const otherBtn = Array.from(container.querySelectorAll('button')).find((btn) =>
         btn.textContent?.includes('Other...')
       )!;
       fireEvent.click(otherBtn);
 
-      // Enter custom text
       const textarea = container.querySelector('textarea')!;
       fireEvent.input(textarea, { target: { value: 'My custom response' } });
 
-      // Submit should be enabled
       const submitButton = Array.from(container.querySelectorAll('button')).find((btn) =>
         btn.textContent?.includes('Submit Response')
       )! as HTMLButtonElement;
@@ -734,12 +692,10 @@ describe('QuestionPrompt', () => {
         />
       );
 
-      // The response is submitted and contains custom text
       expect(container.textContent).toContain('Response submitted');
     });
 
     it('should show resolved state with custom text value in textarea', () => {
-      // Create a question with draft that shows customText
       const questionWithFinalCustom: PendingUserQuestion = {
         ...mockPendingQuestion,
         draftResponses: undefined,
@@ -760,7 +716,6 @@ describe('QuestionPrompt', () => {
         />
       );
 
-      // Check that the resolved header is shown
       expect(container.textContent).toContain('Response submitted');
     });
   });
@@ -776,7 +731,6 @@ describe('QuestionPrompt', () => {
         />
       );
 
-      // Verify cancelled state
       expect(container.textContent).toContain('Question skipped');
     });
 
@@ -790,7 +744,6 @@ describe('QuestionPrompt', () => {
         />
       );
 
-      // The container should have opacity-60 for cancelled state
       const mainDiv = container.firstChild as HTMLDivElement;
       expect(mainDiv.className).toContain('opacity-60');
     });
@@ -805,7 +758,6 @@ describe('QuestionPrompt', () => {
         />
       );
 
-      // The container should have opacity-80 for submitted state
       const mainDiv = container.firstChild as HTMLDivElement;
       expect(mainDiv.className).toContain('opacity-80');
     });
@@ -813,10 +765,6 @@ describe('QuestionPrompt', () => {
 
   describe('Option click in resolved state', () => {
     it('should not change selection when option is clicked in resolved state', () => {
-      // Need to render with expanded state by not using resolvedState initially
-      // This is a bit tricky since resolved state collapses the content
-      // We'll test that the disabled state prevents clicks
-
       const { container } = render(
         <QuestionPrompt
           sessionId="session-1"
@@ -826,7 +774,6 @@ describe('QuestionPrompt', () => {
         />
       );
 
-      // Verify the resolved state
       expect(container.textContent).toContain('Response submitted');
     });
 
@@ -840,14 +787,12 @@ describe('QuestionPrompt', () => {
         />
       );
 
-      // Verify the resolved state - content is collapsed
       expect(container.textContent).toContain('Response submitted');
     });
   });
 
   describe('Draft saving behavior', () => {
     it('should not save draft when resolved', async () => {
-      // Render in resolved state - draft saving should be skipped
       const { container } = render(
         <QuestionPrompt
           sessionId="session-1"
@@ -857,7 +802,6 @@ describe('QuestionPrompt', () => {
         />
       );
 
-      // Verify resolved state
       expect(container.textContent).toContain('Response submitted');
     });
   });
@@ -872,22 +816,18 @@ describe('QuestionPrompt', () => {
         />
       );
 
-      // Select an option
       const editBtn = Array.from(container.querySelectorAll('button')).find((btn) =>
         btn.textContent?.includes('Edit')
       )!;
       fireEvent.click(editBtn);
 
-      // Click submit
       const submitButton = Array.from(container.querySelectorAll('button')).find((btn) =>
         btn.textContent?.includes('Submit Response')
       )!;
       fireEvent.click(submitButton);
 
-      // Wait for async operation
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // onResolved should have been called
       expect(mockOnResolved).toHaveBeenCalledWith('submitted', expect.any(Array));
     });
 
@@ -900,26 +840,21 @@ describe('QuestionPrompt', () => {
         />
       );
 
-      // Click Other instead of selecting an option
       const otherBtn = Array.from(container.querySelectorAll('button')).find((btn) =>
         btn.textContent?.includes('Other...')
       )!;
       fireEvent.click(otherBtn);
 
-      // Type custom text
       const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
       fireEvent.input(textarea, { target: { value: 'My custom answer' } });
 
-      // Click submit
       const submitButton = Array.from(container.querySelectorAll('button')).find((btn) =>
         btn.textContent?.includes('Submit Response')
       )!;
       fireEvent.click(submitButton);
 
-      // Wait for async operation
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // onResolved should have been called with custom text response
       expect(mockOnResolved).toHaveBeenCalledWith(
         'submitted',
         expect.arrayContaining([
@@ -941,16 +876,13 @@ describe('QuestionPrompt', () => {
         />
       );
 
-      // Click skip
       const skipButton = Array.from(container.querySelectorAll('button')).find((btn) =>
         btn.textContent?.includes('Skip Question')
       )!;
       fireEvent.click(skipButton);
 
-      // Wait for async operation
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // onResolved should have been called with cancelled
       expect(mockOnResolved).toHaveBeenCalledWith('cancelled', []);
     });
   });
@@ -967,22 +899,18 @@ describe('QuestionPrompt', () => {
         />
       );
 
-      // Select an option
       const editBtn = Array.from(container.querySelectorAll('button')).find((btn) =>
         btn.textContent?.includes('Edit')
       )!;
       fireEvent.click(editBtn);
 
-      // Click submit
       const submitButton = Array.from(container.querySelectorAll('button')).find((btn) =>
         btn.textContent?.includes('Submit Response')
       )!;
       fireEvent.click(submitButton);
 
-      // Wait for async operation
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // onResolved should NOT have been called since submit failed
       expect(mockOnResolved).not.toHaveBeenCalled();
     });
 
@@ -997,16 +925,13 @@ describe('QuestionPrompt', () => {
         />
       );
 
-      // Click skip
       const skipButton = Array.from(container.querySelectorAll('button')).find((btn) =>
         btn.textContent?.includes('Skip Question')
       )!;
       fireEvent.click(skipButton);
 
-      // Wait for async operation
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // onResolved should NOT have been called since cancel failed
       expect(mockOnResolved).not.toHaveBeenCalled();
     });
 
@@ -1017,16 +942,12 @@ describe('QuestionPrompt', () => {
         <QuestionPrompt sessionId="session-1" pendingQuestion={mockPendingQuestion} />
       );
 
-      // Select an option to trigger draft save
       const editBtn = Array.from(container.querySelectorAll('button')).find((btn) =>
         btn.textContent?.includes('Edit')
       )!;
       fireEvent.click(editBtn);
 
-      // Wait for debounced draft save (500ms + buffer)
       await new Promise((resolve) => setTimeout(resolve, 600));
-
-      // Draft save error should be handled gracefully (no throw)
     });
   });
 
@@ -1036,7 +957,6 @@ describe('QuestionPrompt', () => {
         <QuestionPrompt sessionId="session-1" pendingQuestion={mockPendingQuestion} />
       );
 
-      // Click multiple options rapidly
       const editBtn = Array.from(container.querySelectorAll('button')).find((btn) =>
         btn.textContent?.includes('Edit')
       )!;
@@ -1051,10 +971,8 @@ describe('QuestionPrompt', () => {
       fireEvent.click(deleteBtn);
       fireEvent.click(moveBtn);
 
-      // Wait for debounce
       await new Promise((resolve) => setTimeout(resolve, 600));
 
-      // Should only save draft once (debounced) with final value
       const saveDraftCalls = mockCallIfConnected.mock.calls.filter(
         (call) => call[0] === 'question.saveDraft'
       );
@@ -1066,19 +984,15 @@ describe('QuestionPrompt', () => {
         <QuestionPrompt sessionId="session-1" pendingQuestion={mockPendingQuestion} />
       );
 
-      // Select an option
       const editBtn = Array.from(container.querySelectorAll('button')).find((btn) =>
         btn.textContent?.includes('Edit')
       )!;
       fireEvent.click(editBtn);
 
-      // Unmount before debounce completes
       unmount();
 
-      // Wait for what would have been the debounce
       await new Promise((resolve) => setTimeout(resolve, 600));
 
-      // Draft save should not have been called (cleanup happened)
       const saveDraftCalls = mockCallIfConnected.mock.calls.filter(
         (call) => call[0] === 'question.saveDraft'
       );
@@ -1088,7 +1002,6 @@ describe('QuestionPrompt', () => {
 
   describe('Submit with isSubmitting state', () => {
     it('should disable buttons while submitting', async () => {
-      // Make submit take longer
       mockCallIfConnected.mockImplementation(
         () => new Promise((resolve) => setTimeout(resolve, 100))
       );
@@ -1097,22 +1010,18 @@ describe('QuestionPrompt', () => {
         <QuestionPrompt sessionId="session-1" pendingQuestion={mockPendingQuestion} />
       );
 
-      // Select an option
       const editBtn = Array.from(container.querySelectorAll('button')).find((btn) =>
         btn.textContent?.includes('Edit')
       )!;
       fireEvent.click(editBtn);
 
-      // Click submit
       const submitButton = Array.from(container.querySelectorAll('button')).find((btn) =>
         btn.textContent?.includes('Submit Response')
       )! as HTMLButtonElement;
       fireEvent.click(submitButton);
 
-      // Wait a bit for state to update
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Submit button should be disabled while submitting
       const submitButtonAfter = Array.from(container.querySelectorAll('button')).find((btn) =>
         btn.textContent?.includes('Submit Response')
       )! as HTMLButtonElement;
@@ -1123,14 +1032,12 @@ describe('QuestionPrompt', () => {
       expect(submitButtonAfter.disabled).toBe(true);
       expect(skipButtonAfter.disabled).toBe(true);
 
-      // Wait for submit to complete
       await new Promise((resolve) => setTimeout(resolve, 150));
     });
   });
 
   describe('Cancel with isCancelling state', () => {
     it('should disable buttons while cancelling', async () => {
-      // Make cancel take longer
       mockCallIfConnected.mockImplementation(
         () => new Promise((resolve) => setTimeout(resolve, 100))
       );
@@ -1139,16 +1046,13 @@ describe('QuestionPrompt', () => {
         <QuestionPrompt sessionId="session-1" pendingQuestion={mockPendingQuestion} />
       );
 
-      // Click skip
       const skipButton = Array.from(container.querySelectorAll('button')).find((btn) =>
         btn.textContent?.includes('Skip Question')
       )! as HTMLButtonElement;
       fireEvent.click(skipButton);
 
-      // Wait a bit for state to update
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Both buttons should be disabled while cancelling
       const submitButtonAfter = Array.from(container.querySelectorAll('button')).find((btn) =>
         btn.textContent?.includes('Submit Response')
       )! as HTMLButtonElement;
@@ -1159,7 +1063,6 @@ describe('QuestionPrompt', () => {
       expect(submitButtonAfter.disabled).toBe(true);
       expect(skipButtonAfter.disabled).toBe(true);
 
-      // Wait for cancel to complete
       await new Promise((resolve) => setTimeout(resolve, 150));
     });
   });
@@ -1192,7 +1095,6 @@ describe('QuestionPrompt', () => {
         />
       );
 
-      // Verify cancelled state
       expect(container.textContent).toContain('Question skipped');
     });
 
@@ -1223,14 +1125,12 @@ describe('QuestionPrompt', () => {
         />
       );
 
-      // Verify submitted state header
       expect(container.textContent).toContain('Response submitted');
     });
   });
 
   describe('Resolved form interaction guards', () => {
     it('should not trigger submit when form is already resolved', async () => {
-      // Render a resolved form and attempt to submit - the isResolved guard should prevent it
       const { container } = render(
         <QuestionPrompt
           sessionId="session-1"
@@ -1241,7 +1141,6 @@ describe('QuestionPrompt', () => {
         />
       );
 
-      // Submit and Skip buttons should not be rendered in resolved state
       const submitButton = Array.from(container.querySelectorAll('button')).find((btn) =>
         btn.textContent?.includes('Submit Response')
       );
@@ -1252,9 +1151,7 @@ describe('QuestionPrompt', () => {
       expect(submitButton).toBeFalsy();
       expect(skipButton).toBeFalsy();
 
-      // onResolved should not have been called
       expect(mockOnResolved).not.toHaveBeenCalled();
-      // callIfConnected should not have been called
       expect(mockCallIfConnected).not.toHaveBeenCalled();
     });
 
@@ -1274,14 +1171,12 @@ describe('QuestionPrompt', () => {
         />
       );
 
-      // The textarea should be disabled/readonly
       const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
       expect(textarea).toBeTruthy();
       expect(textarea.disabled).toBe(true);
     });
 
     it('should initialize customInputs map without customText entries when responses lack customText', () => {
-      // This covers the falsy branch of `if (response.customText)` during initialization
       const { container } = render(
         <QuestionPrompt
           sessionId="session-1"
@@ -1291,17 +1186,14 @@ describe('QuestionPrompt', () => {
             {
               questionIndex: 0,
               selectedLabels: ['Edit'],
-              // No customText property - tests the falsy branch
             },
           ]}
         />
       );
 
-      // No textarea should be visible since Other was not selected
       const textarea = container.querySelector('textarea');
       expect(textarea).toBeFalsy();
 
-      // The selected option should be shown
       expect(container.textContent).toContain('Edit');
     });
 
@@ -1315,7 +1207,6 @@ describe('QuestionPrompt', () => {
         />
       );
 
-      // All option buttons should be disabled
       const optionButtons = Array.from(container.querySelectorAll('button')).filter(
         (btn) =>
           btn.textContent?.includes('Edit') ||
@@ -1330,13 +1221,6 @@ describe('QuestionPrompt', () => {
 
   describe('BUG REPRODUCTION: Form content visibility after submission', () => {
     it('should always show form fields even after submission (simulates page refresh)', () => {
-      // This test reproduces the bug where:
-      // 1. User submits a question form
-      // 2. Page is refreshed
-      // 3. Form is re-rendered with resolvedState='submitted'
-      // 4. BUG: Form content is hidden because isExpanded defaults to false for resolved forms
-      // 5. REQUIREMENT: Form fields should NEVER be hidden - they should always be visible
-
       const { container } = render(
         <QuestionPrompt
           sessionId="session-1"
@@ -1346,20 +1230,15 @@ describe('QuestionPrompt', () => {
         />
       );
 
-      // Verify the submitted state header is shown
       expect(container.textContent).toContain('Response submitted');
 
-      // BUG: The form content should be visible, but currently it's hidden
-      // The question text should be in the DOM
       expect(container.textContent).toContain('What would you like to do with the file?');
 
-      // The options should be visible in the DOM
       expect(container.textContent).toContain('Edit');
       expect(container.textContent).toContain('Make changes to the file');
       expect(container.textContent).toContain('Delete');
       expect(container.textContent).toContain('Remove the file permanently');
 
-      // The selected option should be visible with selected styling
       const editButton = Array.from(container.querySelectorAll('button')).find(
         (btn) =>
           btn.textContent?.includes('Edit') && btn.textContent?.includes('Make changes to the file')
@@ -1368,7 +1247,6 @@ describe('QuestionPrompt', () => {
     });
 
     it('should show form fields for cancelled questions after refresh', () => {
-      // Similar bug for cancelled state - form should still be visible
       const { container } = render(
         <QuestionPrompt
           sessionId="session-1"
@@ -1378,17 +1256,14 @@ describe('QuestionPrompt', () => {
         />
       );
 
-      // Verify the cancelled state header is shown
       expect(container.textContent).toContain('Question skipped');
 
-      // Form content should be visible even though it was cancelled
       expect(container.textContent).toContain('What would you like to do with the file?');
       expect(container.textContent).toContain('Edit');
       expect(container.textContent).toContain('Delete');
     });
 
     it('should show custom text in resolved state after refresh', () => {
-      // Test that custom text remains visible after refresh
       const { container } = render(
         <QuestionPrompt
           sessionId="session-1"
@@ -1404,10 +1279,8 @@ describe('QuestionPrompt', () => {
         />
       );
 
-      // Verify the submitted state header
       expect(container.textContent).toContain('Response submitted');
 
-      // The custom text should be visible in the textarea
       const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
       expect(textarea).toBeTruthy();
       expect(textarea.value).toBe('My custom response text');

@@ -69,22 +69,11 @@ function useIsDesktopPanel(): boolean {
   return isDesktop;
 }
 
-/**
- * Resolve the right-panel target for the current view context, or null when no
- * panel applies. The Git review panel applies to ANY session with a workspace
- * (worktree OR direct mode) — the read-only GitPanel handles `none`/not-a-repo
- * states itself. The Space Goals/Forge views expose the selected goal/scope.
- */
 function useToggleTarget(): RightPanelTarget | null {
   const activeSessionId = sessionStore.activeSessionId.value;
   const sessionState = sessionStore.sessionState.value;
   const session = sessionStore.sessionInfo.value;
   const activeSession = session?.id === activeSessionId ? session : null;
-  // `sessionState` is null only during the transient loading gap (the store
-  // nulls it before the new metadata lands). A terminal load error leaves
-  // sessionState set with sessionInfo null, which is NOT a workspace — so scope
-  // the optimistic fallback to sessionState === null, not activeSession === null,
-  // to avoid offering the Git toggle for failed/nonexistent sessions.
   const hasWorkspace = activeSessionId
     ? sessionState === null || Boolean(activeSession?.workspacePath || activeSession?.worktree)
     : false;
@@ -112,11 +101,9 @@ function useToggleTarget(): RightPanelTarget | null {
   return null;
 }
 
-/** True when `target` still belongs to the current view context. */
 function targetMatchesContext(target: RightPanelTarget, toggleTarget: RightPanelTarget | null) {
   if (!toggleTarget) return false;
   if (target.type !== toggleTarget.type) return false;
-  // Git follows the active session; if that changed, the panel should re-point.
   if (target.type === 'git') {
     return toggleTarget.type === 'git' && target.sessionId === toggleTarget.sessionId;
   }
@@ -146,8 +133,6 @@ export function RightPanelToggle() {
   const toggleTarget = useToggleTarget();
   const rightPanelOpen = target !== null && targetMatchesContext(target, toggleTarget);
 
-  // Drop a panel whose context has gone away (view switch, session change) so a
-  // goal panel never lingers over the Tasks view, etc.
   useEffect(() => {
     if (!target) return;
     if (!toggleTarget) {

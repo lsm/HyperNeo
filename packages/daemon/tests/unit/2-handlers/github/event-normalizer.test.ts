@@ -11,10 +11,6 @@ import type {
   GitHubApiComment,
 } from '../../../../src/lib/github/types';
 
-// ============================================================================
-// Test Data Factories
-// ============================================================================
-
 function createIssuesWebhookPayload(
   overrides: Partial<GitHubWebhookIssuesPayload> = {}
 ): GitHubWebhookIssuesPayload {
@@ -118,10 +114,6 @@ function createApiComment(overrides: Partial<GitHubApiComment> = {}): GitHubApiC
   };
 }
 
-// ============================================================================
-// normalizeWebhookEvent
-// ============================================================================
-
 describe('normalizeWebhookEvent', () => {
   describe('issues events', () => {
     it('should normalize issues.opened event', () => {
@@ -141,7 +133,7 @@ describe('normalizeWebhookEvent', () => {
       expect(result?.issue.labels).toEqual(['bug']);
       expect(result?.sender.login).toBe('testuser');
       expect(result?.sender.type).toBe('User');
-      expect(result?.id).toMatch(/^[\da-f-]{36}$/); // UUID format
+      expect(result?.id).toMatch(/^[\da-f-]{36}$/);
       expect(result?.receivedAt).toBeGreaterThan(0);
     });
 
@@ -338,10 +330,6 @@ describe('normalizeWebhookEvent', () => {
   });
 });
 
-// ============================================================================
-// normalizePollingEvent
-// ============================================================================
-
 describe('normalizePollingEvent', () => {
   describe('issue polling', () => {
     it('should normalize issue from polling', () => {
@@ -452,7 +440,6 @@ describe('normalizePollingEvent', () => {
 
     it('should handle malformed repository name', () => {
       const issue = createApiIssue();
-      // When there's no slash, parts[1] will be undefined which becomes ''
       const result = normalizePollingEvent('issue', issue, 'invalidname');
 
       expect(result?.repository.owner).toBe('invalidname');

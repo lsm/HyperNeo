@@ -1,9 +1,3 @@
-/**
- * RewindHandler Tests
- *
- * Tests for rewind operations (preview and execute).
- */
-
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { Session } from '@hyperneo/shared';
@@ -232,7 +226,7 @@ describe('RewindHandler', () => {
       const rewindPoints = handler.getRewindPoints();
 
       expect(rewindPoints).toHaveLength(3);
-      expect(rewindPoints[0].uuid).toBe('msg-3'); // Newest first
+      expect(rewindPoints[0].uuid).toBe('msg-3');
       expect(rewindPoints[0].turnNumber).toBe(3);
       expect(rewindPoints[2].uuid).toBe('msg-1');
       expect(rewindPoints[2].turnNumber).toBe(1);
@@ -402,7 +396,6 @@ describe('RewindHandler', () => {
           timestamp: testTimestamp - 10000,
           content: 'Previous message',
         };
-        // getUserMessages is called AFTER deleteMessagesAtAndAfter, so it should return only remaining messages
         getUserMessagesSpy.mockReturnValue([previousMessage]);
         writeSdkTranscript([previousMessage.uuid]);
 
@@ -435,7 +428,6 @@ describe('RewindHandler', () => {
       });
 
       it('should not set pending resumeSessionAt when no previous user message exists', async () => {
-        // After deleting the only user message, getUserMessages returns empty
         getUserMessagesSpy.mockReturnValue([]);
 
         handler = createHandler();
@@ -496,11 +488,10 @@ describe('RewindHandler', () => {
         handler = createHandler();
         const result = await handler.executeRewind(testRewindPoint.uuid, 'both');
 
-        // File rewind is best-effort - conversation rewind should still proceed
         expect(result.success).toBe(true);
         expect(result.conversationRewound).toBe(true);
         expect(deleteMessagesAtAndAfterSpy).toHaveBeenCalled();
-        expect(result.filesChanged).toBeUndefined(); // No files changed since file rewind failed
+        expect(result.filesChanged).toBeUndefined();
       });
     });
 
@@ -548,7 +539,6 @@ describe('RewindHandler', () => {
         handler = createHandler();
         const result = await handler.executeRewind(testRewindPoint.uuid, 'both');
 
-        // Best-effort: conversation rewind succeeds even when file rewind fails
         expect(result.success).toBe(true);
         expect(result.conversationRewound).toBe(true);
         expect(emitSpy).toHaveBeenCalledWith(
@@ -636,7 +626,7 @@ describe('RewindHandler', () => {
       const result = await handler.previewSelectiveRewind([testRewindPoint.uuid]);
 
       expect(result.canRewind).toBe(true);
-      expect(result.messagesToDelete).toBe(2); // Messages after the first
+      expect(result.messagesToDelete).toBe(2);
       expect(result.filesToRevert).toEqual([
         { path: 'file1.ts', hasCheckpoint: true, hasEditDiff: false },
         { path: 'file2.ts', hasCheckpoint: true, hasEditDiff: false },
@@ -689,7 +679,6 @@ describe('RewindHandler', () => {
         messages: [{ uuid: testRewindPoint.uuid, timestamp: testTimestamp }],
         hasMore: false,
       }));
-      // After deletion, getUserMessages returns only the previous message
       getUserMessagesSpy.mockReturnValue([previousMessage]);
       writeSdkTranscript([previousMessage.uuid]);
 
@@ -982,13 +971,11 @@ describe('RewindHandler', () => {
     let testDir: string;
 
     beforeEach(() => {
-      // Create a unique temp directory for each test
       testDir = join(tmpdir(), `rewind-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
       mkdirSync(testDir, { recursive: true });
     });
 
     afterEach(() => {
-      // Clean up temp directory
       if (existsSync(testDir)) {
         rmSync(testDir, { recursive: true, force: true });
       }
@@ -1044,7 +1031,6 @@ describe('RewindHandler', () => {
       handler = createHandler();
 
       const filePath = join(testDir, 'test.ts');
-      // File content after two edits: A -> B -> C
       writeFileSync(filePath, 'content C\n', 'utf-8');
 
       const operations = [

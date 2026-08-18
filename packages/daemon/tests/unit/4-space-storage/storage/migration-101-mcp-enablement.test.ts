@@ -1,24 +1,6 @@
-/**
- * Migration 101 — mcp_enablement seeding tests.
- *
- * Verifies that runMigration101:
- *   1. Creates the `mcp_enablement` table + indexes idempotently.
- *   2. Copies legacy `room_mcp_enablement` rows as scope='room' overrides.
- *   3. Seeds scope='space' disable rows from `GlobalSettings.disabledMcpServers`
- *      for each active space, resolving server names to registry ids.
- *   4. Seeds scope='session' disable rows from each session's
- *      `config.tools.disabledMcpServers`.
- *   5. Ignores orphan names that no registry entry exists for.
- *   6. Is safe to run twice (idempotent — INSERT OR IGNORE).
- */
-
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigration101 } from '../../../../src/storage/schema';
-
-// ---------------------------------------------------------------------------
-// Minimal schema — only the tables M100 reads/writes.
-// ---------------------------------------------------------------------------
 
 function createMinimalSchema(db: BunDatabase): void {
   db.exec('PRAGMA foreign_keys = ON');
@@ -115,10 +97,6 @@ function insertSession(db: BunDatabase, id: string, config: Record<string, unkno
   ).run(id, JSON.stringify(config));
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe('Migration 100: mcp_enablement seeding', () => {
   let db: BunDatabase;
 
@@ -130,8 +108,6 @@ describe('Migration 100: mcp_enablement seeding', () => {
   afterEach(() => {
     db.close();
   });
-
-  // --- Table creation ----------------------------------------------------
 
   test('creates the mcp_enablement table with the expected shape', () => {
     runMigration101(db);
@@ -145,7 +121,6 @@ describe('Migration 100: mcp_enablement seeding', () => {
     const names = cols.map((c) => c.name).sort();
     expect(names).toEqual(['enabled', 'scope_id', 'scope_type', 'server_id'].sort());
 
-    // Composite PK — second insert with same (server, scope, scope_id) fails.
     insertServer(db, 'srv-1', 'srv-1');
     db.prepare(
       `INSERT INTO mcp_enablement (server_id, scope_type, scope_id, enabled)
@@ -163,11 +138,8 @@ describe('Migration 100: mcp_enablement seeding', () => {
 
   test('is idempotent when run twice on an empty database', () => {
     runMigration101(db);
-    // Second run should not throw.
     expect(() => runMigration101(db)).not.toThrow();
   });
-
-  // --- scope='room' copy from room_mcp_enablement ------------------------
 
   test('copies room_mcp_enablement rows as scope=room overrides', () => {
     insertServer(db, 'srv-1', 'srv-1');
@@ -209,8 +181,6 @@ describe('Migration 100: mcp_enablement seeding', () => {
     expect(count).toBe(1);
   });
 
-  // --- scope='space' seed from GlobalSettings.disabledMcpServers ---------
-
   test('seeds scope=space disable rows for every active space from global settings', () => {
     insertServer(db, 'srv-1', 'test-search');
     insertServer(db, 'srv-2', 'playwright');
@@ -232,7 +202,6 @@ describe('Migration 100: mcp_enablement seeding', () => {
       expect(['space-active-1', 'space-active-2']).toContain(row.scope_id);
     }
 
-    // Archived spaces must not be seeded.
     const archivedCount = (
       db
         .prepare(
@@ -271,7 +240,6 @@ describe('Migration 100: mcp_enablement seeding', () => {
 
   test('tolerates malformed global_settings JSON without throwing', () => {
     insertSpace(db, 'space-1');
-    // Bypass helper to write a literally invalid JSON payload.
     db.prepare(
       `INSERT OR REPLACE INTO global_settings (id, settings, updated_at) VALUES (1, ?, '')`
     ).run('not-json {{');
@@ -282,8 +250,6 @@ describe('Migration 100: mcp_enablement seeding', () => {
       .get() as { c: number };
     expect(rows.c).toBe(0);
   });
-
-  // --- scope='session' seed from session.config.tools.disabledMcpServers --
 
   test('seeds scope=session disable rows for each session', () => {
     insertServer(db, 'srv-1', 'test-search');
@@ -313,7 +279,6 @@ describe('Migration 100: mcp_enablement seeding', () => {
 
   test('tolerates malformed session.config JSON without throwing', () => {
     insertServer(db, 'srv-1', 'srv-1');
-    // Inject a session row with invalid JSON in `config`.
     db.prepare(
       `INSERT INTO sessions (id, title, config, created_at, last_active_at) VALUES ('bad', '', 'not-json', '', '')`
     ).run();
@@ -327,8 +292,6 @@ describe('Migration 100: mcp_enablement seeding', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].scope_id).toBe('good');
   });
-
-  // --- Top-level integration: all three seed paths together --------------
 
   test('seeds rows for room, space, and session sources in a single run', () => {
     insertServer(db, 'srv-1', 'test-search');

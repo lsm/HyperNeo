@@ -72,11 +72,9 @@ describe('QueueHealthSummary', () => {
 
     await findByText('Queue health');
     expect(getByTestId('queue-health-summary')).toBeTruthy();
-    // Breakdown entries render the source keys and failure reasons.
     await waitFor(() => {
       expect(getByText('github')).toBeTruthy();
       expect(getByText('slack')).toBeTruthy();
-      // ttl_expired appears in both the category and reason breakdowns.
       expect(getAllByText('ttl_expired')).toHaveLength(2);
       expect(getByText('pending_node_queue_overflow')).toBeTruthy();
     });

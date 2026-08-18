@@ -1,21 +1,6 @@
-/**
- * Tests for AppMcpServersSettings Component
- *
- * Tests the application-level MCP server registry settings UI including:
- * - Server list display
- * - Add server form validation
- * - Edit server functionality
- * - Delete confirmation dialog
- * - Enable/disable toggle
- */
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, screen, waitFor, fireEvent } from '@testing-library/preact';
 import type { AppMcpServer, AppSkill } from '@hyperneo/shared';
-
-// ---------------------------------------------------------------------------
-// Mocks - must use vi.hoisted for proper hoisting with vi.mock
-// ---------------------------------------------------------------------------
 
 const {
   mockCreateAppMcpServer,
@@ -41,7 +26,6 @@ const {
   mockSkillsUnsubscribe: vi.fn(),
 }));
 
-// Mock the appMcpStore
 vi.mock('../../../lib/app-mcp-store.ts', () => ({
   appMcpStore: {
     appMcpServers: { value: [] },
@@ -52,11 +36,6 @@ vi.mock('../../../lib/app-mcp-store.ts', () => ({
   },
 }));
 
-// Mock the skillsStore — AppMcpServersSettings subscribes to it so it can
-// annotate each server row with its wrapping skill (or warn about orphans).
-// `loaded` is the explicit "first snapshot delivered" signal the component
-// reads (distinct from `skills.length > 0`, which would mis-report the
-// "subscription delivered but zero rows" state as still-loading).
 vi.mock('../../../lib/skills-store.ts', () => ({
   skillsStore: {
     skills: { value: [] },
@@ -68,7 +47,6 @@ vi.mock('../../../lib/skills-store.ts', () => ({
   },
 }));
 
-// Mock api-helpers module
 vi.mock('../../../lib/api-helpers.ts', () => ({
   createAppMcpServer: (...args: unknown[]) => mockCreateAppMcpServer(...args),
   updateAppMcpServer: (...args: unknown[]) => mockUpdateAppMcpServer(...args),
@@ -76,7 +54,6 @@ vi.mock('../../../lib/api-helpers.ts', () => ({
   setAppMcpServerEnabled: (...args: unknown[]) => mockSetAppMcpServerEnabled(...args),
 }));
 
-// Mock toast module
 vi.mock('../../../lib/toast.ts', () => ({
   toast: {
     error: (msg: string) => mockToastError(msg),
@@ -86,7 +63,6 @@ vi.mock('../../../lib/toast.ts', () => ({
   },
 }));
 
-// Mock Modal component - correct path from __tests__/ is ../../ui/Modal.tsx
 vi.mock('../../ui/Modal.tsx', () => ({
   Modal: ({
     isOpen,
@@ -110,7 +86,6 @@ vi.mock('../../ui/Modal.tsx', () => ({
     ) : null,
 }));
 
-// Mock ConfirmModal component - correct path from __tests__/ is ../../ui/ConfirmModal.tsx
 vi.mock('../../ui/ConfirmModal.tsx', () => ({
   ConfirmModal: ({
     isOpen,
@@ -143,7 +118,6 @@ vi.mock('../../ui/ConfirmModal.tsx', () => ({
     ) : null,
 }));
 
-// Mock SettingsSection component - correct path is ../SettingsSection.tsx
 vi.mock('../SettingsSection.tsx', () => ({
   SettingsSection: ({
     title,
@@ -177,7 +151,6 @@ vi.mock('../SettingsSection.tsx', () => ({
   ),
 }));
 
-// Mock Button component - correct path from __tests__/ is ../../ui/Button.tsx
 vi.mock('../../ui/Button.tsx', () => ({
   Button: ({
     children,
@@ -209,14 +182,9 @@ vi.mock('../../ui/Button.tsx', () => ({
   ),
 }));
 
-// Import the component after mocks are set up
 import { AppMcpServersSettings } from '../AppMcpServersSettings.tsx';
 import { appMcpStore } from '../../../lib/app-mcp-store.ts';
 import { skillsStore } from '../../../lib/skills-store.ts';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function makeServer(id: string, overrides: Partial<AppMcpServer> = {}): AppMcpServer {
   return {
@@ -248,25 +216,17 @@ function makeMcpSkill(id: string, serverId: string, overrides: Partial<AppSkill>
   };
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe('AppMcpServersSettings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     cleanup();
 
-    // Reset store signals
     appMcpStore.appMcpServers.value = [];
     appMcpStore.loading.value = false;
     appMcpStore.error.value = null;
     skillsStore.skills.value = [];
-    // Default to loaded=true so the linkage annotations render in the
-    // steady-state tests below. Loading-specific tests flip it to false.
     skillsStore.loaded.value = true;
 
-    // Default mock implementations
     mockCreateAppMcpServer.mockResolvedValue({
       server: makeServer('new', { name: 'new-server' }),
     });
@@ -370,9 +330,6 @@ describe('AppMcpServersSettings', () => {
     });
 
     it('should subscribe to the skills store too (for wrapper linkage)', () => {
-      // The linkage annotations depend on the skills list — if we don't
-      // subscribe here, users see orphan warnings on every server while the
-      // skills subscription sits idle elsewhere.
       render(<AppMcpServersSettings />);
 
       expect(mockSkillsSubscribe).toHaveBeenCalled();
@@ -421,7 +378,6 @@ describe('AppMcpServersSettings', () => {
     it('shows the orphan warning when no skill wrapper exists', () => {
       const server = makeServer('s1', { name: 'fetch-mcp' });
       appMcpStore.appMcpServers.value = [server];
-      // A different skill wraps a different server — fetch-mcp is still orphan.
       skillsStore.skills.value = [makeMcpSkill('w1', 'some-other-server')];
 
       render(<AppMcpServersSettings />);
@@ -432,10 +388,6 @@ describe('AppMcpServersSettings', () => {
     });
 
     it('suppresses annotations while the skills subscription has not yet delivered a snapshot', () => {
-      // The skills LiveQuery hasn't fired its first snapshot yet — we should
-      // not flash "no skill wrapper" warnings before we know the truth. This
-      // is the `loaded === false` branch and is distinct from the
-      // "subscription delivered, zero skills exist" case below.
       const server = makeServer('s1', { name: 'chrome-devtools' });
       appMcpStore.appMcpServers.value = [server];
       skillsStore.skills.value = [];
@@ -448,10 +400,6 @@ describe('AppMcpServersSettings', () => {
     });
 
     it('shows orphan warning once the subscription has loaded even if there are zero skills', () => {
-      // Regression guard: previously the component used `skills.length > 0`
-      // as a proxy for "loaded", which mis-classified this perfectly valid
-      // steady state (MCP servers configured, no skill wrappers yet) as
-      // "still loading" and silently hid the actionable warning.
       const server = makeServer('s1', { name: 'fetch-mcp' });
       appMcpStore.appMcpServers.value = [server];
       skillsStore.skills.value = [];
@@ -481,7 +429,6 @@ describe('AppMcpServersSettings', () => {
       fireEvent.click(screen.getByText('Add MCP Server'));
       expect(screen.getByTestId('modal')).toBeTruthy();
 
-      // Use text content to find the cancel button inside the modal
       fireEvent.click(screen.getByText('Cancel'));
       expect(screen.queryByTestId('modal')).toBeNull();
     });
@@ -490,18 +437,14 @@ describe('AppMcpServersSettings', () => {
       appMcpStore.appMcpServers.value = [];
       render(<AppMcpServersSettings />);
 
-      // Open form
       fireEvent.click(screen.getByText('Add MCP Server'));
 
-      // Fill in name
       const nameInput = screen.getByPlaceholderText('e.g., my-mcp-server');
       fireEvent.change(nameInput, { target: { value: 'test-server' } });
 
-      // Fill in command (stdio type is default)
       const commandInput = screen.getByPlaceholderText('e.g., npx');
       fireEvent.change(commandInput, { target: { value: 'npx' } });
 
-      // Submit form - use the text inside the modal
       fireEvent.click(screen.getByText('Add Server'));
 
       await waitFor(() => {
@@ -519,10 +462,8 @@ describe('AppMcpServersSettings', () => {
       appMcpStore.appMcpServers.value = [];
       render(<AppMcpServersSettings />);
 
-      // Open form
       fireEvent.click(screen.getByText('Add MCP Server'));
 
-      // Try to submit without filling name - click Add Server inside modal
       fireEvent.click(screen.getByText('Add Server'));
 
       await waitFor(() => {
@@ -535,14 +476,11 @@ describe('AppMcpServersSettings', () => {
       appMcpStore.appMcpServers.value = [];
       render(<AppMcpServersSettings />);
 
-      // Open form
       fireEvent.click(screen.getByText('Add MCP Server'));
 
-      // Fill name but not command
       const nameInput = screen.getByPlaceholderText('e.g., my-mcp-server');
       fireEvent.change(nameInput, { target: { value: 'test-server' } });
 
-      // Submit form - click Add Server inside modal
       fireEvent.click(screen.getByText('Add Server'));
 
       await waitFor(() => {
@@ -555,14 +493,12 @@ describe('AppMcpServersSettings', () => {
       appMcpStore.appMcpServers.value = [];
       render(<AppMcpServersSettings />);
 
-      // Open form and fill required fields
       fireEvent.click(screen.getByText('Add MCP Server'));
       const nameInput = screen.getByPlaceholderText('e.g., my-mcp-server');
       fireEvent.change(nameInput, { target: { value: 'test-server' } });
       const commandInput = screen.getByPlaceholderText('e.g., npx');
       fireEvent.change(commandInput, { target: { value: 'npx' } });
 
-      // Submit form - click Add Server inside modal
       fireEvent.click(screen.getByText('Add Server'));
 
       await waitFor(() => {
@@ -574,14 +510,12 @@ describe('AppMcpServersSettings', () => {
       appMcpStore.appMcpServers.value = [];
       render(<AppMcpServersSettings />);
 
-      // Open form and fill required fields
       fireEvent.click(screen.getByText('Add MCP Server'));
       const nameInput = screen.getByPlaceholderText('e.g., my-mcp-server');
       fireEvent.change(nameInput, { target: { value: 'test-server' } });
       const commandInput = screen.getByPlaceholderText('e.g., npx');
       fireEvent.change(commandInput, { target: { value: 'npx' } });
 
-      // Submit form - click Add Server inside modal
       fireEvent.click(screen.getByText('Add Server'));
 
       await waitFor(() => {
@@ -594,14 +528,12 @@ describe('AppMcpServersSettings', () => {
       mockCreateAppMcpServer.mockRejectedValueOnce(new Error('Failed to add server'));
       render(<AppMcpServersSettings />);
 
-      // Open form and fill required fields
       fireEvent.click(screen.getByText('Add MCP Server'));
       const nameInput = screen.getByPlaceholderText('e.g., my-mcp-server');
       fireEvent.change(nameInput, { target: { value: 'test-server' } });
       const commandInput = screen.getByPlaceholderText('e.g., npx');
       fireEvent.change(commandInput, { target: { value: 'npx' } });
 
-      // Submit form - click Add Server inside modal
       fireEvent.click(screen.getByText('Add Server'));
 
       await waitFor(() => {
@@ -622,7 +554,6 @@ describe('AppMcpServersSettings', () => {
 
       expect(screen.getByTestId('modal')).toBeTruthy();
       expect(screen.getByTestId('modal-title').textContent).toBe('Edit MCP Server');
-      // Name should be pre-populated
       expect((screen.getByDisplayValue('test-server') as HTMLInputElement).value).toBe(
         'test-server'
       );
@@ -633,14 +564,11 @@ describe('AppMcpServersSettings', () => {
       appMcpStore.appMcpServers.value = servers;
       render(<AppMcpServersSettings />);
 
-      // Open edit form
       fireEvent.click(screen.getByTitle('Edit'));
 
-      // Change name
       const nameInput = screen.getByDisplayValue('old-name');
       fireEvent.change(nameInput, { target: { value: 'updated-name' } });
 
-      // Submit form - use Save Changes text inside modal
       fireEvent.click(screen.getByText('Save Changes'));
 
       await waitFor(() => {
@@ -658,12 +586,10 @@ describe('AppMcpServersSettings', () => {
       appMcpStore.appMcpServers.value = servers;
       render(<AppMcpServersSettings />);
 
-      // Open edit form and change name
       fireEvent.click(screen.getByTitle('Edit'));
       const nameInput = screen.getByDisplayValue('test-server');
       fireEvent.change(nameInput, { target: { value: 'new-name' } });
 
-      // Submit form - use Save Changes text inside modal
       fireEvent.click(screen.getByText('Save Changes'));
 
       await waitFor(() => {
@@ -800,18 +726,14 @@ describe('AppMcpServersSettings', () => {
       appMcpStore.appMcpServers.value = [];
       render(<AppMcpServersSettings />);
 
-      // Open form
       fireEvent.click(screen.getByText('Add MCP Server'));
 
-      // Select SSE type using the select element
       const selectEl = screen.getByRole('combobox');
       fireEvent.change(selectEl, { target: { value: 'sse' } });
 
-      // Fill name but not URL
       const nameInput = screen.getByPlaceholderText('e.g., my-mcp-server');
       fireEvent.change(nameInput, { target: { value: 'sse-server' } });
 
-      // Submit form - click Add Server inside modal
       fireEvent.click(screen.getByText('Add Server'));
 
       await waitFor(() => {
@@ -824,18 +746,14 @@ describe('AppMcpServersSettings', () => {
       appMcpStore.appMcpServers.value = [];
       render(<AppMcpServersSettings />);
 
-      // Open form
       fireEvent.click(screen.getByText('Add MCP Server'));
 
-      // Select HTTP type
       const selectEl = screen.getByRole('combobox');
       fireEvent.change(selectEl, { target: { value: 'http' } });
 
-      // Fill name but not URL
       const nameInput = screen.getByPlaceholderText('e.g., my-mcp-server');
       fireEvent.change(nameInput, { target: { value: 'http-server' } });
 
-      // Submit form - click Add Server inside modal
       fireEvent.click(screen.getByText('Add Server'));
 
       await waitFor(() => {
@@ -848,21 +766,17 @@ describe('AppMcpServersSettings', () => {
       appMcpStore.appMcpServers.value = [];
       render(<AppMcpServersSettings />);
 
-      // Open form
       fireEvent.click(screen.getByText('Add MCP Server'));
 
-      // Select HTTP type
       const selectEl = screen.getByRole('combobox');
       fireEvent.change(selectEl, { target: { value: 'http' } });
 
-      // Fill name and invalid URL
       const nameInput = screen.getByPlaceholderText('e.g., my-mcp-server');
       fireEvent.change(nameInput, { target: { value: 'http-server' } });
 
       const urlInput = screen.getByPlaceholderText('e.g., http://localhost:8080/sse');
       fireEvent.change(urlInput, { target: { value: 'invalid-url' } });
 
-      // Submit form - click Add Server inside modal
       fireEvent.click(screen.getByText('Add Server'));
 
       await waitFor(() => {

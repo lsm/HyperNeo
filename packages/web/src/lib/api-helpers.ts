@@ -1,27 +1,3 @@
-/**
- * API Helper Functions
- *
- * Typed convenience functions for common daemon operations.
- * These wrap MessageHub.call() with type safety and better DX.
- *
- * ## Non-Blocking Pattern:
- * All functions throw ConnectionNotReadyError immediately if not connected.
- * This prevents UI freezes when the connection is unstable.
- *
- * ## Usage:
- * ```typescript
- * try {
- *   const session = await createSession({ workspacePath: '/path' });
- * } catch (err) {
- *   if (err instanceof ConnectionNotReadyError) {
- *     toast.error('Not connected. Please wait...');
- *   } else {
- *     toast.error(err.message);
- *   }
- * }
- * ```
- */
-
 import type {
   CreateSessionRequest,
   CreateSessionResponse,
@@ -56,9 +32,6 @@ import type {
 import { connectionManager } from './connection-manager.ts';
 import { ConnectionNotReadyError } from './errors.ts';
 
-/**
- * Get hub or throw immediately (non-blocking helper)
- */
 function getHubOrThrow() {
   const hub = connectionManager.getHubIfConnected();
   if (!hub) {
@@ -66,8 +39,6 @@ function getHubOrThrow() {
   }
   return hub;
 }
-
-// ==================== Session Operations ====================
 
 export async function createSession(req: CreateSessionRequest): Promise<CreateSessionResponse> {
   const hub = getHubOrThrow();
@@ -106,11 +77,6 @@ export async function retryNowAfterRateLimit(sessionId: string): Promise<{ succe
   return await hub.request<{ success: boolean }>('session.retryNowAfterRateLimit', { sessionId });
 }
 
-/**
- * Manually retry a failed user message: reopens the `failed` row and re-enqueues
- * its durable delivery job. Backs the per-message "Retry" button shown when
- * `deliveryStatus === 'failed'`.
- */
 export async function retryMessageDelivery(
   sessionId: string,
   messageDbId: string
@@ -160,14 +126,10 @@ export async function archiveSession(
   });
 }
 
-// ==================== Authentication ====================
-
 export async function getAuthStatus(): Promise<GetAuthStatusResponse> {
   const hub = getHubOrThrow();
   return await hub.request<GetAuthStatusResponse>('auth.status');
 }
-
-// ==================== Provider Authentication ====================
 
 export async function listProviderAuthStatus(): Promise<ListProviderAuthStatusResponse> {
   const hub = getHubOrThrow();
@@ -188,8 +150,6 @@ export async function refreshProvider(providerId: string): Promise<ProviderRefre
   const hub = getHubOrThrow();
   return await hub.request<ProviderRefreshResponse>('auth.refresh', { providerId });
 }
-
-// ==================== Unified Provider Registry ====================
 
 export async function listProviders(): Promise<{
   providers: Array<ProviderRecord & { available: boolean }>;
@@ -251,8 +211,6 @@ export async function testProvider(id: string): Promise<{ healthy: boolean; erro
   return await hub.request<{ healthy: boolean; error?: string }>('providers.test', { id });
 }
 
-// ==================== Settings Operations ====================
-
 export async function updateGlobalSettings(
   updates: Partial<import('@hyperneo/shared').GlobalSettings>,
   options?: { timeout?: number }
@@ -267,11 +225,6 @@ export async function updateGlobalSettings(
   }>('settings.global.update', { updates }, options);
 }
 
-/**
- * List runtime-attached (in-process, SDK-type) MCP servers for a session.
- * Covers space-agent-tools, db-query, task-agent, node-agent, and any other
- * MCPs injected via SpaceRuntimeService/TaskAgentManager at runtime.
- */
 export async function listRuntimeMcpServers(
   sessionId: string
 ): Promise<import('@hyperneo/shared').ListRuntimeMcpServersResponse> {
@@ -281,8 +234,6 @@ export async function listRuntimeMcpServers(
     { sessionId }
   );
 }
-
-// ==================== Rewind Operations ====================
 
 export async function getRewindPoints(sessionId: string): Promise<{
   rewindPoints: Array<{ uuid: string; timestamp: number; content: string; turnNumber: number }>;
@@ -322,8 +273,6 @@ export async function executeRewind(
   });
 }
 
-// ==================== Selective Rewind Operations ====================
-
 export async function executeSelectiveRewind(
   sessionId: string,
   messageIds: string[],
@@ -336,15 +285,11 @@ export async function executeSelectiveRewind(
   );
 }
 
-// ==================== App MCP Registry Operations ====================
-
-/** List all application-level MCP servers */
 export async function listAppMcpServers(): Promise<McpRegistryListResponse> {
   const hub = getHubOrThrow();
   return await hub.request<McpRegistryListResponse>('mcp.registry.list');
 }
 
-/** Create a new application-level MCP server */
 export async function createAppMcpServer(
   req: CreateAppMcpServerRequest
 ): Promise<McpRegistryCreateResponse> {
@@ -352,7 +297,6 @@ export async function createAppMcpServer(
   return await hub.request<McpRegistryCreateResponse>('mcp.registry.create', req);
 }
 
-/** Update an application-level MCP server */
 export async function updateAppMcpServer(
   id: string,
   updates: Omit<UpdateAppMcpServerRequest, 'id'>
@@ -361,13 +305,11 @@ export async function updateAppMcpServer(
   return await hub.request<McpRegistryUpdateResponse>('mcp.registry.update', { id, ...updates });
 }
 
-/** Delete an application-level MCP server */
 export async function deleteAppMcpServer(id: string): Promise<McpRegistryDeleteResponse> {
   const hub = getHubOrThrow();
   return await hub.request<McpRegistryDeleteResponse>('mcp.registry.delete', { id });
 }
 
-/** Enable or disable an application-level MCP server */
 export async function setAppMcpServerEnabled(
   id: string,
   enabled: boolean
@@ -379,46 +321,31 @@ export async function setAppMcpServerEnabled(
   });
 }
 
-// ==================== Workspace History Operations ====================
-
-/** Get recently-used workspace paths from backend */
 export async function getWorkspaceHistory(): Promise<WorkspaceHistoryEntry[]> {
   const hub = getHubOrThrow();
   const { entries } = await hub.request<WorkspaceHistoryResponse>('workspace.history', {});
   return entries;
 }
 
-/** Record a workspace path as recently used (upserts into backend history) */
 export async function addWorkspaceToHistory(path: string): Promise<WorkspaceHistoryEntry> {
   const hub = getHubOrThrow();
   const { entry } = await hub.request<WorkspaceAddResponse>('workspace.add', { path });
   return entry;
 }
 
-/** Remove a workspace path from backend history */
 export async function removeWorkspaceFromHistory(path: string): Promise<boolean> {
   const hub = getHubOrThrow();
   const { success } = await hub.request<WorkspaceRemoveResponse>('workspace.remove', { path });
   return success;
 }
 
-/** Get git context (repo detection, branches, current/default branch) for a folder path */
 export async function getGitBranches(path: string): Promise<GitBranchesResponse> {
   const hub = getHubOrThrow();
   return await hub.request<GitBranchesResponse>('git.branches', { path });
 }
 
-/** Get read-only git status for a chat session's effective workspace */
 export async function getGitSessionStatus(sessionId: string): Promise<GitSessionStatusResponse> {
   const hub = getHubOrThrow();
-  // 25s is a pragmatic bound, not a hard one: the backend can exceed
-  // MessageHub's 10s default because getGitHubReviewSummary runs two serial
-  // `gh` calls (8s each) after per-file diffs. For typical repos this finishes
-  // well under 25s, but a large branch on a slow filesystem can surpass it —
-  // MessageHub rejects the client request without cancelling the handler, so an
-  // orphaned computation could still stack with the next poll. Raising this
-  // further has diminishing returns; the durable fix is server-side dedup /
-  // cancellation of the (pre-existing) serial per-file patch reads.
   return await hub.request<GitSessionStatusResponse>(
     'git.sessionStatus',
     { sessionId },
@@ -426,7 +353,6 @@ export async function getGitSessionStatus(sessionId: string): Promise<GitSession
   );
 }
 
-/** Get the full (untruncated) diff for a single file — read-only. */
 export async function getGitFileDiff(
   sessionId: string,
   path: string
@@ -439,9 +365,6 @@ export async function getGitFileDiff(
   );
 }
 
-// ==================== Session Workspace Operations ====================
-
-/** Set workspace on an existing session via inline workspace selector */
 export async function setSessionWorkspace(
   sessionId: string,
   workspacePath: string,
@@ -454,8 +377,6 @@ export async function setSessionWorkspace(
   }>('session.setWorkspace', { sessionId, workspacePath, worktreeMode });
   return session;
 }
-
-// ==================== Custom Endpoints ====================
 
 export async function listCustomEndpoints(): Promise<{
   endpoints: import('@hyperneo/shared').CustomEndpointConfig[];

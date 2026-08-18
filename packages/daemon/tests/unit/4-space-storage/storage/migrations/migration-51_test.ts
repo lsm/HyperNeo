@@ -1,10 +1,3 @@
-/**
- * Migration 51 Tests
- *
- * Migration 51 renames space_tasks.slot_role → agent_name and adds
- * completion_summary TEXT column.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -53,37 +46,30 @@ describe('Migration 51: slot_role → agent_name + completion_summary on space_t
   });
 
   test('fresh DB does NOT have agent_name or completion_summary (removed by M71)', () => {
-    // M51 added agent_name and completion_summary, but M71 later removed both columns.
-    // After a full migration, neither column exists on space_tasks.
     runMigrations(db, () => {});
     createTables(db);
 
     expect(columnExists(db, 'space_tasks', 'agent_name')).toBe(false);
     expect(columnExists(db, 'space_tasks', 'completion_summary')).toBe(false);
     expect(columnExists(db, 'space_tasks', 'slot_role')).toBe(false);
-    // M71 added labels column instead
     expect(columnExists(db, 'space_tasks', 'labels')).toBe(true);
   });
 
   test('fresh DB has correct indexes after M71 rebuild', () => {
-    // M71 rebuilt space_tasks removing old columns and their indexes.
     runMigrations(db, () => {});
     createTables(db);
 
     const indexes = getIndexes(db, 'space_tasks');
     expect(indexes).toContain('idx_space_tasks_space_id');
     expect(indexes).toContain('idx_space_tasks_workflow_run_id');
-    // Post-M71: these indexes were removed (their columns were dropped)
     expect(indexes).not.toContain('idx_space_tasks_status');
     expect(indexes).not.toContain('idx_space_tasks_workflow_node_id');
-    // M131 re-adds goal_id to space_tasks for space-native goals
     expect(indexes).toContain('idx_space_tasks_goal_id');
     expect(indexes).not.toContain('idx_space_tasks_custom_agent_id');
     expect(indexes).not.toContain('idx_space_tasks_task_agent_session_id');
   });
 
   test('existing DB with slot_role gets renamed to agent_name', () => {
-    // Build a schema that looks like a pre-migration-51 DB (post-migration-46 schema)
     db.exec(`
 			CREATE TABLE spaces (
 				id TEXT PRIMARY KEY,
@@ -186,7 +172,6 @@ describe('Migration 51: slot_role → agent_name + completion_summary on space_t
       `CREATE INDEX idx_space_tasks_task_agent_session_id ON space_tasks(task_agent_session_id)`
     );
 
-    // Insert test data with slot_role
     const now = Date.now();
     db.prepare(
       `INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
@@ -202,17 +187,14 @@ describe('Migration 51: slot_role → agent_name + completion_summary on space_t
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run('task-2', 'space-1', 'Task 2', 'Desc 2', null, '[]', now, now);
 
-    // Run migration
     runMigration51(db);
 
-    // Verify column rename
     expect(columnExists(db, 'space_tasks', 'agent_name')).toBe(true);
     expect(columnExists(db, 'space_tasks', 'completion_summary')).toBe(true);
     expect(columnExists(db, 'space_tasks', 'slot_role')).toBe(false);
   });
 
   test('existing DB: slot_role values are preserved as agent_name', () => {
-    // Minimal setup: just spaces + space_tasks with slot_role
     db.exec(`PRAGMA foreign_keys = OFF`);
     db.exec(`
 			CREATE TABLE spaces (
@@ -278,17 +260,14 @@ describe('Migration 51: slot_role → agent_name + completion_summary on space_t
       unknown
     >;
 
-    // slot_role value 'reviewer' should be in agent_name
     expect(t1['agent_name']).toBe('reviewer');
     expect(t1['completion_summary']).toBeNull();
 
-    // null slot_role → null agent_name
     expect(t2['agent_name']).toBeNull();
     expect(t2['completion_summary']).toBeNull();
   });
 
   test('migration is idempotent — running twice does not fail', () => {
-    // Create minimal schema without slot_role (already migrated state)
     db.exec(`PRAGMA foreign_keys = OFF`);
     db.exec(`
 			CREATE TABLE spaces (
@@ -330,13 +309,10 @@ describe('Migration 51: slot_role → agent_name + completion_summary on space_t
 		`);
     db.exec(`PRAGMA foreign_keys = ON`);
 
-    // First run
     expect(() => runMigration51(db)).not.toThrow();
 
-    // Second run should be a no-op (no error)
     expect(() => runMigration51(db)).not.toThrow();
 
-    // Column state after double run
     expect(columnExists(db, 'space_tasks', 'agent_name')).toBe(true);
     expect(columnExists(db, 'space_tasks', 'completion_summary')).toBe(true);
     expect(columnExists(db, 'space_tasks', 'slot_role')).toBe(false);

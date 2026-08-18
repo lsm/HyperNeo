@@ -1,10 +1,4 @@
-/**
- * @deprecated Use `TASK_STATUS_CONFIG` from `./task-status.js` instead.
- * This map will be removed once existing components are migrated to the
- * unified indicator design system.
- */
 export const TASK_STATUS_COLORS: Record<string, string> = {
-  // SpaceTaskStatus values (also covers Room 'draft')
   draft: 'text-slate-400',
   open: 'text-gray-400',
   in_progress: 'text-yellow-400',
@@ -13,7 +7,6 @@ export const TASK_STATUS_COLORS: Record<string, string> = {
   blocked: 'text-red-400',
   cancelled: 'text-gray-500',
   archived: 'text-gray-600',
-  // TaskStatus (room) values
   pending: 'text-gray-400',
   completed: 'text-green-400',
   needs_attention: 'text-red-400',

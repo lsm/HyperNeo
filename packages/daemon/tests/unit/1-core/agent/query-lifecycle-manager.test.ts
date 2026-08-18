@@ -1,14 +1,3 @@
-/**
- * Tests for QueryLifecycleManager
- *
- * Coverage for:
- * - stop: Stopping query with various options
- * - restart: Stop + start sequence
- * - reset: Full reset with cost tracking, state management, and notifications
- * - ensureQueryStarted: Starting query with interrupt handling
- * - startQueryAndEnqueue: Starting query and enqueueing messages
- */
-
 import { describe, test, expect, beforeEach, mock, spyOn, afterEach } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -32,7 +21,6 @@ describe('QueryLifecycleManager', () => {
   let mockContext: QueryLifecycleManagerContext;
   let startStreamingCalled: boolean;
 
-  // Mock spies
   let updateSessionSpy: ReturnType<typeof mock>;
   let updateMessageStatusSpy: ReturnType<typeof mock>;
   let getMessagesByStatusSpy: ReturnType<typeof mock>;
@@ -159,7 +147,6 @@ describe('QueryLifecycleManager', () => {
       queryAbortController: null,
       terminateTrackedAgentProcesses: terminateTrackedAgentProcessesSpy,
       snapshotTrackedAgentProcesses: snapshotTrackedAgentProcessesSpy,
-      // Cleanup support methods
       setCleaningUp: mock(() => {}),
       cleanupEventSubscriptions: mock(() => {}),
       clearModelsCache: clearModelsCacheSpy,
@@ -221,7 +208,6 @@ describe('QueryLifecycleManager', () => {
       mockContext.firstMessageReceived = true;
       manager = new QueryLifecycleManager(mockContext);
 
-      // Should not throw
       await manager.stop();
     });
 
@@ -250,7 +236,6 @@ describe('QueryLifecycleManager', () => {
       await manager.stop({ timeoutMs: 100 });
       const elapsed = Date.now() - start;
 
-      // Should have timed out around 100ms
       expect(elapsed).toBeGreaterThanOrEqual(90);
       expect(elapsed).toBeLessThan(200);
     });
@@ -259,7 +244,6 @@ describe('QueryLifecycleManager', () => {
       mockContext.queryPromise = Promise.reject(new Error('Query failed'));
       manager = new QueryLifecycleManager(mockContext);
 
-      // Should not throw with catchQueryErrors: true
       await manager.stop({ catchQueryErrors: true });
     });
 
@@ -280,7 +264,6 @@ describe('QueryLifecycleManager', () => {
       mockContext.queryObject = null;
       manager = new QueryLifecycleManager(mockContext);
 
-      // Should not throw
       await manager.stop();
     });
 
@@ -288,7 +271,6 @@ describe('QueryLifecycleManager', () => {
       mockContext.queryObject = {} as QueryLifecycleManagerContext['queryObject'];
       manager = new QueryLifecycleManager(mockContext);
 
-      // Should not throw
       await manager.stop();
     });
 
@@ -356,7 +338,6 @@ describe('QueryLifecycleManager', () => {
       mockContext.firstMessageReceived = true;
       manager = new QueryLifecycleManager(mockContext);
 
-      // Should not throw
       await manager.stop();
     });
 
@@ -416,7 +397,6 @@ describe('QueryLifecycleManager', () => {
         interrupt: mock(async () => {}),
         close: mock(() => {
           callOrder.push('close');
-          // Simulate subprocess exit after a short delay (as it would in reality)
           setTimeout(() => {
             callOrder.push('process-exited');
             resolveExit!();
@@ -430,7 +410,6 @@ describe('QueryLifecycleManager', () => {
 
       await manager.stop();
 
-      // Process should have exited before stop() returned
       expect(callOrder).toContain('close');
       expect(callOrder).toContain('process-exited');
       expect(mockContext.processExitedPromise).toBeNull();
@@ -444,7 +423,6 @@ describe('QueryLifecycleManager', () => {
       } as unknown as QueryLifecycleManagerContext['queryObject'];
       mockContext.firstMessageReceived = true;
       mockContext.queryPromise = Promise.resolve();
-      // A promise that never resolves — simulates a stuck subprocess
       mockContext.processExitedPromise = new Promise<void>(() => {});
       manager = new QueryLifecycleManager(mockContext);
 
@@ -452,12 +430,9 @@ describe('QueryLifecycleManager', () => {
       await manager.stop({ timeoutMs: 100 });
       const elapsed = Date.now() - start;
 
-      // Should have timed out at the specified timeout
       expect(elapsed).toBeGreaterThanOrEqual(90);
       expect(elapsed).toBeLessThan(300);
-      // close() must be called so the subprocess is not silently leaked
       expect(closeMock).toHaveBeenCalled();
-      // All three context references are cleared even after a timeout
       expect(mockContext.queryObject).toBeNull();
       expect(mockContext.queryPromise).toBeNull();
       expect(mockContext.processExitedPromise).toBeNull();
@@ -473,7 +448,6 @@ describe('QueryLifecycleManager', () => {
       mockContext.processExitedPromise = null;
       manager = new QueryLifecycleManager(mockContext);
 
-      // Should not throw or hang
       await manager.stop();
 
       expect(mockContext.queryObject).toBeNull();
@@ -486,7 +460,6 @@ describe('QueryLifecycleManager', () => {
       } as unknown as QueryLifecycleManagerContext['queryObject'];
       mockContext.firstMessageReceived = true;
       mockContext.queryPromise = Promise.resolve();
-      // Process already exited
       mockContext.processExitedPromise = Promise.resolve();
       manager = new QueryLifecycleManager(mockContext);
 
@@ -494,44 +467,33 @@ describe('QueryLifecycleManager', () => {
       await manager.stop();
       const elapsed = Date.now() - start;
 
-      // Should complete near-instantly
       expect(elapsed).toBeLessThan(100);
       expect(mockContext.processExitedPromise).toBeNull();
     });
 
     test('snapshots processExitedPromise before queryPromise settles (regression for race condition)', async () => {
-      // Simulate the race: runQuery's finally block clears ctx.processExitedPromise during settlement.
-      // The old code read this.ctx.processExitedPromise AFTER awaiting queryPromise,
-      // so by then the finally block had already nulled it — making the exit wait a no-op.
-      // The fix snapshots it at the top of stop(), before any awaits.
       let resolveQueryPromise!: () => void;
       let resolveProcessExited!: () => void;
       const processExitedPromise = new Promise<void>((r) => (resolveProcessExited = r));
 
-      // When queryPromise resolves, its finally block clears ctx.processExitedPromise
-      // (mirrors what runQuery() does in production)
       const queryPromise = new Promise<void>((r) => (resolveQueryPromise = r)).then(() => {
-        mockContext.processExitedPromise = null; // mirrors runQuery()'s finally block
+        mockContext.processExitedPromise = null;
       });
 
       mockContext.queryPromise = queryPromise;
       mockContext.processExitedPromise = processExitedPromise;
       manager = new QueryLifecycleManager(mockContext);
 
-      // Start stop() but don't await yet
       const stopPromise = manager.stop();
 
-      // Let queryPromise resolve (clears ctx.processExitedPromise as in production)
       resolveQueryPromise();
-      await Promise.resolve(); // yield to let .then() run
+      await Promise.resolve();
 
-      // stop() should still be waiting for process exit (via the snapshot)
       let stopResolved = false;
       stopPromise.then(() => (stopResolved = true));
       await Promise.resolve();
-      expect(stopResolved).toBe(false); // not done yet — waiting for process exit
+      expect(stopResolved).toBe(false);
 
-      // Now resolve process exit — stop() should complete
       resolveProcessExited();
       await stopPromise;
       expect(stopResolved).toBe(true);
@@ -563,10 +525,6 @@ describe('QueryLifecycleManager', () => {
     });
 
     test('releases delivery waiters when restart fails before a replacement query starts (Codex P1)', async () => {
-      // The post-stop setIdle suppresses the waiter drain (the turn continues in
-      // the restarted query). If startStreamingQuery throws, no replacement is
-      // established — release the waiter so the durable turn doesn't hang
-      // `processing` and block the active-turn slot.
       const failingContext = createMockContext({
         startStreamingQuery: async () => {
           throw new Error('Start failed');
@@ -579,10 +537,6 @@ describe('QueryLifecycleManager', () => {
     });
 
     test('does NOT release waiters when restart fails before the old query is stopped (Codex P1)', async () => {
-      // A failure before stop() — here a session.errorClear subscriber rejecting
-      // — leaves the original SDK query still running. Releasing the waiter would
-      // complete the delivery job and free the active-turn slot mid-turn. Only
-      // release once the suppressed idle is reached (stop succeeded).
       const failingContext = createMockContext({
         internalEventBus: {
           publish: mock(async () => {
@@ -612,25 +566,21 @@ describe('QueryLifecycleManager', () => {
       });
       const failingManager = new QueryLifecycleManager(failingContext);
 
-      // Even with interrupt failure, should continue
       await failingManager.restart();
     });
   });
 
   describe('reset', () => {
     test('returns early when no query is running', async () => {
-      // No queryObject or queryPromise set
       const result = await manager.reset();
 
       expect(result.success).toBe(true);
       expect(resetCircuitBreakerSpy).toHaveBeenCalled();
       expect(setIdleSpy).toHaveBeenCalled();
-      // Should not start a new query in early return path
       expect(startStreamingCalled).toBe(false);
     });
 
     test('clears models cache on early return when no query is running', async () => {
-      // No queryObject or queryPromise set
       await manager.reset();
 
       expect(clearModelsCacheSpy).toHaveBeenCalled();
@@ -724,7 +674,6 @@ describe('QueryLifecycleManager', () => {
 
       await manager.reset();
 
-      // Should have updated metadata with preserved cost
       expect(updateSessionSpy).toHaveBeenCalled();
       expect(mockContext.session.metadata.costBaseline).toBeCloseTo(0.15, 10);
       expect(mockContext.session.metadata.lastSdkCost).toBe(0);
@@ -758,11 +707,6 @@ describe('QueryLifecycleManager', () => {
     });
 
     test('no-restart reset drains delivery waiters; restart reset suppresses them (Codex P1)', async () => {
-      // A no-restart reset is a TERMINAL idle (no startStreamingQuery follows):
-      // the turn-end waiter must drain or driveDeliveryTurn hangs `processing`,
-      // blocking the active-turn slot. A restart reset is a retry mid-point (the
-      // query re-starts immediately after) → suppress the drain. The
-      // post-stop setIdle gates suppressDeliveryWaiters on restartAfter.
       mockContext.queryObject = {
         interrupt: mock(async () => {}),
       } as unknown as QueryLifecycleManagerContext['queryObject'];
@@ -772,9 +716,6 @@ describe('QueryLifecycleManager', () => {
       await manager.reset({ restartAfter: false });
       expect(setIdleSpy).toHaveBeenCalledWith({ suppressDeliveryWaiters: false });
 
-      // The first reset's stop() nulls queryObject/queryPromise; re-establish a
-      // running query so the restart half exercises the post-stop setIdle (not
-      // the no-query early-return path). Isolate the spy across halves.
       setIdleSpy.mockClear();
       mockContext.queryObject = {
         interrupt: mock(async () => {}),
@@ -786,9 +727,6 @@ describe('QueryLifecycleManager', () => {
     });
 
     test('a restartAfter reset that fails replacement startup releases the waiter (Codex P1)', async () => {
-      // The suppressed idle (restartAfter) deferred the drain to the restart;
-      // if cache-clear / resume-choice / startStreamingQuery then throws, the
-      // catch must release the waiter or the durable turn hangs `processing`.
       const failingContext = createMockContext({
         queryObject: {
           interrupt: mock(async () => {}),
@@ -846,7 +784,6 @@ describe('QueryLifecycleManager', () => {
       const result = await manager.reset();
 
       expect(result.success).toBe(true);
-      // Default restartAfter is true
       expect(startStreamingCalled).toBe(true);
     });
 
@@ -874,23 +811,19 @@ describe('QueryLifecycleManager', () => {
       mockContext.queryPromise = new Promise((resolve) => setTimeout(resolve, 50));
       manager = new QueryLifecycleManager(mockContext);
 
-      // Start two stops concurrently
       const [result1, result2] = await Promise.all([manager.stop(), manager.stop()]);
 
-      // Both should complete without error
       expect(result1).toBeUndefined();
       expect(result2).toBeUndefined();
     });
 
     test('restart calls start after stop', async () => {
-      // Verify the stop-then-start sequence in restart
       await manager.restart();
       expect(startStreamingCalled).toBe(true);
     });
 
     test('stop with undefined options uses defaults', async () => {
       await manager.stop();
-      // Should complete without error using default timeout
     });
   });
 
@@ -900,7 +833,6 @@ describe('QueryLifecycleManager', () => {
         yield 'test';
       });
       mockContext = createMockContext();
-      // Set queryPromise to indicate an active query
       mockContext.queryPromise = Promise.resolve();
       manager = new QueryLifecycleManager(mockContext);
 
@@ -910,17 +842,11 @@ describe('QueryLifecycleManager', () => {
     });
 
     test('detects stale running state and restarts when isRunning=true but queryPromise=null', async () => {
-      // Simulate stale state: messageQueue thinks it's running but queryPromise is null
-      // This is a defensive check for edge cases (e.g., restored sessions with stale flags).
-      // The primary race (between for-await loop ending and finally block) is handled by
-      // the early messageQueue.stop() in QueryRunner.runQuery().
       messageQueue.start(async function* () {
         yield 'test';
       });
       mockContext = createMockContext();
-      // queryPromise is null (default) — this is the stale state
       mockContext.queryPromise = null;
-      // Set a stale queryObject to verify it gets cleared
       mockContext.queryObject = { close: () => {} } as unknown as typeof mockContext.queryObject;
       manager = new QueryLifecycleManager(mockContext);
 
@@ -928,17 +854,12 @@ describe('QueryLifecycleManager', () => {
 
       await manager.ensureQueryStarted();
 
-      // Should have force-stopped the stale queue, cleared queryObject, and started a new query
       expect(stopSpy).toHaveBeenCalled();
       expect(mockContext.queryObject).toBeNull();
       expect(startStreamingCalled).toBe(true);
     });
 
     test('terminates orphaned tracked processes when recovering stale running state', async () => {
-      // Clean-slate guard: stale running state (queue running, no queryPromise) is
-      // usually an SDK subprocess that died without the queue being stopped — but it
-      // may also be an orphan still holding the workspace lock. The recovery must
-      // force-terminate the tracked set before starting a fresh query.
       messageQueue.start(async function* () {
         yield 'test';
       });
@@ -949,24 +870,16 @@ describe('QueryLifecycleManager', () => {
 
       await manager.ensureQueryStarted();
 
-      // Snapshot was taken and the tracked process group was asked to terminate.
       expect(snapshotTrackedAgentProcessesSpy).toHaveBeenCalled();
       expect(terminateTrackedAgentProcessesSpy).toHaveBeenCalledWith({
         forceDelayMs: 2000,
         processes: [],
         noPidProcesses: [],
       });
-      // Recovery still proceeds to start a fresh query.
       expect(startStreamingCalled).toBe(true);
     });
 
     test('does not clear a replacement query exit tracking when it replaces the orphan during recovery', async () => {
-      // Codex P1 regression: during the stale-running recovery's bounded wait
-      // for the orphaned process to exit, a concurrent ensureQueryStarted() can
-      // start the replacement query, whose trackAgentProcess() installs a NEW
-      // processExitedPromise. The recovery must only clear the exit tracking it
-      // captured — clearing the replacement's would drop its exit tracking and
-      // re-open the workspace-lock collision the guard exists to close.
       messageQueue.start(async function* () {
         yield 'test';
       });
@@ -974,10 +887,8 @@ describe('QueryLifecycleManager', () => {
       mockContext.queryPromise = null;
       mockContext.queryObject = null;
 
-      // Orphan's exit promise resolves after a short delay (within the 5s cap).
       const orphanExit = new Promise<void>((resolve) => setTimeout(resolve, 30));
       mockContext.processExitedPromise = orphanExit;
-      // The replacement query's exit promise — installed while recovery awaits.
       const replacementExit = new Promise<void>(() => {});
       setTimeout(() => {
         mockContext.processExitedPromise = replacementExit;
@@ -992,9 +903,6 @@ describe('QueryLifecycleManager', () => {
       manager = new QueryLifecycleManager(mockContext);
       await manager.ensureQueryStarted();
 
-      // The orphan was awaited to completion, but the reset must NOT have fired
-      // (the tracking no longer belongs to the orphan) and the replacement's
-      // promise must be intact.
       expect(resetCalled).toBe(false);
       expect(mockContext.processExitedPromise).toBe(replacementExit);
       expect(startStreamingCalled).toBe(true);
@@ -1013,13 +921,10 @@ describe('QueryLifecycleManager', () => {
     });
 
     test('validates SDK session when sdkSessionId exists and file is present', async () => {
-      // When session has sdkSessionId and the file exists, query starts after validation.
-      // This requires a temp dir so the file can be located by the file manager.
       const tmpTestDir = mkdtempSync(join(tmpdir(), 'kai-test-'));
       try {
         process.env.TEST_SDK_SESSION_DIR = tmpTestDir;
         const sdkSessionId = 'sdk-session-abc';
-        // Create file at current workspace path
         const projectKey = '/test/workspace'.replace(/[/.]/g, '-');
         mkdirSync(join(tmpTestDir, 'projects', projectKey), { recursive: true });
         writeFileSync(join(tmpTestDir, 'projects', projectKey, `${sdkSessionId}.jsonl`), '');
@@ -1030,7 +935,6 @@ describe('QueryLifecycleManager', () => {
 
         await manager.ensureQueryStarted();
 
-        // File found → query should start
         expect(startStreamingCalled).toBe(true);
       } finally {
         delete process.env.TEST_SDK_SESSION_DIR;
@@ -1067,7 +971,6 @@ describe('QueryLifecycleManager', () => {
       });
       manager = new QueryLifecycleManager(mockContext);
 
-      // Should not throw
       await manager.ensureQueryStarted();
       expect(startStreamingCalled).toBe(true);
     });
@@ -1107,12 +1010,10 @@ describe('QueryLifecycleManager', () => {
         });
         manager = new QueryLifecycleManager(mockContext);
 
-        // This should not hang due to the Promise.race with timeout
         const start = Date.now();
         await manager.ensureQueryStarted();
         const elapsed = Date.now() - start;
 
-        // Should complete within reasonable time (5s timeout + some buffer)
         expect(elapsed).toBeLessThan(6000);
         expect(startStreamingCalled).toBe(true);
       },
@@ -1180,10 +1081,8 @@ describe('QueryLifecycleManager', () => {
 
       await manager.startQueryAndEnqueue('msg-123', 'Hello');
 
-      // Give time for the catch handler to execute
       await new Promise((r) => setTimeout(r, 10));
 
-      // Should not call handleError for user interruption
       expect(handleErrorSpy).not.toHaveBeenCalled();
     });
 
@@ -1202,12 +1101,9 @@ describe('QueryLifecycleManager', () => {
 
       await manager.startQueryAndEnqueue('msg-123', 'Hello');
 
-      // Give time for the catch handler to execute
       await new Promise((r) => setTimeout(r, 200));
 
-      // Should have called handleError with TIMEOUT category
       expect(handleErrorSpy).toHaveBeenCalled();
-      // Should have retried enqueue after reset
       expect(callCount).toBe(2);
     });
 
@@ -1218,9 +1114,7 @@ describe('QueryLifecycleManager', () => {
       await manager.startQueryAndEnqueue('msg-123', 'Hello');
       await new Promise((r) => setTimeout(r, 10));
 
-      // Should have called handleError
       expect(handleErrorSpy).toHaveBeenCalled();
-      // Should set idle after non-timeout error
       expect(setIdleSpy).toHaveBeenCalled();
     });
 
@@ -1228,10 +1122,8 @@ describe('QueryLifecycleManager', () => {
       const timeoutError = new Error('Queue timeout');
       timeoutError.name = 'MessageQueueTimeoutError';
 
-      // First call throws timeout, subsequent calls also fail
       spyOn(messageQueue, 'enqueueWithId').mockRejectedValue(timeoutError);
 
-      // Reset will fail because startStreamingQuery fails on second call
       let callCount = 0;
       mockContext = createMockContext({
         startStreamingQuery: async () => {
@@ -1248,7 +1140,6 @@ describe('QueryLifecycleManager', () => {
       await manager.startQueryAndEnqueue('msg-123', 'Hello');
       await new Promise((r) => setTimeout(r, 200));
 
-      // Should set idle after reset failure
       expect(setIdleSpy).toHaveBeenCalled();
     });
 
@@ -1256,13 +1147,11 @@ describe('QueryLifecycleManager', () => {
       const timeoutError = new Error('Queue timeout');
       timeoutError.name = 'MessageQueueTimeoutError';
 
-      // Always throw timeout error
       spyOn(messageQueue, 'enqueueWithId').mockRejectedValue(timeoutError);
 
       await manager.startQueryAndEnqueue('msg-123', 'Hello');
       await new Promise((r) => setTimeout(r, 200));
 
-      // Should set idle after retry fails
       expect(setIdleSpy).toHaveBeenCalled();
     });
 
@@ -1292,7 +1181,6 @@ describe('QueryLifecycleManager', () => {
 
   describe('restartQuery', () => {
     test('returns early if message queue is not running', async () => {
-      // Queue is not running by default
       await manager.restartQuery();
 
       expect(startStreamingCalled).toBe(false);
@@ -1387,7 +1275,6 @@ describe('QueryLifecycleManager', () => {
       });
       manager = new QueryLifecycleManager(mockContext);
 
-      // Should not throw
       await manager.executeDeferredRestartIfPending();
 
       expect(mockContext.pendingRestartReason).toBeNull();
@@ -1440,7 +1327,6 @@ describe('QueryLifecycleManager', () => {
       });
       manager = new QueryLifecycleManager(mockContext);
 
-      // Should not throw
       await manager.cleanup();
 
       expect(clearModelsCacheSpy).toHaveBeenCalled();
@@ -1468,28 +1354,13 @@ describe('QueryLifecycleManager', () => {
       });
       manager = new QueryLifecycleManager(mockContext);
 
-      // Should not throw
       await manager.cleanup();
     });
   });
 
-  /**
-   * Regression tests for the worktree path fix (PR #518).
-   *
-   * The SDK subprocess uses its CWD (worktree path for worktree sessions) to
-   * determine where to write .jsonl session files. Before the fix, all 3 call
-   * sites that validate/repair the SDK session file used session.workspacePath,
-   * causing lookups to search the wrong directory and falsely clear sdkSessionId.
-   *
-   * Each method that calls validateAndRepairSDKSession gets its own sub-block.
-   */
   describe('SDK workspace path resolution', () => {
     let tmpDir: string;
 
-    /**
-     * Helper: create a valid (empty) JSONL fixture at the given path.
-     * An empty file passes validateAndRepairSDKSession (no orphaned tool_results).
-     */
     function createSdkFile(basePath: string, sdkSessionId: string): void {
       const projectKey = basePath.replace(/[/.]/g, '-');
       const sessionDir = join(tmpDir, 'projects', projectKey);
@@ -1526,7 +1397,6 @@ describe('QueryLifecycleManager', () => {
 
           await manager.restart();
 
-          // File found at worktree path → sdkSessionId preserved
           expect(mockContext.session.sdkSessionId).toBe(sdkSessionId);
         },
         { timeout: 5000 }
@@ -1539,7 +1409,6 @@ describe('QueryLifecycleManager', () => {
           createSdkFile('/test/workspace', sdkSessionId);
 
           mockContext.session.sdkSessionId = sdkSessionId;
-          // No worktree set
           manager = new QueryLifecycleManager(mockContext);
 
           await manager.restart();
@@ -1553,7 +1422,6 @@ describe('QueryLifecycleManager', () => {
         'preserves sdkSessionId when file is at workspacePath but session has worktree',
         async () => {
           const sdkSessionId = 'sdk-restart-wrong-dir';
-          // File is at workspacePath, NOT at worktreePath
           createSdkFile('/test/workspace', sdkSessionId);
 
           mockContext.session.sdkSessionId = sdkSessionId;
@@ -1567,7 +1435,6 @@ describe('QueryLifecycleManager', () => {
 
           await manager.restart();
 
-          // sdkSessionId preserved — SDK will attempt recovery on next query
           expect(mockContext.session.sdkSessionId).toBe(sdkSessionId);
         },
         { timeout: 5000 }
@@ -1623,7 +1490,6 @@ describe('QueryLifecycleManager', () => {
 
           await manager.reset({ restartAfter: true });
 
-          // sdkSessionId preserved — SDK will attempt recovery on next query
           expect(mockContext.session.sdkSessionId).toBe(sdkSessionId);
         },
         { timeout: 5000 }
@@ -1671,20 +1537,12 @@ describe('QueryLifecycleManager', () => {
 
           await manager.ensureQueryStarted();
 
-          // sdkSessionId preserved — SDK will attempt recovery on next query
           expect(mockContext.session.sdkSessionId).toBe(sdkSessionId);
         },
         { timeout: 5000 }
       );
     });
 
-    /**
-     * Regression tests for Task #12: cross-workspace / worktree resume.
-     *
-     * When a session's effective CWD changes between daemon restarts (e.g. a worktree
-     * is added after the session was created), the SDK session file lives under the
-     * OLD project directory. The fix locates and migrates the file before resume.
-     */
     describe('cross-workspace resume (Task #12)', () => {
       test(
         'migrates session file from sdkOriginPath to current CWD when they differ',
@@ -1693,10 +1551,8 @@ describe('QueryLifecycleManager', () => {
           const originWorkspace = '/origin/workspace';
           const currentWorktree = '/current/worktree';
 
-          // File exists at the origin workspace's project dir
           createSdkFile(originWorkspace, sdkSessionId);
 
-          // Session has sdkOriginPath = origin, but worktree CWD = current
           mockContext.session.sdkSessionId = sdkSessionId;
           mockContext.session.sdkOriginPath = originWorkspace;
           mockContext.session.worktree = {
@@ -1709,13 +1565,10 @@ describe('QueryLifecycleManager', () => {
 
           await manager.ensureQueryStarted();
 
-          // sdkSessionId preserved (migration succeeded)
           expect(mockContext.session.sdkSessionId).toBe(sdkSessionId);
 
-          // sdkOriginPath updated to current worktree path after migration
           expect(mockContext.session.sdkOriginPath).toBe(currentWorktree);
 
-          // DB updated with new sdkOriginPath
           expect(updateSessionSpy).toHaveBeenCalledWith('test-session', {
             sdkOriginPath: currentWorktree,
           });
@@ -1727,20 +1580,16 @@ describe('QueryLifecycleManager', () => {
         'finds session file via global scan when sdkOriginPath is not set (legacy sessions)',
         async () => {
           const sdkSessionId = 'sdk-global-scan-legacy';
-          // Simulate a legacy session: file is at workspace path, no sdkOriginPath stored
           const legacyWorkspace = '/legacy/workspace';
           createSdkFile(legacyWorkspace, sdkSessionId);
 
-          // Session has sdkSessionId but no sdkOriginPath (pre-fix session)
           mockContext.session.sdkSessionId = sdkSessionId;
           mockContext.session.sdkOriginPath = undefined;
-          // No worktree — current workspace differs from where the file is
           mockContext.session.workspacePath = '/new/different/workspace';
           manager = new QueryLifecycleManager(mockContext);
 
           await manager.ensureQueryStarted();
 
-          // sdkSessionId preserved — global scan found and migrated the file
           expect(mockContext.session.sdkSessionId).toBe(sdkSessionId);
         },
         { timeout: 5000 }
@@ -1749,17 +1598,14 @@ describe('QueryLifecycleManager', () => {
       test(
         'blocks query and emits sdk_resume_choice action when transcript file not found anywhere',
         async () => {
-          // sdkSessionId set but no file exists anywhere under TEST_SDK_SESSION_DIR
           mockContext.session.sdkSessionId = 'sdk-completely-missing';
           mockContext.session.sdkOriginPath = '/some/deleted/workspace';
           manager = new QueryLifecycleManager(mockContext);
 
           await manager.ensureQueryStarted();
 
-          // Query must NOT start — user must choose first
           expect(startStreamingCalled).toBe(false);
 
-          // A sdk_resume_choice action message must be saved to DB
           expect(saveHyperNeoActionMessageSpy).toHaveBeenCalledTimes(1);
           const savedMsg = saveHyperNeoActionMessageSpy.mock.calls[0][1];
           expect(savedMsg.type).toBe('hyperneo_action');
@@ -1767,7 +1613,6 @@ describe('QueryLifecycleManager', () => {
           expect(savedMsg.resolved).toBe(false);
           expect(savedMsg.session_id).toBe('test-session');
 
-          // The action message must be broadcast via state.sdkMessages.delta
           expect(publishSpy).toHaveBeenCalledWith(
             'state.sdkMessages.delta',
             expect.objectContaining({
@@ -1788,20 +1633,16 @@ describe('QueryLifecycleManager', () => {
         'sets sdkOriginPath for sessions that have the file at current workspace but no origin recorded',
         async () => {
           const sdkSessionId = 'sdk-set-origin-on-existing';
-          // File exists at the current workspace (e.g., session was created here)
           createSdkFile('/test/workspace', sdkSessionId);
 
           mockContext.session.sdkSessionId = sdkSessionId;
-          mockContext.session.sdkOriginPath = undefined; // not set yet
-          // No worktree — current workspace = /test/workspace (from createMockContext)
+          mockContext.session.sdkOriginPath = undefined;
           manager = new QueryLifecycleManager(mockContext);
 
           await manager.ensureQueryStarted();
 
-          // sdkOriginPath should now be set to the current workspace
           expect(mockContext.session.sdkOriginPath).toBe('/test/workspace');
 
-          // DB updated
           expect(updateSessionSpy).toHaveBeenCalledWith('test-session', {
             sdkOriginPath: '/test/workspace',
           });

@@ -1,12 +1,3 @@
-/**
- * TaskAgentManager agent-activity listener tests.
- *
- * Verifies that SDK tool-call / tool-result events refresh
- * NodeExecution.lastActivityAt through the real internalEventBus — the primary
- * "agent is plainly working" signal — and that the refresh is best-effort (a
- * session with no execution row is silently ignored, never thrown into the event
- * path). Companion to task-agent-rate-limit-listener.test.ts.
- */
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager';
@@ -50,7 +41,6 @@ describe('TaskAgentManager agent-activity listener', () => {
     spaceId = space.id;
     taskRepo.createTask({ spaceId: space.id, title: 'T', description: '' });
 
-    // workflow + run for the node_executions FK.
     const now = Date.now();
     (db as unknown as { prepare: (sql: string) => { run: (...args: unknown[]) => void } })
       .prepare(
@@ -68,13 +58,10 @@ describe('TaskAgentManager agent-activity listener', () => {
       status: 'in_progress',
     });
     executionId = exec.id;
-    // Sanity: lastActivityAt starts null and is only advanced by activity.
     expect(exec.lastActivityAt).toBeNull();
 
     bus = createDaemonInternalEventBus();
 
-    // Minimal config: db / taskRepo / nodeExecutionRepo / internalEventBus are
-    // what the constructor + activity listener touch. The rest are stubbed.
     const config = {
       db: { getDatabase: () => db },
       taskRepo,
@@ -127,7 +114,6 @@ describe('TaskAgentManager agent-activity listener', () => {
 
     const after = nodeExecutionRepo.getById(executionId)!;
     expect(after.lastActivityAt).toBe(1_700_000_000_002);
-    // updated_at is the state-write timestamp and must be untouched by activity.
     expect(after.updatedAt).toBe(before.updatedAt);
   });
 
@@ -142,15 +128,10 @@ describe('TaskAgentManager agent-activity listener', () => {
     }).not.toThrow();
     await flush();
 
-    // The unrelated execution is untouched.
     expect(nodeExecutionRepo.getById(executionId)!.lastActivityAt).toBeNull();
   });
 
   it('stamps lastActivityAt when a queued peer message is delivered via flushPendingMessagesForTarget', async () => {
-    // Queued peer messages (the target was unavailable when sent) are later
-    // drained by flushPendingMessagesForTarget, which calls injectSubSessionMessage
-    // directly — bypassing the router's immediate-delivery stamp. That common
-    // activation/rehydration path must also refresh lastActivityAt.
     const pendingRepo = new PendingAgentMessageRepository(
       db as unknown as Parameters<typeof PendingAgentMessageRepository.prototype.constructor>[0]
     );
@@ -174,8 +155,6 @@ describe('TaskAgentManager agent-activity listener', () => {
     });
     expect(nodeExecutionRepo.getById(executionId)!.lastActivityAt).toBeNull();
 
-    // Stub the inject so the queued delivery "succeeds" without a live session —
-    // the activity stamp is what's under test, not the inject mechanism.
     (
       manager2 as unknown as { injectSubSessionMessage: () => Promise<string> }
     ).injectSubSessionMessage = async () => 'flushed-msg-id';

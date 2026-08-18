@@ -206,7 +206,6 @@ describe('CommandRegistry', () => {
       altKey: false,
       code: 'Period',
     } as KeyboardEvent;
-    // Insertion order is preserved by Map.values(); first-registered wins.
     expect(reg.findByShortcut(event)).toBe(first);
     Object.defineProperty(navigator, 'platform', { value: original, configurable: true });
   });

@@ -72,7 +72,6 @@ function SwitchFn({
         e.preventDefault();
         toggle();
       } else if (e.key === 'Enter') {
-        // Submit the form if in one
         const form = (e.currentTarget as HTMLElement)?.closest('form');
         if (form) {
           const submitter = form.querySelector<HTMLButtonElement>('[type="submit"]');

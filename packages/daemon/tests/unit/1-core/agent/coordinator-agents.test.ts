@@ -1,9 +1,3 @@
-/**
- * Coordinator Agents Tests
- *
- * Tests the coordinator mode agent definitions and merging logic.
- */
-
 import { describe, expect, it } from 'bun:test';
 import { getCoordinatorAgents } from '../../../../src/lib/agent/coordinator-agents';
 import type { AgentDefinition } from '@hyperneo/shared';
@@ -35,20 +29,16 @@ describe('getCoordinatorAgents', () => {
   it('should include specialist agents with appropriate tools', () => {
     const agents = getCoordinatorAgents();
 
-    // Coder should have file editing tools
     expect(agents.Coder.tools).toContain('Edit');
     expect(agents.Coder.tools).toContain('Write');
     expect(agents.Coder.tools).toContain('Agent');
 
-    // Debugger should have file tools for writing tests
     expect(agents.Debugger.tools).toContain('Bash');
     expect(agents.Debugger.tools).toContain('Write');
     expect(agents.Debugger.tools).toContain('Agent');
 
-    // Tester should be able to delegate focused follow-up work
     expect(agents.Tester.tools).toContain('Agent');
 
-    // VCS should have Bash for git operations
     expect(agents.VCS.tools).toContain('Bash');
   });
 
@@ -64,7 +54,6 @@ describe('getCoordinatorAgents', () => {
 
     expect(agents['custom-agent']).toBeDefined();
     expect(agents['custom-agent'].description).toBe('A custom agent');
-    // Specialists should still be present
     expect(agents.Coder).toBeDefined();
     expect(agents.Coordinator).toBeDefined();
   });
@@ -79,7 +68,6 @@ describe('getCoordinatorAgents', () => {
 
     const agents = getCoordinatorAgents(userAgents);
 
-    // Specialist should win over user agent
     expect(agents.Coder.description).not.toBe('User-defined Coder');
   });
 
@@ -87,7 +75,6 @@ describe('getCoordinatorAgents', () => {
     const agents = getCoordinatorAgents();
     const agentNames = Object.keys(agents);
 
-    // coordinator + 6 specialists = 7
     expect(agentNames).toHaveLength(7);
   });
 

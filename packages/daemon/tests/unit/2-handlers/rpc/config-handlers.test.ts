@@ -1,33 +1,3 @@
-/**
- * Tests for SDK Config RPC Handlers
- *
- * Tests the RPC handlers for SDK configuration operations:
- * - config.model.get - Get model settings
- * - config.model.update - Update model settings
- * - config.systemPrompt.get - Get system prompt
- * - config.systemPrompt.update - Update system prompt
- * - config.tools.get - Get tools configuration
- * - config.tools.update - Update tools configuration
- * - config.agents.get - Get agents configuration
- * - config.agents.update - Update agents configuration
- * - config.sandbox.get - Get sandbox configuration
- * - config.sandbox.update - Update sandbox configuration
- * - config.mcp.get - Get MCP configuration
- * - config.mcp.update - Update MCP configuration
- * - config.mcp.addServer - Add MCP server
- * - config.mcp.removeServer - Remove MCP server
- * - config.outputFormat.get - Get output format
- * - config.outputFormat.update - Update output format
- * - config.betas.get - Get betas configuration
- * - config.betas.update - Update betas configuration
- * - config.env.get - Get environment settings
- * - config.env.update - Update environment settings
- * - config.permissions.get - Get permissions configuration
- * - config.permissions.update - Update permissions configuration
- * - config.getAll - Get all configuration
- * - config.updateBulk - Bulk update configuration
- */
-
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { MessageHub, type Session } from '@hyperneo/shared';
 import { setupConfigHandlers } from '../../../../src/lib/rpc-handlers/config-handlers';
@@ -35,10 +5,8 @@ import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 
-// Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
-// Helper to create a minimal mock MessageHub that captures handlers
 function createMockMessageHub(): {
   hub: MessageHub;
   handlers: Map<string, RequestHandler>;
@@ -69,7 +37,6 @@ function createMockMessageHub(): {
   return { hub, handlers };
 }
 
-// Helper to create mock DaemonHub
 function createMockDaemonHub(): DaemonHub {
   return {
     emit: mock(async () => {}),
@@ -79,7 +46,6 @@ function createMockDaemonHub(): DaemonHub {
   } as unknown as DaemonHub;
 }
 
-// Default session config
 const defaultSessionConfig: Session['config'] = {
   model: 'claude-sonnet-4-20250514',
   fallbackModel: undefined,
@@ -107,7 +73,6 @@ const defaultSessionConfig: Session['config'] = {
   coordinatorMode: false,
 };
 
-// Helper to create a mock AgentSession with configurable config
 function createMockAgentSession(configOverrides: Partial<Session['config']> = {}): {
   agentSession: AgentSession;
   mocks: {
@@ -141,7 +106,6 @@ function createMockAgentSession(configOverrides: Partial<Session['config']> = {}
   return { agentSession, mocks };
 }
 
-// Helper to create mock SessionManager
 function createMockSessionManager(): {
   sessionManager: SessionManager;
   getSessionAsyncMock: ReturnType<typeof mock>;
@@ -167,7 +131,6 @@ describe('SDK Config RPC Handlers', () => {
     daemonHub = createMockDaemonHub();
     sessionManagerData = createMockSessionManager();
 
-    // Setup handlers with mocked dependencies
     setupConfigHandlers(messageHubData.hub, sessionManagerData.sessionManager, daemonHub);
   });
 
@@ -615,11 +578,6 @@ describe('SDK Config RPC Handlers', () => {
       );
     });
 
-    // Task #140 acceptance #2 — config.mcp.update RPC must preserve in-process
-    // servers (`node-agent`/`task-agent`/`space-agent-tools`/`db-query`) by
-    // routing through `updateUserMcpServers` rather than `updateConfig`.
-    // Without this, editing the MCP server list in the UI silently drops the
-    // runtime-injected servers and the next query starts with no node-agent.
     it('routes mcpServers updates through updateUserMcpServers (preserves in-process servers)', async () => {
       const handler = messageHubData.handlers.get('config.mcp.update');
       expect(handler).toBeDefined();
@@ -643,7 +601,6 @@ describe('SDK Config RPC Handlers', () => {
         {}
       );
 
-      // Critical: must use the merge-preserving API.
       expect(mocks.updateUserMcpServers).toHaveBeenCalledTimes(1);
       expect(mocks.updateConfig).not.toHaveBeenCalledWith(
         expect.objectContaining({ mcpServers: expect.anything() })
@@ -692,9 +649,6 @@ describe('SDK Config RPC Handlers', () => {
       ).rejects.toThrow('Session not found');
     });
 
-    // Task #140 acceptance #2 — addServer must filter out in-process servers
-    // from the existing config before merging the new one, so it preserves
-    // node-agent/space-agent-tools/etc.
     it('routes addServer through updateUserMcpServers and preserves in-process servers', async () => {
       const handler = messageHubData.handlers.get('config.mcp.addServer');
       expect(handler).toBeDefined();
@@ -722,11 +676,8 @@ describe('SDK Config RPC Handlers', () => {
         string,
         { type?: string }
       >;
-      // Must include the new subprocess + any pre-existing subprocess entries.
       expect(passed).toHaveProperty('new-subprocess');
       expect(passed).toHaveProperty('existing');
-      // Must NOT contain in-process (sdk) servers — those are preserved by
-      // updateUserMcpServers itself; the handler must not pass them through.
       expect(passed).not.toHaveProperty('node-agent');
       expect(passed).not.toHaveProperty('space-agent-tools');
     });
@@ -766,8 +717,6 @@ describe('SDK Config RPC Handlers', () => {
       );
     });
 
-    // Task #140 acceptance #2 — removeServer must reject attempts to remove
-    // in-process (sdk-type) runtime servers; those are managed by the daemon.
     it('rejects attempts to remove an in-process (sdk-type) runtime server', async () => {
       const handler = messageHubData.handlers.get('config.mcp.removeServer');
       expect(handler).toBeDefined();
@@ -804,8 +753,6 @@ describe('SDK Config RPC Handlers', () => {
       const passed = mocks.updateUserMcpServers.mock.calls[0][0] as Record<string, unknown>;
       expect(passed).toHaveProperty('to-keep');
       expect(passed).not.toHaveProperty('to-remove');
-      // In-process servers are not passed through — updateUserMcpServers
-      // preserves them on its own (asserted in session-config-handler.test.ts).
       expect(passed).not.toHaveProperty('node-agent');
       expect(passed).not.toHaveProperty('space-agent-tools');
     });

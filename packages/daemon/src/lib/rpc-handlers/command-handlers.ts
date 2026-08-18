@@ -1,7 +1,3 @@
-/**
- * Command RPC Handlers
- */
-
 import type { MessageHub } from '@hyperneo/shared';
 import type { SessionManager } from '../session-manager';
 

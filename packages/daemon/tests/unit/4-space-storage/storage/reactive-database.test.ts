@@ -1,10 +1,3 @@
-/**
- * ReactiveDatabase Tests
- *
- * Tests for the reactive database wrapper: change event emission, per-table
- * events, version tracking, transaction batching, and abort semantics.
- */
-
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,10 +6,6 @@ import { Database } from '../../../../src/storage/index';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
 import type { Session, SessionConfig, SessionMetadata } from '@hyperneo/shared';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function makeTempDbPath(): string {
   return join(tmpdir(), `reactive-db-test-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
@@ -50,10 +39,6 @@ function makeSession(id: string, overrides: Partial<Session> = {}): Session {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Test suite
-// ---------------------------------------------------------------------------
-
 describe('ReactiveDatabase', () => {
   let dbPath: string;
   let db: Database;
@@ -81,10 +66,6 @@ describe('ReactiveDatabase', () => {
     }
   });
 
-  // -------------------------------------------------------------------------
-  // Change event emission
-  // -------------------------------------------------------------------------
-
   describe('change event', () => {
     test('emits change event after createSession', () => {
       const events: Array<{ tables: string[]; versions: Record<string, number> }> = [];
@@ -97,7 +78,6 @@ describe('ReactiveDatabase', () => {
     });
 
     test('emits change event after updateSession', () => {
-      // Use the raw db to insert without triggering events
       db.createSession(makeSession('s2'));
 
       const events: Array<{ tables: string[] }> = [];
@@ -154,10 +134,6 @@ describe('ReactiveDatabase', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Per-table change:* events
-  // -------------------------------------------------------------------------
-
   describe('change:<table> event', () => {
     test('emits change:sessions after createSession', () => {
       const events: Array<{ table: string; version: number }> = [];
@@ -190,10 +166,6 @@ describe('ReactiveDatabase', () => {
       expect(msgEvents.length).toBe(0);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Version tracking
-  // -------------------------------------------------------------------------
 
   describe('getTableVersion', () => {
     test('returns 0 before any writes', () => {
@@ -240,10 +212,6 @@ describe('ReactiveDatabase', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Proxied db correctness
-  // -------------------------------------------------------------------------
-
   describe('proxied db returns correct values', () => {
     test('createSession via proxied db persists data readable by getSession', () => {
       const session = makeSession('proxy1');
@@ -271,10 +239,6 @@ describe('ReactiveDatabase', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Error: no event emitted when write throws
-  // -------------------------------------------------------------------------
-
   describe('error handling', () => {
     test('does NOT emit event when write operation throws (duplicate id)', () => {
       const session = makeSession('dup1');
@@ -283,23 +247,15 @@ describe('ReactiveDatabase', () => {
       const events: unknown[] = [];
       reactiveDb.on('change', (data) => events.push(data));
 
-      // Insert same ID again — should throw due to PRIMARY KEY constraint
       try {
         reactiveDb.db.createSession(session);
       } catch {
         // expected
       }
 
-      // NOTE: The proxy increments the version and emits AFTER the call returns.
-      // If the call throws, it propagates before the emit runs, so no event.
-      // We only verify the throw and that version stayed at 1 (from first create).
       expect(reactiveDb.getTableVersion('sessions')).toBe(1);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Transaction batching
-  // -------------------------------------------------------------------------
 
   describe('beginTransaction / commitTransaction', () => {
     test('suppresses individual events during transaction', () => {
@@ -310,12 +266,10 @@ describe('ReactiveDatabase', () => {
       reactiveDb.db.createSession(makeSession('tx1'));
       reactiveDb.db.createSession(makeSession('tx2'));
 
-      // No events yet
       expect(events.length).toBe(0);
 
       reactiveDb.commitTransaction();
 
-      // Exactly one batched event after commit
       expect(events.length).toBe(1);
     });
 
@@ -330,7 +284,6 @@ describe('ReactiveDatabase', () => {
       reactiveDb.commitTransaction();
 
       expect(events.length).toBe(1);
-      // sessions should appear exactly once
       expect(events[0].tables.filter((t) => t === 'sessions').length).toBe(1);
     });
 
@@ -350,7 +303,6 @@ describe('ReactiveDatabase', () => {
       reactiveDb.beginTransaction();
       reactiveDb.db.createSession(makeSession('tx8'));
       reactiveDb.db.createSession(makeSession('tx9'));
-      // Version should reflect both writes
       expect(reactiveDb.getTableVersion('sessions')).toBe(2);
       reactiveDb.commitTransaction();
     });
@@ -360,11 +312,11 @@ describe('ReactiveDatabase', () => {
       reactiveDb.on('change', () => events.push(1));
 
       reactiveDb.beginTransaction();
-      reactiveDb.beginTransaction(); // depth=2
+      reactiveDb.beginTransaction();
       reactiveDb.db.createSession(makeSession('nested1'));
-      reactiveDb.commitTransaction(); // depth=1 — no flush yet
+      reactiveDb.commitTransaction();
       expect(events.length).toBe(0);
-      reactiveDb.commitTransaction(); // depth=0 — flush
+      reactiveDb.commitTransaction();
       expect(events.length).toBe(1);
     });
 
@@ -381,10 +333,6 @@ describe('ReactiveDatabase', () => {
       expect(events.length).toBe(1);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Transaction abort
-  // -------------------------------------------------------------------------
 
   describe('abortTransaction', () => {
     test('abortTransaction discards pending events — no change event emitted', () => {
@@ -414,30 +362,23 @@ describe('ReactiveDatabase', () => {
       reactiveDb.on('change', () => events.push(1));
 
       reactiveDb.beginTransaction();
-      reactiveDb.beginTransaction(); // depth=2
+      reactiveDb.beginTransaction();
       reactiveDb.db.createSession(makeSession('abort3'));
-      reactiveDb.abortTransaction(); // depth=1 — still nested, events still blocked
+      reactiveDb.abortTransaction();
       expect(events.length).toBe(0);
-      reactiveDb.abortTransaction(); // depth=0 — pending cleared, no flush
+      reactiveDb.abortTransaction();
       expect(events.length).toBe(0);
     });
 
     test('versions are still incremented even on aborted transaction', () => {
-      // The proxy increments version eagerly before potential emit;
-      // abort only prevents event emission, not version mutation.
       reactiveDb.beginTransaction();
       reactiveDb.db.createSession(makeSession('abort4'));
       const versionDuringTx = reactiveDb.getTableVersion('sessions');
       reactiveDb.abortTransaction();
 
-      // Version was already incremented by the write
       expect(versionDuringTx).toBe(1);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // off() — removing listeners
-  // -------------------------------------------------------------------------
 
   describe('off()', () => {
     test('off() stops listener from receiving future events', () => {
@@ -450,13 +391,9 @@ describe('ReactiveDatabase', () => {
 
       reactiveDb.off('change', listener as (...args: unknown[]) => void);
       reactiveDb.db.createSession(makeSession('off2'));
-      expect(events.length).toBe(1); // still 1, listener was removed
+      expect(events.length).toBe(1);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // notifyChange — manual change notification
-  // -------------------------------------------------------------------------
 
   describe('notifyChange', () => {
     test('emits change event for arbitrary table', () => {
@@ -497,12 +434,10 @@ describe('ReactiveDatabase', () => {
       reactiveDb.beginTransaction();
       reactiveDb.notifyChange('tasks');
 
-      // No events yet during transaction
       expect(events.length).toBe(0);
 
       reactiveDb.commitTransaction();
 
-      // Event emitted on commit
       expect(events.length).toBe(1);
     });
 
@@ -518,7 +453,6 @@ describe('ReactiveDatabase', () => {
     });
 
     test('deduplicates with facade writes in transaction', () => {
-      // Create a session via raw db so we can update it inside the transaction
       db.createSession(makeSession('dedup1'));
 
       const events: Array<{ tables: string[] }> = [];
@@ -529,7 +463,6 @@ describe('ReactiveDatabase', () => {
       reactiveDb.notifyChange('sessions');
       reactiveDb.commitTransaction();
 
-      // Only one change event emitted, with sessions deduplicated
       expect(events.length).toBe(1);
       expect(events[0].tables.filter((t) => t === 'sessions').length).toBe(1);
     });
@@ -547,19 +480,13 @@ describe('ReactiveDatabase', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Transaction edge cases
-  // -------------------------------------------------------------------------
-
   describe('transaction edge cases', () => {
     test('commitTransaction without beginTransaction is a no-op — no error, no events', () => {
       const events: unknown[] = [];
       reactiveDb.on('change', () => events.push(1));
 
-      // Should not throw
       expect(() => reactiveDb.commitTransaction()).not.toThrow();
 
-      // No events emitted
       expect(events.length).toBe(0);
     });
 
@@ -568,40 +495,31 @@ describe('ReactiveDatabase', () => {
     });
 
     test('begin → begin → abort inner → commit outer: events ARE emitted (inner abort did not reach depth=0)', () => {
-      // begin: depth=1
-      // begin: depth=2
-      // abort: depth=1 (does not clear pending; depth > 0)
-      // commit: depth=0 → flush
       const events: unknown[] = [];
       reactiveDb.on('change', () => events.push(1));
 
-      reactiveDb.beginTransaction(); // depth=1
-      reactiveDb.beginTransaction(); // depth=2
+      reactiveDb.beginTransaction();
+      reactiveDb.beginTransaction();
       reactiveDb.db.createSession(makeSession('mixed1'));
-      reactiveDb.abortTransaction(); // depth=1 — pending still alive
-      expect(events.length).toBe(0); // still batched
+      reactiveDb.abortTransaction();
+      expect(events.length).toBe(0);
 
-      reactiveDb.commitTransaction(); // depth=0 — flush
+      reactiveDb.commitTransaction();
 
-      // The write happened, abort only decrements; pending is flushed on commit
       expect(events.length).toBe(1);
     });
 
     test('begin → begin → commit inner → abort outer: events are NOT emitted (outer abort clears at depth=0)', () => {
-      // begin: depth=1
-      // begin: depth=2
-      // commit: depth=1 (no flush; still nested)
-      // abort: depth=0 → clear pending, no events
       const events: unknown[] = [];
       reactiveDb.on('change', () => events.push(1));
 
-      reactiveDb.beginTransaction(); // depth=1
-      reactiveDb.beginTransaction(); // depth=2
+      reactiveDb.beginTransaction();
+      reactiveDb.beginTransaction();
       reactiveDb.db.createSession(makeSession('mixed2'));
-      reactiveDb.commitTransaction(); // depth=1 — no flush yet
+      reactiveDb.commitTransaction();
       expect(events.length).toBe(0);
 
-      reactiveDb.abortTransaction(); // depth=0 — clears pending, no flush
+      reactiveDb.abortTransaction();
 
       expect(events.length).toBe(0);
     });
@@ -612,16 +530,12 @@ describe('ReactiveDatabase', () => {
 
       reactiveDb.beginTransaction();
       reactiveDb.db.createSession(makeSession('multi-tx1'));
-      // saveSDKMessage requires a session to exist for FK constraints; use notifyChange
-      // for sdk_messages to avoid FK overhead while still testing multi-table batching
       reactiveDb.notifyChange('sdk_messages');
       reactiveDb.commitTransaction();
 
-      // Exactly one batched event
       expect(events.length).toBe(1);
       expect(events[0].tables).toContain('sessions');
       expect(events[0].tables).toContain('sdk_messages');
-      // Versions for both tables should be present
       expect(events[0].versions).toHaveProperty('sessions');
       expect(events[0].versions).toHaveProperty('sdk_messages');
     });

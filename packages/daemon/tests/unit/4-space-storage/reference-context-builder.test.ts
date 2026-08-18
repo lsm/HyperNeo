@@ -1,7 +1,3 @@
-/**
- * Unit tests for reference-context-builder.ts
- */
-
 import { describe, it, expect } from 'bun:test';
 import {
   buildReferenceContext,
@@ -9,10 +5,6 @@ import {
   MAX_CONTEXT_BYTES,
 } from '../../../src/lib/agent/reference-context-builder';
 import type { ResolvedReference } from '@hyperneo/shared';
-
-// ============================================================================
-// Test fixtures
-// ============================================================================
 
 const taskRef: ResolvedReference = {
   type: 'task',
@@ -113,10 +105,6 @@ const emptyFolderRef: ResolvedReference = {
     entries: [],
   },
 };
-
-// ============================================================================
-// buildReferenceContext
-// ============================================================================
 
 describe('buildReferenceContext', () => {
   it('returns empty string for empty references map', () => {
@@ -291,14 +279,11 @@ describe('buildReferenceContext', () => {
       '@ref{task:task-uuid-1}': taskRef,
     };
     const result = buildReferenceContext(refs);
-    // Task and folder should both be present; unknown type produces no output
     expect(result).toContain('### Task:');
     expect(result).toContain('### Folder:');
   });
 
   it('truncates when total bytes exceed MAX_CONTEXT_BYTES', () => {
-    // Large file section occupies ~MAX_CONTEXT_BYTES - 10 bytes (header + fences + content).
-    // Small file section is ~60 bytes, pushing total over the limit.
     const largeContent = 'x'.repeat(MAX_CONTEXT_BYTES - 40);
     const largeFileRef: ResolvedReference = {
       type: 'file',
@@ -362,10 +347,6 @@ describe('buildReferenceContext', () => {
     expect(result).not.toContain('undefined');
   });
 });
-
-// ============================================================================
-// prependContextToMessage
-// ============================================================================
 
 describe('prependContextToMessage', () => {
   it('returns original message unchanged when context is empty string', () => {

@@ -1,16 +1,12 @@
-// Checkbox input class - includes proper :checked and :indeterminate pseudo-classes
 const checkboxInputClass =
   'col-start-1 row-start-1 size-5 appearance-none rounded border border-gray-300 bg-white checked:border-indigo-600 checked:bg-indigo-600 indeterminate:border-indigo-600 indeterminate:bg-indigo-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:border-gray-300 disabled:bg-gray-100 disabled:checked:bg-gray-100 dark:border-white/10 dark:bg-white/5 dark:checked:border-indigo-500 dark:checked:bg-indigo-500 dark:indeterminate:border-indigo-500 dark:indeterminate:bg-indigo-500 dark:focus-visible:outline-indigo-500 dark:disabled:border-white/5 dark:disabled:bg-white/10 dark:disabled:checked:bg-white/10 forced-colors:appearance-auto';
 
-// Checked SVG - shows checkmark when checked
 const checkedSvgClass =
   'pointer-events-none col-start-1 row-start-1 size-3.5 self-center justify-self-center stroke-white peer-checked:opacity-100 peer-indeterminate:opacity-0 opacity-0 transition-opacity';
 
-// Indeterminate SVG - shows dash when indeterminate
 const indeterminateSvgClass =
   'pointer-events-none col-start-1 row-start-1 size-3.5 self-center justify-self-center stroke-white peer-checked:opacity-0 peer-indeterminate:opacity-100 opacity-0 transition-opacity';
 
-// Reusable checkbox component using peer pattern
 function Checkbox({
   id,
   name,
@@ -36,7 +32,6 @@ function Checkbox({
           defaultChecked={defaultChecked}
           class={`peer ${checkboxInputClass}`}
         />
-        {/* Checkmark SVG */}
         <svg viewBox="0 0 14 14" fill="none" class={checkedSvgClass}>
           <path
             d="M3 7l3 3 5-5"
@@ -46,7 +41,6 @@ function Checkbox({
             stroke-linejoin="round"
           />
         </svg>
-        {/* Indeterminate dash SVG */}
         <svg viewBox="0 0 14 14" fill="none" class={indeterminateSvgClass}>
           <path d="M3 7h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
         </svg>
@@ -64,7 +58,6 @@ function Checkbox({
 export function CheckboxesDemo() {
   return (
     <div class="space-y-6">
-      {/* Example 1: List with description */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">List with description</h3>
         <fieldset class="space-y-4">
@@ -91,7 +84,6 @@ export function CheckboxesDemo() {
         </fieldset>
       </div>
 
-      {/* Example 2: List with inline description */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">List with inline description</h3>
         <fieldset class="space-y-0 divide-y divide-gray-200 dark:divide-white/10">
@@ -125,7 +117,6 @@ export function CheckboxesDemo() {
         </fieldset>
       </div>
 
-      {/* Example 3: List with checkbox on right */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">List with checkbox on right</h3>
         <fieldset class="space-y-0 divide-y divide-gray-200 dark:divide-white/10">
@@ -224,7 +215,6 @@ export function CheckboxesDemo() {
         </fieldset>
       </div>
 
-      {/* Example 4: Simple list with heading */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Simple list with heading</h3>
         <fieldset class="space-y-4">

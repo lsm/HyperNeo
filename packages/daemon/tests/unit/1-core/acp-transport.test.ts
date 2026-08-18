@@ -4,10 +4,6 @@ import { EventEmitter } from 'node:events';
 import type { Writable } from 'node:stream';
 import { AcpTransport } from '../../../src/lib/acp/acp-transport';
 
-// ---------------------------------------------------------------------------
-// Helpers — mock child process with EventEmitter-based stdio
-// ---------------------------------------------------------------------------
-
 class MockStream extends EventEmitter {
   written: string[] = [];
 
@@ -34,7 +30,6 @@ class MockChildProcess extends EventEmitter {
       this.signalCode = signal;
     }
     this.killed = true;
-    // Simulate async exit + stdio close
     setTimeout(() => {
       this.emit('exit', this.exitCode, this.signalCode);
       this.emit('close', this.exitCode, this.signalCode);
@@ -77,19 +72,11 @@ function createMockSpawn(delayMs = 0): SpawnHandler {
   };
 }
 
-// ---------------------------------------------------------------------------
-// AcpTransport — unit tests
-// ---------------------------------------------------------------------------
-
 describe('AcpTransport', () => {
   beforeEach(() => {
     lastMockProcess = null;
     spawnState.handler = createMockSpawn();
   });
-
-  // -------------------------------------------------------------------------
-  // JSON-RPC message framing
-  // -------------------------------------------------------------------------
 
   test('sends request with auto-incrementing IDs', () => {
     const transport = new AcpTransport({ command: 'acp-agent' });
@@ -174,10 +161,6 @@ describe('AcpTransport', () => {
     expect(response.result).toEqual({ ok: true });
   });
 
-  // -------------------------------------------------------------------------
-  // Request/response correlation
-  // -------------------------------------------------------------------------
-
   test('rejects request when response contains error', async () => {
     const transport = new AcpTransport({ command: 'acp-agent' });
     const proc = lastMockProcess!;
@@ -226,10 +209,6 @@ describe('AcpTransport', () => {
     await expect(transport.sendRequest('anything', {})).rejects.toThrow('Transport is closed');
   });
 
-  // -------------------------------------------------------------------------
-  // Notifications
-  // -------------------------------------------------------------------------
-
   test('emits notifications via onNotification callback', () => {
     const notifications: unknown[] = [];
     const transport = new AcpTransport({
@@ -259,7 +238,6 @@ describe('AcpTransport', () => {
     });
     const proc = lastMockProcess!;
 
-    // Should not throw
     proc.stdout.emit(
       'data',
       Buffer.from(
@@ -268,7 +246,6 @@ describe('AcpTransport', () => {
       )
     );
 
-    // Stream parser is still healthy: a later response should process normally.
     const promise = transport.sendRequest('test', {});
     proc.stdout.emit(
       'data',
@@ -277,10 +254,6 @@ describe('AcpTransport', () => {
 
     expect(promise).resolves.toBeDefined();
   });
-
-  // -------------------------------------------------------------------------
-  // Subprocess lifecycle
-  // -------------------------------------------------------------------------
 
   test('spawns process with correct stdio and options', () => {
     let capturedOptions: object | null = null;
@@ -305,7 +278,6 @@ describe('AcpTransport', () => {
     expect(opts.cwd).toBe('/tmp/project');
     expect(opts.env.FOO).toBe('bar');
 
-    // restore
     spawnState.handler = createMockSpawn();
   });
 
@@ -315,10 +287,8 @@ describe('AcpTransport', () => {
 
     const closePromise = transport.close();
 
-    // Immediately after close, SIGTERM should have been sent
     expect(proc.signalCode).toBe('SIGTERM');
 
-    // Wait for the simulated exit
     await closePromise;
 
     expect(proc.killed).toBe(true);
@@ -366,7 +336,6 @@ describe('AcpTransport', () => {
     const transport = new AcpTransport({ command: 'acp-agent' });
     const proc = lastMockProcess!;
 
-    // Should not throw
     proc.stdout.emit('data', Buffer.from('\n\nnot-json\n\n'));
 
     const promise = transport.sendRequest('test', {});
@@ -385,15 +354,10 @@ describe('AcpTransport', () => {
     });
     const proc = lastMockProcess!;
 
-    // Do not emit a response — let it timeout
     const promise = transport.sendRequest('slow', {});
 
     await expect(promise).rejects.toThrow('Request timed out after 50ms: slow');
   });
-
-  // -------------------------------------------------------------------------
-  // Inbound requests
-  // -------------------------------------------------------------------------
 
   test('dispatches inbound requests via onRequest callback', () => {
     const requests: unknown[] = [];
@@ -539,10 +503,6 @@ describe('AcpTransport', () => {
     expect(resp.error.code).toBe(-32600);
   });
 
-  // -------------------------------------------------------------------------
-  // Process group kill
-  // -------------------------------------------------------------------------
-
   test('close falls back to direct kill when group kill fails', async () => {
     const transport = new AcpTransport({ command: 'acp-agent' });
     const proc = lastMockProcess!;
@@ -565,7 +525,6 @@ describe('AcpTransport', () => {
 
     await closePromise;
 
-    // In test env processKill(-12345) throws, so fallback to proc.kill is used
     expect(directKillSignal).toBe('SIGTERM');
   });
 });

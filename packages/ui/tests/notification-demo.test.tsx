@@ -19,10 +19,8 @@ describe('NotificationWithAvatar', () => {
     render(<NotificationWithAvatar />);
     await act(async () => {});
 
-    // Check that sender name is visible
     expect(screen.getByText('Emilia Gates')).toBeTruthy();
 
-    // Check that message is visible
     expect(screen.getByText('Sure! 8:30pm works great!')).toBeTruthy();
   });
 
@@ -47,15 +45,12 @@ describe('NotificationWithAvatar', () => {
     render(<NotificationWithAvatar />);
     await act(async () => {});
 
-    // Verify notification is visible initially
     expect(screen.getByText('Emilia Gates')).toBeTruthy();
 
-    // Click Reply button
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Reply' }));
     });
 
-    // Notification should be hidden after clicking Reply
     expect(screen.queryByText('Emilia Gates')).toBeNull();
   });
 
@@ -73,10 +68,8 @@ describe('NotificationWithSplitButtons', () => {
     render(<NotificationWithSplitButtons />);
     await act(async () => {});
 
-    // Check that title is visible
     expect(screen.getByText('Receive notifications')).toBeTruthy();
 
-    // Check that description is visible
     expect(screen.getByText('Notifications may include alerts, sounds, and badges.')).toBeTruthy();
   });
 
@@ -100,15 +93,12 @@ describe('NotificationWithSplitButtons', () => {
     render(<NotificationWithSplitButtons />);
     await act(async () => {});
 
-    // Verify notification is visible initially
     expect(screen.getByText('Receive notifications')).toBeTruthy();
 
-    // Click Reply button
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Reply' }));
     });
 
-    // Notification should be hidden after clicking Reply
     expect(screen.queryByText('Receive notifications')).toBeNull();
   });
 
@@ -116,15 +106,12 @@ describe('NotificationWithSplitButtons', () => {
     render(<NotificationWithSplitButtons />);
     await act(async () => {});
 
-    // Verify notification is visible initially
     expect(screen.getByText('Receive notifications')).toBeTruthy();
 
-    // Click "Don't allow" button
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: "Don't allow" }));
     });
 
-    // Notification should be hidden after clicking "Don't allow"
     expect(screen.queryByText('Receive notifications')).toBeNull();
   });
 
@@ -142,23 +129,18 @@ describe('Notification dismiss behavior', () => {
     render(<NotificationWithSplitButtons />);
     await act(async () => {});
 
-    // Initially visible
     expect(screen.getByText('Receive notifications')).toBeTruthy();
 
-    // Dismiss
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Reply' }));
     });
 
-    // Hidden
     expect(screen.queryByText('Receive notifications')).toBeNull();
 
-    // Click "Show split-button notification" to re-show
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Show split-button notification' }));
     });
 
-    // Should be visible again
     expect(screen.getByText('Receive notifications')).toBeTruthy();
   });
 });
@@ -168,10 +150,8 @@ describe('SimpleIconNotification', () => {
     render(<SimpleIconNotification />);
     await act(async () => {});
 
-    // Check that title is visible
     expect(screen.getByText('Successfully saved!')).toBeTruthy();
 
-    // Check that description is visible
     expect(screen.getByText('Anyone with a link can now view this file.')).toBeTruthy();
   });
 
@@ -197,7 +177,6 @@ describe('CondensedNotification', () => {
     render(<CondensedNotification />);
     await act(async () => {});
 
-    // Check that text is visible
     expect(screen.getByText('Discussion archived')).toBeTruthy();
   });
 
@@ -231,7 +210,6 @@ describe('NotificationWithActionsBelow', () => {
     render(<NotificationWithActionsBelow />);
     await act(async () => {});
 
-    // Check that title is visible
     expect(screen.getByText('Discussion moved')).toBeTruthy();
   });
 
@@ -267,10 +245,8 @@ describe('NotificationWithButtonsBelow', () => {
     render(<NotificationWithButtonsBelow />);
     await act(async () => {});
 
-    // Check that name is visible
     expect(screen.getByText('Emilia Gates')).toBeTruthy();
 
-    // Check that invite text is visible
     expect(screen.getByText('Sent you an invite to connect.')).toBeTruthy();
   });
 

@@ -1,26 +1,3 @@
-/**
- * Migration 122 Tests — replace task-thread projection with schema fix.
- *
- * Migration 122 makes two schema-level moves:
- *   1. Adds derived columns (`is_renderable`, `is_terminal`, `parent_tool_use_id`)
- *      and a denormalised `task_id` column to `sdk_messages`. The derived
- *      columns are computed from the message JSON; `task_id` is backfilled
- *      from `sessions.session_context.taskId`. New rows are stamped at write
- *      time by the SDK message repository.
- *   2. Drops the legacy `task_session_map` lookup table — the data it carried
- *      is now derived directly from `sdk_messages.task_id` plus joins onto
- *      `sessions` / `node_executions` at read time.
- *
- * Covers:
- *   - Fresh, fully-migrated DB — sdk_messages has all derived columns plus
- *     task_id and the supporting index, and the legacy lookup table is gone.
- *   - Pre-122 schema with rows — derived columns are computed correctly,
- *     parent_tool_use_id is extracted, task_id is backfilled from session
- *     context.
- *   - Re-running the migration is a no-op (idempotent).
- *   - Empty / partial-table DB cases are guarded.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -50,12 +27,6 @@ function indexExists(db: BunDatabase, name: string): boolean {
   return !!row?.name;
 }
 
-/**
- * Build the post-M117 / pre-M122 shape needed to exercise backfill: a minimal
- * `sessions`, `sdk_messages` surface that lets us seed rows and then assert
- * the migration's effects. `session_context` is the column the migration
- * reads to backfill `sdk_messages.task_id`.
- */
 function seedPreM122Schema(db: BunDatabase): void {
   db.exec('PRAGMA foreign_keys = OFF');
   db.exec(`
@@ -153,9 +124,6 @@ describe('Migration 122: derived columns + task_id on sdk_messages', () => {
       const now = Date.now();
       const ts = new Date(now).toISOString();
 
-      // Two task-bound sessions and one un-bound (worker) session. The
-      // task-bound rows carry `taskId` in their `session_context`, exactly
-      // the way Task Agent + node-agent sessions stamp it at creation.
       db.prepare(
         `INSERT INTO sessions (id, type, created_at, last_active_at, session_context) VALUES (?, ?, ?, ?, ?)`
       ).run('sess-task-agent', 'space_task_agent', ts, ts, JSON.stringify({ taskId: 'task-1' }));
@@ -169,8 +137,6 @@ describe('Migration 122: derived columns + task_id on sdk_messages', () => {
         `INSERT INTO sessions (id, type, created_at, last_active_at, session_context) VALUES (?, ?, ?, ?, ?)`
       ).run('sess-malformed', 'worker', ts, ts, '{not-json');
 
-      // SDK messages spanning all renderability classes, plus rows on the
-      // task-bound and unbound sessions so we can assert task_id backfill.
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
 				 VALUES (?, ?, ?, ?, ?)`
@@ -244,7 +210,6 @@ describe('Migration 122: derived columns + task_id on sdk_messages', () => {
         }),
         ts
       );
-      // Un-bound session: should backfill to NULL (no taskId in context).
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
 				 VALUES (?, ?, ?, ?, ?)`
@@ -255,7 +220,6 @@ describe('Migration 122: derived columns + task_id on sdk_messages', () => {
         JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'x' }] } }),
         ts
       );
-      // Malformed JSON in session_context: must NOT throw or corrupt the row.
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
 				 VALUES (?, ?, ?, ?, ?)`
@@ -342,8 +306,6 @@ describe('Migration 122: derived columns + task_id on sdk_messages', () => {
     });
 
     test('task_id is null for sessions with malformed session_context JSON', () => {
-      // Migration must tolerate broken rows — the json_valid guard prevents
-      // json_extract from aborting the UPDATE.
       runMigration122(db);
       const malformed = db
         .prepare(`SELECT task_id FROM sdk_messages WHERE id = ?`)
@@ -352,9 +314,6 @@ describe('Migration 122: derived columns + task_id on sdk_messages', () => {
     });
 
     test('drops the legacy task_session_map table', () => {
-      // Pre-existing task_session_map rows must not survive the migration —
-      // the read path no longer reads from it, so leaving stale rows around
-      // would just be dead bytes plus a misleading source of truth.
       db.exec(`
 				CREATE TABLE task_session_map (
 					task_id TEXT NOT NULL,
@@ -404,7 +363,6 @@ describe('Migration 122: derived columns + task_id on sdk_messages', () => {
 
     test('second run does not rewrite already-correct derived rows', () => {
       runMigration122(db);
-      // All derived columns are now correct. Capture the exact values.
       const before = db
         .prepare(
           `SELECT id, is_renderable, is_terminal, parent_tool_use_id FROM sdk_messages ORDER BY id`
@@ -416,9 +374,6 @@ describe('Migration 122: derived columns + task_id on sdk_messages', () => {
         parent_tool_use_id: string | null;
       }>;
 
-      // Force a mutation by running again. If the WHERE clause is too
-      // broad, rows will be "updated" to the same values but SQLite
-      // will still bump change counters.
       runMigration122(db);
 
       const after = db
@@ -435,15 +390,12 @@ describe('Migration 122: derived columns + task_id on sdk_messages', () => {
     });
 
     test('task_id backfill skips worker sessions with no taskId in context', () => {
-      // sess-orphan is a worker with NULL session_context — its rows
-      // should stay NULL and not be rescanned on every boot.
       runMigration122(db);
       const orphan = db
         .prepare(`SELECT task_id FROM sdk_messages WHERE id = ?`)
         .get('msg-orphan') as { task_id: string | null };
       expect(orphan.task_id).toBeNull();
 
-      // Running again should not throw and should leave the row untouched.
       expect(() => runMigration122(db)).not.toThrow();
       const orphan2 = db
         .prepare(`SELECT task_id FROM sdk_messages WHERE id = ?`)

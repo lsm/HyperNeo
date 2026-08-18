@@ -6,8 +6,6 @@ import { MinimalThreadFeed } from './MinimalThreadFeed';
 
 const mockPushOverlayHistory = vi.hoisted(() => vi.fn());
 
-// Stub MarkdownRenderer to a synchronous text renderer so tests can assert
-// content without waiting on the lazy-loaded marked import.
 vi.mock('../../../chat/MarkdownRenderer.tsx', () => ({
   default: ({ content }: { content: string }) => <div data-testid="md">{content}</div>,
 }));
@@ -114,8 +112,6 @@ function syntheticPeerMessage(
 }
 
 function replayUserMessage(uuid: string, text: string) {
-  // Replay messages have isReplay: true and may carry no origin metadata —
-  // the agent→agent handoff case the daemon currently emits.
   return {
     type: 'user',
     uuid,
@@ -163,9 +159,6 @@ function operationalSystemMessage(
 }
 
 function systemInitMessage(uuid: string) {
-  // Minimal `system:init` envelope. ResultInfoDropdown / MessageInfoDropdown
-  // only require the discriminator fields to render the affordance trigger;
-  // detailed-shape coverage lives in the component-level tests.
   return {
     type: 'system',
     subtype: 'init',
@@ -362,9 +355,6 @@ describe('MinimalThreadFeed', () => {
 
     render(<MinimalThreadFeed parsedRows={rows} />);
 
-    // Hidden subtypes (session_state_changed, commands_changed) are suppressed
-    // via isHiddenSystemSubtype; thinking_tokens is roster-only. Only
-    // model_fallback and the warning notice render as system rows.
     const systemRows = screen.getAllByTestId('minimal-thread-system');
     expect(systemRows).toHaveLength(2);
     expect(systemRows[0].textContent).toContain('Model fallback');
@@ -372,7 +362,6 @@ describe('MinimalThreadFeed', () => {
     expect(systemRows[0].textContent).toContain('claude-opus-4-5 -> claude-sonnet-4-5');
     expect(systemRows[1].textContent).toContain('Warning');
     expect(systemRows[1].textContent).toContain('Hook warning shown to the user');
-    // thinking_tokens is roster-only — never a main-thread system row.
     expect(screen.getByTestId('space-task-event-feed-minimal').textContent).not.toContain(
       'Thinking tokens'
     );
@@ -449,10 +438,8 @@ describe('MinimalThreadFeed', () => {
     expect(turns.length).toBe(2);
     expect(turns[0].dataset.agentLabel).toBe('Coder Agent');
     expect(turns[1].dataset.agentLabel).toBe('Reviewer Agent');
-    // Names appear in their short uppercase form.
     expect(turns[0].textContent).toContain('CODER');
     expect(turns[1].textContent).toContain('REVIEWER');
-    // Both blocks contain a result row → both rendered as completed turns.
     expect(turns.every((t) => t.dataset.turnState === 'completed')).toBe(true);
   });
 
@@ -569,7 +556,6 @@ describe('MinimalThreadFeed', () => {
     await waitFor(() => {
       expect(screen.getByText('final answer ready')).toBeTruthy();
     });
-    // Doesn't pick the earlier text once a later assistant text exists.
     expect(screen.queryByText('preliminary')).toBeNull();
   });
 
@@ -595,15 +581,11 @@ describe('MinimalThreadFeed', () => {
 
     render(<MinimalThreadFeed parsedRows={rows} />);
     const bubble = screen.getByTestId('minimal-thread-agent-bubble');
-    // The error flag flows through → red bubble + data attribute.
     expect(bubble.getAttribute('data-has-error')).toBe('true');
     expect(bubble.className).toContain('border-red-800');
     expect(bubble.className).toContain('bg-red-900');
-    // Normal gray bubble classes are absent.
     expect(bubble.className).not.toContain('bg-dark-800');
-    // "API Error" header label mirrors SDKAssistantMessage's hasError branch.
     expect(bubble.textContent).toContain('API Error');
-    // The error text still renders as the bubble body.
     await waitFor(() => {
       expect(screen.getByTestId('md').textContent).toContain('API Error: 400');
     });
@@ -638,11 +620,6 @@ describe('MinimalThreadFeed', () => {
   });
 
   it('renders a recovered turn (error then success) as a gray bubble, not red', async () => {
-    // When an earlier assistant row carries a transient `error` (e.g. a 429
-    // the SDK retried) but a later assistant row produced a successful reply,
-    // the turn recovered. The surfaced reply is the successful one, so the
-    // bubble must stay gray — painting it red would show an "API Error" header
-    // over a successful reply body, which is misleading.
     const t = Date.now();
     const rows = [
       makeRow({
@@ -1038,9 +1015,6 @@ describe('MinimalThreadFeed', () => {
 
     render(<MinimalThreadFeed parsedRows={rows} />);
 
-    // tu-a1-0 is the oldest of 9 tools → capped out of the completed roster,
-    // so its outcome renders as a standalone roster entry (not a main-thread
-    // system row, and not folded — its tool card isn't in the roster).
     const taskEntries = screen
       .getAllByTestId('minimal-thread-roster-entry')
       .filter((e) => (e as HTMLElement).dataset.rosterKind === 'task_notification');
@@ -1190,9 +1164,6 @@ describe('MinimalThreadFeed', () => {
       }),
     ];
 
-    // Server-derived summary: same activity as the parsed rows would produce
-    // under the old client-side derivation, but expressed as the wire shape
-    // (`ActivityEntry[]`) the renderer now consumes.
     const summary: ActiveTurnSummary = {
       sessionId: 'space:s:task:t',
       turnIndex: 1,
@@ -1227,10 +1198,8 @@ describe('MinimalThreadFeed', () => {
     const turn = screen.getByTestId('minimal-thread-turn');
     expect(turn.dataset.turnState).toBe('active');
 
-    // Rail wrapper appears only on active turns.
     expect(screen.getByTestId('minimal-thread-active-rail')).toBeTruthy();
 
-    // All four tool entries appear in the roster.
     const entries = screen.getAllByTestId('minimal-thread-roster-entry');
     expect(entries.length).toBe(4);
     const text = entries.map((e) => e.textContent).join('\n');
@@ -1242,7 +1211,6 @@ describe('MinimalThreadFeed', () => {
     expect(text).toContain('provisionExistingSpaces');
     expect(text).toContain('git status');
 
-    // Status text sits in the active header while the rail shows richer live stats.
     expect(turn.textContent).toContain('Running');
     const rail = screen.getByTestId('minimal-thread-active-rail');
     expect(rail.textContent).not.toContain('Running');
@@ -1369,8 +1337,6 @@ describe('MinimalThreadFeed', () => {
       />
     );
 
-    // Capped out of the roster (8 newer text entries fill it) AND suppressed
-    // from the main thread — api_retry is roster-only, so it renders nowhere.
     const entries = screen.getAllByTestId('minimal-thread-roster-entry');
     expect(entries.some((entry) => entry.dataset.rosterKind === 'api_retry')).toBe(false);
     const feed = screen.getByTestId('space-task-event-feed-minimal');
@@ -1428,7 +1394,6 @@ describe('MinimalThreadFeed', () => {
       />
     );
 
-    // No standalone task_notification system row — it's folded onto the roster.
     expect(screen.queryByText('Task completed')).toBeNull();
     const entries = screen.getAllByTestId('minimal-thread-roster-entry');
     expect(entries[0].dataset.taskStatus).toBe('completed');
@@ -1437,9 +1402,6 @@ describe('MinimalThreadFeed', () => {
 
   it('does not fold when the summary turnIndex is stale vs the compact rows turn', () => {
     const t = Date.now();
-    // Compact rows are on turn 1 (active). The summary claims turn 2 — a stale
-    // delta from the previous turn. Its tool_use_id must NOT suppress the
-    // notification (no matching rendered turn → fallback row).
     const rows = [
       makeRow({
         id: 'a1',
@@ -1488,7 +1450,6 @@ describe('MinimalThreadFeed', () => {
       />
     );
 
-    // Turn mismatch → not folded → notification falls back to a row.
     const feed = screen.getByTestId('space-task-event-feed-minimal');
     expect(feed.textContent).toContain('42 tests passed');
     expect(feed.textContent).toContain('Task completed');
@@ -1496,8 +1457,6 @@ describe('MinimalThreadFeed', () => {
 
   it('drops the active roster when the summary turnIndex mismatches the trailing turn', () => {
     const t = Date.now();
-    // Active turn on turn 1, but the summary claims turn 2 (stale active-turn
-    // delta). buildActiveTurn must not fold the stale tool/status onto the rail.
     const rows = [
       makeRow({
         id: 'a1',
@@ -1530,7 +1489,6 @@ describe('MinimalThreadFeed', () => {
       />
     );
 
-    // Turn is still active, but the stale-turn summary yields no roster entries.
     expect(screen.queryAllByTestId('minimal-thread-roster-entry')).toHaveLength(0);
   });
 
@@ -1692,10 +1650,6 @@ describe('MinimalThreadFeed', () => {
 
   it('renders a standalone roster entry for task_notification with no roster target (completed turn)', () => {
     const t = Date.now();
-    // More than ROSTER_MAX_ENTRIES tool_use blocks → the first tool is capped
-    // out of the completed roster. Its notification has no tool card to fold
-    // onto, so it renders as a standalone roster entry (terminal metadata not
-    // lost).
     const rows = [
       makeRow({
         id: 'a1',
@@ -1730,8 +1684,6 @@ describe('MinimalThreadFeed', () => {
 
     render(<MinimalThreadFeed parsedRows={rows} />);
 
-    // Capped out of the completed roster → standalone roster entry preserves
-    // status, summary, and usage (terminal metadata not lost).
     const taskEntries = screen
       .getAllByTestId('minimal-thread-roster-entry')
       .filter((e) => (e as HTMLElement).dataset.rosterKind === 'task_notification');
@@ -1744,13 +1696,6 @@ describe('MinimalThreadFeed', () => {
 
   it('preserves both folded and standalone outcomes in a completed turn (no merged-cap eviction)', () => {
     const t = Date.now();
-    // >8 tools in a completed turn. tu-a1-0 (oldest) is capped out of the
-    // 8-tool roster → its notification (nt1) is standalone and arrives LATE
-    // (t+90, newer than the oldest retained tool's invocation ts). tu-a2-0 is
-    // the oldest RETAINED tool → its notification (nt2) folds onto its card.
-    // Re-applying an 8-cap after merging would let the late nt1 evict tu-a2-0,
-    // dropping nt2's folded status/summary with the card. The completed path
-    // must merge by ts for ordering but NOT re-cap, so both outcomes survive.
     const rows = [
       makeRow({
         id: 'a1',
@@ -1812,13 +1757,11 @@ describe('MinimalThreadFeed', () => {
     render(<MinimalThreadFeed parsedRows={rows} />);
 
     const entries = screen.getAllByTestId('minimal-thread-roster-entry');
-    // nt1 (capped-out tool) renders as a standalone outcome line.
     const standalone = entries.filter(
       (e) => (e as HTMLElement).dataset.rosterKind === 'task_notification'
     );
     expect(standalone).toHaveLength(1);
     expect(standalone[0].textContent).toContain('capped subtask done');
-    // nt2 (retained tool) is folded onto tu-a2-0's card, NOT evicted by nt1.
     expect(
       entries.some(
         (e) =>
@@ -1830,10 +1773,6 @@ describe('MinimalThreadFeed', () => {
 
   it('does not duplicate a task_notification that folds onto a rostered tool (roster-only turn)', () => {
     const t = Date.now();
-    // Roster-only completed turn: a single tool (within cap) + result, no
-    // assistant reply text. The task_notification folds onto the tool card and
-    // must NOT also render as a standalone roster entry (the global pre-scan
-    // excludes text-less turns, so the within-turn roster must gate standalone).
     const rows = [
       makeRow({
         id: 'a1',
@@ -1862,7 +1801,6 @@ describe('MinimalThreadFeed', () => {
 
     render(<MinimalThreadFeed parsedRows={rows} />);
 
-    // Outcome folds onto the Bash tool card exactly once — never standalone.
     const standalone = screen
       .getAllByTestId('minimal-thread-roster-entry')
       .filter((e) => (e as HTMLElement).dataset.rosterKind === 'task_notification');
@@ -1875,9 +1813,6 @@ describe('MinimalThreadFeed', () => {
 
   it('falls back to a row when a stale summary lingers after the turn went terminal', () => {
     const t = Date.now();
-    // Tool_use + result → terminal turn, but the active-turn LiveQuery still
-    // holds a summary for it (stale). The notification must NOT be suppressed,
-    // because no active roster renders for a terminal trailing block.
     const rows = [
       makeRow({
         id: 'a1',
@@ -1925,7 +1860,6 @@ describe('MinimalThreadFeed', () => {
       />
     );
 
-    // Stale summary is ignored (terminal trailing block) → notification falls back to a row.
     const feed = screen.getByTestId('space-task-event-feed-minimal');
     expect(feed.textContent).toContain('all green');
   });
@@ -2032,7 +1966,6 @@ describe('MinimalThreadFeed', () => {
     const feed = screen.getByTestId('space-task-event-feed-minimal');
     expect(feed.textContent).toContain('Task failed');
     expect(feed.textContent).toContain('second tool failed after retry');
-    // Roster entry format uses the short "tok" suffix.
     expect(feed.textContent).toContain('1,234 tok');
   });
 
@@ -2047,7 +1980,6 @@ describe('MinimalThreadFeed', () => {
       }),
     ];
 
-    // 10 tool entries in the active-turn summary — only the last 8 should render.
     const summary: ActiveTurnSummary = {
       sessionId: 'space:s:task:t',
       turnIndex: 1,
@@ -2076,18 +2008,12 @@ describe('MinimalThreadFeed', () => {
     expect(entries.length).toBe(8);
     expect(entries[0].textContent).toContain('echo 3');
     expect(entries[7].textContent).toContain('echo 10');
-    // The very oldest two were trimmed.
     expect(entries[0].textContent).not.toContain('echo 1');
     expect(entries[0].textContent).not.toContain('echo 2');
   });
 
   it('ages out a stale standalone task_notification once >8 newer tool calls arrive (active turn)', () => {
     const t = Date.now();
-    // An old tool whose terminal notification has no roster target (its tool
-    // card scrolled out of the 8-slot window) → it becomes a standalone
-    // roster entry. Its timestamp (t+1) predates the 8 newer tool calls below,
-    // so it must rise to the top of the window and fall off once 8 newer
-    // entries exist — NOT stay glued to the bottom forever.
     const rows = [
       makeRow({
         id: 'a0',
@@ -2121,9 +2047,6 @@ describe('MinimalThreadFeed', () => {
       }),
     ];
 
-    // 9 newer tool calls (all newer than the t+1 notification) fill the 8-slot
-    // window, so the notification has no tool card to fold onto and would be a
-    // standalone line — but it must age out rather than pin to the bottom.
     const summary: ActiveTurnSummary = {
       sessionId: 'space:s:task:t',
       turnIndex: 1,
@@ -2149,14 +2072,12 @@ describe('MinimalThreadFeed', () => {
     );
 
     const entries = screen.getAllByTestId('minimal-thread-roster-entry');
-    // The stale notification aged out — no standalone task_notification line.
     const taskEntries = entries.filter(
       (e) => (e as HTMLElement).dataset.rosterKind === 'task_notification'
     );
     expect(taskEntries).toHaveLength(0);
     expect(screen.queryByText('Task completed')).toBeNull();
     expect(entries.some((e) => e.textContent?.includes('stale old completion'))).toBe(false);
-    // The 8 newest tool calls remain visible (the newest at the bottom).
     const toolEntries = entries.filter((e) => (e as HTMLElement).dataset.rosterKind === 'tool');
     expect(toolEntries).toHaveLength(8);
     expect(toolEntries[0].textContent).toContain('newer 2');
@@ -2165,10 +2086,6 @@ describe('MinimalThreadFeed', () => {
 
   it('interleaves a standalone task_notification at its timestamp (mid-roster, not pinned)', () => {
     const t = Date.now();
-    // The standalone notification's tool card scrolled out, but the notification
-    // itself arrived mid-stream (ts t+450 lands between windowed tools). It must
-    // interleave at its true position — not append to the bottom — so the newest
-    // tool stays at the bottom and the notification sits mid-roster.
     const rows = [
       makeRow({
         id: 'a0',
@@ -2226,11 +2143,8 @@ describe('MinimalThreadFeed', () => {
 
     const entries = screen.getAllByTestId('minimal-thread-roster-entry');
     expect(entries).toHaveLength(8);
-    // The newest tool stays at the bottom — the notification did NOT pin there.
     expect(entries[7].textContent).toContain('tool 8');
     expect(entries[7].dataset.rosterKind).toBe('tool');
-    // The notification interleaves mid-roster at its timestamp (t+450, between
-    // tool 4 and tool 5), not at either edge.
     const notifIdx = entries.findIndex(
       (e) => (e as HTMLElement).dataset.rosterKind === 'task_notification'
     );
@@ -2243,10 +2157,6 @@ describe('MinimalThreadFeed', () => {
 
   it('ages out a standalone task_notification that ties the window on the same millisecond', () => {
     const t = Date.now();
-    // The standalone notification shares the exact ms (t+100) as the 8 windowed
-    // tools. Without an insertion-order tie-break the stable sort would treat
-    // the stale notification as newer than the equal-ts tools and let it
-    // survive the cap; the tie-break must sort it older so it ages out.
     const rows = [
       makeRow({
         id: 'a0',
@@ -2301,7 +2211,6 @@ describe('MinimalThreadFeed', () => {
     );
 
     const entries = screen.getAllByTestId('minimal-thread-roster-entry');
-    // The stale notification aged out on the tie — 8 tools fill the window.
     expect(
       entries.filter((e) => (e as HTMLElement).dataset.rosterKind === 'task_notification')
     ).toHaveLength(0);
@@ -2333,9 +2242,6 @@ describe('MinimalThreadFeed', () => {
 
   it('treats the last block as completed when activeAgentLabels is empty', () => {
     const t = Date.now();
-    // No result message — block is non-terminal. Need an assistant text row
-    // alongside the tool-use so the completed turn has surfaceable text and
-    // is not dropped by the empty-completed-turn filter.
     const rows = [
       makeRow({
         id: 'a1',
@@ -2376,21 +2282,17 @@ describe('MinimalThreadFeed', () => {
 
     render(<MinimalThreadFeed parsedRows={rows} />);
     const turns = screen.getAllByTestId('minimal-thread-turn');
-    // One message turn + one agent turn.
     expect(turns.length).toBe(2);
 
     const messageTurn = turns[0];
     expect(messageTurn.dataset.turnState).toBe('message');
     expect(messageTurn.dataset.fromLabel).toBe('User');
     expect(messageTurn.dataset.toLabel).toBe('Coder Agent');
-    // Human bubbles are iMessage-style — sender labels are encoded on the
-    // dataset (asserted above) but not surfaced as visible text.
     expect(messageTurn.dataset.messageKind).toBe('human');
     await waitFor(() => {
       expect(screen.getByText('help me add dark mode')).toBeTruthy();
     });
 
-    // Agent turn follows.
     expect(turns[1].dataset.turnState).toBe('completed');
     expect(turns[1].dataset.agentLabel).toBe('Coder Agent');
   });
@@ -2422,8 +2324,6 @@ describe('MinimalThreadFeed', () => {
     expect(messageTurn.dataset.toLabel).toBe('Coder Agent');
     expect(messageTurn.textContent).toContain('REVIEWER');
     expect(messageTurn.textContent).toContain('CODER');
-    // Synthetic handoffs render with a "Synthetic" badge (was "handoff" earlier;
-    // renamed when the bubble was redesigned to mirror the Thinking block).
     expect(messageTurn.textContent?.toLowerCase()).toContain('synthetic');
     expect(
       messageTurn.querySelector('[data-testid="synthetic-message"] > div')?.className
@@ -2457,7 +2357,6 @@ describe('MinimalThreadFeed', () => {
   it('infers sender from previous block when a replay message has no origin', async () => {
     const t = Date.now();
     const rows = [
-      // Reviewer ran first.
       makeRow({
         id: 'a-rev',
         label: 'Reviewer Agent',
@@ -2470,7 +2369,6 @@ describe('MinimalThreadFeed', () => {
         createdAt: t + 100,
         message: resultMessage('r-rev'),
       }),
-      // Synthetic handoff lands in Coder's session with no origin info.
       makeRow({
         id: 'u1',
         label: 'Coder Agent',
@@ -2487,7 +2385,6 @@ describe('MinimalThreadFeed', () => {
 
     render(<MinimalThreadFeed parsedRows={rows} />);
     const turns = screen.getAllByTestId('minimal-thread-turn');
-    // Reviewer agent turn → message turn (handoff) → Coder agent turn.
     expect(turns.length).toBe(3);
     expect(turns[1].dataset.turnState).toBe('message');
     expect(turns[1].dataset.fromLabel).toBe('Reviewer Agent');
@@ -2569,19 +2466,14 @@ describe('MinimalThreadFeed', () => {
 
     render(<MinimalThreadFeed parsedRows={rows} />);
     const turn = screen.getByTestId('minimal-thread-turn');
-    // 1 tool call, 3 messages, ~31s duration.
     expect(turn.textContent).toContain('1 tool call');
     expect(turn.textContent).toContain('3 messages');
 
-    // The meta line lives in the header under the agent name now —
-    // outside the reply bubble so it reads as "subtitle of the turn"
-    // rather than "first line of the agent's reply".
     const meta = screen.getByTestId('minimal-thread-agent-meta');
     expect(meta).toBeTruthy();
     expect(meta.textContent).toContain('1 tool call');
     expect(meta.textContent).toContain('3 messages');
 
-    // Assert the meta line is NOT inside the agent reply bubble.
     const bubble = screen.getByTestId('minimal-thread-agent-bubble');
     expect(bubble.contains(meta)).toBe(false);
     expect(bubble.textContent).not.toContain('1 tool call');
@@ -2598,8 +2490,6 @@ describe('MinimalThreadFeed', () => {
       }),
     ];
 
-    // Sequence: text → tool → text → tool. All four entries should appear
-    // in the roster in order, with kinds tagged on the data attribute.
     const summary: ActiveTurnSummary = {
       sessionId: 'space:s:task:t',
       turnIndex: 1,
@@ -2646,16 +2536,13 @@ describe('MinimalThreadFeed', () => {
       }),
     ];
 
-    // Server is the canonical filter — but the renderer also defensively
-    // drops empty text/thinking entries so a future relaxation upstream
-    // can't bleed whitespace into the rail.
     const summary: ActiveTurnSummary = {
       sessionId: 'space:s:task:t',
       turnIndex: 1,
       entries: [
-        { kind: 'text', text: '   ', ts: t, uuid: 'a1' }, // whitespace-only
-        { kind: 'text', text: '', ts: t, uuid: 'a1' }, // empty string
-        { kind: 'thinking', preview: '', ts: t, uuid: 'a1' }, // empty thinking
+        { kind: 'text', text: '   ', ts: t, uuid: 'a1' },
+        { kind: 'text', text: '', ts: t, uuid: 'a1' },
+        { kind: 'thinking', preview: '', ts: t, uuid: 'a1' },
         { kind: 'tool_use', toolName: 'Bash', preview: 'ls', ts: t, uuid: 'a1' },
       ],
     };
@@ -2691,7 +2578,6 @@ describe('MinimalThreadFeed', () => {
       ];
 
       const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
-      // The trigger button has title="Run result" (see ResultInfoButton).
       const trigger = container.querySelector('button[title="Run result"]');
       expect(trigger).not.toBeNull();
     });
@@ -2747,7 +2633,6 @@ describe('MinimalThreadFeed', () => {
           createdAt: t,
           message: assistantText('a1', 'still working'),
         }),
-        // No result row → no envelope.
       ];
 
       const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
@@ -2778,8 +2663,6 @@ describe('MinimalThreadFeed', () => {
       ];
 
       const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
-      // Both human msg and agent reply share the same block init, so we
-      // expect to see the session-info trigger present at least once.
       const triggers = container.querySelectorAll('button[title="Session info"]');
       expect(triggers.length).toBeGreaterThanOrEqual(1);
     });
@@ -2856,8 +2739,6 @@ describe('MinimalThreadFeed', () => {
       const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
       const trigger = container.querySelector('button[title="Run result"]');
       expect(trigger).not.toBeNull();
-      // `isError` flag wires the amber accent class onto the trigger so
-      // failures surface in the actions row before the dropdown opens.
       expect(trigger?.className).toMatch(/amber/);
     });
   });
@@ -2883,12 +2764,9 @@ describe('MinimalThreadFeed', () => {
       const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
       const bubble = container.querySelector('[data-testid="minimal-thread-agent-bubble"]');
       expect(bubble).not.toBeNull();
-      // Red bubble treatment — data attribute + red bg/border classes.
       expect(bubble?.getAttribute('data-result-error')).toBe('true');
       expect(bubble?.className).toMatch(/bg-red-900\/20/);
       expect(bubble?.className).toMatch(/border-red-800/);
-      // Inline error summary surfaces the first error string without opening
-      // the dropdown.
       const summary = container.querySelector(
         '[data-testid="minimal-thread-result-error-summary"]'
       );
@@ -2916,8 +2794,6 @@ describe('MinimalThreadFeed', () => {
       const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
       const bubble = container.querySelector('[data-testid="minimal-thread-agent-bubble"]');
       expect(bubble).not.toBeNull();
-      // Budget cap is a deliberate cost guard, not an execution failure — no
-      // red bubble, no inline summary. It still gets the amber dropdown trigger.
       expect(bubble?.getAttribute('data-result-error')).toBeNull();
       expect(bubble?.className).not.toMatch(/bg-red-900/);
       expect(
@@ -2977,8 +2853,6 @@ describe('MinimalThreadFeed', () => {
         '[data-testid="minimal-thread-result-error-summary"]'
       );
       expect(summary).not.toBeNull();
-      // No error string → humanized subtype label so the red bubble always
-      // carries an explanation.
       expect(summary?.textContent).toContain('Error during execution');
     });
 
@@ -2989,7 +2863,6 @@ describe('MinimalThreadFeed', () => {
           id: 'a1',
           label: 'Coder Agent',
           createdAt: t,
-          // tool_use only — no text assistant message before the error result
           message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'echo test' } }]),
         }),
         makeRow({
@@ -3002,8 +2875,6 @@ describe('MinimalThreadFeed', () => {
 
       const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
       const bubble = container.querySelector('[data-testid="minimal-thread-agent-bubble"]');
-      // Without the exemption from the empty-body filter, this turn would be
-      // dropped (empty lastMessage) and the red bubble would never render.
       expect(bubble).not.toBeNull();
       expect(bubble?.getAttribute('data-result-error')).toBe('true');
       const summary = container.querySelector(
@@ -3019,7 +2890,6 @@ describe('MinimalThreadFeed', () => {
           id: 'a1',
           label: 'Coder Agent',
           createdAt: t,
-          // tool_use only — no text before the budget-cap result
           message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'echo test' } }]),
         }),
         makeRow({
@@ -3032,8 +2902,6 @@ describe('MinimalThreadFeed', () => {
 
       const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
       const bubble = container.querySelector('[data-testid="minimal-thread-agent-bubble"]');
-      // Budget-cap is excluded from the red-bubble treatment but the turn must
-      // still render so the amber result-info dropdown is accessible.
       expect(bubble).not.toBeNull();
       expect(bubble?.getAttribute('data-result-error')).toBeNull();
       expect(bubble?.className).not.toMatch(/bg-red-900/);
@@ -3047,7 +2915,6 @@ describe('MinimalThreadFeed', () => {
           id: 'a1',
           label: 'Coder Agent',
           createdAt: t,
-          // tool_use only — no text assistant message before the error result
           message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
         }),
         makeRow({
@@ -3075,11 +2942,8 @@ describe('MinimalThreadFeed', () => {
 
       render(<MinimalThreadFeed parsedRows={rows} />);
 
-      // The error-only turn is visible with the red bubble.
       const bubble = screen.getByTestId('minimal-thread-agent-bubble');
       expect(bubble.getAttribute('data-result-error')).toBe('true');
-      // The task_notification folds onto the roster tool entry (no standalone
-      // system row duplicating it).
       const entry = screen.getByTestId('minimal-thread-roster-entry');
       expect(entry.dataset.taskStatus).toBe('failed');
       expect(entry.textContent).toContain('tests failed');
@@ -3093,7 +2957,6 @@ describe('MinimalThreadFeed', () => {
           id: 'a1',
           label: 'Coder Agent',
           createdAt: t,
-          // tool_use only — no text before the system row and error result
           message: assistantToolUse('a1', [{ name: 'Bash', input: { command: 'bun test' } }]),
         }),
         makeRow({
@@ -3131,21 +2994,15 @@ describe('MinimalThreadFeed', () => {
 
       render(<MinimalThreadFeed parsedRows={rows} />);
 
-      // The system-row split creates two completed turns in chronological
-      // order around the thinking_tokens card: a tool_use-only turn (kept by
-      // the roster-content filter from #2188) and the error turn.
       const bubbles = screen.getAllByTestId('minimal-thread-agent-bubble');
       expect(bubbles).toHaveLength(2);
-      // Turn 1 (tool_use): roster shows the folded task status.
       const toolEntry = screen.getByTestId('minimal-thread-roster-entry');
       expect(toolEntry.dataset.taskStatus).toBe('failed');
       expect(toolEntry.textContent).toContain('tests failed');
-      // Turn 2 (error): red bubble + inline error summary.
       const errorBubble = bubbles.find((b) => b.getAttribute('data-result-error') === 'true');
       expect(errorBubble).toBeDefined();
       const summary = screen.getByTestId('minimal-thread-result-error-summary');
       expect(summary.textContent).toContain('something failed');
-      // No standalone task_notification duplicating the roster.
       expect(screen.queryByText('Task failed')).toBeNull();
     });
   });
@@ -3161,7 +3018,6 @@ describe('MinimalThreadFeed', () => {
       }),
     ];
 
-    // 10 mixed entries — only the last 8 should render.
     const summary: ActiveTurnSummary = {
       sessionId: 'space:s:task:t',
       turnIndex: 1,
@@ -3189,10 +3045,8 @@ describe('MinimalThreadFeed', () => {
     const entries = screen.getAllByTestId('minimal-thread-roster-entry');
     expect(entries.length).toBe(8);
     const allText = entries.map((e) => e.textContent).join('\n');
-    // Oldest two trimmed.
     expect(allText).not.toContain('msg-1');
     expect(allText).not.toContain('echo 1');
-    // Latest eight kept.
     expect(allText).toContain('msg-2');
     expect(allText).toContain('echo 2');
     expect(allText).toContain('msg-5');
@@ -3200,16 +3054,9 @@ describe('MinimalThreadFeed', () => {
   });
 
   describe('Per-agent active rail (multi-session)', () => {
-    // In a multi-session workflow (e.g. Coder + Reviewer in the Coding
-    // Workflow), agent rows interleave. With the original "globally
-    // trailing block" check, a Reviewer terminal `result` row landing
-    // after Coder's last visible row would suppress Coder's still-
-    // running rail because the global tail is now terminal. The fix
-    // is to track trailing non-terminal blocks per agent label.
     it('keeps the Coder rail active when Reviewer just emitted a terminal result after Coder', () => {
       const t = Date.now();
       const rows = [
-        // Coder is mid-action — assistant rows but no result yet.
         makeRow({
           id: 'a-coder-1',
           label: 'Coder Agent',
@@ -3224,9 +3071,6 @@ describe('MinimalThreadFeed', () => {
           createdAt: t + 1000,
           message: assistantText('a-coder-2', 'investigating'),
         }),
-        // Reviewer ran briefly and just finished — its terminal `result`
-        // row lands AFTER Coder's last row. Pre-fix, this is what
-        // suppressed Coder's rail.
         makeRow({
           id: 'a-rev',
           label: 'Reviewer Agent',
@@ -3244,19 +3088,16 @@ describe('MinimalThreadFeed', () => {
       render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
 
       const turns = screen.getAllByTestId('minimal-thread-turn');
-      // Coder turn first, Reviewer turn second.
       const coderTurn = turns.find((t) => t.dataset.agentLabel === 'Coder Agent');
       const reviewerTurn = turns.find((t) => t.dataset.agentLabel === 'Reviewer Agent');
       expect(coderTurn?.dataset.turnState).toBe('active');
       expect(reviewerTurn?.dataset.turnState).toBe('completed');
-      // Exactly one rail — Coder's.
       expect(screen.getAllByTestId('minimal-thread-active-rail').length).toBe(1);
     });
 
     it('mirrors: keeps the Reviewer rail active when Coder just finished before Reviewer', () => {
       const t = Date.now();
       const rows = [
-        // Coder fully ran and emitted a terminal result.
         makeRow({
           id: 'a-coder',
           label: 'Coder Agent',
@@ -3269,7 +3110,6 @@ describe('MinimalThreadFeed', () => {
           createdAt: t + 500,
           message: resultMessage('r-coder'),
         }),
-        // Reviewer is mid-action — assistant rows, no result yet.
         makeRow({
           id: 'a-rev-1',
           label: 'Reviewer Agent',
@@ -3299,7 +3139,6 @@ describe('MinimalThreadFeed', () => {
     it('renders one rail per agent when both agents are running concurrently', () => {
       const t = Date.now();
       const rows = [
-        // Coder mid-action — non-terminal.
         makeRow({
           id: 'a-coder-1',
           label: 'Coder Agent',
@@ -3314,7 +3153,6 @@ describe('MinimalThreadFeed', () => {
           createdAt: t + 1000,
           message: assistantText('a-coder-2', 'still going'),
         }),
-        // Reviewer mid-action — also non-terminal.
         makeRow({
           id: 'a-rev-1',
           label: 'Reviewer Agent',
@@ -3341,15 +3179,10 @@ describe('MinimalThreadFeed', () => {
       const reviewerTurn = turns.find((t) => t.dataset.agentLabel === 'Reviewer Agent');
       expect(coderTurn?.dataset.turnState).toBe('active');
       expect(reviewerTurn?.dataset.turnState).toBe('active');
-      // Two rails — one per agent.
       expect(screen.getAllByTestId('minimal-thread-active-rail').length).toBe(2);
     });
 
     it('matches active-agent labels case- and whitespace-insensitively', () => {
-      // Activity members are run through a title-casing helper on the
-      // daemon ("coder agent" → "Coder Agent") while raw row labels
-      // can be either form. The renderer should treat them as the
-      // same agent regardless of casing or extra whitespace.
       const t = Date.now();
       const rows = [
         makeRow({
@@ -3528,17 +3361,12 @@ describe('MinimalThreadFeed', () => {
     const entries = screen.getAllByTestId('minimal-thread-roster-entry');
     expect(entries.length).toBe(3);
 
-    // First entry: real human user input — distinct kind data attribute.
     expect(entries[0].dataset.rosterKind).toBe('user');
     expect(entries[0].textContent).toContain('please retry that step');
 
-    // Second entry: synthetic agent→agent handoff — uses its own kind, NOT
-    // the same `user` kind, so the rail can render the visual distinction.
     expect(entries[1].dataset.rosterKind).toBe('handoff');
     expect(entries[1].textContent).toContain('Reviewer Agent');
 
-    // Third entry: tool — confirms the handoff/user entries don't displace
-    // or break the existing tool rendering.
     expect(entries[2].dataset.rosterKind).toBe('tool');
   });
 
@@ -3554,9 +3382,6 @@ describe('MinimalThreadFeed', () => {
       }),
     ];
 
-    // Summary keyed on a different session id — the trailing block's
-    // session id has no match, so the rail renders empty rather than
-    // surfacing stale activity from another session.
     const summary: ActiveTurnSummary = {
       sessionId: 'space:s:other-task:o',
       turnIndex: 1,
@@ -3573,8 +3398,6 @@ describe('MinimalThreadFeed', () => {
       />
     );
     expect(screen.queryByTestId('minimal-thread-roster-entry')).toBeNull();
-    // Active rail is still present (the block IS active) — it just has
-    // no entries.
     expect(screen.getByTestId('minimal-thread-active-rail')).toBeTruthy();
   });
 
@@ -3793,7 +3616,6 @@ describe('MinimalThreadFeed', () => {
 
     render(<MinimalThreadFeed parsedRows={rows} activeAgentLabels={new Set(['Coder Agent'])} />);
 
-    // No standalone system card — the status row is folded into the active turn.
     expect(screen.queryByTestId('minimal-thread-system')).toBeNull();
 
     const turn = screen.getByTestId('minimal-thread-turn');
@@ -4013,9 +3835,6 @@ describe('MinimalThreadFeed', () => {
       />
     );
 
-    // The active turn must still be attributed to active-session so its summary
-    // applies; if the unmatched clear row joined the turn, latestSessionId would
-    // flip to other-session and the summary roster entry would disappear.
     const entries = screen.getAllByTestId('minimal-thread-roster-entry');
     expect(entries.some((el) => el.textContent?.includes('summary-read'))).toBe(true);
 

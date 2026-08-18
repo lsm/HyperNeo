@@ -63,7 +63,6 @@ class MockTransport implements IMessageTransport {
     return this.state === 'connected';
   }
 
-  // Test helpers
   simulateMessage(message: HubMessage): void {
     for (const handler of this.messageHandlers) {
       handler(message);
@@ -160,7 +159,6 @@ describe('MessageHub', () => {
       transport.simulateStateChange('connected');
       transport.simulateStateChange('disconnected');
 
-      // Small delay to allow handlers to execute
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(stateChanges).toContain('connecting');
@@ -179,7 +177,7 @@ describe('MessageHub', () => {
       expect(stateChanges).toContain('connecting');
 
       unsubscribe();
-      stateChanges.length = 0; // Clear array
+      stateChanges.length = 0;
 
       transport.simulateStateChange('disconnected');
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -225,7 +223,6 @@ describe('MessageHub', () => {
 
       transport.simulateMessage(requestMessage);
 
-      // Wait for async handler
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(handler).toHaveBeenCalledWith(
@@ -236,7 +233,6 @@ describe('MessageHub', () => {
         })
       );
 
-      // Check that response was sent back
       const sentMessages = transport.sentMessages;
       const responseMessage = sentMessages.find(
         (msg) => msg.type === MessageType.RESPONSE && msg.requestId === requestMessage.id
@@ -261,7 +257,6 @@ describe('MessageHub', () => {
 
       transport.simulateMessage(requestMessage);
 
-      // Wait for async handler
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       const sentMessages = transport.sentMessages;
@@ -297,7 +292,6 @@ describe('MessageHub', () => {
     test('should send query message and receive response', async () => {
       const queryPromise = messageHub.request('test.method', { value: 42 });
 
-      // Simulate receiving result
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       const sentMessage = transport.sentMessages[0];
@@ -305,7 +299,6 @@ describe('MessageHub', () => {
       expect(sentMessage.method).toBe('test.method');
       expect(sentMessage.data).toEqual({ value: 42 });
 
-      // Simulate response from server
       const responseMessage = createResponseMessage({
         method: sentMessage.method,
         data: { result: 'success' },
@@ -332,7 +325,6 @@ describe('MessageHub', () => {
 
       const sentMessage = transport.sentMessages[0];
 
-      // Simulate error from server
       const errorMessage = createErrorResponseMessage({
         method: sentMessage.method,
         error: {
@@ -357,7 +349,6 @@ describe('MessageHub', () => {
     });
 
     test('should handle sendMessage error in query', async () => {
-      // Create a transport that throws on send
       class FailingTransport extends MockTransport {
         async send(_message: HubMessage): Promise<void> {
           throw new Error('Transport send failed');
@@ -380,7 +371,6 @@ describe('MessageHub', () => {
       const sentMessage = transport.sentMessages[0];
       expect(sentMessage.sessionId).toBe('custom-room');
 
-      // Clean up pending query
       const responseMessage = createResponseMessage({
         method: sentMessage.method,
         data: {},
@@ -420,7 +410,6 @@ describe('MessageHub', () => {
 
       transport.simulateMessage(requestMessage);
 
-      // Wait for async handler
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(handler).toHaveBeenCalledWith(
@@ -431,7 +420,6 @@ describe('MessageHub', () => {
         })
       );
 
-      // All requests now send responses (ACK if handler returns void)
       const responses = transport.sentMessages.filter((m) => m.type === MessageType.RESPONSE);
       expect(responses.length).toBe(1);
       expect(responses[0].data).toEqual({ acknowledged: true });
@@ -477,10 +465,8 @@ describe('MessageHub', () => {
     test('should not throw when emitting event while disconnected (skips send)', () => {
       transport.simulateStateChange('disconnected');
 
-      // Should not throw, just skip sending
       messageHub.event('test.event', {});
 
-      // No message should be sent
       expect(transport.sentMessages.length).toBe(0);
     });
   });
@@ -511,7 +497,6 @@ describe('MessageHub', () => {
 
       transport.simulateMessage(eventMessage);
 
-      // Wait for async handling
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(handler).toHaveBeenCalledWith(
@@ -567,10 +552,8 @@ describe('MessageHub', () => {
 
   describe('Room Management', () => {
     test('should send channel.join request', async () => {
-      // Start joinChannel but don't await yet
       const joinPromise = messageHub.joinChannel('session-123');
 
-      // Wait for message to be sent
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       const sentMessage = transport.sentMessages[0];
@@ -578,7 +561,6 @@ describe('MessageHub', () => {
       expect(sentMessage.method).toBe('channel.join');
       expect(sentMessage.data).toEqual({ channel: 'session-123' });
 
-      // Simulate ACK response
       transport.simulateMessage(
         createResponseMessage({
           method: 'channel.join',
@@ -592,10 +574,8 @@ describe('MessageHub', () => {
     });
 
     test('should send channel.leave request', async () => {
-      // Start leaveChannel but don't await yet
       const leavePromise = messageHub.leaveChannel('session-123');
 
-      // Wait for message to be sent
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       const sentMessage = transport.sentMessages[0];
@@ -603,7 +583,6 @@ describe('MessageHub', () => {
       expect(sentMessage.method).toBe('channel.leave');
       expect(sentMessage.data).toEqual({ channel: 'session-123' });
 
-      // Simulate ACK response
       transport.simulateMessage(
         createResponseMessage({
           method: 'channel.leave',
@@ -636,7 +615,6 @@ describe('MessageHub', () => {
       messageHub.onEvent('test.event', eventHandler);
       messageHub.onRequest('test.request2', requestHandler2);
 
-      // Send request 1
       const requestMessage1 = createRequestMessage({
         method: 'test.request1',
         data: {},
@@ -644,7 +622,6 @@ describe('MessageHub', () => {
       });
       transport.simulateMessage(requestMessage1);
 
-      // Send event
       const eventMessage = createEventMessage({
         method: 'test.event',
         data: {},
@@ -652,7 +629,6 @@ describe('MessageHub', () => {
       });
       transport.simulateMessage(eventMessage);
 
-      // Send request 2
       const requestMessage2 = createRequestMessage({
         method: 'test.request2',
         data: {},
@@ -694,7 +670,6 @@ describe('MessageHub', () => {
         requestId: 'unknown-id',
       });
 
-      // Should not throw
       expect(() => {
         transport.simulateMessage(responseMessage);
       }).not.toThrow();
@@ -706,19 +681,14 @@ describe('MessageHub', () => {
 
       const unregister = newHub.registerTransport(newTransport);
 
-      // Verify transport is registered
       expect((newHub as unknown as { transports: Map<string, unknown> }).transports.size).toBe(1);
 
-      // Verify transport has message handlers registered
       expect(newTransport['messageHandlers'].size).toBe(1);
 
-      // Unregister transport
       unregister();
 
-      // Verify transport is unregistered
       expect((newHub as unknown as { transports: Map<string, unknown> }).transports.size).toBe(0);
 
-      // Verify transport's message handlers are removed
       expect(newTransport['messageHandlers'].size).toBe(0);
     });
   });
@@ -728,12 +698,10 @@ describe('MessageHub', () => {
       const handler = mock(() => {});
       messageHub.onMessage(handler);
 
-      // Send a request (outgoing)
       const requestPromise = messageHub.request('test.method', {});
 
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Should have been called for outgoing REQUEST message
       expect(handler).toHaveBeenCalledWith(
         expect.objectContaining({
           type: MessageType.REQUEST,
@@ -742,7 +710,6 @@ describe('MessageHub', () => {
         'out'
       );
 
-      // Simulate response (incoming)
       const sentMessage = transport.sentMessages[0];
       const responseMessage = createResponseMessage({
         method: sentMessage.method,
@@ -753,7 +720,6 @@ describe('MessageHub', () => {
 
       transport.simulateMessage(responseMessage);
 
-      // Should have been called for incoming RESPONSE message
       expect(handler).toHaveBeenCalledWith(
         expect.objectContaining({
           type: MessageType.RESPONSE,
@@ -768,22 +734,16 @@ describe('MessageHub', () => {
       const handler = mock(() => {});
       const unsubscribe = messageHub.onMessage(handler);
 
-      // Send a message
       messageHub.event('test.event', {});
 
-      // Handler should have been called
       expect(handler).toHaveBeenCalled();
 
-      // Clear mock
       handler.mockClear();
 
-      // Unsubscribe
       unsubscribe();
 
-      // Send another message
       messageHub.event('test.event2', {});
 
-      // Handler should NOT have been called
       expect(handler).not.toHaveBeenCalled();
     });
   });
@@ -819,7 +779,6 @@ describe('MessageHub', () => {
         timestamp: new Date().toISOString(),
       };
 
-      // Should not throw
       expect(() => {
         transport.simulateMessage(pongMessage);
       }).not.toThrow();
@@ -883,10 +842,8 @@ describe('MessageHub', () => {
 
   describe('Utility Methods', () => {
     test('should get pending call count', async () => {
-      // No pending calls initially
       expect(messageHub.getPendingCallCount()).toBe(0);
 
-      // Create some pending queries
       const query1 = messageHub.request('test.method1', {});
       const query2 = messageHub.request('test.method2', {});
 
@@ -894,7 +851,6 @@ describe('MessageHub', () => {
 
       expect(messageHub.getPendingCallCount()).toBe(2);
 
-      // Resolve one query
       const sentMessage1 = transport.sentMessages[0];
       transport.simulateMessage(
         createResponseMessage({
@@ -908,7 +864,6 @@ describe('MessageHub', () => {
       await query1;
       expect(messageHub.getPendingCallCount()).toBe(1);
 
-      // Resolve second query
       const sentMessage2 = transport.sentMessages[1];
       transport.simulateMessage(
         createResponseMessage({
@@ -931,11 +886,9 @@ describe('Multi-Transport Support', () => {
     const [t1, t2] = InProcessTransport.createPair({ name: 'test' });
 
     hub.registerTransport(t1, 'primary', true);
-    hub.registerTransport(t2, 'secondary', true); // Override primary
+    hub.registerTransport(t2, 'secondary', true);
 
-    // t2 should now be primary
-    // We can verify this by checking which transport is used for sending
-    expect(hub.isConnected()).toBe(false); // Neither initialized
+    expect(hub.isConnected()).toBe(false);
 
     t1.close();
     t2.close();
@@ -954,7 +907,6 @@ describe('Multi-Transport Support', () => {
 
     expect(hub.isConnected()).toBe(true);
 
-    // Cleanup
     await client1.close();
     await server1.close();
     await client2.close();
@@ -962,7 +914,6 @@ describe('Multi-Transport Support', () => {
   });
 
   test('should route response via same transport request came from (_transportName)', async () => {
-    // This is the CRITICAL test for Neo!
     const serverHub = new MessageHub();
     const clientHub = new MessageHub();
 
@@ -973,7 +924,6 @@ describe('Multi-Transport Support', () => {
 
     await clientTransport.initialize();
 
-    // Track which transport sent the response
     let responseSentVia: string | undefined = undefined;
     const originalSend = serverTransport.send.bind(serverTransport);
     serverTransport.send = async (msg) => {
@@ -981,16 +931,14 @@ describe('Multi-Transport Support', () => {
       return originalSend(msg);
     };
 
-    // Register handler on server
     serverHub.onRequest('test.method', async () => {
       return { success: true };
     });
 
-    // Make request from client
     const result = await clientHub.request('test.method', {});
     expect(result).toEqual({ success: true });
     expect(responseSentVia).toBeDefined();
-    expect(responseSentVia).toBe('neo' as never); // Response went through neo transport
+    expect(responseSentVia).toBe('neo' as never);
 
     await clientTransport.close();
     await serverTransport.close();
@@ -1009,10 +957,8 @@ describe('Multi-Transport Support', () => {
 
     expect(hub.isConnected()).toBe(true);
 
-    // Unregister primary
     unregister1();
 
-    // Should still be connected via second transport
     expect(hub.isConnected()).toBe(true);
 
     await client1.close();
@@ -1028,10 +974,8 @@ describe('Multi-Transport Support', () => {
     hub.registerTransport(server, 'transport1');
     hub.registerTransport(client, 'transport2');
 
-    // Neither initialized
     expect(hub.isConnected()).toBe(false);
 
-    // Initialize one
     await server.initialize();
     expect(hub.isConnected()).toBe(true);
 
@@ -1054,58 +998,43 @@ describe('Multi-Transport Support', () => {
   });
 
   test('should handle RPC from primary transport client when multiple transports registered', async () => {
-    // This test verifies that with multiple transports, the primary transport client
-    // can complete RPC calls. Without a router, responses go to the primary transport.
-
     const serverHub = new MessageHub({ defaultSessionId: 'global' });
 
-    // Primary (websocket) client
     const [wsClient, wsServer] = InProcessTransport.createPair({ name: 'ws' });
     const wsClientHub = new MessageHub({ defaultSessionId: 'global' });
 
-    // Secondary (neo) client
     const [neoClient, neoServer] = InProcessTransport.createPair({ name: 'neo' });
     const neoClientHub = new MessageHub({ defaultSessionId: 'global' });
 
-    // Register both on server - websocket is primary
     serverHub.registerTransport(wsServer, 'websocket', true);
     serverHub.registerTransport(neoServer, 'neo', false);
 
     wsClientHub.registerTransport(wsClient, 'client');
     neoClientHub.registerTransport(neoClient, 'client');
 
-    // Initialize both pairs
     await wsClient.initialize();
     await neoClient.initialize();
 
-    // Register handler
     serverHub.onRequest('test.echo', async (data) => {
       return { echoed: data };
     });
 
-    // Primary client should be able to make RPC calls
     const wsResult = await wsClientHub.request('test.echo', { source: 'websocket' });
     expect((wsResult as { echoed: { source: string } }).echoed.source).toBe('websocket');
 
-    // Secondary client's requests reach the server, but without a router,
-    // responses go to the primary transport (current implementation limitation)
     let neoHandlerCalled = false;
     serverHub.onRequest('test.neo', async (data) => {
       neoHandlerCalled = true;
       return { echoed: data };
     });
 
-    // The secondary client's request reaches the server (handler is called)
-    // but the response goes to the primary transport, causing a timeout
     void neoClientHub.request('test.neo', { source: 'neo' }, { timeout: 100 }).catch(() => {
       // Expected timeout - response goes to primary transport
     });
     await new Promise((resolve) => setTimeout(resolve, 150));
 
-    // The handler was called (request reached server)
     expect(neoHandlerCalled).toBe(true);
 
-    // Cleanup
     await wsClient.close();
     await wsServer.close();
     await neoClient.close();
@@ -1113,14 +1042,6 @@ describe('Multi-Transport Support', () => {
   });
 });
 
-// ========================================
-// onClientDisconnect forwarding
-// ========================================
-
-/**
- * Creates a mock transport with onClientDisconnect support.
- * Returns both the transport and a simulate function to trigger disconnects.
- */
 function createMockTransportWithDisconnect(): {
   transport: IMessageTransport;
   simulateDisconnect: (clientId: string) => void;
@@ -1176,11 +1097,9 @@ describe('MessageHub.onClientDisconnect', () => {
       received.push(clientId);
     });
 
-    // First disconnect fires
     simulateDisconnect('client-1');
     expect(received).toEqual(['client-1']);
 
-    // Unsubscribe and fire again — handler should not be called
     unsubscribe();
     simulateDisconnect('client-2');
     expect(received).toEqual(['client-1']);
@@ -1189,7 +1108,6 @@ describe('MessageHub.onClientDisconnect', () => {
   test('returns no-op unsubscribe when transport has no onClientDisconnect', () => {
     const hub = new MessageHub();
 
-    // Transport without onClientDisconnect
     const mockTransport: IMessageTransport = {
       name: 'mock-no-disconnect',
       initialize: async () => {},
@@ -1199,12 +1117,10 @@ describe('MessageHub.onClientDisconnect', () => {
       getState: () => 'connected' as ConnectionState,
       onMessage: () => () => {},
       onConnectionChange: () => () => {},
-      // onClientDisconnect is intentionally omitted
     };
 
     hub.registerTransport(mockTransport);
 
-    // Should not throw; returns a no-op function
     const unsubscribe = hub.onClientDisconnect(() => {});
     expect(() => unsubscribe()).not.toThrow();
   });

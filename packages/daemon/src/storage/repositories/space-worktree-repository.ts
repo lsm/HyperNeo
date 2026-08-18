@@ -1,10 +1,3 @@
-/**
- * SpaceWorktreeRepository
- *
- * Persists the mapping between space tasks and their git worktrees.
- * One record per task; keyed by (space_id, task_id).
- */
-
 import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
 
@@ -15,16 +8,12 @@ export interface SpaceWorktreeRecord {
   slug: string;
   path: string;
   createdAt: number;
-  /** Unix epoch ms when the task completed. NULL while the task is still active. */
   completedAt?: number;
 }
 
 export class SpaceWorktreeRepository {
   constructor(private db: BunDatabase) {}
 
-  /**
-   * Persist a new worktree ↔ task mapping.
-   */
   create(params: {
     spaceId: string;
     taskId: string;
@@ -42,9 +31,6 @@ export class SpaceWorktreeRepository {
     return this.getById(id)!;
   }
 
-  /**
-   * Look up the worktree record for a specific task.
-   */
   getByTaskId(spaceId: string, taskId: string): SpaceWorktreeRecord | null {
     const row = this.db
       .prepare(`SELECT * FROM space_worktrees WHERE space_id = ? AND task_id = ?`)
@@ -53,9 +39,6 @@ export class SpaceWorktreeRepository {
     return this.rowToRecord(row);
   }
 
-  /**
-   * List all worktrees for a space, ordered by creation time.
-   */
   listBySpace(spaceId: string): SpaceWorktreeRecord[] {
     const rows = this.db
       .prepare(`SELECT * FROM space_worktrees WHERE space_id = ? ORDER BY created_at ASC`)
@@ -63,10 +46,6 @@ export class SpaceWorktreeRepository {
     return rows.map((r) => this.rowToRecord(r));
   }
 
-  /**
-   * Return all slugs currently in use for a space.
-   * Used for collision avoidance when generating new slugs.
-   */
   listSlugs(spaceId: string): string[] {
     const rows = this.db
       .prepare(`SELECT slug FROM space_worktrees WHERE space_id = ?`)
@@ -74,11 +53,6 @@ export class SpaceWorktreeRepository {
     return rows.map((r) => r.slug);
   }
 
-  /**
-   * Set completed_at on the worktree record for a task.
-   * Called when a task finishes normally — worktree is kept for TTL-based cleanup.
-   * Returns true if a row was updated.
-   */
   markCompleted(spaceId: string, taskId: string, completedAt: number = Date.now()): boolean {
     const result = this.db
       .prepare(
@@ -88,10 +62,6 @@ export class SpaceWorktreeRepository {
     return result.changes > 0;
   }
 
-  /**
-   * List all worktree records whose completed_at is older than the given cutoff.
-   * Used by the TTL reaper to find expired worktrees across all spaces.
-   */
   listCompletedBefore(cutoffMs: number): SpaceWorktreeRecord[] {
     const rows = this.db
       .prepare(
@@ -101,10 +71,6 @@ export class SpaceWorktreeRepository {
     return rows.map((r) => this.rowToRecord(r));
   }
 
-  /**
-   * Remove the worktree record for a specific task.
-   * Returns true if a row was deleted.
-   */
   delete(spaceId: string, taskId: string): boolean {
     const result = this.db
       .prepare(`DELETE FROM space_worktrees WHERE space_id = ? AND task_id = ?`)

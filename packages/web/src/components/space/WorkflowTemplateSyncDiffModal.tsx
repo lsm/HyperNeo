@@ -1,18 +1,3 @@
-/**
- * WorkflowTemplateSyncDiffModal
- *
- * Preview-then-apply modal for applying a template update to a seeded
- * workflow. Fetches a structural before/after diff from
- * `spaceWorkflow.previewTemplateSync` on open, renders the deltas
- * (description, instructions, node set), and offers a one-click "Apply update"
- * that runs the existing `spaceWorkflow.syncFromTemplate`.
- *
- * This is the REQUIRED review path when the workflow is both customized and
- * has an update available — applying a structural update would otherwise
- * silently discard the local edits. The apply is never automatic; it only
- * fires on an explicit click.
- */
-
 import { useEffect, useState } from 'preact/hooks';
 import type { SpaceWorkflowSummary, SpaceWorkflowSyncPreview } from '@hyperneo/shared';
 import { Modal } from '../ui/Modal';
@@ -23,7 +8,6 @@ import { toast } from '../../lib/toast';
 interface Props {
   workflow: SpaceWorkflowSummary;
   onClose: () => void;
-  /** Called after a successful apply, before the modal closes. */
   onApplied: () => void;
 }
 
@@ -58,8 +42,6 @@ export function WorkflowTemplateSyncDiffModal({ workflow, onClose, onApplied }: 
   const handleApply = async () => {
     setApplying(true);
     try {
-      // Pass the row hash observed at review time so the daemon rejects the
-      // apply if the workflow changed since (optimistic-concurrency guard).
       await spaceStore.syncWorkflowFromTemplate(workflow.id, preview?.rowHash);
       toast.success(`"${workflow.name}" updated from template`);
       onApplied();
@@ -85,11 +67,6 @@ export function WorkflowTemplateSyncDiffModal({ workflow, onClose, onApplied }: 
 
         {loadError && <p class="text-xs text-red-400">Failed to load diff: {loadError}</p>}
 
-        {/* Persistent warning: apply is a full structural overwrite. Shown in
-            every state so the review process is substantive even when the
-            field-level diff is empty or omits the customized field — the diff
-            below only enumerates description/instructions/step-names, but sync
-            also overwrites channels, hooks, and per-step settings. */}
         {preview && (
           <p class="rounded-md border border-amber-500/20 bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-200/90">
             Applying overwrites the entire workflow structure — steps, instructions, channels, and

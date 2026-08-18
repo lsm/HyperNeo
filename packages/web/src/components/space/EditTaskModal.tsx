@@ -1,11 +1,3 @@
-/**
- * EditTaskModal — inline editor for task title, description, and priority.
- *
- * Opens from the "Edit" button in the SpaceTaskPane header. Calls
- * `spaceStore.updateTask` on confirm, which routes through the existing
- * `spaceTask.update` RPC handler. Available for non-terminal tasks only.
- */
-
 import type { SpaceTaskPriority } from '@hyperneo/shared';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { Modal } from '../ui/Modal.tsx';
@@ -48,9 +40,6 @@ export function EditTaskModal({
   const [description, setDescription] = useState(initialDescription);
   const [priority, setPriority] = useState(initialPriority);
 
-  // Snapshot the initial values at modal-open time. This freezes the diff
-  // baseline so concurrent store updates to untouched fields don't cause
-  // the stale local value to be sent back, overwriting the concurrent edit.
   const baselineRef = useRef({
     title: initialTitle,
     description: initialDescription,
@@ -82,8 +71,6 @@ export function EditTaskModal({
 
   const handleConfirm = (): void => {
     if (!canConfirm) return;
-    // Only send changed fields to avoid overwriting concurrent edits
-    // on untouched fields. Compare against the frozen baseline, not live props.
     const updates: Partial<{
       title: string;
       description: string;

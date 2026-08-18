@@ -14,32 +14,11 @@ import {
   type GitHubPollingRepo,
 } from '../../../../src/lib/external-events/github/github-normalizer.ts';
 
-// ============================================================================
-// External-event essence contract tests
-//
-// Locks the lean "essence" boundary that several tasks (#686, #688, #689, #690,
-// #733) established for GitHub external events. The contract has three legs,
-// each covered below by feeding realistic GitHub webhook/polling fixtures
-// through the full pipeline (normalize → toExternalEvent → injected essence):
-//
-//   1. Review-comment and thread events carry the FULL body text plus reply and
-//      resolve handles.
-//   2. Raw source payloads are EXCLUDED from the injected essence.
-//   3. Raw payloads remain retrievable on demand through get_external_event
-//      (the same store read path the tool uses).
-// ============================================================================
-
 const SPACE_ID = 'space-essence-contract';
 const WATCHED: GitHubPollingRepo = { owner: 'acme', repo: 'widgets' };
 
-// A sentinel that GitHub embeds deep in webhook payloads (a repository archive
-// URL template). It must reach rawPayload/storage but never the injected
-// essence — its absence from the essence proves raw payload projection stops at
-// the documented handle fields.
 const RAW_SENTINEL = 'archive_format{/ref}';
 
-// A body longer than the 240-char summary truncation limit, so "full body"
-// assertions are meaningful (the summary would be ellipsed; the body must not).
 const LONG_REVIEW_BODY = [
   'Please address this before merging.',
   '',
@@ -51,10 +30,6 @@ const LONG_REVIEW_BODY = [
   'terminal paths stay disjoint. See the linked trace for the reproduction.',
 ].join('\n');
 
-// ---------------------------------------------------------------------------
-// GitHub webhook / polling fixtures (realistic REST + webhook shapes).
-// ---------------------------------------------------------------------------
-
 function reviewCommentWebhook(overrides: Record<string, unknown> = {}): unknown {
   return {
     action: 'created',
@@ -64,7 +39,6 @@ function reviewCommentWebhook(overrides: Record<string, unknown> = {}): unknown 
       full_name: 'acme/widgets',
       owner: { login: 'acme' },
       url: 'https://api.github.com/repos/acme/widgets',
-      // Real GitHub payloads carry URL templates like this deep in the tree.
       archive_url: `https://api.github.com/repos/acme/widgets/{${RAW_SENTINEL}}`,
     },
     sender: { login: 'codex', type: 'Bot' },
@@ -99,9 +73,6 @@ function reviewCommentWebhook(overrides: Record<string, unknown> = {}): unknown 
 }
 
 function reviewCommentReplyWebhook(): unknown {
-  // A reply within a review thread carries `in_reply_to_id` pointing at the
-  // root comment. The reply REST endpoint requires the ROOT id, so the
-  // replyHandle.commentId must resolve to 4242 (root), not 5000 (the reply).
   return reviewCommentWebhook({
     comment: {
       id: 5000,
@@ -162,11 +133,8 @@ function reviewThreadWebhook(overrides: Record<string, unknown> = {}): unknown {
       html_url: 'https://github.com/acme/widgets/pull/42',
       head: { sha: 'abc123deadbeef', ref: 'feature/fix' },
       user: { login: 'alice', type: 'User' },
-      // Resolution bumps the PR's updated_at; it is the latest timestamp here.
       updated_at: '2026-07-22T00:10:00Z',
     },
-    // The thread node id is the `PullRequestReviewThread.id` resolveReviewThread
-    // needs — present on this webhook (unlike review-comment webhooks).
     thread: {
       node_id: 'PRRT_kwDOA_thread',
       comments: [
@@ -223,8 +191,6 @@ function checkSuiteWebhook(overrides: Record<string, unknown> = {}): unknown {
 }
 
 function mergeGroupWebhook(overrides: Record<string, unknown> = {}): unknown {
-  // App-only merge_group webhook. The member PR is encoded in head_ref's final
-  // `pr-<N>-<sha>` component; head_sha is the queue's synthetic commit.
   return {
     action: 'checks_requested',
     repository: {
@@ -268,11 +234,6 @@ function reviewCommentPollingRow(): Record<string, unknown> {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Shared helpers.
-// ---------------------------------------------------------------------------
-
-/** Mirror of SpaceRuntime.externalEventPayloadFromRecord (the inject input). */
 function publishedPayloadFromEvent(event: ExternalEvent): ExternalEventPublishedPayload {
   return {
     namespaceId: event.spaceId,
@@ -289,7 +250,6 @@ function publishedPayloadFromEvent(event: ExternalEvent): ExternalEventPublished
   };
 }
 
-/** Normalize a webhook fixture and project it to an ExternalEvent. */
 function webhookToEvent(
   eventType: string,
   payload: unknown,
@@ -300,7 +260,6 @@ function webhookToEvent(
   return toExternalEvent(SPACE_ID, normalized);
 }
 
-/** Run an ExternalEvent through the injected-essence formatter. */
 function essenceOf(event: ExternalEvent): Record<string, unknown> {
   return JSON.parse(formatExternalEventEssence(publishedPayloadFromEvent(event))) as Record<
     string,
@@ -322,7 +281,6 @@ function makeStoreDb(): Database {
 }
 
 function branchProtectionRuleWebhook(overrides: Record<string, unknown> = {}): unknown {
-  // Repo-scoped event (no PR). Per spec row 7: resource=repo, entityId=branch name.
   return {
     action: 'created',
     repository: {
@@ -352,17 +310,11 @@ function branchProtectionRuleWebhook(overrides: Record<string, unknown> = {}): u
   };
 }
 
-// ============================================================================
-// Contract leg 1 — full body + reply/resolve handles
-// ============================================================================
-
 describe('external_event essence contract — body + handles', () => {
   it('review-comment webhook carries the full body and a replyHandle keyed to the root comment id', () => {
     const event = webhookToEvent('pull_request_review_comment', reviewCommentWebhook());
 
-    // Full body (the summary would be truncated at 240 chars; the body is not).
     expect(event.payload.body).toBe(LONG_REVIEW_BODY);
-    // Reply handle resolves to the REST comment id the reply endpoint needs.
     expect(event.payload.replyHandle).toEqual({
       kind: 'pull_request_review_comment',
       commentId: '4242',
@@ -376,7 +328,6 @@ describe('external_event essence contract — body + handles', () => {
       kind: 'pull_request_review_comment',
       commentId: '4242',
     });
-    // Documented inline-comment fields are projected.
     expect(essence).toMatchObject({
       path: 'packages/daemon/src/lib/external-events/delivery.ts',
       line: 87,
@@ -392,12 +343,10 @@ describe('external_event essence contract — body + handles', () => {
   it('a review-comment REPLY resolves replyHandle.commentId to the ROOT id, not the reply id', () => {
     const event = webhookToEvent('pull_request_review_comment', reviewCommentReplyWebhook());
 
-    // 4242 (root via in_reply_to_id), NOT 5000 (the reply's own id).
     expect(event.payload.replyHandle).toEqual({
       kind: 'pull_request_review_comment',
       commentId: '4242',
     });
-    // External identity still keys on the actual delivered comment (5000).
     expect(event.payload.externalId).toBe('review_comment:5000:created');
 
     const essence = essenceOf(event);
@@ -422,9 +371,6 @@ describe('external_event essence contract — body + handles', () => {
   });
 
   it('deployment_status webhook projects state/environment/targetUrl and excludes rawPayload', () => {
-    // deployment_status payloads carry no pull_requests array; the PR is resolved
-    // out-of-band, so the normalizer is driven directly with prNumber (mirroring
-    // the polling-row leg above).
     const normalized = normalizeGitHubDeploymentStatus({
       repo: WATCHED,
       deploymentStatus: {
@@ -438,8 +384,6 @@ describe('external_event essence contract — body + handles', () => {
         created_at: '2026-08-02T00:00:00Z',
         creator: { login: 'ci-bot', type: 'Bot' },
       },
-      // `deployment` is a top-level sibling of `deployment_status` in the real
-      // payload — passed in explicitly (mirrors how the handler resolves it).
       deployment: {
         id: 321,
         ref: 'feat/deploy',
@@ -457,7 +401,6 @@ describe('external_event essence contract — body + handles', () => {
     const essence = essenceOf(event);
 
     expect(event.topic).toBe('github/acme/widgets/pull_request/42.deployment_status_failure');
-    // The status state is carried as the action and projected as `state`.
     expect(essence).toMatchObject({
       eventType: 'deployment_status',
       action: 'failure',
@@ -470,7 +413,6 @@ describe('external_event essence contract — body + handles', () => {
       sha: 'abc123deadbeef',
       deploymentId: 321,
     });
-    // Raw payload (and its sentinel) never reaches the lean essence.
     expect(essence.rawPayload).toBeUndefined();
     expect(JSON.stringify(essence)).not.toContain(RAW_SENTINEL);
   });
@@ -508,7 +450,6 @@ describe('external_event essence contract — body + handles', () => {
       task: 'deploy',
       description: 'ship it',
     });
-    // Raw payload (and its sentinel) never reaches the lean essence.
     expect(essence.rawPayload).toBeUndefined();
     expect(JSON.stringify(essence)).not.toContain(RAW_SENTINEL);
   });
@@ -519,7 +460,6 @@ describe('external_event essence contract — body + handles', () => {
     expect(event.topic).toBe('github/acme/widgets/pull_request/42.suite_failed');
     expect(event.payload.conclusion).toBe('failure');
     expect(event.payload.app).toBe('GitHub Actions');
-    // A suite has no browsable html_url, so the actionable link is the PR.
     expect(event.externalUrl).toBe('https://github.com/acme/widgets/pull/42');
 
     const essence = essenceOf(event);
@@ -529,7 +469,6 @@ describe('external_event essence contract — body + handles', () => {
       headSha: 'abc123deadbeef',
       app: 'GitHub Actions',
     });
-    // The raw payload (and the deep sentinel) never reach the injected essence.
     expect(essence.rawPayload).toBeUndefined();
     expect(JSON.stringify(essence)).not.toContain(RAW_SENTINEL);
   });
@@ -549,7 +488,6 @@ describe('external_event essence contract — body + handles', () => {
       baseSha: 'def456789012345678901234567890abcdef12',
       headCommitId: 'abc123def456789012345678901234567890abcd',
     });
-    // The raw payload (and the deep sentinel) never reach the injected essence.
     expect(essence.rawPayload).toBeUndefined();
     expect(JSON.stringify(essence)).not.toContain(RAW_SENTINEL);
   });
@@ -578,11 +516,6 @@ describe('external_event essence contract — body + handles', () => {
   });
 
   it('thread resolve handles pass through the essence when a consumer resolves the thread node id', () => {
-    // The normalizer intentionally does NOT capture the review-THREAD node id
-    // (GitHub omits it from webhook/REST payloads; it must be queried via the
-    // `reviewThreads` GraphQL connection at runtime — see github-normalizer.ts).
-    // The essence contract is therefore a passthrough: when a consumer adds
-    // `resolveHandle` / `resolveThreadId` to the payload, they reach the agent.
     const event = webhookToEvent(
       'pull_request_review_comment',
       reviewCommentWebhook(),
@@ -600,7 +533,6 @@ describe('external_event essence contract — body + handles', () => {
       threadId: 'PRRT_kwDOA_thread',
     });
     expect(essence.resolveThreadId).toBe('PRRT_kwDOA_thread');
-    // The reply handle still accompanies the resolve handle.
     expect(essence.replyHandle).toEqual({
       kind: 'pull_request_review_comment',
       commentId: '4242',
@@ -610,7 +542,6 @@ describe('external_event essence contract — body + handles', () => {
   it('pull_request_review_thread webhook projects the thread node id and resolveHandle into the essence', () => {
     const event = webhookToEvent('pull_request_review_thread', reviewThreadWebhook());
 
-    // Re-expressed topic + the thread node id captured directly from the payload.
     expect(event.topic).toBe('github/acme/widgets/pull_request/42.thread_resolved');
     expect(event.payload.threadId).toBe('PRRT_kwDOA_thread');
     expect(event.payload.resolveHandle).toEqual({
@@ -626,9 +557,6 @@ describe('external_event essence contract — body + handles', () => {
       kind: 'pull_request_review_thread',
       threadId: 'PRRT_kwDOA_thread',
     });
-    // The thread's root comment body and full diff location reach the essence,
-    // matching the pull_request_review_comment projection (incl. original_* so
-    // outdated threads with line:null keep their last-valid location).
     expect(essence.body).toBe(LONG_REVIEW_BODY);
     expect(essence).toMatchObject({
       path: 'packages/daemon/src/lib/external-events/delivery.ts',
@@ -640,14 +568,9 @@ describe('external_event essence contract — body + handles', () => {
       originalSide: 'RIGHT',
       originalStartLine: 84,
     });
-    // Raw payload (incl. the deep sentinel) never leaks into the injected essence.
     expect(JSON.stringify(essence)).not.toContain(RAW_SENTINEL);
   });
 });
-
-// ============================================================================
-// Contract leg 2 — raw payloads excluded from the injected essence
-// ============================================================================
 
 describe('external_event essence contract — raw payload excluded from context', () => {
   it('the essence never projects rawPayload, summary, or the nested payload object', () => {
@@ -658,9 +581,7 @@ describe('external_event essence contract — raw payload excluded from context'
     expect(essence.rawPayload).toBeUndefined();
     expect(essence.summary).toBeUndefined();
     expect(essence.payload).toBeUndefined();
-    // A deep sentinel from the raw payload must not leak into the injected text.
     expect(serialized).not.toContain(RAW_SENTINEL);
-    // No commit sha / avatar noise from the raw payload either.
     expect(serialized).not.toContain('abc123deadbeef');
   });
 
@@ -669,7 +590,6 @@ describe('external_event essence contract — raw payload excluded from context'
     const event = webhookToEvent('pull_request_review_comment', fixture);
 
     expect(event.payload.rawPayload).toBe(fixture);
-    // Spot-check deep raw fields the essence deliberately omits.
     const raw = event.payload.rawPayload as Record<string, unknown>;
     expect((raw.repository as Record<string, unknown>).archive_url).toContain(RAW_SENTINEL);
     expect((raw.comment as Record<string, unknown>).commit_id).toBe('abc123deadbeef');
@@ -688,10 +608,6 @@ describe('external_event essence contract — raw payload excluded from context'
   });
 });
 
-// ============================================================================
-// Contract leg 3 — raw payloads retrievable through get_external_event
-// ============================================================================
-
 describe('external_event essence contract — raw payload retrievable on demand', () => {
   it('a normalized+stored event is fetchable with its rawPayload intact (get_external_event path)', () => {
     const db = makeStoreDb();
@@ -702,7 +618,6 @@ describe('external_event essence contract — raw payload retrievable on demand'
       const stored = store.store(event);
       expect(stored.duplicate).toBe(false);
 
-      // get_external_event reads exactly this: store.getById(eventId).event.
       const record = store.getById(event.id);
       expect(record).not.toBeNull();
       const fetched = record!.event;
@@ -712,7 +627,6 @@ describe('external_event essence contract — raw payload retrievable on demand'
         kind: 'pull_request_review_comment',
         commentId: '4242',
       });
-      // The complete raw payload survived the storage round-trip.
       expect(fetched.payload.rawPayload).toEqual(fixture);
       expect((fetched.payload.rawPayload as Record<string, unknown>).repository).toBeDefined();
     } finally {

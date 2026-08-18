@@ -1,13 +1,3 @@
-/**
- * Unit tests for visual editor serialization helpers.
- *
- * Coverage:
- * - workflowToVisualState: position restoration from layout, auto-layout fallback,
- *   empty edge initialization, startNodeId pass-through, endNodeId pass-through
- * - visualStateToCreateParams / visualStateToUpdateParams: round-trip,
- *   layout output, endNodeId pass-through
- */
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   workflowToVisualState,
@@ -16,9 +6,6 @@ import {
 } from '../serialization.ts';
 import type { VisualEditorState } from '../serialization.ts';
 import type { SpaceWorkflow, WorkflowNode } from '@hyperneo/shared';
-// ---------------------------------------------------------------------------
-// Stable UUID counter so tests are deterministic
-// ---------------------------------------------------------------------------
 
 let uuidCounter = 0;
 beforeEach(() => {
@@ -32,10 +19,6 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
 });
-
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
 
 function makeStep(id: string, name?: string, agentId?: string): WorkflowNode {
   return { id, name: name ?? id, agents: [{ agentId: agentId ?? 'agent-1', name: 'coder' }] };
@@ -55,10 +38,6 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
     ...overrides,
   };
 }
-
-// ---------------------------------------------------------------------------
-// workflowToVisualState
-// ---------------------------------------------------------------------------
 
 describe('workflowToVisualState', () => {
   it('creates one node per workflow step', () => {
@@ -111,8 +90,6 @@ describe('workflowToVisualState', () => {
   });
 
   it('does not invoke autoLayout when all steps have stored positions', () => {
-    // This is validated by ensuring position values match the layout exactly.
-    // If autoLayout ran, it would produce different values (50, 170) not (999, 888).
     const wf = makeWorkflow({
       nodes: [makeStep('s1'), makeStep('s2')],
       startNodeId: 's1',
@@ -129,7 +106,6 @@ describe('workflowToVisualState', () => {
       startNodeId: 's1',
     });
     const state = workflowToVisualState(wf);
-    // In a linear chain, s2 should be in a lower layer (higher y)
     const s1 = state.nodes.find((n) => n.step.id === 's1')!;
     const s2 = state.nodes.find((n) => n.step.id === 's2')!;
     expect(s1.position.y).toBeLessThan(s2.position.y);
@@ -139,12 +115,10 @@ describe('workflowToVisualState', () => {
     const wf = makeWorkflow({
       nodes: [makeStep('s1'), makeStep('s2')],
       startNodeId: 's1',
-      layout: { s1: { x: 999, y: 888 } }, // s2 not in layout
+      layout: { s1: { x: 999, y: 888 } },
     });
     const state = workflowToVisualState(wf);
-    // s1 uses stored position
     expect(state.nodes.find((n) => n.step.id === 's1')?.position).toEqual({ x: 999, y: 888 });
-    // s2 falls back to autoLayout (non-zero from algorithm)
     const s2 = state.nodes.find((n) => n.step.id === 's2');
     expect(s2?.position).toBeDefined();
   });
@@ -155,7 +129,6 @@ describe('workflowToVisualState', () => {
       startNodeId: 's1',
     });
     const state = workflowToVisualState(wf);
-    // Transitions removed from SpaceWorkflow; visual state starts with no edges
     expect(state.edges).toHaveLength(0);
   });
 
@@ -222,10 +195,6 @@ describe('workflowToVisualState', () => {
     expect(state.endNodeId).toBeUndefined();
   });
 });
-
-// ---------------------------------------------------------------------------
-// visualStateToCreateParams
-// ---------------------------------------------------------------------------
 
 describe('visualStateToCreateParams', () => {
   function makeState(overrides: Partial<VisualEditorState> = {}): VisualEditorState {
@@ -366,7 +335,6 @@ describe('visualStateToCreateParams', () => {
 
   it('nodes have no instructions field (removed from schema)', () => {
     const params = visualStateToCreateParams(makeState(), 'space-1', 'My Workflow');
-    // WorkflowNodeInput no longer has an instructions field
     expect('instructions' in params.nodes![0]).toBe(false);
   });
 
@@ -376,10 +344,8 @@ describe('visualStateToCreateParams', () => {
   });
 
   it('resolves startNodeId via localId when it references step.localId', () => {
-    // startNodeId is set to the localId of an existing step (step.id='s1', localId='local-1')
     const state = makeState({ startNodeId: 'local-1' });
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
-    // Should resolve to the persisted step id 's1'
     expect(params.startNodeId).toBe('s1');
   });
 
@@ -634,8 +600,6 @@ describe('visualStateToCreateParams', () => {
   });
 
   it('preserves postApproval.requirePrMerge through create params (regression)', () => {
-    // requirePrMerge is carried on the sticky step-level field (seeded at load,
-    // surviving the post-approval toggle) and restored by the serializer.
     const state = makeState({
       nodes: [
         {
@@ -663,9 +627,6 @@ describe('visualStateToCreateParams', () => {
   });
 
   it('restores requirePrMerge after the post-approval toggle deletes the route', () => {
-    // The disable branch deletes step.postApproval; the re-enable rebuilds it
-    // without requirePrMerge. The sticky step.requirePrMerge survives and the
-    // serializer restores it, so a saved clone keeps the mark_complete gate.
     const state = makeState({
       nodes: [
         {
@@ -689,9 +650,6 @@ describe('visualStateToCreateParams', () => {
   });
 
   it('preserves requirePrMerge from postApproval when the sticky field is unset (template-picker path)', () => {
-    // buildTemplateNodes (selecting Coding/Coding-with-QA/Research in the
-    // template picker) seeds postApproval.requirePrMerge but not the sticky
-    // step-level field. The serializer must fall back to the nested flag.
     const state = makeState({
       nodes: [
         {
@@ -743,10 +701,6 @@ describe('visualStateToCreateParams', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Handoff transition preservation (carried opaquely through the editor)
-// ---------------------------------------------------------------------------
-
 describe('handoff transition preservation', () => {
   function makeHandoffState(overrides: Partial<VisualEditorState> = {}): VisualEditorState {
     return {
@@ -776,8 +730,6 @@ describe('handoff transition preservation', () => {
   }
 
   it('drops a handoff transition whose target no longer exists', () => {
-    // The editor does not expose handoff transitions to correct a rename/delete,
-    // so a stale target is dropped rather than failing the whole save.
     const params = visualStateToUpdateParams(
       makeHandoffState({
         nodes: [
@@ -805,10 +757,6 @@ describe('handoff transition preservation', () => {
   });
 
   it('drops a handoff transition when its target node is renamed', () => {
-    // The editor carries transitions opaquely and does not track node renames,
-    // so a renamed target no longer resolves and the transition is dropped on
-    // save (rather than rejecting the save). Exposing/remapping transitions is
-    // future UI work.
     const params = visualStateToUpdateParams(
       makeHandoffState({
         nodes: [
@@ -823,7 +771,6 @@ describe('handoff transition preservation', () => {
             position: { x: 0, y: 0 },
           },
           {
-            // Target node renamed Review -> Reviewer
             step: { localId: 'l2', id: 's2', name: 'Reviewer', agentId: 'a2' },
             position: { x: 0, y: 0 },
           },
@@ -834,9 +781,6 @@ describe('handoff transition preservation', () => {
   });
 
   it('drops a handoff transition whose target becomes ambiguous after a rename', () => {
-    // Two nodes now expose a slot named 'shared' (a rename collision), so a
-    // carried transition targeting 'shared' no longer resolves to one
-    // destination. Drop it instead of letting validateTransitions reject the save.
     const params = visualStateToUpdateParams(
       makeHandoffState({
         nodes: [
@@ -880,9 +824,6 @@ describe('handoff transition preservation', () => {
   });
 
   it('drops handoff transitions whose referenced hook was removed', () => {
-    // A node deletion prunes removed-node hooks from state; a carried
-    // transition still referencing one must be dropped, not emitted with a
-    // dangling hookId that validateTransitions rejects.
     const params = visualStateToUpdateParams(
       makeHandoffState({
         nodes: [
@@ -909,10 +850,6 @@ describe('handoff transition preservation', () => {
     expect(params.nodes![0].transitions).toEqual([{ id: 'ok', target: 'Review' }]);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Round-trip: workflowToVisualState -> visualStateToUpdateParams
-// ---------------------------------------------------------------------------
 
 describe('round-trip serialization', () => {
   it('produces equivalent steps after round-trip', () => {
@@ -963,7 +900,6 @@ describe('round-trip serialization', () => {
       startNodeId: 's1',
     });
     const visualState = workflowToVisualState(original);
-    // Edges start empty since backend no longer stores transitions
     expect(visualState.edges).toHaveLength(0);
   });
 
@@ -983,7 +919,6 @@ describe('round-trip serialization', () => {
       startNodeId: 's1',
     });
     const visualState = workflowToVisualState(original);
-    // Transitions have been removed; edges always start empty
     expect(visualState.edges).toHaveLength(0);
   });
 
@@ -1002,24 +937,20 @@ describe('round-trip serialization', () => {
     const visualState = workflowToVisualState(original);
     const params = visualStateToUpdateParams(visualState);
 
-    // Steps
     expect(params.nodes).toHaveLength(3);
     const stepIds = params.nodes!.map((s) => s.id);
     expect(stepIds).toContain('s1');
     expect(stepIds).toContain('s2');
     expect(stepIds).toContain('s3');
 
-    // startNodeId
     expect(params.startNodeId).toBe('s1');
 
-    // Layout
     expect(params.layout).toMatchObject({
       s1: { x: 50, y: 50 },
       s2: { x: 50, y: 200 },
       s3: { x: 50, y: 350 },
     });
 
-    // Tags
     expect(params.tags).toEqual(['coding']);
   });
 
@@ -1042,10 +973,6 @@ describe('round-trip serialization', () => {
     expect(params.endNodeId).toBeNull();
   });
 });
-
-// ---------------------------------------------------------------------------
-// visualStateToUpdateParams specifics
-// ---------------------------------------------------------------------------
 
 describe('visualStateToUpdateParams', () => {
   it('applies name/description overrides', () => {
@@ -1143,10 +1070,6 @@ describe('visualStateToUpdateParams', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Multi-agent step serialization
-// ---------------------------------------------------------------------------
-
 describe('multi-agent step serialization', () => {
   it('workflowToVisualState preserves agents array from WorkflowNode', () => {
     const workflow = makeWorkflow({
@@ -1171,7 +1094,6 @@ describe('multi-agent step serialization', () => {
     expect(step.agents![0].agentId).toBe('a1');
     expect(step.agents![1].agentId).toBe('a2');
     expect(step.agents![1].customPrompt).toEqual({ value: 'focus on security' });
-    // agentId should be empty (multi-agent step)
     expect(step.agentId).toBe('');
   });
 
@@ -1190,10 +1112,6 @@ describe('multi-agent step serialization', () => {
       ],
     });
     const state = workflowToVisualState(workflow);
-    // Note: VisualEditorState does not currently preserve workflow-level channels
-    // This test documents the expected behavior once channels support is added
-    // Note: VisualEditorState does not have a channels property
-    // (channels are at workflow level, not editor state level)
   });
 
   it('visualStateToCreateParams outputs agents array for multi-agent steps', () => {
@@ -1228,7 +1146,6 @@ describe('multi-agent step serialization', () => {
     expect(step.agents).toHaveLength(2);
     expect(step.agents![0].agentId).toBe('a1');
     expect(step.agents![1].customPrompt).toEqual({ value: 'custom' });
-    // agentId should be absent (undefined) when agents is set
     expect((step as unknown as Record<string, unknown>)['agentId']).toBeUndefined();
   });
 
@@ -1253,8 +1170,6 @@ describe('multi-agent step serialization', () => {
       hooks: [],
     };
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
-    // Channels are not yet supported in visualStateToCreateParams output
-    // (they are workflow-level, not editor state level)
   });
 
   it('single-agent step round-trip: agents preserved through workflowToVisualState and serialized output', () => {
@@ -1263,12 +1178,10 @@ describe('multi-agent step serialization', () => {
     });
     const state = workflowToVisualState(workflow);
     const s1Node = state.nodes.find((n) => n.step.id === 's1')!;
-    // workflowToVisualState sets agentId to '' and stores the agent in agents array
     expect(s1Node.step.agents).toHaveLength(1);
     expect(s1Node.step.agents![0].agentId).toBe('agent-coder');
 
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
-    // serialization builds agents array from agents for single-agent steps
     expect(params.nodes![0].agents).toHaveLength(1);
     expect(params.nodes![0].agents[0].agentId).toBe('agent-coder');
   });
@@ -1299,15 +1212,12 @@ describe('multi-agent step serialization', () => {
     const params = visualStateToUpdateParams(state);
 
     const step = params.nodes![0];
-    // agents array preserved through update round-trip
     expect(step.agents).toHaveLength(2);
     expect(step.agents![0].agentId).toBe('a1');
     expect(step.agents![0].customPrompt).toEqual({ value: 'focus on tests' });
     expect(step.agents![1].agentId).toBe('a2');
     expect(step.agents![1].customPrompt).toBeUndefined();
-    // agentId should be absent for multi-agent steps
     expect((step as unknown as Record<string, unknown>)['agentId']).toBeUndefined();
-    // Workflow-level channels are preserved through serialization
     expect(params.channels).toHaveLength(2);
     expect(params.channels![0]).toMatchObject({
       from: 'coder',
@@ -1319,10 +1229,6 @@ describe('multi-agent step serialization', () => {
     });
   });
 });
-
-// ---------------------------------------------------------------------------
-// Per-slot agent override serialization round-trips
-// ---------------------------------------------------------------------------
 
 describe('per-slot agent overrides round-trip', () => {
   it('workflowToVisualState preserves customPrompt override on agents', () => {
@@ -1348,7 +1254,6 @@ describe('per-slot agent overrides round-trip', () => {
     expect(node.step.agents).toHaveLength(2);
     expect(node.step.agents![0].name).toBe('strict-reviewer');
     expect(node.step.agents![0].customPrompt).toMatchObject({ value: 'Be strict.' });
-    // slot without override has no customPrompt field
     expect(node.step.agents![1].customPrompt).toBeUndefined();
   });
 
@@ -1458,7 +1363,6 @@ describe('per-slot agent overrides round-trip', () => {
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
     const agents = params.nodes![0].agents!;
     expect(agents).toHaveLength(2);
-    // Both slots reference the same agentId but with different roles
     expect(agents[0].agentId).toBe('reviewer-agent');
     expect(agents[0].name).toBe('reviewer');
     expect(agents[1].agentId).toBe('reviewer-agent');
@@ -1467,8 +1371,6 @@ describe('per-slot agent overrides round-trip', () => {
   });
 
   it('role rename in visual state is reflected in serialized output', () => {
-    // Simulates the user renaming a slot role via the role input field and then saving.
-    // Workflow-level channels are preserved through serialization (user must update them manually).
     const wf = makeWorkflow({
       nodes: [
         {
@@ -1482,16 +1384,13 @@ describe('per-slot agent overrides round-trip', () => {
     });
     const state = workflowToVisualState(wf);
 
-    // Simulate the user renaming 'coder' -> 'lead-coder' via the role input
     const nodeIdx = state.nodes.findIndex((n) => n.step.id === 's1');
     state.nodes[nodeIdx].step.agents = [{ agentId: 'a1', name: 'lead-coder' }];
 
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
     const node = params.nodes![0];
 
-    // New role is serialized
     expect(node.agents![0].name).toBe('lead-coder');
-    // Workflow-level channels are preserved through serialization
     expect(params.channels).toHaveLength(1);
     expect(params.channels![0]).toMatchObject({
       from: 'planner',

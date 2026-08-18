@@ -288,7 +288,7 @@ describe('OutputLimiterHook', () => {
         }
       ).hookSpecificOutput.updatedToolOutput;
 
-      expect(output.stdout).toBe('ok'); // Small, unchanged
+      expect(output.stdout).toBe('ok');
       expect(output.stderr).toContain('Truncated');
       expect(output.stderr).toContain('err 0');
       expect(output.stderr).toContain('err 499');
@@ -345,7 +345,6 @@ describe('OutputLimiterHook', () => {
         }
       ).hookSpecificOutput.updatedToolOutput;
 
-      // First 10 + last 10
       expect(output.stdout).toContain('line 0');
       expect(output.stdout).toContain('line 49');
       expect(output.stdout).not.toContain('line 20');

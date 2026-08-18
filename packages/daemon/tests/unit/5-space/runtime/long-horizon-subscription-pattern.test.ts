@@ -1,12 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { composeLongHorizonSubscriptionPattern } from '../../../../src/lib/external-events/long-horizon-subscription-pattern';
 
-// Characterization tests for the long-horizon subscription topic composer.
-// These pin the exact observable behavior of the (previously untested) helper
-// that was consolidated from space-runtime.ts and
-// space-long-horizon-agent-handlers.ts. Expected values were captured from the
-// implementation by exercising every branch, not invented.
-
 describe('composeLongHorizonSubscriptionPattern', () => {
   describe('empty source returns the trimmed topic unchanged', () => {
     test('empty source', () => {
@@ -34,8 +28,6 @@ describe('composeLongHorizonSubscriptionPattern', () => {
       ).toBe('github/owner/repo/pull_request/42.opened');
     });
     test('a non-shorthand github topic with an unknown topic source still delegates', () => {
-      // `pull_request` is neither the github shorthand shape nor a known source,
-      // so it falls through to the github branch and widens owner/repo/entity.
       expect(composeLongHorizonSubscriptionPattern('github', 'pull_request')).toBe(
         'github/*/*/pull_request/*'
       );

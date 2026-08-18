@@ -1,18 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for Application State Management
- *
- * Tests signal subscription leak fixes and state channel management.
- *
- * IMPORTANT: This file does NOT use mock.module() for StateChannel because:
- * 1. mock.module() affects the global module cache
- * 2. Bun runs test files in parallel
- * 3. Other tests (like aaa-reconnection-safari.test.ts) need the REAL StateChannel
- * 4. mock.restore() in afterAll doesn't help when tests run concurrently
- *
- * Instead, we mock at the MessageHub level, which is sufficient for testing
- * ApplicationState behavior without polluting the module cache.
- */
 
 import { signal } from '@preact/signals';
 import {
@@ -36,8 +22,6 @@ import {
 } from '../state';
 import { globalStore } from '../global-store';
 
-// Mock MessageHub - this is passed to initializeApplicationState and used by StateChannel
-// No need for mock.module - we just pass this mock directly
 const mockHub = {
   isConnected: vi.fn(() => true),
   subscribe: vi.fn(() => Promise.resolve(() => Promise.resolve())),
@@ -50,64 +34,52 @@ const mockHub = {
   onConnection: vi.fn(() => () => {}),
 };
 
-// Helper to wait for debounced session switching (150ms debounce + buffer)
 const waitForSessionSwitch = () => new Promise((resolve) => setTimeout(resolve, 200));
 
 describe('ApplicationState', () => {
   let currentSessionId: import('@preact/signals').Signal<string | null>;
 
   beforeEach(() => {
-    // Reset MessageHub mocks
     mockHub.subscribe.mockReset();
     mockHub.request.mockReset();
     mockHub.onConnection.mockReset();
 
-    // Restore default mock implementations
     mockHub.subscribe.mockImplementation(() => Promise.resolve(() => Promise.resolve()));
     mockHub.request.mockImplementation(() => Promise.resolve({}));
     mockHub.onConnection.mockImplementation(() => () => {});
 
-    // Create fresh session ID signal for each test with explicit type
     currentSessionId = signal(null) as import('@preact/signals').Signal<string | null>;
   });
 
   afterEach(() => {
-    // Cleanup state after each test
     appState.cleanup();
   });
 
   describe('Subscription Leak Prevention', () => {
     it('should track subscriptions for cleanup', async () => {
-      // Initialize state
       await initializeApplicationState(
         mockHub as unknown as Parameters<typeof initializeApplicationState>[0],
         currentSessionId
       );
 
-      // Trigger a session change to create subscription
       currentSessionId.value = 'test-session-1';
 
-      // Access private subscriptions array via reflection
       const subscriptions = (appState as unknown as { subscriptions: Array<() => void> })
         .subscriptions;
 
-      // Should have at least one subscription (from setupCurrentSessionAutoLoad)
       expect(subscriptions.length).toBeGreaterThan(0);
     });
 
     it('should cleanup subscriptions on cleanup()', async () => {
-      // Initialize state
       await initializeApplicationState(
         mockHub as unknown as Parameters<typeof initializeApplicationState>[0],
         currentSessionId
       );
 
-      // Get subscriptions before cleanup
       const subscriptionsBefore = (appState as unknown as { subscriptions: Array<() => void> })
         .subscriptions;
       const subscriptionCount = subscriptionsBefore.length;
 
-      // Track unsubscribe calls
       let unsubscribeCalls = 0;
       subscriptionsBefore.forEach((_, index) => {
         const original = subscriptionsBefore[index];
@@ -117,34 +89,28 @@ describe('ApplicationState', () => {
         };
       });
 
-      // Cleanup
       appState.cleanup();
 
-      // Verify subscriptions were called
       expect(unsubscribeCalls).toBe(subscriptionCount);
 
-      // Verify subscriptions array is cleared
       const subscriptionsAfter = (appState as unknown as { subscriptions: Array<() => void> })
         .subscriptions;
       expect(subscriptionsAfter.length).toBe(0);
     });
 
     it('should not leak subscriptions on multiple initializations', async () => {
-      // Initialize, cleanup, re-initialize pattern
       await initializeApplicationState(
         mockHub as unknown as Parameters<typeof initializeApplicationState>[0],
         currentSessionId
       );
       appState.cleanup();
 
-      // Create fresh signal for second initialization
       const newSessionId = signal<string | null>(null);
       await initializeApplicationState(
         mockHub as unknown as Parameters<typeof initializeApplicationState>[0],
         newSessionId
       );
 
-      // Should not have accumulated subscriptions
       const subscriptions = (appState as unknown as { subscriptions: Array<() => void> })
         .subscriptions;
       expect(subscriptions.length).toBeLessThanOrEqual(1);
@@ -158,18 +124,14 @@ describe('ApplicationState', () => {
         currentSessionId
       );
 
-      // Initially no active session
       const activeSessionIdBefore = (appState as unknown as { activeSessionId: string | null })
         .activeSessionId;
       expect(activeSessionIdBefore).toBeNull();
 
-      // Change session ID
       currentSessionId.value = 'auto-load-test-session';
 
-      // Wait for debounced session switch to complete
       await waitForSessionSwitch();
 
-      // Should have set the active session
       const activeSessionIdAfter = (appState as unknown as { activeSessionId: string | null })
         .activeSessionId;
       expect(activeSessionIdAfter).toBe('auto-load-test-session');
@@ -181,20 +143,16 @@ describe('ApplicationState', () => {
         currentSessionId
       );
 
-      // Create channels for a session
       currentSessionId.value = 'cleanup-test-session';
 
-      // Wait for debounced session switch to complete
       await waitForSessionSwitch();
 
       const activeSessionId = (appState as unknown as { activeSessionId: string | null })
         .activeSessionId;
       expect(activeSessionId).toBe('cleanup-test-session');
 
-      // Cleanup specific session
       await appState.cleanupSessionChannels('cleanup-test-session');
 
-      // Should be removed
       const activeSessionIdAfter = (appState as unknown as { activeSessionId: string | null })
         .activeSessionId;
       expect(activeSessionIdAfter).toBeNull();
@@ -206,44 +164,34 @@ describe('ApplicationState', () => {
         currentSessionId
       );
 
-      // Create multiple sessions (only last one is active due to single-session invariant)
       currentSessionId.value = 'session-1';
       currentSessionId.value = 'session-2';
       currentSessionId.value = 'session-3';
 
-      // Wait for debounced session switch to complete
       await waitForSessionSwitch();
 
-      // Only the current session has channels (single-session invariant)
       const activeSessionIdBefore = (appState as unknown as { activeSessionId: string | null })
         .activeSessionId;
       expect(activeSessionIdBefore).toBe('session-3');
 
-      // Cleanup all
       appState.cleanup();
 
-      // All should be cleared
       const activeSessionIdAfter = (appState as unknown as { activeSessionId: string | null })
         .activeSessionId;
       expect(activeSessionIdAfter).toBeNull();
     });
   });
 
-  // NOTE: Global state channels tests removed - global state is now managed by globalStore
-
   describe('Initialization State', () => {
     it('should prevent double initialization', async () => {
-      // First initialization
       await initializeApplicationState(
         mockHub as unknown as Parameters<typeof initializeApplicationState>[0],
         currentSessionId
       );
 
-      // Access private initialized signal
       const initialized = (appState as unknown as { initialized: { value: boolean } }).initialized;
       expect(initialized.value).toBe(true);
 
-      // Try to initialize again - should be a no-op (no error, no extra subscriptions)
       const subscriptionsBefore = (appState as unknown as { subscriptions: Array<() => void> })
         .subscriptions.length;
 
@@ -263,7 +211,6 @@ describe('ApplicationState', () => {
         currentSessionId
       );
 
-      // Access private initialized signal
       const initialized = (appState as unknown as { initialized: { value: boolean } }).initialized;
       expect(initialized.value).toBe(true);
 
@@ -291,10 +238,8 @@ describe('ApplicationState - Edge Cases', () => {
       currentSessionId
     );
 
-    // Set to null (should not throw)
     currentSessionId.value = null;
 
-    // No active session should be set
     const activeSessionId = (appState as unknown as { activeSessionId: string | null })
       .activeSessionId;
     expect(activeSessionId).toBeNull();
@@ -306,15 +251,12 @@ describe('ApplicationState - Edge Cases', () => {
       currentSessionId
     );
 
-    // Rapid changes
     for (let i = 0; i < 10; i++) {
       currentSessionId.value = `rapid-session-${i}`;
     }
 
-    // Wait for debounced session switch to complete
     await waitForSessionSwitch();
 
-    // Only the last session has channels (single-session invariant + debounce)
     const activeSessionId = (appState as unknown as { activeSessionId: string | null })
       .activeSessionId;
     expect(activeSessionId).toBe('rapid-session-9');
@@ -326,26 +268,21 @@ describe('ApplicationState - Edge Cases', () => {
       currentSessionId
     );
 
-    // Set session
     currentSessionId.value = 'reuse-test';
     await waitForSessionSwitch();
 
     const channels1 = appState.getSessionChannels('reuse-test');
 
-    // Switch away (this will cleanup 'reuse-test' channels after debounce)
     currentSessionId.value = 'other-session';
     await waitForSessionSwitch();
 
-    // Switch back (this will create new channels)
     currentSessionId.value = 'reuse-test';
     await waitForSessionSwitch();
 
     const channels2 = appState.getSessionChannels('reuse-test');
 
-    // After cleanup on switch fix: channels are recreated, not reused
     expect(channels1).not.toBe(channels2);
 
-    // But both should be valid channel instances
     expect(channels1).toBeDefined();
     expect(channels2).toBeDefined();
     expect(channels1.session).toBeDefined();
@@ -353,7 +290,6 @@ describe('ApplicationState - Edge Cases', () => {
   });
 
   it('should throw when getSessionChannels called before init', () => {
-    // Don't initialize - should throw
     expect(() => appState.getSessionChannels('test')).toThrow('State not initialized');
   });
 });
@@ -377,10 +313,8 @@ describe('ApplicationState - refreshAll', () => {
   });
 
   it('should return early when refreshAll called without initialization', async () => {
-    // Don't initialize - call refreshAll (should not throw)
     await appState.refreshAll();
 
-    // Verify no hub calls were made since we're not initialized
     expect(mockHub.request).not.toHaveBeenCalled();
   });
 
@@ -390,14 +324,11 @@ describe('ApplicationState - refreshAll', () => {
       currentSessionId
     );
 
-    // Set up a session
     currentSessionId.value = 'refresh-test-session';
     await waitForSessionSwitch();
 
-    // Call refreshAll - should not throw
     await appState.refreshAll();
 
-    // Verify the session channels exist after refresh
     const activeSessionId = (appState as unknown as { activeSessionId: string | null })
       .activeSessionId;
     expect(activeSessionId).toBe('refresh-test-session');
@@ -409,12 +340,8 @@ describe('ApplicationState - refreshAll', () => {
       currentSessionId
     );
 
-    // Don't set a session - no active channels
-
-    // Call refreshAll - should not throw
     await appState.refreshAll();
 
-    // Verify no active session is set
     const activeSessionId = (appState as unknown as { activeSessionId: string | null })
       .activeSessionId;
     expect(activeSessionId).toBeNull();
@@ -444,17 +371,12 @@ describe('ApplicationState - Session Channel Switch Error Handling', () => {
       currentSessionId
     );
 
-    // Make subscribe throw an error
     mockHub.subscribe.mockRejectedValueOnce(new Error('Channel start failed'));
 
-    // Get channels - this will start the async switch
     currentSessionId.value = 'error-test-session';
     await waitForSessionSwitch();
 
-    // Wait a bit more for the async error handler
     await new Promise((resolve) => setTimeout(resolve, 100));
-
-    // Error should be handled gracefully (caught by .catch)
   });
 
   it('should return existing channels when same session requested', async () => {
@@ -463,14 +385,12 @@ describe('ApplicationState - Session Channel Switch Error Handling', () => {
       currentSessionId
     );
 
-    // Set session and wait
     currentSessionId.value = 'same-session';
     await waitForSessionSwitch();
 
     const channels1 = appState.getSessionChannels('same-session');
     const channels2 = appState.getSessionChannels('same-session');
 
-    // Should return the same instance
     expect(channels1).toBe(channels2);
   });
 
@@ -480,14 +400,11 @@ describe('ApplicationState - Session Channel Switch Error Handling', () => {
       currentSessionId
     );
 
-    // Set up a session
     currentSessionId.value = 'active-session';
     await waitForSessionSwitch();
 
-    // Try to cleanup a different session (should be a no-op)
     await appState.cleanupSessionChannels('other-session');
 
-    // Active session should still be set
     const activeSessionId = (appState as unknown as { activeSessionId: string | null })
       .activeSessionId;
     expect(activeSessionId).toBe('active-session');
@@ -495,7 +412,6 @@ describe('ApplicationState - Session Channel Switch Error Handling', () => {
 });
 
 describe('mergeSdkMessagesWithDedup', () => {
-  // Helper to create a mock SDK message with uuid and timestamp
   const createMessage = (
     uuid: string,
     timestamp: number,
@@ -537,7 +453,6 @@ describe('mergeSdkMessagesWithDedup', () => {
   });
 
   it('should deduplicate messages with same UUID (reconnection bug fix)', () => {
-    // Scenario: Snapshot contains [A, B, C, D], then delta arrives with D again
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const existing: any = [
       createMessage('a', 100),
@@ -546,11 +461,10 @@ describe('mergeSdkMessagesWithDedup', () => {
       createMessage('d', 400),
     ];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const added: any = [createMessage('d', 400, 'duplicate')]; // Same UUID as existing 'd'
+    const added: any = [createMessage('d', 400, 'duplicate')];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = mergeSdkMessagesWithDedup(existing, added);
 
-    // Should NOT have duplicate - only 4 messages, not 5
     expect(result).toHaveLength(4);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect(result.map((m: any) => m.uuid)).toEqual(['a', 'b', 'c', 'd']);
@@ -565,7 +479,6 @@ describe('mergeSdkMessagesWithDedup', () => {
     const result = mergeSdkMessagesWithDedup(existing, added);
 
     expect(result).toHaveLength(1);
-    // Added message should overwrite existing (takes precedence)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((result[0] as any).message.content).toBe('new content');
   });
@@ -579,7 +492,6 @@ describe('mergeSdkMessagesWithDedup', () => {
     const result = mergeSdkMessagesWithDedup(existing, added);
 
     expect(result).toHaveLength(4);
-    // Should be sorted by timestamp, not insertion order
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect(result.map((m: any) => m.uuid)).toEqual(['a', 'b', 'c', 'd']);
   });
@@ -588,11 +500,7 @@ describe('mergeSdkMessagesWithDedup', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const existing: any = [createMessage('a', 100), createMessage('b', 200)];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const added: any = [
-      createMessage('a', 100), // duplicate
-      createMessage('b', 200), // duplicate
-      createMessage('c', 300), // new
-    ];
+    const added: any = [createMessage('a', 100), createMessage('b', 200), createMessage('c', 300)];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = mergeSdkMessagesWithDedup(existing, added);
 
@@ -615,7 +523,6 @@ describe('mergeSdkMessagesWithDedup', () => {
 
 describe('Computed Signals', () => {
   beforeEach(() => {
-    // Reset global store state for each test
     globalStore.sessions.value = [];
     globalStore.systemState.value = null;
     globalStore.settings.value = null;
@@ -643,10 +550,8 @@ describe('Computed Signals', () => {
 
   describe('hasArchivedSessions signal', () => {
     it('should reflect globalStore hasArchivedSessions', () => {
-      // hasArchivedSessions is now a computed derived from sessionsTotalCount > sessions.length
       expect(hasArchivedSessions.value).toBe(false);
 
-      // Set totalCount greater than visible sessions to indicate archived sessions exist
       globalStore.sessions.value = [
         {
           id: '1',
@@ -824,7 +729,6 @@ describe('Computed Signals', () => {
       ];
       globalStore.sessions.value = source;
 
-      // Accessing the computed must not reorder the canonical array.
       const _ = recentSessions.value;
 
       expect(source.map((s) => s.id)).toEqual(['1', '2', '3']);
@@ -835,14 +739,12 @@ describe('Computed Signals', () => {
 
   describe('isAgentWorking signal', () => {
     it('should return false when currentAgentState is idle', async () => {
-      // Need to initialize state first to access session-related signals
       const sessionId = signal<string | null>(null);
       await initializeApplicationState(
         mockHub as unknown as Parameters<typeof initializeApplicationState>[0],
         sessionId
       );
 
-      // When no session is active, currentAgentState defaults to idle
       expect(isAgentWorking.value).toBe(false);
 
       appState.cleanup();
@@ -893,7 +795,6 @@ describe('Computed Signals', () => {
 
   describe('connectionState signal', () => {
     it('should be a signal with default value', () => {
-      // connectionState is exported directly
       expect(connectionState.value).toBeDefined();
     });
 

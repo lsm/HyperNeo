@@ -1,11 +1,3 @@
-/**
- * Tests for the custom-endpoint handling inside settings.global.update and
- * settings.global.save. These paths must stay consistent with the dedicated
- * customEndpoints.* RPCs: validate before persist, sync registry, clear
- * model cache — and crucially NOT clobber the registry when the payload
- * omits `customEndpoints` entirely.
- */
-
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import type { CustomEndpointConfig, GlobalSettings } from '@hyperneo/shared';
@@ -106,7 +98,6 @@ describe('settings handlers — custom endpoints integration', () => {
       await expect(
         handler({ updates: { customEndpoints: [{ ...validEndpoint, baseUrl: 'ftp://nope' }] } }, {})
       ).rejects.toThrow(/baseUrl/);
-      // Persist should not have happened.
       expect(syncCalls).toHaveLength(0);
     });
 
@@ -136,14 +127,9 @@ describe('settings handlers — custom endpoints integration', () => {
   describe('settings.global.save', () => {
     it('preserves existing custom endpoints when payload omits the field', async () => {
       const handler = hubData.handlers.get('settings.global.save')!;
-      // Payload missing customEndpoints entirely (legacy partial save).
       await handler({ settings: {} as GlobalSettings }, {});
-      // Must not unregister any custom provider.
       expect(syncCalls).toHaveLength(0);
       expect(clearModelsCacheCalls).toHaveLength(0);
-      // And must not wipe the persisted customEndpoints from disk —
-      // otherwise the next daemon startup would load the saved settings,
-      // see no endpoints, and never re-register them.
       expect(settings.state.settings.customEndpoints).toEqual([validEndpoint]);
     });
 
@@ -157,7 +143,6 @@ describe('settings handlers — custom endpoints integration', () => {
           {}
         )
       ).rejects.toThrow(/customEndpoints must be an array/);
-      // Persisted state untouched.
       expect(settings.state.settings.customEndpoints).toEqual([validEndpoint]);
       expect(syncCalls).toHaveLength(0);
     });
@@ -187,27 +172,8 @@ describe('settings handlers — custom endpoints integration', () => {
 
   describe('cross-RPC mutation serialisation', () => {
     it('serialises a concurrent settings.global.update + customEndpoints.remove via the shared lock', async () => {
-      // Register both handler sets onto the same hub so both RPCs share
-      // the in-process `withCustomEndpointsLock` queue.
       registerCustomEndpointHandlers(hubData.hub, settings.manager, eventBus);
 
-      // Starting state: [validEndpoint].
-      // Fire concurrently:
-      //   - settings.global.update → customEndpoints = [validEndpoint, second]
-      //   - customEndpoints.remove → remove 'lmstudio'
-      //
-      // Without the shared lock both ops would read the same pre-state
-      // `[validEndpoint]` and last-writer-wins would either drop `second`
-      // (remove wins) or leave `lmstudio` registered (update wins).
-      // With the lock the two writes are serialised, so the final state
-      // is the *composition* of both: exactly one of {[second]} (update
-      // then remove) or {[validEndpoint, second]} after remove failure
-      // is impossible because update already replaced the array.
-      //
-      // What we assert: whichever order the lock picks, both handlers
-      // observe a consistent snapshot — no lost-update where the final
-      // array is [validEndpoint] (would mean remove was a no-op on a
-      // stale read AND update never landed).
       const updateHandler = hubData.handlers.get('settings.global.update')!;
       const removeHandler = hubData.handlers.get('customEndpoints.remove')!;
       const second: CustomEndpointConfig = { ...validEndpoint, id: 'second' };
@@ -217,31 +183,14 @@ describe('settings handlers — custom endpoints integration', () => {
         removeHandler({ id: 'lmstudio' }, {}),
       ]);
 
-      // Neither op should silently swallow the other; one of the two
-      // orderings must hold:
-      //   A) remove → update: remove succeeds against initial [lmstudio],
-      //      then update overwrites to [lmstudio, second].
-      //   B) update → remove: update overwrites to [lmstudio, second],
-      //      then remove drops lmstudio leaving [second].
       const final = (settings.state.settings.customEndpoints ?? []).map((e) => e.id).sort();
       const orderA = ['lmstudio', 'second'];
       const orderB = ['second'];
       expect([JSON.stringify(orderA), JSON.stringify(orderB)]).toContain(JSON.stringify(final));
-      // Both ops must succeed under the lock; failure here would mean a
-      // race surfaced a "not found" against a stale read.
       expect(results.every((r) => r.status === 'fulfilled')).toBe(true);
     });
 
     it('serialises settings.global.update (no customEndpoints in payload) against customEndpoints.add', async () => {
-      // settings.global.update still does a full read-merge-write of the
-      // global settings row, which includes customEndpoints. If the handler
-      // skips the lock when `updates.customEndpoints` is omitted, then a
-      // concurrent customEndpoints.add can land between the update
-      // handler's read and write — and the update will overwrite the row
-      // with a stale customEndpoints snapshot, dropping the added entry.
-      //
-      // Simulate the race by stalling updateGlobalSettings so the add gets
-      // a chance to run on top of the same pre-state.
       registerCustomEndpointHandlers(hubData.hub, settings.manager, eventBus);
       const real = settings.manager.updateGlobalSettings as unknown as (
         updates: Partial<GlobalSettings>
@@ -263,40 +212,21 @@ describe('settings handlers — custom endpoints integration', () => {
       const addHandler = hubData.handlers.get('customEndpoints.add')!;
       const second: CustomEndpointConfig = { ...validEndpoint, id: 'second' };
 
-      // Kick off settings.global.update first — it will stall inside the
-      // (stubbed) updateGlobalSettings while holding the lock.
       const updatePromise = updateHandler({ updates: { showArchived: true } }, {});
-      // Yield so the update handler can enter the lock-protected region.
       await Promise.resolve();
       await Promise.resolve();
-      // Fire customEndpoints.add — without the lock, this would land first
-      // (since update is stalled); the lock must hold it until update
-      // releases.
       const addPromise = addHandler({ endpoint: second }, {});
 
-      // Release the stall so update completes, then verify add ran AFTER.
       stallResolve?.();
       await Promise.all([updatePromise, addPromise]);
 
-      // Final state must include both customEndpoints (initial + added).
-      // If the lock was skipped, the update handler's write would have
-      // landed last with the stale customEndpoints=[validEndpoint], wiping
-      // `second`.
       const ids = (settings.state.settings.customEndpoints ?? []).map((e) => e.id).sort();
       expect(ids).toEqual(['lmstudio', 'second']);
     });
 
     it('serialises settings.global.save (no customEndpoints in payload) against customEndpoints.add', async () => {
-      // settings.global.save with the field omitted snapshots the persisted
-      // customEndpoints list and writes the merged settings back. The
-      // snapshot MUST happen inside the lock; otherwise a concurrent
-      // customEndpoints.add can land between the read and the save, and
-      // the save will overwrite it with the stale list.
       registerCustomEndpointHandlers(hubData.hub, settings.manager, eventBus);
 
-      // Stall saveGlobalSettings AFTER the snapshot has been taken inside
-      // the lock; this gives us the only window where a non-serialised add
-      // could clobber state. Under correct locking the add waits.
       const realSave = settings.manager.saveGlobalSettings as unknown as (
         s: GlobalSettings
       ) => void;
@@ -325,8 +255,6 @@ describe('settings handlers — custom endpoints integration', () => {
       await Promise.all([savePromise, addPromise]);
 
       const ids = (settings.state.settings.customEndpoints ?? []).map((e) => e.id).sort();
-      // add must not have been swallowed by the save's stale snapshot —
-      // both endpoints must be present.
       expect(ids).toEqual(['lmstudio', 'second']);
     });
   });

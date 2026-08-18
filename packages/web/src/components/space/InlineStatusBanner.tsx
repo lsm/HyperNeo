@@ -1,55 +1,22 @@
-/**
- * InlineStatusBanner — shared thin-banner primitive for task-pane status lines.
- *
- * Prior to this primitive, `PendingTaskCompletionBanner` and (in this PR)
- * `PendingPostApprovalBanner` each rolled their own one-line banner markup.
- * Extracting the shape lets new banners stay consistent and lets tests assert
- * structure instead of class strings.
- *
- * Tone palette matches existing banners:
- *   - `amber`  — awaiting approval / blocked on human
- *   - `blue`   — informational, in-progress
- *   - `green`  — success / positive
- *   - `purple` — policy / blocked on hook
- *   - `red`    — failure / error
- *   - `gray`   — inert
- *
- * Keep this primitive narrow: icon + label + optional meta + up to 3 actions.
- * Multi-line bodies, modals, and expandable sections belong in the caller.
- */
-
 import type { ComponentChildren, JSX } from 'preact';
 
 export type InlineStatusBannerTone = 'amber' | 'blue' | 'green' | 'purple' | 'red' | 'gray';
 
 export interface InlineStatusBannerAction {
-  /** Visible label. */
   label: string;
-  /** Click handler. */
   onClick: () => void;
-  /** Optional button variant. Defaults to `'secondary'`. */
   variant?: 'primary' | 'secondary' | 'danger';
-  /** Optional test id. */
   testId?: string;
-  /** Disabled state — e.g. while a request is in flight. */
   disabled?: boolean;
 }
 
 export interface InlineStatusBannerProps {
-  /** Colour accent. */
   tone: InlineStatusBannerTone;
-  /** Small leading icon — plain text/emoji (kept as ComponentChildren so
-   *  consumers can pass JSX if needed). */
   icon?: ComponentChildren;
-  /** Primary label. */
   label: ComponentChildren;
-  /** Optional right-of-label meta (e.g. `"· 3m ago"`). */
   meta?: ComponentChildren;
-  /** Up to 3 actions. Callers are responsible for truncating. */
   actions?: InlineStatusBannerAction[];
-  /** Test id applied to the root. */
   testId?: string;
-  /** Optional data-* attribute for test introspection. */
   dataAttrs?: Record<string, string>;
 }
 
@@ -97,10 +64,6 @@ const ACTION_VARIANT_CLASSES: Record<
   },
 };
 
-/**
- * Render the one-line banner. Callers should cap `actions.length` at 3; this
- * component does not truncate silently.
- */
 export function InlineStatusBanner({
   tone,
   icon,

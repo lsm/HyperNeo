@@ -1,11 +1,3 @@
-/**
- * ErrorBanner Component
- *
- * Displays error messages with optional "View Details" button, custom action buttons,
- * and dismiss functionality.
- * Extracted from ChatContainer.tsx for better separation of concerns.
- */
-
 import { borderColors } from '../lib/design-tokens';
 
 export interface ErrorBannerAction {
@@ -18,7 +10,6 @@ export interface ErrorBannerProps {
   hasDetails?: boolean;
   onViewDetails?: () => void;
   onDismiss: () => void;
-  /** Optional action buttons rendered before the dismiss button */
   actions?: ErrorBannerAction[];
 }
 

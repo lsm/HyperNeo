@@ -1,18 +1,3 @@
-/**
- * Unit tests for buildSpaceChatSystemPrompt()
- *
- * Verifies:
- * - Prompt includes available workflow names and tags; descriptions are lazy-loaded
- * - Prompt includes available agent names and roles
- * - Task-first guidance text is present
- * - Operator-supplied background and instructions are included
- * - Empty workflows/agents handled gracefully
- * - Event handling section always included with all four event kinds
- * - Autonomy level section reflects configured level
- * - Escalation section always included
- * - Coordination tools section always included
- */
-
 import { describe, test, expect } from 'bun:test';
 import {
   buildSpaceChatSystemPrompt,
@@ -20,10 +5,6 @@ import {
   type WorkflowSummary,
   type AgentSummary,
 } from '../../../../src/lib/space/agents/space-chat-agent';
-
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
 
 function makeWorkflow(overrides?: Partial<WorkflowSummary>): WorkflowSummary {
   return {
@@ -53,10 +34,6 @@ function makeContext(overrides?: Partial<SpaceChatAgentContext>): SpaceChatAgent
   };
 }
 
-// ---------------------------------------------------------------------------
-// Basic structure
-// ---------------------------------------------------------------------------
-
 describe('buildSpaceChatSystemPrompt — basic structure', () => {
   test('returns non-empty string', () => {
     const prompt = buildSpaceChatSystemPrompt();
@@ -74,10 +51,6 @@ describe('buildSpaceChatSystemPrompt — basic structure', () => {
     expect(() => buildSpaceChatSystemPrompt({})).not.toThrow();
   });
 });
-
-// ---------------------------------------------------------------------------
-// Workflow information
-// ---------------------------------------------------------------------------
 
 describe('buildSpaceChatSystemPrompt — workflow information', () => {
   test('includes workflow name', () => {
@@ -146,10 +119,6 @@ describe('buildSpaceChatSystemPrompt — workflow information', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Agent information
-// ---------------------------------------------------------------------------
-
 describe('buildSpaceChatSystemPrompt — agent information', () => {
   test('includes agent name', () => {
     const prompt = buildSpaceChatSystemPrompt(makeContext());
@@ -178,10 +147,6 @@ describe('buildSpaceChatSystemPrompt — agent information', () => {
     expect(prompt).toContain('Coder');
   });
 });
-
-// ---------------------------------------------------------------------------
-// Workflow vs task guidance
-// ---------------------------------------------------------------------------
 
 describe('buildSpaceChatSystemPrompt — workflow vs task guidance', () => {
   test('does not mention start_workflow_run (tool is not exposed to Space Agent)', () => {
@@ -224,10 +189,6 @@ describe('buildSpaceChatSystemPrompt — workflow vs task guidance', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Operator-supplied context
-// ---------------------------------------------------------------------------
-
 describe('buildSpaceChatSystemPrompt — operator context', () => {
   test('includes background context when provided', () => {
     const prompt = buildSpaceChatSystemPrompt({
@@ -253,10 +214,6 @@ describe('buildSpaceChatSystemPrompt — operator context', () => {
     expect(prompt).not.toContain('Space Instructions');
   });
 });
-
-// ---------------------------------------------------------------------------
-// Event handling section
-// ---------------------------------------------------------------------------
 
 describe('buildSpaceChatSystemPrompt — event handling', () => {
   test('includes Event Handling section header', () => {
@@ -300,10 +257,6 @@ describe('buildSpaceChatSystemPrompt — event handling', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Autonomy level section
-// ---------------------------------------------------------------------------
-
 describe('buildSpaceChatSystemPrompt — autonomy level', () => {
   test('includes Autonomy Level section header', () => {
     const prompt = buildSpaceChatSystemPrompt();
@@ -334,7 +287,6 @@ describe('buildSpaceChatSystemPrompt — autonomy level', () => {
   test('level 2 gets supervised prompt (runtime auto-completes but agent defers decisions)', () => {
     const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 2 });
     expect(prompt).toContain('autonomy level **2**');
-    // Level 2 is below the >= 3 threshold for autonomous corrective actions
     expect(prompt).toContain('wait');
     expect(prompt).toContain('Do not retry');
     expect(prompt).not.toContain('Retry a failed task once');
@@ -374,8 +326,6 @@ describe('buildSpaceChatSystemPrompt — autonomy level', () => {
   });
 
   test('levels 3, 4, and 5 produce distinct decision-style guidance', () => {
-    // Previously L3/L4/L5 were byte-identical (a single level >= 3 branch). Graduating them is the
-    // core fix — assert each level yields distinct guidance.
     const l3 = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
     const l4 = buildSpaceChatSystemPrompt({ autonomyLevel: 4 });
     const l5 = buildSpaceChatSystemPrompt({ autonomyLevel: 5 });
@@ -396,9 +346,6 @@ describe('buildSpaceChatSystemPrompt — autonomy level', () => {
   });
 
   test('level 4 does not treat plain uncertainty as an escalation trigger', () => {
-    // Old wording "escalate after one failed retry or uncertainty" listed uncertainty itself as a
-    // trigger. A coordinator is always somewhat uncertain, so this caused over-escalation. The fix
-    // gates escalation on reversibility, not uncertainty.
     const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 4 });
     expect(prompt).not.toContain('or uncertainty');
     expect(prompt).not.toMatch(/escalate .* uncertainty/i);
@@ -411,10 +358,6 @@ describe('buildSpaceChatSystemPrompt — autonomy level', () => {
     expect(prompt).toContain('tell the user what you did');
   });
 });
-
-// ---------------------------------------------------------------------------
-// Escalation section
-// ---------------------------------------------------------------------------
 
 describe('buildSpaceChatSystemPrompt — escalation', () => {
   test('includes Escalation section header', () => {
@@ -454,13 +397,10 @@ describe('buildSpaceChatSystemPrompt — escalation', () => {
   });
 
   test('level 4 escalation does not mandate a question', () => {
-    // At high autonomy, escalation prefers acting and reporting; a direct question is conditional,
-    // not a required step of every escalation (the old text hard-coded one into every escalation).
     const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 4 });
     const escalation = prompt.split('## Escalation')[1]?.split('##')[0] ?? '';
     expect(escalation).toContain('Prefer acting and reporting');
     expect(escalation).toContain('only if');
-    // The mandatory "and one direct question" phrasing must not appear at L4.
     expect(escalation).not.toContain('and one direct question');
   });
 
@@ -470,10 +410,6 @@ describe('buildSpaceChatSystemPrompt — escalation', () => {
     expect(escalation).toContain('one direct question');
   });
 });
-
-// ---------------------------------------------------------------------------
-// Clarification guidance (M5.3)
-// ---------------------------------------------------------------------------
 
 describe('buildSpaceChatSystemPrompt — clarification guidance', () => {
   test('includes instruction to ask for clarification on ambiguous requests', () => {
@@ -520,10 +456,6 @@ describe('buildSpaceChatSystemPrompt — clarification guidance', () => {
     }
   });
 });
-
-// ---------------------------------------------------------------------------
-// Coordination tools section
-// ---------------------------------------------------------------------------
 
 describe('buildSpaceChatSystemPrompt — coordination tools', () => {
   test('includes Coordination Invariants section header', () => {

@@ -1,12 +1,3 @@
-/**
- * Logger Unit Tests
- *
- * Tests the unified logger system which provides:
- * - Log levels: SILENT, ERROR, WARN, INFO, DEBUG, TRACE
- * - Environment-based defaults (test=SILENT, prod=WARN, dev=INFO)
- * - Namespace-based filtering via LOG_FILTER environment variable
- */
-
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { Logger, LogLevel, configureLogger, getLoggerConfig } from '../../../../src/lib/logger';
 
@@ -23,9 +14,6 @@ describe('Logger', () => {
   let originalConfig: ReturnType<typeof getLoggerConfig>;
 
   beforeEach(() => {
-    // Defensively reset the namespace filter first in case an earlier test left
-    // it empty (filter: [] disables all namespaces), then capture the baseline
-    // so afterEach restores a known-good filter rather than a contaminated one.
     configureLogger({ filter: ['*'] });
     originalConfig = getLoggerConfig();
     consoleSpy = {
@@ -45,16 +33,13 @@ describe('Logger', () => {
     consoleSpy.warn.mockRestore();
     consoleSpy.info.mockRestore();
     consoleSpy.debug.mockRestore();
-    // Restore original config
     configureLogger(originalConfig);
   });
 
   describe('in development mode (INFO level)', () => {
     beforeEach(() => {
       process.env.NODE_ENV = 'development';
-      // Configure for INFO level (development default)
       configureLogger({ level: LogLevel.INFO });
-      // Clear any calls from module-level logging during setup
       consoleSpy.log.mockClear();
       consoleSpy.error.mockClear();
       consoleSpy.warn.mockClear();
@@ -66,10 +51,9 @@ describe('Logger', () => {
       const logger = new Logger('TestPrefix');
       logger.log('test message', { extra: 'data' });
 
-      // Logger output: [timestamp, namespace prefix, message]
       expect(consoleSpy.info).toHaveBeenCalledTimes(1);
       const calls = consoleSpy.info.mock.calls[0];
-      expect(calls[0]).toMatch(/^\d{4}-\d{2}-\d{2}T/); // ISO timestamp (default-on)
+      expect(calls[0]).toMatch(/^\d{4}-\d{2}-\d{2}T/);
       expect(calls[1]).toContain('hyperneo:daemon:testprefix');
       expect(calls[2]).toBe('test message');
     });
@@ -111,7 +95,6 @@ describe('Logger', () => {
       const logger = new Logger('TestPrefix');
       logger.debug('debug message');
 
-      // Debug is below INFO level, so should not be called
       expect(consoleSpy.debug).not.toHaveBeenCalled();
     });
   });
@@ -119,7 +102,6 @@ describe('Logger', () => {
   describe('in test mode (SILENT)', () => {
     beforeEach(() => {
       process.env.NODE_ENV = 'test';
-      // Configure for SILENT level (test default)
       configureLogger({ level: LogLevel.SILENT });
       consoleSpy.log.mockClear();
       consoleSpy.error.mockClear();
@@ -140,7 +122,6 @@ describe('Logger', () => {
       const logger = new Logger('TestPrefix');
       logger.error('error message');
 
-      // In SILENT mode, even errors are suppressed
       expect(consoleSpy.error).not.toHaveBeenCalled();
     });
 
@@ -162,7 +143,6 @@ describe('Logger', () => {
   describe('in production mode (WARN level)', () => {
     beforeEach(() => {
       process.env.NODE_ENV = 'production';
-      // Configure for WARN level (production default)
       configureLogger({ level: LogLevel.WARN });
       consoleSpy.log.mockClear();
       consoleSpy.error.mockClear();
@@ -175,7 +155,6 @@ describe('Logger', () => {
       const logger = new Logger('TestPrefix');
       logger.log('test message');
 
-      // log() uses INFO level, which is below WARN
       expect(consoleSpy.info).not.toHaveBeenCalled();
       expect(consoleSpy.log).not.toHaveBeenCalled();
     });
@@ -184,7 +163,6 @@ describe('Logger', () => {
       const logger = new Logger('TestPrefix');
       logger.error('error message');
 
-      // ERROR is >= WARN level
       expect(consoleSpy.error).toHaveBeenCalledTimes(1);
     });
 
@@ -192,7 +170,6 @@ describe('Logger', () => {
       const logger = new Logger('TestPrefix');
       logger.warn('warning message');
 
-      // WARN is at WARN level
       expect(consoleSpy.warn).toHaveBeenCalledTimes(1);
     });
 
@@ -200,7 +177,6 @@ describe('Logger', () => {
       const logger = new Logger('TestPrefix');
       logger.info('info message');
 
-      // INFO is below WARN level
       expect(consoleSpy.info).not.toHaveBeenCalled();
     });
   });
@@ -277,7 +253,7 @@ describe('Logger', () => {
     });
 
     test('matching namespace should log', () => {
-      const logger = new Logger('TestPrefix'); // becomes hyperneo:daemon:testprefix
+      const logger = new Logger('TestPrefix');
       logger.info('info message');
 
       expect(consoleSpy.info).toHaveBeenCalledTimes(1);

@@ -1,13 +1,3 @@
-/**
- * WorkflowNodeCard Component
- *
- * A single node card in the workflow editor.
- * Supports collapsed (summary) and expanded (edit) modes.
- *
- * Collapsed: step number, agent name, gate type icons
- * Expanded: name input, agent dropdown, entry/exit gate selectors, instructions
- */
-
 import type {
   NodeExecutionStatus,
   SpaceWorkerAgent,
@@ -20,103 +10,43 @@ import type {
 import { useCallback, useState } from 'preact/hooks';
 import { cn } from '../../lib/utils';
 
-// ============================================================================
-// Draft Types (used by WorkflowEditor + WorkflowNodeCard)
-// ============================================================================
-
 export interface NodeDraft {
-  /** Stable local key for React rendering — not sent to the server */
   localId: string;
-  /** Existing step ID when editing an existing workflow */
   id?: string;
   name: string;
-  /** Single-agent shorthand (backward compat). When agents is provided and non-empty, agents takes precedence. */
   agentId: string;
-  /** Single-agent model override. Ignored when agents[] is present. */
   model?: string;
-  /** Single-agent thinking-level override. Ignored when agents[] is present. */
   thinkingLevel?: ThinkingLevel;
-  /** Single-agent custom prompt override. Ignored when agents[] is present. */
   customPrompt?: WorkflowNodeAgentOverride;
-  /** Single-agent replace-agent-prompt flag. Ignored when agents[] is present. */
   replaceAgentPrompt?: boolean;
-  /** Single-agent disabled skills. Ignored when agents[] is present. */
   disabledSkillIds?: string[];
-  /**
-   * Single-agent fresh-context flag. Ignored when agents[] is present.
-   * Mirrors WorkflowNodeAgent.resetContextPerTurn for single-agent nodes.
-   */
   resetContextPerTurn?: boolean;
-  /** Multiple agents for parallel execution. When non-empty, takes precedence over agentId. */
   agents?: WorkflowNodeAgent[];
-  /** Directed messaging topology between agents. */
   channels?: WorkflowChannel[];
-  /** Optional post-approval route scoped to this node. */
   postApproval?: import('@hyperneo/shared').PostApprovalRoute;
-  /**
-   * Sticky copy of postApproval.requirePrMerge that survives the post-approval
-   * toggle. The toggle deletes `postApproval` when unchecked, so reading
-   * `postApproval.requirePrMerge` on re-check sees undefined and drops the
-   * hidden merge gate. This step-level field is seeded at load and restored at
-   * serialization, so unchecking/rechecking "Post-approval instruction" on a
-   * coder-owned workflow keeps the mark_complete merge gate.
-   */
   requirePrMerge?: boolean;
-  /**
-   * Declared outbound handoff transitions for this node. Carried verbatim
-   * through the editor (load → build) so a visual-editor save does NOT drop
-   * them — the field is writable via RPC/import, so silent loss would be a
-   * data-loss trap. Named `handoffTransitions` (not `transitions`) to avoid
-   * colliding with the visual editor's edge/`VisualTransition` concept, which
-   * uses `transitions` throughout the canvas code.
-   */
   handoffTransitions?: HandoffTransition[];
 }
 
-// ============================================================================
-// Multi-agent helpers
-// ============================================================================
-
-/** Returns true when this node has multiple agents configured. */
 export function isMultiAgentNode(node: NodeDraft): boolean {
   return Array.isArray(node.agents) && node.agents.length > 1;
 }
 
-/**
- * Condition draft for workflow transitions (entry/exit gates).
- * Kept here for backward compatibility with WorkflowEditor imports.
- */
 export interface ConditionDraft {
   type: 'always' | 'human' | 'condition' | 'task_result';
-  /** Expression: shell command for 'condition' type, match value for 'task_result' type */
   expression?: string;
 }
 
-// ============================================================================
-// Agent Completion State
-// ============================================================================
-
-/**
- * Runtime completion state for a single agent slot within a workflow node.
- * Derived from NodeExecution records grouped by workflowNodeId.
- */
 export interface AgentTaskState {
-  /** Matches WorkflowNodeAgent.name; null means single-agent node */
   agentName: string | null;
   status: NodeExecutionStatus;
   completionSummary?: string | null;
 }
 
-/** Returns true when all provided agent states have status === 'idle'. */
 export function isNodeFullyCompleted(states: AgentTaskState[]): boolean {
   return states.length > 0 && states.every((s) => s.status === 'idle');
 }
 
-// ============================================================================
-// Icon Components
-// ============================================================================
-
-/** Animated spinner for in-progress agents */
 function SpinnerIcon({ title }: { title?: string }) {
   return (
     <svg
@@ -136,7 +66,6 @@ function SpinnerIcon({ title }: { title?: string }) {
   );
 }
 
-/** Green checkmark for completed agents */
 function CheckIcon({ title }: { title?: string }) {
   return (
     <svg
@@ -152,7 +81,6 @@ function CheckIcon({ title }: { title?: string }) {
   );
 }
 
-/** Red/gray X for failed/cancelled agents */
 function FailIcon({ title }: { title?: string }) {
   return (
     <svg
@@ -173,7 +101,6 @@ function FailIcon({ title }: { title?: string }) {
   );
 }
 
-/** Renders the appropriate icon for an agent's task status. */
 export function AgentStatusIcon({ state }: { state: AgentTaskState }) {
   const summary = state.completionSummary ?? undefined;
   if (state.status === 'idle') {
@@ -197,7 +124,6 @@ export function AgentStatusIcon({ state }: { state: AgentTaskState }) {
       </span>
     );
   }
-  // pending/draft/review/rate_limited/usage_limited — faint dot
   return (
     <span
       class="w-1.5 h-1.5 rounded-full bg-gray-500 flex-shrink-0"
@@ -223,11 +149,6 @@ function ChevronUp() {
   );
 }
 
-// ============================================================================
-// Override helpers
-// ============================================================================
-
-/** Extract the text value from an override (backward compat for legacy string shape). */
 export function extractOverrideValue(
   override: WorkflowNodeAgentOverride | string | undefined
 ): string {
@@ -236,14 +157,9 @@ export function extractOverrideValue(
   return override.value ?? '';
 }
 
-/** Build an override object, clearing to undefined when value is empty. */
 export function buildOverride(value: string): WorkflowNodeAgentOverride | undefined {
   return value.trim() ? { value: value.trim() } : undefined;
 }
-
-// ============================================================================
-// MultiAgentSection — manages the agents list in expanded view
-// ============================================================================
 
 interface MultiAgentSectionProps {
   node: NodeDraft;
@@ -254,7 +170,6 @@ interface MultiAgentSectionProps {
 function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
   const nodeAgents = node.agents ?? [];
 
-  // Track which slots have their override fields expanded (keyed by name)
   const [expandedSlots, setExpandedSlots] = useState<Set<string>>(new Set());
 
   const toggleSlotExpanded = useCallback((role: string) => {
@@ -273,10 +188,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
   function addAgent(agentId: string) {
     if (!agentId) return;
     const agentInfo = agents.find((a) => a.id === agentId);
-    // Guard against agents with empty role strings to avoid indistinguishable slot names
     const baseRole = agentInfo?.name?.trim() || agentId;
-    // Ensure the slot name is unique within this node. When the same agent is added
-    // multiple times, append a numeric suffix to distinguish the slots.
     const usedRoles = new Set(nodeAgents.map((a) => a.name));
     let role = baseRole;
     for (let i = 2; usedRoles.has(role); i++) {
@@ -289,8 +201,6 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
     const removed = nodeAgents.find((a) => a.name === role);
     const next = nodeAgents.filter((a) => a.name !== role);
     if (next.length === 0) {
-      // Switch back to single-agent mode: restore agentId from the removed agent and
-      // clear channels (orphaned channels on a single-agent node are semantically invalid)
       onUpdate({
         ...node,
         agents: undefined,
@@ -312,7 +222,6 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
     // model is no longer a property of WorkflowNodeAgent; this function is a no-op
   }
 
-  // All agents are available; same agent may be added multiple times with different roles.
   const availableAgents = agents;
 
   return (
@@ -339,7 +248,6 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
         )}
       </div>
 
-      {/* Agent list */}
       <div class="space-y-1.5">
         {nodeAgents.map((sa) => {
           const agentInfo = agents.find((a) => a.id === sa.agentId);
@@ -350,7 +258,6 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
               key={sa.name}
               class={`rounded p-2 space-y-1 border ${hasOverrides ? 'bg-amber-950/20 border-amber-700/40' : 'bg-dark-800 border-dark-600'}`}
             >
-              {/* Header: role input + override badge + remove */}
               <div class="flex items-center gap-1">
                 <input
                   type="text"
@@ -358,7 +265,6 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
                   onInput={(e) => {
                     const oldRole = sa.name;
                     const newRole = (e.currentTarget as HTMLInputElement).value;
-                    // Keep the override section expanded after a rename by migrating the key
                     setExpandedSlots((prev) => {
                       if (!prev.has(oldRole)) return prev;
                       const next = new Set(prev);
@@ -421,9 +327,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
                   </svg>
                 </button>
               </div>
-              {/* Agent name (readonly) */}
               <p class="text-xs text-gray-400">{agentInfo?.name ?? sa.agentId ?? ''}</p>
-              {/* Per-agent custom prompt */}
               <div class="space-y-0.5">
                 <label class="text-xs text-gray-400">Custom Prompt</label>
                 <input
@@ -437,7 +341,6 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
                   class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-300 focus:outline-none focus:border-blue-500 placeholder-gray-700"
                 />
               </div>
-              {/* Expandable overrides section */}
               {isExpanded && (
                 <div class="space-y-1 pt-1 border-t border-dark-700" data-testid="slot-overrides">
                   <p class="text-xs text-gray-400 font-medium">Slot overrides</p>
@@ -461,7 +364,6 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
         })}
       </div>
 
-      {/* Add agent dropdown */}
       {availableAgents.length > 0 && (
         <select
           value=""
@@ -480,15 +382,10 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
         </select>
       )}
 
-      {/* Channels section */}
       <ChannelsSection node={node} agents={agents} onUpdate={onUpdate} />
     </div>
   );
 }
-
-// ============================================================================
-// ChannelsSection — manages messaging topology channels
-// ============================================================================
 
 interface ChannelsSectionProps {
   node: NodeDraft;
@@ -496,7 +393,6 @@ interface ChannelsSectionProps {
   onUpdate: (node: NodeDraft) => void;
 }
 
-/** Format a to value for display. */
 function formatTo(to: string | string[]): string {
   return Array.isArray(to) ? `[${to.join(', ')}]` : to;
 }
@@ -505,7 +401,6 @@ function ChannelsSection({ node, onUpdate }: ChannelsSectionProps) {
   const channels = node.channels ?? [];
   const nodeAgents = node.agents ?? [];
 
-  // Collect known roles from node agents (+ wildcard)
   const knownRoles = ['*', ...nodeAgents.map((sa) => sa.name)];
 
   function updateChannels(next: WorkflowChannel[]) {
@@ -518,7 +413,6 @@ function ChannelsSection({ node, onUpdate }: ChannelsSectionProps) {
 
   function addChannel(from: string, to: string, label?: string) {
     if (!from || !to) return;
-    // Support comma-separated multi-select for fan-out
     const toValue: string | string[] = to.includes(',')
       ? to
           .split(',')
@@ -541,7 +435,6 @@ function ChannelsSection({ node, onUpdate }: ChannelsSectionProps) {
         <p class="text-xs text-gray-400">No channels — agents are isolated.</p>
       )}
 
-      {/* Channel list */}
       <div class="space-y-1">
         {channels.map((ch, i) => (
           <div
@@ -571,7 +464,6 @@ function ChannelsSection({ node, onUpdate }: ChannelsSectionProps) {
         ))}
       </div>
 
-      {/* Add channel form */}
       <AddChannelForm knownRoles={knownRoles} onAdd={addChannel} />
     </div>
   );
@@ -599,7 +491,6 @@ interface ChannelFormBodyProps {
 }
 
 function ChannelFormBody({ knownRoles, onAdd }: ChannelFormBodyProps) {
-  // We use a form inside details to avoid useState — just read values on submit
   function handleSubmit(e: Event) {
     e.preventDefault();
     const form = e.currentTarget as HTMLFormElement;
@@ -650,30 +541,19 @@ function ChannelFormBody({ knownRoles, onAdd }: ChannelFormBodyProps) {
   );
 }
 
-// ============================================================================
-// Main Component
-// ============================================================================
-
 interface WorkflowNodeCardProps {
   node: NodeDraft;
   nodeIndex: number;
   isFirst: boolean;
   isLast: boolean;
   expanded: boolean;
-  /** All space agents, excluding 'leader' */
   agents: SpaceWorkerAgent[];
   onToggleExpand: () => void;
   onUpdate: (node: NodeDraft) => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
   onRemove: () => void;
-  /** When true, the Remove button is disabled (e.g. only one node remains) */
   disableRemove?: boolean;
-  /**
-   * Runtime agent completion states for this node.
-   * Derived from NodeExecution records filtered by the node's ID.
-   * When provided, per-agent status indicators are shown in the collapsed header.
-   */
   nodeTaskStates?: AgentTaskState[];
 }
 
@@ -695,7 +575,6 @@ export function WorkflowNodeCard({
   const multi = isMultiAgentNode(node);
   const agentName = agents.find((a) => a.id === node.agentId)?.name ?? node.agentId;
 
-  // Build a lookup: agentName → AgentTaskState (for multi-agent) or the first entry (for single-agent)
   const taskStateByAgent = new Map<string | null, AgentTaskState>(
     (nodeTaskStates ?? []).map((s) => [s.agentName, s])
   );
@@ -708,7 +587,6 @@ export function WorkflowNodeCard({
         allDone ? 'border-green-700/60' : 'border-dark-700'
       )}
     >
-      {/* Collapsed header — always visible */}
       <div
         class={cn(
           'flex items-center gap-2 px-3 py-2.5 cursor-pointer select-none',
@@ -716,7 +594,6 @@ export function WorkflowNodeCard({
         )}
         onClick={onToggleExpand}
       >
-        {/* Step number — turns green when all agents done */}
         <span
           class={cn(
             'w-5 h-5 flex items-center justify-center rounded-full text-xs font-semibold flex-shrink-0',
@@ -727,7 +604,6 @@ export function WorkflowNodeCard({
           {nodeIndex + 1}
         </span>
 
-        {/* Step info */}
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-1.5 min-w-0 flex-wrap">
             <span class="text-xs font-medium text-gray-200 truncate">
@@ -772,7 +648,6 @@ export function WorkflowNodeCard({
               </span>
             )}
           </div>
-          {/* Completion summary — shown when the single-agent or any agent has a summary */}
           {nodeTaskStates && nodeTaskStates.some((s) => s.completionSummary) && (
             <p class="text-xs text-gray-400 truncate mt-0.5" data-testid="node-completion-summary">
               {nodeTaskStates.find((s) => s.completionSummary)?.completionSummary}
@@ -780,7 +655,6 @@ export function WorkflowNodeCard({
           )}
         </div>
 
-        {/* Controls */}
         <div class="flex items-center gap-0.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
           <button
             onClick={onMoveUp}
@@ -815,16 +689,13 @@ export function WorkflowNodeCard({
           </button>
         </div>
 
-        {/* Expand chevron */}
         <span class="text-gray-400 flex-shrink-0">
           {expanded ? <ChevronUp /> : <ChevronDown />}
         </span>
       </div>
 
-      {/* Expanded body */}
       {expanded && (
         <div class="px-4 py-4 bg-dark-900 space-y-4">
-          {/* Name */}
           <div class="space-y-1">
             <label class="text-xs font-medium text-gray-400">Node Name</label>
             <input
@@ -838,7 +709,6 @@ export function WorkflowNodeCard({
             />
           </div>
 
-          {/* Agent(s) */}
           {multi ? (
             <MultiAgentSection node={node} agents={agents} onUpdate={onUpdate} />
           ) : (
@@ -879,7 +749,6 @@ export function WorkflowNodeCard({
             </div>
           )}
 
-          {/* Custom Prompt (single-agent) */}
           <div class="space-y-1">
             <label class="text-xs font-medium text-gray-400">
               Custom Prompt <span class="font-normal text-gray-400">(optional)</span>

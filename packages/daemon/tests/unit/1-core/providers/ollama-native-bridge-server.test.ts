@@ -1,13 +1,3 @@
-/**
- * Tests for the Ollama-native custom-endpoint integration.
- *
- * The underlying bridge is shared with the built-in `OllamaProvider`. These
- * tests exercise the new custom-endpoint surface — extra request headers,
- * `num_ctx` forwarding via `modelContextWindow`, tool stripping when the
- * active model doesn't support tools, and loopback binding — without
- * duplicating the existing translator tests in `ollama-bridge-server.test.ts`.
- */
-
 import { afterEach, describe, expect, it, mock } from 'bun:test';
 import {
   createOllamaNativeBridgeServer,
@@ -104,8 +94,6 @@ describe.skipIf(!isBun)('OllamaNativeBridge — custom-endpoint surface', () => 
         stream: true,
       }),
     });
-    // Tool stripping is the whole point — older Ollama servers reject the
-    // request when they see a `tools` array on a model that doesn't support it.
     expect(body.tools).toBeUndefined();
   });
 
@@ -187,7 +175,6 @@ describe.skipIf(!isBun)('OllamaNativeBridge — custom-endpoint surface', () => 
       fetchImpl: fetchMock as typeof fetch,
     });
     servers.push(server);
-    // A loopback-bound server still answers on 127.0.0.1.
     const response = await fetch(`http://127.0.0.1:${server.port}/health`);
     expect(response.status).toBe(200);
   });
@@ -215,7 +202,6 @@ describe.skipIf(!isBun)('OllamaNativeBridge — custom-endpoint surface', () => 
           stream: true,
         }),
       });
-      // Must NOT be `http://ollama.test/api/chat/api/chat`.
       expect(capturedUrl).toBe('http://ollama.test/api/chat');
     });
 

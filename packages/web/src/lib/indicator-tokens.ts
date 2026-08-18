@@ -1,14 +1,3 @@
-/**
- * Indicator Tokens
- *
- * Unified tone palette for status, activity, and attention indicators across
- * the HyperNeo web UI. Each tone exports solid background, text, border, and
- * soft badge class sets so dots, badges, spinners, and banners stay consistent.
- */
-
-/**
- * Tone names in the unified indicator palette.
- */
 export const INDICATOR_TONE_NAMES = [
   'neutral',
   'info',
@@ -19,35 +8,16 @@ export const INDICATOR_TONE_NAMES = [
   'special',
 ] as const;
 
-/**
- * A tone from the unified indicator palette.
- */
 export type IndicatorTone = (typeof INDICATOR_TONE_NAMES)[number];
 
-/**
- * Class set for a single indicator tone.
- */
 export interface ToneClassSet {
-  /** Solid background class for dots, spinners, and solid badges. */
   bg: string;
-  /** Text color class. */
   text: string;
-  /** Opaque border class. */
   border: string;
-  /** Pre-composed soft badge class string (border + background + text). */
   soft: string;
-  /**
-   * Solid border class for spinners and other solid-border indicators.
-   * Stored as a complete literal (not derived from `bg`) so Tailwind's JIT
-   * scanner emits the utility for every tone.
-   */
   spinner: string;
 }
 
-/**
- * Unified tone palette. Every status/activity indicator should derive its
- * classes from one of these tones.
- */
 export const INDICATOR_TONES: Record<IndicatorTone, ToneClassSet> = {
   neutral: {
     bg: 'bg-gray-500',
@@ -100,9 +70,6 @@ export const INDICATOR_TONES: Record<IndicatorTone, ToneClassSet> = {
   },
 };
 
-/**
- * Return the class set for a given indicator tone.
- */
 export function getToneClasses(tone: IndicatorTone): ToneClassSet {
   return INDICATOR_TONES[tone];
 }

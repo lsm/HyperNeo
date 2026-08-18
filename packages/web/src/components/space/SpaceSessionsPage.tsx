@@ -1,9 +1,3 @@
-/**
- * SpaceSessionsPage — lists all user-created sessions for a space.
- *
- * Sessions are grouped by runtime/read state and exclude task/workflow system sessions.
- */
-
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { navigateToSpaceSession } from '../../lib/router';
@@ -59,17 +53,6 @@ const RUNNING_LABELS: Record<string, string> = {
   processing: 'Processing',
 };
 
-/**
- * Classify a session into a runtime group + human label. Lifecycle state is
- * considered alongside the persisted processing phase so actionable and
- * terminal sessions surface correctly instead of all collapsing to "Idle":
- *  - `pending_worktree_choice` is actionable (the chat needs a worktree before
- *    it can proceed) → surfaced under "Waiting for input".
- *  - `rate_limit_cooldown` is a warning (throttled, auto-resumes), not active
- *    execution → its own "Rate Limited" group, matching session-processing-phase.
- *  - `paused` / `ended` stay under Idle but are labelled accurately.
- * Malformed or unknown state falls back to Idle, never Error.
- */
 function classifySession(
   status: string,
   processingStateValue: unknown
@@ -268,7 +251,6 @@ export function SpaceSessionsPage({
 }: SpaceSessionsPageProps) {
   const routeSpaceId = navigationSpaceId ?? spaceId;
   const storeSessions = spaceStore.sessions.value;
-  // Subscribe so marking a session read immediately moves it between idle groups.
   void spaceSessionLastSeen.value;
 
   const sessions = useMemo(() => {

@@ -1,9 +1,3 @@
-/**
- * AcpMessageTranslator Tests
- *
- * Unit tests for chunk accumulation and notification translation.
- */
-
 import { describe, expect, test, beforeEach } from 'bun:test';
 import { AcpMessageTranslator } from '../../../../src/lib/acp/acp-message-translator';
 import type {
@@ -19,10 +13,6 @@ describe('AcpMessageTranslator', () => {
   beforeEach(() => {
     translator = new AcpMessageTranslator('test-session');
   });
-
-  // ---------------------------------------------------------------------------
-  // Chunk accumulation
-  // ---------------------------------------------------------------------------
 
   test('accumulates text chunks and emits on flush', () => {
     translator.processUpdate(agentChunk('Hello'));
@@ -60,10 +50,6 @@ describe('AcpMessageTranslator', () => {
     expect(second.length).toBe(0);
   });
 
-  // ---------------------------------------------------------------------------
-  // Tool call boundary
-  // ---------------------------------------------------------------------------
-
   test('flushes accumulated chunks before tool_call', () => {
     translator.processUpdate(agentChunk('Before tool'));
 
@@ -97,10 +83,6 @@ describe('AcpMessageTranslator', () => {
     expect(firstContent[1].type).toBe('text');
   });
 
-  // ---------------------------------------------------------------------------
-  // Tool call translation
-  // ---------------------------------------------------------------------------
-
   test('translateToolCall produces tool_use block', () => {
     const msg = translator.translateToolCall(
       toolCall('tc-2', 'Write file', { path: '/tmp/f', content: 'hi' })
@@ -127,10 +109,6 @@ describe('AcpMessageTranslator', () => {
     expect(content[0].input).toEqual({});
   });
 
-  // ---------------------------------------------------------------------------
-  // Tool call update translation
-  // ---------------------------------------------------------------------------
-
   test('translateToolCallUpdate produces tool_progress message', () => {
     const msg = translator.translateToolCallUpdate(toolCallUpdate('tc-4', 'Running test'));
 
@@ -146,10 +124,6 @@ describe('AcpMessageTranslator', () => {
     const msg = translator.translateToolCallUpdate(toolCallUpdate('tc-5', undefined));
     expect(msg.tool_name).toBe('unknown');
   });
-
-  // ---------------------------------------------------------------------------
-  // Result translation
-  // ---------------------------------------------------------------------------
 
   test('translateResult produces success result', () => {
     const msg = translator.translateResult('end_turn');
@@ -167,10 +141,6 @@ describe('AcpMessageTranslator', () => {
     expect((msg as { is_error: boolean }).is_error).toBe(true);
     expect((msg as { errors: string[] }).errors).toContain('cancelled');
   });
-
-  // ---------------------------------------------------------------------------
-  // Ignored updates
-  // ---------------------------------------------------------------------------
 
   test('translates plan, config, mode, session info updates', () => {
     expect(translator.processUpdate({ sessionUpdate: 'plan', entries: [] } as never)[0].type).toBe(
@@ -251,10 +221,6 @@ describe('AcpMessageTranslator', () => {
     ).toEqual([]);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function agentChunk(text: string): AcpAgentMessageChunkUpdate {
   return {

@@ -1,7 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for Collapsible Component
- */
 
 import { render, cleanup, waitFor } from '@testing-library/preact';
 import { describe, it, expect, vi } from 'vitest';
@@ -66,7 +63,6 @@ describe('Collapsible', () => {
         </Collapsible>
       );
       const content = container.querySelector('div[style*="height"]');
-      // When closed, height should be 0 or transitioning
       expect(content?.style.height).toBe('0px');
     });
 
@@ -192,10 +188,8 @@ describe('Collapsible', () => {
       const trigger = container.querySelector('button');
       trigger?.click();
 
-      // Should call callback but state should remain controlled
       expect(onOpenChange).toHaveBeenCalledWith(true);
 
-      // The button should still show the controlled state
       const button = container.querySelector('button');
       expect(button?.getAttribute('aria-expanded')).toBe('false');
     });
@@ -359,17 +353,13 @@ describe('Collapsible', () => {
 
       const trigger = container.querySelector('button');
 
-      // Initially closed
       let contentWrapper = container.querySelector('div[style*="height"]');
       expect(contentWrapper?.style.height).toBe('0px');
 
-      // Open
       trigger?.click();
 
-      // Height should animate (briefly have a pixel value)
       await waitFor(() => {
         contentWrapper = container.querySelector('div[style*="height"]');
-        // When open, height is either a pixel value during animation or 'auto' after
         const height = contentWrapper?.style.height;
         expect(height === 'auto' || (height && parseInt(height) > 0)).toBe(true);
       });
@@ -419,7 +409,6 @@ describe('Collapsible', () => {
 
       await waitFor(() => {
         const contentWrapper = container.querySelector('div[style*="height"]');
-        // When fully open, overflow should be visible or not specified
         expect(
           contentWrapper?.style.overflow === 'visible' || contentWrapper?.style.overflow === ''
         ).toBe(true);

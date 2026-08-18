@@ -1,23 +1,9 @@
-/**
- * Built-in HyperNeo commands
- *
- * These commands are available in all HyperNeo sessions and are expanded
- * to full prompts before being sent to the Claude Agent SDK.
- *
- * Similar to how Claude Code handles .claude/commands/*.md files, but
- * these are built into HyperNeo itself.
- */
-
 export interface BuiltInCommand {
   name: string;
   description: string;
   prompt: string;
 }
 
-/**
- * Built-in command definitions
- * Internal-only: use getBuiltInCommandNames() or expandBuiltInCommand() instead
- */
 const BUILT_IN_COMMANDS: BuiltInCommand[] = [
   {
     name: 'merge-session',
@@ -39,17 +25,10 @@ Follow git best practices:
   },
 ];
 
-/**
- * Get list of built-in command names
- */
 export function getBuiltInCommandNames(): string[] {
   return BUILT_IN_COMMANDS.map((cmd) => cmd.name);
 }
 
-/**
- * Expand a built-in command to its full prompt
- * Returns null if the command is not a built-in command
- */
 export function expandBuiltInCommand(content: string): string | null {
   const trimmed = content.trim();
   if (!trimmed.startsWith('/')) {

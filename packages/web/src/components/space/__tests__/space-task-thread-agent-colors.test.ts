@@ -84,22 +84,17 @@ describe('getAgentColor', () => {
   it('two different unknown labels produce different HSL colors', () => {
     const color1 = getAgentColor('Alpha Bot 9999');
     const color2 = getAgentColor('Beta Bot 8888');
-    // Both must be valid HSL fallback strings
     expect(color1).toMatch(/^hsl\(\d+ 70% 62%\)$/);
     expect(color2).toMatch(/^hsl\(\d+ 70% 62%\)$/);
-    // And they must be different (different inputs hash to different hues)
     expect(color1).not.toBe(color2);
   });
 
   it('returns an HSL fallback (not crash) for empty string', () => {
     const color = getAgentColor('');
-    // Empty string normalizes to '' and falls through to fallbackColor('agent')
     expect(color).toMatch(/^hsl\(\d+ 70% 62%\)$/);
   });
 
   it('does not throw and returns a string for null input coerced as string', () => {
-    // Callers in practice always pass a string label, but defensive coverage
-    // for coerced null (null.toString() would throw; passing null via `as any` tests runtime safety)
     const color = getAgentColor(null as unknown as string);
     expect(typeof color).toBe('string');
     expect(color.length).toBeGreaterThan(0);

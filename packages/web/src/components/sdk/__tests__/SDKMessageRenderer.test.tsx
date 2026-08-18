@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * SDKMessageRenderer Component Tests
- *
- * Tests SDK message routing and rendering logic
- */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import { render, fireEvent, waitFor } from '@testing-library/preact';
@@ -11,10 +6,8 @@ import { SDKMessageRenderer } from '../SDKMessageRenderer';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
 
-// Helper to create a valid UUID
 const createUUID = (): UUID => crypto.randomUUID() as UUID;
 
-// Mock message factories
 function createUserMessage(content: string): SDKMessage {
   return {
     type: 'user',
@@ -152,7 +145,7 @@ function createSubagentMessage(): SDKMessage {
       stop_sequence: null,
       usage: { input_tokens: 10, output_tokens: 20 },
     },
-    parent_tool_use_id: 'toolu_parent123', // This marks it as a subagent message
+    parent_tool_use_id: 'toolu_parent123',
     uuid: createUUID(),
     session_id: 'test-session',
   } as unknown as SDKMessage;
@@ -201,8 +194,6 @@ describe('SDKMessageRenderer', () => {
       const message = createSystemCompactBoundaryMessage();
       const { container } = render(<SDKMessageRenderer message={message} />);
 
-      // SDKSystemMessage should be rendered for non-init system messages
-      // CompactBoundaryMessage shows "Compact" and token count
       expect(container.textContent).toContain('Compact');
       expect(container.textContent).toContain('tokens');
     });
@@ -219,13 +210,10 @@ describe('SDKMessageRenderer', () => {
 
       const { container } = render(<SDKMessageRenderer message={message} />);
 
-      // thinking_tokens is now hidden - should render nothing
       expect(container.innerHTML).toBe('');
     });
 
     it('should render all hidden system subtypes as null', () => {
-      // hook_started / hook_progress are intentionally NOT hidden — the chat
-      // transcript renders them via HookRunningCard. They're covered separately.
       for (const subtype of [
         'session_state_changed',
         'commands_changed',
@@ -327,7 +315,6 @@ describe('SDKMessageRenderer', () => {
       const message = createResultMessage(true);
       const { container } = render(<SDKMessageRenderer message={message} />);
 
-      // Result messages have a button for expanding details
       const resultMessage = container.querySelector('button');
       expect(resultMessage).toBeTruthy();
       expect(container.textContent).toContain('tokens');
@@ -337,7 +324,6 @@ describe('SDKMessageRenderer', () => {
       const message = createToolProgressMessage();
       const { container } = render(<SDKMessageRenderer message={message} />);
 
-      // ToolProgressCard shows tool name
       expect(container.textContent).toContain('Read');
     });
 
@@ -345,7 +331,6 @@ describe('SDKMessageRenderer', () => {
       const message = createAuthStatusMessage();
       const { container } = render(<SDKMessageRenderer message={message} />);
 
-      // AuthStatusCard should be rendered
       expect(container.textContent).toContain('Authenticating');
     });
 
@@ -353,7 +338,6 @@ describe('SDKMessageRenderer', () => {
       const message = createUserReplayMessage();
       const { container } = render(<SDKMessageRenderer message={message} />);
 
-      // SlashCommandOutput should handle this
       await waitFor(() => {
         expect(container.textContent).toContain('Command output');
       });
@@ -365,7 +349,6 @@ describe('SDKMessageRenderer', () => {
       const message = createStreamEventMessage();
       const { container } = render(<SDKMessageRenderer message={message} />);
 
-      // Should return null for stream events
       expect(container.innerHTML).toBe('');
     });
 
@@ -373,7 +356,6 @@ describe('SDKMessageRenderer', () => {
       const message = createSystemInitMessage();
       const { container } = render(<SDKMessageRenderer message={message} />);
 
-      // System init messages are skipped - shown as MessageInfoDropdown instead
       expect(container.innerHTML).toBe('');
     });
 
@@ -381,7 +363,6 @@ describe('SDKMessageRenderer', () => {
       const message = createSubagentMessage();
       const { container } = render(<SDKMessageRenderer message={message} />);
 
-      // Subagent messages should be filtered out
       expect(container.innerHTML).toBe('');
     });
 
@@ -429,7 +410,6 @@ describe('SDKMessageRenderer', () => {
         <SDKMessageRenderer message={message} sessionInfo={sessionInfo} />
       );
 
-      // User message should be rendered with session info available
       expect(container.querySelector('[data-testid="user-message"]')).toBeTruthy();
     });
 
@@ -441,7 +421,6 @@ describe('SDKMessageRenderer', () => {
         <SDKMessageRenderer message={message} toolInputsMap={toolInputsMap} />
       );
 
-      // ToolProgressCard should receive the input
       expect(container.textContent).toContain('Read');
     });
   });
@@ -466,7 +445,6 @@ describe('SDKMessageRenderer', () => {
         <SDKMessageRenderer message={message} foldableToolUseIds={new Set(['tu-fold'])} />
       );
 
-      // Folded onto the tool card — no standalone row.
       expect(container.innerHTML).toBe('');
     });
 
@@ -522,7 +500,6 @@ describe('SDKMessageRenderer', () => {
       const message = { ...baseNotification } as unknown as SDKMessage;
 
       const { container } = render(
-        // foldableToolUseIds omits 'tu-fold' — the originating card isn't rendered.
         <SDKMessageRenderer message={message} foldableToolUseIds={new Set()} />
       );
 
@@ -532,8 +509,6 @@ describe('SDKMessageRenderer', () => {
 
     it('renders the fallback row for a nested tool_use whose parent card is paginated out', () => {
       const message = { ...baseNotification } as unknown as SDKMessage;
-      // 'tu-fold' is indexed (nested tool_use exists) but its parent Task card
-      // is absent → not foldable → must fall back to a row.
       const { container } = render(
         <SDKMessageRenderer
           message={message}
@@ -559,9 +534,6 @@ describe('SDKMessageRenderer', () => {
     });
 
     it('renders the fallback row for a nested notification whose parent card is absent', () => {
-      // Has parent_tool_use_id → would normally be hidden by the sub-agent
-      // skip. But with the parent Task/Agent card paginated out (not foldable),
-      // it must still render the fallback row instead of being dropped.
       const message = {
         ...baseNotification,
         parent_tool_use_id: 'task-missing',
@@ -586,7 +558,6 @@ describe('SDKMessageRenderer', () => {
 
       const { container } = render(<SDKMessageRenderer message={unknownMessage} />);
 
-      // Should show unknown type fallback
       expect(container.textContent).toContain('Unknown message type');
     });
   });
@@ -596,7 +567,6 @@ describe('SDKMessageRenderer', () => {
       const message = createResultMessage(false);
       const { container } = render(<SDKMessageRenderer message={message} />);
 
-      // Error result should be rendered with error styling
       expect(container.querySelector('.bg-red-50, .bg-red-900\\/10')).toBeTruthy();
     });
   });
@@ -619,7 +589,6 @@ describe('SDKMessageRenderer', () => {
         />
       );
 
-      // Should have rewind button
       const rewindButton = container.querySelector('button[title="Rewind to here"]');
       expect(rewindButton).toBeTruthy();
     });
@@ -635,7 +604,6 @@ describe('SDKMessageRenderer', () => {
         />
       );
 
-      // Should NOT have rewind button (only user messages get rewind buttons)
       const rewindButton = container.querySelector('button[title="Rewind to here"]');
       expect(rewindButton).toBeFalsy();
     });
@@ -668,7 +636,6 @@ describe('SDKMessageRenderer', () => {
         />
       );
 
-      // Should show spinner instead of rewind button
       const spinner = container.querySelector('[role="status"]');
       expect(spinner).toBeTruthy();
 
@@ -722,10 +689,8 @@ describe('SDKMessageRenderer', () => {
         />
       );
 
-      // Should not have rewind button
       expect(container.querySelector('button[title="Rewind to here"]')).toBeFalsy();
 
-      // Should render message directly
       expect(container.querySelector('[data-testid="user-message"]')).toBeTruthy();
     });
 
@@ -744,7 +709,6 @@ describe('SDKMessageRenderer', () => {
         />
       );
 
-      // Synthetic messages use the shared user message toolbar.
       expect(container.querySelector('button[title="Rewind to here"]')).toBeTruthy();
     });
 
@@ -760,7 +724,6 @@ describe('SDKMessageRenderer', () => {
         />
       );
 
-      // Result messages should NOT have rewind button (only user messages get rewind buttons)
       const rewindButton = container.querySelector('button[title="Rewind to here"]');
       expect(rewindButton).toBeFalsy();
     });
@@ -777,7 +740,6 @@ describe('SDKMessageRenderer', () => {
         />
       );
 
-      // System messages should NOT have rewind button (only user messages get rewind buttons)
       const rewindButton = container.querySelector('button[title="Rewind to here"]');
       expect(rewindButton).toBeFalsy();
     });
@@ -787,7 +749,6 @@ describe('SDKMessageRenderer', () => {
 
       const { container } = render(<SDKMessageRenderer message={message} />);
 
-      // Should render message without any wrappers
       expect(container.querySelector('[data-testid="user-message"]')).toBeTruthy();
       expect(container.querySelector('input[type="checkbox"]')).toBeFalsy();
     });

@@ -1,13 +1,3 @@
-/**
- * GitHub Webhook Tests
- *
- * Tests for webhook handling:
- * - Test valid webhook signature is accepted
- * - Test invalid webhook signature is rejected
- * - Test event parsing for different event types
- * - Test full processing pipeline
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import {
   verifySignature,
@@ -16,10 +6,8 @@ import {
 } from '../../../../src/lib/github/webhook-handler';
 import type { GitHubEvent } from '@hyperneo/shared';
 
-// Test secret for webhook signatures
 const TEST_SECRET = 'test-webhook-secret-12345';
 
-// Helper to create a valid HMAC-SHA256 signature
 async function createSignature(payload: string, secret: string): Promise<string> {
   const encoder = new TextEncoder();
   const keyData = encoder.encode(secret);
@@ -34,7 +22,6 @@ async function createSignature(payload: string, secret: string): Promise<string>
   const payloadData = encoder.encode(payload);
   const signatureBuffer = await crypto.subtle.sign('HMAC', cryptoKey, payloadData);
 
-  // Convert to hex string
   const array = new Uint8Array(signatureBuffer);
   const hex = Array.from(array)
     .map((b) => b.toString(16).padStart(2, '0'))
@@ -43,7 +30,6 @@ async function createSignature(payload: string, secret: string): Promise<string>
   return `sha256=${hex}`;
 }
 
-// Helper to create a webhook request
 function createWebhookRequest(
   payload: string,
   eventType: string,
@@ -62,7 +48,6 @@ function createWebhookRequest(
   });
 }
 
-// Sample webhook payloads
 const ISSUE_OPENED_PAYLOAD = {
   action: 'opened',
   issue: {
@@ -180,15 +165,12 @@ describe('GitHub Webhook Handler', () => {
     test('should reject malformed signature format', async () => {
       const payload = JSON.stringify(ISSUE_OPENED_PAYLOAD);
 
-      // Missing sha256 prefix
       const isValid1 = await verifySignature(payload, 'invalidhex123456', TEST_SECRET);
       expect(isValid1).toBe(false);
 
-      // Empty signature
       const isValid2 = await verifySignature(payload, '', TEST_SECRET);
       expect(isValid2).toBe(false);
 
-      // Wrong prefix
       const isValid3 = await verifySignature(payload, 'md5=abc123', TEST_SECRET);
       expect(isValid3).toBe(false);
     });
@@ -197,7 +179,6 @@ describe('GitHub Webhook Handler', () => {
       const payload = JSON.stringify(ISSUE_OPENED_PAYLOAD);
       const signature = await createSignature(payload, TEST_SECRET);
 
-      // Tamper with payload
       const tamperedPayload = payload.replace('Test Issue Title', 'Hacked Title');
 
       const isValid = await verifySignature(tamperedPayload, signature, TEST_SECRET);
@@ -420,20 +401,15 @@ describe('GitHub Webhook Handler', () => {
         throw new Error('Handler error');
       });
 
-      // Still returns 200 to GitHub to prevent retries
       expect(response.status).toBe(200);
     });
   });
 
   describe('Constant-Time Comparison', () => {
     test('should use constant-time comparison for security', async () => {
-      // This test verifies the signature comparison is secure against timing attacks
-      // The implementation should use constant-time comparison
-
       const payload = JSON.stringify(ISSUE_OPENED_PAYLOAD);
       const correctSignature = await createSignature(payload, TEST_SECRET);
 
-      // Create a slightly wrong signature (one char different)
       const wrongSignature = correctSignature.slice(0, -1) + '0';
 
       const isValid = await verifySignature(payload, wrongSignature, TEST_SECRET);
@@ -450,7 +426,6 @@ describe('GitHub Webhook Handler', () => {
 
       const response = await handleGitHubWebhook(request, TEST_SECRET);
 
-      // Empty payload is not valid JSON
       expect(response.status).toBe(400);
     });
 

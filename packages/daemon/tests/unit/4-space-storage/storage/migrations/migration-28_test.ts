@@ -1,20 +1,3 @@
-/**
- * Migration 28 Tests
- *
- * Tests for Migration 28: Goal V2 / Mission System schema additions.
- *
- * Covers:
- * - Migration runs cleanly on fresh DB
- * - Migration runs cleanly on DB with existing goals rows (idempotent)
- * - New columns have correct defaults
- * - New tables (mission_metric_history, mission_executions) are created
- * - Partial unique index prevents two running executions for same goal
- * - GoalRepository CRUD for new columns
- * - GoalRepository metric history CRUD
- * - GoalRepository execution CRUD
- * - getEffectiveMaxPlanningAttempts helper
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -27,12 +10,7 @@ import {
 } from '../../../../../src/storage/repositories/goal-repository.ts';
 import { noOpReactiveDb } from '../../../../helpers/reactive-database';
 
-// ---------------------------------------------------------------------------
-// Shared test database setup helpers
-// ---------------------------------------------------------------------------
-
 function createLegacyGoalsTable(db: BunDatabase): void {
-  // Create the goals table as it existed before Migration 28
   db.exec(`PRAGMA foreign_keys = OFF`);
   db.exec(`
 		CREATE TABLE IF NOT EXISTS goals (
@@ -66,17 +44,10 @@ function insertRoom(db: BunDatabase, id = 'room-1'): void {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Describe blocks
-// ---------------------------------------------------------------------------
-
 describe('Migration 28: mission metadata schema additions', () => {
   let testDir: string;
   let db: BunDatabase;
 
-  // runMigrations replays the full migration chain on a fresh on-disk DB per
-  // test, which legitimately takes a few seconds and intermittently exceeded
-  // the 5s default under CI load (flaky timeout — see migration-94_test.ts).
   const HOOK_TIMEOUT_MS = 30_000;
 
   beforeEach(() => {
@@ -87,7 +58,6 @@ describe('Migration 28: mission metadata schema additions', () => {
     db = new BunDatabase(dbPath);
     db.exec('PRAGMA foreign_keys = ON');
 
-    // Create rooms table (needed for FK)
     db.exec(`
 			CREATE TABLE IF NOT EXISTS rooms (
 				id TEXT PRIMARY KEY,
@@ -123,8 +93,6 @@ describe('Migration 28: mission metadata schema additions', () => {
 
   test('migration runs cleanly on fresh DB (no goals table yet)', () => {
     expect(() => runMigrations(db, () => {})).not.toThrow();
-    // goals table should not exist yet (created by createTables, not migrations)
-    // But the new support tables should exist after runMigrations
     const mmhExists = db
       .prepare(
         `SELECT name FROM sqlite_master WHERE type='table' AND name='mission_metric_history'`
@@ -138,7 +106,6 @@ describe('Migration 28: mission metadata schema additions', () => {
   });
 
   test('migration adds new columns to existing goals table and backfills defaults', () => {
-    // Simulate a pre-migration database with legacy goals table
     createLegacyGoalsTable(db);
 
     const now = Date.now();
@@ -149,7 +116,6 @@ describe('Migration 28: mission metadata schema additions', () => {
 
     runMigrations(db, () => {});
 
-    // Check new columns exist with correct values
     const row = db.prepare(`SELECT * FROM goals WHERE id = 'goal-1'`).get() as Record<
       string,
       unknown
@@ -205,7 +171,6 @@ describe('Migration 28: mission metadata schema additions', () => {
 			 VALUES ('mh-1', 'g-cascade', 'velocity', 42.5, 1000)`
     );
 
-    // Delete goal → should cascade
     db.exec(`DELETE FROM goals WHERE id = 'g-cascade'`);
 
     const remaining = db
@@ -224,13 +189,11 @@ describe('Migration 28: mission metadata schema additions', () => {
 			 VALUES ('g-exec', 'room-1', 'Exec Goal', '', 'active', 'normal', 'one_shot', 'supervised', ${now}, ${now})`
     );
 
-    // Insert first running execution — should succeed
     db.exec(
       `INSERT INTO mission_executions (id, goal_id, execution_number, status, task_ids, planning_attempts)
 			 VALUES ('e-1', 'g-exec', 1, 'running', '[]', 0)`
     );
 
-    // Insert second running execution for same goal — should fail due to partial unique index
     expect(() => {
       db.exec(
         `INSERT INTO mission_executions (id, goal_id, execution_number, status, task_ids, planning_attempts)
@@ -238,7 +201,6 @@ describe('Migration 28: mission metadata schema additions', () => {
       );
     }).toThrow();
 
-    // Two completed executions should be allowed
     db.exec(`UPDATE mission_executions SET status = 'completed' WHERE id = 'e-1'`);
     expect(() => {
       db.exec(
@@ -248,10 +210,6 @@ describe('Migration 28: mission metadata schema additions', () => {
     }).not.toThrow();
   });
 });
-
-// ---------------------------------------------------------------------------
-// GoalRepository tests (using fresh in-memory DB via createTables)
-// ---------------------------------------------------------------------------
 
 describe('GoalRepository: mission metadata CRUD', () => {
   let db: BunDatabase;
@@ -336,10 +294,6 @@ describe('GoalRepository: mission metadata CRUD', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// GoalRepository: metric history tests
-// ---------------------------------------------------------------------------
-
 describe('GoalRepository: mission_metric_history', () => {
   let db: BunDatabase;
   let repo: GoalRepository;
@@ -413,10 +367,6 @@ describe('GoalRepository: mission_metric_history', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// GoalRepository: execution tests
-// ---------------------------------------------------------------------------
-
 describe('GoalRepository: mission_executions', () => {
   let db: BunDatabase;
   let repo: GoalRepository;
@@ -473,7 +423,6 @@ describe('GoalRepository: mission_executions', () => {
   test('listExecutions returns most recent first', () => {
     repo.insertExecution({ goalId, executionNumber: 1 });
 
-    // Complete first, then start second
     const e1 = repo.getActiveExecution(goalId)!;
     repo.updateExecution(e1.id, { status: 'completed' });
     repo.insertExecution({ goalId, executionNumber: 2 });
@@ -508,10 +457,6 @@ describe('GoalRepository: mission_executions', () => {
     expect(updated?.planningAttempts).toBe(3);
   });
 });
-
-// ---------------------------------------------------------------------------
-// getEffectiveMaxPlanningAttempts helper tests
-// ---------------------------------------------------------------------------
 
 describe('getEffectiveMaxPlanningAttempts', () => {
   function makeGoal(
@@ -558,7 +503,6 @@ describe('getEffectiveMaxPlanningAttempts', () => {
   });
 
   test('ignores goal.maxPlanningAttempts of 0 (falls through to roomConfig)', () => {
-    // 0 is not a valid value (must be > 0)
     const goal = makeGoal(0);
     expect(getEffectiveMaxPlanningAttempts(goal, { maxPlanningRetries: 4 })).toBe(5);
   });

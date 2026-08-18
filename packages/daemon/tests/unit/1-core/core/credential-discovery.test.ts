@@ -1,11 +1,3 @@
-/**
- * Credential Discovery Tests
- *
- * Tests the credential discovery module that enriches process.env
- * with Claude Code credentials at daemon startup.
- * Uses claudeDir parameter injection for file-based test isolation.
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -17,7 +9,6 @@ describe('discoverCredentials', () => {
   let claudeDir: string;
 
   beforeEach(() => {
-    // Save auth-related env vars
     originalEnv = {
       ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
       CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN,
@@ -31,7 +22,6 @@ describe('discoverCredentials', () => {
         process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC,
     };
 
-    // Clear all auth-related env vars for clean test state
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
     delete process.env.ANTHROPIC_AUTH_TOKEN;
@@ -42,7 +32,6 @@ describe('discoverCredentials', () => {
     delete process.env.API_TIMEOUT_MS;
     delete process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
 
-    // Create temp directory for file-based tests
     tempDir = join(
       process.env.TMPDIR || '/tmp',
       `hyperneo-cred-unit-${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -52,7 +41,6 @@ describe('discoverCredentials', () => {
   });
 
   afterEach(() => {
-    // Restore env vars
     for (const [key, value] of Object.entries(originalEnv)) {
       if (value !== undefined) {
         process.env[key] = value;
@@ -60,7 +48,6 @@ describe('discoverCredentials', () => {
         delete process.env[key];
       }
     }
-    // Cleanup temp dir
     try {
       rmSync(tempDir, { recursive: true, force: true });
     } catch {
@@ -418,63 +405,48 @@ describe('discoverCredentials', () => {
 
   describe('catch-all error handler', () => {
     it('should catch unexpected errors during credential discovery', () => {
-      // Use a non-existent path with special characters that might cause issues
-      // to trigger the catch-all error handler
       const problematicPath = '/nonexistent/\x00/path/.claude';
 
       const result = discoverCredentials(problematicPath);
 
-      // Should still return a valid result despite any errors
       expect(result).toHaveProperty('credentialSource');
       expect(result).toHaveProperty('settingsEnvApplied');
       expect(result).toHaveProperty('errors');
       expect(Array.isArray(result.errors)).toBe(true);
-
-      // The function should handle the error gracefully
-      // Note: Whether an error is recorded depends on the platform and filesystem
     });
 
     it('should handle malformed JSON in settings.json gracefully', () => {
-      // Create a file that exists but has malformed content
       writeFileSync(join(claudeDir, 'settings.json'), '{ malformed json }');
 
       const result = discoverCredentials(claudeDir);
 
-      // Should catch the JSON parse error and record it
       expect(result.errors.length).toBeGreaterThan(0);
       expect(result.errors[0]).toContain('settings.json');
 
-      // Should still return a valid DiscoveryResult
       expect(result.credentialSource).toBeDefined();
       expect(typeof result.settingsEnvApplied).toBe('number');
     });
 
     it('should handle malformed JSON in .credentials.json gracefully', () => {
-      // Create a file that exists but has malformed content
       writeFileSync(join(claudeDir, '.credentials.json'), '{ invalid }');
 
       const result = discoverCredentials(claudeDir);
 
-      // Should catch the JSON parse error and record it
       expect(result.errors.length).toBeGreaterThan(0);
       expect(result.errors[0]).toContain('.credentials.json');
 
-      // Should still return a valid DiscoveryResult
       expect(result.credentialSource).toBeDefined();
       expect(typeof result.settingsEnvApplied).toBe('number');
     });
 
     it('should return valid result even with multiple errors', () => {
-      // Create both files with malformed content
       writeFileSync(join(claudeDir, 'settings.json'), '{ bad1 }');
       writeFileSync(join(claudeDir, '.credentials.json'), '{ bad2 }');
 
       const result = discoverCredentials(claudeDir);
 
-      // Should catch both errors
       expect(result.errors.length).toBeGreaterThanOrEqual(1);
 
-      // Should still return a valid DiscoveryResult
       expect(result).toHaveProperty('credentialSource');
       expect(result).toHaveProperty('settingsEnvApplied');
       expect(result).toHaveProperty('errors');
@@ -483,12 +455,10 @@ describe('discoverCredentials', () => {
 
   describe('when all 3 credentials are present but settings.json still applies', () => {
     it('should apply settings.json env vars even when all 3 credentials are already present', () => {
-      // Set all 3 credentials in process.env
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
       process.env.CLAUDE_CODE_OAUTH_TOKEN = 'oauth-test-token';
       process.env.ANTHROPIC_AUTH_TOKEN = 'auth-test-token';
 
-      // Create a settings.json with additional env vars
       writeFileSync(
         join(claudeDir, 'settings.json'),
         JSON.stringify({
@@ -502,29 +472,24 @@ describe('discoverCredentials', () => {
 
       const result = discoverCredentials(claudeDir);
 
-      // Credential source should be 'env' since all 3 were already present
       expect(result.credentialSource).toBe('env');
 
-      // Settings env vars should still be applied
       expect(result.settingsEnvApplied).toBe(3);
       expect(process.env.ANTHROPIC_BASE_URL).toBe('https://custom.example.com');
       expect(process.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('custom-model-123');
       expect(process.env.API_TIMEOUT_MS).toBe('60000');
 
-      // Original credentials should not be overwritten
       expect(process.env.ANTHROPIC_API_KEY).toBe('sk-test-key');
       expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('oauth-test-token');
       expect(process.env.ANTHROPIC_AUTH_TOKEN).toBe('auth-test-token');
     });
 
     it('should not overwrite existing env vars from settings.json when all 3 credentials present', () => {
-      // Set all 3 credentials plus some additional env vars
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
       process.env.CLAUDE_CODE_OAUTH_TOKEN = 'oauth-test-token';
       process.env.ANTHROPIC_AUTH_TOKEN = 'auth-test-token';
       process.env.ANTHROPIC_BASE_URL = 'existing-url';
 
-      // Create settings.json with conflicting env var
       writeFileSync(
         join(claudeDir, 'settings.json'),
         JSON.stringify({
@@ -537,30 +502,24 @@ describe('discoverCredentials', () => {
 
       const result = discoverCredentials(claudeDir);
 
-      // Credential source should be 'env'
       expect(result.credentialSource).toBe('env');
 
-      // Only the new env var should be applied (not the existing one)
       expect(result.settingsEnvApplied).toBe(1);
-      expect(process.env.ANTHROPIC_BASE_URL).toBe('existing-url'); // Not overwritten
-      expect(process.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('new-model'); // Applied
+      expect(process.env.ANTHROPIC_BASE_URL).toBe('existing-url');
+      expect(process.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('new-model');
     });
 
     it('should handle empty settings.json when all 3 credentials present', () => {
-      // Set all 3 credentials
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
       process.env.CLAUDE_CODE_OAUTH_TOKEN = 'oauth-test-token';
       process.env.ANTHROPIC_AUTH_TOKEN = 'auth-test-token';
 
-      // Create empty settings.json
       writeFileSync(join(claudeDir, 'settings.json'), JSON.stringify({}));
 
       const result = discoverCredentials(claudeDir);
 
-      // Credential source should be 'env'
       expect(result.credentialSource).toBe('env');
 
-      // No env vars should be applied
       expect(result.settingsEnvApplied).toBe(0);
     });
   });

@@ -1,25 +1,3 @@
-/**
- * Tests for Space Workflow RPC Handlers
- *
- * Covers:
- * - spaceWorkflow.create: happy path, missing spaceId, missing/empty name, space not found,
- *   validation error propagation, event emission (spaceWorkflow.created)
- * - spaceWorkflow.list: happy path, missing spaceId, space not found
- * - spaceWorkflow.get: happy path, missing id, workflow not found, optional spaceId space-existence
- *   check, optional spaceId ownership check, handle fallback on null ID, handle fallback on cross-space ID
- * - spaceWorkflow.update: happy path, missing id, workflow not found, optional spaceId
- *   space-existence check, ownership check, validation error, event emission (spaceWorkflow.updated)
- * - spaceWorkflow.delete: happy path, missing id, workflow not found, optional spaceId
- *   space-existence check, ownership check, event emission (spaceWorkflow.deleted)
- * - spaceWorkflow.detectDrift: no templateName (not drifted), template not found, no drift,
- *   template hash mismatch (template updated), workflow content hash mismatch (user edit),
- *   missing id
- * - spaceWorkflow.syncFromTemplate: happy path, missing id, missing spaceId, space not found,
- *   workflow not found, ownership mismatch, no templateName, template not found,
- *   agent not resolved, event emission (spaceWorkflow.updated)
- * - spaceWorkflow.setDefault: NOT registered (concept removed from design)
- */
-
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import type { Space, SpaceWorkflow } from '@hyperneo/shared';
@@ -44,8 +22,6 @@ import { computeWorkflowHash } from '../../../../src/lib/space/workflows/templat
 import { getBuiltInWorkflows } from '../../../../src/lib/space/workflows/built-in-workflows';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
-
-// ─── Fixtures ────────────────────────────────────────────────────────────────
 
 const NOW = Date.now();
 
@@ -80,8 +56,6 @@ const mockWorkflow: SpaceWorkflow = {
   createdAt: NOW,
   updatedAt: NOW,
 };
-
-// ─── Mock helpers ─────────────────────────────────────────────────────────────
 
 function createMockMessageHub(): {
   hub: MessageHub;
@@ -174,8 +148,6 @@ function createMockWorkflowRunRepo(): SpaceWorkflowRunRepository {
   } as unknown as SpaceWorkflowRunRepository;
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
-
 describe('space-workflow-handlers', () => {
   let hub: MessageHub;
   let handlers: Map<string, RequestHandler>;
@@ -213,8 +185,6 @@ describe('space-workflow-handlers', () => {
     if (!handler) throw new Error(`No handler registered for ${method}`);
     return handler(data);
   };
-
-  // ─── spaceWorkflow.create ──────────────────────────────────────────────────
 
   describe('spaceWorkflow.create', () => {
     beforeEach(() => setup());
@@ -292,8 +262,6 @@ describe('space-workflow-handlers', () => {
     });
   });
 
-  // ─── spaceWorkflow.list ────────────────────────────────────────────────────
-
   describe('spaceWorkflow.list', () => {
     beforeEach(() => setup());
 
@@ -340,8 +308,6 @@ describe('space-workflow-handlers', () => {
       expect(result.workflows).toEqual([]);
     });
   });
-
-  // ─── spaceWorkflow.get ─────────────────────────────────────────────────────
 
   describe('spaceWorkflow.get', () => {
     beforeEach(() => setup());
@@ -410,7 +376,6 @@ describe('space-workflow-handlers', () => {
     });
 
     it('falls back to handle when id lookup misses and both id and handle+spaceId are provided', async () => {
-      // getWorkflow returns null (stale id); getWorkflowByHandle returns the workflow.
       setup(mockSpace, null);
       (workflowManager.getWorkflowByHandle as ReturnType<typeof mock>).mockReturnValue(
         mockWorkflow
@@ -428,15 +393,12 @@ describe('space-workflow-handlers', () => {
     });
 
     it('falls back to handle when id resolves to a workflow in a different space', async () => {
-      // getWorkflow returns a workflow owned by space-other; spaceId is space-1.
-      // The ID is "unusable" so the handler should try the handle for space-1.
       const crossSpaceWorkflow: SpaceWorkflow = {
         ...mockWorkflow,
         id: 'wf-other',
         spaceId: 'space-other',
       };
       setup(mockSpace, crossSpaceWorkflow);
-      // Override getWorkflowByHandle to return the correct workflow for space-1
       (workflowManager.getWorkflowByHandle as ReturnType<typeof mock>).mockReturnValue(
         mockWorkflow
       );
@@ -453,7 +415,6 @@ describe('space-workflow-handlers', () => {
     });
 
     it('throws when id is cross-space and no handle is provided', async () => {
-      // Without a handle fallback, cross-space ID should surface as "Workflow not found".
       const crossSpaceWorkflow: SpaceWorkflow = {
         ...mockWorkflow,
         id: 'wf-other',
@@ -466,8 +427,6 @@ describe('space-workflow-handlers', () => {
       ).rejects.toThrow('Workflow not found: wf-other');
     });
   });
-
-  // ─── spaceWorkflow.update ──────────────────────────────────────────────────
 
   describe('spaceWorkflow.update', () => {
     beforeEach(() => setup());
@@ -544,8 +503,6 @@ describe('space-workflow-handlers', () => {
     });
   });
 
-  // ─── spaceWorkflow.delete ──────────────────────────────────────────────────
-
   describe('spaceWorkflow.delete', () => {
     beforeEach(() => setup());
 
@@ -601,9 +558,6 @@ describe('space-workflow-handlers', () => {
     });
 
     it('propagates WorkflowDeletionBlockedError and does NOT emit deleted (RFC §4 #3)', async () => {
-      // The primary failure mode for a workflow with an executable run: the
-      // manager throws, the handler surfaces it, and no spaceWorkflow.deleted
-      // event fires (the workflow is kept, not removed).
       (workflowManager.deleteWorkflow as ReturnType<typeof mock>).mockImplementation(() => {
         throw new WorkflowDeletionBlockedError('blocked: executable run', 'wf-1');
       });
@@ -618,8 +572,6 @@ describe('space-workflow-handlers', () => {
     });
   });
 
-  // ─── spaceWorkflow.setDefault (removed from design) ───────────────────────
-
   describe('spaceWorkflow.setDefault', () => {
     beforeEach(() => setup());
 
@@ -627,8 +579,6 @@ describe('space-workflow-handlers', () => {
       expect(handlers.has('spaceWorkflow.setDefault')).toBe(false);
     });
   });
-
-  // ─── spaceWorkflow.detectDrift ────────────────────────────────────────────
 
   describe('spaceWorkflow.detectDrift', () => {
     it('returns neither signal with null hashes when workflow has no templateName', async () => {
@@ -668,10 +618,8 @@ describe('space-workflow-handlers', () => {
     });
 
     it('returns neither signal when workflow matches template and stored hash (pristine)', async () => {
-      // Use the first built-in template and set hashes so there is no drift
       const [template] = getBuiltInWorkflows();
       const hash = computeWorkflowHash(template);
-      // Build a workflow that exactly matches the template's fingerprint by copying node names etc.
       const wfMatching: SpaceWorkflow = {
         ...template,
         id: 'wf-1',
@@ -684,8 +632,6 @@ describe('space-workflow-handlers', () => {
         string,
         unknown
       >;
-      // Regression guard: updateAvailable is the former `drifted` half for the
-      // "template moved" condition — pristine row → false, unchanged behavior.
       expect(result.updateAvailable).toBe(false);
       expect(result.customized).toBe(false);
       expect(result.templateName).toBe(template.name);
@@ -695,9 +641,6 @@ describe('space-workflow-handlers', () => {
     it('returns updateAvailable only when the template moved but the row is at its stored version', async () => {
       const [template] = getBuiltInWorkflows();
       const currentHash = computeWorkflowHash(template);
-      // Build an "old" version of the template (instructions changed) and seed
-      // the row with it + its hash. The row matches its stored version, so it
-      // is NOT customized — but the live template has since moved.
       const oldVersion = { ...template, instructions: `${template.instructions ?? ''}\n[old]` };
       const oldHash = computeWorkflowHash(oldVersion);
       const wfStale: SpaceWorkflow = {
@@ -722,8 +665,6 @@ describe('space-workflow-handlers', () => {
     it('returns customized only when the workflow was edited but the template did not move', async () => {
       const [template] = getBuiltInWorkflows();
       const templateHash = computeWorkflowHash(template);
-      // Workflow has extra node compared to template — content diverges, but
-      // storedHash still equals the (unchanged) current template hash.
       const wfEdited: SpaceWorkflow = {
         ...template,
         id: 'wf-1',
@@ -787,8 +728,6 @@ describe('space-workflow-handlers', () => {
     });
   });
 
-  // ─── spaceWorkflow.previewTemplateSync ──────────────────────────────────────
-
   describe('spaceWorkflow.previewTemplateSync', () => {
     it('registers the handler', () => {
       setup();
@@ -819,7 +758,6 @@ describe('space-workflow-handlers', () => {
 
     it('returns a structural before/after diff without writing', async () => {
       const [template] = getBuiltInWorkflows();
-      // Row = an old version (extra node + changed instructions); stored hash stale.
       const wfEdited: SpaceWorkflow = {
         ...template,
         id: 'wf-1',
@@ -854,21 +792,16 @@ describe('space-workflow-handlers', () => {
 
       expect(result.preview.workflowId).toBe('wf-1');
       expect(result.preview.templateName).toBe(template.name);
-      // Template moved (stale hash) AND row edited → both signals.
       expect(result.preview.updateAvailable).toBe(true);
       expect(result.preview.customized).toBe(true);
       expect(result.preview.diff.description?.before).toBe('edited description');
       expect(result.preview.diff.description?.after).toBe(template.description ?? '');
       expect(result.preview.diff.instructions?.before).toBe('edited instructions');
-      // The extra node is present on the row but not on the template → removed on apply.
       expect(result.preview.diff.nodes?.removed).toContain('Extra Node');
     });
   });
 
-  // ─── spaceWorkflow.syncFromTemplate ───────────────────────────────────────
-
   describe('spaceWorkflow.syncFromTemplate', () => {
-    // Build an agent list that resolves all role names used by the first built-in template
     function agentsForTemplate(template: SpaceWorkflow): Array<{ id: string; name: string }> {
       const names = new Set<string>();
       for (const node of template.nodes) {
@@ -889,7 +822,6 @@ describe('space-workflow-handlers', () => {
         templateHash: 'old-hash',
       };
       setup(mockSpace, wfLinked, agents);
-      // updateWorkflow should return a fully updated workflow
       const updatedWf: SpaceWorkflow = { ...wfLinked, templateHash };
       (workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue(updatedWf);
 
@@ -948,8 +880,6 @@ describe('space-workflow-handlers', () => {
     it('preserves existing exact-name node IDs and assigns fresh IDs to inserted template nodes', async () => {
       const [template] = getBuiltInWorkflows();
       const agents = agentsForTemplate(template);
-      // Existing workflow carries only Review; the template's Coding node is
-      // missing and must be inserted with a fresh ID while Review keeps its ID.
       const wfLinked: SpaceWorkflow = {
         ...mockWorkflow,
         nodes: [{ id: 'existing-review', name: 'Review', agents: [] }],
@@ -1031,9 +961,6 @@ describe('space-workflow-handlers', () => {
     it('throws when a required agent role cannot be resolved to a SpaceWorkerAgent', async () => {
       const [template] = getBuiltInWorkflows();
       const wfLinked: SpaceWorkflow = { ...mockWorkflow, templateName: template.name };
-      // Empty agents list — none of the role names can resolve. Built-in
-      // templates reference preset names ("Coder", "Reviewer", ...), so the
-      // missing role surfaces as a preset-specific message naming the cause.
       setup(mockSpace, wfLinked, []);
       await expect(
         call('spaceWorkflow.syncFromTemplate', { id: 'wf-1', spaceId: 'space-1' })
@@ -1041,12 +968,6 @@ describe('space-workflow-handlers', () => {
     });
 
     it('throws a preset-specific message with a repair hint when a preset is missing', async () => {
-      // The production bug: a built-in template references a preset that doesn't
-      // exist in this Space (created before the preset was added — e.g. a Space
-      // predating the Reviewer preset). The error must name it as a preset agent
-      // and link the remediation. Using the stable `Coding` template: Coder
-      // resolves, so the Reviewer (the second node's role) is the first
-      // unresolved agent.
       const template = getBuiltInWorkflows().find((t) => t.name === 'Coding')!;
       const wfLinked: SpaceWorkflow = { ...mockWorkflow, templateName: template.name };
       setup(mockSpace, wfLinked, [{ id: 'coder-id', name: 'Coder' }]);
@@ -1066,7 +987,6 @@ describe('space-workflow-handlers', () => {
       setup(mockSpace, wfLinked, agents);
       (workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue(wfLinked);
 
-      // The reviewed hash does not match the current row → reject before writing.
       await expect(
         call('spaceWorkflow.syncFromTemplate', {
           id: 'wf-1',
@@ -1088,7 +1008,6 @@ describe('space-workflow-handlers', () => {
       setup(mockSpace, wfLinked, agents);
       (workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue(wfLinked);
 
-      // The reviewed hash matches → sync proceeds.
       await call('spaceWorkflow.syncFromTemplate', {
         id: 'wf-1',
         spaceId: 'space-1',
@@ -1097,11 +1016,6 @@ describe('space-workflow-handlers', () => {
       expect(workflowManager.updateWorkflow).toHaveBeenCalledTimes(1);
     });
   });
-
-  // ─── spaceWorkflow.detectDuplicateDrift ───────────────────────────────────
-  //
-  // Surfaces groups of workflows in the same space that share a `templateName`
-  // and a known built-in name, but have diverging `templateHash` values.
 
   describe('spaceWorkflow.detectDuplicateDrift', () => {
     function setupWithWorkflows(workflows: SpaceWorkflow[]) {
@@ -1164,10 +1078,6 @@ describe('space-workflow-handlers', () => {
     });
 
     it('REPORTS uniform-hash duplicate groups (duplicates warrant cleanup, not only drift)', async () => {
-      // Any >1-row built-in group is surfaced for consolidation so the
-      // "Resync duplicates" badge stays until the group is actually reduced to
-      // one row — a partial resync (or a post-archival retry) never leaves the
-      // user without a cleanup path.
       const [t1] = getBuiltInWorkflows();
       setupWithWorkflows([
         {
@@ -1240,7 +1150,6 @@ describe('space-workflow-handlers', () => {
       const report = result.reports[0];
       expect(report.templateName).toBe(t1.name);
       expect(report.rows).toHaveLength(2);
-      // Newest-first ordering
       expect(report.rows[0].id).toBe('wf-newer');
       expect(report.rows[1].id).toBe('wf-older');
       expect(report.rows[0].templateHash).toBe('new-hash');
@@ -1311,8 +1220,6 @@ describe('space-workflow-handlers', () => {
       expect(names).toEqual([t1.name, t2.name].sort());
     });
   });
-
-  // ─── spaceWorkflow.resyncDuplicates ───────────────────────────────────────
 
   describe('spaceWorkflow.resyncDuplicates', () => {
     function agentsForTemplate(template: SpaceWorkflow): Array<{ id: string; name: string }> {
@@ -1407,14 +1314,11 @@ describe('space-workflow-handlers', () => {
         templateName: template.name,
       })) as { workflow: SpaceWorkflow; keptWorkflowId: string; deletedIds: string[] };
 
-      // Kept the newest row.
       expect(result.keptWorkflowId).toBe('wf-newer');
-      // Deleted the older row.
       expect(result.deletedIds).toEqual(['wf-older']);
       expect(workflowManager.deleteWorkflow).toHaveBeenCalledWith('wf-older');
       expect(workflowManager.deleteWorkflow).not.toHaveBeenCalledWith('wf-newer');
 
-      // Overwrote kept row with template content.
       expect(workflowManager.updateWorkflow).toHaveBeenCalledTimes(1);
       const [calledId, calledParams] = (workflowManager.updateWorkflow as ReturnType<typeof mock>)
         .mock.calls[0] as [string, Record<string, unknown>];
@@ -1427,7 +1331,6 @@ describe('space-workflow-handlers', () => {
       expect(calledNodes.find((node) => node.id === 'step-1')?.name).toBe(template.nodes[0].name);
       expect(calledParams.startNodeId).toBe('step-1');
 
-      // Emitted spaceWorkflow.deleted for the older row and spaceWorkflow.updated for the kept row.
       expect(internalEventBus.publish).toHaveBeenCalledWith('spaceWorkflow.deleted', {
         sessionId: 'global',
         spaceId: 'space-1',
@@ -1443,9 +1346,6 @@ describe('space-workflow-handlers', () => {
     });
 
     it('KEEPS a duplicate whose deletion is blocked by a non-archived run (RFC §4 #3)', async () => {
-      // resync must never strand an in-flight/reopenable run. If deleteWorkflow
-      // refuses a duplicate (WorkflowDeletionBlockedError), resync skips it
-      // rather than aborting the whole operation, and reports it as skipped.
       const [template] = getBuiltInWorkflows();
       const agents = agentsForTemplate(template);
       const older: SpaceWorkflow = {
@@ -1467,9 +1367,6 @@ describe('space-workflow-handlers', () => {
       setupWithGroup([older, newer], agents);
 
       (workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue(newer);
-      // The older duplicate is blocked: it has an executable run. The pre-check
-      // (hasExecutableRuns) fires before any cleanup, so the duplicate is left
-      // untouched — neither deleteByWorkflowId nor deleteWorkflow runs for it.
       (workflowManager.hasExecutableRuns as ReturnType<typeof mock>).mockImplementation(
         (id: string) => id === 'wf-older'
       );
@@ -1479,13 +1376,10 @@ describe('space-workflow-handlers', () => {
         templateName: template.name,
       })) as { deletedIds: string[]; skippedDueToExecutableRuns: string[] };
 
-      // The blocked duplicate was kept (not deleted), the kept row was resynced.
       expect(result.deletedIds).toEqual([]);
       expect(result.skippedDueToExecutableRuns).toEqual(['wf-older']);
-      // Neither the workflow row nor its runs were touched.
       expect(workflowManager.deleteWorkflow).not.toHaveBeenCalledWith('wf-older');
       expect(workflowRunRepo.deleteByWorkflowId).not.toHaveBeenCalledWith('wf-older');
-      // No spaceWorkflow.deleted emitted for a workflow that was never deleted.
       expect(internalEventBus.publish).not.toHaveBeenCalledWith(
         'spaceWorkflow.deleted',
         expect.objectContaining({ workflowId: 'wf-older' })
@@ -1522,10 +1416,6 @@ describe('space-workflow-handlers', () => {
     });
 
     it('throws when no SpaceWorkerAgent resolves a required role — and does NOT delete any duplicates or mutate the kept row', async () => {
-      // Regression: previously resyncDuplicates deleted the older rows
-      // before validating agent resolution. If agent resolution threw,
-      // duplicates were permanently lost with no resync performed. The
-      // handler must now validate first, update second, delete last.
       const [template] = getBuiltInWorkflows();
       const older: SpaceWorkflow = {
         ...mockWorkflow,
@@ -1541,9 +1431,6 @@ describe('space-workflow-handlers', () => {
         templateHash: 'new',
         createdAt: 200,
       };
-      // Empty agents list — required roles won't resolve. Built-in templates
-      // reference preset names, so the first missing role ("Coder") surfaces as
-      // a preset-specific message.
       setupWithGroup([older, newer], []);
 
       await expect(
@@ -1553,17 +1440,12 @@ describe('space-workflow-handlers', () => {
         })
       ).rejects.toThrow(/Cannot resync: preset agent "Coder" is missing/);
 
-      // Crucially: no destructive work happened.
       expect(workflowManager.deleteWorkflow).not.toHaveBeenCalled();
       expect(workflowManager.updateWorkflow).not.toHaveBeenCalled();
       expect(workflowRunRepo.deleteByWorkflowId).not.toHaveBeenCalled();
     });
 
     it('explicitly deletes runs for each removed duplicate workflow', async () => {
-      // Regression: migration 60 rebuilt space_workflow_runs without ON
-      // DELETE CASCADE on workflow_id, so removing a workflow alone leaves
-      // orphan runs. resyncDuplicates must call deleteByWorkflowId for
-      // each deleted row.
       const [template] = getBuiltInWorkflows();
       const agents = agentsForTemplate(template);
       const older1: SpaceWorkflow = {
@@ -1604,8 +1486,6 @@ describe('space-workflow-handlers', () => {
   });
 });
 
-// ─── checkBuiltInWorkflowDriftOnStartup ──────────────────────────────────────
-
 describe('checkBuiltInWorkflowDriftOnStartup', () => {
   function makeSpaceManager(spaces: Space[]): SpaceManager {
     return {
@@ -1624,7 +1504,6 @@ describe('checkBuiltInWorkflowDriftOnStartup', () => {
   it('returns without logging when there are no spaces', async () => {
     const sm = makeSpaceManager([]);
     const wm = makeWorkflowManager({});
-    // Should complete without throwing
     await expect(checkBuiltInWorkflowDriftOnStartup(wm, sm)).resolves.toBeUndefined();
   });
 
@@ -1643,7 +1522,6 @@ describe('checkBuiltInWorkflowDriftOnStartup', () => {
     const wm = makeWorkflowManager({ 'sp-1': [workflow] });
 
     await expect(checkBuiltInWorkflowDriftOnStartup(wm, sm)).resolves.toBeUndefined();
-    // listWorkflows was called for the one space
     expect(wm.listWorkflows).toHaveBeenCalledWith('sp-1');
   });
 
@@ -1673,7 +1551,6 @@ describe('checkBuiltInWorkflowDriftOnStartup', () => {
     const sm = makeSpaceManager([space]);
     const wm = makeWorkflowManager({ 'sp-1': [workflow] });
 
-    // No drift for unknown template names — they are skipped
     await expect(checkBuiltInWorkflowDriftOnStartup(wm, sm)).resolves.toBeUndefined();
   });
 
@@ -1690,7 +1567,6 @@ describe('checkBuiltInWorkflowDriftOnStartup', () => {
     const sm = makeSpaceManager([space]);
     const wm = makeWorkflowManager({ 'sp-1': [staleWorkflow] });
 
-    // Must resolve (not throw) even when drift is present
     await expect(checkBuiltInWorkflowDriftOnStartup(wm, sm)).resolves.toBeUndefined();
   });
 
@@ -1745,7 +1621,6 @@ describe('checkBuiltInWorkflowDriftOnStartup', () => {
     } as unknown as SpaceManager;
     const wm = makeWorkflowManager({});
 
-    // Errors must be swallowed — startup must never be blocked
     await expect(checkBuiltInWorkflowDriftOnStartup(wm, sm)).resolves.toBeUndefined();
   });
 });

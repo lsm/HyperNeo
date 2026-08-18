@@ -18,8 +18,6 @@ const PRESETS = {
   openai: {
     endpoint: 'https://api.openai.com/v1/audio/transcriptions',
     model: 'whisper-1',
-    // Explicitly reset transport exceptions that may have been enabled for a
-    // prior local/self-signed backend — a public endpoint must not inherit them.
     allowInsecureTls: false,
     allowPrivateNetwork: false,
   },
@@ -42,12 +40,8 @@ export function VoiceSettings() {
   }, [settings]);
 
   const save = async (next: VoiceSettingsConfig, options?: { silent?: boolean }) => {
-    // Capture the payload before any draft mutation so the RPC always sends
-    // the intended values even if the draft changes mid-save.
     const { hasApiKey: _omitHasApiKey, ...payload } = next;
     setDraft(next);
-    // Clear the key from the draft IMMEDIATELY (before the await) so a
-    // subsequent patch() while the save is in flight does not re-send it.
     if (next.apiKey?.trim()) {
       setDraft((d) => ({ ...d, apiKey: '' }));
     }
@@ -72,9 +66,6 @@ export function VoiceSettings() {
     void save({ ...draft, ...updates });
   };
 
-  // Explicit credential removal: send the current voice block with hasApiKey
-  // cleared. Ordinary saves omit hasApiKey (server-owned), so only this path
-  // signals a delete to the daemon.
   const removeKey = async () => {
     setSaving(true);
     try {
@@ -90,14 +81,9 @@ export function VoiceSettings() {
     }
   };
 
-  // Only persist on blur when the trimmed value actually changed; otherwise a
-  // plain focus/blur (e.g. before clicking another control) triggers a
-  // redundant save that disables the panel mid-click.
   const patchOnBlur = (field: 'endpoint' | 'model') => {
     const current = draft[field]?.trim() ?? '';
     if (current === (settings[field] ?? '').trim()) return;
-    // Silent: don't disable the panel during blur-triggered saves so a click on
-    // a preset/toggle/Test button that follows the blur is not dropped.
     void save({ ...draft, [field]: current } as VoiceSettingsConfig, { silent: true });
   };
 
@@ -108,8 +94,6 @@ export function VoiceSettings() {
   const testConnection = async () => {
     if (testing) return;
     setTesting(true);
-    // Await any pending blur-triggered save so the test reads the latest
-    // persisted config rather than the pre-edit state.
     try {
       await pendingSaveRef.current;
     } catch {

@@ -1,10 +1,3 @@
-/**
- * DeepSeek Provider
- *
- * Uses DeepSeek's Anthropic-compatible API endpoint.
- * API documentation: https://api-docs.deepseek.com/guides/anthropic_api
- */
-
 import type { ModelInfo } from '@hyperneo/shared';
 import type {
   ModelTier,

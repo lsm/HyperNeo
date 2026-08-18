@@ -1,11 +1,3 @@
-/**
- * ContextUsageBar Component
- *
- * Shows context usage as a circular progress indicator with expandable dropdown:
- * - Circle with percentage and color coding (green → yellow → orange → red)
- * - Clickable to show detailed breakdown by category
- */
-
 import { useState, useRef, useEffect, useCallback } from 'preact/hooks';
 import type { ContextInfo } from '@hyperneo/shared';
 import { borderColors } from '../lib/design-tokens.ts';
@@ -16,12 +8,9 @@ interface ContextUsageBarProps {
   maxContextTokens?: number;
 }
 
-// SVG geometry for the circular indicator (r=15, so circumference = 2π·15).
 const CIRCLE_RADIUS = 15;
 const CIRCLE_CIRCUMFERENCE = 2 * Math.PI * CIRCLE_RADIUS;
 
-// Diagonal-stripe pattern used to mark the autocompact buffer zone as
-// visually distinct from the regular free space.
 const AUTOCOMPACT_BUFFER_STRIPES =
   'repeating-linear-gradient(135deg, rgba(255,255,255,0.08) 0, rgba(255,255,255,0.08) 2px, transparent 2px, transparent 5px)';
 
@@ -31,17 +20,14 @@ const AUTOCOMPACT_THRESHOLD_TOOLTIP = 'Autocompact threshold';
 
 export default function ContextUsageBar({ contextUsage, maxContextTokens }: ContextUsageBarProps) {
   const [showContextDetails, setShowContextDetails] = useState(false);
-  const [dropdownBottom, setDropdownBottom] = useState(96); // Default 24*4px = 96px
+  const [dropdownBottom, setDropdownBottom] = useState(96);
   const indicatorRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // FIX: Use useCallback to prevent stale closure issues that could cause UI freeze
   const closeDropdown = useCallback(() => {
     setShowContextDetails(false);
   }, []);
 
-  // FIX: Add escape key handler and click outside detection
-  // Use document-level detection instead of invisible backdrop div to prevent z-index issues
   useEffect(() => {
     if (!showContextDetails) return;
 
@@ -52,7 +38,6 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
     };
 
     const handleClickOutside = (e: MouseEvent) => {
-      // Close dropdown if click is outside both the dropdown and the indicator
       const target = e.target as Node;
       const isInsideDropdown = dropdownRef.current?.contains(target);
       const isInsideIndicator = indicatorRef.current?.contains(target);
@@ -62,9 +47,7 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
       }
     };
 
-    // Use capture phase to ensure we catch the event before any stopPropagation
     document.addEventListener('keydown', handleEscape, true);
-    // Use timeout to avoid closing immediately from the same click that opened it
     const timeoutId = setTimeout(() => {
       document.addEventListener('click', handleClickOutside, true);
     }, 0);
@@ -76,31 +59,25 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
     };
   }, [showContextDetails, closeDropdown]);
 
-  // FIX: Ensure dropdown is closed when component unmounts
   useEffect(() => {
     return () => {
-      // Force close on unmount to prevent stale backdrop
       setShowContextDetails(false);
     };
   }, []);
 
-  // Calculate dropdown position dynamically when it opens
   useEffect(() => {
     if (showContextDetails && indicatorRef.current && dropdownRef.current) {
       const indicatorRect = indicatorRef.current.getBoundingClientRect();
       const dropdownHeight = dropdownRef.current.offsetHeight;
 
-      // Calculate space needed: height of dropdown + some padding (16px)
       const _spaceNeeded = dropdownHeight + 16;
 
-      // Position dropdown above the indicator with proper spacing
       const bottomPosition = window.innerHeight - indicatorRect.top + 8;
 
       setDropdownBottom(bottomPosition);
     }
   }, [showContextDetails]);
 
-  // Only show context info when accurate data is available
   const totalTokens = contextUsage?.totalUsed || 0;
   const contextCapacity =
     contextUsage?.totalCapacity && contextUsage.totalCapacity > 0
@@ -111,10 +88,6 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
   const contextPercentage = contextUsage?.percentUsed || 0;
   const hasContextData = totalTokens > 0;
 
-  // Tokens between the autocompact threshold and total capacity are reserved
-  // by the SDK for context compression — not available for conversation. Only
-  // render the buffer when the SDK reports auto-compact is enabled with a
-  // threshold strictly inside the capacity range.
   const autoCompactThreshold = contextUsage?.autoCompactThreshold ?? 0;
   const showAutoCompactBuffer =
     contextUsage?.isAutoCompactEnabled === true &&
@@ -126,7 +99,6 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
     : 0;
   const autoCompactBufferPercent = 100 - autoCompactThresholdPercent;
 
-  // Determine color based on usage - green for lower usage
   const getContextColor = () => {
     if (contextPercentage >= 90) return 'text-red-400';
     if (contextPercentage >= 75) return 'text-orange-400';
@@ -141,13 +113,9 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
     return 'bg-green-500';
   };
 
-  /**
-   * Get color for a specific context category
-   */
   const getCategoryColor = (category: string): { bg: string; text: string; dot: string } => {
     const normalizedCategory = category.toLowerCase();
 
-    // System-controlled categories (gray)
     if (normalizedCategory.includes('system prompt')) {
       return { bg: 'bg-gray-600', text: 'text-gray-400', dot: 'bg-gray-400' };
     }
@@ -161,7 +129,6 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
       return { bg: 'bg-gray-700', text: 'text-gray-500', dot: 'bg-gray-500' };
     }
 
-    // User-configurable MCP tools (purple)
     if (normalizedCategory.includes('mcp tools')) {
       return {
         bg: 'bg-purple-500',
@@ -170,12 +137,10 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
       };
     }
 
-    // Conversation history (blue)
     if (normalizedCategory.includes('messages')) {
       return { bg: 'bg-blue-500', text: 'text-blue-400', dot: 'bg-blue-400' };
     }
 
-    // Context being sent (cyan)
     if (
       normalizedCategory.includes('input context') ||
       normalizedCategory.includes('input tokens')
@@ -183,7 +148,6 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
       return { bg: 'bg-cyan-500', text: 'text-cyan-400', dot: 'bg-cyan-400' };
     }
 
-    // Generated output (green)
     if (normalizedCategory.includes('output tokens') || normalizedCategory.includes('output')) {
       return {
         bg: 'bg-green-500',
@@ -192,7 +156,6 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
       };
     }
 
-    // Default color for unknown categories
     return {
       bg: 'bg-indigo-500',
       text: 'text-indigo-400',
@@ -200,13 +163,9 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
     };
   };
 
-  /**
-   * Get sort order for context categories
-   */
   const getCategorySortOrder = (category: string): number => {
     const normalizedCategory = category.toLowerCase();
 
-    // Group categories logically
     if (normalizedCategory.includes('system prompt')) return 1;
     if (normalizedCategory.includes('system tools')) return 2;
     if (normalizedCategory.includes('mcp tools')) return 3;
@@ -218,12 +177,11 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
     if (normalizedCategory.includes('autocompact')) return 7;
     if (normalizedCategory.includes('free space')) return 8;
 
-    return 99; // Unknown categories go last
+    return 99;
   };
 
   return (
     <>
-      {/* Context usage indicator - always show */}
       <div
         ref={indicatorRef}
         class={`flex items-center gap-3 transition-opacity ${
@@ -236,10 +194,8 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
         }}
         title={hasContextData ? 'Click for context details' : 'Context data loading...'}
       >
-        {/* Circle indicator */}
         <svg width="32" height="32" viewBox="0 0 36 36" class="relative">
           <g class="transform rotate-[-90deg]" transform-origin="18 18">
-            {/* Background circle */}
             <circle
               cx="18"
               cy="18"
@@ -249,7 +205,6 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
               stroke-width="3"
               class="text-dark-700"
             />
-            {/* Drawn before the progress arc so the colored fill sits on top. */}
             {showAutoCompactBuffer && (
               <circle
                 data-testid="autocompact-buffer-arc"
@@ -265,7 +220,6 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
                 <title>{AUTOCOMPACT_BUFFER_TOOLTIP}</title>
               </circle>
             )}
-            {/* Progress arc */}
             <circle
               cx="18"
               cy="18"
@@ -286,7 +240,6 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
               stroke-linecap="round"
             />
           </g>
-          {/* Percentage text in center */}
           <text
             x="18"
             y="18"
@@ -300,7 +253,6 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
         </svg>
       </div>
 
-      {/* Context Details Dropdown - uses document click detection instead of backdrop */}
       {showContextDetails && hasContextData && (
         <div class="fixed right-0 px-4 z-50" style={{ bottom: `${dropdownBottom}px` }}>
           <div class="max-w-4xl mx-auto flex justify-end">
@@ -331,7 +283,6 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
                 </div>
 
                 <div class="space-y-3">
-                  {/* Total Usage */}
                   <div class="bg-dark-700 rounded-lg p-2.5">
                     <div class="flex justify-between items-center mb-1.5">
                       <span class="text-xs text-gray-400">Context Window</span>
@@ -371,7 +322,6 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
                     </div>
                   </div>
 
-                  {/* Token Breakdown with colored squares */}
                   {contextUsage?.breakdown && (
                     <div class="space-y-2">
                       <h4 class="text-xs font-medium text-gray-300">Breakdown</h4>
@@ -392,7 +342,6 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
                                   : 0;
                             return (
                               <div key={category} class="flex items-center gap-2 text-xs">
-                                {/* Colored square icon */}
                                 <div class={`w-3 h-3 rounded ${bg} flex-shrink-0`} />
                                 <span class="text-gray-400 flex-1 min-w-0 truncate">
                                   {category}
@@ -408,7 +357,6 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
                     </div>
                   )}
 
-                  {/* Model info */}
                   {contextUsage?.model && (
                     <div class={`pt-3 border-t ${borderColors.ui.default}`}>
                       <div class="flex items-center gap-2 text-xs">

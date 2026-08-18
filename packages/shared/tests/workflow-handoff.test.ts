@@ -1,11 +1,3 @@
-/**
- * Workflow Handoff Contract — resolver unit tests.
- *
- * Covers the pure `resolveHandoffTransition` resolver that formalizes
- * "targets must resolve to declared outbound workflow transitions". Runtime
- * transition execution is out of scope (contract phase only).
- */
-
 import { describe, expect, test } from 'bun:test';
 import { isBroadcastHandoffTarget, resolveHandoffTransition } from '../src/lib/workflow-handoff.ts';
 import { HANDOFF_TARGET_WILDCARD } from '../src/types/space.ts';
@@ -42,12 +34,10 @@ describe('resolveHandoffTransition', () => {
 
   test('the broadcast wildcard is a literal target, not a catch-all', () => {
     const broadcast = transition({ id: 'broadcast', target: HANDOFF_TARGET_WILDCARD });
-    // A named target does NOT match the broadcast transition.
     expect(resolveHandoffTransition([broadcast], 'Review')).toEqual({
       ok: false,
       reason: 'unknown_target',
     });
-    // Only an explicit wildcard handoff resolves to it.
     expect(resolveHandoffTransition([broadcast], HANDOFF_TARGET_WILDCARD)).toEqual({
       ok: true,
       transition: broadcast,
@@ -55,9 +45,6 @@ describe('resolveHandoffTransition', () => {
   });
 
   test('returns ambiguous when two transitions share a target (defensive)', () => {
-    // The workflow manager forbids duplicate targets within a node, so a
-    // validated workflow never reaches this branch; the resolver stays
-    // defensive for hand-built (unvalidated) transition lists.
     const a = transition({ id: 'a', target: 'Review' });
     const b = transition({ id: 'b', target: 'Review', hookId: 'h1' });
     expect(resolveHandoffTransition([a, b], 'Review')).toEqual({ ok: false, reason: 'ambiguous' });

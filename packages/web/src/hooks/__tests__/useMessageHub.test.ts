@@ -1,22 +1,15 @@
 // @ts-nocheck
-/**
- * Tests for useMessageHub Hook
- *
- * Tests the hook for safe, non-blocking access to the MessageHub connection.
- */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 
-// Define mock functions with vi.hoisted (no imports inside)
 const { mockGetHubIfConnected, mockOnConnected, mockOnceConnected } = vi.hoisted(() => ({
   mockGetHubIfConnected: vi.fn(),
   mockOnConnected: vi.fn(),
   mockOnceConnected: vi.fn(),
 }));
 
-// Create signal outside of vi.hoisted
 const mockConnectionState = signal<string>('disconnected');
 
 vi.mock('../../lib/connection-manager', () => ({
@@ -33,7 +26,6 @@ vi.mock('../../lib/state', () => ({
   },
 }));
 
-// Import after mocks
 import { useMessageHub } from '../useMessageHub';
 import { ConnectionNotReadyError } from '../../lib/errors';
 
@@ -212,7 +204,6 @@ describe('useMessageHub', () => {
       mockGetHubIfConnected.mockReturnValue(null);
       const { result } = renderHook(() => useMessageHub());
 
-      // Should not throw
       const response = await result.current.callIfConnected('test.method');
       expect(response).toBeNull();
     });
@@ -259,7 +250,6 @@ describe('useMessageHub', () => {
       const handler = vi.fn();
       const unsub = result.current.subscribe('test.event', handler);
 
-      // After migration, onEvent takes only 2 arguments (method, handler)
       expect(mockHub.onEvent).toHaveBeenCalledWith('test.event', handler);
       expect(typeof unsub).toBe('function');
     });
@@ -295,7 +285,6 @@ describe('useMessageHub', () => {
       const options = { sessionId: 'test-session' };
       result.current.subscribe('test.event', handler, options);
 
-      // After migration, onEvent takes only 2 arguments; options are ignored
       expect(mockHub.onEvent).toHaveBeenCalledWith('test.event', handler);
     });
 
@@ -318,14 +307,12 @@ describe('useMessageHub', () => {
         return () => {};
       });
 
-      // Start disconnected
       mockGetHubIfConnected.mockReturnValue(null);
       const { result } = renderHook(() => useMessageHub());
 
       const handler = vi.fn();
       result.current.subscribe('test.event', handler);
 
-      // Simulate connection
       const mockHub = {
         call: vi.fn(),
         request: vi.fn().mockResolvedValue({ acknowledged: true }),
@@ -335,7 +322,6 @@ describe('useMessageHub', () => {
       mockGetHubIfConnected.mockReturnValue(mockHub);
       connectionCallback?.();
 
-      // After migration, onEvent takes only 2 arguments (method, handler)
       expect(mockHub.onEvent).toHaveBeenCalledWith('test.event', handler);
     });
 
@@ -350,9 +336,8 @@ describe('useMessageHub', () => {
       const { result } = renderHook(() => useMessageHub());
 
       const unsub = result.current.subscribe('test.event', vi.fn());
-      unsub(); // Cancel
+      unsub();
 
-      // Simulate connection
       const mockHub = {
         call: vi.fn(),
         request: vi.fn().mockResolvedValue({ acknowledged: true }),
@@ -432,7 +417,6 @@ describe('useMessageHub', () => {
       mockConnectionState.value = 'connected';
       const { result } = renderHook(() => useMessageHub({ debug: true }));
 
-      // Debug mode registers a no-op subscriber but should not throw
       expect(result.current.isConnected).toBe(true);
     });
   });
@@ -455,7 +439,6 @@ describe('useMessageHub', () => {
 
       unmount();
 
-      // Both subscriptions should be cleaned up
       expect(mockUnsub).toHaveBeenCalledTimes(2);
     });
 
@@ -474,7 +457,6 @@ describe('useMessageHub', () => {
       const { result, unmount } = renderHook(() => useMessageHub());
       result.current.subscribe('event', vi.fn());
 
-      // Should not throw
       expect(() => unmount()).not.toThrow();
     });
   });
@@ -633,7 +615,6 @@ describe('useMessageHub', () => {
       const handler = vi.fn();
       result.current.onEvent('test.event', handler);
 
-      // Simulate connection
       const mockHub = {
         call: vi.fn(),
         request: vi.fn().mockResolvedValue({ acknowledged: true }),
@@ -656,9 +637,8 @@ describe('useMessageHub', () => {
       const { result } = renderHook(() => useMessageHub());
 
       const unsub = result.current.onEvent('test.event', vi.fn());
-      unsub(); // Cancel
+      unsub();
 
-      // Simulate connection
       const mockHub = {
         call: vi.fn(),
         request: vi.fn().mockResolvedValue({ acknowledged: true }),
@@ -683,7 +663,6 @@ describe('useMessageHub', () => {
       const handler = vi.fn();
       const unsub = result.current.onEvent('test.event', handler);
 
-      // Simulate connection - this sets actualUnsub
       const mockEventUnsub = vi.fn();
       const mockHub = {
         onEvent: vi.fn().mockReturnValue(mockEventUnsub),
@@ -691,7 +670,6 @@ describe('useMessageHub', () => {
       mockGetHubIfConnected.mockReturnValue(mockHub);
       connectionCallback?.();
 
-      // Now unsubscribe - should call actualUnsub
       unsub();
       expect(mockEventUnsub).toHaveBeenCalled();
     });

@@ -31,7 +31,6 @@ import { SessionsSidebar } from './SessionsSidebar.tsx';
 import { SpaceDetailPanel } from './SpaceDetailPanel.tsx';
 import { spaceStore } from '../lib/space-store.ts';
 
-// Settings section configuration
 const SETTINGS_SECTIONS: Array<{
   id: SettingsSection;
   label: string;
@@ -54,7 +53,6 @@ const SETTINGS_SECTIONS: Array<{
   { id: 'about', label: 'About', icon: 'info', accent: 'text-gray-300 bg-white/10' },
 ];
 
-// Helper component for section icons
 function SectionIcon({ type }: { type: string }) {
   switch (type) {
     case 'settings':
@@ -184,8 +182,6 @@ export function ContextPanel() {
   const navSection = navSectionSignal.value;
   const isPanelOpen = contextPanelOpenSignal.value;
 
-  // Initialize the global space list when entering the spaces section, including
-  // in-space mobile where the ContextPanel is repurposed as the space switcher.
   useEffect(() => {
     if (navSection === 'spaces') {
       spaceStore.initGlobalList().catch(() => {
@@ -200,7 +196,6 @@ export function ContextPanel() {
   const currentSpaceConfigureTab = currentSpaceConfigureTabSignal.value;
   const currentSpaceTasksFilterTab = currentSpaceTasksFilterTabSignal.value;
   const currentSpaceViewMode = currentSpaceViewModeSignal.value;
-  // When a specific space is selected in the spaces section, show space-specific panel
   const isSpaceDetail = navSection === 'spaces' && currentSpaceId !== null;
   const headerTitle = spaceStore.space.value?.name ?? 'Space';
 
@@ -249,8 +244,6 @@ export function ContextPanel() {
     contextPanelOpenSignal.value = false;
   };
 
-  // Memoize the active-space filter so unrelated signal ticks (panel open,
-  // selected tab) don't re-run the full pass on every render.
   const activeSpaces = useMemo(
     () => spaceStore.spacesWithTasks.value.filter((space) => space.status === 'active'),
     [spaceStore.spacesWithTasks.value]
@@ -356,7 +349,6 @@ export function ContextPanel() {
 
   return (
     <>
-      {/* Mobile backdrop */}
       {isPanelOpen && (
         <div
           class="fixed inset-0 bg-black/50 z-35 md:hidden cursor-pointer"
@@ -390,7 +382,6 @@ export function ContextPanel() {
           />
         </div>
 
-        {/* Space-detail header — back / name / configure (desktop) */}
         {isSpaceDetail && (
           <div
             class={`hidden h-9 items-center gap-1 border-b px-4 md:flex ${borderColors.ui.default}`}
@@ -444,7 +435,6 @@ export function ContextPanel() {
           </div>
         )}
 
-        {/* Section content — key triggers fade-in on section change */}
         <div
           key={navSection + (isSpaceDetail ? '-space-detail' : '')}
           class="flex-1 overflow-hidden flex flex-col animate-fadeIn"

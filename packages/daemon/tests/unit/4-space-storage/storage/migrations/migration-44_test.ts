@@ -1,12 +1,3 @@
-/**
- * Migration 44 Tests
- *
- * Migration 44 renames sdk_messages.send_status values:
- * - saved -> deferred
- * - queued -> enqueued
- * - sent -> consumed
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';

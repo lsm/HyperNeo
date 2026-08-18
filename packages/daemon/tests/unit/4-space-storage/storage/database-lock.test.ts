@@ -1,11 +1,3 @@
-/**
- * DatabaseLock Unit Tests
- *
- * Tests for database lock acquisition, release, and the synchronous
- * process.on('exit') fallback that removes the lock file when async
- * signal handlers do not fire (SIGTERM, SIGHUP, Bun Ctrl+C kill).
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -49,7 +41,7 @@ describe('DatabaseLock', () => {
       lock.acquire();
 
       const countAfterFirst = process.listenerCount('exit');
-      lock.acquire(); // Should not register another listener
+      lock.acquire();
 
       expect(process.listenerCount('exit')).toBe(countAfterFirst);
       expect(existsSync(lockPath)).toBe(true);
@@ -82,18 +74,14 @@ describe('DatabaseLock', () => {
 
       expect(existsSync(lockPath)).toBe(true);
 
-      // Find the handler that was just registered (not present before acquire)
       const afterListeners = process.rawListeners('exit') as (() => void)[];
       const newHandler = afterListeners.find((l) => !beforeListeners.includes(l));
       expect(newHandler).toBeDefined();
 
-      // Invoke it directly to simulate a process.on('exit') fire without
-      // actually exiting — safe because we bypass the event system.
       newHandler!();
 
       expect(existsSync(lockPath)).toBe(false);
 
-      // Remove the handler from the process since we bypassed release()
       process.removeListener('exit', newHandler!);
     });
   });
@@ -124,7 +112,6 @@ describe('DatabaseLock', () => {
       lock.acquire();
       lock.release();
 
-      // Second release should be a no-op and not throw
       expect(() => lock.release()).not.toThrow();
     });
 
@@ -136,13 +123,11 @@ describe('DatabaseLock', () => {
 
   describe('stale lock detection', () => {
     it('should take over a stale lock from a dead process', () => {
-      // Write a lock file with a PID that is almost certainly dead
-      writeFileSync(lockPath, '2147483647', 'utf-8'); // Max int32 — no such process
+      writeFileSync(lockPath, '2147483647', 'utf-8');
 
       const lock = new DatabaseLock(dbPath);
       expect(() => lock.acquire()).not.toThrow();
 
-      // Our PID should now be in the lock file
       const content = readFileSync(lockPath, 'utf-8');
       expect(parseInt(content, 10)).toBe(process.pid);
 
@@ -150,7 +135,6 @@ describe('DatabaseLock', () => {
     });
 
     it('should throw when another live process holds the lock', () => {
-      // Write a lock file for the parent process (which is alive)
       const alivePid = process.ppid ?? 1;
       writeFileSync(lockPath, String(alivePid), 'utf-8');
 
@@ -158,15 +142,12 @@ describe('DatabaseLock', () => {
       let threw = false;
       try {
         lock.acquire();
-        // If ppid isn't alive or equals our PID, acquire succeeds — clean up
         lock.release();
       } catch (err) {
         threw = true;
         expect(String(err)).toContain('Another HyperNeo daemon is already running');
       }
 
-      // On platforms where ppid is verifiably alive and ≠ process.pid this
-      // should always throw; on edge cases (ppid === pid) we skip the check.
       if (alivePid !== process.pid) {
         expect(threw).toBe(true);
       }

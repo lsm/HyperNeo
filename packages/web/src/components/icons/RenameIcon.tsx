@@ -1,7 +1,3 @@
-/**
- * Pencil icon used for the inline session-rename affordance.
- * Icon from: https://www.svgrepo.com/svg/499022/edit-pencil
- */
 export function RenameIcon({ className }: { className?: string }) {
   return (
     <svg class={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">

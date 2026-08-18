@@ -1,22 +1,3 @@
-/**
- * Unit tests for AnthropicToCopilotBridgeProvider
- *
- * Tests cover:
- * - Provider properties (id, capabilities, ownsModel, getModelForTier)
- * - Availability checks (credential discovery chain)
- * - Credential sources: loadStoredGitHubToken, tryGhHostsToken
- * - logout() removes stored credentials and invalidates the token cache
- * - startOAuthFlow() returns ProviderOAuthFlowData with correct shape
- * - buildSdkConfig env-var shape (requires pre-warmed serverCache)
- * - getModels() pre-warms the embedded server
- * - shutdown() stops the embedded server and CopilotClient
- * - ensureServerStarted() retry-after-failure
- *
- * NOTE: All tests that touch credential storage use spies on private methods rather
- * than real file I/O. This avoids interference from `mock.module('node:fs/promises', ...)`
- * calls in other test files (e.g. mcp-handlers.test.ts) that leak across the test run.
- */
-
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { AnthropicToCopilotBridgeProvider } from '../../../../../src/lib/providers/anthropic-copilot/index';
 import {
@@ -28,10 +9,6 @@ import {
   getProviderRegistry,
   resetProviderRegistry,
 } from '../../../../../src/lib/providers/registry';
-
-// ---------------------------------------------------------------------------
-// AnthropicToCopilotBridgeProvider — unit tests
-// ---------------------------------------------------------------------------
 
 describe('AnthropicToCopilotBridgeProvider', () => {
   let provider: AnthropicToCopilotBridgeProvider;
@@ -78,7 +55,6 @@ describe('AnthropicToCopilotBridgeProvider', () => {
     });
 
     it('owns all bare model IDs in the model list', () => {
-      // No legacy CLI provider collision — bare IDs are owned by this provider
       expect(provider.ownsModel('claude-opus-4.6')).toBe(true);
       expect(provider.ownsModel('claude-sonnet-4.6')).toBe(true);
       expect(provider.ownsModel('gpt-5.3-codex')).toBe(true);
@@ -115,7 +91,6 @@ describe('AnthropicToCopilotBridgeProvider', () => {
     });
 
     it('returns static ID when dynamic cache contains a matching model', () => {
-      // Inject dynamic cache that includes the static haiku ID
       (provider as unknown as Record<string, unknown>)['dynamicModelsCache'] = [
         {
           id: 'gpt-5-mini',
@@ -133,7 +108,6 @@ describe('AnthropicToCopilotBridgeProvider', () => {
     });
 
     it('returns an available model from dynamic cache when static ID is not present', () => {
-      // Dynamic cache has gpt-4o-mini (fits haiku keywords) but NOT gpt-5-mini
       (provider as unknown as Record<string, unknown>)['dynamicModelsCache'] = [
         {
           id: 'gpt-4o',
@@ -158,14 +132,11 @@ describe('AnthropicToCopilotBridgeProvider', () => {
           available: true,
         },
       ];
-      // haiku tier should find gpt-4o-mini (contains 'mini' keyword)
       expect(provider.getModelForTier('haiku')).toBe('gpt-4o-mini');
-      // sonnet tier should find gpt-4o (contains '4o' keyword)
       expect(provider.getModelForTier('sonnet')).toBe('gpt-4o');
     });
 
     it('returns first available model from dynamic cache when no keyword match', () => {
-      // Dynamic cache has only an unusual model ID
       (provider as unknown as Record<string, unknown>)['dynamicModelsCache'] = [
         {
           id: 'some-custom-model',
@@ -441,18 +412,11 @@ describe('AnthropicToCopilotBridgeProvider', () => {
     });
 
     it('sets ANTHROPIC_API_KEY to empty string to clear real Anthropic key', () => {
-      // An empty-string sentinel tells applyEnvVars() to delete process.env.ANTHROPIC_API_KEY,
-      // preventing the SDK subprocess from bypassing the embedded proxy and calling
-      // api.anthropic.com directly with the user's real key.
       const cfg = provider.buildSdkConfig('copilot-anthropic-sonnet');
       expect(cfg.envVars['ANTHROPIC_API_KEY']).toBe('');
     });
 
     it('ANTHROPIC_DEFAULT_HAIKU_MODEL matches the resolved model ID (all tiers use the same Copilot model)', () => {
-      // All three SDK model tiers (opus/sonnet/haiku) are set to the resolved Copilot
-      // model ID so that every SDK-internal call (summarisation, compaction, etc.)
-      // routes through the same real Copilot model rather than a hardcoded fallback
-      // that might not be available on the user's Copilot account.
       const cfg = provider.buildSdkConfig('copilot-anthropic-sonnet');
       expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe('claude-sonnet-4.6');
       expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe(
@@ -525,7 +489,6 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       ).mockResolvedValue(undefined as never);
       spyOn(p, 'ensureServerStarted').mockResolvedValue('http://127.0.0.1:9999' as never);
 
-      // Inject a mock clientCache with listModels()
       const fakeSdkModels = [
         {
           id: 'gpt-4o',
@@ -545,7 +508,6 @@ describe('AnthropicToCopilotBridgeProvider', () => {
           },
           policy: { state: 'enabled', terms: '' },
         },
-        // Disabled model should be filtered out
         {
           id: 'gpt-4-turbo',
           name: 'GPT-4 Turbo',
@@ -562,12 +524,10 @@ describe('AnthropicToCopilotBridgeProvider', () => {
 
       const models = await p.getModels();
 
-      // Should return dynamic models (filtering out disabled ones)
       expect(models.length).toBe(2);
       expect(models.map((m) => m.id)).toContain('gpt-4o');
       expect(models.map((m) => m.id)).toContain('claude-sonnet-4-5');
       expect(models.map((m) => m.id)).not.toContain('gpt-4-turbo');
-      // All should have the correct provider
       for (const m of models) {
         expect(m.provider).toBe('anthropic-copilot');
       }
@@ -588,7 +548,6 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       };
 
       const models = await p.getModels();
-      // Should fall back to static list
       expect(models.length).toBeGreaterThan(0);
       expect(models.some((m) => m.id === 'claude-sonnet-4.6')).toBe(true);
       expect(models.find((m) => m.id === 'gpt-5.4')?.contextWindow).toBe(272000);
@@ -621,18 +580,14 @@ describe('AnthropicToCopilotBridgeProvider', () => {
         },
       };
 
-      // First call — should invoke listModels()
       await p.getModels();
       expect(callCount).toBe(1);
 
-      // Second call within TTL — should return cached result
       await p.getModels();
-      expect(callCount).toBe(1); // listModels NOT called again
+      expect(callCount).toBe(1);
 
-      // Force expiry
       (p as unknown as Record<string, unknown>)['dynamicModelsCacheExpiresAt'] = Date.now() - 1;
 
-      // Third call after expiry — should invoke listModels() again
       await p.getModels();
       expect(callCount).toBe(2);
     });
@@ -650,7 +605,6 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       };
 
       const models = await p.getModels();
-      // Should fall back to static list
       expect(models.length).toBeGreaterThan(0);
       expect(models.some((m) => m.id === 'claude-sonnet-4.6')).toBe(true);
       expect(models.find((m) => m.id === 'gpt-5.4')?.contextWindow).toBe(272000);
@@ -661,7 +615,6 @@ describe('AnthropicToCopilotBridgeProvider', () => {
   describe('ownsModel() with dynamic models', () => {
     it('returns true for a model ID in the dynamic cache', () => {
       const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
-      // Inject a dynamic models cache with a model not in the static list
       (p as unknown as Record<string, unknown>)['dynamicModelsCache'] = [
         {
           id: 'gpt-4o',
@@ -677,7 +630,6 @@ describe('AnthropicToCopilotBridgeProvider', () => {
       ];
       expect(p.ownsModel('gpt-4o')).toBe(true);
       expect(p.ownsModel('copilot-gpt-4o')).toBe(true);
-      // Unknown model should still return false
       expect(p.ownsModel('unknown-model-xyz')).toBe(false);
     });
   });
@@ -694,12 +646,9 @@ describe('AnthropicToCopilotBridgeProvider', () => {
         }
       );
 
-      // First call should reject
       await expect(p.ensureServerStarted()).rejects.toThrow('transient failure');
-      // serverStarting must be cleared so the second attempt creates a new promise
       expect((p as unknown as Record<string, unknown>)['serverStarting']).toBeUndefined();
 
-      // Second call should succeed
       const url = await p.ensureServerStarted();
       expect(url).toBe('http://127.0.0.1:9999');
     });
@@ -714,7 +663,6 @@ describe('AnthropicToCopilotBridgeProvider', () => {
         }
       );
 
-      // Fire three concurrent calls — only one createServer() should occur
       const [url1, url2, url3] = await Promise.all([
         p.ensureServerStarted(),
         p.ensureServerStarted(),
@@ -770,22 +718,13 @@ describe('AnthropicToCopilotBridgeProvider', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// loadStoredGitHubToken — source 1 of the credential discovery chain
-//
-// Tests use spies on the private method rather than real file I/O so they are
-// resilient to `mock.module('node:fs/promises', ...)` leaks from other test files.
-// ---------------------------------------------------------------------------
-
 describe('loadStoredGitHubToken', () => {
   it('token from auth.json propagates through the chain to isAvailable()=true', async () => {
     const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
-    // Source 1 returns a token (simulates auth.json with github-copilot credentials)
     spyOn(
       p as unknown as Record<string, unknown>,
       'loadStoredGitHubToken' as never
     ).mockResolvedValue('stored-gh-token-abc' as never);
-    // Sources 2-3 absent (empty env); sources 4-5 blocked
     spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
       undefined as never
     );
@@ -797,12 +736,10 @@ describe('loadStoredGitHubToken', () => {
 
   it('absent auth.json (source 1 returns undefined) falls through to sources 2-5', async () => {
     const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
-    // Source 1 returns nothing
     spyOn(
       p as unknown as Record<string, unknown>,
       'loadStoredGitHubToken' as never
     ).mockResolvedValue(undefined as never);
-    // All other sources also blocked
     spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
       undefined as never
     );
@@ -819,20 +756,12 @@ describe('loadStoredGitHubToken', () => {
       'loadStoredGitHubToken' as never
     ).mockResolvedValue('stored-tok' as never);
     await p.isAvailable();
-    // loadStoredGitHubToken must be called even when COPILOT_GITHUB_TOKEN is set,
-    // because source 1 is checked first in discoverGitHubToken().
     expect(spy).toHaveBeenCalledTimes(1);
   });
 });
 
-// ---------------------------------------------------------------------------
-// tryGhHostsToken — source 5 of the credential discovery chain
-// ---------------------------------------------------------------------------
-
 describe('tryGhHostsToken', () => {
   it('token from hosts.yml DOES make isAvailable()=true (runtime credential discovery uses all sources)', async () => {
-    // isAvailable() uses resolveGitHubToken() which checks all 5 sources including hosts.yml.
-    // This ensures model listing and session creation work regardless of credential source.
     const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
     spyOn(
       p as unknown as Record<string, unknown>,
@@ -871,31 +800,21 @@ describe('tryGhHostsToken', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// logout()
-//
-// Tests use spies so they are resilient to mock.module leaks from other files.
-// ---------------------------------------------------------------------------
-
 describe('logout()', () => {
   it('invalidates the token cache so the next call re-discovers credentials', async () => {
     const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
-    // Prime the cache by calling isAvailable() — uses resolveGitHubToken() which populates tokenCache
     spyOn(
       p as unknown as Record<string, unknown>,
       'loadStoredGitHubToken' as never
     ).mockResolvedValue('gho_stored_tok' as never);
     expect(await p.isAvailable()).toBe(true);
-    // tokenCache is now set (resolveGitHubToken() caches the result)
     expect((p as unknown as Record<string, unknown>)['tokenCache']).toBeDefined();
-    // logout() must clear the cache
     await p.logout();
     expect((p as unknown as Record<string, unknown>)['tokenCache']).toBeNull();
   });
 
   it('calls loadStoredGitHubToken returns undefined after logout clears stored token', async () => {
     const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
-    // Prime the cache with a stored token
     spyOn(
       p as unknown as Record<string, unknown>,
       'loadStoredGitHubToken' as never
@@ -907,9 +826,7 @@ describe('logout()', () => {
       undefined as never
     );
     expect(await p.isAvailable()).toBe(true);
-    // Simulate logout clearing auth.json (source 1 no longer available)
     await p.logout();
-    // After logout the cache is cleared; next call falls through all sources to false
     expect(await p.isAvailable()).toBe(false);
   });
 
@@ -920,15 +837,10 @@ describe('logout()', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// startOAuthFlow()
-// ---------------------------------------------------------------------------
-
 describe('startOAuthFlow()', () => {
   it('returns ProviderOAuthFlowData with type=device and required fields', async () => {
     const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
 
-    // Mock the internal device flow fetch so no real network call is made
     spyOn(p as unknown as Record<string, unknown>, 'startDeviceFlow' as never).mockResolvedValue({
       device_code: 'dev-code-123',
       user_code: 'ABCD-EFGH',
@@ -937,7 +849,6 @@ describe('startOAuthFlow()', () => {
       interval: 5,
     } as never);
 
-    // Prevent background polling from running in the test
     spyOn(
       p as unknown as Record<string, unknown>,
       'startBackgroundPolling' as never
@@ -972,18 +883,12 @@ describe('startOAuthFlow()', () => {
     const first = await p.startOAuthFlow();
     const second = await p.startOAuthFlow();
 
-    // startDeviceFlow called only once — second call returns cached data
     expect(startDeviceFlowSpy).toHaveBeenCalledTimes(1);
     expect(second.userCode).toBe(first.userCode);
   });
 });
 
-// ---------------------------------------------------------------------------
-// startBackgroundPolling()
-// ---------------------------------------------------------------------------
-
 describe('startBackgroundPolling()', () => {
-  /** Helper: set activeOAuthFlow directly on the provider instance. */
   function setActiveFlow(p: AnthropicToCopilotBridgeProvider): void {
     (p as unknown as Record<string, unknown>)['activeOAuthFlow'] = {
       deviceCode: 'dev-code-abc',
@@ -995,7 +900,6 @@ describe('startBackgroundPolling()', () => {
     };
   }
 
-  /** Helper: read activeOAuthFlow from the provider instance. */
   function getActiveFlow(p: AnthropicToCopilotBridgeProvider): {
     completed: boolean;
     success: boolean;
@@ -1006,38 +910,31 @@ describe('startBackgroundPolling()', () => {
     };
   }
 
-  /** Minimal DeviceFlowResponse used in all sub-tests. */
   const device = {
     device_code: 'dev-code-abc',
     user_code: 'ABCD-1234',
     verification_uri: 'https://github.com/login/device',
     expires_in: 60,
-    interval: 0, // 0-second poll delay so tests complete immediately
+    interval: 0,
   };
 
   it('slow_down response backs off by 5 s and continues — not terminal', async () => {
     const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
     setActiveFlow(p);
 
-    // Suppress file I/O
     spyOn(p as unknown as Record<string, unknown>, 'saveCredentials' as never).mockResolvedValue(
       undefined as never
     );
 
-    // Capture all setTimeout delays; run callbacks immediately (0 ms) to avoid
-    // the real 5-second wall-clock wait mandated by the RFC 8628 slow_down backoff.
-    // This also lets us assert the backoff magnitude was exactly +5 s (5000 ms).
     const sleepDelays: number[] = [];
     const origSetTimeout = globalThis.setTimeout;
     const setTimeoutSpy = spyOn(globalThis, 'setTimeout').mockImplementation(
       (fn: TimerHandler, delay?: number, ...args: unknown[]) => {
         sleepDelays.push(delay ?? 0);
-        // Run the callback at the next tick but without the real delay.
         return origSetTimeout(fn as () => void, 0, ...(args as []));
       }
     );
 
-    // First call: slow_down — second call: success
     let callCount = 0;
     const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async () => {
       callCount++;
@@ -1059,16 +956,13 @@ describe('startBackgroundPolling()', () => {
       ).startBackgroundPolling;
       await callPoll.call(p, device, undefined);
 
-      // slow_down is NOT terminal — fetch called twice, flow succeeds
       expect(callCount).toBe(2);
       expect(getActiveFlow(p).completed).toBe(true);
       expect(getActiveFlow(p).success).toBe(true);
 
-      // RFC 8628 §3.5: each slow_down must add exactly 5 s to the polling interval.
-      // With device.interval=0, the second sleep must be 0+5=5000 ms.
       expect(sleepDelays).toHaveLength(2);
-      expect(sleepDelays[0]).toBe(0); // first iteration: interval=0
-      expect(sleepDelays[1]).toBe(5000); // after slow_down: interval=0+5 s
+      expect(sleepDelays[0]).toBe(0);
+      expect(sleepDelays[1]).toBe(5000);
     } finally {
       setTimeoutSpy.mockRestore();
       fetchSpy.mockRestore();
@@ -1101,10 +995,6 @@ describe('startBackgroundPolling()', () => {
     }
   });
 });
-
-// ---------------------------------------------------------------------------
-// Factory registration
-// ---------------------------------------------------------------------------
 
 describe('factory registration', () => {
   beforeEach(() => {

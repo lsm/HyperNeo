@@ -1,17 +1,9 @@
-/**
- * FileIndex Unit Tests
- *
- * Tests the workspace file tree cache: init, search, invalidation,
- * .gitignore filtering, polling refresh, and path traversal prevention.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { FileIndex } from '../../../src/lib/file-index';
 
-// Use a very large poll interval in tests so polling doesn't fire unexpectedly
 const NO_POLL = 9_999_999;
 
 async function makeWorkspace(): Promise<string> {
@@ -35,8 +27,6 @@ describe('FileIndex (Unit)', () => {
     if (idx) idx.dispose();
     await rm(workspace, { recursive: true, force: true });
   });
-
-  // ─── init ────────────────────────────────────────────────────────────────
 
   describe('init', () => {
     it('isReady() returns false before init', () => {
@@ -68,7 +58,6 @@ describe('FileIndex (Unit)', () => {
       idx = new FileIndex(workspace, NO_POLL);
       await idx.init();
 
-      // src/, src/utils/, src/index.ts, src/utils/helper.ts
       expect(idx.size()).toBe(4);
     });
 
@@ -101,8 +90,6 @@ describe('FileIndex (Unit)', () => {
     });
   });
 
-  // ─── search ──────────────────────────────────────────────────────────────
-
   describe('search', () => {
     beforeEach(async () => {
       await mkdir(join(workspace, 'src', 'components'), { recursive: true });
@@ -115,7 +102,6 @@ describe('FileIndex (Unit)', () => {
 
     it('returns empty array for empty cache', () => {
       idx = new FileIndex(workspace, NO_POLL);
-      // not initialized — cache is empty
       expect(idx.search('foo')).toEqual([]);
     });
 
@@ -152,7 +138,6 @@ describe('FileIndex (Unit)', () => {
     });
 
     it('returns results within limit', async () => {
-      // Create many files
       for (let i = 0; i < 30; i++) {
         await writeFile(join(workspace, `file${i}.ts`), '');
       }
@@ -203,7 +188,6 @@ describe('FileIndex (Unit)', () => {
       await idx.init();
 
       const results = idx.search('index');
-      // index.ts starts with "index"; main-index.ts contains "index"
       const indexPos = results.findIndex((e) => e.name === 'index.ts');
       const mainIndexPos = results.findIndex((e) => e.name === 'main-index.ts');
       expect(indexPos).toBeLessThan(mainIndexPos);
@@ -217,8 +201,6 @@ describe('FileIndex (Unit)', () => {
       expect(results.length).toBe(0);
     });
   });
-
-  // ─── invalidation ────────────────────────────────────────────────────────
 
   describe('invalidate', () => {
     it('removes a single entry from the cache', async () => {
@@ -258,8 +240,6 @@ describe('FileIndex (Unit)', () => {
       expect(idx.size()).toBe(0);
     });
   });
-
-  // ─── .gitignore filtering ─────────────────────────────────────────────────
 
   describe('.gitignore filtering', () => {
     it('ignores .git directory', async () => {
@@ -346,13 +326,11 @@ describe('FileIndex (Unit)', () => {
       idx = new FileIndex(workspace, NO_POLL);
       await idx.init();
 
-      // Files inside build/ should be excluded
       expect(idx.search('app.js')).toEqual([]);
       expect(idx.search('index.html')).toEqual([]);
     });
 
     it('respects **/prefix double-star pattern at root depth', async () => {
-      // **/tests should match "tests" at root AND nested paths
       await writeFile(join(workspace, '.gitignore'), '**/tests\n');
       await mkdir(join(workspace, 'tests'), { recursive: true });
       await writeFile(join(workspace, 'tests', 'foo.spec.ts'), '');
@@ -363,10 +341,8 @@ describe('FileIndex (Unit)', () => {
       idx = new FileIndex(workspace, NO_POLL);
       await idx.init();
 
-      // "tests" directories at both root and nested should be excluded
       expect(idx.search('foo.spec.ts')).toEqual([]);
       expect(idx.search('bar.spec.ts')).toEqual([]);
-      // Unrelated files should still be indexed
       expect(idx.search('app.ts').length).toBeGreaterThan(0);
     });
 
@@ -387,7 +363,7 @@ describe('FileIndex (Unit)', () => {
       await writeFile(join(workspace, '.gitignore'), 'file?.ts\n');
       await writeFile(join(workspace, 'file1.ts'), '');
       await writeFile(join(workspace, 'file2.ts'), '');
-      await writeFile(join(workspace, 'fileAB.ts'), ''); // two chars — should NOT match
+      await writeFile(join(workspace, 'fileAB.ts'), '');
       await writeFile(join(workspace, 'keep.ts'), '');
 
       idx = new FileIndex(workspace, NO_POLL);
@@ -399,8 +375,6 @@ describe('FileIndex (Unit)', () => {
       expect(idx.search('keep.ts').length).toBeGreaterThan(0);
     });
   });
-
-  // ─── setIgnorePatterns ───────────────────────────────────────────────────
 
   describe('setIgnorePatterns', () => {
     it('applies extra patterns on subsequent init', async () => {
@@ -422,11 +396,9 @@ describe('FileIndex (Unit)', () => {
       idx = new FileIndex(workspace, NO_POLL);
       await idx.init();
 
-      // Both files are in the cache before pattern update
       expect(idx.search('secret.key').length).toBeGreaterThan(0);
       expect(idx.search('app.ts').length).toBeGreaterThan(0);
 
-      // Adding the pattern should purge matching entries immediately
       idx.setIgnorePatterns(['*.key']);
 
       expect(idx.search('secret.key')).toEqual([]);
@@ -442,14 +414,11 @@ describe('FileIndex (Unit)', () => {
 
       idx.setIgnorePatterns(['*.key']);
 
-      // Trigger refresh — should not re-add the secret.key entry
       await (idx as unknown as { runRefresh(): Promise<void> }).runRefresh();
 
       expect(idx.search('secret.key')).toEqual([]);
     });
   });
-
-  // ─── path traversal prevention ───────────────────────────────────────────
 
   describe('path traversal prevention', () => {
     it('does not index paths outside the workspace', async () => {
@@ -458,7 +427,6 @@ describe('FileIndex (Unit)', () => {
       idx = new FileIndex(workspace, NO_POLL);
       await idx.init();
 
-      // Cache should only contain entries whose paths stay within workspace
       for (const entry of idx.search('')) {
         expect(entry.path.startsWith('..')).toBe(false);
         expect(entry.path.startsWith('/')).toBe(false);
@@ -479,19 +447,14 @@ describe('FileIndex (Unit)', () => {
     });
   });
 
-  // ─── polling refresh ─────────────────────────────────────────────────────
-
   describe('polling refresh', () => {
     it('picks up new files on next refresh', async () => {
       idx = new FileIndex(workspace, NO_POLL);
       await idx.init();
       expect(idx.size()).toBe(0);
 
-      // Create a file after init
       await writeFile(join(workspace, 'new.ts'), '');
 
-      // Manually trigger refresh by re-running (simulate poll tick)
-      // Access private method via cast for testing
       await (idx as unknown as { runRefresh(): Promise<void> }).runRefresh();
 
       expect(idx.size()).toBe(1);
@@ -505,10 +468,8 @@ describe('FileIndex (Unit)', () => {
       await idx.init();
       expect(idx.size()).toBe(1);
 
-      // Delete the file
       await rm(join(workspace, 'delete-me.ts'));
 
-      // Trigger refresh
       await (idx as unknown as { runRefresh(): Promise<void> }).runRefresh();
 
       expect(idx.size()).toBe(0);
@@ -517,13 +478,10 @@ describe('FileIndex (Unit)', () => {
     it('dispose() stops the polling timer', () => {
       idx = new FileIndex(workspace, 100);
       idx.dispose();
-      // pollTimer should be cleared — accessing internal state via cast
       const internal = idx as unknown as { pollTimer: unknown };
       expect(internal.pollTimer).toBeNull();
     });
   });
-
-  // ─── edge cases ──────────────────────────────────────────────────────────
 
   describe('edge cases', () => {
     it('handles files with spaces and special characters', async () => {
@@ -572,7 +530,6 @@ describe('FileIndex (Unit)', () => {
     });
 
     it('search is fast for large workspaces', async () => {
-      // Create 200 files across nested directories
       for (let i = 0; i < 10; i++) {
         const dir = join(workspace, `pkg${i}`);
         await mkdir(dir, { recursive: true });
@@ -590,7 +547,6 @@ describe('FileIndex (Unit)', () => {
       }
       const elapsed = Date.now() - start;
 
-      // 100 searches should complete well under 1 second
       expect(elapsed).toBeLessThan(1000);
     });
 
@@ -621,7 +577,6 @@ describe('FileIndex (Unit)', () => {
       idx = new FileIndex(workspace, NO_POLL);
       await idx.init();
 
-      // The symlinked directory itself should appear as a folder entry
       const results = idx.search('linked-dir');
       expect(results.length).toBeGreaterThan(0);
       expect(results[0].type).toBe('folder');

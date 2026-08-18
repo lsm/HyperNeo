@@ -1,10 +1,3 @@
-/**
- * Assembles npm packages from compiled binaries.
- * Takes binaries from dist/bin/ and creates publishable packages in dist/npm/.
- *
- * Usage: bun run scripts/package-npm.ts [--version 0.1.0]
- */
-
 import { mkdirSync, copyFileSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -12,7 +5,6 @@ const ROOT = join(import.meta.dir, '..');
 const BIN_DIR = join(ROOT, 'dist', 'bin');
 const NPM_DIR = join(ROOT, 'dist', 'npm');
 
-// Read version from root package.json or CLI args
 const versionIdx = process.argv.indexOf('--version');
 const VERSION =
   versionIdx !== -1
@@ -28,7 +20,6 @@ const PLATFORMS = [
 
 console.log(`Packaging npm packages (version ${VERSION})...\n`);
 
-// 1. Create platform-specific packages
 for (const { target, os, cpu } of PLATFORMS) {
   const pkgName = `@hyperneo/cli-${target}`;
   const pkgDir = join(NPM_DIR, `cli-${target}`);
@@ -36,7 +27,6 @@ for (const { target, os, cpu } of PLATFORMS) {
 
   mkdirSync(binDir, { recursive: true });
 
-  // Copy binary
   const srcBinary = join(BIN_DIR, `hyperneo-${target}`);
   const destBinary = join(binDir, 'hyperneo');
 
@@ -48,7 +38,6 @@ for (const { target, os, cpu } of PLATFORMS) {
     continue;
   }
 
-  // Write package.json
   writeFileSync(
     join(pkgDir, 'package.json'),
     JSON.stringify(
@@ -74,16 +63,13 @@ for (const { target, os, cpu } of PLATFORMS) {
   console.log(`  Created ${pkgName}`);
 }
 
-// 2. Create main hyperneo package
 const mainDir = join(NPM_DIR, 'hyperneo');
 const mainBinDir = join(mainDir, 'bin');
 mkdirSync(mainBinDir, { recursive: true });
 
-// Copy launcher script
 copyFileSync(join(ROOT, 'npm', 'hyperneo', 'bin', 'hyperneo.js'), join(mainBinDir, 'hyperneo.js'));
 chmodSync(join(mainBinDir, 'hyperneo.js'), 0o755);
 
-// Write main package.json
 const optionalDeps: Record<string, string> = {};
 for (const { target } of PLATFORMS) {
   optionalDeps[`@hyperneo/cli-${target}`] = VERSION;

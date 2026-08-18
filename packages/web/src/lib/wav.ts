@@ -55,12 +55,6 @@ export function downsampleMono(
   return output;
 }
 
-/**
- * Same averaging downsample as downsampleMono, but reads directly from the
- * recorder's chunk list so a long capture (a 5-minute 48 kHz recording is ~55 MB
- * of float samples) never gets duplicated into one giant contiguous array first.
- * Produces identical output to downsampleMono over the concatenated chunks.
- */
 export function downsampleChunks(
   chunks: Float32Array[],
   totalSamples: number,
@@ -83,12 +77,12 @@ export function downsampleChunks(
   const outputLength = Math.floor(totalSamples / ratio);
   const output = new Float32Array(outputLength);
   let chunkIndex = 0;
-  let chunkBase = 0; // global input index of chunks[chunkIndex][0]
-  let i = 0; // global read pointer; output windows tile forward monotonically
+  let chunkBase = 0;
+  let i = 0;
 
   for (let index = 0; index < outputLength; index++) {
     const end = Math.min(Math.floor((index + 1) * ratio), totalSamples);
-    const start = i; // === floor(index * ratio) by construction
+    const start = i;
     let sum = 0;
     while (i < end) {
       while (chunkIndex < chunks.length - 1 && i >= chunkBase + chunks[chunkIndex].length) {
@@ -108,10 +102,6 @@ export function downsampleChunks(
 }
 
 export function bytesToBase64(bytes: Uint8Array): string {
-  // Build the binary string in chunks (a single char-by-char concat is O(n²) and
-  // janks the UI on stop for multi-MB recordings), then base64-encode the WHOLE
-  // string once. Calling btoa per chunk would emit '=' padding mid-string and
-  // yield invalid base64 (the daemon rejects it).
   const CHUNK = 0x8000;
   const parts: string[] = [];
   for (let i = 0; i < bytes.length; i += CHUNK) {

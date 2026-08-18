@@ -1,11 +1,4 @@
 // @ts-nocheck
-/**
- * ResultInfoDropdown Component Tests
- *
- * Verifies the result-envelope dropdown surfaces usage tokens, duration,
- * cost, num_turns, errors, and stop_reason for both success and error
- * `result` subtypes.
- */
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/preact';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
@@ -88,7 +81,6 @@ describe('ResultInfoDropdown', () => {
       const { container } = render(<ResultInfoDropdown result={createSuccessResult()} />);
       expect(container.textContent).toContain('Input');
       expect(container.textContent).toContain('Output');
-      // 1234 → "1.2k", 567 → "567"
       expect(container.textContent).toContain('1.2k');
       expect(container.textContent).toContain('567');
     });
@@ -118,13 +110,9 @@ describe('ResultInfoDropdown', () => {
   describe('Run block', () => {
     it('shows duration / API time / turns / cost', () => {
       const { container } = render(<ResultInfoDropdown result={createSuccessResult()} />);
-      // 12_345ms → "12.3s"
       expect(container.textContent).toContain('12.3s');
-      // 9_876ms → "9.9s"
       expect(container.textContent).toContain('9.9s');
-      // num_turns = 7
       expect(container.textContent).toContain('7');
-      // total_cost_usd = 0.0523 → "$0.0523"
       expect(container.textContent).toContain('$0.0523');
     });
   });

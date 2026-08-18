@@ -1,10 +1,3 @@
-/**
- * Tests for CallContext.clientId plumbing
- *
- * Verifies that clientId is populated in CallContext for WebSocket-originated
- * requests and absent for in-process calls.
- */
-
 import { describe, test, expect } from 'bun:test';
 import { MessageHub } from '../src/message-hub/message-hub';
 import type { IMessageTransport, ConnectionState, CallContext } from '../src/message-hub/types';
@@ -12,7 +5,6 @@ import type { HubMessage } from '../src/message-hub/types';
 import { createRequestMessage } from '../src/message-hub/protocol';
 import type { HubMessageWithMetadata } from '../src/message-hub/protocol';
 
-// Minimal mock transport that lets tests inject messages directly
 class MockTransport implements IMessageTransport {
   readonly name = 'mock-transport';
   private messageHandlers: Set<(message: HubMessage) => void> = new Set();
@@ -61,7 +53,6 @@ describe('CallContext.clientId', () => {
       });
     });
 
-    // Build a request message with a clientId attached (as WebSocketServerTransport does)
     const req = createRequestMessage({
       method: 'test.method',
       data: {},
@@ -87,7 +78,6 @@ describe('CallContext.clientId', () => {
       });
     });
 
-    // Plain request message — no clientId attached
     const req = createRequestMessage({
       method: 'test.method',
       data: {},

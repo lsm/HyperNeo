@@ -1,7 +1,3 @@
-/**
- * File RPC Handlers
- */
-
 import type { MessageHub } from '@hyperneo/shared';
 import type { SessionManager } from '../session-manager';
 import type { ReadFileRequest, ListFilesRequest, GetFileTreeRequest } from '@hyperneo/shared';

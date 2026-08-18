@@ -1,18 +1,3 @@
-/**
- * recover-messages script — regression test for the interrupted-rerun path.
- *
- * `touchedSessions` must include EVERY matched session on every run, not just
- * sessions that inserted a new row this invocation. Otherwise a prior run that
- * inserted rows but exited before the recompute step leaves the counter stale,
- * and a rerun skips the session entirely (the existing-UUID `continue` fires
- * before it's tracked). Since `spaceSessions.bySpace` reads only the counter,
- * the badge stays stale for the recovered session.
- *
- * This test runs the script as a subprocess against a temp DB whose session
- * already has its (visible) messages inserted with a stale counter of 0 — i.e.
- * a rerun with no new inserts — and asserts the counter is repaired.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -33,7 +18,6 @@ const SCRIPT = resolve(
   )
 );
 
-/** A visible recovered message (top-level, consumed user / assistant). */
 function recoveredMessage(uuid: string, type: string): string {
   return JSON.stringify({
     type,
@@ -52,10 +36,6 @@ describe('recover-messages script — interrupted-rerun recompute', () => {
     dbPath = join(dir, 'test.db');
 
     const db = new Database(dbPath);
-    // sessions carries the full column set the script's `insertSession`
-    // statement prepares against (it prepares eagerly in Step 5, even with
-    // zero orphans), plus the maintained visible_message_count. sdk_messages
-    // holds the rows a prior (interrupted) run inserted.
     db.exec(`
       CREATE TABLE sessions (
         id TEXT PRIMARY KEY,
@@ -93,8 +73,6 @@ describe('recover-messages script — interrupted-rerun recompute', () => {
       `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, sdk_session_id)
        VALUES (?, '', ?, ?, 'active', '{}', '{}', ?)`
     ).run('sess-S', now, now, 'sdk-S');
-    // Prior-run bypass inserts — visible rows, but the counter was never
-    // maintained, so it stays at the default 0 (stale).
     const insert = db.prepare(
       `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, parent_tool_use_id)
        VALUES (?, ?, ?, NULL, ?, ?, 'consumed', NULL)`
@@ -128,9 +106,6 @@ describe('recover-messages script — interrupted-rerun recompute', () => {
   });
 
   test('rerun recomputes a session a prior interrupted run left stale (no new inserts)', () => {
-    // All UUIDs already exist, so this run inserts nothing for sess-S — yet the
-    // counter must still be recomputed. Fails if touchedSessions only tracks
-    // current-run inserts.
     execFileSync('bun', [SCRIPT, dbPath], {
       stdio: ['ignore', 'ignore', 'pipe'],
     });
@@ -140,7 +115,6 @@ describe('recover-messages script — interrupted-rerun recompute', () => {
       .prepare(`SELECT visible_message_count AS n FROM sessions WHERE id = ?`)
       .get('sess-S') as { n: number };
     db.close();
-    // assistant + consumed user → 2 visible rows.
     expect(row.n).toBe(2);
   }, 30000);
 });

@@ -1,10 +1,3 @@
-/**
- * ChannelInfoPanel
- *
- * Read-only info panel shown when a channel edge is selected in the runtime canvas.
- * Displays: source node → target node, direction, and loop badge.
- */
-
 import type { JSX } from 'preact';
 import type { ResolvedWorkflowChannel } from './visual-editor/EdgeRenderer';
 import { cn } from '../../lib/utils';
@@ -38,7 +31,6 @@ export function ChannelInfoPanel({
     >
       <div class="flex items-start justify-between gap-3">
         <div class="flex-1 min-w-0 space-y-2">
-          {/* Connection */}
           <div class="flex items-center gap-2 text-sm">
             <span class="font-medium text-gray-100 truncate max-w-[120px]" title={fromNodeName}>
               {fromNodeName}
@@ -50,7 +42,6 @@ export function ChannelInfoPanel({
             {channel.isCyclic && <span class="text-xs text-amber-500 flex-shrink-0">↩ loop</span>}
           </div>
 
-          {/* Optional channel label */}
           {channel.label && (
             <div class="text-xs text-gray-400 truncate" title={channel.label}>
               {channel.label}

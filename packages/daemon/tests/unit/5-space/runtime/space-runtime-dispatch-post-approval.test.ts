@@ -1,27 +1,3 @@
-/**
- * Regression coverage for SpaceRuntime.dispatchPostApproval (PR 2/5 review fixes).
- *
- * Drives the **full flow** through `dispatchPostApproval` (not just
- * `setTaskStatus`) to pin down two bugs the initial implementation had:
- *
- *   Bug 1 — `approvalReason` from `contextExtras` was silently dropped on the
- *   `review → approved` transition. `SpaceTaskManager.setTaskStatus` would then
- *   stamp `approvalReason: null`, overwriting whatever the caller had already
- *   written via `updateTask`.
- *
- *   Bug 2 — The no-route branch (`workflow.postApproval` absent → direct
- *   `approved → done`) bypassed `safeOnTaskUpdated`, leaving UI listeners in
- *   the dark until the next poll. Only the RPC path emitted (because
- *   `approvePendingCompletion` re-reads + emits after dispatch); the end-node
- *   tick path did not.
- *
- * These tests guard the fixes by:
- *   - Asserting `approvalReason` is persisted after `dispatchPostApproval`
- *     on the review → approved transition with a reason in `contextExtras`.
- *   - Asserting `onTaskUpdated` is invoked with a task in status `done` after
- *     a no-route dispatch (covers the end-node tick path that has no follow-up).
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -83,8 +59,6 @@ function buildRuntime(): Ctx {
     onTaskUpdated: async ({ spaceId, task }) => {
       emitted.push({ spaceId, task });
     },
-    // Minimal Task Agent stub — only inline Task Agent post-approval routes
-    // use injectIntoTaskAgent. The no-route tests below must not touch it.
     taskAgentManager: {
       injectIntoTaskAgent: async (_taskId, message) => {
         injected.push(message);
@@ -100,9 +74,6 @@ function buildRuntime(): Ctx {
 }
 
 function seedReviewTask(taskRepo: SpaceTaskRepository): SpaceTask {
-  // Start in 'in_progress' then transition to 'review' via the repo (setting
-  // status directly bypasses the transition validator, which is fine for a
-  // fixture — the runtime does NOT look at transition history).
   const t = taskRepo.createTask({
     spaceId: SPACE_ID,
     title: 'Ship it',
@@ -128,10 +99,6 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
     }
   });
 
-  // ---------------------------------------------------------------------------
-  // Bug 1 regression
-  // ---------------------------------------------------------------------------
-
   test('forwards approvalReason from contextExtras to setTaskStatus (review → approved)', async () => {
     const task = seedReviewTask(ctx.taskRepo);
 
@@ -140,10 +107,8 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
     });
 
     const final = ctx.taskRepo.getTask(task.id);
-    expect(final?.status).toBe('done'); // no-route → closed
+    expect(final?.status).toBe('done');
     expect(final?.approvalSource).toBe('human');
-    // The critical assertion: reason survives the round-trip. Prior to the
-    // fix it would be null because dispatchPostApproval silently dropped it.
     expect(final?.approvalReason).toBe('LGTM — ship it');
     expect(final?.approvedAt).toBeTypeOf('number');
   });
@@ -158,19 +123,11 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
     expect(final?.approvalSource).toBe('human');
   });
 
-  // ---------------------------------------------------------------------------
-  // Bug 2 regression
-  // ---------------------------------------------------------------------------
-
   test('emits onTaskUpdated with status=done after no-route dispatch', async () => {
     const task = seedReviewTask(ctx.taskRepo);
 
     await ctx.runtime.dispatchPostApproval(task.id, 'agent');
 
-    // At least two emits expected: one for review → approved (step 1), one
-    // for the post-router state (approved → done). The end-of-dispatch emit
-    // is the critical one — without it the UI would not learn about the
-    // closure until the next poll.
     const doneEmits = ctx.emitted.filter((e) => e.task.status === 'done');
     expect(doneEmits.length).toBeGreaterThanOrEqual(1);
     expect(doneEmits[doneEmits.length - 1].task.id).toBe(task.id);
@@ -193,7 +150,6 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
 
     const final = ctx.taskRepo.getTask(t.id);
     expect(final?.status).toBe('done');
-    // Should still emit even though the transition step was skipped.
     expect(ctx.emitted.some((e) => e.task.id === t.id && e.task.status === 'done')).toBe(true);
   });
 
@@ -206,16 +162,8 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
     expect(ctx.injected).toHaveLength(0);
   });
 
-  // ---------------------------------------------------------------------------
-  // Layer B regression — pending-completion fields cleared after dispatch
-  // ---------------------------------------------------------------------------
-
   test('Layer B: clears all four pending-completion fields after no-route dispatch', async () => {
     const task = seedReviewTask(ctx.taskRepo);
-    // Stamp the pending-completion fields exactly as `submit_for_approval`
-    // does, so we can assert they are null once dispatch completes. This task
-    // has no workflow → no Post-Approval route → the no-route branch runs and
-    // closes it to `done`.
     ctx.taskRepo.updateTask(task.id, {
       pendingCheckpointType: 'task_completion',
       pendingCompletionSubmittedByNodeId: 'node-review',
@@ -228,7 +176,6 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
     const final = ctx.taskRepo.getTask(task.id);
     expect(final?.status).toBe('done');
     expect(final?.postApprovalSessionId).toBeNull();
-    // All four pending-completion fields must be cleared.
     expect(final?.pendingCheckpointType).toBeNull();
     expect(final?.pendingCompletionSubmittedByNodeId).toBeNull();
     expect(final?.pendingCompletionSubmittedAt).toBeNull();

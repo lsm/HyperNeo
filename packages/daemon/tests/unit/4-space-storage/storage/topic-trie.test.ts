@@ -6,7 +6,6 @@ import {
 } from '../../../../src/lib/external-events/topic-trie';
 
 describe('TopicTrie', () => {
-  // GitHub 5-segment format: source/owner/repo/resource/entityId.action
   const topic = 'github/lsm/neokai/pull_request/5.review_submitted';
 
   test('matches an exact topic pattern', () => {

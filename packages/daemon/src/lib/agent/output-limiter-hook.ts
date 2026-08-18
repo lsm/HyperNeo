@@ -1,24 +1,9 @@
-/**
- * Output Limiter Hook
- *
- * Prevents large tool outputs from overflowing the model context window.
- *
- * Strategy:
- * - PreToolUse: inject limit parameters for Read (line limit) and Grep
- *   (head_limit) so the tools fetch less data in the first place.
- * - PostToolUse: truncate Bash stdout/stderr via updatedToolOutput if the
- *   output exceeds line or byte thresholds. The command runs unwrapped,
- *   so exit codes, heredocs, cwd, sandbox, and background behavior are
- *   all preserved naturally.
- */
-
 import type {
   HookCallback,
   PostToolUseHookInput,
   PreToolUseHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
 
-// Resolved configuration (all fields populated)
 interface OutputLimiterConfig {
   enabled: boolean;
   bash: {
@@ -34,7 +19,6 @@ interface OutputLimiterConfig {
   excludeTools: string[];
 }
 
-// Input shape: nested values may be partial (settings update path)
 export interface OutputLimiterConfigInput {
   enabled?: boolean;
   bash?: {
@@ -43,7 +27,6 @@ export interface OutputLimiterConfigInput {
   };
   read?: {
     maxLines?: number;
-    /** @deprecated Use maxLines instead. Legacy char-based limit. */
     maxChars?: number;
   };
   grep?: {
@@ -62,8 +45,6 @@ const DEFAULT_CONFIG: OutputLimiterConfig = {
     maxLines: 1000,
   },
   grep: {
-    // Match the SDK's built-in default so injecting head_limit never expands
-    // output beyond what the SDK would have returned on its own.
     maxMatches: 250,
   },
   excludeTools: [],
@@ -89,10 +70,6 @@ export function resolveConfig(input: OutputLimiterConfigInput = {}): OutputLimit
     excludeTools: input.excludeTools ?? DEFAULT_CONFIG.excludeTools,
   };
 }
-
-// ---------------------------------------------------------------------------
-// PreToolUse hook: inject limit parameters for Read and Grep
-// ---------------------------------------------------------------------------
 
 export function createOutputLimiterPreHook(config: OutputLimiterConfigInput = {}): HookCallback {
   const finalConfig = resolveConfig(config);
@@ -152,10 +129,6 @@ function injectReadOrGrepLimit(
   }
 }
 
-// ---------------------------------------------------------------------------
-// PostToolUse hook: truncate large Bash output via updatedToolOutput
-// ---------------------------------------------------------------------------
-
 export function createOutputLimiterPostHook(config: OutputLimiterConfigInput = {}): HookCallback {
   const finalConfig = resolveConfig(config);
 
@@ -183,11 +156,9 @@ export function createOutputLimiterPostHook(config: OutputLimiterConfigInput = {
     const totalBytes = stdout.length + stderr.length;
 
     if (totalLines <= headLines + tailLines && totalBytes <= maxBytes) {
-      return {}; // Within limits
+      return {};
     }
 
-    // Split the line budget across stdout and stderr proportionally so the
-    // combined output stays within the configured cap.
     const stdoutTruncated = truncateOutput(stdout, headLines, tailLines, maxBytes);
     const stderrTruncated = truncateOutput(stderr, headLines, tailLines, maxBytes);
 
@@ -204,11 +175,6 @@ export function createOutputLimiterPostHook(config: OutputLimiterConfigInput = {
   };
 }
 
-/**
- * Truncate a string to the first `headLines` + last `tailLines` lines.
- * Also enforces a byte cap for strings with very long individual lines.
- * Returns the original string if within both limits.
- */
 function truncateOutput(
   str: string,
   headLines: number,
@@ -217,7 +183,6 @@ function truncateOutput(
 ): string {
   if (!str) return str;
 
-  // Byte cap for very long single lines (minified JSON, base64).
   if (str.length > maxBytes) {
     const halfBytes = Math.floor(maxBytes / 2);
     return `${str.slice(0, halfBytes)}\n\n... [Truncated ${str.length - maxBytes} bytes] ...\n\n${str.slice(-halfBytes)}`;

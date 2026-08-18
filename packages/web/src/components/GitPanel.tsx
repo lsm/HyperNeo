@@ -65,26 +65,15 @@ function compactPath(path: string): string {
   return `${parts[0]}/.../${parts.slice(-2).join('/')}`;
 }
 
-/** Build a vscode:// file URI from the repo root + a repo-relative path.
- * Percent-encodes each segment so reserved characters (#, ?, space) in repo or
- * file paths don't get misread as fragment/query. Backslash separators are
- * normalized to `/` only for Windows roots (drive-letter or UNC `\\server\…` /
- * `//server/…`) — on POSIX a backslash is a legal filename char and is
- * percent-encoded (%5C) instead of turned into a separator. */
 function editorFileUri(root: string | null, relPath: string): string | null {
   if (!root || !relPath) return null;
   const isWindows = /^([A-Za-z]:[\\/]|[\\/]{2})/.test(root);
   const norm = (p: string) => (isWindows ? p.replace(/\\/g, '/') : p);
   const abs = `${norm(root.replace(/[\\/]+$/, ''))}/${norm(relPath)}`;
   const encoded = abs.split('/').map(encodeURIComponent).join('/');
-  // Strip a single leading slash so a POSIX root (/repo) renders as
-  // vscode://file/repo/…, while preserving the double-slash UNC prefix
-  // (//server/share → vscode://file//server/share/…).
   return `vscode://file/${encoded.replace(/^\//, '')}`;
 }
 
-/** Cheap stable string hash (FNV-1a). Used to fold a large patch string into a
- * short key without placing the full string in a deps array. */
 function hashString(value: string): string {
   let h = 0x811c9dc5;
   for (let i = 0; i < value.length; i++) {
@@ -134,11 +123,6 @@ function checkBucket(check: GitCheckSummary): 'pass' | 'fail' | 'pending' | 'oth
   return 'other';
 }
 
-/** The working-tree group(s) a review file belongs to. A file staged AND
- * modified again in the worktree (porcelain `MM`) appears in BOTH Staged and
- * Unstaged — the binary `staged` flag alone can't represent that dual state.
- * Files with no working-tree entry (committed on the branch, clean tree) fall
- * back to a separate "On branch" group. */
 function fileBuckets(
   file: GitReviewFile,
   stagedByPath: Map<string, boolean>,
@@ -457,22 +441,16 @@ function FileList({
     ? files.filter((file) => file.path.toLowerCase().includes(normalized))
     : files;
 
-  // Only split into groups when there is staged/unstaged information available
-  // (i.e. a working tree). A branch-only review with no working-tree status
-  // renders a flat list.
   const hasWorktree = stagedByPath.size > 0;
   const groups: FileBucket[] = ['staged', 'unstaged', 'committed'];
   const grouped = groups
     .map((bucket) => ({
       bucket,
-      // A file with both staged and unstaged changes appears in both groups.
       items: filtered.filter((file) =>
         fileBuckets(file, stagedByPath, unstagedByPath).includes(bucket)
       ),
     }))
     .filter((group) => group.items.length > 0);
-  // When every file is in one bucket (or no working tree), render flat to avoid
-  // a lone group header above the list.
   const renderGrouped = hasWorktree && grouped.length > 1;
 
   return (
@@ -538,9 +516,6 @@ function FileRow({
   onSelect: (path: string) => void;
   repoRootPath: string | null;
 }) {
-  // A deleted file's path no longer exists in the working tree — opening it in
-  // the editor would show a blank/recreate prompt, so omit the action. (Copied
-  // path and diff preview remain available.)
   const editorHref = file.status === 'deleted' ? null : editorFileUri(repoRootPath, file.path);
 
   return (
@@ -631,18 +606,8 @@ function DiffPreview({ file, sessionId }: { file: GitReviewFile | null; sessionI
   const [fullTruncated, setFullTruncated] = useState(false);
   const [loadingFull, setLoadingFull] = useState(false);
   const [expandError, setExpandError] = useState<string | null>(null);
-  // Token guarding in-flight expand requests: bumped when the selected file's
-  // content changes so a response that lands after a refresh (or a newer
-  // expand) is discarded instead of re-expanding stale content.
   const expandSeq = useRef(0);
 
-  // A stable per-file content key: changes only when the selected file's actual
-  // content changes — NOT on every poll. Combines the truncated preview patch
-  // (hashed, so same-numstat edits within the preview still move the key — e.g.
-  // modifying an existing line) with the full numstat (catches edits beyond the
-  // MAX_PATCH_CHARS slice the truncated preview can't see). Keying the reset on
-  // this (rather than a per-poll revision) preserves an expanded diff across
-  // unchanged polls and avoids killing a slow in-flight expand every 10s.
   const fileKey = file
     ? `${file.path} ${file.additions} ${file.deletions} ${file.patchTruncated} ${hashString(file.patch ?? '')}`
     : null;
@@ -653,8 +618,6 @@ function DiffPreview({ file, sessionId }: { file: GitReviewFile | null; sessionI
     setFullPatch(null);
     setFullTruncated(false);
     setExpandError(null);
-    // A superseded expand's finally skips its loadingFull clear (guard mismatch),
-    // so drop the spinner here too — otherwise the button stays on "Loading…".
     setLoadingFull(false);
   }, [fileKey]);
 
@@ -675,10 +638,7 @@ function DiffPreview({ file, sessionId }: { file: GitReviewFile | null; sessionI
     setExpandError(null);
     try {
       const result = await getGitFileDiff(sessionId, file.path);
-      if (requestId !== expandSeq.current) return; // superseded by a refresh/newer expand
-      // git.fileDiff resolves (not rejects) with an error + null patch if the
-      // workspace stopped being a repo mid-flight — surface it and keep the
-      // truncated preview rather than replacing it with "no diff available".
+      if (requestId !== expandSeq.current) return;
       if (result.error) {
         setExpandError(result.error);
         return;
@@ -759,11 +719,6 @@ function GitPanelBody({ status }: { status: GitSessionStatusResponse }) {
     for (const file of status.files) map.set(file.path, file.unstaged);
     return map;
   }, [status.files]);
-  // Editor links and porcelain/diff paths are relative to the git working-tree
-  // root where the session's files actually live. `gitRoot` is exactly that
-  // (the worktree root for worktree sessions, the repo root for direct ones);
-  // unlike `mainRepoPath`, it stays inside an externally-created linked
-  // worktree instead of resolving back to the main checkout.
   const repoRootPath = status.gitRoot ?? status.worktreePath ?? status.mainRepoPath;
 
   useEffect(() => {

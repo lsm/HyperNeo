@@ -10,7 +10,6 @@ import {
   Clock,
 } from 'lucide-preact';
 
-// Demo 1: Small Calendar with Meetings
 function SmallWithMeetings() {
   const meetings = [
     {
@@ -246,7 +245,6 @@ function SmallWithMeetings() {
   );
 }
 
-// Demo 2: Month View Calendar
 function MonthView() {
   const meetings = [
     {
@@ -462,7 +460,6 @@ function MonthView() {
   );
 }
 
-// Demo 3: Week View Calendar
 function WeekView() {
   const events = [
     { id: 1, name: 'Maple syrup museum', time: '3PM', datetime: '2022-01-15T09:00', href: '#' },
@@ -854,7 +851,6 @@ function WeekView() {
   );
 }
 
-// Demo 4: Day View Calendar
 function DayView() {
   return (
     <div class="flex h-full flex-col">
@@ -1378,7 +1374,6 @@ function DayView() {
   );
 }
 
-// Demo 5: Year View Calendar
 function YearView() {
   const months = [
     {
@@ -1757,7 +1752,6 @@ function YearView() {
   );
 }
 
-// Demo 6: Borderless Stacked Calendar (Week View with sidebar)
 function BorderlessStacked() {
   const [selectedDate, setSelectedDate] = useState('2022-01-22');
 
@@ -1852,7 +1846,6 @@ function BorderlessStacked() {
       </header>
 
       <div class="flex flex-auto overflow-hidden">
-        {/* Week view sidebar */}
         <div class="hidden w-48 flex-none border-r border-surface-border p-4 lg:block dark:border-white/10">
           <div class="space-y-3">
             {days.map((day) => (
@@ -1877,7 +1870,6 @@ function BorderlessStacked() {
           </div>
         </div>
 
-        {/* Day schedule */}
         <div class="flex-auto overflow-auto p-4">
           <div class="space-y-4">
             {events.map((event) => (
@@ -1927,7 +1919,6 @@ function BorderlessStacked() {
   );
 }
 
-// Demo 7: Borderless Side by Side Calendar
 function BorderlessSideBySide() {
   const days = [
     { date: '2022-01-16' },
@@ -2016,7 +2007,6 @@ function BorderlessSideBySide() {
       </header>
 
       <div class="flex flex-auto overflow-hidden">
-        {/* Mini calendar */}
         <div class="hidden w-64 flex-none border-r border-surface-border p-4 dark:border-white/10 lg:block">
           <h3 class="text-sm font-semibold text-text-primary dark:text-white mb-4">January 2022</h3>
           <div class="grid grid-cols-7 gap-1 text-center text-xs">
@@ -2039,7 +2029,6 @@ function BorderlessSideBySide() {
           </div>
         </div>
 
-        {/* Schedule view */}
         <div class="flex-auto overflow-auto p-6">
           <div class="space-y-4">
             <div class="flex items-center gap-4">

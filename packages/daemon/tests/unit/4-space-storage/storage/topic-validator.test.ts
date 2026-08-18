@@ -1,12 +1,3 @@
-/**
- * Topic Validator Unit Tests
- *
- * Covers:
- *   - validateGlobPattern: valid patterns across different segment counts, edge cases
- *   - validateLiteralTopic: literal topics accepted, wildcards rejected
- *   - validateSource: known sources, unknown sources, malformed sources
- */
-
 import { describe, expect, test } from 'bun:test';
 import {
   KNOWN_SOURCES,

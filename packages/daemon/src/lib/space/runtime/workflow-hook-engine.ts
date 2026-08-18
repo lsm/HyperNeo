@@ -1,20 +1,3 @@
-/**
- * Workflow Hook Engine
- *
- * Receives structured action context before selected node-agent MCP handlers
- * execute. Snapshots matching enabled hooks, sorts by classification then order
- * then id, and executes them serially in a single action-scoped pipeline.
- *
- * Hook result precedence:
- *   - validation `block` stops the chain and blocks the action
- *   - validation `retryable_block` stops the chain and blocks (retryable)
- *   - `block` takes precedence over `retryable_block`
- *   - side-effect failures are recorded but do not block
- *   - multiple `patch_params` apply sequentially
- *   - `emit_follow_up` dispatches through the handler pipeline (depth capped at 1)
- *   - `record_state` persists hook-local state
- */
-
 import type {
   WorkflowHook,
   WorkflowHookResult,
@@ -45,11 +28,6 @@ import {
   MarkCompleteSchema,
 } from '../tools/task-agent-tool-schemas';
 
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
-
-/** Metadata about the current action, passed by the tool handler wrapper. */
 export interface HookActionMeta {
   sessionId: string;
   agentName: string;
@@ -58,9 +36,7 @@ export interface HookActionMeta {
   targetNode?: string;
 }
 
-/** Outcome of running the hook chain for a single MCP action. */
 export interface HookActionOutcome {
-  /** The most significant decision from the hook chain. */
   decision:
     | 'allow'
     | 'block'
@@ -68,21 +44,14 @@ export interface HookActionOutcome {
     | 'patch_params'
     | 'emit_follow_up'
     | 'record_state';
-  /** Final params after all patch_params applied (or original if none). */
   finalParams: Record<string, unknown>;
-  /** Follow-up actions to dispatch, if any. */
   followUpRequests: Array<{ targetNode: string; message: string }>;
-  /** State updates to persist. */
   stateUpdates: Array<{ hookId: string; state: Record<string, unknown> }>;
-  /** Normalized user-visible state for banners/debug UI. */
   userState: WorkflowHookUserState;
-  /** Per-hook execution log for auditing. */
   executionLog: HookExecutionRecord[];
-  /** The hook ID that caused a block, if any. */
   blockedByHookId?: string;
 }
 
-/** Record of a single hook execution. */
 export interface HookExecutionRecord {
   hookId: string;
   classification: 'validation' | 'side_effect';
@@ -90,16 +59,8 @@ export interface HookExecutionRecord {
   timestamp: number;
 }
 
-/**
- * Reserved hook id under which the engine stamps the run's pr_ready-validated
- * PR identity. Hook `record_state`/`stateForHook` updates target a hook's OWN
- * id, so no real (user-defined) hook can write here; the resolver reads this key
- * directly instead of matching user-defined hook ids by substring, closing the
- * colliding-hook-id / record_state PR-identity spoof.
- */
 export const PR_READY_VALIDATED_IDENTITY_HOOK_ID = '__pr_ready_validated_identity__';
 
-/** Dependencies for the workflow hook engine. */
 export interface WorkflowHookEngineConfig {
   workflow: SpaceWorkflow;
   workflowRunId: string;
@@ -116,27 +77,16 @@ export interface WorkflowHookEngineConfig {
   onHookStateUpdated?: (hookId: string, hookState: WorkflowHookStateSnapshot) => void;
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 const log = new Logger('workflow-hook-engine');
 
-/** Whitelisted MCP methods that may be used for follow-up actions. */
 const FOLLOW_UP_METHODS = new Set(['send_message']);
 
-/** Maximum follow-up execution latency budget (30 seconds default). */
 const DEFAULT_FOLLOW_UP_TIMEOUT_MS = 30_000;
 
-/** Default delay for queued retryable hook actions when validator omits retryAfterMs. */
 const DEFAULT_RETRYABLE_ACTION_DELAY_MS = 30_000;
 
 interface PendingRetryableHookAction {
@@ -170,25 +120,18 @@ interface QueuedRetryableHookAction {
   queuedAt: number;
 }
 
-/** Maximum bytes for an artifact data payload injected into hook context. */
 const MAX_ARTIFACT_DATA_BYTES = 16_384;
 
-/** Maximum bytes for a param `data` field before it is redacted in hook env. */
 const MAX_PARAM_DATA_BYTES = 4096;
 
-/** Maximum bytes for hook-local state serialized into the script env. */
 const MAX_HOOK_LOCAL_STATE_BYTES = 8192;
 
-/** Maximum items in an array before truncation in hook env params. */
 const MAX_ARRAY_ITEMS = 100;
 
-/** Maximum keys in an object before truncation in hook env params. */
 const MAX_OBJECT_KEYS = 50;
 
-/** Maximum bytes for the serialized params JSON injected into hook env. */
 const MAX_PARAMS_JSON_BYTES = 32_768;
 
-/** Maximum bytes for the entire serialized artifacts array injected into hook env. */
 const MAX_ARTIFACTS_ARRAY_BYTES = 65_536;
 
 const METHOD_PARAM_SCHEMAS: Record<string, import('zod').ZodType<unknown>> = {
@@ -199,10 +142,6 @@ const METHOD_PARAM_SCHEMAS: Record<string, import('zod').ZodType<unknown>> = {
   submit_for_approval: SubmitForApprovalSchema,
   mark_complete: MarkCompleteSchema,
 };
-
-// ---------------------------------------------------------------------------
-// Engine
-// ---------------------------------------------------------------------------
 
 export class WorkflowHookEngine {
   constructor(private readonly config: WorkflowHookEngineConfig) {}
@@ -318,10 +257,6 @@ export class WorkflowHookEngine {
     );
   }
 
-  /**
-   * Persist a single hook-local state update (and optional last result) through
-   * the repository. Returns true on success, false on version conflict or error.
-   */
   persistStateUpdate(
     hookId: string,
     state: Record<string, unknown>,
@@ -348,14 +283,6 @@ export class WorkflowHookEngine {
     return false;
   }
 
-  /**
-   * Execute the hook chain for an MCP action.
-   *
-   * @param methodName  The MCP method being invoked (e.g. 'send_message')
-   * @param params      The raw params passed to the method
-   * @param meta        Caller identity metadata
-   * @returns           HookActionOutcome with decision, patched params, and user state
-   */
   async executeAction(
     methodName: string,
     params: Record<string, unknown>,
@@ -387,20 +314,13 @@ export class WorkflowHookEngine {
     } | null = null;
 
     for (const hook of sortedHooks) {
-      // If a validation hook already returned non-retryable block, skip everything
       if (blockedByValidation?.isRetryable === false) {
         break;
       }
-      // If a validation hook returned retryable_block, skip remaining side-effects
-      // but allow later validation hooks to run (so block can override retryable_block)
       if (blockedByValidation && (hook.classification ?? 'validation') === 'side_effect') {
         break;
       }
 
-      // Pre-check retry backoff / limit for validation hooks so we don't waste
-      // executor runs while a retryable_block cooldown is active. Dynamic
-      // retryAfterMs results also persist nextRetryAt even when hook.retry is
-      // not configured, so repeated manual attempts respect the same cooldown.
       if ((hook.classification ?? 'validation') === 'validation') {
         const hookState = this.config.hookStateRepo.get(this.config.workflowRunId, hook.id);
         const maxAttempts = hook.retry?.maxAttempts ?? 0;
@@ -475,16 +395,8 @@ export class WorkflowHookEngine {
         timestamp: Date.now(),
       });
 
-      // Process result
       switch (result.type) {
         case 'allow':
-          // Snapshot the run's reviewed PR identity ONLY when the pr_ready
-          // validator allows the handoff. Stamping pr_url into ANY allowed
-          // send_message hook's localState let a custom hook with a colliding
-          // id (e.g. `post-pr-ready-notification`) and a different validator
-          // supply a spoofed pr_url that resolveInitialPrimaryLinkUrl (which
-          // matches hook ids by the `pr-ready` substring) would then trust for
-          // merge-dispatch resolution and the mark_complete merge gate.
           if (
             methodName === 'send_message' &&
             hook.validator.kind === 'built_in' &&
@@ -492,14 +404,7 @@ export class WorkflowHookEngine {
           ) {
             const prUrl = extractPrUrlFromParams(currentParams);
             if (prUrl) {
-              // The pr_ready hook's own state — used by the validator's frozen-
-              // identity check on later handoffs.
               stateUpdates.push({ hookId: hook.id, state: { pr_url: prUrl } });
-              // The authoritative run-level identity under a RESERVED hook id.
-              // record_state / stateForHook target a hook's OWN id, so no real
-              // hook can write here — the resolver reads this key directly
-              // instead of matching user-defined hook ids by substring, closing
-              // the colliding-hook-id / record_state spoof.
               stateUpdates.push({
                 hookId: PR_READY_VALIDATED_IDENTITY_HOOK_ID,
                 state: { pr_url: prUrl },
@@ -519,12 +424,10 @@ export class WorkflowHookEngine {
           if ((hook.classification ?? 'validation') === 'validation') {
             blockedByValidation = { hookId: hook.id, result, isRetryable: false };
           }
-          // side_effect block is recorded but does not stop
           break;
 
         case 'retryable_block': {
           if ((hook.classification ?? 'validation') === 'validation') {
-            // block takes precedence over retryable_block
             if (!blockedByValidation) {
               const retryConfig = hook.retry;
               const maxAttempts = retryConfig?.maxAttempts ?? 0;
@@ -535,7 +438,6 @@ export class WorkflowHookEngine {
               if (maxAttempts > 0 && currentRetryCount >= maxAttempts) {
                 blockedByValidation = { hookId: hook.id, result, isRetryable: false };
               } else if (nextRetryAt !== undefined && Date.now() < nextRetryAt) {
-                // Delay has not elapsed — remain retryable without consuming another attempt.
                 blockedByValidation = { hookId: hook.id, result, isRetryable: true };
               } else {
                 blockedByValidation = { hookId: hook.id, result, isRetryable: true };
@@ -589,7 +491,6 @@ export class WorkflowHookEngine {
           }
           if (result.patch && typeof result.patch === 'object') {
             const patch = { ...result.patch };
-            // Disallow routing field patches to prevent target bypass
             if (methodName === 'send_message' && 'target' in patch) {
               log.warn(
                 `Hook "${hook.id}" tried to patch send_message target; target change ignored.`
@@ -609,13 +510,6 @@ export class WorkflowHookEngine {
               };
             } else {
               currentParams = patchedParams;
-              // A pr_ready patch_params success (it discovered the PR from
-              // templateData / the current branch because the sender omitted
-              // data.pr_url) is a successful handoff — stamp the frozen
-              // identity (hook-local + reserved key) just like the allow branch,
-              // using the now-patched params. Without this, the common no-pr_url
-              // handoff recorded no frozen identity and later blocker/fix
-              // handoffs failed closed.
               if (
                 methodName === 'send_message' &&
                 hook.validator.kind === 'built_in' &&
@@ -651,10 +545,6 @@ export class WorkflowHookEngine {
           }
           if (isRecord(result.stateForHook)) {
             for (const [hookId, state] of Object.entries(result.stateForHook)) {
-              // Hooks cannot write the reserved pr_ready-identity key — it is
-              // engine-only (stamped on pr_ready allow), so the resolver can
-              // trust it as the authoritative run PR identity. record_state and
-              // stateForHook are user/hook-addressable; reject the reserved id.
               if (hookId === PR_READY_VALIDATED_IDENTITY_HOOK_ID) continue;
               if (isRecord(state)) stateUpdates.push({ hookId, state });
             }
@@ -662,8 +552,6 @@ export class WorkflowHookEngine {
           break;
       }
 
-      // Reset retry metadata when the hook does not return a retryable_block,
-      // so later unrelated actions start with a fresh attempt budget.
       if (result.type !== 'retryable_block') {
         let updateOk = false;
         for (let attempt = 0; attempt < 3; attempt++) {
@@ -692,7 +580,6 @@ export class WorkflowHookEngine {
       }
     }
 
-    // Determine final decision
     if (blockedByValidation) {
       const hook = sortedHooks.find((h) => h.id === blockedByValidation!.hookId)!;
       const isRetryable = blockedByValidation.isRetryable;
@@ -709,7 +596,6 @@ export class WorkflowHookEngine {
       };
     }
 
-    // Determine the most significant non-block decision
     const hasPatch = !this.shallowEqual(params, currentParams);
     const hasFollowUp = followUpRequests.length > 0;
     const hasState = stateUpdates.length > 0;
@@ -737,10 +623,6 @@ export class WorkflowHookEngine {
     };
   }
 
-  // -------------------------------------------------------------------------
-  // Hook resolution
-  // -------------------------------------------------------------------------
-
   private resolveMatchingHooks(
     methodName: string,
     params: Record<string, unknown>,
@@ -751,7 +633,6 @@ export class WorkflowHookEngine {
 
     const nodeName = workflow.nodes.find((n) => n.id === meta.nodeId)?.name ?? meta.agentName;
 
-    // Build slot-to-nodes map so duplicate slot names across nodes are preserved
     const slotToNodes = new Map<string, string[]>();
     for (const node of workflow.nodes) {
       for (const agent of node.agents ?? []) {
@@ -768,7 +649,6 @@ export class WorkflowHookEngine {
     const nodeNames = new Set(workflow.nodes.map((n) => n.name));
     const resolver = new ChannelResolver(workflow.channels ?? []);
 
-    // Resolve action target(s) for send_message
     const actionTargets = new Set<string>();
     let allRequestedTargetsRoutable = true;
     const isRoutableTarget = (targetNode: string): boolean =>
@@ -888,19 +768,15 @@ export class WorkflowHookEngine {
       if (!hook.enabled) return false;
       if (hook.method !== methodName) return false;
 
-      // Match sourceNode — must be the current workflow node name
       if (hook.sourceNode !== nodeName) return false;
 
-      // Match targetNode when declared — non-send_message methods have no action
-      // target to compare, so a hook with targetNode on those methods is skipped.
       if (hook.targetNode) {
         if (methodName !== 'send_message') return false;
         if (!allRequestedTargetsRoutable) return false;
         if (!actionTargets.has(hook.targetNode)) return false;
       }
 
-      // Authorized callers check
-      if (hook.humanOnly) return false; // agent MCP sessions cannot trigger human-only hooks
+      if (hook.humanOnly) return false;
       if (!hook.authorizedCallers || hook.authorizedCallers.length === 0) return false;
 
       return hook.authorizedCallers.some((caller) => {
@@ -915,38 +791,17 @@ export class WorkflowHookEngine {
     return [...hooks].sort((a, b) => {
       const aClass = a.classification ?? 'validation';
       const bClass = b.classification ?? 'validation';
-      // Validation hooks first
       if (aClass !== bClass) {
         return aClass === 'validation' ? -1 : 1;
       }
-      // Then by order (lower first)
       const orderA = a.order ?? 0;
       const orderB = b.order ?? 0;
       if (orderA !== orderB) return orderA - orderB;
-      // Then by id for determinism
       return a.id.localeCompare(b.id);
     });
   }
 
-  // -------------------------------------------------------------------------
-  // Context building
-  // -------------------------------------------------------------------------
-
-  /**
-   * Resolve the run's frozen reviewed PR URL: the latest `pr_url` stamped by a
-   * `pr_ready` built-in validator's hook. After the engine gated pr_url
-   * stamping on the pr_ready validator, only those hooks carry a frozen pr_url,
-   * so this is the authoritative run-level identity that merge dispatch and the
-   * mark_complete merge gate bind to. Returns undefined when no pr_ready
-   * handoff has frozen an identity yet.
-   */
   private resolveFrozenPrUrl(): string | undefined {
-    // The reserved pr_ready-identity key is the authoritative frozen PR URL —
-    // engine-only (stamped on pr_ready allow; cross-hook writes to it are
-    // blocked), so a script hook cannot pollute it by writing to the ordinary
-    // pr_ready hook id. Reading it here (rather than the ordinary hook state)
-    // means the frozen identity bound to mark_complete / blocker handoffs is
-    // no longer spoofable via cross-hook state writes.
     try {
       const st = this.config.hookStateRepo.get(
         this.config.workflowRunId,
@@ -969,14 +824,12 @@ export class WorkflowHookEngine {
     const workflow = this.config.workflow;
     const nodeName = workflow?.nodes.find((n) => n.id === meta.nodeId)?.name ?? meta.agentName;
 
-    // Load hook-local state
     const hookState = this.config.hookStateRepo.ensure(
       this.config.workflowRunId,
       hook.id,
       hook.localState?.defaults ?? {}
     );
 
-    // Resolve recentResultRef from referenced hook state
     let hookLocalState = hookState.localState;
     if (hook.localState?.recentResultRef) {
       const ref = hook.localState.recentResultRef;
@@ -986,7 +839,6 @@ export class WorkflowHookEngine {
       }
     }
 
-    // Load current artifacts — most recently updated first, capped at 50
     let currentArtifacts: WorkflowRunArtifact[] = [];
     try {
       const all = this.config.artifactRepo?.listByRun(this.config.workflowRunId) ?? [];
@@ -998,9 +850,6 @@ export class WorkflowHookEngine {
       // best effort
     }
 
-    // Built-in validators resolve their connector deps through the registry
-    // (no hardcoded 'github'); the legacy ternary is a fallback when the
-    // connectors layer is disabled. Script validators carry their own list.
     const permittedExternalLookups: string[] =
       hook.validator.kind === 'script'
         ? (hook.validator.externalLookups ?? [])
@@ -1010,7 +859,6 @@ export class WorkflowHookEngine {
             ? ['github']
             : [];
 
-    // Build mapped artifacts with a total-byte budget to avoid exceeding OS env limits.
     const mappedArtifacts: Array<{
       id: string;
       nodeId: string;
@@ -1058,10 +906,6 @@ export class WorkflowHookEngine {
     };
   }
 
-  /**
-   * Return a bounded projection of action params to avoid oversized env.
-   * Large `data` fields are replaced with a placeholder; long messages truncated.
-   */
   private boundParams(params: Record<string, unknown>): Record<string, unknown> {
     const clone = { ...params };
     if (clone.data !== undefined) {
@@ -1077,8 +921,6 @@ export class WorkflowHookEngine {
     for (const key of Object.keys(clone)) {
       clone[key] = this.boundValue(clone[key]);
     }
-    // Fail-safe: if the total serialized params still exceed the budget,
-    // replace the whole object with a placeholder so Bun.spawn doesn't fail.
     try {
       const totalBytes = new TextEncoder().encode(JSON.stringify(clone)).length;
       if (totalBytes > MAX_PARAMS_JSON_BYTES) {
@@ -1090,11 +932,6 @@ export class WorkflowHookEngine {
     return clone;
   }
 
-  /**
-   * Recursively bound values before serializing into hook env vars.
-   * Strings longer than 4096 chars are truncated; objects and arrays
-   * are traversed deeply.
-   */
   private boundValue(value: unknown): unknown {
     if (typeof value === 'string' && value.length > 4096) {
       return value.slice(0, 4096) + '...[truncated]';
@@ -1127,10 +964,6 @@ export class WorkflowHookEngine {
     return value;
   }
 
-  /**
-   * Bound artifact data payloads to avoid oversized hook env vars.
-   * Values that exceed the byte budget are replaced with a placeholder.
-   */
   private boundArtifactData(data: unknown): unknown {
     if (data === null || typeof data !== 'object') return data;
     try {
@@ -1142,10 +975,6 @@ export class WorkflowHookEngine {
     return `[truncated: artifact data exceeds ${MAX_ARTIFACT_DATA_BYTES} bytes]`;
   }
 
-  /**
-   * Bound hook-local state before serializing into script env vars.
-   * Replaces the whole state with a placeholder when it exceeds the byte budget.
-   */
   private boundHookLocalState(state: Record<string, unknown>): Record<string, unknown> {
     try {
       const bytes = new TextEncoder().encode(JSON.stringify(state)).length;
@@ -1156,10 +985,6 @@ export class WorkflowHookEngine {
     return { _truncated: `hook local state exceeds ${MAX_HOOK_LOCAL_STATE_BYTES} bytes` };
   }
 
-  /**
-   * Re-validate patched params against the MCP method schema.
-   * Returns human-readable validation errors, or an empty array when valid.
-   */
   private validatePatchedParams(methodName: string, params: Record<string, unknown>): string[] {
     const schema = METHOD_PARAM_SCHEMAS[methodName];
     if (!schema) return [];
@@ -1172,10 +997,6 @@ export class WorkflowHookEngine {
     }
     return [];
   }
-
-  // -------------------------------------------------------------------------
-  // User state builders
-  // -------------------------------------------------------------------------
 
   private buildBlockUserState(
     hook: WorkflowHook,
@@ -1239,21 +1060,6 @@ export class WorkflowHookEngine {
     return base;
   }
 
-  // -------------------------------------------------------------------------
-  // Helpers
-  // -------------------------------------------------------------------------
-
-  /**
-   * Resolve a raw target string into one or more node names.
-   *
-   * Handles:
-   *   - node IDs → node name
-   *   - agent slot names → all matching node names (duplicate slots across nodes)
-   *   - @worker: addresses → decoded node segment
-   *   - bare node names / raw strings → returned as-is
-   *
-   * Target strings are trimmed before resolution.
-   */
   private resolveTargetEntries(
     target: string,
     nodeIdToName: Map<string, string>,
@@ -1264,7 +1070,6 @@ export class WorkflowHookEngine {
     if (nodeIdToName.has(trimmed)) {
       return [nodeIdToName.get(trimmed)!];
     }
-    // Prefer exact workflow node names over slot aliases
     if (nodeNames.has(trimmed)) {
       return [trimmed];
     }
@@ -1292,7 +1097,6 @@ export class WorkflowHookEngine {
     }
     if (trimmed.startsWith('@role:')) {
       const role = trimmed.slice(6);
-      // Decode actor-role:<nodeId|agentName> form used by the messaging adapter
       const actorRolePrefix = 'actor-role:';
       if (role.startsWith(actorRolePrefix)) {
         const actorRoleValue = decodeURIComponent(role.slice(actorRolePrefix.length));
@@ -1303,7 +1107,6 @@ export class WorkflowHookEngine {
         if (actorRoleSlotMatches) {
           return [...actorRoleSlotMatches];
         }
-        // Return the decoded value directly (may be a raw node name)
         return [actorRoleValue];
       }
       if (nodeIdToName.has(role)) {
@@ -1313,7 +1116,6 @@ export class WorkflowHookEngine {
       if (roleSlotMatches) {
         return [...roleSlotMatches];
       }
-      // Raw role may be a workflow node name
       return [role];
     }
     return [trimmed];
@@ -1330,14 +1132,8 @@ export class WorkflowHookEngine {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Handler wrapper
-// ---------------------------------------------------------------------------
-
-/** Symbol stored on wrapped handlers to retrieve the original unwrapped function. */
 const RAW_HANDLER = Symbol('rawHandler');
 
-/** Helper to build a typed ToolResult from inline hook responses. */
 function hookResult(
   data: Record<string, unknown>,
   isError = false
@@ -1553,17 +1349,6 @@ function getToolResultFailure(
   return undefined;
 }
 
-/**
- * Wrap an MCP tool handler with the workflow hook engine.
- *
- * @param methodName      The MCP method name (e.g. 'send_message')
- * @param handler         The original handler function
- * @param engine          The hook engine (undefined = pass-through)
- * @param handlers        The full handler map for follow-up dispatch
- * @param meta            Caller identity metadata
- * @param isFollowUp      Whether this call is itself a follow-up action
- * @returns               A wrapped handler that runs hooks before the original
- */
 export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
   methodName: string,
   handler: (args: T) => Promise<AnyToolResult>,
@@ -1578,8 +1363,6 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
     const actionKey = buildRetryableActionKey(methodName, args as Record<string, unknown>, meta);
     const outcome = await engine.executeAction(methodName, args as Record<string, unknown>, meta);
 
-    // Batch persist hook state updates and execution results.
-    // Each hook gets at most one repo write to avoid version conflicts.
     const updatesByHook = new Map<
       string,
       { state: Record<string, unknown>; result?: WorkflowHookResult }
@@ -1604,7 +1387,6 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
       }
     }
 
-    // Handle block
     if (outcome.decision === 'block') {
       if (outcome.blockedByHookId) {
         for (const queuedActionKey of engine.clearQueuedRetryableActionsForOwner(
@@ -1631,7 +1413,6 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
       );
     }
 
-    // Handle retryable block
     if (outcome.decision === 'retryable_block') {
       const retryAfterMs = outcome.userState.retryAfterMs ?? DEFAULT_RETRYABLE_ACTION_DELAY_MS;
       if (methodName === 'send_message') {
@@ -1727,13 +1508,11 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
     engine.clearQueuedRetryableActionsForKey(actionKey);
     clearRetryableHookActionTimer(actionKey);
 
-    // Skip nested follow-up emission — only one level of follow-up is allowed
     const nestedFollowUpSuppressed = outcome.followUpRequests.length > 0 && isFollowUp;
     if (nestedFollowUpSuppressed) {
       log.warn('Nested follow-up emission suppressed during follow-up dispatch.');
     }
 
-    // Handle follow-up dispatch
     if (outcome.followUpRequests.length > 0 && !nestedFollowUpSuppressed) {
       const followUpMethod = 'send_message';
       if (!FOLLOW_UP_METHODS.has(followUpMethod)) {
@@ -1757,13 +1536,11 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
         );
       }
 
-      // Unwrap if the handler was already wrapped to avoid double-wrapping
       const rawFollowUpHandler =
         ((followUpHandler as unknown as WrappedHandler<Record<string, unknown>>)[RAW_HANDLER] as
           | ((args: Record<string, unknown>) => Promise<AnyToolResult>)
           | undefined) ?? followUpHandler;
 
-      // Dispatch all follow-ups concurrently through the wrapped pipeline with timeout
       const followUpPromises = outcome.followUpRequests.map((req) => {
         const dispatchPromise = wrapHandlerWithHooks(
           followUpMethod,
@@ -1793,12 +1570,9 @@ export function wrapHandlerWithHooks<T extends Record<string, unknown>>(
         log.warn(
           `Follow-up dispatch timed out or failed: ${err instanceof Error ? err.message : String(err)}`
         );
-        // Task says "continues only after the follow-up action succeeds or fails"
-        // So we continue regardless, but we log the failure.
       }
     }
 
-    // Call original handler with final (potentially patched) params
     return handler(outcome.finalParams as T);
   };
 

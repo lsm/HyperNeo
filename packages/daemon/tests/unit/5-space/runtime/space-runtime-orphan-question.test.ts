@@ -1,22 +1,3 @@
-/**
- * SpaceRuntime — Orphaned-question cleanup tests (Task #138)
- *
- * Covers two related guarantees that protect users from a "dead-end" question
- * card after the runtime force-completes or blocks a session that was sitting
- * in `waiting_for_input`:
- *
- *   1. Step 1.5 force-idle SPARES sessions in `waiting_for_input` — the
- *      session is not stuck (a human is), so we leave it alone. (Part D)
- *
- *   2. When Step 1 (liveness check) decides to reset/block a node-execution,
- *      we call `markPendingQuestionOrphaned('agent_session_terminated')` on
- *      the live AgentSession before tearing it down. (Part C)
- *
- * The tests exercise the runtime through `processRunTick`-style flows with a
- * mock TaskAgentManager whose `getAgentSessionById` returns a stub that
- * tracks calls to `getProcessingState` / `markPendingQuestionOrphaned`.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -32,17 +13,11 @@ import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceWorkflow, AgentProcessingState } from '@hyperneo/shared';
 
-// ---------------------------------------------------------------------------
-// DB / seed helpers
-// ---------------------------------------------------------------------------
-
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
 
-  // runMigrations() applies migrations only; these unit fixtures need the base
-  // sdk_messages table because runtime recovery inspects persisted SDK output.
   db.exec(`CREATE TABLE IF NOT EXISTS sdk_messages (
 		id TEXT PRIMARY KEY,
 		session_id TEXT NOT NULL,
@@ -100,10 +75,6 @@ function buildLinearWorkflow(
   });
 }
 
-// ---------------------------------------------------------------------------
-// Mock AgentSession stub
-// ---------------------------------------------------------------------------
-
 interface AgentSessionStub {
   getProcessingState(): AgentProcessingState;
   markPendingQuestionOrphaned: (
@@ -124,10 +95,6 @@ function makeAgentSessionStub(state: AgentProcessingState): AgentSessionStub {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Mock TaskAgentManager
-// ---------------------------------------------------------------------------
-
 function makeMockTaskAgentManager(opts: {
   aliveSessions?: Set<string>;
   sessionStubs?: Map<string, AgentSessionStub>;
@@ -146,10 +113,6 @@ function makeMockTaskAgentManager(opts: {
     injectIntoTaskAgent: async () => ({ injected: false, reason: 'no-session' }),
   };
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe('SpaceRuntime — orphaned-question cleanup (Task #138)', () => {
   let db: BunDatabase;
@@ -200,19 +163,6 @@ describe('SpaceRuntime — orphaned-question cleanup (Task #138)', () => {
     }
   });
 
-  // --------------------------------------------------------------------
-  // Part C: Step 1 (liveness) marks the orphan question on dead sessions
-  // --------------------------------------------------------------------
-  //
-  // Defense-in-depth path. In production today, `isSessionAlive` lazily
-  // rehydrates a session from DB on first lookup, so for sessions whose row
-  // still exists this branch isn't hit — Part D handles them in Step 1.5.
-  // The Part C path covers the case where a session has been evicted and
-  // cannot be revived (e.g. SessionManager reports dead) but a stub still
-  // exposes the in-memory question state via `getAgentSessionById`. We
-  // exercise it here so a future refactor that decouples isSessionAlive
-  // from auto-rehydration can't silently regress the orphan cleanup.
-
   describe('Step 1 (liveness) orphans pending questions on dead sessions', () => {
     test('calls markPendingQuestionOrphaned with agent_session_terminated on a dead waiting_for_input session', async () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
@@ -246,10 +196,6 @@ describe('SpaceRuntime — orphaned-question cleanup (Task #138)', () => {
         agentSessionId: sessionId,
       });
 
-      // Stub reports waiting_for_input, but the session is NOT in the alive
-      // set — Step 1's liveness check sees it as dead and falls into the
-      // crash path, where Part C should call markPendingQuestionOrphaned
-      // before the execution is reset/blocked.
       const stub = makeAgentSessionStub({
         status: 'waiting_for_input',
         pendingQuestion: {
@@ -267,7 +213,6 @@ describe('SpaceRuntime — orphaned-question cleanup (Task #138)', () => {
       });
 
       const tam = makeMockTaskAgentManager({
-        // aliveSessions intentionally empty — isSessionAlive returns false
         aliveSessions: new Set(),
         sessionStubs: new Map([[sessionId, stub]]),
       });
@@ -275,11 +220,6 @@ describe('SpaceRuntime — orphaned-question cleanup (Task #138)', () => {
 
       await rt.executeTick();
 
-      // Crash path fired: orphan cleanup was invoked with the expected reason
-      // before the execution was reset/blocked. The downstream execution state
-      // (re-spawned, blocked, etc.) is owned by the runtime's lifecycle logic
-      // and out of scope for this assertion — we only care that the question
-      // card was flipped to cancelled.
       expect(stub._orphanCalls).toEqual(['agent_session_terminated']);
     });
 
@@ -315,9 +255,6 @@ describe('SpaceRuntime — orphaned-question cleanup (Task #138)', () => {
         agentSessionId: sessionId,
       });
 
-      // No stub registered — getAgentSessionById returns null. Crash path
-      // must still proceed to reset the execution; orphan cleanup is a
-      // best-effort no-op when there's nothing to clean up.
       const tam = makeMockTaskAgentManager({
         aliveSessions: new Set(),
         sessionStubs: new Map(),
@@ -325,10 +262,6 @@ describe('SpaceRuntime — orphaned-question cleanup (Task #138)', () => {
       const rt = new SpaceRuntime(buildConfig(tam));
 
       await rt.executeTick();
-
-      // Tick completed without throwing despite no stub — the orphan cleanup
-      // is a try/catch best-effort, so a missing live session doesn't break
-      // the crash path. (The downstream execution lifecycle is out of scope.)
     });
   });
 });

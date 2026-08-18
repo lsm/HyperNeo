@@ -3,7 +3,6 @@ import { BarChart3, HelpCircle, Mail, Search, Users } from 'lucide-preact';
 export function InputGroupsDemo() {
   return (
     <div class="space-y-12">
-      {/* Input with leading icon */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">With leading icon</h3>
         <div>
@@ -26,7 +25,6 @@ export function InputGroupsDemo() {
         </div>
       </div>
 
-      {/* Input with trailing icon */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">With trailing icon</h3>
         <div>
@@ -49,7 +47,6 @@ export function InputGroupsDemo() {
         </div>
       </div>
 
-      {/* Input with inline leading and trailing add-ons */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">
           With inline leading and trailing add-ons
@@ -82,7 +79,6 @@ export function InputGroupsDemo() {
         </div>
       </div>
 
-      {/* Input with leading dropdown */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">With leading dropdown</h3>
         <div>
@@ -104,7 +100,6 @@ export function InputGroupsDemo() {
         </div>
       </div>
 
-      {/* Input with leading icon and trailing button */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">
           With leading icon and trailing button
@@ -138,7 +133,6 @@ export function InputGroupsDemo() {
         </div>
       </div>
 
-      {/* Input with search icon */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">With search icon</h3>
         <div>
@@ -161,7 +155,6 @@ export function InputGroupsDemo() {
         </div>
       </div>
 
-      {/* Input with inline add-on */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">With inline add-on</h3>
         <div>

@@ -1,7 +1,3 @@
-/**
- * Tests for ProvidersSettings (unified provider registry view)
- */
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, screen, waitFor, fireEvent } from '@testing-library/preact';
 import type { ProviderRecord } from '@hyperneo/shared';
@@ -154,7 +150,6 @@ vi.mock('../../ui/Button.tsx', () => ({
   ),
 }));
 
-// Mock CustomEndpointEditor to avoid pulling in heavy deps
 vi.mock('../CustomEndpointEditor.tsx', () => ({
   EditorModal: () => <div data-testid="editor-modal">Editor</div>,
   PresetPicker: () => <div data-testid="preset-picker">Presets</div>,
@@ -311,10 +306,8 @@ describe('ProvidersSettings', () => {
     const { container } = render(<ProvidersSettings />);
     await waitFor(() => expect(container.textContent).toContain('Anthropic'));
 
-    // Initially no auth section
     expect(container.textContent).not.toContain('Authentication');
 
-    // Click to expand
     const row = container.querySelector('[class*="cursor-pointer"]');
     if (row) fireEvent.click(row);
 
@@ -335,7 +328,6 @@ describe('ProvidersSettings', () => {
     const { container } = render(<ProvidersSettings />);
     await waitFor(() => expect(container.textContent).toContain('Anthropic'));
 
-    // Find and click the toggle (role=switch)
     const toggle = container.querySelector('[role="switch"]');
     if (toggle) fireEvent.click(toggle);
 
@@ -355,7 +347,6 @@ describe('ProvidersSettings', () => {
     const { container } = render(<ProvidersSettings />);
     await waitFor(() => expect(container.textContent).toContain('Anthropic'));
 
-    // Click the star button
     const starButton = container.querySelector('button[title="Set as default"]');
     if (starButton) fireEvent.click(starButton);
 
@@ -374,7 +365,6 @@ describe('ProvidersSettings', () => {
     const { container } = render(<ProvidersSettings />);
     await waitFor(() => expect(container.textContent).toContain('Anthropic'));
 
-    // Expand row first
     const row = container.querySelector('[class*="cursor-pointer"]');
     if (row) fireEvent.click(row);
     await waitFor(() => expect(container.textContent).toContain('Delete'));
@@ -400,7 +390,6 @@ describe('ProvidersSettings', () => {
     const { container } = render(<ProvidersSettings />);
     await waitFor(() => expect(container.textContent).toContain('Anthropic'));
 
-    // Expand row
     const row = container.querySelector('[class*="cursor-pointer"]');
     if (row) fireEvent.click(row);
     await waitFor(() => expect(container.textContent).toContain('Test connection'));
@@ -426,12 +415,10 @@ describe('ProvidersSettings', () => {
     const { container } = render(<ProvidersSettings />);
     await waitFor(() => expect(container.textContent).toContain('Anthropic'));
 
-    // Expand row
     const row = container.querySelector('[class*="cursor-pointer"]');
     if (row) fireEvent.click(row);
     await waitFor(() => expect(container.textContent).toContain('Set key'));
 
-    // Type API key
     const input = container.querySelector('input[type="password"]') as HTMLInputElement;
     fireEvent.input(input, { target: { value: 'sk-test' } });
 
@@ -469,7 +456,6 @@ describe('ProvidersSettings', () => {
     const { container } = render(<ProvidersSettings />);
     await waitFor(() => expect(container.textContent).toContain('Copilot'));
 
-    // Expand row
     const row = container.querySelector('[class*="cursor-pointer"]');
     if (row) fireEvent.click(row);
     await waitFor(() => expect(container.textContent).toContain('Login'));
@@ -503,7 +489,6 @@ describe('ProvidersSettings', () => {
     const { container } = render(<ProvidersSettings />);
     await waitFor(() => expect(container.textContent).toContain('Copilot'));
 
-    // Expand row
     const row = container.querySelector('[class*="cursor-pointer"]');
     if (row) fireEvent.click(row);
     await waitFor(() => expect(container.textContent).toContain('Logout'));
@@ -519,8 +504,6 @@ describe('ProvidersSettings', () => {
   });
 
   it('shows success toast on full logout (no warning field)', async () => {
-    // Sanity: when backend returns {success: true} with no warning, the UI
-    // still shows the success toast (regression guard for the new branch).
     const providers = [
       createMockProvider('1', 'anthropic-copilot', {
         displayName: 'Copilot',
@@ -645,7 +628,6 @@ describe('ProvidersSettings', () => {
     const { container } = render(<ProvidersSettings />);
     await waitFor(() => expect(container.textContent).toContain('LM Studio'));
 
-    // Expand row
     const row = container.querySelector('[class*="cursor-pointer"]');
     if (row) fireEvent.click(row);
     await waitFor(() => expect(container.textContent).toContain('Edit'));
@@ -685,7 +667,6 @@ describe('ProvidersSettings', () => {
     const { container } = render(<ProvidersSettings />);
     await waitFor(() => expect(container.textContent).toContain('Copilot'));
 
-    // Expand row
     const row = container.querySelector('[class*="cursor-pointer"]');
     if (row) fireEvent.click(row);
     await waitFor(() => expect(container.textContent).toContain('Login'));
@@ -699,7 +680,6 @@ describe('ProvidersSettings', () => {
       expect(screen.getByTestId('oauth-modal')).toBeTruthy();
     });
 
-    // Simulate auth completion on next poll
     mockListProviderAuthStatus.mockResolvedValue({
       providers: [
         { id: 'anthropic-copilot', displayName: 'Copilot', isAuthenticated: true, method: 'oauth' },

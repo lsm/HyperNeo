@@ -27,7 +27,6 @@ export function Skeleton({ variant = 'text', width, height, class: className }: 
   return <div class={cn(baseStyles, variants[variant], className)} style={style} />;
 }
 
-// Pre-made skeleton components for common use cases
 function SkeletonText({ lines = 3 }: { lines?: number }) {
   return (
     <div class="space-y-3">

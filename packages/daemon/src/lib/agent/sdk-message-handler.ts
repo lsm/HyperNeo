@@ -1,21 +1,3 @@
-/**
- * SDKMessageHandler - Process incoming SDK messages
- *
- * Extracted from AgentSession to reduce complexity.
- * Takes AgentSession instance directly - handlers are internal parts of AgentSession.
- *
- * Handles:
- * - Message persistence to DB
- * - Broadcasting to clients via MessageHub
- * - Metadata updates (tokens, costs, tool calls)
- * - Compaction event detection and emission
- * - Title generation trigger
- * - Automatic phase detection for state tracking
- * - Circuit breaker trip handling (error loop detection)
- * - Context usage refresh via the SDK's native `query.getContextUsage()`
- *   (runs every N stream events, at every turn end, and after compaction)
- */
-
 import type { UUID } from 'crypto';
 import type { QueryLike } from './query-like';
 import { signalDeliveryConsumed } from './message-delivery';
@@ -61,17 +43,8 @@ import { getSessionModelInfo } from '../model-service';
 import { shouldUseHyperNeoCompactFallback } from './query-options-builder.js';
 import { reserveBasedThreshold } from './context-tracker.js';
 
-/**
- * Number of SDK stream events between automatic context-usage refreshes.
- * A refresh also happens at every turn end (result/error) and after
- * compaction, so short turns still update context at least once.
- */
 const CONTEXT_REFRESH_EVENT_INTERVAL = 5;
 
-/**
- * Context interface - what SDKMessageHandler needs from AgentSession
- * Using interface instead of importing AgentSession to avoid circular deps
- */
 export interface SDKMessageHandlerContext {
   readonly session: Session;
   readonly db: Database;
@@ -81,27 +54,16 @@ export interface SDKMessageHandlerContext {
   readonly contextTracker: ContextTracker;
   readonly messageQueue: MessageQueue;
 
-  // Dependencies for circuit breaker trip handling
   readonly errorManager: ErrorManager;
   readonly lifecycleManager: QueryLifecycleManager;
 
-  // Mutable query state (needed to check if query is running and to call getContextUsage())
   queryObject: QueryLike | null;
   queryPromise: Promise<void> | null;
 
-  // Called when the SDK init message provides the full slash commands list
   onInitSlashCommands: (commands: string[]) => Promise<void>;
 
-  // Called when the SDK pushes a mid-session slash command replacement list
   onCommandsChanged: (commands: string[]) => Promise<void>;
 
-  /**
-   * Notify the delivery layer that the SDK produced activity (any incoming
-   * message). Resets the no-progress stall watchdog for the in-flight delivery
-   * turn so a live, actively-streaming turn is never mistaken for a stall.
-   * Optional — a no-op when no delivery turn is in flight. See
-   * AgentSession.bumpDeliveryTurnActivity.
-   */
   bumpDeliveryTurnActivity?(): void;
   reportFirstDeliverySDKResponse?(responseType: string): void;
 }
@@ -117,37 +79,17 @@ export class SDKMessageHandler {
   private usesSessionStateChangedTurnEnd: boolean = false;
   private expectsSessionStateIdleAfterResult: boolean = false;
   private lastResultWasSuccess: boolean | null = null;
-  // Set by AgentSession.clearConversationContext before issuing an in-stream
-  // /clear. That turn never sets processing (the generator skips setProcessing
-  // for internal messages), so its result would otherwise publish a spurious
-  // idle→idle and fire the one-shot node-agent completion callback before the
-  // cleared handoff is reviewed. Consume on the next result to make that
-  // setIdle a no-op; the handoff's own genuine processing→idle completes the
-  // turn.
   private suppressIdleOnNextResult: boolean = false;
 
-  // Count of SDK stream events seen since the last context-usage refresh.
-  // Resets whenever we call refreshContextUsage() (on 5-event tick, turn end,
-  // or compaction) so that back-to-back triggers don't double-fetch.
   private eventsSinceContextRefresh: number = 0;
 
-  // In-flight context refresh (deduped across event/turn-end/compact triggers)
   private pendingContextRefresh: Promise<void> | null = null;
 
-  // Latest turn-level thinking tokens estimate from the SDK. For providers that
-  // emit a cumulative running total, this is the cumulative value, NOT a
-  // per-block count.
   private currentThinkingTokensEstimate: number | null = null;
-  // Cumulative amount already attributed to persisted assistant thinking blocks
-  // in the current turn. The delta between current and last stamped is what we
-  // persist on each new thinking block.
   private lastStampedThinkingTokensEstimate: number = 0;
 
-  /** Terminal-bound slash commands (exit, statusline, …) reported by init, applied
-   * to both init and mid-session commands_changed refreshes. */
   private terminalCommands: Set<string> = new Set();
 
-  /** Guardrail that breaks repeated identical tool-use errors in Forge task sessions. */
   private repeatedToolErrorGuardrail: RepeatedToolErrorGuardrail;
 
   constructor(private ctx: SDKMessageHandlerContext) {
@@ -156,15 +98,11 @@ export class SDKMessageHandler {
     this.contextFetcher = new ContextFetcher(session.id);
     this.circuitBreaker = new ApiErrorCircuitBreaker(session.id);
 
-    // Set up circuit breaker callback - fully internalized
     this.circuitBreaker.setOnTripCallback(async (reason, _errorCount) => {
       const userMessage = this.circuitBreaker.getTripMessage();
       await this.handleCircuitBreakerTrip(reason, userMessage);
     });
 
-    // Set up message yield callback - fires when generator yields to SDK
-    // This is the CORRECT moment to broadcast steered messages to UI
-    // and update their DB timestamp (T_consumed, not T_end)
     ctx.messageQueue.onMessageYielded = (messageId: string, consumedAt: number) => {
       this.handleMessageYielded(messageId, consumedAt);
     };
@@ -175,11 +113,9 @@ export class SDKMessageHandler {
           const repo = this.ctx.db?.getSpaceTaskRepo();
           if (!repo) return null;
 
-          // Legacy task-agent sessions store the task directly on the session row.
           const task = repo.getTaskBySessionId(this.ctx.session.id);
           if (task) return task;
 
-          // Worker/node-agent sessions carry the task id in session context.
           const taskId = this.ctx.session.context?.taskId;
           if (taskId) return repo.getTask(taskId);
 
@@ -214,9 +150,6 @@ export class SDKMessageHandler {
         }
       },
       routeRecoveryMessage: (text) => {
-        // Route the recovery through the active message queue so the running SDK
-        // turn actually receives the instruction, instead of only displaying a
-        // synthetic assistant frame in the UI.
         void this.ctx.messageQueue.enqueue(text).catch((err) => {
           this.logger.warn('Failed to enqueue repeated tool error recovery message:', err);
         });
@@ -224,47 +157,22 @@ export class SDKMessageHandler {
     });
   }
 
-  /**
-   * Reset the circuit breaker (after manual reset or successful recovery)
-   */
   resetCircuitBreaker(): void {
     this.circuitBreaker.reset();
   }
 
-  /**
-   * Arm idle suppression for the next result message. Used by
-   * `AgentSession.clearConversationContext()` so the in-stream `/clear` turn's
-   * result does not publish a spurious idle (see `suppressIdleOnNextResult`).
-   */
   suppressIdleForNextResult(): void {
     this.suppressIdleOnNextResult = true;
   }
 
-  /**
-   * Release an armed suppression without consuming it — for the enqueue-failure
-   * path, where no `/clear` turn actually ran.
-   */
   clearIdleSuppression(): void {
     this.suppressIdleOnNextResult = false;
   }
 
-  /**
-   * Mark successful API interaction (resets error tracking)
-   */
   markApiSuccess(): void {
     this.circuitBreaker.markSuccess();
   }
 
-  /**
-   * Handle circuit breaker trip (error loop detected)
-   *
-   * This is called when the circuit breaker detects repeated API errors.
-   * It stops the session and displays an error message to the user.
-   * Unlike normal reset, this does NOT:
-   * - Preserve cost tracking
-   * - Restart the query
-   * - Publish session.reset notification
-   */
   private async handleCircuitBreakerTrip(reason: string, userMessage: string): Promise<void> {
     const {
       session,
@@ -276,28 +184,23 @@ export class SDKMessageHandler {
     } = this.ctx;
 
     try {
-      // Clear state before stopping
       messageQueue.clear();
       this.resetCircuitBreaker();
       await internalEventBus.publish('session.errorClear', {
         sessionId: session.id,
       });
 
-      // Stop the query (if running)
       if (this.ctx.queryObject || this.ctx.queryPromise) {
         await lifecycleManager.stop({ catchQueryErrors: true });
       }
 
-      // Reset to idle state
       await stateManager.setIdle();
 
-      // Display error message as assistant message
       await this.displayErrorAsAssistantMessage(
         `⚠️ **Session Stopped: Error Loop Detected**\n\n${userMessage}\n\n` +
           `The agent has been automatically stopped to prevent further errors.`
       );
 
-      // Report to error manager
       await errorManager.handleError(
         session.id,
         new Error(`Circuit breaker tripped: ${reason}`),
@@ -312,11 +215,6 @@ export class SDKMessageHandler {
     }
   }
 
-  /**
-   * Display error as synthetic assistant message
-   *
-   * Creates and persists an assistant message to show errors in the chat UI.
-   */
   private async displayErrorAsAssistantMessage(text: string): Promise<void> {
     const { session, db, messageHub } = this.ctx;
 
@@ -357,15 +255,6 @@ export class SDKMessageHandler {
     }
   }
 
-  /**
-   * Acknowledge a persisted user message when SDK replays it.
-   *
-   * For user messages already persisted in sdk_messages with send_status
-   * (enqueued/deferred), we should:
-   * 1) transition send_status -> consumed
-   * 2) publish the user message to transcript
-   * 3) avoid inserting a duplicate SDK message row
-   */
   private async acknowledgePersistedUserMessage(message: SDKMessage): Promise<boolean> {
     const { session, db } = this.ctx;
     if (message.type !== 'user' || !message.uuid) {
@@ -407,9 +296,6 @@ export class SDKMessageHandler {
 
     this.withDbChangeBatch(() => {
       db.updateMessageStatus([persistedMessage.dbId], 'consumed');
-      // Update DB timestamp to now so the message's position in the DB matches
-      // where the SDK placed it in the conversation (after already-streamed
-      // assistant messages), not when the user originally typed it.
       db.updateMessageTimestamp(persistedMessage.dbId);
     });
 
@@ -430,8 +316,6 @@ export class SDKMessageHandler {
       { channel: `session:${session.id}` }
     );
 
-    // Emit on InternalEventBus<DaemonInternalEventMap> for server-side listeners (e.g. group message mirroring)
-    // so pre-persisted user messages appear in the group timeline.
     await internalEventBus.publish('sdk.message', {
       sessionId: session.id,
       message: sdkReplayMessage,
@@ -439,15 +323,6 @@ export class SDKMessageHandler {
     await this.publishToolResultConsumedEvents(sdkReplayMessage);
   }
 
-  /**
-   * Fallback acknowledgment when SDK doesn't replay user messages.
-   * Marks ALL remaining enqueued user messages as consumed at turn end.
-   *
-   * This is a safety net — ideally handleMessageYielded already handled
-   * these at yield time. But if the generator didn't fire the callback
-   * (e.g., internal messages, edge cases), this ensures messages don't
-   * stay stuck in 'enqueued' status forever.
-   */
   private async acknowledgeOldestQueuedUserOnTurnEnd(): Promise<void> {
     const { session, db, internalEventBus, messageHub } = this.ctx;
     const durableOwned =
@@ -456,23 +331,12 @@ export class SDKMessageHandler {
       .getMessagesByStatus(session.id, 'enqueued')
       .filter((enqueued) => isSDKUserMessage(enqueued) && !durableOwned.has(enqueued.uuid ?? ''));
 
-    // Strictly-increasing consumedAt across the loop so two prompts consumed in
-    // the same millisecond don't share a timestamp — rewind checkpoints are
-    // identified by timestamp, so a tie would let a rewind to the later prompt
-    // also delete the earlier one (#2338).
     let lastConsumedAt = 0;
     for (const enqueuedUser of enqueuedUsers) {
       let consumedAt = Date.now();
       if (consumedAt <= lastConsumedAt) consumedAt = lastConsumedAt + 1;
       lastConsumedAt = consumedAt;
       db.updateMessageStatus([enqueuedUser.dbId], 'consumed');
-      // #2338: updateMessageStatus reassigns this message a fresh conversation
-      // turn (MAX+1) on consume. Align the timestamp to the consume time so the
-      // compact feed's createdAt ordering agrees with the new turn order —
-      // otherwise the row keeps its original typed time (mid prior turn) but a
-      // future turn index, rendering before the result that closed the prior
-      // turn. Mirrors the normal SDK-replay consume path's
-      // updateMessageTimestamp(consumedAt).
       db.updateMessageTimestamp(enqueuedUser.dbId, consumedAt);
       await internalEventBus.publish('messages.statusChanged', {
         sessionId: session.id,
@@ -480,11 +344,6 @@ export class SDKMessageHandler {
         status: 'consumed',
       });
 
-      // Broadcast the replayed message at consumedAt (not the original typed
-      // time captured on enqueuedUser) so the live session-store delta places
-      // it at its new turn position, matching the persisted timestamp and the
-      // compact feed — otherwise it stays at its mid-run spot until a DB reload
-      // (#2338).
       const { dbId: _dbId, timestamp: _oldTs, ...sdkUserMessage } = enqueuedUser;
       const replayedMessage = {
         ...sdkUserMessage,
@@ -511,18 +370,6 @@ export class SDKMessageHandler {
     return persisted;
   }
 
-  /**
-   * Batched queue flush on an ACP session: the kickoff's submission writes the
-   * COMBINED prompt to the subprocess — the admitted members' text is already
-   * in flight, so they must leave `enqueued` (mutable in the queue UI) at the
-   * same moment. Otherwise ACP's potentially minutes-long
-   * submission→acceptance window lets a member be deleted/deferred in the UI,
-   * an operation that cannot retract text already written to the subprocess.
-   * Membership comes from the durable (narrowed-to-admitted) job payload.
-   * Best-effort: a member that fails to transition is still consumed at
-   * acceptance (see consumeBatchMembersAtAcceptance) or settled by the
-   * reconciler.
-   */
   private submitBatchMembersWithKickoff(kickoffUuid: string): void {
     try {
       const jobQueue = this.ctx.db.getJobQueueRepo?.();
@@ -542,9 +389,6 @@ export class SDKMessageHandler {
   }
 
   markMessageAccepted(messageId: string): void {
-    // ACP acceptance is the provider-specific consume boundary. Reuse the same
-    // projection path as a normal SDK yield so status, timestamp, transcript
-    // delta, and server-side events stay consistent.
     try {
       this.handleMessageYielded(messageId, Date.now());
     } catch {
@@ -553,10 +397,6 @@ export class SDKMessageHandler {
       // signal below — else LTA/task-agent callers time out despite a durably
       // consumed prompt + a fresh caller retries the work twice. (Codex review.)
     }
-    // Signal delivery waiters (LTA / task-agent consumption-await) ONLY when the
-    // acceptance actually took — the row is now `consumed`. If a racing
-    // interrupt/error already flipped it `failed` (markACPDeliveryFailed),
-    // handleMessageYielded is a no-op and we must NOT signal.
     const consumed = this.ctx.db.getMessageByStatusAndUuid(
       this.ctx.session.id,
       'consumed',
@@ -568,17 +408,6 @@ export class SDKMessageHandler {
     }
   }
 
-  /**
-   * Batched queue flush on an ACP session: the kickoff's prompt folded the
-   * members in, and ACP's consume boundary is acceptance (here) — not onSent.
-   * Flip the members with the kickoff or their rows stay `enqueued` and the
-   * orphan reconciler re-delivers them individually, repeating already-executed
-   * prompts. The membership is read from the durable job payload
-   * (`getActiveDeliveryBatchUuids`), so a crash + reclaim between admission and
-   * acceptance resolves the same batch. Best-effort: a throw here must not
-   * break the kickoff's acceptance path (the members are then picked up by the
-   * reconciler after the job settles).
-   */
   private consumeBatchMembersAtAcceptance(kickoffUuid: string): void {
     try {
       const jobQueue = this.ctx.db.getJobQueueRepo?.();
@@ -606,14 +435,6 @@ export class SDKMessageHandler {
     }
   }
 
-  /**
-   * Terminalize an ACP prompt that was submitted to the subprocess but whose
-   * run ended (interrupt / error / adapter close) before any acceptance
-   * signal. Submitted rows are hidden from transcript queries, so without an
-   * explicit settle they stay invisible and nonterminal until restart
-   * recovery. Fail-ambiguous: the row is never auto-replayed. See Codex
-   * (#3743968032).
-   */
   markMessageSubmissionFailed(messageId: string): void {
     const { session, db, internalEventBus } = this.ctx;
     const message = db.getMessageByStatusAndUuid(session.id, 'submitted', messageId);
@@ -628,13 +449,6 @@ export class SDKMessageHandler {
       .catch(() => {});
   }
 
-  /**
-   * Fail-ambiguous terminalization for an ACP prompt that may have reached the
-   * subprocess but never got a definitive acceptance. Covers BOTH enqueued (the
-   * enqueued→submitted transition threw, or remove/defer won) AND submitted (the
-   * run ended before acceptance). The row becomes visible-failed and is never
-   * auto-replayed. See Codex (#3743968032, #3744886836).
-   */
   markACPDeliveryFailed(messageId: string): void {
     const { session, db, internalEventBus } = this.ctx;
     const flipped = db.getSDKMessageRepo().markDeliveryFailedByUuid(session.id, messageId);
@@ -667,29 +481,17 @@ export class SDKMessageHandler {
     return true;
   }
 
-  /**
-   * Handle message yielded by the generator to the SDK.
-   *
-   * This fires at the EXACT moment the SDK receives a enqueued user message
-   * (T_consumed). We update the DB and broadcast to UI here, so the message
-   * appears at the correct position in the conversation — after any assistant
-   * messages that were already streamed, and before the assistant's response
-   * to the steering.
-   */
   private handleMessageYielded(messageId: string, consumedAt: number): void {
     const { session, db, internalEventBus, messageHub } = this.ctx;
 
-    // Find the persisted message in DB by UUID without scanning every queued row.
     const enqueuedMessage =
       db.getMessageByStatusAndUuid(session.id, 'enqueued', messageId) ??
       db.getMessageByStatusAndUuid(session.id, 'submitted', messageId);
     if (!enqueuedMessage) {
-      // Could be a 'deferred' message being replayed
       const deferredMessage = db.getMessageByStatusAndUuid(session.id, 'deferred', messageId);
       if (!deferredMessage) {
-        return; // Not a persisted user message (e.g., already consumed)
+        return;
       }
-      // Handle deferred message the same way
       this.withDbChangeBatch(() => {
         db.updateMessageStatus([deferredMessage.dbId], 'consumed');
         db.updateMessageTimestamp(deferredMessage.dbId, consumedAt);
@@ -716,7 +518,6 @@ export class SDKMessageHandler {
       internalEventBus
         .publish('sdk.message', {
           sessionId: session.id,
-          // Cast needed: DB injects epoch-ms timestamp while SDK uses ISO string on user msgs
           message: { ...sdkMessage, timestamp: consumedAt } as unknown as SDKMessage,
         })
         .catch(() => {});
@@ -727,13 +528,11 @@ export class SDKMessageHandler {
       return;
     }
 
-    // Update status and timestamp in DB
     this.withDbChangeBatch(() => {
       db.updateMessageStatus([enqueuedMessage.dbId], 'consumed');
       db.updateMessageTimestamp(enqueuedMessage.dbId, consumedAt);
     });
 
-    // Emit status change event (for queue overlay polling)
     internalEventBus
       .publish('messages.statusChanged', {
         sessionId: session.id,
@@ -742,11 +541,8 @@ export class SDKMessageHandler {
       })
       .catch(() => {});
 
-    // Mark as acknowledged so fallback path doesn't fire again
     this.acknowledgedPersistedUserThisTurn = true;
 
-    // Broadcast to UI with the correct timestamp
-    // Strip DB-only fields before broadcasting
     const { dbId: _dbId, timestamp: _timestamp, ...sdkMessage } = enqueuedMessage;
     messageHub.event(
       'state.sdkMessages.delta',
@@ -758,12 +554,9 @@ export class SDKMessageHandler {
       { channel: `session:${session.id}` }
     );
 
-    // Emit on InternalEventBus<DaemonInternalEventMap> for server-side listeners (e.g. group message mirroring)
-    // so injected user messages (like leader envelope) appear in the group timeline.
     internalEventBus
       .publish('sdk.message', {
         sessionId: session.id,
-        // Cast needed: DB injects epoch-ms timestamp while SDK uses ISO string on user msgs
         message: { ...sdkMessage, timestamp: consumedAt } as unknown as SDKMessage,
       })
       .catch(() => {});
@@ -773,48 +566,21 @@ export class SDKMessageHandler {
     } as unknown as SDKMessage).catch(() => {});
   }
 
-  /**
-   * Main entry point - handle incoming SDK message.
-   *
-   * The SDK's query() AsyncGenerator yields complete messages (assistant, user,
-   * result, …); when `includePartialMessages` is on it ALSO yields incremental
-   * `stream_event` token deltas. Those partials are intercepted below as a
-   * LIVENESS heartbeat for the delivery-turn stall watchdog and are never
-   * persisted or broadcast — only complete messages reach the DB / clients.
-   */
   async handleMessage(message: SDKMessage): Promise<void> {
     const { session, db, messageHub, stateManager } = this.ctx;
 
-    // Any incoming SDK message is "activity" — reset the delivery turn's no-
-    // progress stall watchdog so an actively-streaming turn (even a multi-hour
-    // one) is never mistaken for a stall. No-op when no delivery turn is active.
     this.ctx.bumpDeliveryTurnActivity?.();
     this.ctx.reportFirstDeliverySDKResponse?.(message.type);
 
-    // Partial/streaming token deltas (`stream_event`) are a LIVENESS heartbeat
-    // only. They prove the model is actively generating or extended-thinking
-    // during a long quiet generation that would otherwise exceed the stall
-    // watchdog's no-activity window and look like a hang — the bump above reset
-    // it. Update the streaming phase, but NEVER persist or broadcast partials:
-    // a single assistant turn can yield hundreds of token deltas, and persisting
-    // each would bloat the DB. The complete `assistant` message is still emitted
-    // and handled normally below, so persistence/rendering are unaffected.
     if (isSDKStreamEvent(message)) {
       await stateManager.detectPhaseFromMessage(message);
       return;
     }
 
-    // Command lifecycle events (slash-command queue tracking) are internal
-    // progress signals emitted by the native CLI, not user-facing content.
-    // Never persist or broadcast them — same treatment as stream_event above.
     if (isSDKCommandLifecycleMessage(message)) {
       return;
     }
 
-    // Conversation reset is a fresh-session boundary (/clear, plan-mode exit):
-    // reset the auto-generated title (both the displayed string and the
-    // generation flag) so the browser doesn't keep the old title attached to
-    // the new conversation, then drop the boundary event itself.
     if (isSDKConversationResetMessage(message)) {
       if (session.metadata.titleSetBy !== 'user') {
         const metadata = { ...session.metadata, titleGenerated: false };
@@ -824,15 +590,10 @@ export class SDKMessageHandler {
       return;
     }
 
-    // Active-goal is a fire-and-forget goal-state push, not chat content.
     if (isSDKActiveGoalMessage(message)) {
       return;
     }
 
-    // background_tasks_changed and control_request_progress are internal state
-    // pushes with no downstream consumer in HyperNeo. Filter before
-    // persistence/broadcast so they don't accumulate invisible DB rows or wake
-    // every live subscriber.
     if (
       isSDKBackgroundTasksChangedMessage(message) ||
       isSDKControlRequestProgressMessage(message)
@@ -840,25 +601,17 @@ export class SDKMessageHandler {
       return;
     }
 
-    // Check for API error patterns that indicate an infinite loop
-    // This MUST happen BEFORE any other processing to catch errors early
     const circuitBreakerTripped = await this.circuitBreaker.checkMessage(message);
     if (circuitBreakerTripped) {
-      // Circuit breaker tripped - skip normal processing
-      // The callback will handle stopping the query and notifying the user
       return;
     }
 
-    // Handle API retry messages: emit event for UI to display retry progress
-    // These carry operational metadata (attempt count, delay, error) that is useful for
-    // debugging and user feedback.
     if (isSDKAPIRetryMessage(message)) {
       this.logger.warn(
         `API retry: attempt ${message.attempt}/${message.max_retries}, ` +
           `delay ${message.retry_delay_ms}ms, status ${message.error_status ?? 'n/a'}, ` +
           `error ${message.error}`
       );
-      // Emit event for UI to show retry progress
       await this.ctx.internalEventBus.publish('session.retryAttempt', {
         sessionId: session.id,
         attempt: message.attempt,
@@ -867,21 +620,10 @@ export class SDKMessageHandler {
         error_status: message.error_status,
         error: message.error,
       });
-      // DO NOT return - let it fall through to persistence and rendering
     }
 
-    // Handle thinking tokens messages: stash the latest cumulative estimate for
-    // the current turn, but do not persist or broadcast the event itself.
-    // These fire frequently during the redacted thinking phase and would bloat
-    // the DB if persisted. The per-block delta is computed and stamped when an
-    // assistant message containing a thinking block arrives.
     if (isSDKThinkingTokensMessage(message)) {
       const estimate = message.estimated_tokens;
-      // Heuristic: treat a drop in the cumulative estimate as a new thinking-block
-      // boundary. Non-decreasing values are treated as the same stream so the
-      // delta since the last stamped block is attributed correctly. This handles
-      // both the stuck-cumulative task-agent case (e.g. #614) and per-block resets
-      // where the next block starts lower than the previous block's final total.
       if (
         this.lastStampedThinkingTokensEstimate > 0 &&
         estimate < this.lastStampedThinkingTokensEstimate
@@ -889,29 +631,20 @@ export class SDKMessageHandler {
         this.lastStampedThinkingTokensEstimate = 0;
       }
       this.currentThinkingTokensEstimate = estimate;
-      return; // Skip persistence and broadcast - this is internal tracking only
+      return;
     }
 
-    // Automatically update phase based on message type
     await stateManager.detectPhaseFromMessage(message);
 
-    // For persisted user messages, mark consumed + publish now and skip duplicate DB inserts.
     if (await this.acknowledgePersistedUserMessage(message)) {
       this.maybeRefreshContextOnEvent(message);
       return;
     }
 
-    // Mark unmatched SDK user messages as synthetic.
     if (message.type === 'user') {
       (message as SDKUserMessage & { isSynthetic: boolean }).isSynthetic = true;
     }
 
-    // Ensure messages with a nested BetaMessage have a usage object to
-    // prevent SDK crashes. The Claude Agent SDK's internal functions
-    // access message.usage.input_tokens without null-checking. When the
-    // SDK subprocess is restarted and reloads conversation history from
-    // the daemon, messages without usage cause:
-    //   "undefined is not an object (evaluating 'K.input_tokens')"
     if (
       'message' in message &&
       message.message &&
@@ -925,13 +658,6 @@ export class SDKMessageHandler {
       };
     }
 
-    // Stamp the per-block thinking tokens delta onto assistant messages that
-    // contain a thinking block. The SDK emits a cumulative turn-level estimate,
-    // which can be split across many assistant messages in task-agent sessions.
-    // Persisting the delta since the last stamped block avoids repeating the
-    // same cumulative count on every block. If the delta is not positive
-    // (stale/zero/negative), omit the field so the UI falls back to character
-    // counts only.
     if (isSDKAssistantMessage(message) && this.currentThinkingTokensEstimate !== null) {
       const hasThinkingBlock = message.message.content.some(
         (block: unknown) => (block as Record<string, unknown>).type === 'thinking'
@@ -945,23 +671,15 @@ export class SDKMessageHandler {
       }
     }
 
-    // Save to DB FIRST before broadcasting to clients
-    // This ensures we only broadcast messages that are successfully persisted
     const deferredSuccessfully = this.withDbChangeBatch(() =>
       db.saveSDKMessage(session.id, message)
     );
 
     if (!deferredSuccessfully) {
-      // Log warning but continue - message is already in SDK's memory
       this.logger.warn(`Failed to save message to DB (type: ${message.type})`);
-      // Don't broadcast to clients if DB save failed
       return;
     }
 
-    // A persisted terminal result proves this turn ended. Start the completion
-    // fence before publication or type-specific awaited work; the corresponding
-    // immediate/session-state idle consumes it after finalization. In-stream
-    // /clear results are internal and intentionally suppress that idle.
     const parentToolUseId = (message as SDKMessage & { parent_tool_use_id?: string | null })
       .parent_tool_use_id;
     const isTopLevelResult =
@@ -970,7 +688,6 @@ export class SDKMessageHandler {
       stateManager.beginTerminalIdle();
     }
 
-    // Broadcast SDK message delta to frontend clients
     messageHub.event(
       'state.sdkMessages.delta',
       {
@@ -981,7 +698,6 @@ export class SDKMessageHandler {
       { channel: `session:${session.id}` }
     );
 
-    // Emit on InternalEventBus<DaemonInternalEventMap> for server-side listeners (e.g. conversation session mirroring)
     await this.ctx.internalEventBus.publish('sdk.message', {
       sessionId: session.id,
       message,
@@ -994,27 +710,17 @@ export class SDKMessageHandler {
       }
     }
 
-    // Terminal messages end the turn even when they represent errors.
-    // Clear stale waiting_for_input state before type-specific handling so
-    // interrupted AskUserQuestion turns cannot keep the composer locked.
     if (isTopLevelResult && !this.usesSessionStateChangedTurnEnd) {
       if (!this.suppressIdleOnNextResult) {
         await stateManager.setIdle();
       }
-      // When armed (in-stream /clear), skip setIdle here AND finishTurn below
-      // — that turn never set processing (internal message), so an idle publish
-      // would fire the one-shot node-agent completion callback before the
-      // cleared handoff is reviewed. The flag is consumed at finishTurn.
     }
 
     if (isTopLevelResult) {
       this.lastResultWasSuccess = isSDKResultSuccess(message);
-      // Reset turn-level thinking token tracking now, before any turn-end
-      // handler can trigger an immediate queued turn replay.
       this.resetThinkingTokenTracking();
     }
 
-    // Handle specific message types
     if (isSDKUserMessage(message)) {
       await this.handleUserMessage(message);
     }
@@ -1047,67 +753,38 @@ export class SDKMessageHandler {
       await this.handleCompactBoundary(message);
     }
 
-    // Turn-end context refresh: any result message (success or error
-    // termination — error_during_execution, error_max_turns, etc.)
-    // triggers a fetch, so short turns still update context once.
-    // The 5-event tick below is deduped via pendingContextRefresh.
     if (isSDKResultMessage(message)) {
       void this.refreshContextUsage('turn-end');
       return;
     }
 
-    // Stream-event cadence for context refresh: every N events we've seen
-    // in this session (user/assistant/tool-use/tool-result etc.).
     this.maybeRefreshContextOnEvent(message);
   }
 
-  /**
-   * Handle system message (capture SDK session ID and slash commands)
-   */
   private async handleSystemMessage(message: SDKMessage): Promise<void> {
     const { session, db, internalEventBus } = this.ctx;
 
     if (!isSDKSystemMessage(message)) return;
 
-    // A new SDK query/session starts with an init message. Reset any stale
-    // turn-level thinking counters left over from a previously interrupted or
-    // stopped turn so they cannot undercount the new query's first block.
     if (isSDKSystemInit(message)) {
       this.resetThinkingTokenTracking();
     }
 
-    // Capture the SDK's internal session id whenever an init reports a different
-    // one than we hold. The SDK rotates to a fresh session on `/clear`
-    // (resetContextPerTurn "fresh eyes") and on model-switch/error restarts, and
-    // emits a new init with the new id — capturing it keeps daemon-restart resume
-    // pointing at the live conversation instead of a stale, pre-clear one. Guard
-    // on isSDKSystemInit so other system subtypes (api_retry, status, …) that
-    // also carry session_id cannot overwrite this field.
     if (
       isSDKSystemInit(message) &&
       message.session_id &&
       session.sdkSessionId !== message.session_id
     ) {
-      // Update in-memory session
       session.sdkSessionId = message.session_id;
 
-      // Record the workspace path used as CWD when this SDK session was created.
-      // The SDK stores conversation files at:
-      //   ~/.claude/projects/{encoded-cwd}/{sdkSessionId}.jsonl
-      // Persisting this "origin path" allows the daemon to locate and migrate the
-      // session file on resume even when the effective CWD changes (e.g. a worktree
-      // is added or removed between daemon restarts).
       const sdkOriginPath = session.worktree?.worktreePath ?? session.workspacePath ?? undefined;
       session.sdkOriginPath = sdkOriginPath;
 
-      // Persist to database
       db.updateSession(session.id, {
         sdkSessionId: message.session_id,
         sdkOriginPath,
       });
 
-      // Emit session.updated event so StateManager broadcasts the change
-      // Include data for decoupled state management
       await internalEventBus.publish('session.updated', {
         sessionId: session.id,
         source: 'sdk-session',
@@ -1115,13 +792,6 @@ export class SDKMessageHandler {
       });
     }
 
-    // Capture the full slash commands list from the init message.
-    // This is the authoritative source — it includes all SDK built-ins plus
-    // any custom skills, and fires immediately when a query starts.
-    // Use isSDKSystemInit which narrows specifically to SDKSystemMessage (subtype: 'init').
-    // Terminal-bound commands (exit, statusline, …) have no browser UX and can
-    // dead-interact or kill the CLI — strip them before caching/broadcasting,
-    // and retain the set so the commands_changed refresh below applies it too.
     if (isSDKSystemInit(message) && message.slash_commands?.length > 0) {
       this.terminalCommands = new Set(message.terminal_slash_commands ?? []);
       const browserCommands = message.slash_commands.filter(
@@ -1131,25 +801,16 @@ export class SDKMessageHandler {
     }
 
     if (isSDKCommandsChangedMessage(message)) {
-      // Filter the command records (not the flattened names) so a terminal
-      // command's aliases are excluded too — flattening first would re-add them.
       const browserRecords = message.commands.filter((cmd) => !this.terminalCommands.has(cmd.name));
       await this.ctx.onCommandsChanged(flattenSDKSlashCommands(browserRecords));
     }
   }
 
-  /**
-   * Handle result message (end of turn)
-   */
   private async handleResultMessage(message: SDKMessage): Promise<void> {
     const { session, db, internalEventBus } = this.ctx;
 
-    // Type guard to ensure this is a successful result
     if (!isSDKResultSuccess(message)) return;
 
-    // Update session metadata with token usage and costs
-    // Guard: SDK may produce result messages without usage (e.g. bridge providers
-    // like anthropic-copilot where the upstream SDK fails to populate usage).
     const usage = message.usage ?? {
       input_tokens: 0,
       output_tokens: 0,
@@ -1158,22 +819,15 @@ export class SDKMessageHandler {
     };
     const totalTokens = usage.input_tokens + usage.output_tokens;
 
-    // SDK's total_cost_usd is CUMULATIVE within a single run, but RESETS when agent restarts
-    // (e.g., after errors or manual reset). We detect resets by comparing to lastSdkCost.
-    // Example sequence: 0.42 -> 0.73 -> 1.1 (cumulative) -> RESET -> 0.25 -> 0.50 (cumulative again)
     const sdkCost = message.total_cost_usd || 0;
     const lastSdkCost = session.metadata?.lastSdkCost || 0;
     const costBaseline = session.metadata?.costBaseline || 0;
 
-    // Detect SDK reset: if current cost < last cost, SDK was restarted
-    // Save previous cumulative cost as new baseline
     let newCostBaseline = costBaseline;
     if (sdkCost < lastSdkCost && lastSdkCost > 0) {
-      // SDK reset detected - add previous SDK cost to baseline
       newCostBaseline = costBaseline + lastSdkCost;
     }
 
-    // Total cost = baseline (from previous runs) + current SDK cost (cumulative within this run)
     const totalCost = newCostBaseline + sdkCost;
 
     session.lastActiveAt = new Date().toISOString();
@@ -1183,10 +837,8 @@ export class SDKMessageHandler {
       totalTokens: (session.metadata?.totalTokens || 0) + totalTokens,
       inputTokens: (session.metadata?.inputTokens || 0) + usage.input_tokens,
       outputTokens: (session.metadata?.outputTokens || 0) + usage.output_tokens,
-      // Total cost across all runs (baseline + current SDK cumulative)
       totalCost,
       toolCallCount: session.metadata?.toolCallCount || 0,
-      // Track SDK state for reset detection
       lastSdkCost: sdkCost,
       costBaseline: newCostBaseline,
     };
@@ -1196,8 +848,6 @@ export class SDKMessageHandler {
       metadata: session.metadata,
     });
 
-    // Emit session.updated event so StateManager broadcasts the change
-    // Include data for decoupled state management
     await internalEventBus.publish('session.updated', {
       sessionId: session.id,
       source: 'metadata',
@@ -1207,37 +857,20 @@ export class SDKMessageHandler {
       },
     });
 
-    // NOTE: Turn-end context refresh is triggered for all `result`
-    // messages (success + error) at the end of handleMessage(), before
-    // this success-only branch runs. No need to re-fetch here.
-
-    // Mark successful API interaction - resets circuit breaker error tracking
-    // Only reset when actual tokens were consumed (indicating a real API call)
-    // Zero-token results happen when SDK processes synthetic error messages without
-    // making an API call - these should NOT reset the circuit breaker
     if (usage.input_tokens > 0 || usage.output_tokens > 0) {
       this.circuitBreaker.markSuccess();
     }
 
-    // If SDK didn't replay the enqueued user message this turn, acknowledge one
-    // enqueued user message at turn end to keep status and transcript in sync.
     if (!this.acknowledgedPersistedUserThisTurn) {
       await this.acknowledgeOldestQueuedUserOnTurnEnd();
     }
     this.acknowledgedPersistedUserThisTurn = false;
 
-    // Clear any session errors since we successfully completed a turn
-    // This resolves persistent error banners that weren't being cleared
     await internalEventBus.publish('session.errorClear', {
       sessionId: session.id,
     });
 
     if (this.suppressIdleOnNextResult) {
-      // In-stream /clear result: never set processing this turn, so an idle
-      // publish here would fire the one-shot node-agent completion callback
-      // before the cleared handoff is reviewed. Skip finishTurn (no idle, no
-      // deferred replay); the cleared handoff's own genuine processing→idle
-      // completes the turn.
       this.suppressIdleOnNextResult = false;
     } else if (!this.usesSessionStateChangedTurnEnd && !this.expectsSessionStateIdleAfterResult) {
       await this.finishTurn();
@@ -1247,11 +880,8 @@ export class SDKMessageHandler {
   private async finishTurn(allowQueueReplay = true): Promise<void> {
     const { session, internalEventBus, stateManager } = this.ctx;
 
-    // Set state back to idle
-    // Note: Title generation now handled by TitleGenerationQueue (decoupled via EventBus)
     await stateManager.setIdle();
 
-    // Auto-dispatch deferred messages in immediate mode (next-turn queue replay)
     if (allowQueueReplay && session.config.queryMode !== 'manual') {
       try {
         await internalEventBus.publish('query.trigger', { sessionId: session.id });
@@ -1266,8 +896,6 @@ export class SDKMessageHandler {
 
     this.usesSessionStateChangedTurnEnd = true;
     if (message.state === 'idle') {
-      // Reset turn-scoped thinking tokens tracking before replaying queued
-      // turns, so the next turn cannot inherit a stale baseline.
       this.resetThinkingTokenTracking();
       const allowQueueReplay = this.lastResultWasSuccess !== false;
       await this.finishTurn(allowQueueReplay);
@@ -1277,13 +905,6 @@ export class SDKMessageHandler {
     }
   }
 
-  /**
-   * Reset turn-level thinking token tracking.
-   *
-   * Called at turn end (result messages and session_state_changed idle) so
-   * cumulative estimates from one turn cannot be attributed to blocks in the
-   * next turn.
-   */
   private resetThinkingTokenTracking(): void {
     this.currentThinkingTokensEstimate = null;
     this.lastStampedThinkingTokensEstimate = 0;
@@ -1292,10 +913,6 @@ export class SDKMessageHandler {
   private async handleModelRefusalFallbackMessage(message: SDKMessage): Promise<void> {
     const { session, db, internalEventBus } = this.ctx;
     if (!isSDKModelRefusalFallbackMessage(message) || message.direction !== 'retry') return;
-    // A `local` fallback (subagent, /btw side question, or background fork) only
-    // swaps that one response's model — the main session model is unchanged. Do
-    // not persist the fallback into session.config for local scopes; an absent
-    // scope is the legacy session-wide behavior.
     if (message.scope === 'local') return;
     const fallbackModel = this.resolveConfiguredFallbackModel(message.fallback_model);
     if (!fallbackModel || session.config.model === fallbackModel) return;
@@ -1342,11 +959,6 @@ export class SDKMessageHandler {
     for (const block of content) {
       if (block.type !== 'tool_result') continue;
       await internalEventBus.publish('sdk.toolUse.consumed', {
-        // Use the application session.id (as sdk.toolUse.created does), NOT
-        // message.session_id (the SDK conversation ID, a.k.a. session.sdkSessionId):
-        // node_executions.agent_session_id stores the app id, so consumers that
-        // resolve the event to an execution (e.g. lastActivityAt tracking) would
-        // otherwise miss every tool-result event.
         sessionId: this.ctx.session.id,
         toolUseId: block.tool_use_id,
         timestamp: Date.now(),
@@ -1354,12 +966,6 @@ export class SDKMessageHandler {
     }
   }
 
-  /**
-   * Handle assistant message (track tool calls)
-   *
-   * NOTE: AskUserQuestion is now handled via the canUseTool callback in
-   * AskUserQuestionHandler, not here. The SDK intercepts it BEFORE execution.
-   */
   private async handleAssistantMessage(message: SDKMessage): Promise<void> {
     const { session, db, internalEventBus } = this.ctx;
 
@@ -1384,8 +990,6 @@ export class SDKMessageHandler {
         metadata: session.metadata,
       });
 
-      // Emit session.updated event so StateManager broadcasts the change
-      // Include data for decoupled state management
       await internalEventBus.publish('session.updated', {
         sessionId: session.id,
         source: 'metadata',
@@ -1394,9 +998,6 @@ export class SDKMessageHandler {
     }
   }
 
-  /**
-   * Handle status message (detect compaction start)
-   */
   private async handleStatusMessage(message: SDKMessage): Promise<void> {
     const { stateManager } = this.ctx;
 
@@ -1404,34 +1005,20 @@ export class SDKMessageHandler {
 
     const statusMsg = message as { status: string | null };
     if (statusMsg.status === 'compacting') {
-      // Set isCompacting flag on processing state (flows through state.session)
       await stateManager.setCompacting(true);
     }
   }
 
-  /**
-   * Handle compact boundary message (compaction completed)
-   */
   private async handleCompactBoundary(message: SDKMessage): Promise<void> {
     const { stateManager } = this.ctx;
 
     if (!isSDKCompactBoundary(message)) return;
 
-    // Clear isCompacting flag on processing state (flows through state.session)
     await stateManager.setCompacting(false);
 
-    // Immediately refresh context usage after compaction so the UI reflects
-    // the new post-compact numbers without waiting for the next turn.
     void this.refreshContextUsage('compact-boundary');
   }
 
-  /**
-   * Stream-event cadence: refresh context usage every
-   * `CONTEXT_REFRESH_EVENT_INTERVAL` SDK stream events. We count every
-   * processed message (user replays, assistant turns, tool uses, tool results),
-   * skipping only purely-internal events (api_retry, which returns early
-   * before this is ever called).
-   */
   private maybeRefreshContextOnEvent(_message: SDKMessage): void {
     this.eventsSinceContextRefresh += 1;
     if (this.eventsSinceContextRefresh >= CONTEXT_REFRESH_EVENT_INTERVAL) {
@@ -1439,19 +1026,9 @@ export class SDKMessageHandler {
     }
   }
 
-  /**
-   * Refresh context usage via the SDK's `query.getContextUsage()`.
-   *
-   * Dedupes via `pendingContextRefresh`, so multiple triggers (5-event tick,
-   * turn end, compaction) collapse to a single in-flight fetch. Resets the
-   * event counter so a turn-end refresh also zeroes the stream tick.
-   */
   private refreshContextUsage(
     reason: 'event-tick' | 'turn-end' | 'compact-boundary'
   ): Promise<void> {
-    // Reset the event counter regardless of whether we actually fetch —
-    // a dedup-skipped refresh still represents the same informational
-    // moment for the tick window.
     this.eventsSinceContextRefresh = 0;
 
     if (this.pendingContextRefresh) {
@@ -1459,8 +1036,6 @@ export class SDKMessageHandler {
     }
 
     const { session, internalEventBus, contextTracker, queryObject } = this.ctx;
-    // If there's no live query yet (or anymore), skip silently — context
-    // info is a best-effort side effect.
     if (!queryObject) return Promise.resolve();
 
     const promise = (async () => {
@@ -1477,23 +1052,6 @@ export class SDKMessageHandler {
           contextInfo,
         });
 
-        // HyperNeo-level compaction fallback.
-        //
-        // Scoped to providers/model routes where SDK auto-compact uses the
-        // wrong capacity. For these routes, SDK auto-compact is disabled via
-        // Options.settings; HyperNeo is the sole compaction path and fires at a
-        // provider-aware reserve threshold (33k default, 45k for Kimi — see
-        // `reserveBasedThreshold`).
-        //
-        // For all other providers (Anthropic native, GLM, Codex, OpenRouter,
-        // Ollama, custom endpoints) we trust the SDK's own auto-compact.
-        // Installing HyperNeo as a competing trigger would either race with the
-        // SDK (same threshold) or preempt it (lower threshold, cutting off
-        // advertised context). The context-fetcher capacity-mismatch warning
-        // surfaces any regression in SDK behaviour for those providers.
-        //
-        // The HyperNeo-only cooldown (60s) prevents back-to-back `/compact`
-        // enqueues while a previous compaction is still in flight.
         const providerId = session.config.provider;
         if (!providerId) {
           return;
@@ -1512,7 +1070,7 @@ export class SDKMessageHandler {
                 `(provider=${providerId}, ${contextInfo.totalUsed} >= ${hyperNeoCompactThreshold} ` +
                 `of ${actualContextWindow} tokens)`
             );
-            void this.ctx.messageQueue.enqueue('/compact', /* internal */ true).catch((error) => {
+            void this.ctx.messageQueue.enqueue('/compact', true).catch((error) => {
               this.logger.warn(`compaction enqueue failed for session ${session.id}:`, error);
             });
           }

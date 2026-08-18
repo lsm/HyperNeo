@@ -20,10 +20,8 @@ describe('Logger', () => {
   let consoleDebugMock: ReturnType<typeof mock>;
 
   beforeEach(() => {
-    // Save original environment
     originalEnv = { ...process.env };
 
-    // Mock all console methods to prevent output during tests
     consoleErrorMock = mock(() => {});
     consoleWarnMock = mock(() => {});
     consoleInfoMock = mock(() => {});
@@ -36,7 +34,6 @@ describe('Logger', () => {
     console.log = consoleLogMock;
     console.debug = consoleDebugMock;
 
-    // Reset logger config to defaults
     configureLogger({
       level: LogLevel.INFO,
       filter: ['*'],
@@ -47,10 +44,8 @@ describe('Logger', () => {
 
   afterEach(() => {
     clearStructuredLogSubscribers();
-    // Restore environment
     process.env = originalEnv;
 
-    // Reset logger config
     configureLogger({
       level: LogLevel.INFO,
       filter: ['*'],
@@ -153,7 +148,6 @@ describe('Logger', () => {
       const newConfig = getLoggerConfig();
       expect(newConfig.level).toBe(LogLevel.DEBUG);
       expect(newConfig.timestamps).toBe(true);
-      // filter and excludeFilter should remain
       expect(newConfig.filter).toEqual(['*']);
       expect(newConfig.excludeFilter).toEqual([]);
     });
@@ -241,7 +235,6 @@ describe('Logger', () => {
       logger.log('should not log');
 
       expect(consoleInfoMock).not.toHaveBeenCalled();
-      // Mock cleared in beforeEach
     });
 
     test('should respect ERROR level', () => {
@@ -257,9 +250,6 @@ describe('Logger', () => {
 
       expect(consoleErrorMock).toHaveBeenCalled();
       expect(consoleWarnMock).not.toHaveBeenCalled();
-
-      // Mock cleared in beforeEach
-      // Mock cleared in beforeEach
     });
 
     test('should respect WARN level', () => {
@@ -274,9 +264,6 @@ describe('Logger', () => {
 
       expect(consoleWarnMock).toHaveBeenCalled();
       expect(consoleInfoMock).not.toHaveBeenCalled();
-
-      // Mock cleared in beforeEach
-      // Mock cleared in beforeEach
     });
 
     test('should respect INFO level', () => {
@@ -291,9 +278,6 @@ describe('Logger', () => {
 
       expect(consoleInfoMock).toHaveBeenCalled();
       expect(consoleDebugMock).not.toHaveBeenCalled();
-
-      // Mock cleared in beforeEach
-      // Mock cleared in beforeEach
     });
 
     test('should respect DEBUG level', () => {
@@ -304,8 +288,6 @@ describe('Logger', () => {
 
       logger.debug('debug message');
       expect(consoleDebugMock).toHaveBeenCalled();
-
-      // Mock cleared in beforeEach
     });
 
     test('should respect TRACE level', () => {
@@ -316,8 +298,6 @@ describe('Logger', () => {
 
       logger.trace('trace message');
       expect(consoleDebugMock).toHaveBeenCalled();
-
-      // Mock cleared in beforeEach
     });
 
     test('should show level indicator in DEBUG mode for non-INFO levels', () => {
@@ -330,8 +310,6 @@ describe('Logger', () => {
       expect(consoleDebugMock).toHaveBeenCalled();
       const callArgs = consoleDebugMock.mock.calls[0];
       expect(callArgs).toContainEqual('[DEBUG]');
-
-      // Mock cleared in beforeEach
     });
   });
 
@@ -348,8 +326,6 @@ describe('Logger', () => {
       blockedLogger.info('blocked message');
 
       expect(consoleInfoMock).toHaveBeenCalledTimes(1);
-
-      // Mock cleared in beforeEach
     });
 
     test('should filter by wildcard namespace prefix', () => {
@@ -366,8 +342,6 @@ describe('Logger', () => {
       logger3.info('message 3');
 
       expect(consoleInfoMock).toHaveBeenCalledTimes(2);
-
-      // Mock cleared in beforeEach
     });
 
     test('should allow all with wildcard', () => {
@@ -382,8 +356,6 @@ describe('Logger', () => {
       logger2.info('message 2');
 
       expect(consoleInfoMock).toHaveBeenCalledTimes(2);
-
-      // Mock cleared in beforeEach
     });
 
     test('should exclude specific namespaces', () => {
@@ -401,8 +373,6 @@ describe('Logger', () => {
       verboseLogger.info('verbose message');
 
       expect(consoleInfoMock).toHaveBeenCalledTimes(1);
-
-      // Mock cleared in beforeEach
     });
 
     test('should exclude wildcard namespace prefixes', () => {
@@ -420,8 +390,6 @@ describe('Logger', () => {
       internalLogger.info('internal message');
 
       expect(consoleInfoMock).toHaveBeenCalledTimes(1);
-
-      // Mock cleared in beforeEach
     });
   });
 
@@ -461,8 +429,6 @@ describe('Logger', () => {
 
       child.info('child message');
       expect(consoleInfoMock).toHaveBeenCalledTimes(1);
-
-      // Mock cleared in beforeEach
     });
 
     test('child should be filtered out when namespace does not match', () => {
@@ -480,8 +446,6 @@ describe('Logger', () => {
       child.info('child message');
 
       expect(consoleInfoMock).toHaveBeenCalledTimes(1);
-
-      // Mock cleared in beforeEach
     });
   });
 
@@ -493,26 +457,19 @@ describe('Logger', () => {
 
       const logger = createLogger('test:namespace');
 
-      // First call caches the enabled state
       consoleInfoMock.mockClear();
       logger.info('first message');
 
-      // Change filter to exclude this namespace
       configureLogger({
         filter: ['other:*'],
       });
 
-      // Without clearCache, the cached state would still say it's enabled
       logger.info('second message');
 
-      // Now clear cache and log again
       logger.clearCache();
       logger.info('third message');
 
-      // First two messages should have been logged (before filter change)
       expect(consoleInfoMock).toHaveBeenCalledTimes(2);
-
-      // Mock cleared in beforeEach
     });
 
     test('should re-evaluate enabled state after cache clear', () => {
@@ -522,23 +479,18 @@ describe('Logger', () => {
 
       const logger = createLogger('test:namespace');
 
-      // Initial state: enabled
       let enabled = logger['isEnabled']();
       expect(enabled).toBe(true);
 
-      // Change filter to exclude
       configureLogger({
         filter: ['other:*'],
       });
 
-      // Still cached as enabled
       enabled = logger['isEnabled']();
       expect(enabled).toBe(true);
 
-      // Clear cache
       logger.clearCache();
 
-      // Now re-evaluates to disabled
       enabled = logger['isEnabled']();
       expect(enabled).toBe(false);
     });
@@ -555,8 +507,6 @@ describe('Logger', () => {
       logger.info('info method message');
 
       expect(consoleInfoMock).toHaveBeenCalledTimes(2);
-
-      // Mock cleared in beforeEach
     });
 
     test('should respect log level', () => {
@@ -567,8 +517,6 @@ describe('Logger', () => {
 
       logger.log('should not log');
       expect(consoleInfoMock).not.toHaveBeenCalled();
-
-      // Mock cleared in beforeEach
     });
   });
 
@@ -581,8 +529,6 @@ describe('Logger', () => {
 
       logger.trace('trace message');
       expect(consoleDebugMock).toHaveBeenCalled();
-
-      // Mock cleared in beforeEach
     });
 
     test('should not log when level is above TRACE', () => {
@@ -593,8 +539,6 @@ describe('Logger', () => {
 
       logger.trace('trace message');
       expect(consoleDebugMock).not.toHaveBeenCalled();
-
-      // Mock cleared in beforeEach
     });
 
     test('should show level indicator in DEBUG mode', () => {
@@ -606,8 +550,6 @@ describe('Logger', () => {
       logger.trace('trace message');
       const callArgs = consoleDebugMock.mock.calls[0];
       expect(callArgs).toContainEqual('[TRACE]');
-
-      // Mock cleared in beforeEach
     });
   });
 
@@ -621,10 +563,7 @@ describe('Logger', () => {
       logger.info('message with timestamp');
 
       const callArgs = consoleInfoMock.mock.calls[0];
-      // First arg should be an ISO date string
       expect(callArgs[0]).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-
-      // Mock cleared in beforeEach
     });
 
     test('should not include timestamps when disabled', () => {
@@ -636,12 +575,9 @@ describe('Logger', () => {
       logger.info('message without timestamp');
 
       const callArgs = consoleInfoMock.mock.calls[0];
-      // First arg should be namespace prefix, not timestamp
       if (callArgs.length > 0) {
         expect(callArgs[0]).not.toMatch(/^\d{4}-\d{2}-\d{2}T/);
       }
-
-      // Mock cleared in beforeEach
     });
   });
 
@@ -656,8 +592,6 @@ describe('Logger', () => {
 
       const callArgs = consoleInfoMock.mock.calls[0];
       expect(callArgs).toContainEqual('[test:namespace]');
-
-      // Mock cleared in beforeEach
     });
 
     test('should not include prefix for empty namespace', () => {
@@ -669,13 +603,10 @@ describe('Logger', () => {
       logger.info('message');
 
       const callArgs = consoleInfoMock.mock.calls[0];
-      // Should not have [namespace] prefix
       const hasPrefix = callArgs.some(
         (arg) => typeof arg === 'string' && arg.startsWith('[') && arg.endsWith(']')
       );
       expect(hasPrefix).toBe(false);
-
-      // Mock cleared in beforeEach
     });
   });
 

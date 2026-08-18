@@ -1,16 +1,3 @@
-/**
- * SpaceRuntime Integration Tests
- *
- * Covers:
- * - startWorkflowRun(): creates run, executor, first task with correct taskType
- * - executeTick(): advances completed tasks to next step
- * - Gate enforcement: human gate blocks advancement, needs_attention set
- * - Standalone tasks: tasks without workflowRunId are not processed by executor map
- * - Rule injection: getRulesForStep() filters correctly
- * - Rehydration: executors reconstructed from DB on startup
- * - Executor cleanup: removed from map on run complete/cancel
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -29,19 +16,11 @@ import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceWorkflow, SpaceWorkflowRun } from '@hyperneo/shared';
 
-// ---------------------------------------------------------------------------
-// DB helpers
-// ---------------------------------------------------------------------------
-
 function makeDb(): BunDatabase {
-  // Use in-memory SQLite — faster than file-based DB and avoids filesystem
-  // I/O contention that caused beforeEach hook timeouts in CI.
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
 
-  // runMigrations() applies migrations only; these unit fixtures need the base
-  // sdk_messages table because runtime recovery inspects persisted SDK output.
   db.exec(`CREATE TABLE IF NOT EXISTS sdk_messages (
 		id TEXT PRIMARY KEY,
 		session_id TEXT NOT NULL,
@@ -99,10 +78,6 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string, name: s
   ).run(agentId, spaceId, name, Date.now(), Date.now());
 }
 
-// ---------------------------------------------------------------------------
-// Fixture helpers
-// ---------------------------------------------------------------------------
-
 function buildLinearWorkflow(
   spaceId: string,
   workflowManager: SpaceWorkflowManager,
@@ -110,7 +85,6 @@ function buildLinearWorkflow(
   conditions: Array<{ type: 'always' | 'human'; description?: string }> = [],
   opts: { channels?: SpaceWorkflow['channels']; gates?: SpaceWorkflow['gates'] } = {}
 ): SpaceWorkflow {
-  // Build transitions: step[i] → step[i+1] with conditions[i]
   const transitions = nodes.slice(0, -1).map((step, i) => ({
     from: step.id,
     to: nodes[i + 1].id,
@@ -133,14 +107,6 @@ function buildLinearWorkflow(
   });
 }
 
-/**
- * End-node validation requires exactly 1 agent (validator enforced — they own
- * the `task.reportedStatus` completion signal). When a test workflow has its
- * last node as multi-agent (which used to double as start+end), append a
- * synthetic single-agent terminal node so the multi-agent node remains the
- * start (or middle) and validation passes. Tests that don't activate the
- * synthetic end node continue to behave the same.
- */
 const SYNTHETIC_END_NODE_ID = '__test_end__';
 
 function appendSyntheticEnd<T extends { id: string; agents?: unknown[] }>(
@@ -158,10 +124,6 @@ function appendSyntheticEnd<T extends { id: string; agents?: unknown[] }>(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Test suite setup
-// ---------------------------------------------------------------------------
-
 describe('SpaceRuntime', () => {
   let db: BunDatabase;
 
@@ -176,13 +138,11 @@ describe('SpaceRuntime', () => {
   const SPACE_ID = 'space-rt-1';
   const WORKSPACE = '/tmp/runtime-ws';
 
-  // Agent IDs for preset roles
   const AGENT_PLANNER = 'agent-planner';
   const AGENT_CODER = 'agent-coder';
   const AGENT_GENERAL = 'agent-general';
   const AGENT_CUSTOM = 'agent-custom';
 
-  // Step ID constants
   const STEP_A = 'step-a';
   const STEP_B = 'step-b';
   const STEP_C = 'step-c';
@@ -190,16 +150,13 @@ describe('SpaceRuntime', () => {
   beforeEach(() => {
     db = makeDb();
 
-    // Seed space
     seedSpaceRow(db, SPACE_ID, WORKSPACE);
 
-    // Seed agents with different roles
     seedAgentRow(db, AGENT_PLANNER, SPACE_ID, 'Planner');
     seedAgentRow(db, AGENT_CODER, SPACE_ID, 'Coder');
     seedAgentRow(db, AGENT_GENERAL, SPACE_ID, 'General');
     seedAgentRow(db, AGENT_CUSTOM, SPACE_ID, 'Custom');
 
-    // Build managers and repos
     workflowRunRepo = new SpaceWorkflowRunRepository(db);
     taskRepo = new SpaceTaskRepository(db);
     nodeExecutionRepo = new NodeExecutionRepository(db);
@@ -235,10 +192,6 @@ describe('SpaceRuntime', () => {
       /* ignore */
     }
   });
-
-  // -------------------------------------------------------------------------
-  // getRulesForStep — removed in M71; no tests needed
-  // -------------------------------------------------------------------------
 
   describe('recoverWorkflowBackedTask()', () => {
     test('manual recovery clears alive-stuck restart budget for the run', async () => {
@@ -597,7 +550,6 @@ describe('SpaceRuntime', () => {
     });
 
     describe('recoverWorkflowBackedTask() — handoff expiration regression', () => {
-      /** Minimal taskAgentManager stub that satisfies the runtime's tick loop. */
       function makeStubTam() {
         return {
           isSessionAlive: (_sid: string) => false,
@@ -638,9 +590,6 @@ describe('SpaceRuntime', () => {
         );
         const task = tasks[0];
 
-        // Simulate an expired queued handoff message to the reviewer node.
-        // In production, expireStale() inside repairQueuedWorkflowNodeHandoffs
-        // converts pending → expired; here we pre-expire to force the blocked path.
         pendingMessageRepo.enqueue({
           workflowRunId: run.id,
           spaceId: SPACE_ID,
@@ -648,28 +597,23 @@ describe('SpaceRuntime', () => {
           targetKind: 'node_agent',
           targetAgentName: 'Review',
           message: 'handoff to reviewer',
-          expiresAt: Date.now() - 1, // already expired
+          expiresAt: Date.now() - 1,
         });
 
-        // Tick to trigger the expired-handoff → blocked path
         await runtime.executeTick();
 
-        // Verify the run is now blocked due to expired handoff
         const blockedRun = workflowRunRepo.getRun(run.id)!;
         expect(blockedRun.status).toBe('blocked');
 
         const blockedTask = taskRepo.getTask(task.id)!;
         expect(blockedTask.status).toBe('blocked');
 
-        // Now recover the task
         await runtime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'in_progress');
 
-        // Verify expired messages were cleared
         const allMessages = pendingMessageRepo.listAllForRun(run.id);
         const expiredMessages = allMessages.filter((m) => m.status === 'expired');
         expect(expiredMessages).toHaveLength(0);
 
-        // Run the tick again — should NOT re-block
         await runtime.executeTick();
 
         const recoveredTask = taskRepo.getTask(task.id)!;
@@ -681,7 +625,6 @@ describe('SpaceRuntime', () => {
       test('clearTerminalForRun clears expired, failed, and delivered but preserves pending', async () => {
         const pendingMessageRepo = new PendingAgentMessageRepository(db);
 
-        // Create a run to attach messages to
         const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
           { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
         ]);
@@ -692,7 +635,6 @@ describe('SpaceRuntime', () => {
         );
         const task = tasks[0];
 
-        // Enqueue messages with different fates
         pendingMessageRepo.enqueue({
           workflowRunId: run.id,
           spaceId: SPACE_ID,
@@ -702,7 +644,7 @@ describe('SpaceRuntime', () => {
           message: 'will expire',
           expiresAt: Date.now() - 1,
         });
-        pendingMessageRepo.expireStale(run.id); // convert to expired
+        pendingMessageRepo.expireStale(run.id);
 
         const failedResult = pendingMessageRepo.enqueue({
           workflowRunId: run.id,
@@ -724,17 +666,14 @@ describe('SpaceRuntime', () => {
           message: 'stays pending',
         });
 
-        // Verify setup: 1 expired, 1 failed, 1 pending
         const before = pendingMessageRepo.listAllForRun(run.id);
         expect(before.filter((m) => m.status === 'expired')).toHaveLength(1);
         expect(before.filter((m) => m.status === 'failed')).toHaveLength(1);
         expect(before.filter((m) => m.status === 'pending')).toHaveLength(1);
 
-        // Clear terminal messages
         const deleted = pendingMessageRepo.clearTerminalForRun(run.id);
-        expect(deleted).toBe(2); // expired + failed
+        expect(deleted).toBe(2);
 
-        // Verify: only pending remains
         const after = pendingMessageRepo.listAllForRun(run.id);
         expect(after).toHaveLength(1);
         expect(after[0].status).toBe('pending');
@@ -762,7 +701,6 @@ describe('SpaceRuntime', () => {
         );
         const task = tasks[0];
 
-        // Helper to manually block run + executions + task
         const blockAll = () => {
           workflowRunRepo.transitionStatus(run.id, 'blocked');
           const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
@@ -777,23 +715,16 @@ describe('SpaceRuntime', () => {
           });
         };
 
-        // Block and tick — auto-retry fires (counter becomes 1),
-        // resets execution to pending, run → in_progress.
-        // MAX_BLOCKED_RUN_RETRIES = 1.
         blockAll();
         await runtime.executeTick();
         expect(workflowRunRepo.getRun(run.id)!.status).toBe('in_progress');
 
-        // Block again and tick — counter (1) >= MAX (1), retries exhausted,
-        // run stays blocked.
         blockAll();
         await runtime.executeTick();
         expect(workflowRunRepo.getRun(run.id)!.status).toBe('blocked');
 
-        // Recover — should reset the retry counter
         await runtime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'in_progress');
 
-        // Block again and tick — auto-retry should fire again (counter was reset)
         blockAll();
         await runtime.executeTick();
 
@@ -802,10 +733,6 @@ describe('SpaceRuntime', () => {
       });
     });
   });
-
-  // -------------------------------------------------------------------------
-  // startWorkflowRun()
-  // -------------------------------------------------------------------------
 
   describe('startWorkflowRun()', () => {
     test('creates run record with in_progress status', async () => {
@@ -836,12 +763,8 @@ describe('SpaceRuntime', () => {
       ]);
 
       const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Pinned Run');
-      // Baseline: whatever channels the pinned definition has immediately after start
-      // (robust to whether transitions are materialized as channels).
       const pinnedChannelCount = runtime.getWorkflowChannels(run.id).length;
 
-      // Edit the head AFTER the run was pinned — append a back-channel that did not exist
-      // at run creation. An in-flight run must keep executing its pinned version.
       const head = workflowManager.getWorkflow(workflow.id)!;
       workflowManager.updateWorkflow(workflow.id, {
         channels: [
@@ -850,7 +773,6 @@ describe('SpaceRuntime', () => {
         ],
       });
 
-      // The head now carries one more channel; the run's runtime read stays pinned.
       expect(workflowManager.getWorkflow(workflow.id)?.channels ?? []).toHaveLength(
         pinnedChannelCount + 1
       );
@@ -867,7 +789,6 @@ describe('SpaceRuntime', () => {
       expect(tasks).toHaveLength(1);
       const task = tasks[0];
       expect(task.workflowRunId).toBe(run.id);
-      // workflowNodeId was removed from SpaceTask in M71; node tracking moved to node_executions
       expect(task.status).toBe('open');
       expect(task.title).toBe('My Run');
     });
@@ -879,7 +800,6 @@ describe('SpaceRuntime', () => {
 
       const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-      // taskType removed from SpaceTask in M71; role-to-type mapping no longer stored on task
       expect(tasks[0].status).toBe('open');
     });
 
@@ -904,9 +824,6 @@ describe('SpaceRuntime', () => {
       expect(runtime.getExecutor(run.id)).toBeDefined();
     });
 
-    // maxIterations removed from CreateSpaceWorkflowParams and CreateWorkflowRunParams;
-    // per-channel maxCycles via ChannelCycleRepository replaces global iteration tracking.
-
     test('throws for unknown workflow', async () => {
       await expect(runtime.startWorkflowRun(SPACE_ID, 'nonexistent-wf-id', 'Run')).rejects.toThrow(
         'Workflow not found'
@@ -914,11 +831,6 @@ describe('SpaceRuntime', () => {
     });
 
     test('cancels DB run record when task creation fails (prevents silent rehydration loop)', async () => {
-      // Create a workflow where the startNodeId references a valid node but the
-      // agentId references an agent that is then deleted, causing createTask to fail
-      // due to the foreign key constraint on space_tasks.agent_id.
-      // Instead, use FK-bypass to create a workflow with a bogus startNodeId to
-      // trigger the "Start node not found" path which also exercises the cleanup.
       db.exec('PRAGMA foreign_keys = OFF');
       let workflow: SpaceWorkflow;
       try {
@@ -939,18 +851,15 @@ describe('SpaceRuntime', () => {
         db.exec('PRAGMA foreign_keys = ON');
       }
 
-      // Count runs before
       const runsBefore = workflowRunRepo.listBySpace(SPACE_ID);
 
       await expect(runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Bad Run')).rejects.toThrow();
 
-      // The newly created run should be cancelled, not left as in_progress
       const runsAfter = workflowRunRepo.listBySpace(SPACE_ID);
       const newRun = runsAfter.find((r) => !runsBefore.some((b) => b.id === r.id));
       expect(newRun).toBeDefined();
       expect(newRun!.status).toBe('cancelled');
 
-      // Executor map should not retain the failed run
       expect(runtime.executorCount).toBe(0);
     });
 
@@ -980,7 +889,6 @@ describe('SpaceRuntime', () => {
     });
 
     test('goalId param is accepted (but not stored — removed from SpaceWorkflowRun in M71)', async () => {
-      // goalId was removed from SpaceWorkflowRun in M71; the param is silently ignored
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
       ]);
@@ -993,7 +901,6 @@ describe('SpaceRuntime', () => {
         'goal-abc'
       );
 
-      // run and task should still be created successfully
       expect(run).toBeDefined();
       expect(tasks).toHaveLength(1);
     });
@@ -1005,7 +912,6 @@ describe('SpaceRuntime', () => {
 
       const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'No Goal');
 
-      // goalId removed from SpaceWorkflowRun and SpaceTask in M71
       expect((run as Record<string, unknown>).goalId).toBeUndefined();
       expect((tasks[0] as Record<string, unknown>).goalId).toBeUndefined();
     });
@@ -1073,12 +979,10 @@ describe('SpaceRuntime', () => {
     });
 
     test('cancels run and clears executor when start step has no agent configuration', async () => {
-      // Bypass FK + manager validation to insert a step with no agentId/agents
       db.exec('PRAGMA foreign_keys = OFF');
       let workflow: SpaceWorkflow;
       try {
         const repo = new SpaceWorkflowRepository(db);
-        // Insert step JSON directly with no agentId and no agents[]
         workflow = repo.createWorkflow({
           spaceId: SPACE_ID,
           name: `No Agent Step ${Date.now()}`,
@@ -1098,7 +1002,6 @@ describe('SpaceRuntime', () => {
 
       await expect(runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Broken Run')).rejects.toThrow();
 
-      // Run should not remain active in the executor map
       const runsAfter = workflowRunRepo.listBySpace(SPACE_ID);
       const newRun = runsAfter.find((r) => !runsBefore.some((b) => b.id === r.id));
       if (newRun) {
@@ -1108,13 +1011,8 @@ describe('SpaceRuntime', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Standalone tasks
-  // -------------------------------------------------------------------------
-
   describe('standalone tasks', () => {
     test('standalone task (no workflowRunId) is not processed by executor map', async () => {
-      // Create a standalone task directly via repo
       const task = taskRepo.createTask({
         spaceId: SPACE_ID,
         title: 'Standalone Task',
@@ -1122,27 +1020,22 @@ describe('SpaceRuntime', () => {
         status: 'open',
       });
 
-      // Tick should not throw and executor count stays 0
       await runtime.executeTick();
 
       expect(runtime.executorCount).toBe(0);
 
-      // Task status unchanged
       const unchanged = taskRepo.getTask(task.id)!;
       expect(unchanged.status).toBe('open');
     });
 
     test('uses preferredWorkflowId when attaching workflow to standalone task', async () => {
-      // Create two workflows — one preferred, one that would match heuristically
       const preferredWorkflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Coding', agentId: AGENT_CODER },
       ]);
-      // Second workflow with tags that would win the heuristic for "fix bug" keywords
       buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_B, name: 'Fix', agentId: AGENT_GENERAL },
       ]);
 
-      // Create task with explicit preferredWorkflowId
       const task = taskRepo.createTask({
         spaceId: SPACE_ID,
         title: 'Fix login bug',
@@ -1151,13 +1044,11 @@ describe('SpaceRuntime', () => {
         preferredWorkflowId: preferredWorkflow.id,
       });
 
-      // Tick attaches the preferred workflow
       await runtime.executeTick();
 
       const updated = taskRepo.getTask(task.id)!;
       expect(updated.workflowRunId).not.toBeNull();
 
-      // Verify the run uses the preferred workflow
       const run = workflowRunRepo.getRun(updated.workflowRunId!);
       expect(run).not.toBeNull();
       expect(run!.workflowId).toBe(preferredWorkflow.id);
@@ -1168,7 +1059,6 @@ describe('SpaceRuntime', () => {
         { id: STEP_A, name: 'Work', agentId: AGENT_CODER },
       ]);
 
-      // Create task with a non-existent preferred workflow ID
       const task = taskRepo.createTask({
         spaceId: SPACE_ID,
         title: 'Some task',
@@ -1179,13 +1069,11 @@ describe('SpaceRuntime', () => {
 
       await runtime.executeTick();
 
-      // Runtime should have fallen back and attached a workflow
       const updated = taskRepo.getTask(task.id)!;
       expect(updated.workflowRunId).not.toBeNull();
 
       const run = workflowRunRepo.getRun(updated.workflowRunId!);
       expect(run).not.toBeNull();
-      // Fallback: uses the only available workflow
       expect(run!.workflowId).toBe(fallbackWorkflow.id);
     });
 
@@ -1335,10 +1223,6 @@ describe('SpaceRuntime', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Rehydration
-  // -------------------------------------------------------------------------
-
   describe('rehydrateExecutors()', () => {
     test('rehydration is idempotent (second executeTick does not double-rehydrate)', async () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
@@ -1347,10 +1231,8 @@ describe('SpaceRuntime', () => {
 
       await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-      // First tick — triggers rehydration check (rehydrated already set)
       await runtime.executeTick();
 
-      // Second tick — should not duplicate executors
       await runtime.executeTick();
 
       expect(runtime.executorCount).toBeLessThanOrEqual(1);
@@ -1368,14 +1250,8 @@ describe('SpaceRuntime', () => {
       });
       workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
 
-      // Delete the workflow
-      // Simulate a workflow deleted out from under an active run — a legacy
-      // orphan the deletion guard (RFC §4 #3) now prevents in normal operation,
-      // but which rehydration must still tolerate. Bypass the manager guard by
-      // deleting at the repo level (no active-run check).
       new SpaceWorkflowRepository(db).deleteWorkflow(workflow.id);
 
-      // Fresh runtime — should not throw, should skip the orphaned run
       const freshRuntime = new SpaceRuntime({
         db,
         spaceManager,
@@ -1391,10 +1267,6 @@ describe('SpaceRuntime', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Executor cleanup
-  // -------------------------------------------------------------------------
-
   describe('executor cleanup', () => {
     test('cleanupTerminalExecutors() removes cancelled runs', async () => {
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
@@ -1404,19 +1276,13 @@ describe('SpaceRuntime', () => {
       const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
       expect(runtime.executorCount).toBe(1);
 
-      // Externally cancel the run
       workflowRunRepo.transitionStatus(run.id, 'cancelled');
 
-      // executeTick → processCompletedTasks skips cancelled, cleanupTerminalExecutors removes it
       await runtime.executeTick();
 
       expect(runtime.getExecutor(run.id)).toBeUndefined();
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Task Agent integration (taskAgentManager configured)
-  // -------------------------------------------------------------------------
 
   describe('queued workflow node handoff repair', () => {
     function makeWorkflowForHandoffRepair() {
@@ -1598,11 +1464,6 @@ describe('SpaceRuntime', () => {
     });
 
     test('drains two same-slot nodes independently (node-scoped recovery)', async () => {
-      // Round-10 regression: two nodes both declare 'reviewer'; each has a
-      // queued handoff row stamped with its workflowNodeId. Recovery must
-      // group by (agentName, nodeId) and drain each to its own node —
-      // otherwise it picks the first node, strands the other's row, and the
-      // run eventually blocks.
       const workflow = workflowManager.createWorkflow({
         spaceId: SPACE_ID,
         name: `Same-slot recovery ${Date.now()}-${Math.random()}`,
@@ -1621,13 +1482,10 @@ describe('SpaceRuntime', () => {
       });
       const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Same-slot');
       const task = tasks[0];
-      // Idle the start-node execution so it isn't treated as the repair target.
       const startExec = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
       if (startExec)
         nodeExecutionRepo.update(startExec.id, { status: 'idle', agentSessionId: null });
 
-      // Seed the two reviewer executions (pending, no session) + a queued row
-      // for each, stamped with its node id.
       nodeExecutionRepo.createOrIgnore({
         workflowRunId: run.id,
         workflowNodeId: 'rev-a',
@@ -1668,8 +1526,6 @@ describe('SpaceRuntime', () => {
         maxAttempts: 3,
       });
 
-      // Node-scoped flush (mirrors the real flushPendingMessagesForTarget):
-      // drain only rows whose workflowNodeId matches the session's execution.
       const tam = makeRepairTam({
         flush: async (runId: string, agentName: string, sessionId: string) => {
           const exec = nodeExecutionRepo
@@ -1682,13 +1538,11 @@ describe('SpaceRuntime', () => {
       });
       await buildRepairRuntime(tam, pendingRepo).executeTick();
 
-      // Both reviewer executions spawned (each on its own node).
       const execs = nodeExecutionRepo
         .listByWorkflowRun(run.id)
         .filter((e) => e.agentName === 'reviewer');
       expect(execs).toHaveLength(2);
       expect(execs.every((e) => e.agentSessionId)).toBe(true);
-      // Both rows delivered, each to its own node's session — neither stranded.
       const rows = pendingRepo.listAllForRun(run.id);
       expect(rows).toHaveLength(2);
       expect(rows.every((r) => r.status === 'delivered')).toBe(true);
@@ -1886,12 +1740,6 @@ describe('SpaceRuntime', () => {
       expect(nodeExecutionRepo.getById(helperExec.id)!.agentSessionId).toBe('session:helper-slot');
     });
 
-    // Compound "nodeName/agentName" handoff targets — regression coverage for
-    // the message-delivery v2 scoped queue rows emitted by agent-message-router
-    // (scopedAgentName) and task-agent-manager. The resolver must split the
-    // compound form and match node-by-name + slot-by-name; plain slot names and
-    // node names (no "/") keep resolving for backward compatibility. Without
-    // this, every Coding-workflow coder→reviewer handoff blocks the run.
     function makeCompoundHandoffWorkflow() {
       return workflowManager.createWorkflow({
         spaceId: SPACE_ID,
@@ -1918,22 +1766,12 @@ describe('SpaceRuntime', () => {
       });
     }
 
-    // The real flushPendingMessagesForTarget drains both the bare slot name and
-    // the compound "nodeName/agentName" form; mirror that so compound queue rows
-    // are marked delivered in these tests. This is a deliberate simplification
-    // of the real drain: it omits the workflowNodeId scoping, the
-    // targetKind === 'node_agent' filter, and the executionless guard. That's
-    // fine here because the compound rows enqueued below carry a null
-    // workflowNodeId and targetKind 'node_agent', so scoped/unscoped queries
-    // both find them and there are no executionless (merger) sessions in play.
     function makeCompoundAwareFlush(workflow: SpaceWorkflow) {
       const nodeNameById = new Map(workflow.nodes.map((node) => [node.id, node.name]));
       return async (runId: string, agentName: string, sessionId: string) => {
         const repo = new PendingAgentMessageRepository(db);
         const execution = nodeExecutionRepo.getByAgentSessionId(sessionId);
         const nodeName = execution ? nodeNameById.get(execution.workflowNodeId) : undefined;
-        // Mirror real flushPendingMessagesForTarget: bare agent + "<name>/<agent>".
-        // (No "<id>/<agent>" alias — see flushPendingMessagesForTarget.)
         const targets = [agentName, ...(nodeName ? [`${nodeName}/${agentName}`] : [])];
         const seen = new Set<string>();
         for (const target of targets) {
@@ -1959,7 +1797,6 @@ describe('SpaceRuntime', () => {
       );
       const task = tasks[0];
       taskRepo.updateTask(task.id, { status: 'in_progress' });
-      // Idle the start node so the sweep focuses on the queued reviewer handoff.
       nodeExecutionRepo.update(nodeExecutionRepo.listByWorkflowRun(run.id)[0]!.id, {
         status: 'idle',
         agentSessionId: null,
@@ -2031,10 +1868,6 @@ describe('SpaceRuntime', () => {
     });
 
     test('resolves a pinned bare slot name that contains "/" (restart-recovery form)', async () => {
-      // Pinned rows (workflowNodeId set) carry the BARE slot name — including
-      // enqueueRestartRecoveryMessage and the router's new emission. A slot whose
-      // name contains "/" (e.g. "Review/reviewer") must match exactly, not be
-      // stripped to "reviewer" by the compound prefix-match.
       const workflow = workflowManager.createWorkflow({
         spaceId: SPACE_ID,
         name: `Slash slot ${Date.now()}-${Math.random()}`,
@@ -2088,10 +1921,6 @@ describe('SpaceRuntime', () => {
     });
 
     test('resolves a compound target whose node name contains "/"', async () => {
-      // Workflow validation does not forbid "/" in node names. A compound like
-      // "Pair/Review/reviewer" must match the "Pair/Review" node's reviewer
-      // slot — splitting on the first "/" would truncate the node name to "Pair"
-      // and miss it, blocking the run.
       const workflow = workflowManager.createWorkflow({
         spaceId: SPACE_ID,
         name: `Slash-name handoff ${Date.now()}-${Math.random()}`,
@@ -2145,10 +1974,6 @@ describe('SpaceRuntime', () => {
     });
 
     test('an unpinned bare slot name containing "/" resolves to its exact node, not a compound', async () => {
-      // Node Review declares "foo"; node Audit declares a slot literally named
-      // "Review/foo". A bare unpinned row "Review/foo" (e.g. a generic send to
-      // Audit's slot) must resolve to Audit's exact slot — not be parsed as
-      // Review's compound "Review/foo" -> foo.
       const workflow = workflowManager.createWorkflow({
         spaceId: SPACE_ID,
         name: `Slash bare slot ${Date.now()}-${Math.random()}`,
@@ -2196,7 +2021,6 @@ describe('SpaceRuntime', () => {
         .find((e) => e.workflowNodeId === 'audit-node');
       expect(auditExec?.agentName).toBe('Review/foo');
       expect(auditExec?.status).toBe('in_progress');
-      // Review's "foo" slot must NOT have been spawned (no compound misresolution).
       expect(
         nodeExecutionRepo.listByWorkflowRun(run.id).find((e) => e.workflowNodeId === 'review-node')
       ).toBeUndefined();
@@ -2204,10 +2028,6 @@ describe('SpaceRuntime', () => {
     });
 
     test('a bare node-name target is not captured by another node same-named slot (no slash)', async () => {
-      // Node Review's first slot is 'reviewer'; node Other has a slot literally
-      // named 'Review'. A bare unpinned 'Review' targets the NODE, and must still
-      // resolve to Review (via the bare-node path) — the exact-slot-first pass is
-      // limited to slash-shaped values, so it must not hand 'Review' to Other.
       const workflow = workflowManager.createWorkflow({
         spaceId: SPACE_ID,
         name: `Bare node vs slot ${Date.now()}-${Math.random()}`,
@@ -2250,7 +2070,6 @@ describe('SpaceRuntime', () => {
       const tam = makeRepairTam({ flush: makeCompoundAwareFlush(workflow) });
       await buildRepairRuntime(tam, pendingRepo).executeTick();
 
-      // Resolves to the Review node's first slot, NOT Other's 'Review' slot.
       const reviewExec = nodeExecutionRepo
         .listByWorkflowRun(run.id)
         .find((e) => e.workflowNodeId === 'review-node');
@@ -2262,10 +2081,6 @@ describe('SpaceRuntime', () => {
     });
 
     test('disambiguates two nodes sharing a slot name, via the pinned workflowNodeId', async () => {
-      // Two nodes both declare a 'reviewer' slot. The router and restart-recovery
-      // emit BARE 'reviewer' + each node's workflowNodeId, so the resolver pins
-      // the exact node instead of guessing from the slot name — each row reaches
-      // its own node and neither leaks to the other.
       const workflow = workflowManager.createWorkflow({
         spaceId: SPACE_ID,
         name: `Same-slot ${Date.now()}-${Math.random()}`,
@@ -2290,7 +2105,6 @@ describe('SpaceRuntime', () => {
       });
 
       const pendingRepo = new PendingAgentMessageRepository(db);
-      // Two rows with the SAME bare slot name, each pinned to a different node.
       for (const nodeId of ['rev-a', 'rev-b']) {
         pendingRepo.enqueue({
           workflowRunId: run.id,
@@ -2308,7 +2122,6 @@ describe('SpaceRuntime', () => {
       const tam = makeRepairTam({ flush: makeCompoundAwareFlush(workflow) });
       await buildRepairRuntime(tam, pendingRepo).executeTick();
 
-      // Each node spawned its own reviewer; neither row leaked to the other node.
       const execs = nodeExecutionRepo.listByWorkflowRun(run.id);
       const revA = execs.find((e) => e.workflowNodeId === 'rev-a');
       const revB = execs.find((e) => e.workflowNodeId === 'rev-b');
@@ -2322,8 +2135,6 @@ describe('SpaceRuntime', () => {
     });
 
     test('resolves a bare slot name pinned by workflowNodeId (router emission form)', async () => {
-      // The router now persists the BARE agent name + resolved workflowNodeId on
-      // @worker rows (no compound). Verify the sweep resolves that form end-to-end.
       const workflow = makeCompoundHandoffWorkflow();
       const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Bare pinned');
       const task = tasks[0];
@@ -2359,11 +2170,6 @@ describe('SpaceRuntime', () => {
     });
 
     test('legacy "<nodeId>/<agent>" rows (prior router) are normalized and delivered', async () => {
-      // A row queued by the previous router from an actor-registry handle stored
-      // the id-compound "<nodeId>/<agent>" with NO workflowNodeId. The sweep
-      // resolves it and rewrites it to bare+workflowNodeId so the flush drains it
-      // — otherwise it would expire undelivered now that the compound drain alias
-      // is gone.
       const workflow = makeCompoundHandoffWorkflow();
       const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Legacy id');
       const task = tasks[0];
@@ -2392,7 +2198,6 @@ describe('SpaceRuntime', () => {
         .find((e) => e.workflowNodeId === 'review-node');
       expect(reviewerExec?.agentName).toBe('reviewer');
       expect(reviewerExec?.status).toBe('in_progress');
-      // The row was rescoped to bare+workflowNodeId and delivered.
       const row = pendingRepo.listAllForRun(run.id)[0];
       expect(row.targetAgentName).toBe('reviewer');
       expect(row.workflowNodeId).toBe('review-node');
@@ -2400,15 +2205,10 @@ describe('SpaceRuntime', () => {
     });
 
     test('legacy "<nodeId>/<agent>" rows are rescoped even when an execution already exists', async () => {
-      // The rescope must run BEFORE the execution lookup — if a matching
-      // NodeExecution already exists, the no-execution branch (where rescope used
-      // to live) is skipped and the row keeps its old "<nodeId>/<agent>" key, so
-      // the flush never drains it.
       const workflow = makeCompoundHandoffWorkflow();
       const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Legacy exec');
       const task = tasks[0];
       taskRepo.updateTask(task.id, { status: 'in_progress' });
-      // Pre-create the target execution with a live session (e.g. spawned earlier).
       nodeExecutionRepo.createOrIgnore({
         workflowRunId: run.id,
         workflowNodeId: 'review-node',
@@ -2446,10 +2246,6 @@ describe('SpaceRuntime', () => {
     });
 
     test('rescoping a legacy compound row drops it when a bare retry row already exists (idempotency)', async () => {
-      // If the new router already inserted a bare retry row for the same
-      // idempotency key, rescoping the legacy compound row into the same
-      // (run, target, idempotency_key) would violate the unique index. The
-      // rescope drops the superseded legacy row instead.
       const workflow = makeCompoundHandoffWorkflow();
       const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Idempotency');
       const task = tasks[0];
@@ -2459,7 +2255,6 @@ describe('SpaceRuntime', () => {
         agentSessionId: null,
       });
       const pendingRepo = new PendingAgentMessageRepository(db);
-      // Legacy compound row from the previous router.
       pendingRepo.enqueue({
         workflowRunId: run.id,
         spaceId: SPACE_ID,
@@ -2472,7 +2267,6 @@ describe('SpaceRuntime', () => {
         ttlMs: 60_000,
         maxAttempts: 3,
       });
-      // Bare retry row the new router inserted for the same message.
       pendingRepo.enqueue({
         workflowRunId: run.id,
         spaceId: SPACE_ID,
@@ -2490,7 +2284,6 @@ describe('SpaceRuntime', () => {
       await buildRepairRuntime(tam, pendingRepo).executeTick();
 
       const rows = pendingRepo.listAllForRun(run.id);
-      // The legacy compound row was dropped; the bare retry row was delivered.
       expect(rows.filter((r) => r.targetAgentName === 'review-node/reviewer')).toHaveLength(0);
       const bare = rows.filter((r) => r.targetAgentName === 'reviewer');
       expect(bare).toHaveLength(1);
@@ -2498,9 +2291,6 @@ describe('SpaceRuntime', () => {
     });
 
     test('rescoping a legacy compound row proceeds when the same-key retry row already failed', async () => {
-      // The unique index covers only pending rows, so a failed/expired retry
-      // with the same idempotency key is NOT a conflict — the legacy row is
-      // rescoped and delivered, not dropped (it's the only retryable handoff).
       const workflow = makeCompoundHandoffWorkflow();
       const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Failed retry');
       const task = tasks[0];
@@ -2510,7 +2300,6 @@ describe('SpaceRuntime', () => {
         agentSessionId: null,
       });
       const pendingRepo = new PendingAgentMessageRepository(db);
-      // Bare retry row that already FAILED (terminal), same idempotency key.
       const retry = pendingRepo.enqueue({
         workflowRunId: run.id,
         spaceId: SPACE_ID,
@@ -2525,7 +2314,6 @@ describe('SpaceRuntime', () => {
         maxAttempts: 1,
       });
       pendingRepo.markAttemptFailed(retry.record.id, 'prior failure');
-      // Legacy compound row, same key.
       pendingRepo.enqueue({
         workflowRunId: run.id,
         spaceId: SPACE_ID,
@@ -2542,7 +2330,6 @@ describe('SpaceRuntime', () => {
       await buildRepairRuntime(tam, pendingRepo).executeTick();
 
       const rows = pendingRepo.listAllForRun(run.id);
-      // The legacy compound row was rescoped (not dropped) and delivered.
       expect(rows.filter((r) => r.targetAgentName === 'review-node/reviewer')).toHaveLength(0);
       const delivered = rows.filter(
         (r) => r.targetAgentName === 'reviewer' && r.status === 'delivered'
@@ -2576,7 +2363,6 @@ describe('SpaceRuntime', () => {
         ttlMs: 60_000,
         maxAttempts: 3,
       });
-      // Default mock flush drains by the bare slot name, which matches here.
       const tam = makeRepairTam();
       await buildRepairRuntime(tam, pendingRepo).executeTick();
 
@@ -2618,10 +2404,6 @@ describe('SpaceRuntime', () => {
       const tam = makeRepairTam();
       await buildRepairRuntime(tam, pendingRepo).executeTick();
 
-      // Bare node name resolves to the Review node's first (reviewer) slot and
-      // spawns it. (A bare node name is a legacy/defensive target — current
-      // routing emits slot names or compound forms — so we assert resolution,
-      // not delivery, which depends on a matching flush key.)
       const reviewerExec = nodeExecutionRepo
         .listByWorkflowRun(run.id)
         .find((execution) => execution.workflowNodeId === 'review-node')!;
@@ -2631,11 +2413,6 @@ describe('SpaceRuntime', () => {
     });
 
     test('a compound target with an unknown slot does not silently fall back to another slot', async () => {
-      // Compound "nodeName/agentName" is a precise address: a slot name that
-      // doesn't exist on the matched node must NOT fall back to slots[0]. The
-      // resolver returns null and the sweep surfaces it as an undeclared target.
-      // Pins the failure behavior this fix restores and guards against typos
-      // like "Review/reveiwer" misdelivering to the reviewer slot.
       const workflow = makeCompoundHandoffWorkflow();
       const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Bad slot');
       const task = tasks[0];
@@ -2660,8 +2437,6 @@ describe('SpaceRuntime', () => {
       const tam = makeRepairTam();
       await buildRepairRuntime(tam, pendingRepo).executeTick();
 
-      // No execution created or spawned for the Review node, and the row failed
-      // with the undeclared-target error instead of misdelivering to the slot.
       expect(tam._spawnedExecutionIds).toHaveLength(0);
       const row = pendingRepo.listAllForRun(run.id)[0];
       expect(row.status).toBe('failed');
@@ -2702,10 +2477,6 @@ describe('SpaceRuntime', () => {
     });
 
     test('createWorkflow rejects a node id that collides with another node name (channel isolation)', () => {
-      // Channel authorization is by node NAME, but worker-handle resolution can
-      // resolve a name-authorized ref to a node by ID. A node id equal to another
-      // node's name makes that ref ambiguous and can route a message into a node
-      // the topology never authorized — reject it at definition time.
       expect(() =>
         workflowManager.createWorkflow({
           spaceId: SPACE_ID,
@@ -2748,8 +2519,6 @@ describe('SpaceRuntime', () => {
     });
 
     test('createWorkflow rejects empty and surrounding-whitespace node ids', () => {
-      // Rejecting (rather than silently trimming) keeps a supplied id verbatim so
-      // params.layout keys still match — trimming would discard saved positions.
       const base = {
         spaceId: SPACE_ID,
         transitions: [],
@@ -2997,14 +2766,6 @@ describe('SpaceRuntime', () => {
   });
 
   describe('Task Agent integration', () => {
-    /**
-     * Minimal mock for TaskAgentManager.
-     *
-     * The runtime now uses execution-centric APIs
-     * (isExecutionSpawning / isSessionAlive / spawnWorkflowNodeAgentForExecution).
-     * This helper keeps tests concise by accepting task-centric overrides and mapping
-     * execution IDs back to the canonical run task when needed.
-     */
     function makeMockTaskAgentManager(
       overrides: {
         isSpawning?: (taskId: string) => boolean;
@@ -3026,7 +2787,6 @@ describe('SpaceRuntime', () => {
         (async (task: unknown) => {
           const t = task as { id: string };
           spawned.push(t.id);
-          // Mirror real TaskAgentManager: writes taskAgentSessionId as a side-effect
           taskRepo.updateTask(t.id, { taskAgentSessionId: `session:${t.id}` });
           return `session:${t.id}`;
         });
@@ -3098,9 +2858,7 @@ describe('SpaceRuntime', () => {
 
       await rt.executeTick();
 
-      // Task Agent should have been spawned
       expect(tam._spawned).toContain(tasks[0].id);
-      // Task should be in_progress
       const updated = taskRepo.getTask(tasks[0].id)!;
       expect(updated.status).toBe('in_progress');
       expect(updated.taskAgentSessionId).toBe(`session:${tasks[0].id}`);
@@ -3119,7 +2877,7 @@ describe('SpaceRuntime', () => {
 
       let spawnCount = 0;
       const tam = makeMockTaskAgentManager({
-        isTaskAgentAlive: () => true, // always alive
+        isTaskAgentAlive: () => true,
         spawnWorkflowNodeAgent: async (task: unknown) => {
           const t = task as { id: string };
           spawnCount++;
@@ -3131,31 +2889,25 @@ describe('SpaceRuntime', () => {
 
       const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-      // First tick: spawns Task Agent (no taskAgentSessionId yet)
       await rt.executeTick();
       expect(spawnCount).toBe(1);
 
-      // Mark task as in_progress (set by SpaceRuntime after spawn)
-      // taskAgentSessionId is already set by mock spawnWorkflowNodeAgent
       const taskAfterSpawn = taskRepo.getTask(tasks[0].id)!;
       expect(taskAfterSpawn.taskAgentSessionId).toBeTruthy();
 
-      // Subsequent ticks: agent is alive → skip, no re-spawn
       await rt.executeTick();
       await rt.executeTick();
-      expect(spawnCount).toBe(1); // still only spawned once
+      expect(spawnCount).toBe(1);
     });
 
     test('crashed Task Agent resets to pending on first crash (retry) then needs_attention after max retries', async () => {
-      // M9.4 crash-retry: transient crashes reset to pending (up to MAX_TASK_AGENT_CRASH_RETRIES=2).
-      // Only after the limit is exhausted does the task escalate to needs_attention.
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
       ]);
 
       let spawnCount = 0;
       const tam = makeMockTaskAgentManager({
-        isTaskAgentAlive: () => false, // agent always reports as dead (crashed)
+        isTaskAgentAlive: () => false,
         spawnWorkflowNodeAgent: async (task: unknown) => {
           const t = task as { id: string };
           spawnCount++;
@@ -3167,32 +2919,26 @@ describe('SpaceRuntime', () => {
 
       const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-      // Mark the single start-node execution as having a dead session to trigger crash handling.
       const firstExecution = nodeExecutionRepo.listByNode(tasks[0].workflowRunId!, STEP_A)[0]!;
       nodeExecutionRepo.update(firstExecution.id, {
         agentSessionId: 'session:dead',
         status: 'in_progress',
       });
 
-      // Tick 1: crash 1 (count=1 ≤ MAX=2) → reset to pending; runtime re-spawns in same tick
       await rt.executeTick();
       let updated = taskRepo.getTask(tasks[0].id)!;
-      expect(updated.status).toBe('in_progress'); // re-spawned after first crash
+      expect(updated.status).toBe('in_progress');
       expect(spawnCount).toBe(1);
 
-      // Tick 2: crash 2 (count=2 ≤ MAX=2) → reset to pending; runtime re-spawns in same tick
       await rt.executeTick();
       updated = taskRepo.getTask(tasks[0].id)!;
-      expect(updated.status).toBe('in_progress'); // re-spawned after second crash
+      expect(updated.status).toBe('in_progress');
       expect(spawnCount).toBe(2);
 
-      // Tick 3: crash 3 (count=3 > MAX=2) → blocked (M71: needs_attention renamed to blocked)
       await rt.executeTick();
       updated = taskRepo.getTask(tasks[0].id)!;
       expect(updated.status).toBe('blocked');
-      // crash info is stored in result field (not error)
       expect(updated.result).toContain('3 times');
-      // Only 2 re-spawns happened (crashes 1 and 2 got retries; crash 3 escalated)
       expect(spawnCount).toBe(2);
     });
 
@@ -3218,12 +2964,10 @@ describe('SpaceRuntime', () => {
 
       const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-      // Simulate concurrent tick while first is "spawning"
-      spawningSet.add(tasks[0].id); // pretend spawn is in progress
+      spawningSet.add(tasks[0].id);
 
       await rt.executeTick();
 
-      // No additional spawn should happen while isSpawning() returns true
       expect(spawnCount).toBe(0);
     });
 
@@ -3236,7 +2980,6 @@ describe('SpaceRuntime', () => {
       let spawnCount = 0;
       const tam = makeMockTaskAgentManager({
         isTaskAgentAlive: (taskId: string) => {
-          // Alive after spawn (taskAgentSessionId is set)
           const task = taskRepo.getTask(taskId);
           return !!task?.taskAgentSessionId;
         },
@@ -3251,13 +2994,11 @@ describe('SpaceRuntime', () => {
 
       const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-      // Multiple ticks — should only spawn once (agent is alive after first spawn)
       await rt.executeTick();
       await rt.executeTick();
       await rt.executeTick();
 
       expect(spawnCount).toBe(1);
-      // Task should still be in_progress
       expect(taskRepo.getTask(tasks[0].id)!.status).toBe('in_progress');
     });
 
@@ -3266,7 +3007,6 @@ describe('SpaceRuntime', () => {
         { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
       ]);
 
-      // Start the run with the real space manager so startWorkflowRun() works.
       const tam = makeMockTaskAgentManager({
         spawnWorkflowNodeAgent: async (task: unknown) => {
           const t = task as { id: string };
@@ -3287,27 +3027,19 @@ describe('SpaceRuntime', () => {
         },
       });
 
-      // Build a fresh runtime that uses a null space manager for getSpace().
-      // startWorkflowRun already created the run and executor in the DB; the fresh
-      // runtime rehydrates it on first executeTick() and then hits the null space path.
       const nullSpaceManager = {
         getSpace: async () => null,
         listSpaces: async () => [{ id: SPACE_ID, workspacePath: WORKSPACE }],
       };
       const rtWithNullSpace = buildRuntimeWithMockTAM(tamForNull, nullSpaceManager);
 
-      // executeTick() rehydrates the run but getSpace() returns null → spawn skipped
       await rtWithNullSpace.executeTick();
 
-      // No Task Agent spawned — space is null
       expect(spawnCount).toBe(0);
-      // Task stays open (M71: 'pending' renamed to 'open')
       expect(taskRepo.getTask(tasks[0].id)!.status).toBe('open');
     });
 
     test('liveness loop resets crashed task to pending (1st crash) and leaves alive sibling untouched', async () => {
-      // M9.4 crash-retry: Two tasks in same step — task A alive, task B crashed (1st crash).
-      // Task B resets to pending for retry; task A (alive) remains untouched.
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
       ]);
@@ -3319,7 +3051,6 @@ describe('SpaceRuntime', () => {
 
       const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-      // Insert a second task for the same step directly via repo (multi-task scenario)
       const taskB = taskRepo.createTask({
         spaceId: SPACE_ID,
         title: 'Plan B',
@@ -3332,11 +3063,9 @@ describe('SpaceRuntime', () => {
       const taskBId = taskB.id;
       taskRepo.updateTask(taskBId, { taskAgentSessionId: 'session:dead-b' });
 
-      // Create alive task separately by injecting its id into the mock
       const firstTask = taskRepo.listByWorkflowRun(run.id).find((t) => t.id !== taskBId)!;
       taskRepo.updateTask(firstTask.id, { status: 'in_progress' });
 
-      // Override the mock to know which task is alive
       const aliveId = firstTask.id;
       const customTam = makeMockTaskAgentManager({
         isTaskAgentAlive: (taskId: string) => taskId === aliveId,
@@ -3345,18 +3074,15 @@ describe('SpaceRuntime', () => {
 
       await rt2.executeTick();
 
-      // In strict one-task-per-run mode, extra run tasks are archived during tick repair.
       const updatedB = taskRepo.getTask(taskBId)!;
       expect(updatedB.status).toBe('archived');
       expect(updatedB.workflowRunId).toBeUndefined();
 
-      // Alive task A should be untouched
       const updatedA = taskRepo.getTask(aliveId)!;
       expect(updatedA.status).toBe('in_progress');
     });
 
     test('liveness loop marks crashed task needs_attention after max retries exhausted', async () => {
-      // After MAX_TASK_AGENT_CRASH_RETRIES=2 retries, the 3rd crash escalates to needs_attention.
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
       ]);
@@ -3370,39 +3096,30 @@ describe('SpaceRuntime', () => {
           spawnCount++;
           const sessionId = `session:${t.id}:v${spawnCount}`;
           taskRepo.updateTask(t.id, { taskAgentSessionId: sessionId });
-          // Keep alive until next tick check
           return sessionId;
         },
       });
       const rt = buildRuntimeWithMockTAM(tam);
       const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-      // Pre-load with a dead execution session to trigger crash detection from tick 1
       const firstExecution = nodeExecutionRepo.listByNode(tasks[0].workflowRunId!, STEP_A)[0]!;
       nodeExecutionRepo.update(firstExecution.id, {
         agentSessionId: 'session:dead-initial',
         status: 'in_progress',
       });
 
-      // 3 ticks: crash 1 → open+respawn, crash 2 → open+respawn, crash 3 → blocked
       await rt.executeTick();
       await rt.executeTick();
       await rt.executeTick();
 
       const updated = taskRepo.getTask(tasks[0].id)!;
       expect(updated.status).toBe('blocked');
-      // crash info is stored in result field (not error)
       expect(updated.result).toContain('3 times');
     });
   });
 
-  // -------------------------------------------------------------------------
-  // seedPresetAgents + seedBuiltInWorkflows wiring (space-handlers)
-  // -------------------------------------------------------------------------
-
   describe('space.create seeding (unit-level check)', () => {
     test('seedBuiltInWorkflows can be called after seedPresetAgents successfully', async () => {
-      // Create a new space DB row
       const newSpaceId = 'space-seed-test';
       const newWorkspacePath = '/tmp/seed-test';
       seedSpaceRow(db, newSpaceId, newWorkspacePath);
@@ -3412,13 +3129,10 @@ describe('SpaceRuntime', () => {
         '../../../../src/lib/space/workflows/built-in-workflows.ts'
       );
 
-      // Seed agents
       const result = await seedPresetAgents(newSpaceId, agentManager);
       expect(result.errors).toHaveLength(0);
       expect(result.seeded.length).toBeGreaterThan(0);
 
-      // Seed workflows using name resolver (role removed from CreateSpaceWorkerAgentParams in M71;
-      // built-in templates use capitalized placeholder names matching agent names)
       const agents = agentManager.listBySpaceId(newSpaceId);
       expect(() =>
         seedBuiltInWorkflows(
@@ -3428,8 +3142,6 @@ describe('SpaceRuntime', () => {
         )
       ).not.toThrow();
 
-      // Four built-in workflows should exist (the stable coder-owned set,
-      // minus the removed Plan & Decompose workflow).
       const workflows = workflowManager.listWorkflows(newSpaceId);
       expect(workflows).toHaveLength(4);
     });
@@ -3446,20 +3158,15 @@ describe('SpaceRuntime', () => {
 
       await seedPresetAgents(newSpaceId, agentManager);
       const agents = agentManager.listBySpaceId(newSpaceId);
-      // role removed from CreateSpaceWorkerAgentParams in M71; use name lookup instead
       const resolver = (name: string) => agents.find((a) => a.name === name)?.id;
 
       seedBuiltInWorkflows(newSpaceId, workflowManager, resolver);
-      seedBuiltInWorkflows(newSpaceId, workflowManager, resolver); // second call is no-op
+      seedBuiltInWorkflows(newSpaceId, workflowManager, resolver);
 
       const workflows = workflowManager.listWorkflows(newSpaceId);
-      expect(workflows).toHaveLength(4); // still 4, not 8
+      expect(workflows).toHaveLength(4);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Multi-agent steps
-  // -------------------------------------------------------------------------
 
   describe('multi-agent step support', () => {
     test('startWorkflowRun() creates one canonical task and one execution per agent', async () => {
@@ -3510,7 +3217,6 @@ describe('SpaceRuntime', () => {
       const { tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
       expect(tasks).toHaveLength(1);
-      // workflowNodeId removed from SpaceTask in M71; node tracking is now in node_executions
       expect(tasks[0].status).toBe('open');
     });
 
@@ -3651,10 +3357,6 @@ describe('SpaceRuntime', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Channel topology resolution
-  // -------------------------------------------------------------------------
-
   describe('channel topology resolution', () => {
     test('storeWorkflowChannels: step with channels stores channels in memory', async () => {
       const AGENT_REVIEWER = 'agent-reviewer';
@@ -3679,7 +3381,6 @@ describe('SpaceRuntime', () => {
 
       const { run } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-      // Channels stored in-memory via runtime.getRunWorkflowChannels()
       const channels = runtime.getRunWorkflowChannels(run.id);
       expect(Array.isArray(channels)).toBe(true);
       expect(channels.length).toBeGreaterThan(0);

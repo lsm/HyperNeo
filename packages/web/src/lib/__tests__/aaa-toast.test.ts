@@ -1,20 +1,13 @@
 // @ts-nocheck
-/**
- * Tests for Toast Notification System
- *
- * Tests the toast utility functions and signals.
- */
 
 import { toastsSignal, dismissToast, toast } from '../toast';
 
 describe('toastsSignal', () => {
   beforeEach(() => {
-    // Clear all toasts before each test
     toastsSignal.value = [];
   });
 
   afterEach(() => {
-    // Clear all toasts after each test
     toastsSignal.value = [];
   });
 
@@ -128,12 +121,10 @@ describe('toast', () => {
 
   describe('auto-dismiss', () => {
     it('should auto-dismiss after duration', async () => {
-      // Use a short duration for testing
       toast.info('Auto-dismiss', 50);
 
       expect(toastsSignal.value).toHaveLength(1);
 
-      // Wait for auto-dismiss
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       expect(toastsSignal.value).toHaveLength(0);
@@ -144,10 +135,8 @@ describe('toast', () => {
 
       expect(toastsSignal.value).toHaveLength(1);
 
-      // Wait a bit
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // Should still be there
       expect(toastsSignal.value).toHaveLength(1);
     });
   });
@@ -244,11 +233,9 @@ describe('Toast ID generation', () => {
       ids.push(toast.info(`Toast ${i}`));
     }
 
-    // All IDs should be unique
     const uniqueIds = new Set(ids);
     expect(uniqueIds.size).toBe(5);
 
-    // All IDs should follow the pattern
     ids.forEach((id) => {
       expect(id).toMatch(/^toast-\d+$/);
     });

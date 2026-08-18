@@ -1,12 +1,3 @@
-/**
- * TaskArtifactsPanel — grouped artifact view for a task's workflow run.
- *
- * Sections:
- *   - Todos: last TodoWrite per agent, grouped by agent label
- *   - Commits: git commits between branch point and HEAD (clickable → file list → diff)
- *   - Uncommitted Changes: staged/unstaged files vs HEAD (clickable → diff)
- */
-
 import { useState, useEffect, useMemo } from 'preact/hooks';
 import { connectionManager } from '../../lib/connection-manager';
 import { cn } from '../../lib/utils';
@@ -24,14 +15,6 @@ import {
   type FileOperation,
 } from './thread/space-task-thread-events';
 
-// ============================================================================
-// Helpers
-// ============================================================================
-
-/**
- * Returns a human-readable relative time string (e.g. "3m ago", "2h ago").
- * Intentionally simple — no i18n dependency.
- */
 function relativeTime(timestampMs: number): string {
   const diffMs = Date.now() - timestampMs;
   const diffSec = Math.floor(diffMs / 1_000);
@@ -44,14 +27,9 @@ function relativeTime(timestampMs: number): string {
   return `${diffDays}d ago`;
 }
 
-// ============================================================================
-// Types
-// ============================================================================
-
 export interface TaskArtifactsPanelProps {
   runId: string;
   taskId?: string;
-  /** Called when the panel should close (kept for API compatibility) */
   onClose?: () => void;
   class?: string;
 }
@@ -91,10 +69,6 @@ type PanelView =
   | { mode: 'commitFiles'; commit: CommitInfo }
   | { mode: 'fileDiff'; filePath: string; commitSha?: string; fromCommit?: CommitInfo }
   | { mode: 'syntheticDiff'; op: FileOperation };
-
-// ============================================================================
-// Subcomponents
-// ============================================================================
 
 function SectionHeader({
   label,
@@ -204,10 +178,6 @@ function FileRow({ file, onClick }: { file: FileDiffStat; onClick: () => void })
   );
 }
 
-// ============================================================================
-// Commit files drill-down view
-// ============================================================================
-
 function CommitFilesView({
   runId,
   taskId,
@@ -255,7 +225,6 @@ function CommitFilesView({
 
   return (
     <div class="flex flex-col h-full overflow-hidden">
-      {/* Mini header */}
       <div class="flex items-center gap-2 px-4 py-3 border-b border-dark-700 flex-shrink-0 bg-dark-850">
         <button
           onClick={onBack}
@@ -304,41 +273,30 @@ function CommitFilesView({
   );
 }
 
-// ============================================================================
-// Main component
-// ============================================================================
-
 export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArtifactsPanelProps) {
   const [view, setView] = useState<PanelView>({ mode: 'list' });
 
-  // ── Uncommitted changes ──────────────────────────────────────────────────
   const [uncommittedLoading, setUncommittedLoading] = useState(true);
   const [uncommittedError, setUncommittedError] = useState<string | null>(null);
   const [uncommitted, setUncommitted] = useState<UncommittedResult | null>(null);
 
-  // ── Commits ──────────────────────────────────────────────────────────────
   const [commitsLoading, setCommitsLoading] = useState(true);
   const [commitsError, setCommitsError] = useState<string | null>(null);
   const [commitsData, setCommitsData] = useState<CommitsResult | null>(null);
 
-  // ── Run artifacts ───────────────────────────────────────────────────────
   const [artifacts, setArtifacts] = useState<WorkflowRunArtifact[]>([]);
 
-  // ── Todos (from message thread) ──────────────────────────────────────────
   const { rows: messageRows, error: messageRowsError } = useSpaceTaskMessages(taskId ?? null);
 
-  // File operations from tool calls (Write/Edit) — used when not a git repo
   const fileOps = useMemo<FileOperation[]>(() => {
     if (!messageRows.length) return [];
     const parsedRows = messageRows.map(parseThreadRow);
     return extractFileOperations(parsedRows);
   }, [messageRows]);
 
-  // Group by sessionId → take last TodoWrite per session
   const todosByAgent = useMemo<{ label: string; todos: TodoItem[] }[]>(() => {
     if (!messageRows.length) return [];
 
-    // Group rows by sessionId
     const bySession = new Map<string, typeof messageRows>();
     for (const row of messageRows) {
       const key = row.sessionId ?? 'unknown';
@@ -350,7 +308,6 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
     for (const [, rows] of bySession) {
       const parsedRows = rows.map(parseThreadRow);
       const events = buildThreadEvents(parsedRows);
-      // Last TodoWrite in this session = current state for this agent
       let latestTodos: TodoItem[] | null = null;
       for (let i = events.length - 1; i >= 0; i--) {
         const t = events[i].todos;
@@ -384,8 +341,6 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
 
     const taskParams = taskId ? { taskId } : {};
 
-    // Cancellation guard — effect reruns / component unmounts should not land
-    // state into the replaced instance.
     let cancelled = false;
 
     const fetchGateArtifacts = () => {
@@ -432,8 +387,6 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
         // Artifact fetch is best-effort — component works without them
       });
 
-    // Reactively refetch when the background sync job writes a new cache row.
-    // The event carries the cacheKey so we only re-run the relevant RPC.
     const unsubscribe = hub.onEvent<{
       sessionId: string;
       spaceId: string;
@@ -444,7 +397,6 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
     }>('space.artifactCache.updated', (event) => {
       if (cancelled) return;
       if (event.runId !== runId) return;
-      // Task scope: if panel is scoped to a specific task, ignore other tasks.
       if (taskId && event.taskId && event.taskId !== taskId) return;
       if (event.cacheKey === 'gateArtifacts') {
         fetchGateArtifacts();
@@ -458,8 +410,6 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
       unsubscribe();
     };
   }, [runId, taskId]);
-
-  // ── View routing ─────────────────────────────────────────────────────────
 
   if (view.mode === 'syntheticDiff') {
     const synth = buildSyntheticDiff(view.op);
@@ -511,9 +461,6 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
     );
   }
 
-  // ── List view ────────────────────────────────────────────────────────────
-
-  // A repo is considered non-git when we have a definitive false (not just empty data)
   const isGitRepo = uncommitted?.isGitRepo !== false && commitsData?.isGitRepo !== false;
 
   const uncommittedMeta =
@@ -536,7 +483,6 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
     >
       <div class="flex-1 overflow-y-auto min-h-0">
         <div class="min-h-[calc(100%+1px)]">
-          {/* ── Todos ───────────────────────────────────────────── */}
           {hasTodos && (
             <div class="mb-2">
               <SectionHeader label="Todos" />
@@ -573,7 +519,6 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
             </div>
           )}
 
-          {/* ── Run Artifacts ──────────────────────────────────── */}
           {artifacts.length > 0 && (
             <div class="mb-2">
               <SectionHeader
@@ -592,7 +537,6 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
 
           {isGitRepo ? (
             <>
-              {/* ── Commits ───────────────────────────────────────── */}
               <div class="mb-2">
                 <SectionHeader
                   label="Commits"
@@ -648,7 +592,6 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
                                 {commit.message}
                               </p>
                               <p class="text-xs text-gray-400 font-mono mt-0.5 flex items-center gap-1.5 flex-wrap">
-                                {/* SHA — links to GitHub when repoUrl is available */}
                                 {ghCommitUrl ? (
                                   <a
                                     href={ghCommitUrl}
@@ -715,7 +658,6 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
                 )}
               </div>
 
-              {/* ── Uncommitted Changes ────────────────────────────── */}
               <div>
                 <SectionHeader
                   label="Uncommitted Changes"
@@ -754,7 +696,6 @@ export function TaskArtifactsPanel({ runId, taskId, class: className }: TaskArti
               </div>
             </>
           ) : (
-            /* ── Non-git fallback: files from Write/Edit tool calls ── */
             <div>
               <SectionHeader
                 label="Files Touched"

@@ -1,23 +1,3 @@
-/**
- * ChannelRouter — run reopening & archive tombstone semantics.
- *
- * Covers the acceptance criteria for the "communication allowed until task is
- * archived" fix. Archive (`SpaceTask.archivedAt`) is the only authoritative
- * tombstone for inter-agent communication and node activation — workflow run
- * statuses `done` and `cancelled` can always transition back to `in_progress`
- * when new inbound activity arrives before the parent task is archived.
- *
- * 1. deliverMessage auto-reopens a `done` run and activates the target node
- *    when the parent task is not archived.
- * 2. deliverMessage auto-reopens a `cancelled` run and activates the target
- *    node when the parent task is not archived.
- * 3. deliverMessage throws `ActivationError` with the archived-task message
- *    when the parent task is archived (regardless of run status).
- * 4. A `workflow_run_reopened` notification event is emitted to the
- *    InternalEventBus exactly once per reopen, with the correct `fromStatus`
- *    and `by` fields.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -41,13 +21,7 @@ import type {
   SpaceWorkflowRunReopenedEvent,
 } from '../../../../src/lib/internal-event-bus.ts';
 
-// ---------------------------------------------------------------------------
-// DB helpers
-// ---------------------------------------------------------------------------
-
 function makeDb(): BunDatabase {
-  // Use in-memory SQLite — faster than file-based DB and avoids filesystem
-  // I/O contention that caused beforeEach hook timeouts in CI.
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
@@ -68,10 +42,6 @@ function seedAgent(db: BunDatabase, agentId: string, spaceId: string): void {
      VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
   ).run(agentId, spaceId, `Agent ${agentId}`, Date.now(), Date.now());
 }
-
-// ---------------------------------------------------------------------------
-// Recording notification collector (via InternalEventBus)
-// ---------------------------------------------------------------------------
 
 class RecordingCollector {
   readonly events: Array<SpaceWorkflowRunReopenedEvent> = [];
@@ -96,10 +66,6 @@ class RecordingCollector {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Workflow builder
-// ---------------------------------------------------------------------------
-
 function buildSimpleWorkflow(
   spaceId: string,
   workflowManager: SpaceWorkflowManager,
@@ -120,10 +86,6 @@ function buildSimpleWorkflow(
     completionAutonomyLevel: 3,
   });
 }
-
-// ---------------------------------------------------------------------------
-// Test suite
-// ---------------------------------------------------------------------------
 
 describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () => {
   let db: BunDatabase;
@@ -153,7 +115,6 @@ describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () 
     workflowRunRepo = new SpaceWorkflowRunRepository(db);
     channelCycleRepo = new ChannelCycleRepository(db);
 
-    // One-task-per-run: ensure every createRun also creates a canonical task.
     const createRunOriginal = workflowRunRepo.createRun.bind(workflowRunRepo);
     (workflowRunRepo as unknown as { createRun: typeof workflowRunRepo.createRun }).createRun = ((
       params: Parameters<typeof workflowRunRepo.createRun>[0]
@@ -190,10 +151,6 @@ describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () 
     collector.destroy();
     db.close();
   });
-
-  // -------------------------------------------------------------------------
-  // activateNode — reopen on terminal statuses
-  // -------------------------------------------------------------------------
 
   describe('activateNode', () => {
     test('reopens a done run, activates the target, and emits workflow_run_reopened', async () => {
@@ -271,7 +228,6 @@ describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () 
         ARCHIVED_TASK_ERROR_MESSAGE
       );
       expect(collector.reopens()).toHaveLength(0);
-      // Status must remain done — we never transitioned.
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
     });
 
@@ -292,10 +248,6 @@ describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () 
     });
   });
 
-  // -------------------------------------------------------------------------
-  // deliverMessage — attribution forwarding
-  // -------------------------------------------------------------------------
-
   describe('deliverMessage attribution', () => {
     test('forwards fromRole as agent:<name> when reopening via peer send_message', async () => {
       const workflow = buildSimpleWorkflow(SPACE_ID, workflowManager, [
@@ -310,8 +262,6 @@ describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () 
       });
       workflowRunRepo.updateStatusUnchecked(run.id, 'done');
 
-      // Agent A sends a message to Agent B on a done run — expect reopen
-      // attributed to "agent:A".
       await router.deliverMessage(run.id, 'A', 'B', 'hello');
 
       const reopens = collector.reopens();
@@ -324,14 +274,8 @@ describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () 
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Idempotency & resilience
-  // -------------------------------------------------------------------------
-
   describe('resilience', () => {
     test('a throwing InternalEventBus subscriber does not break activation', async () => {
-      // Create a bus with a subscriber that throws — simulates a downstream
-      // consumer crashing. The router must still complete the activation.
       const throwingBus = new InternalEventBus<DaemonInternalEventMap>();
       throwingBus.subscribe(
         'space.workflowRun.reopened',
@@ -362,7 +306,6 @@ describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () 
       });
       workflowRunRepo.updateStatusUnchecked(run.id, 'done');
 
-      // Should not throw despite the bus subscriber failing.
       await localRouter.activateNode(run.id, NODE_A, { allowTerminalReopen: true });
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
     });

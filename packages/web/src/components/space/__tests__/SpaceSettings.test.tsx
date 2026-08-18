@@ -1,19 +1,4 @@
 // @ts-nocheck
-/**
- * Unit tests for SpaceSettings
- *
- * Tests:
- * - Renders space name, description, workspace path
- * - Renders instructions and backgroundContext editors
- * - Save Changes button only shown when form is dirty
- * - Calls space.update RPC with trimmed values on save (including instructions/backgroundContext)
- * - Discard button resets form to original values (including instructions/backgroundContext)
- * - Shows error when not connected
- * - Archive button calls space.archive and navigates away
- * - Delete button calls space.delete and navigates away
- * - Archive button is disabled when space is already archived
- * - Export bundle button calls spaceExport.bundle
- */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, waitFor, cleanup } from '@testing-library/preact';
@@ -109,7 +94,6 @@ function makeSpace(overrides: Partial<Space> = {}): Space {
   };
 }
 
-// Mock window.confirm globally
 const mockConfirm = vi.fn();
 beforeEach(() => {
   (globalThis as unknown as { confirm: unknown }).confirm = mockConfirm;
@@ -201,7 +185,6 @@ describe('SpaceSettings', () => {
     expect(getByText('Discard')).toBeTruthy();
 
     fireEvent.click(getByText('Discard'));
-    // After discard, form should be clean
     expect(queryByText('Save Changes')).toBeNull();
     expect((getByDisplayValue('My Space') as HTMLInputElement).value).toBe('My Space');
   });
@@ -272,7 +255,6 @@ describe('SpaceSettings', () => {
     mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
     const space = makeSpace();
     const { getByDisplayValue, getByText, findByText } = render(<SpaceSettings space={space} />);
-    // Clear the name field
     fireEvent.input(getByDisplayValue('My Space'), { target: { value: '' } });
     fireEvent.click(getByText('Save Changes'));
     expect(await findByText('Space name is required')).toBeTruthy();
@@ -292,7 +274,6 @@ describe('SpaceSettings', () => {
     const { getByText } = render(<SpaceSettings space={space} />);
     fireEvent.click(getByText('Archive'));
 
-    // Button should be disabled while in-flight
     await waitFor(() => {
       const btn = getByText('Loading...').closest('button')!;
       expect(btn.disabled).toBe(true);
@@ -314,7 +295,6 @@ describe('SpaceSettings', () => {
     const { getByText } = render(<SpaceSettings space={space} />);
     fireEvent.click(getByText('Delete'));
 
-    // Button should be disabled while in-flight
     await waitFor(() => {
       const btns = document.querySelectorAll('button[disabled]');
       expect(btns.length).toBeGreaterThan(0);
@@ -330,7 +310,6 @@ describe('SpaceSettings', () => {
     const { getByDisplayValue, getByText } = render(<SpaceSettings space={space} />);
     expect(getByDisplayValue('Use TypeScript strict mode')).toBeTruthy();
     expect(getByDisplayValue('Bun + Hono backend')).toBeTruthy();
-    // Check labels are rendered
     expect(getByText('Instructions')).toBeTruthy();
     expect(getByText('Background context', { exact: false })).toBeTruthy();
   });
@@ -404,13 +383,11 @@ describe('SpaceSettings', () => {
     });
     const { getByDisplayValue, getByText, queryByText } = render(<SpaceSettings space={space} />);
 
-    // Change instructions
     fireEvent.input(getByDisplayValue('Original instructions'), {
       target: { value: 'Changed instructions' },
     });
     expect(getByText('Save Changes')).toBeTruthy();
 
-    // Discard
     fireEvent.click(getByText('Discard'));
     expect(queryByText('Save Changes')).toBeNull();
     expect(getByDisplayValue('Original instructions')).toBeTruthy();

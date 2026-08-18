@@ -21,34 +21,12 @@ export interface SpaceTaskThreadMessageRow {
   messageType: string;
   content: string;
   createdAt: number;
-  /** Message origin from the DB (human, system). Used to classify sender in the thread UI. */
   origin?: string | null;
-  /** User-message delivery lifecycle from sdk_messages.send_status (task #862). */
   deliveryState?: MessageDeliveryStatus | null;
   parentToolUseId?: string | null;
-  /**
-   * Server-computed turn index (per session) for compact thread grouping.
-   * Present in compact query rows; absent in full rows.
-   */
   turnIndex?: number;
-  /**
-   * Insertion order (sdk_messages.rowid) — emitted by the compact feed so the
-   * client can tiebreak same-millisecond rows deterministically instead of by
-   * the random UUID id. Absent for the legacy full feed and github rows (#2338).
-   */
   insOrder?: number | null;
-  /**
-   * Count of earlier non-terminal messages hidden by compact cap in this
-   * session-turn. Present in compact query rows; absent in full rows.
-   */
   turnHiddenMessageCount?: number;
-  /**
-   * Total messages stored for this session — populated by the compact query
-   * variant when the server has sliced the result set. When equal to the
-   * number of delivered rows for this session, nothing was truncated.
-   *
-   * Absent (undefined) when the full/legacy query is used.
-   */
   sessionMessageCount?: number;
 }
 
@@ -64,7 +42,6 @@ export type SpaceTaskMessagesQueryVariant = 'compact' | 'full';
 
 export interface UseSpaceTaskMessagesResult {
   rows: SpaceTaskThreadMessageRow[];
-  /** Server-computed activity summary for the currently-active turn of each session. */
   activeTurnSummaries: ActiveTurnSummary[];
   isLoading: boolean;
   error: string | null;
@@ -89,9 +66,6 @@ const MAX_SNAPSHOT_RETRIES = 5;
 export function sortRows(rows: SpaceTaskThreadMessageRow[]): SpaceTaskThreadMessageRow[] {
   return [...rows].sort((a, b) => {
     if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
-    // Tiebreak same-millisecond rows by insertion order (insOrder = rowid) when
-    // both rows carry it (compact feed), so e.g. queued prompts consumed in the
-    // same ms render in queue order; otherwise fall back to the UUID id (#2338).
     if (typeof a.insOrder === 'number' && typeof b.insOrder === 'number') {
       return a.insOrder - b.insOrder;
     }
@@ -103,11 +77,6 @@ export function sortActiveTurnRows(rows: ActiveTurnEntryRow[]): ActiveTurnEntryR
   return [...rows].sort((a, b) => {
     if (a.sessionId !== b.sessionId) return a.sessionId.localeCompare(b.sessionId);
     if (a.ts !== b.ts) return a.ts - b.ts;
-    // id shape: <sessionId>:<turn>:<rowId>:<blockIdx> where rowId is the numeric
-    // sdk_messages.rowid (insertion order) and blockIdx is numeric. sessionId may
-    // contain ':', so split from the right and compare the trailing components
-    // NUMERICALLY — a lexicographic compare would order rowid 10 before rowid 9
-    // and break same-millisecond emission order.
     const [ar, ab] = activeTurnRowPosition(a.id);
     const [br, bb] = activeTurnRowPosition(b.id);
     if (ar !== br) return ar - br;
@@ -115,8 +84,6 @@ export function sortActiveTurnRows(rows: ActiveTurnEntryRow[]): ActiveTurnEntryR
   });
 }
 
-/** Extract the trailing (rowId, blockIdx) numeric pair from an active-turn row
- * id. Returns [0, 0] for unparseable ids so they sort stably. */
 function activeTurnRowPosition(id: string): [number, number] {
   const parts = id.split(':');
   const rowId = Number.parseInt(parts[parts.length - 2] ?? '', 10);
@@ -180,15 +147,6 @@ export function useSpaceTaskMessages(
   const [rows, setRows] = useState<SpaceTaskThreadMessageRow[]>([]);
   const [activeTurnRows, setActiveTurnRows] = useState<ActiveTurnEntryRow[]>([]);
   const [error, setError] = useState<string | null>(null);
-  /**
-   * The task id whose LiveQuery snapshot has been applied to `rows`.
-   * `null` means either no subscription is active or we are still waiting
-   * for the first snapshot of the current `taskId`. `isLoading` is derived
-   * from the mismatch between this and the incoming `taskId`, which keeps
-   * the loading state correct from the very first render — no useEffect
-   * transition is needed to flip it to `true`, so the empty-state branch
-   * can never flash on mount or on task switch.
-   */
   const [loadedForTaskId, setLoadedForTaskId] = useState<string | null>(null);
   const activeSubIdRef = useRef<string | null>(null);
   const activeTurnSubIdRef = useRef<string | null>(null);
@@ -216,9 +174,6 @@ export function useSpaceTaskMessages(
     let sawSnapshot = false;
     let snapshotRetries = 0;
     let subscribeGeneration = 0;
-    // Clear stale rows from a previous subscription synchronously. The
-    // empty-state UI is still suppressed because `loadedForTaskId` is now
-    // out of sync with `taskId`, so consumers see the loading state.
     setRows([]);
     setActiveTurnRows([]);
     setLoadedForTaskId(null);
@@ -312,9 +267,6 @@ export function useSpaceTaskMessages(
           snapshotRetryTimers.add(retryTimer);
         })
         .catch(() => {
-          // Release the loading gate on subscribe failure so consumers can
-          // surface the empty state (or, more likely, the reconnecting state
-          // once the websocket drops) rather than stalling forever.
           if (activeSubIdRef.current === subscriptionId) {
             setLoadedForTaskId(taskId);
           }
@@ -368,11 +320,6 @@ export function useSpaceTaskMessages(
     [activeTurnRows]
   );
 
-  // Derived: we are loading whenever we have an active taskId but have not
-  // yet applied a snapshot for it. Computing this (instead of tracking it
-  // as separate state) means the very first render — before the effect
-  // runs — already returns `isLoading=true`, which is what suppresses the
-  // empty-state flash on slow networks and on task switch.
   const isLoading = taskId !== null && isConnected && loadedForTaskId !== taskId;
 
   return {

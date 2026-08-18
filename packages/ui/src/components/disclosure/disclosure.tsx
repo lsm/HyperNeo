@@ -21,7 +21,6 @@ interface DisclosureState {
 const DisclosureContext = createContext<DisclosureState | null>(null);
 DisclosureContext.displayName = 'DisclosureContext';
 
-// Context to track if a button is inside a panel
 const DisclosurePanelContext = createContext<string | null>(null);
 DisclosurePanelContext.displayName = 'DisclosurePanelContext';
 
@@ -32,8 +31,6 @@ function useDisclosureContext(component: string): DisclosureState {
   }
   return ctx;
 }
-
-// --- Disclosure (root) ---
 
 interface DisclosureProps {
   as?: ElementType;
@@ -52,7 +49,6 @@ function DisclosureFn({
   children,
   ...rest
 }: DisclosureProps) {
-  // Controlled mode: use provided `open` prop; otherwise use internal state
   const [internalOpen, setInternalOpen] = useState(defaultOpen);
   const isControlled = controlledOpen !== undefined;
   const open = isControlled ? controlledOpen : internalOpen;
@@ -63,7 +59,6 @@ function DisclosureFn({
   const panelRef = useRef<HTMLElement | null>(null);
   const internalRef = useRef<HTMLElement | null>(null);
 
-  // Stable onChange handler
   const handleChange = useEvent((newValue: boolean) => {
     if (!isControlled) {
       setInternalOpen(newValue);
@@ -93,7 +88,6 @@ function DisclosureFn({
 
   const slot = useMemo(() => ({ open, close }), [open, close]);
 
-  // Ref forwarding for the root Disclosure element
   const disclosureRef = useSyncRefs(
     'ref' in rest ? (rest.ref as import('preact').Ref<HTMLElement>) : null,
     optionalRef((ref) => {
@@ -124,8 +118,6 @@ function DisclosureFn({
 DisclosureFn.displayName = 'Disclosure';
 export const Disclosure = DisclosureFn;
 
-// --- DisclosureButton ---
-
 interface DisclosureButtonProps {
   as?: ElementType;
   autoFocus?: boolean;
@@ -144,22 +136,17 @@ function DisclosureButtonFn({
   const { open, toggle, close, panelId, buttonId, buttonRef } =
     useDisclosureContext('DisclosureButton');
 
-  // Check if button is inside a panel
   const panelContext = useContext(DisclosurePanelContext);
   const isWithinPanel = panelContext !== null;
 
-  // Internal ref to track the actual button element
   const internalButtonRef = useRef<HTMLElement | null>(null);
 
-  // Extract external ref from rest props (Preact style)
   const externalRef = 'ref' in rest ? (rest.ref as import('preact').Ref<HTMLElement>) : null;
 
-  // Sync refs
   const syncedRef = useSyncRefs(
     internalButtonRef,
     externalRef,
     optionalRef((el: HTMLElement) => {
-      // Only set buttonRef if not inside panel
       if (!isWithinPanel) {
         buttonRef.current = el;
       }
@@ -170,17 +157,13 @@ function DisclosureButtonFn({
   const [focus, setFocus] = useState(false);
   const [active, setActive] = useState(false);
 
-  // Resolve button type - if it's a button element and no type is specified, use "button"
   const type = useMemo(() => {
-    // If type is explicitly provided, use it
     if ('type' in rest && rest.type !== undefined) {
       return rest.type as string;
     }
-    // If `as` prop is provided and it's not a string 'button', don't add type
     if (Tag !== 'button') {
       return undefined;
     }
-    // Default to type="button" for button elements
     return 'button';
   }, [Tag, rest]);
 
@@ -189,9 +172,7 @@ function DisclosureButtonFn({
       if (disabled) return;
       e.preventDefault();
       if (isWithinPanel) {
-        // When inside panel, clicking closes the disclosure
         close();
-        // Focus the button outside the panel
         buttonRef.current?.focus();
       } else {
         toggle();
@@ -216,7 +197,6 @@ function DisclosureButtonFn({
     [disabled, toggle, close, isWithinPanel, buttonRef]
   );
 
-  // Firefox space key fix - prevent space from triggering click after preventDefault in keydown
   const handleKeyUp = useCallback((e: KeyboardEvent) => {
     if (e.key === ' ') {
       e.preventDefault();
@@ -228,7 +208,6 @@ function DisclosureButtonFn({
     [open, hover, focus, active, autoFocus, disabled]
   );
 
-  // When button is inside panel, it acts as a close button without aria attributes
   const ourProps: Record<string, unknown> = isWithinPanel
     ? {
         ref: syncedRef,
@@ -275,8 +254,6 @@ function DisclosureButtonFn({
 DisclosureButtonFn.displayName = 'DisclosureButton';
 export const DisclosureButton = DisclosureButtonFn;
 
-// --- DisclosurePanel ---
-
 interface DisclosurePanelProps {
   as?: ElementType;
   transition?: boolean;
@@ -296,10 +273,8 @@ function DisclosurePanelFn({
 }: DisclosurePanelProps) {
   const { open, close, panelId, panelRef } = useDisclosureContext('DisclosurePanel');
 
-  // Extract external ref from rest props (Preact style)
   const externalRef = 'ref' in rest ? (rest.ref as import('preact').Ref<HTMLElement>) : null;
 
-  // Sync refs
   const syncedRef = useSyncRefs(
     panelRef,
     externalRef,
@@ -308,7 +283,6 @@ function DisclosurePanelFn({
     })
   );
 
-  // Transition data attribute state
   const [transitionAttrs, setTransitionAttrs] = useState<{
     'data-transition'?: '';
     'data-enter'?: '';
@@ -328,7 +302,6 @@ function DisclosurePanelFn({
     prevOpenRef.current = open;
 
     if (open && !prev) {
-      // Opening: data-enter + data-transition for one frame, then remove
       setTransitionAttrs({ 'data-transition': '', 'data-enter': '' });
       const raf = requestAnimationFrame(() => {
         requestAnimationFrame(() => {
@@ -339,7 +312,6 @@ function DisclosurePanelFn({
     }
 
     if (!open && prev) {
-      // Closing: data-leave + data-transition + data-closed, then clear
       setTransitionAttrs({ 'data-transition': '', 'data-leave': '', 'data-closed': '' });
       const raf = requestAnimationFrame(() => {
         requestAnimationFrame(() => {
@@ -366,7 +338,6 @@ function DisclosurePanelFn({
 
   const features = Features.RenderStrategy | Features.Static;
 
-  // Provide panel context so buttons inside can detect they're in a panel
   return createElement(
     DisclosurePanelContext.Provider,
     { value: panelId },

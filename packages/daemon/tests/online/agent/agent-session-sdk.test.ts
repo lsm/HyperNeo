@@ -1,38 +1,15 @@
-/**
- * AgentSession SDK Integration Tests
- *
- * These tests use the REAL Claude Agent SDK with actual API credentials.
- * They verify that AgentSession correctly integrates with the SDK for:
- * - Message sending and receiving
- * - Session state management
- * - WebSocket communication
- * - Image handling
- * - Interrupts and aborts
- *
- * MODES:
- * - Real API (default): Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
- * - Dev Proxy: Set HYPERNEO_USE_DEV_PROXY=1 for offline testing with mocked responses
- *
- * Run with Dev Proxy:
- *   cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/agent/agent-session-sdk.test.ts
- */
-
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { WebSocket } from 'undici';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import { getProcessingState, sendMessage, waitForIdle } from '../../helpers/daemon-actions';
 
-// Detect mock mode for faster timeouts (Dev Proxy)
 const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 const MODEL = IS_MOCK ? 'haiku' : 'haiku-4.5';
 const IDLE_TIMEOUT = IS_MOCK ? 5000 : 30000;
 const SETUP_TIMEOUT = IS_MOCK ? 10000 : 30000;
 const TEST_TIMEOUT = IS_MOCK ? 30000 : 150000;
 
-/**
- * Create a WebSocket connection and wait for the first message
- */
 function createWebSocketWithFirstMessage(baseUrl: string): {
   ws: WebSocket;
   firstMessagePromise: Promise<unknown>;
@@ -73,9 +50,6 @@ function createWebSocketWithFirstMessage(baseUrl: string): {
   return { ws, firstMessagePromise };
 }
 
-/**
- * Wait for WebSocket to be in a specific state
- */
 async function waitForWebSocketState(ws: WebSocket, state: number): Promise<void> {
   const startTime = Date.now();
   while (ws.readyState !== state) {
@@ -86,9 +60,6 @@ async function waitForWebSocketState(ws: WebSocket, state: number): Promise<void
   }
 }
 
-/**
- * Wait for WebSocket message
- */
 async function waitForWebSocketMessage(ws: WebSocket, timeout = 5000): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const messageHandler = (event: MessageEvent) => {
@@ -125,7 +96,6 @@ async function waitForWebSocketMessage(ws: WebSocket, timeout = 5000): Promise<u
   });
 }
 
-// Tests will FAIL if credentials are not available
 describe('AgentSession SDK Integration', () => {
   let daemon: DaemonServerContext;
 
@@ -153,7 +123,6 @@ describe('AgentSession SDK Integration', () => {
         const { sessionId } = createResult;
         daemon.trackSession(sessionId);
 
-        // Send a simple message
         const result = await sendMessage(
           daemon,
           sessionId,
@@ -163,10 +132,8 @@ describe('AgentSession SDK Integration', () => {
         expect(result.messageId).toBeString();
         expect(result.messageId.length).toBeGreaterThan(0);
 
-        // Wait for processing to complete (polls state until idle)
         await waitForIdle(daemon, sessionId);
 
-        // Verify state returned to idle after processing
         const state = await getProcessingState(daemon, sessionId);
         expect(state.status).toBe('idle');
       },
@@ -185,7 +152,6 @@ describe('AgentSession SDK Integration', () => {
         const { sessionId } = createResult;
         daemon.trackSession(sessionId);
 
-        // 1x1 red pixel PNG
         const result = await sendMessage(
           daemon,
           sessionId,
@@ -206,10 +172,8 @@ describe('AgentSession SDK Integration', () => {
 
         expect(result.messageId).toBeString();
 
-        // Wait for processing to complete
         await waitForIdle(daemon, sessionId);
 
-        // Verify state is idle
         const state = await getProcessingState(daemon, sessionId);
         expect(state.status).toBe('idle');
       },
@@ -230,19 +194,15 @@ describe('AgentSession SDK Integration', () => {
         const { sessionId } = createResult;
         daemon.trackSession(sessionId);
 
-        // Send first message
         await sendMessage(daemon, sessionId, 'What is 2+2? Just the number.');
 
-        // Wait for first message to complete
         await waitForIdle(daemon, sessionId);
 
-        // Send second message
         const result = await sendMessage(daemon, sessionId, 'What is 3+3? Just the number.');
 
         expect(result.messageId).toBeString();
         expect(result.messageId.length).toBeGreaterThan(0);
 
-        // Wait for second message to process
         await waitForIdle(daemon, sessionId);
       },
       TEST_TIMEOUT
@@ -262,14 +222,11 @@ describe('AgentSession SDK Integration', () => {
         const { sessionId } = createResult;
         daemon.trackSession(sessionId);
 
-        // Send a simple message first and wait for it to complete
         await sendMessage(daemon, sessionId, 'What is 1+1? Just the number.');
         await waitForIdle(daemon, sessionId);
 
-        // Now interrupt (should work even on idle - it's a no-op but shouldn't error)
         await daemon.messageHub.request('client.interrupt', { sessionId });
 
-        // State should be idle after interrupt
         const state = await getProcessingState(daemon, sessionId);
         expect(state.status).toBe('idle');
       },
@@ -294,15 +251,14 @@ describe('AgentSession SDK Integration', () => {
           daemon.baseUrl,
           sessionId
         );
-        await waitForWebSocketState(ws, 1); // OPEN
+        await waitForWebSocketState(ws, 1);
         await firstMessagePromise;
 
-        // Subscribe to state.sdkMessages.delta events
         const subPromise = waitForWebSocketMessage(ws);
         ws.send(
           JSON.stringify({
             id: 'sub-sdk-1',
-            type: 'SUBSCRIBE', // DEPRECATED - needs room-based rewrite
+            type: 'SUBSCRIBE',
             method: 'state.sdkMessages.delta',
             sessionId,
             timestamp: new Date().toISOString(),
@@ -311,16 +267,12 @@ describe('AgentSession SDK Integration', () => {
         );
         await subPromise;
 
-        // CRITICAL: Start listening for SDK message BEFORE sending
         const sdkEventPromise = waitForWebSocketMessage(ws, 10000);
 
-        // Send a message to trigger SDK events
         await sendMessage(daemon, sessionId, 'Say hello. Just respond "Hello".');
 
-        // Wait for SDK message event
         const sdkEvent = (await sdkEventPromise) as Record<string, unknown>;
 
-        // Should receive a state.sdkMessages.delta event
         expect(sdkEvent.type).toBe('EVENT');
         expect(sdkEvent.method).toBe('state.sdkMessages.delta');
         expect(sdkEvent.data).toBeDefined();
@@ -344,21 +296,16 @@ describe('AgentSession SDK Integration', () => {
         const { sessionId } = createResult;
         daemon.trackSession(sessionId);
 
-        // Initial state should be idle
         const initialState = await getProcessingState(daemon, sessionId);
         expect(initialState.status).toBe('idle');
 
-        // Send message
         await sendMessage(daemon, sessionId, 'What is 5+5? Just the number.');
 
-        // State should be queued or processing (depending on timing)
         const stateAfterSend = await getProcessingState(daemon, sessionId);
         expect(['queued', 'processing', 'idle']).toContain(stateAfterSend.status);
 
-        // Wait for completion
         await waitForIdle(daemon, sessionId);
 
-        // Should be back to idle
         const finalState = await getProcessingState(daemon, sessionId);
         expect(finalState.status).toBe('idle');
       },
@@ -377,19 +324,15 @@ describe('AgentSession SDK Integration', () => {
         const { sessionId } = createResult;
         daemon.trackSession(sessionId);
 
-        // Send first message and wait for completion
         const result1 = await sendMessage(daemon, sessionId, 'Count to 1');
         await waitForIdle(daemon, sessionId);
 
-        // Send second message after first completes
         const result2 = await sendMessage(daemon, sessionId, 'Count to 2');
 
-        // All should have unique message IDs
         expect(result1.messageId).toBeString();
         expect(result2.messageId).toBeString();
         expect(result1.messageId).not.toBe(result2.messageId);
 
-        // Wait for processing to complete
         await waitForIdle(daemon, sessionId);
       },
       TEST_TIMEOUT
@@ -409,22 +352,17 @@ describe('AgentSession SDK Integration', () => {
         const { sessionId } = createResult;
         daemon.trackSession(sessionId);
 
-        // Send a message and let it complete
         await sendMessage(daemon, sessionId, 'What is 1+1? Just the number.');
         await waitForIdle(daemon, sessionId);
 
-        // Verify state is idle
         const state1 = await getProcessingState(daemon, sessionId);
         expect(state1.status).toBe('idle');
 
-        // Call interrupt on idle session - should be a no-op
         await daemon.messageHub.request('client.interrupt', { sessionId });
 
-        // State should still be idle
         const state2 = await getProcessingState(daemon, sessionId);
         expect(state2.status).toBe('idle');
 
-        // Send another message to verify session is still functional
         await sendMessage(daemon, sessionId, 'What is 2+2? Just the number.');
         await waitForIdle(daemon, sessionId);
       },

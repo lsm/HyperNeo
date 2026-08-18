@@ -1,19 +1,3 @@
-/**
- * Migration 68 Tests
- *
- * Migration 68: Add 'origin' column to sdk_messages.
- * - NULL default (treated as 'human' by frontend)
- * - CHECK constraint: NULL or one of ('human', 'system')
- *
- * Covers:
- * - origin column is added to an existing sdk_messages table
- * - origin column defaults to NULL for new rows
- * - Valid origin values are accepted
- * - Invalid origin values are rejected by CHECK constraint
- * - Idempotency: running runMigration68 twice does not error
- * - Fresh DB via createTables also has origin column
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -26,7 +10,6 @@ function columnExists(db: BunDatabase, table: string, column: string): boolean {
   return rows.some((r) => r.name === column);
 }
 
-/** Create sdk_messages WITHOUT origin column to simulate a pre-migration DB */
 function createLegacySdkMessagesTable(db: BunDatabase): void {
   db.exec(`
 		CREATE TABLE IF NOT EXISTS sdk_messages (
@@ -142,7 +125,6 @@ describe('Migration 68: Add origin column to sdk_messages', () => {
   test('existing rows without origin are NULL after migration', () => {
     createLegacySdkMessagesTable(db);
 
-    // Insert a row before running migration
     db.prepare(
       `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp)
 			 VALUES (?, ?, ?, ?, ?)`
@@ -150,7 +132,6 @@ describe('Migration 68: Add origin column to sdk_messages', () => {
 
     runMigration68(db);
 
-    // Old row should have NULL origin
     const row = db.prepare(`SELECT origin FROM sdk_messages WHERE id = 'old-msg'`).get() as {
       origin: string | null;
     };
@@ -158,13 +139,11 @@ describe('Migration 68: Add origin column to sdk_messages', () => {
   });
 
   test('fresh DB via createTables has origin column on sdk_messages', () => {
-    // createTables uses CREATE TABLE IF NOT EXISTS with origin column already in schema
     createTables(db);
     expect(columnExists(db, 'sdk_messages', 'origin')).toBe(true);
   });
 
   test('runMigration68 is no-op when sdk_messages does not exist', () => {
-    // If sdk_messages doesn't exist, migration should just return without error
     expect(() => runMigration68(db)).not.toThrow();
   });
 });

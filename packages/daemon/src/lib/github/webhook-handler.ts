@@ -1,12 +1,3 @@
-/**
- * GitHub Webhook Handler
- *
- * Handles incoming GitHub webhook requests:
- * - HMAC-SHA256 signature verification
- * - Event parsing and normalization
- * - Response handling
- */
-
 import type { GitHubEvent } from '@hyperneo/shared';
 import { Logger } from '../logger';
 import { normalizeWebhookEvent } from './event-normalizer';
@@ -14,20 +5,11 @@ import type { WebhookParseResult } from './types';
 
 const log = new Logger('github-webhook');
 
-/**
- * Verify GitHub webhook signature using HMAC-SHA256
- *
- * @param payload - Raw request body as string
- * @param signature - X-Hub-Signature-256 header value (sha256=<hex>)
- * @param secret - Webhook secret
- * @returns Whether the signature is valid
- */
 export async function verifySignature(
   payload: string,
   signature: string,
   secret: string
 ): Promise<boolean> {
-  // Extract hex from signature format: sha256=<hex>
   const signatureParts = signature.split('=');
   if (signatureParts.length !== 2 || signatureParts[0] !== 'sha256') {
     log.error('Invalid signature format');
@@ -40,7 +22,6 @@ export async function verifySignature(
   }
 
   try {
-    // Import the secret key
     const encoder = new TextEncoder();
     const keyData = encoder.encode(secret);
     const cryptoKey = await crypto.subtle.importKey(
@@ -51,14 +32,11 @@ export async function verifySignature(
       ['sign']
     );
 
-    // Sign the payload
     const payloadData = encoder.encode(payload);
     const signatureBuffer = await crypto.subtle.sign('HMAC', cryptoKey, payloadData);
 
-    // Convert to hex string
     const computedHex = bufferToHex(signatureBuffer);
 
-    // Constant-time comparison to prevent timing attacks
     return constantTimeEqual(computedHex, expectedHex);
   } catch (error) {
     log.error('Signature verification failed', error);
@@ -66,9 +44,6 @@ export async function verifySignature(
   }
 }
 
-/**
- * Convert ArrayBuffer to hex string
- */
 function bufferToHex(buffer: ArrayBuffer): string {
   const array = new Uint8Array(buffer);
   const parts: string[] = [];
@@ -78,9 +53,6 @@ function bufferToHex(buffer: ArrayBuffer): string {
   return parts.join('');
 }
 
-/**
- * Constant-time string comparison to prevent timing attacks
- */
 function constantTimeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) {
     return false;
@@ -93,13 +65,6 @@ function constantTimeEqual(a: string, b: string): boolean {
   return result === 0;
 }
 
-/**
- * Parse a GitHub webhook event
- *
- * @param payload - Parsed JSON payload
- * @param eventType - X-GitHub-Event header value
- * @returns Parse result with event or error
- */
 export function parseWebhookEvent(payload: unknown, eventType: string): WebhookParseResult {
   try {
     const event = normalizeWebhookEvent(eventType, payload);
@@ -122,25 +87,15 @@ export function parseWebhookEvent(payload: unknown, eventType: string): WebhookP
   }
 }
 
-/**
- * Handle GitHub webhook HTTP request
- *
- * @param req - Incoming HTTP request
- * @param secret - Webhook secret for signature verification
- * @param onEvent - Callback for handling parsed events
- * @returns HTTP response
- */
 export async function handleGitHubWebhook(
   req: Request,
   secret: string,
   onEvent?: (event: GitHubEvent) => Promise<void> | void
 ): Promise<Response> {
-  // Get headers
   const signature = req.headers.get('X-Hub-Signature-256');
   const eventType = req.headers.get('X-GitHub-Event');
   const deliveryId = req.headers.get('X-GitHub-Delivery');
 
-  // Validate required headers
   if (!signature) {
     log.warn('Missing X-Hub-Signature-256 header');
     return new Response(JSON.stringify({ error: 'Missing signature header' }), {
@@ -165,10 +120,8 @@ export async function handleGitHubWebhook(
     });
   }
 
-  // Get raw body
   const rawBody = await req.text();
 
-  // Verify signature
   const isValid = await verifySignature(rawBody, signature, secret);
   if (!isValid) {
     log.warn('Invalid webhook signature', { deliveryId, eventType });
@@ -178,7 +131,6 @@ export async function handleGitHubWebhook(
     });
   }
 
-  // Parse JSON payload
   let payload: unknown;
   try {
     payload = JSON.parse(rawBody);
@@ -190,11 +142,9 @@ export async function handleGitHubWebhook(
     });
   }
 
-  // Parse and normalize the event
   const parseResult = parseWebhookEvent(payload, eventType);
 
   if (!parseResult.event) {
-    // Not an error - just unsupported event type
     log.debug('Ignoring unsupported event', {
       deliveryId,
       eventType,
@@ -213,7 +163,6 @@ export async function handleGitHubWebhook(
     );
   }
 
-  // Call event handler if provided
   if (onEvent) {
     try {
       await onEvent(parseResult.event);
@@ -223,7 +172,6 @@ export async function handleGitHubWebhook(
         eventType,
         error: error instanceof Error ? error.message : error,
       });
-      // Still return success to GitHub - we don't want retries for handler errors
     }
   }
 
@@ -248,13 +196,6 @@ export async function handleGitHubWebhook(
   );
 }
 
-/**
- * Create a webhook handler function for use with HTTP frameworks
- *
- * @param secret - Webhook secret
- * @param onEvent - Callback for handling parsed events
- * @returns Request handler function
- */
 export function createWebhookHandler(
   secret: string,
   onEvent?: (event: GitHubEvent) => Promise<void> | void

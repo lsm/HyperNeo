@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for useSessionActions Hook
- *
- * Tests session action handlers: delete, archive, reset, export.
- */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/preact';
@@ -11,7 +6,6 @@ import { signal } from '@preact/signals';
 import type { Session } from '@hyperneo/shared';
 import { useSessionActions } from '../useSessionActions.ts';
 
-// Mock connection state
 const mockConnectionState = signal<'connected' | 'disconnected' | 'connecting'>('connected');
 
 vi.mock('../../lib/state', () => ({
@@ -22,7 +16,6 @@ vi.mock('../../lib/state', () => ({
   },
 }));
 
-// Mock the connection manager
 const mockRequest = vi.fn();
 const mockGetHubIfConnected = vi.fn();
 
@@ -32,7 +25,6 @@ vi.mock('../../lib/connection-manager', () => ({
   },
 }));
 
-// Mock toast
 const mockToastSuccess = vi.fn();
 const mockToastError = vi.fn();
 
@@ -43,7 +35,6 @@ vi.mock('../../lib/toast', () => ({
   },
 }));
 
-// Mock api-helpers
 const mockDeleteSession = vi.fn();
 const mockListSessions = vi.fn();
 const mockArchiveSession = vi.fn();
@@ -56,7 +47,6 @@ vi.mock('../../lib/api-helpers', () => ({
   resetSessionQuery: (sessionId: string) => mockResetSessionQuery(sessionId),
 }));
 
-// Mock signals - use vi.hoisted to ensure they're available before vi.mock hoisting
 const { mockCurrentSessionIdSignal, mockSessionsSignal } = vi.hoisted(() => ({
   mockCurrentSessionIdSignal: { value: 'session-1' as string | null },
   mockSessionsSignal: { value: [] as Session[] },
@@ -157,7 +147,6 @@ describe('useSessionActions', () => {
       expect(mockSessionsSignal.value).toEqual(updatedSessions);
       expect(mockToastSuccess).toHaveBeenCalledWith('Session deleted');
 
-      // Run the setTimeout
       await act(async () => {
         vi.runAllTimers();
       });
@@ -182,7 +171,6 @@ describe('useSessionActions', () => {
         await result.current.handleDeleteSession();
       });
 
-      // Modal stays open on error so user can retry
       expect(onDeleteModalClose).not.toHaveBeenCalled();
       expect(mockToastError).toHaveBeenCalledWith('Delete failed');
     });
@@ -299,7 +287,6 @@ describe('useSessionActions', () => {
     });
 
     it('should set archiving state during operation', async () => {
-      // Test that archive operation sets and clears archiving state
       mockArchiveSession.mockResolvedValue({ success: true });
 
       const { result } = renderHook(() =>
@@ -311,14 +298,12 @@ describe('useSessionActions', () => {
         })
       );
 
-      // Initial state should not be archiving
       expect(result.current.archiving).toBe(false);
 
       await act(async () => {
         await result.current.handleArchiveClick();
       });
 
-      // After archive completes, should not be archiving
       expect(result.current.archiving).toBe(false);
       expect(mockArchiveSession).toHaveBeenCalledWith('session-1', false);
     });
@@ -510,7 +495,6 @@ describe('useSessionActions', () => {
     });
 
     it('should handle no hub connection (resetSessionQuery throws)', async () => {
-      // resetSessionQuery calls getHubOrThrow() internally; when hub is null it throws
       mockResetSessionQuery.mockRejectedValue(new Error('Not connected to server'));
 
       const { result } = renderHook(() =>

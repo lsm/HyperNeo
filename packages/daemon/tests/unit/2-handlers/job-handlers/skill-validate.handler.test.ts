@@ -9,10 +9,6 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function makeJob(payload: Record<string, unknown>): Job {
   return {
     id: 'test-job-id',
@@ -64,10 +60,6 @@ function makeAppMcpServerRepo(
   } as unknown as AppMcpServerRepository;
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe('createSkillValidateHandler', () => {
   let handler: ReturnType<typeof createSkillValidateHandler>;
 
@@ -113,7 +105,6 @@ describe('createSkillValidateHandler', () => {
   });
 
   it('passes validation for plugin skill with accessible path', async () => {
-    // Use a temp directory that is guaranteed to exist and be readable
     const pluginPath = mkdtempSync(join(tmpdir(), 'hyperneo-test-'));
     const skill = makeSkill({
       sourceType: 'plugin',

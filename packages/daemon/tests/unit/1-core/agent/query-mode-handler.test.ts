@@ -1,9 +1,3 @@
-/**
- * QueryModeHandler Tests
- *
- * Tests for query mode operations (Manual/Auto-queue).
- */
-
 import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import {
   QueryModeHandler,
@@ -36,9 +30,6 @@ describe('QueryModeHandler', () => {
   let v2Previous: string | undefined;
 
   beforeEach(() => {
-    // The legacy inline replay path is preserved as the HYPERNEO_MESSAGE_DELIVERY_V2=0
-    // opt-out. These existing assertions cover THAT branch; the v2-default durable
-    // path has its own describe block below.
     v2Previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
     process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
     mockSession = {
@@ -68,8 +59,6 @@ describe('QueryModeHandler', () => {
     mockDb = {
       getMessagesByStatus: getMessagesByStatusSpy,
       updateMessageStatus: updateMessageStatusSpy,
-      // message-delivery v2 legacy-replay guard: no active v2 jobs in these
-      // tests, so the replay paths are unfiltered.
       getJobQueueRepo: () => ({ activeDeliveryMessageUuids: () => new Set<string>() }),
     } as unknown as Database;
 
@@ -279,7 +268,7 @@ describe('QueryModeHandler', () => {
           dbId: 'db-1',
           uuid: 'uuid-1',
           type: 'user',
-          message: { role: 'user' }, // No content
+          message: { role: 'user' },
         } as unknown as SDKMessage,
       ];
       getMessagesByStatusSpy.mockReturnValue(savedMessages);
@@ -372,7 +361,6 @@ describe('QueryModeHandler', () => {
       });
       handler = createHandler();
 
-      // Should not throw
       await handler.sendEnqueuedMessagesOnTurnEnd();
 
       expect(mockLogger.error).toHaveBeenCalledWith(
@@ -460,18 +448,12 @@ describe('QueryModeHandler', () => {
     });
   });
 
-  // Durable delivery (v2 default): the legacy kickoff paths route through the
-  // `deliverMessage` chokepoint instead of the inline ensureQueryStarted +
-  // enqueueWithId. The handler then owns driving the turn / feeding steers.
   describe('durable delivery (v2 default) — task #861 item 3', () => {
     let jobQueue: JobQueueRepository;
     let jobsDb: Database;
 
     beforeEach(() => {
-      // v2 default-on for this block.
       process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '1';
-      // A real in-memory job_queue so deliverMessage's enqueue + role arbitration
-      // (uq_message_delivery_active_turn) execute against the real index.
       jobsDb = new DatabaseImpl(':memory:');
       jobsDb.exec(`
         CREATE TABLE job_queue (
@@ -528,9 +510,7 @@ describe('QueryModeHandler', () => {
       const result = await handler.handleQueryTrigger();
 
       expect(result).toEqual({ success: true, messageCount: 3 });
-      // Status flip to enqueued still fires (so the handler drives, not skips).
       expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1', 'db-2', 'db-3'], 'enqueued');
-      // ONE batched turn job carries every UUID (kickoff = first); no steers.
       const jobs = deliveryUuids();
       expect(jobs).toHaveLength(1);
       expect(jobs[0].uuid).toBe('uuid-1');
@@ -539,15 +519,11 @@ describe('QueryModeHandler', () => {
         .prepare(`SELECT payload FROM job_queue WHERE queue = 'message_delivery'`)
         .get() as { payload: string };
       expect(JSON.parse(row.payload).batchUuids).toEqual(['uuid-1', 'uuid-2', 'uuid-3']);
-      // The inline transport path is NOT used under v2.
       expect(ensureQueryStartedSpy).not.toHaveBeenCalled();
       expect(enqueueWithIdSpy).not.toHaveBeenCalled();
     });
 
     it('handleQueryTrigger falls back to per-message jobs when a turn is already active', async () => {
-      // Pre-insert an active turn for another session message — the batch
-      // enqueue hits the uq_message_delivery_active_turn index and falls back
-      // to the pre-batch first-turn/rest-steer behavior (here: all steers).
       jobQueue.enqueue({
         queue: 'message_delivery',
         payload: {
@@ -569,8 +545,6 @@ describe('QueryModeHandler', () => {
       expect(result).toEqual({ success: true, messageCount: 2 });
       const jobs = deliveryUuids();
       expect(jobs.map((j) => j.uuid).sort()).toEqual(['uuid-1', 'uuid-2', 'uuid-active']);
-      // The pre-existing turn stays; both flush messages steer into it, with
-      // no batchUuids on any job (no coalescing happened).
       expect(jobs.filter((j) => j.role === 'steer')).toHaveLength(2);
       const payloads = jobsDb
         .prepare(`SELECT payload FROM job_queue WHERE queue = 'message_delivery'`)
@@ -597,9 +571,6 @@ describe('QueryModeHandler', () => {
       const result = await handler.handleQueryTrigger();
 
       expect(result).toEqual({ success: true, messageCount: 3 });
-      // Batching only the texts would deliver text C before the earlier image
-      // B — the whole flush falls back to per-message (first turn, rest steer)
-      // so queue order is preserved.
       const jobs = deliveryUuids();
       expect(jobs).toHaveLength(3);
       expect(jobs.find((j) => j.uuid === 'uuid-1')?.role).toBe('turn');
@@ -626,8 +597,6 @@ describe('QueryModeHandler', () => {
       const result = await handler.handleQueryTrigger();
 
       expect(result).toEqual({ success: true, messageCount: 2 });
-      // A batch delimiter prefix would turn the command into literal prompt
-      // text — per-message delivery keeps it standalone.
       const jobs = deliveryUuids();
       expect(jobs).toHaveLength(2);
       expect(jobs.find((j) => j.uuid === 'uuid-1')?.role).toBe('turn');
@@ -635,10 +604,6 @@ describe('QueryModeHandler', () => {
     });
 
     it('handleQueryTrigger skips batch-owned members in the per-message fallback (replay race)', async () => {
-      // Startup/replay flush while the batched turn is still pending: the
-      // batch attempt declines (members are active), and the fallback must
-      // NOT give the members individual steer jobs on top of the pending
-      // combined prompt — that would execute each prompt twice.
       jobQueue.enqueue({
         queue: 'message_delivery',
         payload: {
@@ -660,7 +625,6 @@ describe('QueryModeHandler', () => {
       const result = await handler.handleQueryTrigger();
 
       expect(result).toEqual({ success: true, messageCount: 3 });
-      // Only the pre-existing batch job remains — no per-member jobs added.
       const jobs = deliveryUuids();
       expect(jobs.map((j) => j.uuid)).toEqual(['uuid-1']);
       expect(jobs[0].role).toBe('turn');

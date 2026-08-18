@@ -255,7 +255,6 @@ describe('resolveCustomAgentPrompt', () => {
     expect(resolved.value).toBe('Slot-only prompt');
     expect(resolved.value).not.toContain('Agent base prompt');
     expect(resolved.source).toBe('workflow_node_replaced_prompt');
-    // hash covers the replaced value, not the agent base prompt.
     expect(resolved.hash).toBe(
       resolveCustomAgentPrompt(makeAgent({ customPrompt: null }), {
         customPrompt: 'Slot-only prompt',
@@ -316,30 +315,24 @@ describe('buildCustomAgentTaskMessage', () => {
       })
     );
 
-    // Task section
     expect(message).toContain('## Your Task');
     expect(message).toContain('Ship auth flow');
     expect(message).toContain('Implement auth flow');
     expect(message).toContain('**Priority:** high');
 
-    // Runtime Location
     expect(message).toContain('## Runtime Location');
     expect(message).toContain('- Worktree: /workspaces/auth');
 
-    // Your Role
     expect(message).toContain('## Your Role in This Workflow');
     expect(message).toContain('- Node: Plan');
     expect(message).toContain('- Peers: Code');
 
-    // Previous work
     expect(message).toContain('## Previous Work on This Goal');
     expect(message).toContain('- Task 0: added login page');
 
-    // Project context
     expect(message).toContain('## Project Context');
     expect(message).toContain('Monorepo project');
 
-    // Standing instructions (space + workflow combined)
     expect(message).toContain('## Standing Instructions');
     expect(message).toContain('Run tests before finishing.');
     expect(message).toContain('Use conventional commits.');
@@ -409,12 +402,11 @@ describe('buildCustomAgentTaskMessage', () => {
       makeConfig({
         workflow: makeWorkflow(),
         workflowRun: makeWorkflowRun(),
-        nodeId: 'node-1', // "Plan" node
+        nodeId: 'node-1',
         agentSlotName: 'Coder',
       })
     );
 
-    // Plan → Code outbound channel should show, Code → Plan should not
     expect(message).toContain('Channels from this node:');
     expect(message).toContain('Code (Plan → Code)');
     expect(message).not.toContain('Plan (Code → Plan');
@@ -440,7 +432,6 @@ describe('buildCustomAgentTaskMessage', () => {
     const messageNoWorkflow = buildCustomAgentTaskMessage(makeConfig());
     expect(messageNoWorkflow).not.toContain('## Your Role in This Workflow');
 
-    // Workflow provided but nodeId not resolvable → section omitted.
     const messageUnknownNode = buildCustomAgentTaskMessage(
       makeConfig({
         workflow: makeWorkflow(),
@@ -462,7 +453,6 @@ describe('buildCustomAgentTaskMessage', () => {
     expect(message).not.toContain('## Previous Work on This Goal');
     expect(message).not.toContain('## Project Context');
     expect(message).not.toContain('## Standing Instructions');
-    // Runtime Location is always rendered so we don't check its absence here.
     expect(message).toContain('## Your Task');
   });
 
@@ -609,7 +599,6 @@ describe('buildCustomAgentTaskMessage', () => {
       })
     );
 
-    // Old standalone heading is gone — replaced by ## Standing Instructions.
     expect(message).not.toContain('## Instructions\n');
   });
 
@@ -691,7 +680,6 @@ describe('createCustomAgentInit', () => {
       })
     );
 
-    // The parent keeps the preset defaults, including first-level Agent/Task tools.
     expect(init.sdkToolsPreset).toBeUndefined();
     expect(init.allowedTools).toBeUndefined();
     expect(init.disallowedTools).toBeUndefined();
@@ -771,7 +759,6 @@ describe('createCustomAgentInit', () => {
   it('runs a Reviewer slot without REVIEWER_SYSTEM_CONTRACT when the slot replaces the prompt', () => {
     const init = createCustomAgentInit(
       makeConfig({
-        // The seeded Reviewer agent carries the full reviewer contract as its base prompt.
         customAgent: makeAgent({
           id: 'reviewer-agent-id',
           name: 'Reviewer',
@@ -792,10 +779,6 @@ describe('createCustomAgentInit', () => {
   });
 
   it('injects Coding workflow coder-owned handoff guidance into system prompt', () => {
-    // The stable `Coding` workflow (2 nodes: Coding, Review — no Post-Approval
-    // node, no merger agent) uses a behavioral-only coder slot prompt: it does
-    // not restate the review peer or gate fields, which are injected centrally
-    // via the Runtime Execution Contract. Exercise the slot-prompt injection path.
     const codingNode = CODING_WORKFLOW.nodes.find((node) => node.name === 'Coding')!;
     const codingSlot = codingNode.agents[0];
     const init = createCustomAgentInit(
@@ -820,8 +803,6 @@ describe('createCustomAgentInit', () => {
     );
 
     const prompt = init.systemPrompt?.append ?? '';
-    // The coder-owned merge prompt: the Coder implements and hands off via the
-    // gated handoff, and owns the post-approval merge (no separate merger agent).
     expect(prompt).toContain(
       'hand it off via the gated handoff described in Your Role in This Workflow'
     );
@@ -1049,10 +1030,6 @@ describe('resolveAgentInit', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// expandPrompt
-// ---------------------------------------------------------------------------
-
 describe('expandPrompt', () => {
   it('returns base when no expansion is provided', () => {
     expect(expandPrompt('base prompt', undefined)).toBe('base prompt');
@@ -1127,10 +1104,6 @@ describe('expandPrompt', () => {
     expect(expandPrompt('  exact  spacing  ', undefined)).toBe('exact  spacing');
   });
 });
-
-// ---------------------------------------------------------------------------
-// SlotOverrides interface
-// ---------------------------------------------------------------------------
 
 describe('SlotOverrides interface', () => {
   it('accepts customPrompt as string', () => {

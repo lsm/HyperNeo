@@ -1,41 +1,3 @@
-/**
- * Task Agent Skills Integration — Online Tests
- *
- * Verifies that space task agent sessions have access to globally-enabled MCP server
- * skills. This tests the G1+G2+G3 wiring: TaskAgentManager now passes skillsManager
- * and appMcpServerRepo through to AgentSession.fromInit() so that QueryOptionsBuilder
- * can inject enabled skills (MCP servers and plugins) into the session's SDK options.
- *
- * ## What is tested
- *
- * 1. The daemon seeds default MCP-backed skills at startup.
- * 2. When a globally-enabled `mcp_server` skill exists, a task agent session can be
- *    spawned without errors — meaning skillsManager and appMcpServerRepo were properly
- *    threaded through and did not cause a TypeError when QueryOptionsBuilder accessed them.
- * 3. The session's `config.mcpServers` entry for the skill is observable via the
- *    `skill.list` RPC — confirming the skill was active in the daemon at spawn time.
- *
- * ## Note on observable signals
- *
- * QueryOptionsBuilder merges skills-based MCP servers into the SDK query options at
- * runtime, NOT into the persisted session DB record. So we can't directly read "which
- * MCP servers a session used" from session.get. The test therefore verifies:
- *   a) The skill exists and is enabled (skill.list)
- *   b) The task agent session is spawned without error (taskAgentSessionId is set)
- *   c) session.get returns the live session (meaning fromInit completed without throwing)
- *
- * Combined with unit tests that verify the parameters are forwarded, this confirms
- * end-to-end wiring.
- *
- * ## Running
- *
- *   cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/space/task-agent-skills.test.ts
- *
- * MODES:
- * - Dev Proxy (recommended): Set HYPERNEO_USE_DEV_PROXY=1 for offline testing
- * - Real API (default): Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
- */
-
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
@@ -45,10 +7,6 @@ const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 const SETUP_TIMEOUT = IS_MOCK ? 20_000 : 60_000;
 const TEST_TIMEOUT = IS_MOCK ? 30_000 : 120_000;
 const TASK_AGENT_SPAWN_TIMEOUT = IS_MOCK ? 15_000 : 45_000;
-
-// ---------------------------------------------------------------------------
-// Fixture helpers (reuse the pattern from task-agent-lifecycle.test.ts)
-// ---------------------------------------------------------------------------
 
 type TestFixtures = {
   space: Space;
@@ -135,10 +93,6 @@ async function waitForNodeAgentSpawned(
   );
 }
 
-// ---------------------------------------------------------------------------
-// Test suite
-// ---------------------------------------------------------------------------
-
 describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
   let daemon: DaemonServerContext;
 
@@ -156,7 +110,6 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
   test(
     'task agent session is spawned when a globally-enabled mcp_server skill exists',
     async () => {
-      // Step 1: Create an app_mcp_server entry (the backing store for an MCP skill)
       const { server: appMcpServer } = (await daemon.messageHub.request('mcp.registry.create', {
         name: 'test-skills-mcp',
         description: 'A test MCP server for skills injection online test',
@@ -170,7 +123,6 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
       expect(appMcpServer.id).toBeDefined();
       expect(appMcpServer.enabled).toBe(true);
 
-      // Step 2: Create a skill of type mcp_server linked to the app_mcp_server
       const { skill } = (await daemon.messageHub.request('skill.create', {
         params: {
           name: 'test-skills-mcp',
@@ -187,7 +139,6 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
       expect(skill.enabled).toBe(true);
       expect(skill.sourceType).toBe('mcp_server');
 
-      // Step 3: Verify the skill is in the enabled skills list
       const { skills } = (await daemon.messageHub.request('skill.list', {})) as {
         skills: Array<{
           id: string;
@@ -204,7 +155,6 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
       expect(ourSkill).toBeDefined();
       expect(ourSkill!.enabled).toBe(true);
 
-      // Step 4: Create a space + workflow to trigger a workflow node-agent session
       const { space, workflow } = await createTestFixtures(daemon);
 
       const { runId, taskId, executionId } = await startWorkflowRun(
@@ -214,7 +164,6 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
         'Skills injection test run'
       );
 
-      // Step 5: Wait for the node-agent session to be spawned for the execution.
       const nodeAgentSessionId = await waitForNodeAgentSpawned(
         daemon,
         space.id,
@@ -224,20 +173,6 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
       );
 
       daemon.trackSession(nodeAgentSessionId);
-      // Step 6: Verify the task agent session exists, is accessible, and has only
-      // the GENUINE runtime MCP servers in its runtime config.
-      //
-      // As of task #853, TaskAgentManager no longer copies registry-sourced servers
-      // into session.config.mcpServers — registry servers are resolved by
-      // QueryOptionsBuilder.getMcpServersFromRegistry() at query time (using the
-      // session's context.spaceId) and reconciled live on mcp.registry.changed, so
-      // disable/update/delete/rename take effect without recreating the session.
-      // Copying them in here would leave a stale copy that defeats that reconciliation.
-      //
-      // session.get returns the live in-memory session, so config.mcpServers reflects
-      // the runtime state: only the in-process servers (node-agent, agent-memory).
-      // Registry injection for space-scoped sessions is covered by the
-      // query-options-builder.test.ts unit tests.
       const sessionResult = (await daemon.messageHub.request('session.get', {
         sessionId: nodeAgentSessionId,
       })) as {
@@ -250,8 +185,6 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
       expect(nodeAgentSessionId).toContain(`task:${taskId}`);
       expect(nodeAgentSessionId).toContain(`exec:${executionId}`);
 
-      // Genuine runtime servers are present; the registry server is NOT copied in
-      // (it flows via the builder at query time — see task #853).
       const mcpServerKeys = Object.keys(sessionResult.session.config?.mcpServers ?? {});
       expect(mcpServerKeys).toContain('node-agent');
       expect(mcpServerKeys).toContain('agent-memory');
@@ -263,8 +196,6 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
   test(
     'skill.list contains the seeded chrome-devtools-mcp skill at daemon startup',
     async () => {
-      // The SkillsManager seeds a 'chrome-devtools-mcp' skill on startup (disabled by default).
-      // This test confirms the skill is available (disabled) for enabling later.
       const { skills } = (await daemon.messageHub.request('skill.list', {})) as {
         skills: Array<{
           id: string;
@@ -279,7 +210,6 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
       expect(chromeSkill).toBeDefined();
       expect(chromeSkill!.sourceType).toBe('mcp_server');
       expect(chromeSkill!.builtIn).toBe(true);
-      // It's disabled by default (opt-in)
       expect(chromeSkill!.enabled).toBe(false);
     },
     TEST_TIMEOUT
@@ -288,7 +218,6 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
   test(
     'task agent session is spawned after enabling the chrome-devtools-mcp skill globally',
     async () => {
-      // Get the seeded chrome-devtools-mcp skill
       const { skills } = (await daemon.messageHub.request('skill.list', {})) as {
         skills: Array<{
           id: string;
@@ -300,14 +229,12 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
       const chromeSkill = skills.find((s) => s.name === 'chrome-devtools-mcp');
       expect(chromeSkill).toBeDefined();
 
-      // Enable it globally
       const { skill: updated } = (await daemon.messageHub.request('skill.setEnabled', {
         id: chromeSkill!.id,
         enabled: true,
       })) as { skill: { id: string; enabled: boolean } };
       expect(updated.enabled).toBe(true);
 
-      // Create space + run and wait for node-agent spawn
       const { space, workflow } = await createTestFixtures(daemon);
       const { runId, executionId } = await startWorkflowRun(
         daemon,
@@ -326,7 +253,6 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
 
       daemon.trackSession(nodeAgentSessionId);
 
-      // Verify the session is live — proves skills wiring didn't crash session start
       const sessionResult = (await daemon.messageHub.request('session.get', {
         sessionId: nodeAgentSessionId,
       })) as { session: { id: string; type: string } };

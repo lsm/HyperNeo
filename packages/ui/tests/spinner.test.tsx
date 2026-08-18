@@ -29,7 +29,6 @@ describe('Spinner', () => {
 
     it('contains sr-only text for screen readers', () => {
       render(<Spinner label="Processing" />);
-      // The sr-only span renders the label text
       const srSpan = document.querySelector('span[role="status"] span');
       expect(srSpan?.textContent).toBe('Processing');
     });
@@ -39,7 +38,6 @@ describe('Spinner', () => {
       const spinner = screen.getByRole('status');
       const srSpan = spinner.querySelector('span');
       expect(srSpan).not.toBeNull();
-      // Check the sr-only style is applied
       const style = srSpan?.getAttribute('style') ?? '';
       expect(style).toContain('position');
     });
@@ -56,7 +54,6 @@ describe('Spinner', () => {
   describe('default element', () => {
     it('renders as span by default', () => {
       const { container } = render(<Spinner />);
-      // Default tag is span
       const span = container.querySelector('span[role="status"]');
       expect(span).not.toBeNull();
     });
@@ -78,8 +75,6 @@ describe('Spinner', () => {
 
   describe('ref forwarding', () => {
     it('component accepts a ref prop and renders correctly', () => {
-      // Spinner passes a ref through the render() utility to the underlying element.
-      // Verify the component renders the expected DOM without error when a ref is supplied.
       function WithRef() {
         const ref = useRef<HTMLElement>(null);
         return <Spinner ref={ref} data-testid="spinner-with-ref" />;

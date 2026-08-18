@@ -1,22 +1,9 @@
-/**
- * resolveMcpServers precedence-matrix tests.
- *
- * The resolver is intentionally pure; these tests hand it synthetic registry
- * rows + overrides (no database) and verify that the session > room > space >
- * registry-default precedence chain is honoured regardless of which combinations
- * of overrides are present.
- */
-
 import { describe, expect, test } from 'bun:test';
 import {
   resolveMcpServers,
   scopeChainForSession,
 } from '../../../../src/lib/mcp/resolve-mcp-servers';
 import type { AppMcpServer, McpEnablementOverride } from '@hyperneo/shared';
-
-// ---------------------------------------------------------------------------
-// Tiny builders to keep each test concise
-// ---------------------------------------------------------------------------
 
 function server(id: string, enabled: boolean, partial: Partial<AppMcpServer> = {}): AppMcpServer {
   return {
@@ -48,10 +35,6 @@ const session = {
   id: SESSION_ID,
   context: { spaceId: SPACE_ID, roomId: ROOM_ID },
 };
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe('resolveMcpServers', () => {
   describe('registry default (no overrides)', () => {
@@ -161,7 +144,6 @@ describe('resolveMcpServers', () => {
         override('room', ROOM_ID, 'room-on', true),
         override('session', SESSION_ID, 'session-on', true),
         override('session', SESSION_ID, 'session-off', false),
-        // noise rows that must be ignored
         override('space', 'other-space', 'reg-on', false),
         override('room', 'other-room', 'reg-on', false),
         override('session', 'other-session', 'reg-on', false),

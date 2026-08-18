@@ -1,10 +1,3 @@
-/**
- * SpaceWorkflowRepository — `disabled` round-trip tests.
- *
- * Covers the acceptance criterion "Workflow CRUD round-trips preserve
- * `disabled` field (save → load → assert equal)."
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';

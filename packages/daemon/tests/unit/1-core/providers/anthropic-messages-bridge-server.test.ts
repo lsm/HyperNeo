@@ -1,20 +1,3 @@
-/**
- * Tests for the Anthropic Messages pass-through bridge.
- *
- * The bridge accepts Anthropic-format requests, forwards them verbatim to a
- * user-configured upstream that already speaks Anthropic Messages, and proxies
- * the streamed SSE response back 1:1. There is no translation layer, so the
- * tests focus on:
- *
- *   - URL construction (handles base URLs with/without `/v1/messages`, query
- *     strings, etc.)
- *   - Header forwarding (api key under both `x-api-key` and Authorization,
- *     user-supplied headers winning)
- *   - Request body preservation (bytes pass through unmodified)
- *   - Response stream pass-through (SSE bytes 1:1)
- *   - Error envelope normalisation on upstream non-2xx
- */
-
 import { afterEach, describe, expect, it, mock } from 'bun:test';
 import {
   buildUpstreamUrl,
@@ -146,7 +129,6 @@ describe('AnthropicMessagesBridge', () => {
         headers: {
           'Content-Type': 'application/json',
           'anthropic-version': '2024-10-01',
-          // Multi-value beta header — the SDK passes betas joined by `,`.
           'anthropic-beta': 'prompt-caching-2024-07-31,extended-cache-ttl-2025-04-11',
           'anthropic-dangerous-direct-browser-access': 'true',
         },
@@ -201,8 +183,6 @@ describe('AnthropicMessagesBridge', () => {
         fetchImpl: fetchMock as typeof fetch,
       });
       servers.push(server);
-      // Include a non-modelled field (`unknown_extra`) to prove the bridge
-      // doesn't decode-and-re-encode the JSON (which would drop it).
       const requestBody = JSON.stringify({
         model: 'claude',
         messages: [{ role: 'user', content: 'hi' }],
@@ -413,9 +393,6 @@ describe('AnthropicMessagesBridge', () => {
     });
 
     it('does not duplicate /v1/messages when baseUrl already includes it', async () => {
-      // Regression for the case where users paste a full endpoint URL —
-      // the bridge must produce `.../v1/messages/count_tokens`, not
-      // `.../v1/messages/v1/messages/count_tokens`.
       let capturedUrl = '';
       const fetchMock = mock(async (url: string) => {
         capturedUrl = url;

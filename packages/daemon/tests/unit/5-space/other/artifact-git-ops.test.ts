@@ -1,12 +1,3 @@
-/**
- * Tests for packages/daemon/src/lib/space/artifact-git-ops.ts
- *
- * Covers the pure parsers (parseNumstat, parseCommitLog, countDiffLines) and
- * the merge-base in-process TTL cache (getDiffBaseRef, invalidateDiffBaseRef).
- * execGit itself isn't unit-tested here — its behaviour is exercised
- * end-to-end by the handler tests that shell out to real git.
- */
-
 import { describe, expect, it, beforeEach } from 'bun:test';
 import {
   parseNumstat,
@@ -65,7 +56,7 @@ describe('parseNumstat', () => {
 });
 
 describe('parseCommitLog', () => {
-  const DL = '\x1F'; // COMMIT_LOG_FIELD_DELIMITER — must mirror the producer in artifact-git-ops.
+  const DL = '\x1F';
 
   it('returns empty array for empty output', () => {
     expect(parseCommitLog('')).toEqual([]);
@@ -117,8 +108,6 @@ describe('parseCommitLog', () => {
   });
 
   it('preserves commit subjects that contain a pipe character', () => {
-    // Regression for the `|` delimiter: previously a subject like
-    // `fix: handle | in input` would shift author/timestamp fields.
     const input = `COMMIT:deadbeef${DL}fix: handle | in input${DL}Bob${DL}1700000200`;
     const commits = parseCommitLog(input);
     expect(commits).toHaveLength(1);
@@ -167,9 +156,6 @@ describe('getDiffBaseRef / merge-base cache', () => {
   });
 
   it('memoises the result per worktree path for MERGE_BASE_TTL_MS', async () => {
-    // A non-existent path means every git probe fails → the function
-    // returns the empty-string fallback. That is still a legitimate cache
-    // entry and should be reused on the second call.
     const path = '/tmp/nonexistent-worktree-for-cache-test';
     const firstCallStart = Date.now();
     const first = await getDiffBaseRef(path);
@@ -177,26 +163,18 @@ describe('getDiffBaseRef / merge-base cache', () => {
     expect(first).toBe('');
     expect(mergeBaseCacheSize()).toBe(1);
 
-    // The second call should hit the in-memory cache and return immediately.
     const secondCallStart = Date.now();
     const second = await getDiffBaseRef(path);
     const secondCallDuration = Date.now() - secondCallStart;
     expect(second).toBe('');
-    // Be generous: second call must still be noticeably faster than the first
-    // (which ran 3 × merge-base subprocess probes). In CI we allow a 50ms
-    // buffer because the cached path is < 1 ms but scheduling can add noise.
     expect(secondCallDuration).toBeLessThan(Math.max(50, firstCallDuration));
   });
 
   it('invalidates the cache when TTL expires', async () => {
     const path = '/tmp/nonexistent-worktree-ttl';
-    // Seed the cache with TTL=0 so the next call is already stale.
     await getDiffBaseRef(path, { ttlMs: 0 });
     expect(mergeBaseCacheSize()).toBe(1);
 
-    // When we call again with a future `now`, the cached entry has
-    // expired and a fresh probe runs (returning '' since git can't find
-    // the path). The cache entry is then refreshed.
     await getDiffBaseRef(path, { now: Date.now() + 60_000, ttlMs: 60_000 });
     expect(mergeBaseCacheSize()).toBe(1);
   });
@@ -257,9 +235,6 @@ describe('normalizeGithubUrl', () => {
 });
 
 describe('getGitRemoteUrl', () => {
-  // These tests shell out to real git, whose subprocess startup can take
-  // several seconds on a loaded CI machine; give them a generous timeout so
-  // they don't race the 5s execGit timeout (the vitest default is also 5s).
   it('returns null for a non-existent directory (git command fails)', async () => {
     const result = await getGitRemoteUrl('/tmp/nonexistent-dir-for-remote-url-test');
     expect(result).toBeNull();

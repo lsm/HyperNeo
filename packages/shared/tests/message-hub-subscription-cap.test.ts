@@ -10,18 +10,6 @@ import { MessageHub, MessageHubHandlerError } from '../src/message-hub/message-h
 import type { ConnectionState, HubMessage, IMessageTransport } from '../src/message-hub/types';
 import { generateUUID } from '../src/utils';
 
-/**
- * Ingress fan-out guardrail: per-client subscription cap (task #899 / incident #2414).
- *
- * Before this guardrail, `maxSubscriptionsPerClient` was declared but never
- * enforced, so a high-fan-out page silently accumulated one handler per
- * subscribe (790 on one task page) and stalled the client past the 10s RPC
- * timeout. These tests characterize the now-enforced behavior: over-cap
- * subscribes fail fast with a structured error, existing subscriptions are
- * preserved, and dev mode warns loudly.
- */
-
-// Minimal mock connection (matches the pattern in message-hub-router.test.ts)
 function createMockConnection(id?: string): ClientConnection {
   return {
     id: id || generateUUID(),
@@ -30,7 +18,6 @@ function createMockConnection(id?: string): ClientConnection {
   };
 }
 
-/** Logger that records warn calls so tests can assert the dev-mode warning. */
 function createRecordingLogger(): RouterLogger & { warns: string[] } {
   const warns: string[] = [];
   return {
@@ -44,8 +31,6 @@ function createRecordingLogger(): RouterLogger & { warns: string[] } {
 describe('MessageHubRouter subscription cap (ingress fan-out guardrail)', () => {
   describe('default', () => {
     test('is tuned below the observed 790-subscribe task-page fan-out (#2414)', () => {
-      // A guardrail default that sits above the incident would not trip on the
-      // regression it exists to catch.
       expect(DEFAULT_MAX_SUBSCRIPTIONS_PER_CLIENT).toBeLessThan(790);
       expect(DEFAULT_MAX_SUBSCRIPTIONS_PER_CLIENT).toBe(128);
     });
@@ -69,7 +54,6 @@ describe('MessageHubRouter subscription cap (ingress fan-out guardrail)', () => 
         router.addClientSubscription('client-A');
       }
 
-      // The (cap+1)th subscribe is refused — fail fast at the boundary.
       const over = router.checkSubscriptionCapacity('client-A');
       expect(over.ok).toBe(false);
       if (!over.ok) {
@@ -93,8 +77,6 @@ describe('MessageHubRouter subscription cap (ingress fan-out guardrail)', () => 
       for (let i = 0; i < CAP; i++) router.addClientSubscription('client-A');
       expect(router.getClientSubscriptionCount('client-A')).toBe(CAP);
 
-      // Repeated capacity checks must not drift the counter (a caller that
-      // checks then decides not to subscribe must not need to release).
       router.checkSubscriptionCapacity('client-A');
       router.checkSubscriptionCapacity('client-A');
       router.checkSubscriptionCapacity('client-A');
@@ -115,11 +97,9 @@ describe('MessageHubRouter subscription cap (ingress fan-out guardrail)', () => 
       for (let i = 0; i < CAP; i++) router.addClientSubscription('client-A');
       const before = router.getClientSubscriptionCount('client-A');
 
-      // Simulate the daemon's refusal path: check fails, caller does NOT add.
       const check = router.checkSubscriptionCapacity('client-A');
       expect(check.ok).toBe(false);
 
-      // The cap held — refusing the new subscribe did not evict any existing one.
       expect(router.getClientSubscriptionCount('client-A')).toBe(before);
       expect(router.getClientSubscriptionCount('client-A')).toBe(CAP);
     });
@@ -128,11 +108,9 @@ describe('MessageHubRouter subscription cap (ingress fan-out guardrail)', () => 
       for (let i = 0; i < CAP; i++) router.addClientSubscription('client-A');
       expect(router.checkSubscriptionCapacity('client-A').ok).toBe(false);
 
-      // An existing subscription is closed (e.g. user navigates away from a view).
       router.releaseClientSubscription('client-A');
       expect(router.getClientSubscriptionCount('client-A')).toBe(CAP - 1);
 
-      // A new subscribe can now succeed again.
       expect(router.checkSubscriptionCapacity('client-A').ok).toBe(true);
       router.addClientSubscription('client-A');
       expect(router.getClientSubscriptionCount('client-A')).toBe(CAP);
@@ -143,12 +121,10 @@ describe('MessageHubRouter subscription cap (ingress fan-out guardrail)', () => 
       router.releaseClientSubscription('client-A');
       expect(router.getClientSubscriptionCount('client-A')).toBe(0);
 
-      // Extra releases on a client with no tracked subscriptions are a no-op.
       router.releaseClientSubscription('client-A');
       router.releaseClientSubscription('client-A');
       expect(router.getClientSubscriptionCount('client-A')).toBe(0);
 
-      // And capacity is still correctly reported as available.
       expect(router.checkSubscriptionCapacity('client-A').ok).toBe(true);
     });
   });
@@ -163,7 +139,6 @@ describe('MessageHubRouter subscription cap (ingress fan-out guardrail)', () => 
       router.addClientSubscription('A');
       router.addClientSubscription('B');
 
-      // A is full, B still has headroom.
       expect(router.checkSubscriptionCapacity('A').ok).toBe(false);
       expect(router.checkSubscriptionCapacity('B').ok).toBe(true);
     });
@@ -177,19 +152,12 @@ describe('MessageHubRouter subscription cap (ingress fan-out guardrail)', () => 
 
       router.unregisterConnection('A');
 
-      // Counter is gone; a re-registration starts from a clean slate.
       expect(router.getClientSubscriptionCount('A')).toBe(0);
       router.registerConnection(createMockConnection('A'));
       expect(router.checkSubscriptionCapacity('A').ok).toBe(true);
     });
   });
 });
-
-// ---------------------------------------------------------------------------
-// Hub error-response plumbing: a MessageHubHandlerError carries its ErrorCode
-// onto the wire so the daemon's over-cap refusal reaches the client as a
-// structured TOO_MANY_SUBSCRIPTIONS (mirroring #2423's MESSAGE_TOO_LARGE).
-// ---------------------------------------------------------------------------
 
 class CapMockTransport implements IMessageTransport {
   readonly name = 'cap-mock-transport';

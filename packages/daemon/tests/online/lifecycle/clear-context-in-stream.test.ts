@@ -1,26 +1,3 @@
-/**
- * Online regression: the SDK's `/clear` command clears the model's context
- * WITHIN a streaming-input query (the mode `resetContextPerTurn` runs in).
- *
- * `AgentSession.clearConversationContext()` issues `/clear` by enqueuing it as
- * an internal message into the persistent streaming query's generator, ahead of
- * the triggering handoff. This test guards the SDK assumption that contract
- * rests on: that yielding `/clear` mid-stream (a) clears context for the next
- * yielded message and (b) rotates the SDK session id, which our
- * `handleSystemInit` then recaptures.
- *
- * The unit tests cover clearConversationContext's enqueue/cost/trace logic; this
- * test covers the SDK behavior those unit tests mock out. A one-shot `query()`
- * can't exercise this (the docs: "/clear ... for one-shot query() calls has no
- * practical effect"), so this drives a streaming-input generator directly.
- *
- * MODES:
- * - Real API (default): requires CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_AUTH_TOKEN
- *   / ANTHROPIC_API_KEY. Hard-fails if none are set (per the online-test contract).
- * - Dev Proxy: set HYPERNEO_USE_DEV_PROXY=1 for offline mocked responses.
- *
- * Run: cd packages/daemon && bun test ./tests/online/lifecycle/clear-context-in-stream.test.ts
- */
 import { describe, expect, test } from 'bun:test';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -32,7 +9,6 @@ const AUTH =
   process.env.ANTHROPIC_AUTH_TOKEN ||
   process.env.ANTHROPIC_API_KEY;
 
-// An unguessable codeword so the post-clear probe can't accidentally reproduce it.
 const CODEWORD = `ZEXQWB-${Date.now().toString(36)}`;
 
 type Deferred<T> = { promise: Promise<T>; resolve: (v: T) => void };
@@ -82,7 +58,6 @@ describe('SDK /clear in streaming-input mode', () => {
       await waitForResults(1, 90_000);
 
       yield userMsg('/clear');
-      // /clear emits its own result; wait for it before probing.
       try {
         await waitForResults(2, 60_000);
       } catch {
@@ -120,9 +95,7 @@ describe('SDK /clear in streaming-input mode', () => {
       rmSync(cwd, { recursive: true, force: true });
     }
 
-    // /clear cleared context: the probe must NOT reproduce the unguessable codeword.
     expect(probeText.toLowerCase()).not.toContain(CODEWORD.toLowerCase());
-    // /clear rotated the SDK session id (≥2 distinct inits: pre- and post-clear).
     expect(new Set(sessionIds).size).toBeGreaterThanOrEqual(2);
   }, 240_000);
 });

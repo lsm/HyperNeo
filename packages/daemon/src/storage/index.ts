@@ -1,10 +1,3 @@
-/**
- * Database Facade
- *
- * Re-exports for backward compatibility.
- * The Database class composes all repositories and maintains the exact same public API.
- */
-
 import { Database as BunDatabase } from './sqlite-compat';
 import type {
   Session,
@@ -69,7 +62,6 @@ export type {
 } from './job-queue-processor';
 
 // @public - Library export
-// Re-export repository classes for direct use
 export { GoalRepository } from './repositories/goal-repository';
 export { TaskRepository } from './repositories/task-repository';
 export { SpaceAgentRepository } from './repositories/space-agent-repository';
@@ -100,12 +92,6 @@ export type {
   UpdateProviderParams,
 } from '@hyperneo/shared';
 
-/**
- * Database facade class that maintains backward compatibility with the original Database class.
- *
- * This class composes all repositories and delegates method calls to the appropriate repository.
- * All existing consumers can continue using this class without any changes.
- */
 export class Database {
   private core: DatabaseCore;
   private sessionRepo!: SessionRepository;
@@ -137,12 +123,6 @@ export class Database {
     return this.core.getDbPath();
   }
 
-  /**
-   * Notify the live-query layer that a table changed, when this facade is
-   * wired to a {@link ReactiveDatabase}. Used by code paths that mutate a table
-   * through the raw db (e.g. `revokePendingDelivery` defer+cancel) so the
-   * widened delivery feed re-evaluates. No-op when not wired.
-   */
   notifyChange(table: string, scope?: { sessionId?: string; taskId?: string }): void {
     this.reactiveDb?.notifyChange(table, scope);
   }
@@ -151,7 +131,6 @@ export class Database {
     await this.core.initialize();
     this.reactiveDb = reactiveDb;
 
-    // Initialize repositories with the raw BunDatabase instance
     const db = this.core.getDb();
     this.shortIdAllocator = new ShortIdAllocator(db);
     const shortIdAllocator = this.shortIdAllocator;
@@ -180,10 +159,6 @@ export class Database {
     this.agentMemoryRepo.backfillPendingEmbeddings();
   }
 
-  // ============================================================================
-  // Session operations (delegated to SessionRepository)
-  // ============================================================================
-
   createSession(session: Session): void {
     this.sessionRepo.createSession(session);
   }
@@ -211,10 +186,6 @@ export class Database {
   deleteSession(id: string): void {
     this.sessionRepo.deleteSession(id);
   }
-
-  // ============================================================================
-  // SDK Message operations (delegated to SDKMessageRepository)
-  // ============================================================================
 
   saveSDKMessage(sessionId: string, message: SDKMessage, origin?: MessageOrigin): boolean {
     return this.sdkMessageRepo.saveSDKMessage(sessionId, message, origin);
@@ -267,7 +238,6 @@ export class Database {
     return this.sdkMessageRepo.getSDKMessageCount(sessionId);
   }
 
-  // Message Query Mode operations
   saveUserMessage(
     sessionId: string,
     message: SDKMessage,
@@ -331,7 +301,6 @@ export class Database {
     return this.sdkMessageRepo.deleteMessagesAtAndAfter(sessionId, atTimestamp);
   }
 
-  // Rewind feature: get user messages as checkpoints
   getUserMessages(sessionId: string): Array<{ uuid: string; timestamp: number; content: string }> {
     return this.sdkMessageRepo.getUserMessages(sessionId);
   }
@@ -363,10 +332,6 @@ export class Database {
     this.sdkMessageRepo.updateHyperNeoActionMessageByUuid(sessionId, messageUuid, updated);
   }
 
-  // ============================================================================
-  // Global Configuration operations (delegated to SettingsRepository)
-  // ============================================================================
-
   getGlobalToolsConfig(): GlobalToolsConfig {
     return this.settingsRepo.getGlobalToolsConfig();
   }
@@ -386,10 +351,6 @@ export class Database {
   updateGlobalSettings(updates: Partial<GlobalSettings>): GlobalSettings {
     return this.settingsRepo.updateGlobalSettings(updates);
   }
-
-  // ============================================================================
-  // GitHub Mapping operations (delegated to GitHubMappingRepository)
-  // ============================================================================
 
   createGitHubMapping(params: {
     roomId: string;
@@ -443,10 +404,6 @@ export class Database {
     this.githubMappingRepo.deleteMappingByRoomId(roomId);
   }
 
-  // ============================================================================
-  // Inbox Item operations (delegated to InboxItemRepository)
-  // ============================================================================
-
   createInboxItem(params: CreateInboxItemParams): InboxItem {
     return this.inboxItemRepo.createItem(params);
   }
@@ -495,10 +452,6 @@ export class Database {
     return this.inboxItemRepo.countByStatus(status);
   }
 
-  // ============================================================================
-  // Goal operations (delegated to GoalRepository)
-  // ============================================================================
-
   createGoal(params: CreateGoalParams): RoomGoal {
     return this.goalRepo.createGoal(params);
   }
@@ -539,108 +492,54 @@ export class Database {
     return this.goalRepo.getActiveGoalCount(roomId);
   }
 
-  // ============================================================================
-  // Core operations (delegated to DatabaseCore)
-  // ============================================================================
-
-  /**
-   * Get the underlying Bun SQLite database instance
-   * Used by background job queues (e.g., liteque) that need direct DB access
-   */
   getDatabase(): BunDatabase {
     return this.core.getDb();
   }
 
-  /**
-   * Get the shared ShortIdAllocator instance
-   * Used by TaskManager and GoalManager to assign short IDs on creation
-   */
   getShortIdAllocator(): ShortIdAllocator {
     return this.shortIdAllocator;
   }
 
-  /**
-   * Get the SDK message repository
-   * Used by SessionBridge for direct access to SDK messages
-   */
   getSDKMessageRepo(): SDKMessageRepository {
     return this.sdkMessageRepo;
   }
 
-  /**
-   * Get the goal repository
-   * Used by GoalManager for direct access to goals
-   */
   getGoalRepo(): GoalRepository {
     return this.goalRepo;
   }
 
-  /**
-   * Get the task repository
-   * Used by ReferenceResolver for task lookups during message preprocessing
-   */
   getTaskRepo(): TaskRepository {
     return this.taskRepo;
   }
 
-  /**
-   * Get the Space task repository
-   * Used for Space workflow session-role policy checks
-   */
   getSpaceTaskRepo(): SpaceTaskRepository {
     return this.spaceTaskRepo;
   }
 
-  /**
-   * Get the Space node execution repository
-   * Used for workflow worker session-role policy checks
-   */
   getNodeExecutionRepo(): NodeExecutionRepository {
     return this.nodeExecutionRepo;
   }
 
-  /**
-   * Get the database file path
-   * Used by background job queues to create their own connections to the same DB file
-   */
   getDatabasePath(): string {
     return this.core.getDbPath();
   }
 
-  /**
-   * Get the job queue repository
-   * Used for generic database-backed job queue operations
-   */
   getJobQueueRepo(): JobQueueRepository {
     return this.jobQueueRepo;
   }
 
-  /**
-   * Get the application-level MCP server repository
-   */
   get appMcpServers(): AppMcpServerRepository {
     return this.appMcpServerRepo;
   }
 
-  /**
-   * Get the generalized per-scope MCP enablement repository. One row per
-   * explicit (scope_type, scope_id, server_id) override; missing rows inherit
-   * from the next most-specific scope (session > space > registry).
-   */
   get mcpEnablement(): McpEnablementRepository {
     return this.mcpEnablementRepo;
   }
 
-  /**
-   * Get the application-level Skills repository
-   */
   get skills(): SkillRepository {
     return this.skillRepo;
   }
 
-  /**
-   * Get the workspace history repository
-   */
   get workspaceHistory(): WorkspaceHistoryRepository {
     return this.workspaceHistoryRepo;
   }

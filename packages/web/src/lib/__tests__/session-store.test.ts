@@ -1,23 +1,14 @@
 // @ts-nocheck
-/**
- * Tests for SessionStore
- *
- * Tests the SessionStore class which manages per-session state.
- * Uses a fresh instance for each test to isolate state.
- */
 
 import { signal } from '@preact/signals';
 import type { SessionState, AgentProcessingState } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 
-// Create SessionStore class instance directly for testing
-// We need to create a fresh instance for each test
 class TestSessionStore {
   readonly activeSessionId = signal<string | null>(null);
   readonly sessionState = signal<SessionState | null>(null);
   readonly sdkMessages = signal<SDKMessage[]>([]);
 
-  // Computed values
   get sessionInfo() {
     return this.sessionState.value?.sessionInfo || null;
   }
@@ -48,10 +39,8 @@ class TestSessionStore {
     return state.status === 'processing' || state.status === 'queued';
   }
 
-  // Track session switch time
   private sessionSwitchTime = 0;
 
-  // Simulate select behavior
   async select(sessionId: string | null): Promise<void> {
     if (this.activeSessionId.value === sessionId) {
       return;
@@ -63,7 +52,6 @@ class TestSessionStore {
     this.activeSessionId.value = sessionId;
   }
 
-  // Clear error
   clearError(): void {
     if (this.sessionState.value?.error) {
       this.sessionState.value = {
@@ -73,7 +61,6 @@ class TestSessionStore {
     }
   }
 
-  // Prepend messages
   prependMessages(messages: SDKMessage[]): void {
     if (messages.length === 0) return;
     this.sdkMessages.value = [...messages, ...this.sdkMessages.value];
@@ -307,11 +294,9 @@ describe('SessionStore', () => {
       await store.select('same-session');
       const firstSwitchTime = store.getSessionSwitchTime();
 
-      // Wait a bit
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       await store.select('same-session');
-      // Switch time should not change
       expect(store.getSessionSwitchTime()).toBe(firstSwitchTime);
     });
 

@@ -712,7 +712,6 @@ describe('GoalAutomationService', () => {
       ingestedAt: 31,
     });
 
-    // Simulate the job being claimed (moved to processing)
     const jobs = jobQueue.listJobs({ queue: GOAL_AUTOMATION_EXECUTE, status: 'pending' });
     expect(jobs).toHaveLength(1);
     db.prepare("UPDATE job_queue SET status = 'processing', started_at = ? WHERE id = ?").run(
@@ -720,7 +719,6 @@ describe('GoalAutomationService', () => {
       jobs[0].id
     );
 
-    // Same event should not enqueue a second job while the first is processing
     service.onExternalEventPublished({
       eventId: 'event-1',
       spaceId,
@@ -891,7 +889,6 @@ describe('GoalAutomationService', () => {
     syncGoalAutomationSelfNagScheduleForScope({ goalRepo, scheduleService, scope });
     expect(scheduleService.listSchedules(spaceId, 'active')).toHaveLength(1);
 
-    // Unlink scope from goal.
     evolutionRepo.updateScope(scope.id, { spaceGoalId: null });
     const unlinkedScope = evolutionRepo.getScope(scope.id)!;
     expect(unlinkedScope.spaceGoalId).toBeNull();
@@ -921,7 +918,6 @@ describe('GoalAutomationService', () => {
     expect(scheduleService.listSchedules(spaceId, 'active')).toHaveLength(1);
     const goalASchedule = scheduleService.listSchedules(spaceId, 'active')[0];
 
-    // Reassign scope from goal A to goal B.
     evolutionRepo.updateScope(scope.id, { spaceGoalId: goalB.id });
     const reassignedScope = evolutionRepo.getScope(scope.id)!;
 
@@ -931,11 +927,9 @@ describe('GoalAutomationService', () => {
       scope: reassignedScope as typeof scope,
     });
 
-    // Old schedule (goal A) should be paused.
     const pausedSchedules = scheduleService.listSchedules(spaceId, 'paused');
     expect(pausedSchedules.some((s) => s.id === goalASchedule.id)).toBe(true);
 
-    // New schedule (goal B) should be active.
     const activeSchedules = scheduleService.listSchedules(spaceId, 'active');
     expect(activeSchedules).toHaveLength(1);
     expect(activeSchedules[0].goalId).toBe(goalB.id);
@@ -1281,11 +1275,9 @@ describe('GoalAutomationService', () => {
     const schedule = scheduleService.listSchedules(spaceId, 'active')[0];
     expect(schedule.cronExpression).toBe('0 0 * * *');
 
-    // Pause the schedule (simulates goal temporarily inactive)
     scheduleService.pauseSchedule(schedule.id);
     expect(scheduleService.listSchedules(spaceId, 'paused')).toHaveLength(1);
 
-    // Re-sync with a new cron expression while schedule is paused
     const updatedScope = evolutionRepo.updateScope(scope.id, {
       policy: { automation: { selfNagCronExpression: '0 * * * *' } },
     });
@@ -1295,7 +1287,6 @@ describe('GoalAutomationService', () => {
       scope: updatedScope as typeof scope,
     });
 
-    // Schedule should be active again with the NEW cron expression
     const active = scheduleService.listSchedules(spaceId, 'active');
     expect(active).toHaveLength(1);
     expect(active[0].id).toBe(schedule.id);
@@ -1879,7 +1870,6 @@ describe('handleGoalAutomationExecute', () => {
       createdAt: 10,
     });
 
-    // First run: creates episode and review task
     const firstResult = await handleGoalAutomationExecute(
       createAutomationJob({
         goalId: goal.id,
@@ -1912,12 +1902,10 @@ describe('handleGoalAutomationExecute', () => {
     expect(firstResult.skipped).toBe(false);
     expect(firstResult.episodeId).not.toBeNull();
 
-    // Mark review task as terminal
     const reviewTask = taskRepo.getTask(firstResult.reviewTaskId as string);
     expect(reviewTask).not.toBeNull();
     taskRepo.updateTask(reviewTask!.id, { status: 'done' });
 
-    // Add newer evidence
     const secondTask = taskRepo.createTask({ spaceId, title: 'Second done', goalId: goal.id });
     taskRepo.updateTask(secondTask.id, { status: 'done' });
     evolutionRepo.createEvidence({
@@ -1928,7 +1916,6 @@ describe('handleGoalAutomationExecute', () => {
       createdAt: 20,
     });
 
-    // Re-trigger for the same first task (simulating re-terminal handling)
     const secondResult = await handleGoalAutomationExecute(
       createAutomationJob({
         goalId: goal.id,
@@ -1983,7 +1970,6 @@ describe('handleGoalAutomationExecute', () => {
       createdAt: 10,
     });
 
-    // First run at threshold:1 creates review and advances cursor
     const firstResult = await handleGoalAutomationExecute(
       createAutomationJob({
         goalId: goal.id,
@@ -2015,11 +2001,9 @@ describe('handleGoalAutomationExecute', () => {
     );
     expect(firstResult.skipped).toBe(false);
 
-    // Mark review as terminal
     const reviewTask = taskRepo.getTask(firstResult.reviewTaskId as string);
     taskRepo.updateTask(reviewTask!.id, { status: 'done' });
 
-    // Change threshold and complete a second task — advances a newer cursor
     const secondTask = taskRepo.createTask({ spaceId, title: 'Second done', goalId: goal.id });
     taskRepo.updateTask(secondTask.id, { status: 'done' });
     evolutionRepo.createEvidence({
@@ -2061,7 +2045,6 @@ describe('handleGoalAutomationExecute', () => {
     expect(secondResult.skipped).toBe(false);
     taskRepo.updateTask(secondResult.reviewTaskId as string, { status: 'done' });
 
-    // Add third task and re-trigger the original first task
     const thirdTask = taskRepo.createTask({ spaceId, title: 'Third done', goalId: goal.id });
     taskRepo.updateTask(thirdTask.id, { status: 'done' });
     evolutionRepo.createEvidence({
@@ -2101,7 +2084,6 @@ describe('handleGoalAutomationExecute', () => {
       }
     );
 
-    // Must create a new episode because the newer threshold:2 cursor has advanced
     expect(thirdResult.skipped).toBe(false);
     expect(thirdResult.episodeId).not.toBe(firstResult.episodeId);
   });
@@ -2892,7 +2874,6 @@ describe('handleGoalAutomationExecute', () => {
     );
 
     expect(result.skipped).toBe(false);
-    // The capped slice (12) plus the triggering external-event evidence.
     expect(episodeEvidenceIds).toHaveLength(13);
     const freshEvidence = evolutionRepo
       .listEvidence(scope.id)
@@ -3259,7 +3240,6 @@ describe('handleGoalAutomationExecute', () => {
       taskCreatedEventHub: { publish: async () => {} },
     };
 
-    // First run: normal execution
     const job1 = createAutomationJob(payload, 'job-1');
     const result1 = await handleGoalAutomationExecute(job1, deps_base);
     expect(result1.skipped).toBe(false);
@@ -3267,7 +3247,6 @@ describe('handleGoalAutomationExecute', () => {
     const cursor1 = cursorRepo.get(goal.id, scope.id, 'self_nag', 'sched-race')!;
     expect(cursor1).not.toBeNull();
 
-    // Add more evidence and run again: cursor advances
     evolutionRepo.createEvidence({
       scopeId: scope.id,
       kind: 'manual_note',
@@ -3281,24 +3260,19 @@ describe('handleGoalAutomationExecute', () => {
     const cursor2 = cursorRepo.get(goal.id, scope.id, 'self_nag', 'sched-race')!;
     expect(cursor2.lastFiredAt).toBeGreaterThanOrEqual(cursor1.lastFiredAt!);
 
-    // Simulate old job (job-1) trying to write after job-2 already advanced cursor.
-    // The cursor upsert must NOT regress lastFiredAt.
     cursorRepo.upsert({
       spaceId: space.id,
       goalId: goal.id,
       scopeId: scope.id,
       triggerKind: 'self_nag',
       triggerKey: 'sched-race',
-      lastFiredAt: cursor1.lastFiredAt! - 1, // strictly older than cursor2
-      lastEvidenceCreatedAt: 1, // stale value
+      lastFiredAt: cursor1.lastFiredAt! - 1,
+      lastEvidenceCreatedAt: 1,
       metadata: { stale: true },
     });
     const afterStale = cursorRepo.get(goal.id, scope.id, 'self_nag', 'sched-race')!;
-    // Stale write must not regress: lastFiredAt stays at job-2's value
     expect(afterStale.lastFiredAt).toBe(cursor2.lastFiredAt);
-    // Evidence cursor also stays at job-2's value (not regressed to 1)
     expect(afterStale.lastEvidenceCreatedAt).toBe(cursor2.lastEvidenceCreatedAt);
-    // Metadata stays from job-2's write (stale marker not applied)
     expect(afterStale.metadata.stale).toBeUndefined();
   });
 });

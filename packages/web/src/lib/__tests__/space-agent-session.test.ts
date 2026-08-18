@@ -1,7 +1,3 @@
-/**
- * Tests for the synthetic Space session-id helpers (task #873).
- */
-
 import { describe, it, expect } from 'vitest';
 import {
   isCoordinatorSessionId,
@@ -47,7 +43,6 @@ describe('parseLongHorizonAgentSessionId', () => {
   it('returns null for a coordinator id, a plain session, or malformed input', () => {
     expect(parseLongHorizonAgentSessionId(`space:chat:${SPACE_ID}`)).toBeNull();
     expect(parseLongHorizonAgentSessionId('01234567-89ab-cdef')).toBeNull();
-    // Too few segments after the prefix.
     expect(parseLongHorizonAgentSessionId('space:agent:only-one')).toBeNull();
     expect(parseLongHorizonAgentSessionId(null)).toBeNull();
   });

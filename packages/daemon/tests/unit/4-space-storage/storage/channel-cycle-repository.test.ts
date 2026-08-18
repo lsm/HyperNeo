@@ -1,18 +1,3 @@
-/**
- * ChannelCycleRepository Unit Tests
- *
- * Covers the rate-based dead-loop detection API:
- *   - reserveCycleEvent: authoritative atomic gate (prune + count + conditional insert)
- *   - recordCycleEvent: unconditional traversal record (recovery path)
- *   - countRecentCycleEvents / isDeadLoopReached: read-only windowed count
- *   - resetAllForRun: human-touch reset (clears event history, lifts a block)
- *   - pruneAllOldEvents: cross-run GC for abandoned/stalled runs
- *
- * Uses an in-memory SQLite DB seeded with the full migration chain so FK
- * constraints (channel_cycle_events.run_id → space_workflow_runs.id) match
- * production.
- */
-
 import { describe, test, expect, beforeEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { ChannelCycleRepository } from '../../../../src/storage/repositories/channel-cycle-repository.ts';
@@ -48,8 +33,6 @@ beforeEach(() => {
   repo = new ChannelCycleRepository(db);
 });
 
-// A fixed "now" and a 5-minute window keep the rate tests deterministic without
-// depending on real wall-clock time.
 const NOW = 1_700_000_000_000;
 const WINDOW = 5 * 60 * 1000;
 
@@ -65,18 +48,13 @@ describe('ChannelCycleRepository — reserveCycleEvent (authoritative gate)', ()
 
   test('blocks the traversal that would exceed the threshold (no insert)', () => {
     for (let i = 0; i < 15; i++) repo.reserveCycleEvent(RUN_ID_A, 1, NOW + i * 1000);
-    // The 16th attempt within the window is blocked and records nothing.
     const blocked = repo.reserveCycleEvent(RUN_ID_A, 1, NOW + 15_000);
     expect(blocked.allowed).toBe(false);
     expect(blocked.recentCount).toBe(15);
-    // Still exactly 15 recorded — the blocked attempt inserted no row.
     expect(repo.countRecentCycleEvents(RUN_ID_A, 1, NOW + 15_000, WINDOW)).toBe(15);
   });
 
   test('a genuine extended review spread over hours never trips', () => {
-    // 30 review round-trips on the same channel, each an hour apart — far more
-    // than any lifetime cap allowed, but spread over a whole day. The rolling
-    // 5-minute window must only ever see one at a time.
     for (let i = 0; i < 30; i++) {
       const t = NOW + i * 60 * 60 * 1000;
       expect(repo.reserveCycleEvent(RUN_ID_A, 1, t).allowed).toBe(true);
@@ -86,8 +64,6 @@ describe('ChannelCycleRepository — reserveCycleEvent (authoritative gate)', ()
   test('is isolated per channel index and per run', () => {
     for (let i = 0; i < 15; i++) repo.reserveCycleEvent(RUN_ID_A, 1, NOW + i * 1000);
     expect(repo.reserveCycleEvent(RUN_ID_A, 1, NOW + 15_000).allowed).toBe(false);
-    // Different channel on the same run, and the same channel on a different
-    // run, are both still allowed.
     expect(repo.reserveCycleEvent(RUN_ID_A, 2, NOW + 15_000).allowed).toBe(true);
     expect(repo.reserveCycleEvent(RUN_ID_B, 1, NOW + 15_000).allowed).toBe(true);
   });
@@ -95,36 +71,28 @@ describe('ChannelCycleRepository — reserveCycleEvent (authoritative gate)', ()
 
 describe('ChannelCycleRepository — windowed counting & pruning', () => {
   test('countRecentCycleEvents only counts traversals inside the window', () => {
-    repo.recordCycleEvent(RUN_ID_A, 1, NOW - 60 * 60 * 1000); // an hour ago
-    repo.recordCycleEvent(RUN_ID_A, 1, NOW - 30 * 60 * 1000); // 30 min ago
-    repo.recordCycleEvent(RUN_ID_A, 1, NOW - 60_000); // inside
-    repo.recordCycleEvent(RUN_ID_A, 1, NOW - 10_000); // inside
+    repo.recordCycleEvent(RUN_ID_A, 1, NOW - 60 * 60 * 1000);
+    repo.recordCycleEvent(RUN_ID_A, 1, NOW - 30 * 60 * 1000);
+    repo.recordCycleEvent(RUN_ID_A, 1, NOW - 60_000);
+    repo.recordCycleEvent(RUN_ID_A, 1, NOW - 10_000);
     expect(repo.countRecentCycleEvents(RUN_ID_A, 1, NOW, WINDOW)).toBe(2);
   });
 
   test('counting prunes events older than the window (bounded growth)', () => {
-    for (let i = 0; i < 40; i++) repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 1000); // 40s span
-    // Counting 6 minutes later prunes the whole burst (all older than 5 min).
+    for (let i = 0; i < 40; i++) repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 1000);
     expect(repo.countRecentCycleEvents(RUN_ID_A, 1, NOW + 6 * 60 * 1000, WINDOW)).toBe(0);
   });
 
   test('future-dated events are excluded from the window (clock-skew safe)', () => {
-    // Simulate a backward clock jump across a restart: 15 events recorded
-    // "in the future" relative to the current `now`. The upper window bound
-    // excludes them, so the channel is not falsely dead-looped and recovers
-    // as the clock advances (instead of blocking until the clock catches up).
     for (let i = 1; i <= 15; i++) repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 60_000);
     expect(repo.countRecentCycleEvents(RUN_ID_A, 1, NOW)).toBe(0);
     expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW)).toBe(false);
   });
 
   test('exact window boundaries are inclusive on both ends', () => {
-    // sent_at == now - windowMs is counted (>= lower bound, survives prune via
-    // strict `<`); sent_at == now is counted (<= upper bound); one ms older than
-    // the lower bound is excluded.
-    repo.recordCycleEvent(RUN_ID_A, 1, NOW - WINDOW); // exactly on the lower edge
-    repo.recordCycleEvent(RUN_ID_A, 1, NOW); // exactly on the upper edge
-    repo.recordCycleEvent(RUN_ID_A, 1, NOW - WINDOW - 1); // one ms too old (pruned)
+    repo.recordCycleEvent(RUN_ID_A, 1, NOW - WINDOW);
+    repo.recordCycleEvent(RUN_ID_A, 1, NOW);
+    repo.recordCycleEvent(RUN_ID_A, 1, NOW - WINDOW - 1);
     expect(repo.countRecentCycleEvents(RUN_ID_A, 1, NOW, WINDOW)).toBe(2);
   });
 
@@ -136,8 +104,6 @@ describe('ChannelCycleRepository — windowed counting & pruning', () => {
   });
 
   test('uses package defaults (15 / 5min) when threshold/window omitted', () => {
-    // Omits threshold/window args to exercise the DEAD_LOOP_THRESHOLD /
-    // DEAD_LOOP_WINDOW_MS defaults (distinct from the explicit-args test above).
     for (let i = 0; i < 14; i++) repo.recordCycleEvent(RUN_ID_A, 1, NOW + i * 1000);
     expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 14_000)).toBe(false);
     repo.recordCycleEvent(RUN_ID_A, 1, NOW + 14_000);
@@ -154,7 +120,6 @@ describe('ChannelCycleRepository — resetAllForRun (human touch)', () => {
     expect(deleted).toBe(15);
     expect(repo.countRecentCycleEvents(RUN_ID_A, 1, NOW + 15_000, WINDOW)).toBe(0);
     expect(repo.isDeadLoopReached(RUN_ID_A, 1, NOW + 15_000)).toBe(false);
-    // The channel is deliverable again after the reset.
     expect(repo.reserveCycleEvent(RUN_ID_A, 1, NOW + 15_000).allowed).toBe(true);
   });
 
@@ -175,10 +140,9 @@ describe('ChannelCycleRepository — resetAllForRun (human touch)', () => {
 
 describe('ChannelCycleRepository — pruneAllOldEvents (cross-run GC)', () => {
   test('deletes events older than the retention cutoff across all runs', () => {
-    // Run A: recent events (kept). Run B: stale events (GC'd).
     repo.recordCycleEvent(RUN_ID_A, 1, NOW - 60_000);
-    repo.recordCycleEvent(RUN_ID_B, 1, NOW - 2 * WINDOW); // 10 min ago
-    repo.recordCycleEvent(RUN_ID_B, 2, NOW - 3 * WINDOW); // 15 min ago
+    repo.recordCycleEvent(RUN_ID_B, 1, NOW - 2 * WINDOW);
+    repo.recordCycleEvent(RUN_ID_B, 2, NOW - 3 * WINDOW);
 
     const deleted = repo.pruneAllOldEvents(NOW);
     expect(deleted).toBe(2);

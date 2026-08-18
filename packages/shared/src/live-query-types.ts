@@ -1,7 +1,7 @@
 export interface LiveQuerySubscribeRequest {
-  queryName: string; // named query key from server registry
+  queryName: string;
   params: unknown[];
-  subscriptionId: string; // client-chosen, unique per client connection
+  subscriptionId: string;
 }
 
 export interface LiveQuerySubscribeResponse {
@@ -16,7 +16,6 @@ export interface LiveQueryUnsubscribeResponse {
   ok: true;
 }
 
-// Server-pushed via router.sendToClient, not broadcast
 export interface LiveQuerySnapshotEvent {
   subscriptionId: string;
   rows: unknown[];

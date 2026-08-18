@@ -1,21 +1,3 @@
-/**
- * Unit tests for the PostApprovalRouter.
- *
- * The router is pure plumbing: it reads node-level `postApproval` routes
- * (falling back to legacy `workflow.postApproval`) and dispatches via injected
- * delegates. These tests use in-memory SQLite for the task
- * repository and stub the delegates, so we can assert exactly which branch
- * fired for each workflow configuration.
- *
- * Coverage matrix:
- *   - No postApproval → no-route; task flipped approved → done.
- *   - targetAgent pointing at a node agent → spawn; session id stamped.
- *   - postApprovalSessionId already set + live → already-routed (no spawn).
- *   - postApprovalSessionId set but dead → re-spawn.
- *   - Empty instructions on spawn path → skipped.
- *   - task-agent target is now skipped gracefully (legacy compat).
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -49,7 +31,6 @@ function makeApprovedTask(taskRepo: SpaceTaskRepository): SpaceTask {
     description: 'Do the thing',
     status: 'in_progress',
   });
-  // The router expects callers to have already transitioned the task into `approved`.
   const approved = taskRepo.updateTask(task.id, {
     status: 'approved',
     approvalSource: 'agent',
@@ -201,14 +182,7 @@ describe('PostApprovalRouter.route', () => {
     expect(delegates.spawned[0].kickoffMessage).toContain(task.title ?? '');
     expect(delegates.spawned[0].kickoffMessage).toContain('mark_complete');
     expect(delegates.spawned[0].kickoffMessage).toContain('Do NOT call approve_task');
-    // The appended completion instructions must not reference request_human_input
-    // — that tool is not registered on the post-approval node-agent surface, so
-    // referencing it sends the reviewer into an unregistered tool.
     expect(delegates.spawned[0].kickoffMessage).not.toContain('request_human_input');
-    // A blocked-path artifact must be a NON-terminal shape — mark_complete derives
-    // the task result from the latest kindless-decision summary, so a "blocked"
-    // decision would poison a later successful completion. A keyed note is the
-    // non-terminal form.
     expect(delegates.spawned[0].kickoffMessage).toMatch(/NON-result artifact/);
     expect(delegates.spawned[0].kickoffMessage).toContain('shape:"note", kind:"blocked"');
 
@@ -297,8 +271,6 @@ describe('PostApprovalRouter.route', () => {
       ],
     });
 
-    // Task submitted by n1 (no postApproval of its own). Approval is a
-    // task-level event: the router scans every node, so n2's route fires.
     const result = await router.route({ ...task, postApprovalSourceNodeId: 'n1' }, workflow, {
       approvalSource: 'human',
       task_title: task.title,
@@ -342,10 +314,6 @@ describe('PostApprovalRouter.route', () => {
 
     const result = await router.route(task, workflow, { approvalSource: 'agent' });
 
-    // Multi-route fan-out is not supported (completion is uncoordinated and
-    // postApprovalSessionId is singular). The router dispatches AT MOST ONE
-    // route — the first declared (here `coder` on node n1) — and ignores the
-    // rest, rather than running broken parallel post-approval workers.
     expect(result.mode).toBe('spawn');
     expect(delegates.spawned).toHaveLength(1);
     expect(delegates.spawned[0].targetAgent).toBe('coder');
@@ -356,7 +324,6 @@ describe('PostApprovalRouter.route', () => {
 
   test('already-routed (live session) → no re-spawn', async () => {
     const task = makeApprovedTask(taskRepo);
-    // Stamp a live session id.
     taskRepo.updateTask(task.id, {
       postApprovalSessionId: 'session-alive-1',
     });
@@ -391,7 +358,6 @@ describe('PostApprovalRouter.route', () => {
     const updated = taskRepo.getTask(task.id)!;
 
     const delegates = makeDelegates();
-    // aliveSessions intentionally empty → liveness probe returns false.
 
     const router = new PostApprovalRouter({
       taskRepo,
@@ -469,10 +435,6 @@ describe('PostApprovalRouter.route', () => {
       livenessProbe: delegates.liveness,
     });
 
-    // Legacy workflows may still declare targetAgent: 'task-agent'. That
-    // executor was removed, so the route is filtered out — with no other
-    // dispatchable route the task has no post-approval step and closes (done),
-    // never attempting a spawn that would fail (no 'task-agent' slot).
     const workflow = stubWorkflow({
       postApproval: {
         targetAgent: 'task-agent',
@@ -487,16 +449,11 @@ describe('PostApprovalRouter.route', () => {
     });
 
     expect(result.mode).toBe('no-route');
-    // Spawner must NOT have been called
     expect(delegates.spawned).toHaveLength(0);
     const final = taskRepo.getTask(task.id);
     expect(final?.status).toBe('done');
   });
 });
-
-// ---------------------------------------------------------------------------
-// mapPostApprovalDispatchWarning — Layer C error-message mapping
-// ---------------------------------------------------------------------------
 
 describe('mapPostApprovalDispatchWarning', () => {
   test('always states the approval was recorded', () => {
@@ -511,7 +468,6 @@ describe('mapPostApprovalDispatchWarning', () => {
     expect(mapPostApprovalDispatchWarning('Request was aborted by the user')).toContain(
       'was interrupted'
     );
-    // A non-abort error uses the generic phrasing, but still embeds the detail.
     const generic = mapPostApprovalDispatchWarning('spawn failed: ENOTFOUND');
     expect(generic).toContain('hit an error');
     expect(generic).toContain('ENOTFOUND');

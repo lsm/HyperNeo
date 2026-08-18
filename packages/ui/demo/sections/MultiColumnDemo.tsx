@@ -27,7 +27,6 @@ function FullWidthThreeColumn() {
           <Menu aria-hidden="true" class="size-6" />
         </button>
 
-        {/* Main column */}
         <div class="col-span-1 lg:col-span-2">
           <div class="bg-surface-0 dark:bg-surface-2/50 p-6 rounded-lg min-h-32">
             <h4 class="text-sm font-medium text-text-primary dark:text-white">Main Content Area</h4>
@@ -37,7 +36,6 @@ function FullWidthThreeColumn() {
           </div>
         </div>
 
-        {/* Secondary column */}
         <div class="col-span-1">
           <div class="bg-surface-0 dark:bg-surface-2/50 p-6 rounded-lg min-h-32">
             <h4 class="text-sm font-medium text-text-primary dark:text-white">Secondary Panel</h4>
@@ -48,7 +46,6 @@ function FullWidthThreeColumn() {
         </div>
       </div>
 
-      {/* Static sidebar for desktop */}
       <div class="hidden lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-72 lg:flex-col">
         <div class="relative flex grow flex-col gap-y-5 overflow-y-auto border-r border-surface-border bg-surface-0 px-6 dark:border-white/10 dark:bg-surface-2 dark:before:pointer-events-none dark:before:absolute dark:before:inset-0 dark:before:bg-black/10">
           <div class="relative flex h-16 shrink-0 items-center">
@@ -144,7 +141,6 @@ function FullWidthThreeColumn() {
         </div>
       </div>
 
-      {/* Mobile header */}
       <div class="sticky top-0 z-40 flex items-center gap-x-6 bg-white px-4 py-4 shadow-xs sm:px-6 lg:hidden dark:bg-surface-2 dark:shadow-none dark:before:pointer-events-none dark:before:absolute dark:before:inset-0 dark:before:border-b dark:before:border-white/10 dark:before:bg-black/10">
         <button
           type="button"
@@ -166,7 +162,6 @@ function FullWidthThreeColumn() {
         </a>
       </div>
 
-      {/* Secondary column (hidden on smaller screens) */}
       <aside class="fixed inset-y-0 left-72 hidden w-96 overflow-y-auto border-r border-surface-border px-4 py-6 sm:px-6 lg:px-8 xl:block dark:border-white/10">
         <div class="bg-surface-0 dark:bg-surface-2/50 p-4 rounded-lg min-h-48">
           <h4 class="text-sm font-medium text-text-primary dark:text-white">Tertiary Panel</h4>
@@ -182,7 +177,6 @@ function FullWidthThreeColumn() {
 function FullWidthSecondaryColumnOnRight() {
   return (
     <div>
-      {/* Static sidebar for desktop */}
       <div class="hidden lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-72 lg:flex-col">
         <div class="relative flex grow flex-col gap-y-5 overflow-y-auto border-r border-surface-border bg-surface-0 px-6 dark:border-white/10 dark:bg-surface-2 dark:before:pointer-events-none dark:before:absolute dark:before:inset-0 dark:before:bg-black/10">
           <div class="relative flex h-16 shrink-0 items-center">
@@ -278,7 +272,6 @@ function FullWidthSecondaryColumnOnRight() {
         </div>
       </div>
 
-      {/* Mobile header */}
       <div class="sticky top-0 z-40 flex items-center gap-x-6 bg-white px-4 py-4 shadow-xs sm:px-6 lg:hidden dark:bg-surface-2 dark:shadow-none dark:before:pointer-events-none dark:before:absolute dark:before:inset-0 dark:before:border-b dark:before:border-white/10 dark:before:bg-black/10">
         <button
           type="button"
@@ -300,7 +293,6 @@ function FullWidthSecondaryColumnOnRight() {
         </a>
       </div>
 
-      {/* Main content */}
       <main class="lg:pl-72">
         <div class="xl:pr-96">
           <div class="bg-surface-0 dark:bg-surface-2/50 p-6 rounded-lg min-h-48">
@@ -312,7 +304,6 @@ function FullWidthSecondaryColumnOnRight() {
         </div>
       </main>
 
-      {/* Secondary column on the right (hidden on smaller screens) */}
       <aside class="fixed inset-y-0 right-0 hidden w-96 overflow-y-auto border-l border-surface-border px-4 py-6 sm:px-6 lg:px-8 xl:block dark:border-white/10">
         <div class="bg-surface-0 dark:bg-surface-2/50 p-4 rounded-lg min-h-48">
           <h4 class="text-sm font-medium text-text-primary dark:text-white">

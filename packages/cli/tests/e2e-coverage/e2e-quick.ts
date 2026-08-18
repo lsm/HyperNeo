@@ -1,16 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Quick E2E Coverage Runner
- *
- * Runs representative E2E tests with an in-process server to collect coverage
- * for both server-side (daemon/shared) and browser-side (web) code.
- *
- * Coverage collection:
- * - Server-side: Bun's --coverage flag instruments imported daemon/shared code
- * - Browser-side: Playwright CDP page.coverage API + v8-to-istanbul
- *
- * Run: bun --coverage --coverage-reporter=lcov --coverage-dir=coverage ./tests/e2e-coverage/e2e-quick.ts
- */
 import { chromium, type Browser, type Page } from 'playwright';
 import { createServer } from 'net';
 import { Hono } from 'hono';
@@ -25,12 +13,10 @@ import {
   printCoverageSummary,
 } from './coverage-utils';
 
-// Import daemon components - these will be covered by bun --coverage
 import { createDaemonApp } from '@hyperneo/daemon/app';
 import { getConfig } from '@hyperneo/daemon/config';
 import { createWebSocketHandlers } from '@hyperneo/daemon/routes/setup-websocket';
 
-// Test state
 let browser: Browser;
 let server: ReturnType<typeof Bun.serve> | null = null;
 let daemonContext: Awaited<ReturnType<typeof createDaemonApp>> | null = null;
@@ -38,14 +24,10 @@ let serverPort: number;
 let baseUrl: string;
 let coverageCollector: BrowserCoverageCollector;
 
-// Test results
 let passed = 0;
 let failed = 0;
 const failures: { name: string; error: Error }[] = [];
 
-/**
- * Find an available port dynamically
- */
 async function findAvailablePort(): Promise<number> {
   return new Promise((resolvePort, reject) => {
     const srv = createServer();
@@ -61,40 +43,31 @@ async function findAvailablePort(): Promise<number> {
   });
 }
 
-/**
- * Setup: Start in-process server and browser
- */
 async function setup(): Promise<void> {
   serverPort = await findAvailablePort();
   baseUrl = `http://localhost:${serverPort}`;
   coverageCollector = new BrowserCoverageCollector(serverPort);
   console.log(`\n🚀 Starting E2E coverage server on port ${serverPort}...`);
 
-  // Setup workspace
   const workspace = `/tmp/e2e-cov-${Date.now()}`;
   await Bun.$`mkdir -p ${workspace}`;
 
-  // Configure
   process.env.HYPERNEO_WORKSPACE_PATH = workspace;
   const config = getConfig();
   config.port = serverPort;
   config.dbPath = `${workspace}/daemon.db`;
 
-  // Create daemon
   daemonContext = await createDaemonApp({ config, verbose: false, standalone: false });
   daemonContext.server.stop();
 
-  // Web dist path
   const distPath = resolve(import.meta.dir, '../../../web/dist');
   const distExists = await Bun.file(resolve(distPath, 'index.html')).exists();
   if (!distExists) {
     throw new Error('Web dist not found. Run: cd packages/web && bun run build');
   }
 
-  // WebSocket handlers
   const wsHandlers = createWebSocketHandlers(daemonContext.transport, daemonContext.sessionManager);
 
-  // Hono for static files
   const app = new Hono();
   app.use('/*', serveStatic({ root: distPath }));
   app.get('*', async (c) => {
@@ -102,7 +75,6 @@ async function setup(): Promise<void> {
     return c.html(html);
   });
 
-  // Start server
   server = Bun.serve({
     hostname: '127.0.0.1',
     port: serverPort,
@@ -117,7 +89,6 @@ async function setup(): Promise<void> {
     websocket: wsHandlers,
   });
 
-  // Wait for ready
   for (let i = 0; i < 50; i++) {
     try {
       const res = await fetch(baseUrl);
@@ -132,13 +103,9 @@ async function setup(): Promise<void> {
   console.log('✅ Browser launched\n');
 }
 
-/**
- * Teardown: Collect coverage, cleanup
- */
 async function teardown(): Promise<void> {
   console.log('\n🛑 Processing coverage and cleanup...');
 
-  // Process browser coverage
   const coverage = coverageCollector.getCoverage();
   if (coverage.length > 0) {
     const distPath = resolve(import.meta.dir, '../../../web/dist');
@@ -148,13 +115,11 @@ async function teardown(): Promise<void> {
       const stats = calculateStats(istanbulCoverage, 'packages/web/src');
       printCoverageSummary(stats);
 
-      // Write LCOV for browser coverage
       const lcov = generateLcov(istanbulCoverage, 'packages/web/src');
       const lcovPath = resolve(import.meta.dir, 'browser-coverage.lcov');
       await Bun.write(lcovPath, lcov);
       console.log(`   📄 Browser LCOV written to: ${lcovPath}\n`);
 
-      // Write raw coverage JSON
       const jsonPath = resolve(import.meta.dir, 'browser-coverage.json');
       await Bun.write(jsonPath, JSON.stringify(coverage, null, 2));
     } catch (err) {
@@ -170,9 +135,6 @@ async function teardown(): Promise<void> {
   console.log('✅ Done\n');
 }
 
-/**
- * Create a new page with coverage collection
- */
 async function newPage(): Promise<Page> {
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -180,26 +142,17 @@ async function newPage(): Promise<Page> {
   return page;
 }
 
-/**
- * Close page and collect coverage
- */
 async function closePage(page: Page): Promise<void> {
   await coverageCollector.stopCoverage(page);
   await page.close();
 }
 
-/**
- * Simple assertion helper
- */
 function assert(condition: boolean, message: string): void {
   if (!condition) {
     throw new Error(`Assertion failed: ${message}`);
   }
 }
 
-/**
- * Run a single test
- */
 async function runTest(name: string, fn: () => Promise<void>): Promise<void> {
   try {
     await fn();
@@ -212,10 +165,6 @@ async function runTest(name: string, fn: () => Promise<void>): Promise<void> {
     console.log(`    Error: ${(error as Error).message}`);
   }
 }
-
-// =============================================================================
-// Test Suites
-// =============================================================================
 
 async function runTests(): Promise<void> {
   console.log('Homepage');
@@ -387,10 +336,6 @@ async function runTests(): Promise<void> {
   });
 }
 
-// =============================================================================
-// Main
-// =============================================================================
-
 async function main(): Promise<void> {
   console.log('═══════════════════════════════════════════════════════════════');
   console.log('  Quick E2E Coverage Runner');
@@ -408,7 +353,6 @@ async function main(): Promise<void> {
     await teardown();
   }
 
-  // Print summary
   console.log('═══════════════════════════════════════════════════════════════');
   console.log(`  Results: ${passed} passed, ${failed} failed`);
   if (failures.length > 0) {
@@ -422,7 +366,6 @@ async function main(): Promise<void> {
   process.exit(failed > 0 ? 1 : 0);
 }
 
-// Handle graceful shutdown
 process.on('SIGINT', async () => {
   console.log('\n⚠️  Received SIGINT, shutting down...');
   await teardown();
@@ -435,7 +378,6 @@ process.on('SIGTERM', async () => {
   process.exit(143);
 });
 
-// Run
 main().catch((error) => {
   console.error('Fatal error:', error);
   process.exit(1);

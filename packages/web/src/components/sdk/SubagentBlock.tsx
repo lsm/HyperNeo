@@ -1,14 +1,3 @@
-/**
- * SubagentBlock Component - Displays sub-agent task execution with input/output
- *
- * Renders Task tool calls as a distinct block instead of a generic tool card,
- * showing:
- * - Header: [icon] [subagent_type] [description]
- * - Input: The prompt sent to the sub-agent
- * - Messages: All nested messages from the sub-agent execution
- * - Output: The sub-agent's final response (markdown rendered)
- */
-
 import type { ComponentChild } from 'preact';
 import { useState, useMemo } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
@@ -37,9 +26,6 @@ import {
   type MessageReplacementStatus,
 } from '../../lib/sdk-message-replacement.ts';
 
-/**
- * Extract text content from a user message for comparison with input prompt
- */
 function getUserMessageText(message: SDKMessage): string | null {
   if (message.type !== 'user') return null;
 
@@ -62,10 +48,7 @@ function shouldHideNestedSystemMessage(message: SDKMessage, isLiveTail: boolean)
   if (message.type !== 'system') return false;
   const subtype = (message as { subtype?: string }).subtype;
   if (!subtype) return true;
-  // Honor the centralized hidden-subtype contract so nested timelines
-  // don't leak noise rows the main transcript already hides.
   if (isHiddenSystemSubtype(subtype)) return true;
-  // Honor conditional hides so success-noise rows don't leak either.
   if (isConditionallyHiddenSystemMessage(message)) return true;
   if (subtype === 'init') return true;
   if (subtype === 'informational' && (message as { level?: string }).level === 'info') return true;
@@ -101,46 +84,25 @@ function shouldUseSDKSystemRenderer(message: Extract<SDKMessage, { type: 'system
 }
 
 interface SubagentBlockProps {
-  /** The Task tool input containing subagent_type, description, prompt */
   input: AgentInput;
-  /** The tool result (sub-agent's final response) */
   output?: unknown;
-  /** Whether this is an error result */
   isError?: boolean;
-  /** The tool use ID */
   toolId: string;
-  /** All messages from the sub-agent execution */
   nestedMessages?: SDKMessage[];
-  /** Map of tool use IDs to their results (for nested tool calls) */
   toolResultsMap?: Map<string, unknown>;
-  /** Map of SDK message UUIDs to replacement/retraction status. */
   replacementStatusMap?: Map<string, MessageReplacementStatus>;
-  /** Terminal task_notification for this Task/Agent tool_use (status/summary/usage),
-   * folded onto the header instead of a standalone system row. */
   taskNotification?: {
     status: 'completed' | 'failed' | 'stopped';
     summary?: string;
     usage?: { total_tokens: number; tool_uses: number; duration_ms: number };
   };
-  /** Full tool_use_id → task_notification map, so nested tool_use blocks inside
-   * this subagent can fold their own terminal status onto their ToolResultCard
-   * (the top-level suppression relies on toolInputsMap having the nested id, so
-   * the nested card must actually receive the notification). */
   taskNotificationsMap?: Map<string, SDKTaskNotificationMessage>;
-  /** Latest live task_progress for this Task/Agent tool_use. */
   taskProgress?: SDKTaskProgressMessage;
-  /** Full tool_use_id → task_progress map for nested tool_use blocks. */
   taskProgressMap?: Map<string, SDKTaskProgressMessage>;
-  /** Additional CSS classes */
   className?: string;
-  /** When true, show a faint white shimmer sweep (the `.running-shimmer`
-   * overlay) across this block's surface. */
   isRunning?: boolean;
 }
 
-/**
- * Get icon for subagent type
- */
 function getSubagentIcon(subagentType: string) {
   const iconClass = 'w-5 h-5 flex-shrink-0';
 
@@ -190,7 +152,6 @@ function getSubagentIcon(subagentType: string) {
         </svg>
       );
     default:
-      // Default agent icon
       return (
         <svg class={iconClass} fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
@@ -204,9 +165,6 @@ function getSubagentIcon(subagentType: string) {
   }
 }
 
-/**
- * Get color scheme for subagent type
- */
 function getSubagentColors(subagentType: string) {
   switch (subagentType.toLowerCase()) {
     case 'explore':
@@ -244,9 +202,6 @@ function getSubagentColors(subagentType: string) {
   }
 }
 
-/**
- * Extract text content from output
- */
 function extractOutputText(output: unknown): string {
   if (!output) return '';
 
@@ -257,16 +212,13 @@ function extractOutputText(output: unknown): string {
   if (typeof output === 'object') {
     const obj = output as Record<string, unknown>;
 
-    // Check for content field (common in tool results)
     if ('content' in obj) {
       const content = obj.content;
 
-      // Handle string content
       if (typeof content === 'string') {
         return content;
       }
 
-      // Handle array of content blocks (Claude API format)
       if (Array.isArray(content)) {
         return content
           .map((block) => {
@@ -275,11 +227,9 @@ function extractOutputText(output: unknown): string {
             }
             if (typeof block === 'object' && block !== null) {
               const blockObj = block as Record<string, unknown>;
-              // Extract text from content blocks like {type: "text", text: "..."}
               if ('text' in blockObj && typeof blockObj.text === 'string') {
                 return blockObj.text;
               }
-              // Handle other block types that might have content
               if ('content' in blockObj && typeof blockObj.content === 'string') {
                 return blockObj.content;
               }
@@ -291,17 +241,14 @@ function extractOutputText(output: unknown): string {
       }
     }
 
-    // Check for text field
     if ('text' in obj && typeof obj.text === 'string') {
       return obj.text;
     }
 
-    // Check for result field
     if ('result' in obj && typeof obj.result === 'string') {
       return obj.result;
     }
 
-    // Fallback to JSON
     return JSON.stringify(output, null, 2);
   }
 
@@ -327,27 +274,14 @@ export function SubagentBlock({
 
   const colors = getSubagentColors(input.subagent_type ?? 'general-purpose');
   const outputText = extractOutputText(output);
-  // task_notification is authoritative when present; otherwise fall back to isError.
   const taskStatus = taskNotification?.status;
   const notificationIsError = taskStatus === 'failed' || taskStatus === 'stopped';
   const notificationIsSuccess = taskStatus === 'completed';
   const showErrorIcon = notificationIsError || (!taskNotification && isError);
 
-  /**
-   * Filter out the first user message that duplicates the input prompt.
-   *
-   * When the SDK invokes a Task tool (sub-agent), it creates an initial user message
-   * containing the prompt text. This is redundant since we already show the input
-   * in the "Input" section, so we filter it out to avoid showing the same content twice.
-   */
   const filteredNestedMessages = useMemo(() => {
     if (nestedMessages.length === 0) return [];
 
-    // Nested tool_use ids — their task_notification is folded onto the nested
-    // ToolResultCard (via taskNotificationsMap), so a standalone
-    // task_notification row for one of these would duplicate the folded status
-    // on expand. Suppress those; orphan notifications (no tool_use_id, or a
-    // tool_use not present in this timeline) are still rendered.
     const nestedToolUseIds = new Set<string>();
     for (const msg of nestedMessages) {
       if (msg.type !== 'assistant' || !Array.isArray(msg.message.content)) continue;
@@ -362,33 +296,24 @@ export function SubagentBlock({
         return false;
       }
 
-      // Suppress a folded nested task_notification: its tool_use card already
-      // shows the status, so a standalone row would duplicate it.
       if (msg.type === 'system' && (msg as { subtype?: string }).subtype === 'task_notification') {
         const toolUseId = (msg as { tool_use_id?: string }).tool_use_id;
         if (toolUseId && nestedToolUseIds.has(toolUseId)) return false;
       }
 
-      // Only check the first message
       if (idx !== 0) return true;
 
-      // Only filter user messages
       if (msg.type !== 'user') return true;
 
-      // Check if the message content matches the input prompt
       const msgText = getUserMessageText(msg);
       if (msgText && msgText === input.prompt) {
-        return false; // Filter out this duplicate
+        return false;
       }
 
       return true;
     });
   }, [nestedMessages, input.prompt]);
 
-  // UUIDs of hook_started/hook_progress phases in this subagent's slice whose
-  // run reached hook_response in the SAME turn (a result message closes the
-  // turn). Turn-scoped because hook_id is only unique within a turn — matches
-  // the top-level useMessageMaps.completedHookUuids contract.
   const nestedCompletedHookUuids = useMemo(() => {
     const completed = new Set<string>();
     const pendingByHook = new Map<string, string[]>();
@@ -416,9 +341,6 @@ export function SubagentBlock({
     return completed;
   }, [nestedMessages]);
 
-  // The running-state shimmer is a `.running-shimmer` overlay rendered inside
-  // this card while isRunning (added below). overflow-hidden contains it to
-  // the card's rounded surface.
   const block = (
     <div
       class={cn(
@@ -429,7 +351,6 @@ export function SubagentBlock({
         className
       )}
     >
-      {/* Header */}
       <button
         onClick={() => setIsExpanded(!isExpanded)}
         class={cn(
@@ -438,24 +359,20 @@ export function SubagentBlock({
         )}
       >
         <div class="flex items-center gap-2 min-w-0 flex-1">
-          {/* Icon */}
           <span class={colors.icon}>
             {getSubagentIcon(input.subagent_type ?? 'general-purpose')}
           </span>
 
-          {/* Subagent type badge */}
           <span
             class={cn('text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0', colors.badge)}
           >
             {input.subagent_type ?? 'general-purpose'}
           </span>
 
-          {/* Description */}
           <span class={cn('text-sm font-medium truncate', colors.text)}>{input.description}</span>
         </div>
 
         <div class="flex items-center gap-2 flex-shrink-0">
-          {/* Message counter */}
           {filteredNestedMessages.length > 0 && (
             <span class="text-xs font-semibold px-1.5 py-0.5 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
               {filteredNestedMessages.length}
@@ -504,10 +421,8 @@ export function SubagentBlock({
 
       {isRunning && taskProgress && <TaskProgressLine progress={taskProgress} />}
 
-      {/* Expanded content */}
       {isExpanded && (
         <div class={cn('border-t bg-white dark:bg-gray-900', colors.border)}>
-          {/* Folded task_notification summary + usage. */}
           {taskNotification && (taskNotification.summary || taskNotification.usage) && (
             <div class="border-b border-gray-200 dark:border-gray-700 p-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
               {taskNotification.summary && (
@@ -533,7 +448,6 @@ export function SubagentBlock({
               )}
             </div>
           )}
-          {/* Input section */}
           <div class="border-b border-gray-200 dark:border-gray-700 p-3">
             <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">Input</div>
             <div class="text-sm bg-gray-50 dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700 whitespace-pre-wrap break-words text-gray-700 dark:text-gray-300">
@@ -541,7 +455,6 @@ export function SubagentBlock({
             </div>
           </div>
 
-          {/* Nested messages section */}
           {filteredNestedMessages.length > 0 && (
             <div class="border-b border-gray-200 dark:border-gray-700 p-3">
               <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
@@ -565,7 +478,6 @@ export function SubagentBlock({
             </div>
           )}
 
-          {/* Output section */}
           <div class="p-3">
             <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">Output</div>
             {outputText ? (
@@ -594,9 +506,6 @@ export function SubagentBlock({
   return block;
 }
 
-/**
- * Renders a single nested message from the sub-agent execution
- */
 function NestedMessageRenderer({
   message,
   isLiveTail,
@@ -639,29 +548,21 @@ function NestedMessageRenderer({
     );
   };
 
-  // Handle assistant messages
   if (message.type === 'assistant') {
     const apiMessage = message.message;
     const content = apiMessage.content as ContentBlock[];
 
-    // Extract estimated thinking tokens if present (stamped by daemon handler on SDK wrapper)
     const estimatedThinkingTokens = (message as { estimated_thinking_tokens?: number })
       .estimated_thinking_tokens;
 
     const textBlocks = content.filter((block) => isTextBlock(block));
     const toolBlocks = content.filter((block) => isToolUseBlock(block));
-    // Filter out Opus 4.7 "omitted" thinking stubs (empty `thinking`
-    // payload with only a signature). ThinkingBlock guards internally,
-    // but filtering here keeps the behavior consistent with the
-    // top-level assistant/thread renderers and avoids rendering an
-    // empty wrapper.
     const thinkingBlocks = content
       .filter((block) => isThinkingBlock(block))
       .filter((block) => hasRenderableThinking(block));
 
     return withReplacementStatus(
       <div class="space-y-2">
-        {/* Thinking blocks */}
         {thinkingBlocks.map((block, idx) => (
           <ThinkingBlock
             key={`thinking-${idx}`}
@@ -670,7 +571,6 @@ function NestedMessageRenderer({
           />
         ))}
 
-        {/* Tool use blocks */}
         {toolBlocks.map((block, idx) => {
           const toolBlock = block as {
             type: 'tool_use';
@@ -703,7 +603,6 @@ function NestedMessageRenderer({
           );
         })}
 
-        {/* Text blocks */}
         {textBlocks.length > 0 && (
           <div class="bg-gray-50 dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700 overflow-x-auto">
             {textBlocks.map((block, idx) => (
@@ -717,13 +616,10 @@ function NestedMessageRenderer({
     );
   }
 
-  // Handle user messages (typically tool results)
   if (message.type === 'user') {
     const apiMessage = message.message;
     const content = apiMessage.content;
 
-    // Skip rendering user messages that only contain tool results
-    // as they are already shown with the tool use block
     if (Array.isArray(content)) {
       const hasNonToolResultContent = content.some((block) => {
         const blockObj = block as unknown as Record<string, unknown>;
@@ -734,7 +630,6 @@ function NestedMessageRenderer({
         return null;
       }
 
-      // Render non-tool-result content blocks
       return withReplacementStatus(
         <div class="bg-blue-50 dark:bg-blue-900/20 p-3 rounded border border-blue-200 dark:border-blue-800">
           {content.map((block, idx) => {
@@ -755,7 +650,6 @@ function NestedMessageRenderer({
       );
     }
 
-    // Handle string content
     if (typeof content === 'string') {
       return withReplacementStatus(
         <div class="bg-blue-50 dark:bg-blue-900/20 p-3 rounded border border-blue-200 dark:border-blue-800 text-sm text-blue-900 dark:text-blue-100 whitespace-pre-wrap break-words">
@@ -767,7 +661,6 @@ function NestedMessageRenderer({
     return null;
   }
 
-  // Handle result messages
   if (message.type === 'result') {
     const resultMessage = message as SDKMessage & {
       subtype: string;
@@ -795,7 +688,6 @@ function NestedMessageRenderer({
     return null;
   }
 
-  // Handle system messages
   if (message.type === 'system') {
     const systemMessage = message as Extract<SDKMessage, { type: 'system' }>;
     if (shouldUseSDKSystemRenderer(systemMessage)) {
@@ -814,7 +706,6 @@ function NestedMessageRenderer({
     );
   }
 
-  // Fallback for unknown message types - show raw data
   return withReplacementStatus(
     <div class="bg-gray-100 dark:bg-gray-800 p-2 rounded text-xs">
       <details>

@@ -14,7 +14,6 @@ export function RadioGroupsDemo() {
 
   return (
     <div class="space-y-12">
-      {/* Simple radio list with radio on right */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">Select with radio on right</h3>
         <fieldset>
@@ -46,7 +45,6 @@ export function RadioGroupsDemo() {
         </p>
       </div>
 
-      {/* Icon-only radio options */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">Icon-only radio options</h3>
         <fieldset>

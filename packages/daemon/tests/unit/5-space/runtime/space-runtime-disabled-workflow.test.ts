@@ -1,13 +1,3 @@
-/**
- * SpaceRuntime — disabled workflow filtering
- *
- * Covers:
- * - Disabled workflows are excluded from `resolveWorkflowForRun`
- * - Disabled workflows are excluded from `attachStandaloneTasksToWorkflows`
- * - Explicit `preferredWorkflowId` pointing to a disabled workflow falls through
- *   to automatic selection
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -22,10 +12,6 @@ import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.t
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SelectWorkflowWithLlm } from '../../../../src/lib/space/runtime/llm-workflow-selector.ts';
-
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -48,10 +34,6 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string, name: s
          VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
   ).run(agentId, spaceId, name, Date.now(), Date.now());
 }
-
-// ---------------------------------------------------------------------------
-// Test suite
-// ---------------------------------------------------------------------------
 
 describe('SpaceRuntime — disabled workflow filtering', () => {
   const SPACE_ID = 'space-disabled-wf';
@@ -120,10 +102,8 @@ describe('SpaceRuntime — disabled workflow filtering', () => {
 
     const runtime = buildRuntime();
 
-    // Explicit ID for enabled workflow resolves correctly
     expect(runtime.resolveWorkflowForRun(SPACE_ID, enabledWf.id)!.id).toBe(enabledWf.id);
 
-    // Explicit ID for disabled workflow returns null (filtered out)
     expect(runtime.resolveWorkflowForRun(SPACE_ID, disabledWf.id)).toBeNull();
   });
 
@@ -186,7 +166,6 @@ describe('SpaceRuntime — disabled workflow filtering', () => {
     const updated = taskRepo.getTask(task.id)!;
     expect(updated.workflowRunId).not.toBeNull();
     const run = workflowRunRepo.getRun(updated.workflowRunId!);
-    // Should have fallen through to the enabled default-tagged workflow
     expect(run!.workflowId).toBe(enabledWf.id);
   });
 });

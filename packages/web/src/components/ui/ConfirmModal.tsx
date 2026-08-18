@@ -1,10 +1,3 @@
-/**
- * ConfirmModal Component
- *
- * A confirmation dialog built on top of the Modal component.
- * Used for destructive actions that require user confirmation.
- */
-
 import type { ComponentChildren } from 'preact';
 
 import { Modal } from './Modal.tsx';
@@ -40,7 +33,6 @@ export function ConfirmModal({
 }: ConfirmModalProps) {
   const handleConfirm = () => {
     onConfirm();
-    // Note: onClose will be called by parent after confirmation succeeds
   };
 
   const confirmButtonClasses =
@@ -55,19 +47,16 @@ export function ConfirmModal({
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={title} size="sm" showCloseButton={false}>
       <div class="space-y-4">
-        {/* Message */}
         <p class="text-gray-300 text-sm leading-relaxed">{message}</p>
 
         {children && <div class="mt-2">{children}</div>}
 
-        {/* Error message */}
         {error && (
           <p class="text-red-400 text-sm bg-red-900/20 border border-red-800/50 rounded px-3 py-2">
             {error}
           </p>
         )}
 
-        {/* Actions */}
         <div class="flex items-center justify-end gap-3 pt-2">
           <button
             type="button"

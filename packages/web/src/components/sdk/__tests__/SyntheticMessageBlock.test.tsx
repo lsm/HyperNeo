@@ -1,18 +1,9 @@
 // @ts-nocheck
-/**
- * SyntheticMessageBlock Component Tests
- *
- * Tests synthetic (system-generated) user message rendering.
- * Validates the redesigned component: subtle dark card, markdown rendering,
- * collapsible content, and right-aligned placement.
- */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import { render, fireEvent, waitFor } from '@testing-library/preact';
 import { SyntheticMessageBlock } from '../SyntheticMessageBlock';
 
-// Mock MarkdownRenderer — its behaviour is tested separately in MarkdownRenderer.test.tsx.
-// Here we only care that SyntheticMessageBlock passes text content to it.
 vi.mock('../../chat/MarkdownRenderer.tsx', () => ({
   default: ({ content, class: className }: { content: string; class?: string }) => (
     <div data-testid="markdown-renderer" class={className}>
@@ -21,7 +12,6 @@ vi.mock('../../chat/MarkdownRenderer.tsx', () => ({
   ),
 }));
 
-// Mock copyToClipboard
 const mockCopyToClipboard = vi.fn();
 
 vi.mock('../../../lib/utils.ts', async () => {
@@ -32,7 +22,6 @@ vi.mock('../../../lib/utils.ts', async () => {
   };
 });
 
-// Mock toast
 const mockToastError = vi.fn();
 
 vi.mock('../../../lib/toast.ts', () => ({
@@ -291,7 +280,6 @@ describe('SyntheticMessageBlock', () => {
         <SyntheticMessageBlock content="Content" timestamp={timestamp} />
       );
 
-      // Should show time in format like "10:30 AM"
       const timeRegex = /\d{1,2}:\d{2}\s?(AM|PM)/i;
       expect(container.textContent).toMatch(timeRegex);
     });
@@ -299,7 +287,6 @@ describe('SyntheticMessageBlock', () => {
     it('should not show timestamp when not provided', () => {
       const { container } = render(<SyntheticMessageBlock content="Content" />);
 
-      // Should still render, just without timestamp
       expect(container.textContent).toContain('Content');
     });
 
@@ -309,7 +296,6 @@ describe('SyntheticMessageBlock', () => {
         <SyntheticMessageBlock content="Content" timestamp={timestamp} />
       );
 
-      // The time span should exist
       const timeSpan = container.querySelector('.text-xs.text-gray-400');
       expect(timeSpan).toBeTruthy();
     });
@@ -321,7 +307,6 @@ describe('SyntheticMessageBlock', () => {
         <SyntheticMessageBlock content="Content" timestamp={Date.now()} />
       );
 
-      // The header label is the canonical "this is synthetic" marker.
       expect(container.textContent).toContain('Synthetic');
     });
 
@@ -330,8 +315,6 @@ describe('SyntheticMessageBlock', () => {
         <SyntheticMessageBlock content="Content" timestamp={Date.now()} />
       );
 
-      // The redesigned actions row defers to SpaceTaskThreadMessageActions,
-      // which has timestamp + copy (+ optional open) only — no extra pill.
       expect(container.querySelector('.bg-purple-500\\/20')).toBeNull();
     });
   });
@@ -363,8 +346,6 @@ describe('SyntheticMessageBlock', () => {
     });
 
     it('should stay in "Copy message" state when copy fails', async () => {
-      // Copy is delegated to the shared SpaceTaskThreadMessageActions, which
-      // silently leaves the button in its original state on failure (no toast).
       mockCopyToClipboard.mockResolvedValue(false);
 
       const { container } = render(
@@ -398,15 +379,12 @@ describe('SyntheticMessageBlock', () => {
         const copyButton = container.querySelector('button[title="Copy message"]');
         fireEvent.click(copyButton!);
 
-        // Should show Copied! state
         await vi.waitFor(() => {
           expect(container.querySelector('button[title="Copied!"]')).toBeTruthy();
         });
 
-        // Advance timer past 1500ms
         vi.advanceTimersByTime(1500);
 
-        // Should revert to copy state
         await vi.waitFor(() => {
           expect(container.querySelector('button[title="Copy message"]')).toBeTruthy();
         });
@@ -417,7 +395,7 @@ describe('SyntheticMessageBlock', () => {
       const content = [
         { type: 'text', text: 'First line' },
         { type: 'text', text: 'Second line' },
-        { type: 'image', source: {} }, // non-text should be ignored
+        { type: 'image', source: {} },
       ];
 
       const { container } = render(
@@ -472,9 +450,6 @@ describe('SyntheticMessageBlock', () => {
     });
 
     it('should render the session-info trigger when sessionInit is provided', () => {
-      // Minimal `system:init` envelope — the dropdown only checks the
-      // discriminator fields here; full-shape coverage lives in
-      // MessageInfoDropdown's own tests.
       const sessionInit = {
         type: 'system',
         subtype: 'init',
@@ -625,7 +600,6 @@ describe('SyntheticMessageBlock', () => {
         <SyntheticMessageBlock content={content} timestamp={Date.now()} />
       );
 
-      // No markdown renderer for tool_use blocks
       const renderers = container.querySelectorAll('[data-testid="markdown-renderer"]');
       expect(renderers.length).toBe(0);
     });
@@ -638,7 +612,6 @@ describe('SyntheticMessageBlock', () => {
         <SyntheticMessageBlock content={shortContent} timestamp={Date.now()} />
       );
 
-      // No toggle button when content is short
       const toggle = container.querySelector('[data-testid="synthetic-toggle"]');
       expect(toggle).toBeNull();
     });
@@ -651,7 +624,7 @@ describe('SyntheticMessageBlock', () => {
       Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
         configurable: true,
         get() {
-          return 500; // Exceeds 12 * 24 = 288px threshold
+          return 500;
         },
       });
 
@@ -694,11 +667,9 @@ describe('SyntheticMessageBlock', () => {
         const toggle = container.querySelector('[data-testid="synthetic-toggle"]');
         expect(toggle?.textContent).toContain('Show more');
 
-        // Expand
         fireEvent.click(toggle as HTMLElement);
         expect(container.textContent).toContain('Show less');
 
-        // Collapse
         const showLessButton = container.querySelector('[data-testid="synthetic-toggle"]');
         fireEvent.click(showLessButton as HTMLElement);
         expect(container.textContent).toContain('Show more');
@@ -809,7 +780,6 @@ describe('SyntheticMessageBlock', () => {
         <SyntheticMessageBlock content={content} timestamp={Date.now()} />
       );
 
-      // Content should be rendered (escaped by Preact/MarkdownRenderer mock)
       expect(container.textContent).toContain('Special chars');
     });
 

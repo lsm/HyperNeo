@@ -1,11 +1,3 @@
-/**
- * ACP Protocol Client
- *
- * Wraps AcpTransport with the ACP protocol state machine.
- * Handles initialization, authentication, session lifecycle,
- * prompt streaming, and server-to-client request delegation.
- */
-
 import type {
   AcpInitializeResult,
   AcpInitializeParams,
@@ -70,9 +62,6 @@ export interface AcpClientOptions
   requestTimeoutMs?: number;
 }
 
-/**
- * ACP protocol client wrapping AcpTransport.
- */
 export class AcpClient {
   private transport: AcpTransport;
   private callbacks: AcpClientCallbacks;
@@ -116,9 +105,6 @@ export class AcpClient {
     });
   }
 
-  /**
-   * Send initialize request and store negotiated capabilities.
-   */
   async initialize(): Promise<AcpInitializeResult> {
     const requestedVersion = 1;
     const hasFs = !!(this.callbacks.onFsRead || this.callbacks.onFsWrite);
@@ -157,9 +143,6 @@ export class AcpClient {
     return result;
   }
 
-  /**
-   * Authenticate with the agent if auth is required.
-   */
   async authenticate(credentials?: { methodId: string }): Promise<void> {
     if (!this.authMethods || this.authMethods.length === 0) {
       return;
@@ -175,9 +158,6 @@ export class AcpClient {
     }
   }
 
-  /**
-   * Create a new ACP session.
-   */
   async createSession(
     cwd: string,
     mcpServers: AcpMcpServerConfig[] = []
@@ -205,9 +185,6 @@ export class AcpClient {
     };
   }
 
-  /**
-   * Load an existing ACP session.
-   */
   async loadSession(
     sessionId: string,
     cwd: string,
@@ -236,9 +213,6 @@ export class AcpClient {
     };
   }
 
-  /**
-   * Resume an existing ACP session.
-   */
   async resumeSession(
     sessionId: string,
     cwd: string,
@@ -273,9 +247,6 @@ export class AcpClient {
     return !!sessionCapabilities && 'resume' in sessionCapabilities;
   }
 
-  /**
-   * Send a prompt and yield streaming update notifications.
-   */
   async *sendPrompt(
     prompt: AcpContentBlock[],
     callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
@@ -292,12 +263,6 @@ export class AcpClient {
     let accepted = false;
     const accept = () => {
       if (accepted) return;
-      // Mark accepted only AFTER the callback succeeds: a throwing callback
-      // (e.g. markMessageAccepted hitting a SQLite/MessageHub failure) leaves
-      // acceptance retryable on later notifications instead of suppressing it,
-      // and the response path below still sets done — a callback failure must
-      // never leave sendPrompt waiting forever on a settled request. See Codex
-      // (#3743968037).
       callbacks?.onAccepted?.();
       accepted = true;
     };
@@ -377,9 +342,6 @@ export class AcpClient {
     }
   }
 
-  /**
-   * Cancel the current prompt turn.
-   */
   cancel(): void {
     if (!this.sessionId || this.closed) return;
     this.transport.sendNotification('session/cancel', {
@@ -387,9 +349,6 @@ export class AcpClient {
     } as AcpSessionCancelParams);
   }
 
-  /**
-   * Close the transport and clean up.
-   */
   close(): void {
     if (this.closed) return;
     this.closed = true;

@@ -1,27 +1,3 @@
-/**
- * MinimalThreadFeed
- *
- * Production renderer for Space task threads. Maps `parsedRows` into
- * Slack-style turn rows:
- *
- *   ▢ AGENT
- *   ▢   3 tool calls · 8 messages · 47m       ← meta line under name
- *   ▢   <last assistant message bubble>       ← completed turn (no rail)
- *
- *   ▢ AGENT
- *   ▢   9:43 PM
- *   ▢ │ 12 tools · 2m 22s
- *   ▢ │ Bash: bun run typecheck
- *   ▢ │ Read: packages/.../space-task-runtime.ts
- *   ▢ │ 💬 Looking into the failing test…    ← agent text mixes in with tools
- *   ▢ │ Bash: git status
- *   ▢ │ • Running…                            ← active turn (coloured rail)
- *
- * No tool cards, no thinking blocks, no bracket rails. Turn grouping comes
- * from `buildAgentTurns` in `../space-task-thread-turns.ts` (one block per
- * init→result cycle).
- */
-
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import type { ActiveTurnSummary, ActivityEntry, MessageDeliveryStatus } from '@hyperneo/shared';
 import {
@@ -63,66 +39,16 @@ import { getToolColors, getToolDisplayName } from '../../../sdk/tools/tool-utils
 
 interface MinimalThreadFeedProps {
   parsedRows: ParsedThreadRow[];
-  /**
-   * Labels of agents whose underlying sessions are currently executing.
-   * The trailing non-terminal block **for each label in this set** renders as
-   * the active turn (coloured rail, live tool roster, ticking elapsed clock).
-   *
-   * Per-agent rather than a single boolean: in multi-session workflows
-   * (e.g. Coder + Reviewer interleaved), the Reviewer's terminal `result`
-   * row can land *after* the Coder's last visible row. With a single
-   * boolean + globally-trailing block check, that suppresses the Coder's
-   * still-running rail because the global tail is now terminal. Keying
-   * activity by agent label lets each agent's trailing block be upgraded
-   * independently of what other agents emitted afterwards.
-   *
-   * Labels are matched case-insensitively / whitespace-insensitively against
-   * each block's `agentLabel` so activity-member labels (which are run
-   * through a title-casing helper on the daemon) collide with raw row
-   * labels (e.g. "coder agent" → "Coder Agent").
-   */
   activeAgentLabels?: ReadonlySet<string>;
-  /**
-   * Server-derived activity summaries — one per session with an active
-   * (non-terminal) turn. The roster on each active feed turn is built from
-   * the matching summary's full entry list, so the rail stays accurate even
-   * when the compact feed has dropped older non-terminal rows from the
-   * trailing turn. Empty array when no session is mid-turn.
-   *
-   * Optional for backwards-compatibility with tests / call sites that
-   * haven't been updated; an absent payload silently falls back to no
-   * roster (rather than the previous client-side derivation, which is now
-   * gone).
-   */
   activeTurnSummaries?: ActiveTurnSummary[];
-  /** Task id used to preserve node-agent task messaging when opening overlays. */
   overlayTaskId?: string;
 }
 
-/**
- * Active-turn roster entry. The roster surfaces what the agent is "doing right
- * now" — tool invocations interleaved with the assistant's own outputs and the
- * user-side rows (real human input or synthetic agent→agent handoff) that are
- * sitting inside the active turn.
- *
- * Tagged on `kind` so the renderer can switch between distinct visuals:
- *   - `tool`     : `BashCmd: bun run typecheck`             (colored TOOL: + preview)
- *   - `message`  : `💬 Investigating the failing test…`     (chat glyph + italic body)
- *   - `thinking` : `✦ Considering edge cases…`              (sparkle + dim italic body)
- *   - `user`     : `👤 You: please retry`                   (user glyph + body)
- *   - `handoff`  : `↪ Reviewer Agent: please verify`        (handoff glyph + body)
- *
- * Server-derived: shapes mirror `ActivityEntry` from `@hyperneo/shared` 1:1. The
- * mapping happens in `rosterEntriesFromSummary` so the renderer stays decoupled
- * from the wire format.
- */
 interface RosterToolEntry {
   kind: 'tool';
   tool: string;
   preview: string;
   ts: number;
-  /** Links to a task_notification (by tool_use_id) so the roster can show the
-   * task's terminal status inline. Resolved at turn-build time. */
   toolUseId?: string;
   taskStatus?: 'completed' | 'failed' | 'stopped';
   taskSummary?: string;
@@ -165,13 +91,6 @@ interface RosterApiRetryEntry {
   ts: number;
   uuid: string;
 }
-/**
- * Standalone task outcome entry — rendered directly in the roster (chat-
- * container style: ✓/■/✗ + summary + usage) for task_notifications whose
- * originating tool_use is NOT in the roster (capped out / orphan / completed
- * turn). When the tool_use IS rostered, the outcome folds onto its tool card
- * instead (see foldTaskNotification) so these two never duplicate.
- */
 interface RosterTaskNotificationEntry {
   kind: 'task_notification';
   status: 'completed' | 'failed' | 'stopped';
@@ -212,35 +131,10 @@ interface CompletedFeedTurn {
   messages: number;
   lastMessage: string;
   fallback: boolean;
-  /**
-   * True when the surfaced assistant reply carries an SDK `error` field
-   * (e.g. `error: 'invalid_request'`). Renders the bubble with red error
-   * styling + an "API Error" header, mirroring SDKAssistantMessage's
-   * hasError branch, instead of the normal gray reply bubble.
-   */
   hasError: boolean;
-  /**
-   * Session id that produced this turn's reply text. Used by the
-   * "open in session" affordance so clicking the button lands the user
-   * on the right session even when multiple sessions are interleaved
-   * in the feed. Null when the underlying row had no resolvable session.
-   */
   sessionId: string | null;
-  /**
-   * SDK message UUID of the row whose text was surfaced as `lastMessage`.
-   * Forwarded as `highlightMessageId` to the slide-over so that message
-   * is scrolled to + briefly highlighted on open. May be undefined when
-   * we fell back to `fallbackText` and no SDK message was available.
-   */
   highlightMessageUuid?: string;
   replacementStatus?: MessageReplacementStatus;
-  /**
-   * SDK `result` envelope for the exec that produced this turn. When
-   * present, the actions row renders a result-info dropdown surfacing
-   * usage tokens / cost / duration / errors. Undefined when the block
-   * is non-terminal (e.g. the trailing fragment of a still-running
-   * exec) — the result message hasn't arrived yet.
-   */
   resultInfo?: ResultMessage;
   roster: ActiveRosterEntry[];
 }
@@ -261,7 +155,6 @@ interface ActiveFeedTurn {
   toolEntries: number | null;
   lastEventAt: number;
   roster: ActiveRosterEntry[];
-  /** Session id for the still-running turn; used by the agent header open affordance. */
   sessionId: string | null;
 }
 
@@ -299,36 +192,19 @@ interface SystemFeedTurn {
 interface MessageFeedTurn {
   state: 'message';
   id: string;
-  /** Human-readable sender label (e.g. "User", "Reviewer Agent"). */
   fromLabel: string;
-  /** Recipient agent label — the session this row belongs to. */
   toLabel: string;
-  /** Recipient agent kind, used to avoid node-agent routing for Task Agent sessions. */
   toKind: 'task_agent' | 'node_agent';
-  /** Raw workflow slot/role name for routing task messages. */
   toRole: string;
-  /** Node execution id for exact routing to duplicate-named node agents. */
   toNodeExecutionId?: string | null;
-  /** Rendered message text (markdown when not fallback). */
   body: string;
   bodyIsFallback: boolean;
   createdAt: number;
-  /** True for synthetic agent→agent / system handoffs; false for human input. */
   isSynthetic: boolean;
-  /** Recipient session id — same role as `CompletedFeedTurn.sessionId`. */
   sessionId: string | null;
-  /** User-message delivery state, shown as a small send-state badge. */
   deliveryState?: MessageDeliveryStatus | null;
-  /** SDK message UUID, used to deep-link the slide-over. */
   highlightMessageUuid?: string;
   replacementStatus?: MessageReplacementStatus;
-  /**
-   * SDK `system:init` envelope for the recipient agent's exec — the agent
-   * state this user message landed in. When present, the actions row
-   * renders an info-circle dropdown surfacing model / cwd / tools / mcp
-   * servers. Undefined when no init message exists in the same logical
-   * block (e.g. for replays, or messages that didn't trigger a new exec).
-   */
   sessionInit?: SystemInitMessage;
 }
 
@@ -398,18 +274,6 @@ function isFoldedSystemStatusRow(
   return consumedStatusRowIds.has(String(row.id));
 }
 
-/**
- * Translate the server-derived `ActivityEntry` union into the renderer's
- * tagged `ActiveRosterEntry` shape and apply the display cap (most-recent
- * wins). Server entries are already chronologically sorted and have their
- * previews/text collapsed onto a single line; the cap is the last piece of
- * presentation policy that lives client-side.
- *
- * Empty `text` entries (e.g. a model response containing only whitespace)
- * are still defensively dropped here even though the server already filters
- * them — defence in depth lets renderer-level invariants hold even if a
- * future server change relaxes the filter.
- */
 function rosterEntriesFromSummary(
   summary: ActiveTurnSummary | undefined,
   maxEntries: number
@@ -423,13 +287,6 @@ function rosterEntriesFromSummary(
   return out.slice(-maxEntries);
 }
 
-/**
- * Defensive string coercion for fields that the typed `ActivityEntry` shape
- * declares as `string`. The daemon already normalises entry-level fields when
- * it builds `ActiveTurnSummary`, but we coerce here as a belt-and-braces guard
- * against a malformed entry crashing the renderer with a `TypeError` on
- * `.trim()`.
- */
 function asTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
@@ -496,11 +353,6 @@ function mapActivityEntry(entry: ActivityEntry): ActiveRosterEntry | null {
   }
 }
 
-/**
- * Count tool calls within the active turn from the server-derived summary
- * (preferred — covers the *full* turn, not the truncated compact slice) or
- * fall back to the parsed rows when no summary is available.
- */
 function countToolCallsForActive(
   rows: ParsedThreadRow[],
   summary: ActiveTurnSummary | undefined
@@ -574,13 +426,6 @@ function rowsContainResult(
   return resultInfo !== undefined && rows.some((row) => row.message === resultInfo);
 }
 
-/**
- * Whether a row slice contains any non-success result message. Used to keep
- * error-only turns (no assistant text) visible and to collect their
- * tool_use_ids for task_notification folding — covering ALL error subtypes
- * (including error_max_budget_usd), since visibility is separate from the
- * narrower inline red-bubble treatment.
- */
 function rowsContainResultError(rows: ParsedThreadRow[]): boolean {
   return rows.some((row) => row.message && isSDKResultError(row.message));
 }
@@ -592,14 +437,6 @@ function latestSessionId(rows: ParsedThreadRow[]): string | null {
   return null;
 }
 
-/**
- * Session id of the active turn represented by a block. Status rows and
- * compact_boundary rows can carry a different session id than the agent rows
- * they annotate (or no session id at all), so the active turn's session must
- * be derived from the last *non-status, non-boundary, non-user* row. Using the
- * raw `latestSessionId` would let a later cross-session status row hijack the
- * turn's identity and either mis-attach the status or suppress its fallback.
- */
 function activeTurnSessionId(rows: ParsedThreadRow[]): string | null {
   for (let i = rows.length - 1; i >= 0; i--) {
     const row = rows[i];
@@ -612,37 +449,10 @@ function activeTurnSessionId(rows: ParsedThreadRow[]): string | null {
   return null;
 }
 
-/**
- * Extract the closing text for a turn, walking rows last-to-first.
- *
- * Two viable text sources:
- *   1. `assistant` rows — the model's `text` content blocks. Standard path,
- *      and the preferred deep-link target so the chat-bubble click highlights
- *      the agent's actual reply rather than the green result envelope below it.
- *   2. `result|success` rows — the SDK's end-of-exec envelope, whose top-level
- *      `result` string carries the agent's final reply. Used as a fallback for
- *      turns where the agent emitted only `tool_use` / `thinking` blocks (e.g.
- *      Reviewer runs that verify with Bash and never write a textual reply
- *      mid-stream).
- *
- * Walk order: last-to-first looking for an assistant row with text. While
- * walking, capture the most recent result-success row as a fallback candidate.
- * Return the assistant row if found; otherwise fall back to the captured
- * result row.
- *
- * Returns the surfaced row alongside the text so callers can build deep links
- * back to the original SDK message (sessionId + uuid) for the slide-over.
- */
 function extractLastAssistantText(rows: ParsedThreadRow[]): {
   text: string;
   fallback: boolean;
   sourceRow: ParsedThreadRow | null;
-  /**
-   * True when the surfaced assistant reply (or any assistant row in the turn,
-   * when text came from a fallback) carries an SDK `error` field — e.g.
-   * `error: 'invalid_request'`. Drives the red error-bubble treatment in
-   * CompletedBody, mirroring SDKAssistantMessage's `hasError` branch.
-   */
   hasError: boolean;
 } {
   let resultFallback: { text: string; sourceRow: ParsedThreadRow } | null = null;
@@ -652,9 +462,6 @@ function extractLastAssistantText(rows: ParsedThreadRow[]): {
     const row = rows[i];
     if (!row.message) continue;
 
-    // Result-success rows carry the agent's final reply on `.result`.
-    // Capture the most recent one as a fallback — but keep walking in case
-    // there is an assistant message above it we'd rather highlight.
     if (isSDKResultMessage(row.message) && row.message.subtype === 'success') {
       if (!resultFallback) {
         const result = (row.message as { result?: unknown }).result;
@@ -666,10 +473,6 @@ function extractLastAssistantText(rows: ParsedThreadRow[]): {
     }
 
     if (!isSDKAssistantMessage(row.message)) continue;
-    // An assistant message may carry an `error` field (e.g. a 400
-    // invalid_request) alongside its text content. Track it so the reply
-    // bubble renders red instead of the normal gray, matching the chat
-    // transcript (SDKAssistantMessage detects the same field).
     const hasError =
       'error' in row.message && (row.message as { error?: unknown }).error !== undefined;
     if (hasError) assistantHasError = true;
@@ -688,7 +491,6 @@ function extractLastAssistantText(rows: ParsedThreadRow[]): {
       return { text: texts.join('\n\n'), fallback: false, sourceRow: row, hasError };
   }
 
-  // No assistant text anywhere in the turn — fall back to the result envelope.
   if (resultFallback) {
     return {
       text: resultFallback.text,
@@ -829,19 +631,10 @@ function buildCompletedTurn(
         taskNotificationsByToolUseId,
         indexCompletedFoldableToolUseIds(rows)
       );
-      // Suppress standalone entries for outcomes already folded onto a tool
-      // card in THIS turn (the global pre-scan misses roster-only turns).
       const rostered = new Set([
         ...globalRosteredToolUseIds,
         ...rosteredToolUseIdsFromRoster(base),
       ]);
-      // Merge by timestamp (not append) so older outcomes don't land below
-      // newer activity, but do NOT re-apply the 8-cap: a completed turn renders
-      // once, so capping would drop terminal metadata (incl. failures) on first
-      // paint and could let a late notification evict a retained tool whose
-      // folded status/summary/usage would vanish with its card. `base` is
-      // already capped to 8 tools, so this is at worst 8 tools + a few
-      // notifications — matching the prior [...base, ...standalone] layout.
       return mergeRosterWithNotifications(
         base,
         standaloneTaskNotificationEntries(rows, rostered),
@@ -851,10 +644,6 @@ function buildCompletedTurn(
   };
 }
 
-/**
- * Scan parsedRows for terminal task_notification system rows, keyed by
- * tool_use_id. Used to fold status onto the active-turn roster tool entry.
- */
 function indexTaskNotifications(rows: ParsedThreadRow[]): Map<string, TaskNotificationLite> {
   const byToolUseId = new Map<string, TaskNotificationLite>();
   for (const row of rows) {
@@ -875,14 +664,6 @@ function indexTaskNotifications(rows: ParsedThreadRow[]): Map<string, TaskNotifi
   return byToolUseId;
 }
 
-/**
- * Build standalone roster entries for task_notifications whose originating
- * tool_use is NOT rendered in the roster (capped out / orphan / completed
- * turn). These have no tool card to fold onto, so they get their own
- * chat-container-style outcome line. Entries whose tool_use IS rostered are
- * skipped — their outcome folds onto that tool card (foldTaskNotification),
- * so the two paths never duplicate.
- */
 function standaloneTaskNotificationEntries(
   rows: ParsedThreadRow[],
   rosteredToolUseIds: Set<string>
@@ -912,32 +693,6 @@ function standaloneTaskNotificationEntries(
   return out;
 }
 
-/**
- * Interleave standalone task_notification entries into the roster by timestamp,
- * then apply the display cap. Appending them as a block (older outcomes after
- * newer activity) inverts chronology, and a subsequent `slice(-N)` then pins
- * those older outcomes to the bottom forever — every newly-arrived tool call
- * lands above them and is trimmed off instead. Sorting by `ts` places each
- * notification at its true position: an old notification whose tool card has
- * scrolled out of the window rises to the top and falls off once N newer
- * entries exist, exactly like any other roster entry.
- *
- * `maxEntries` caps the merged result. The active turn passes
- * `ROSTER_MAX_ENTRIES` (a standalone outcome ages out as newer activity fills
- * the sliding window). The completed turn passes `Infinity` — it renders once,
- * so "ageing out" would just drop terminal metadata (incl. failures) on first
- * paint, and a late-arriving notification must not evict a retained tool whose
- * folded status/summary/usage would vanish with its card. `base` is already
- * capped to 8 tools, so the completed roster is at worst 8 tools + a few
- * notifications, matching the prior layout.
- *
- * Same-millisecond ties break toward the standalone notification sorting FIRST
- * (older): a standalone outcome originates from a tool that already scrolled
- * out of the window, so on an equal timestamp it preceded the windowed
- * activity — consistent with the insertion-order tie-break the compact feed
- * uses (`useSpaceTaskMessages.sortRows`), and it keeps a stale outcome from
- * artificially surviving the cap.
- */
 function mergeRosterWithNotifications(
   base: ActiveRosterEntry[],
   notifications: RosterTaskNotificationEntry[],
@@ -953,15 +708,6 @@ function mergeRosterWithNotifications(
   return maxEntries === Infinity ? merged : merged.slice(-maxEntries);
 }
 
-/**
- * tool_use_ids whose tool cards are present in a given roster. Combined with
- * the global rostered set to gate standalone task_notification entries: a
- * notification must NOT emit a standalone roster entry if its outcome already
- * folds onto a tool card in THIS turn's roster — otherwise roster-only turns
- * (no assistant text, kept only for their roster) would show the outcome twice
- * (once folded, once standalone), since the global pre-scan excludes those
- * text-less turns and so omits their tool ids.
- */
 function rosteredToolUseIdsFromRoster(roster: ActiveRosterEntry[]): Set<string> {
   const ids = new Set<string>();
   for (const entry of roster) {
@@ -970,24 +716,12 @@ function rosteredToolUseIdsFromRoster(roster: ActiveRosterEntry[]): Set<string> 
   return ids;
 }
 
-/**
- * Collect the tool_use_ids that have a rendered active-roster target — i.e.
- * tool_use entries that survive the ROSTER_MAX_ENTRIES cap in a summary whose
- * session actually renders an active roster. A summary only renders an active
- * roster when its session's trailing block is non-terminal AND that block's
- * agent is active; a stale summary left over after the compact rows advanced
- * to a terminal result must NOT suppress a task_notification (it has nowhere
- * to fold). A task_notification is only suppressed when its tool_use_id is in
- * this set; otherwise its status must render as a fallback row.
- */
 function collectActiveRosteredToolUseIds(
   summaries: ActiveTurnSummary[],
   renderedTurnKeys: Set<string>
 ): Set<string> {
   const ids = new Set<string>();
   for (const summary of summaries) {
-    // Match on (sessionId, turnIndex): a stale summary whose turn no longer
-    // matches the compact feed's active turn must not contribute tool IDs.
     if (!renderedTurnKeys.has(`${summary.sessionId}:${summary.turnIndex}`)) continue;
     for (const entry of rosterEntriesFromSummary(summary, ROSTER_MAX_ENTRIES)) {
       if (entry.kind === 'tool' && entry.toolUseId) ids.add(entry.toolUseId);
@@ -1022,10 +756,6 @@ function buildActiveTurn(
     if (entry.kind !== 'tool') return entry;
     return foldTaskNotification(entry, taskNotificationsByToolUseId);
   });
-  // Collect standalone outcome entries for task_notifications whose tool_use
-  // isn't rostered in any turn (capped out / orphan). Folded ones are already
-  // on their tool card; checking the global set + this turn's roster prevents
-  // both cross-turn and within-turn duplication.
   const rostered = new Set([
     ...globalRosteredToolUseIds,
     ...rosteredToolUseIdsFromRoster(baseRoster),
@@ -1034,10 +764,6 @@ function buildActiveTurn(
   const sessionEntry = sessionId ? latestStatusBySession?.get(sessionId) : undefined;
   const labelEntry = latestStatusBySession?.get(labelKey);
   const activeStatus = sessionEntry ?? labelEntry;
-  // Merge standalone outcomes into the roster by timestamp, then cap — so a
-  // stale notification rises and ages out instead of pinning to the bottom.
-  // The live status entry is pinned AFTER the cap so the header pill always
-  // has a matching roster line even when many events followed it.
   const cappedBase = mergeRosterWithNotifications(
     baseRoster,
     standaloneTaskNotificationEntries(rows, rostered)
@@ -1065,21 +791,6 @@ function buildActiveTurn(
   };
 }
 
-/**
- * Resolve the sender of a user-type SDK message.
- *
- * The origin field comes in two shapes in the wild:
- * - Legacy string form ("system") — what the daemon currently writes
- *   to the DB for non-human-typed messages.
- * - Typed `SDKMessageOrigin` object form (`{ kind: 'peer'/'channel'/... }`) —
- *   what the SDK itself emits for richer provenance.
- *
- * For synthetic / replay messages without origin info, we fall back to the
- * previous agent block's label — agent→agent handoffs almost always come from
- * whichever agent ran immediately before the recipient. It's a heuristic, but
- * it produces meaningful labels in the common case where origin metadata is
- * missing.
- */
 function extractSenderLabel(
   message: SDKMessage,
   previousAgentLabel: string | null
@@ -1115,10 +826,6 @@ function extractSenderLabel(
   return { label: 'User', isSynthetic: false };
 }
 
-/**
- * Extract a user-type message's text body. Concatenates all text blocks; falls
- * back to the row's fallbackText when the message can't be parsed.
- */
 function extractUserMessageText(row: ParsedThreadRow): { body: string; fallback: boolean } {
   if (!row.message) {
     return { body: row.fallbackText ?? '', fallback: true };
@@ -1182,49 +889,18 @@ function buildOperationalSystemTurn(
   if (!message || message.type !== 'system') return null;
   const subtype = (message as { subtype?: string }).subtype;
   if (!subtype || subtype === 'init') return null;
-  // SDK status messages (compacting / requesting) fold into the active turn's
-  // header pill and roster. Suppress the standalone system card when the status
-  // has been attached to an active turn; leave non-clear statuses as a generic
-  // fallback row when they arrived with no active roster (orphan / completed
-  // turn). Clear messages (status: null) are only meaningful inside an active
-  // turn, so never render them as a standalone card.
   if (subtype === 'status') {
     const statusValue = (message as { status?: unknown }).status;
     if (statusValue === null) return null;
     if (consumedStatusRowIds && consumedStatusRowIds.has(String(row.id))) return null;
   }
-  // Hooks surface ONLY as roster entries in the minimal feed (one entry per
-  // hook run via the active-turn summary). Suppress every hook_* system row so
-  // the feed never shows a standalone hook card. The chat transcript still
-  // renders hook_started/hook_progress/hook_response.
   if (subtype === 'hook_started' || subtype === 'hook_progress' || subtype === 'hook_response') {
     return null;
   }
-  // task_notification is folded onto its originating tool_use roster entry
-  // (active turn only). Suppress the standalone row ONLY when that target
-  // exists — i.e. the tool_use is in an active summary's rendered roster. When
-  // there is no target (completed turn, missing summary, or the tool was
-  // capped out of the last ROSTER_MAX_ENTRIES entries), fall through to a
-  // system turn so the terminal summary/usage/failure is not silently lost.
-  // True orphans (no tool_use_id) also fall through.
   if (isFoldedTaskNotification(row, rosteredToolUseIds)) return null;
-  // These subtypes surface ONLY as roster entries in the minimal feed (like
-  // hooks) — never as standalone system cards in the main thread, even when
-  // capped out of the roster:
-  //   - api_retry: roster `api_retry` entry. (The chat transcript still
-  //     renders api_retry via SDKSystemMessage.)
-  //   - thinking_tokens: roster `thinking` entries carry the content; the
-  //     numeric token estimate is dropped (it's excluded from the chat
-  //     transcript pagination too).
-  //   - task_notification: folds onto its roster tool card when the tool is
-  //     rostered, otherwise a standalone roster entry. Never a main-thread card.
   if (subtype === 'api_retry' || subtype === 'thinking_tokens' || subtype === 'task_notification')
     return null;
-  // Honor the centralized hidden-subtype contract so Space task threads
-  // don't surface noisy rows the main transcript already hides.
   if (isHiddenSystemSubtype(subtype)) return null;
-  // Apply the same conditional hides as SDKSystemMessage so Space task
-  // threads don't render success-noise rows the main transcript suppresses.
   if (isConditionallyHiddenSystemMessage(message)) return null;
   if (subtype === 'informational' && (message as { level?: string }).level === 'info') {
     return null;
@@ -1406,16 +1082,6 @@ function buildMessageTurn(
   };
 }
 
-/**
- * Pre-scan a block's rows for the SDK envelope messages we surface as
- * dropdown affordances:
- *   - `system:init` → attached to the user message that triggered the
- *     exec (so the user can introspect "what state did my message land
- *     in?"). First match wins; an exec only emits one init.
- *   - `result`      → attached to the completed agent turn. Last match
- *     wins so we always grab the most recent envelope when a block
- *     happens to contain multiple (rare; mostly defensive).
- */
 function extractBlockEnvelopes(rows: ParsedThreadRow[]): {
   init: SystemInitMessage | undefined;
   result: ResultMessage | undefined;
@@ -1434,19 +1100,6 @@ function extractBlockEnvelopes(rows: ParsedThreadRow[]): {
   return { init, result };
 }
 
-/**
- * Build the ordered turn list for the minimal feed.
- *
- * Walks `buildAgentTurns` output but splits each block on user-type rows:
- * - Each user/synthetic row becomes its own `MessageFeedTurn`, surfaced as a
- *   distinct row showing FROM → TO and the message body.
- * - Consecutive non-user rows (assistant + result) form `CompletedFeedTurn`s.
- * - For every agent label in `activeAgentLabels`, the trailing non-terminal
- *   completed turn from that agent upgrades to an `ActiveFeedTurn`. Tracking
- *   trailing state per agent (rather than a single global "last block") is
- *   what keeps the Coder rail visible when a Reviewer's terminal `result` row
- *   lands after Coder's last row in a multi-session workflow.
- */
 function buildFeedTurns(
   parsedRows: ParsedThreadRow[],
   activeAgentLabels: ReadonlySet<string>,
@@ -1456,18 +1109,8 @@ function buildFeedTurns(
   const blocks = buildAgentTurns(rowsWithReplacementStatus);
   if (blocks.length === 0) return [];
 
-  // task_notifications keyed by tool_use_id — used to fold status onto the
-  // active-turn roster tool entry.
   const taskNotificationsByToolUseId = indexTaskNotifications(rowsWithReplacementStatus);
 
-  // Turns that will actually render an active roster: the trailing block for
-  // an active agent is non-terminal. Only a summary whose (sessionId, turnIndex)
-  // matches one of these rendered turns can fold a task_notification onto a
-  // roster entry. Matching turnIndex (not just sessionId) matters because the
-  // compact-message and active-turn LiveQueries update independently: if the
-  // compact rows advance a session into a new turn before the active-turn delta
-  // lands, the previous turn's tool IDs must not be collected (they'd suppress
-  // or mis-attach a just-finished turn's notification).
   const normalisedActive = new Set<string>();
   for (const label of activeAgentLabels) normalisedActive.add(normalizeAgentKey(label));
   const trailingBlockByAgent = new Map<string, AgentTurnBlock>();
@@ -1485,12 +1128,6 @@ function buildFeedTurns(
     }
   }
 
-  // SDK system:status messages (compacting / requesting) fold into the active
-  // turn's header pill and roster. Consume them when they belong to the active
-  // turn's session, or — for rows without a session id — when the agent label
-  // has a non-terminal active turn. When the turn index is known on both sides
-  // it must match. Any unmatched status row falls back to a generic system card
-  // so it is never silently lost.
   const consumedStatusRowIds = new Set<string>();
   const latestStatusBySession = new Map<string, { status: string; ts: number }>();
   for (const row of rowsWithReplacementStatus) {
@@ -1522,16 +1159,10 @@ function buildFeedTurns(
     }
 
     if (isCompactBoundary) {
-      // The daemon treats a compact_boundary as the clear point for an active
-      // compacting state; mirror that in the folded UI.
       latestStatusBySession.delete(targetKey);
       continue;
     }
 
-    // Only fold a status row when there is an actual turn to attach it to.
-    // If the trailing block contains only status/boundary/user rows, the row
-    // would be consumed and then silently dropped, so let it fall back to a
-    // standalone system card instead.
     if (parsed) {
       const block = trailingBlockByAgent.get(labelKey);
       if (block) {
@@ -1550,9 +1181,6 @@ function buildFeedTurns(
       latestStatusBySession.delete(targetKey);
     } else {
       const existing = latestStatusBySession.get(targetKey);
-      // Use strict `>` so two status rows in the same millisecond keep the
-      // first-seen value (insertion order) instead of being overwritten by a
-      // later row whose UUID/DB order may not reflect the true stream order.
       if (!existing || row.createdAt > existing.ts) {
         latestStatusBySession.set(targetKey, { status: parsed!.status, ts: row.createdAt });
       }
@@ -1569,11 +1197,6 @@ function buildFeedTurns(
     const blockKey = normalizeAgentKey(block.agentLabel);
     const trailingBlockCanUpgradeToActive = normalisedActive.has(blockKey) && !block.isTerminal;
     let pendingAgentRows: ParsedThreadRow[] = [];
-    // A completed slice contributes to the rostered-tool pre-scan when it has
-    // an assistant reply OR tool_use content. Including tool-only slices
-    // (no reply text — e.g. a background task turn) means their tool ids enter
-    // the global rostered set, so a task_notification that folds onto one of
-    // those tools isn't duplicated as a standalone roster entry elsewhere.
     const sliceContributesToRoster = (sliceRows: ParsedThreadRow[]) =>
       extractLastAssistantText(sliceRows).text.length > 0 ||
       sliceRows.some((r) => getToolUseContentBlocks(r).length > 0);
@@ -1581,10 +1204,6 @@ function buildFeedTurns(
       if (
         (pendingAgentRows.length > 0 &&
           !(isFinal && trailingBlockCanUpgradeToActive) &&
-          // Keep slices with text, tool_use content, OR any result error —
-          // error-only turns must be included so their tool_use_ids are collected
-          // into rosteredToolUseIds and post-result task_notifications fold onto
-          // the now-visible roster instead of duplicating as standalone rows.
           sliceContributesToRoster(pendingAgentRows)) ||
         rowsContainResultError(pendingAgentRows)
       ) {
@@ -1594,9 +1213,6 @@ function buildFeedTurns(
     };
     for (const row of block.rows) {
       if (isFoldedSystemStatusRow(row, consumedStatusRowIds)) continue;
-      // Unmatched `system:status` clear rows (status: null) should never join a
-      // turn — they would shift latestSessionId / message counts and could steal
-      // the active rail's session away from the real active turn.
       if (parseSystemStatusRow(row)?.isClear) continue;
       if (buildCompactBoundaryTurn(row) || isUserRow(row)) {
         flush();
@@ -1626,11 +1242,6 @@ function buildFeedTurns(
     return out;
   });
 
-  // tool_use_ids whose status is actually rendered on an active or completed
-  // roster entry. A task_notification is suppressed ONLY when its tool_use_id is
-  // in this set — otherwise there is no inline target (missing/stale summary,
-  // turn mismatch, or capped out of the roster) and the notification must fall
-  // back to a standalone system row so terminal metadata is not lost.
   const rosteredToolUseIds = collectRosteredToolUseIds(
     activeTurnSummaries,
     renderedTurnKeys,
@@ -1642,21 +1253,12 @@ function buildFeedTurns(
     if (row.sessionId) latestRowIdBySession.set(row.sessionId, String(row.id));
   }
 
-  // Index summaries by sessionId so the trailing-block upgrade can pick the
-  // right summary in O(1) rather than scanning the (small but not bounded)
-  // list once per render. The server emits at most one summary per session.
   const summariesBySession = new Map<string, ActiveTurnSummary>();
   for (const summary of activeTurnSummaries) {
     summariesBySession.set(summary.sessionId, summary);
   }
 
   const turns: FeedTurn[] = [];
-  // Per-agent trailing completed-turn pointer. Keyed by the normalised agent
-  // label so case/whitespace variants between activity-member labels (run
-  // through a title-casing helper on the daemon) and raw row labels collide
-  // on the same entry. Each `flushAgent` call overwrites the entry for
-  // `block.agentLabel`, so after the loop the map points at the *last*
-  // completed turn each agent produced — exactly what we want to upgrade.
   type AgentTrailing = {
     turnIdx: number;
     rows: ParsedThreadRow[];
@@ -1666,10 +1268,6 @@ function buildFeedTurns(
   let previousAgentLabel: string | null = null;
 
   for (const block of blocks) {
-    // Pre-extract once per block so every turn we emit (user msg AND
-    // completed turn) shares the same view of the block's init/result
-    // envelopes. Cheap — single linear scan over rows we'd already be
-    // walking anyway.
     const { init: blockInit, result: blockResult } = extractBlockEnvelopes(block.rows);
     const blockKey = normalizeAgentKey(block.agentLabel);
 
@@ -1706,7 +1304,6 @@ function buildFeedTurns(
 
     for (const row of block.rows) {
       if (isFoldedSystemStatusRow(row, consumedStatusRowIds)) continue;
-      // Drop unmatched `system:status` clear rows before they can join a turn.
       if (parseSystemStatusRow(row)?.isClear) continue;
       const compactBoundaryTurn = buildCompactBoundaryTurn(row);
       if (compactBoundaryTurn) {
@@ -1739,15 +1336,6 @@ function buildFeedTurns(
     previousAgentLabel = block.agentLabel;
   }
 
-  // Per-agent active-rail upgrade. For every label in `activeAgentLabels`
-  // whose trailing block is non-terminal, swap that agent's last completed
-  // turn for an active turn. Independent across agents — a Reviewer terminal
-  // block landing after Coder's last row can no longer suppress the Coder
-  // rail because Coder has its own entry in `perAgentTrailing`. The roster
-  // is built from the server-derived summary keyed on the trailing rows'
-  // session id; missing summary → empty roster (e.g. server hasn't shipped
-  // metadata yet, or the active turn lives on a different session than the
-  // trailing fragment).
   if (activeAgentLabels.size > 0) {
     const normalisedActive = new Set<string>();
     for (const label of activeAgentLabels) {
@@ -1758,14 +1346,6 @@ function buildFeedTurns(
       if (trailing.block.isTerminal) continue;
       const completed = turns[trailing.turnIdx] as CompletedFeedTurn;
       const sessionId = latestSessionId(trailing.rows);
-      // Only fold when the summary matches the trailing rows' turn (when the
-      // turn is known). The compact and active-turn LiveQueries race: if the
-      // compact rows advanced to a new non-terminal turn before the active-turn
-      // delta landed, a session-keyed summary is stale and would attach the
-      // previous turn's tool IDs/status to the new active rail. Drop the summary
-      // on a known turn mismatch → buildActiveTurn renders no roster until the
-      // summary catches up. When the trailing turn is unknown, fall through
-      // (no gate) so summaries still apply.
       const candidateSummary = sessionId ? summariesBySession.get(sessionId) : undefined;
       const trailingTurn = latestTurnIndex(trailing.rows);
       const summary =
@@ -1785,18 +1365,6 @@ function buildFeedTurns(
     }
   }
 
-  // Drop empty completed turns. With result-message-aware text extraction in
-  // place, the only way a completed turn ends up with no body is if it's an
-  // agent-phase fragment that got cut off by another agent's rows before its
-  // own exec's result message arrived — its actual reply lives in a sibling
-  // turn from the same agent. Showing the fragment as its own header-only row
-  // (e.g. "REVIEWER 12:29 PM · 3 messages · 9s" with nothing under it) is
-  // noise; the reply is rendered in the sibling that holds the result text.
-  // A turn with no reply text but with roster content (tool calls / task
-  // outcomes) is still meaningful — e.g. a killed task whose outcome lives in
-  // the roster — so keep it. A turn that ended in a result error (any subtype)
-  // is also kept even with no text and no roster: the red bubble + inline
-  // error summary IS the visible content.
   return turns.filter((t) => {
     if (t.state !== 'completed') return true;
     if (t.resultInfo && isSDKResultError(t.resultInfo)) return true;
@@ -1804,11 +1372,6 @@ function buildFeedTurns(
   });
 }
 
-/**
- * Force a re-render every second so live-elapsed values derived from
- * `Date.now() - startedAt` stay current. Single timer per component
- * instance — cheap, and only mounted while there is an active turn.
- */
 function useSecondsTick(): void {
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -1816,8 +1379,6 @@ function useSecondsTick(): void {
     return () => clearInterval(id);
   }, []);
 }
-
-/* ── visual building blocks ──────────────────────────────────────────────── */
 
 function PulseDot({ color }: { color: string }) {
   return (
@@ -2070,9 +1631,6 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
   }
 
   if (entry.kind === 'user') {
-    // Real human input that landed inside the active turn — surface it
-    // distinctly from agent text so a user reading the rail can tell at
-    // a glance which line is theirs.
     return (
       <div
         class={`flex items-baseline gap-2 text-xs leading-5 ${fadeClass}`}
@@ -2088,7 +1646,6 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
   }
 
   if (entry.kind === 'handoff') {
-    // Synthetic agent→agent / system handoff — arrow glyph + body.
     return (
       <div
         class={`flex items-baseline gap-2 text-xs leading-5 ${fadeClass}`}
@@ -2103,10 +1660,6 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
     );
   }
 
-  // Assistant message — small chat-bubble glyph (mirrors the open-session
-  // affordance) plus an italic preview of the text. No mono-font / TOOL:
-  // prefix so it visually reads as "the agent said this" rather than
-  // "another command ran".
   return (
     <div
       class={`flex items-baseline gap-2 text-xs leading-5 ${fadeClass}`}
@@ -2132,12 +1685,6 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
   );
 }
 
-/**
- * Terminal result subtypes surfaced inline as a red bubble in the minimal feed.
- * `error_max_budget_usd` is intentionally excluded — hitting a budget cap is a
- * deliberate cost guard, not an execution failure, so painting the whole turn
- * red would mislead. It still gets the amber result-info dropdown trigger.
- */
 const INLINE_RESULT_ERROR_SUBTYPES: ReadonlySet<string> = new Set([
   'error_during_execution',
   'error_max_turns',
@@ -2155,13 +1702,6 @@ const RESULT_ERROR_SUBTYPE_LABELS: Record<string, string> = {
   error_max_structured_output_retries: 'Max structured output retries reached',
 };
 
-/**
- * First-line error summary for a terminal result error. Prefers the SDK's
- * `errors[]` (the model/SDK's own failure message); falls back to a humanized
- * subtype label so the red bubble always carries an explanation even when the
- * errors array is empty/missing (defensive against bridge providers that omit
- * it).
- */
 function getResultErrorSummary(result: ResultMessage): string {
   const errors = (result as { errors?: unknown }).errors;
   if (Array.isArray(errors)) {
@@ -2171,22 +1711,6 @@ function getResultErrorSummary(result: ResultMessage): string {
   return RESULT_ERROR_SUBTYPE_LABELS[result.subtype] ?? 'Run failed';
 }
 
-/**
- * Body for a completed agent turn — wraps the meta-line + reply text in a
- * left-aligned chat bubble that sizes to content up to a max-width cap.
- *
- * Why bubble-style at all: agent replies are often long markdown blobs
- * (review summaries, hand-off briefs) that look like transcripts when
- * rendered as plain flush-left rows. A subtle bubble (`bg-dark-800`, one
- * shade lighter than the synthetic bubble's `bg-dark-900`) re-establishes
- * the conversational rhythm and differentiates "agent's own reply" from
- * "synthetic handoff" without competing with the human bubble's blue.
- *
- * Width strategy: stacked under the agent header (no avatar offset on the
- * left), so `w-fit` lets short replies hug their content, `max-w-full`
- * fills the row on mobile, and `md:max-w-[86%]` caps the width on desktop
- * to keep long markdown readable instead of stretching edge-to-edge.
- */
 function CompletedBody({
   turn,
   overlayTaskId,
@@ -2199,8 +1723,6 @@ function CompletedBody({
     isTerminalError && turn.resultInfo ? getResultErrorSummary(turn.resultInfo) : null;
   const openSession = turn.sessionId
     ? () => {
-        // `pushOverlayHistory` reads the highlight signal; passing the message
-        // uuid scrolls the slide-over straight to this turn's surfaced reply.
         if (overlayTaskId && turn.agentKind === 'node_agent') {
           pushOverlayHistory(turn.sessionId as string, turn.agent, turn.highlightMessageUuid, {
             taskId: overlayTaskId,
@@ -2345,20 +1867,6 @@ function ActiveBody({ turn, color }: { turn: ActiveFeedTurn; color: string }) {
   );
 }
 
-/**
- * Agent turn — Slack-style stacked layout. The header (avatar + name +
- * timestamp-when-active) sits on its own row; the body (bubble or active
- * rail) drops below the header at the full container width, aligned with
- * the avatar's left edge.
- *
- * Why stacked instead of avatar-on-the-left-of-body: agent replies are
- * frequently long markdown blobs. With the body indented under a flex
- * column to the right of the avatar, the bubble is forced into a narrower
- * sub-column (~48px lost to the avatar + gap) AND the legacy 85% cap left
- * dead space on the right. Stacking lets the body use the full row width
- * on mobile and feels closer to Slack/Reddit/Discord post layouts than
- * iMessage chat bubbles — a better fit for "agent post with long output".
- */
 function AgentTurnRow({
   turn,
   overlayTaskId,
@@ -2427,19 +1935,6 @@ function AgentTurnRow({
       data-agent-color={color}
       data-turn-state={turn.state}
     >
-      {/* Header — avatar + stacked (name / meta-or-clock) column. The meta
-			    line ("3 tool calls · 4 messages · 22s") lives here under the
-			    agent name on completed turns instead of inside the reply
-			    bubble — it's metadata about the turn, not part of the agent's
-			    spoken reply, so reading it as "subtitle" rather than "first
-			    line of the bubble" is more intuitive. Active turns swap the
-			    meta for a live clock; the rail body still shows the running
-			    tool counter + roster.
-
-			    Active turns don't get an actions row below (no copy while
-			    running), so completed turns surface time + copy under the
-			    bubble via SpaceTaskThreadMessageActions to avoid duplicating
-			    the header clock. */}
       {openSession ? (
         <button
           type="button"
@@ -2454,7 +1949,6 @@ function AgentTurnRow({
       ) : (
         <div class="flex min-h-11 items-center gap-3">{headerContent}</div>
       )}
-      {/* Body — full-width on mobile, capped on desktop for readability. */}
       {turn.state === 'active' ? (
         <ActiveBody turn={turn} color={color} />
       ) : (
@@ -2464,11 +1958,6 @@ function AgentTurnRow({
   );
 }
 
-/**
- * Human user input — iMessage-style blue bubble, right-aligned. No header
- * decoration: the user IS the human, the recipient is implicit (this is the
- * recipient agent's session view).
- */
 function HumanMessageTurn({ turn }: { turn: MessageFeedTurn }) {
   const recipientColor = getAgentColor(turn.toLabel);
   return (
@@ -2494,10 +1983,6 @@ function HumanMessageTurn({ turn }: { turn: MessageFeedTurn }) {
             <p class="opacity-70 italic">(empty message)</p>
           )}
         </div>
-        {/* Right-aligned actions row — timestamp + (optional)
-				    session-init dropdown + copy. Replaces the bare
-				    timestamp so the human bubble has parity with synthetic
-				    messages and agent reply bubbles. */}
         {turn.deliveryState && turn.deliveryState !== 'delivered' ? (
           <div class="mt-1 flex justify-end">
             <DeliveryStateBadge
@@ -2517,16 +2002,6 @@ function HumanMessageTurn({ turn }: { turn: MessageFeedTurn }) {
   );
 }
 
-/**
- * Synthetic / agent→agent handoff — delegates rendering to the shared
- * `SyntheticMessageBlock` so this idiom looks identical in the chat
- * container and the task thread feed. The thread-feed wrapper adds:
- *   • Turn-level data attributes consumed by E2E tests / sticky headers.
- *   • Agent route info (FROM→TO badge) since the thread feed has agent
- *     labels that the chat container doesn't surface.
- *   • An "open in session" callback that pops the session overlay scrolled
- *     to this synthetic message.
- */
 function CompactBoundaryTurn({
   turn,
   overlayTaskId,
@@ -2761,8 +2236,6 @@ function MinimalTurnRow({ turn, overlayTaskId }: { turn: FeedTurn; overlayTaskId
   return <AgentTurnRow turn={turn} overlayTaskId={overlayTaskId} />;
 }
 
-/* ── public component ────────────────────────────────────────────────────── */
-
 const EMPTY_ACTIVE_AGENT_LABELS: ReadonlySet<string> = new Set();
 
 export function MinimalThreadFeed({
@@ -2785,8 +2258,6 @@ export function MinimalThreadFeed({
     </>
   );
 }
-
-/* ── animations (scoped via local <style> tag) ───────────────────────────── */
 
 const ANIMATIONS_CSS = `
 @keyframes minimal-thread-roster-fade-in-kf {

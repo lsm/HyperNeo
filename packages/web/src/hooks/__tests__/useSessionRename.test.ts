@@ -1,17 +1,6 @@
-/**
- * Tests for useSessionRename Hook
- *
- * Covers: startEditing seeds the draft; commit calls updateSession with the
- * trimmed title + titleSetBy metadata and applies the optimistic store update;
- * empty/unchanged draft is a no-op; Esc cancels and restores; a failed commit
- * rolls back the optimistic update and surfaces a toast error.
- */
-
 import { describe, it, expect, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/preact';
 
-// vi.hoisted so the mock factories (which vitest hoists above imports) can
-// reference stable mock functions.
 const mocks = vi.hoisted(() => ({
   updateSession: vi.fn(),
   globalStoreUpdate: vi.fn(),
@@ -30,7 +19,6 @@ vi.mock('../../lib/toast', () => ({ toast: { error: mocks.toastError } }));
 
 import { useSessionRename } from '../useSessionRename';
 
-// Lightweight synthetic-event builders (tests bypass strict Preact event types).
 const inputEvent = (value: string) => ({ currentTarget: { value } }) as any;
 const keyEvent = (key: string) =>
   ({ key, preventDefault: () => {}, stopPropagation: () => {} }) as any;
@@ -58,9 +46,6 @@ describe('useSessionRename', () => {
   });
 
   it('exposed commit is a no-op without an active edit, even after an external title change', async () => {
-    // The draft is seeded at mount; a title arriving later (e.g. auto-title
-    // generation) does NOT re-seed it. Hosts call commit() from panel-open
-    // paths, so it must not persist that stale draft as a user rename.
     const { result, rerender } = renderHook(({ title }) => useSessionRename('session-1', title), {
       initialProps: { title: 'Original' },
     });
@@ -90,11 +75,7 @@ describe('useSessionRename', () => {
     });
 
     expect(result.current.isEditing).toBe(false);
-    // Optimistic store update carries the new title only (metadata is merged on
-    // the backend; the store shallow-merges and would drop counts otherwise).
     expect(mocks.globalStoreUpdate).toHaveBeenCalledWith('session-1', { title: 'New Title' });
-    // Both stores update optimistically: chat rows read globalStore, space rows
-    // read spaceStore (which is otherwise fed only by the LiveQuery).
     expect(mocks.spaceStoreUpdate).toHaveBeenCalledWith('session-1', { title: 'New Title' });
     expect(mocks.updateSession).toHaveBeenCalledWith('session-1', {
       title: 'New Title',
@@ -148,7 +129,6 @@ describe('useSessionRename', () => {
     act(() => {
       result.current.startEditing();
     });
-    // Leave the draft as the current title.
     await act(async () => {
       result.current.inputProps.onKeyDown(keyEvent('Enter'));
     });
@@ -211,7 +191,6 @@ describe('useSessionRename', () => {
     });
 
     expect(result.current.isEditing).toBe(false);
-    // Optimistic write, then rollback to the original title — in both stores.
     expect(mocks.globalStoreUpdate).toHaveBeenNthCalledWith(1, 'session-1', {
       title: 'New Title',
     });

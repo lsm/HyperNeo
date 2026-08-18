@@ -1,10 +1,3 @@
-/**
- * CanvasToolbar
- *
- * A small floating toolbar positioned at the bottom-right of the canvas
- * that provides zoom controls and a fit-to-view button.
- */
-
 import type { NodePosition, ViewportState } from './types';
 import { MIN_SCALE, MAX_SCALE } from './VisualCanvas';
 
@@ -12,12 +5,6 @@ export const ZOOM_STEP = 0.25;
 export const FIT_PADDING = 40;
 const MAX_FIT_SCALE = 1;
 
-/**
- * Compute a ViewportState that centers and fits all nodes inside the viewport
- * with the given padding on each side.
- *
- * Returns the current viewport unchanged when there are no nodes.
- */
 export function computeFitToView(
   nodes: NodePosition,
   viewportWidth: number,
@@ -52,7 +39,6 @@ export function computeFitToView(
   const scale = Math.min(scaleX, scaleY, MAX_FIT_SCALE, MAX_SCALE);
   const clampedScale = Math.max(MIN_SCALE, scale);
 
-  // Center the nodes in the viewport
   const scaledW = nodesW * clampedScale;
   const scaledH = nodesH * clampedScale;
   const offsetX = (viewportWidth - scaledW) / 2 - minX * clampedScale;
@@ -78,7 +64,6 @@ export function CanvasToolbar({
 }: CanvasToolbarProps) {
   const handleZoomIn = () => {
     const newScale = Math.min(MAX_SCALE, viewport.scale + ZOOM_STEP);
-    // Zoom toward center of viewport
     const cx = viewportWidth / 2;
     const cy = viewportHeight / 2;
     const ratio = newScale / viewport.scale;

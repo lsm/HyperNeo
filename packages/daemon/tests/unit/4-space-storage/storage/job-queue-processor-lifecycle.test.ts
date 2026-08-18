@@ -1,20 +1,3 @@
-/**
- * JobQueueProcessor Lifecycle Integration Tests
- *
- * Verifies behavioral contracts that the app-level wiring depends on.
- * Tests in this file are complementary to `job-queue-processor.test.ts`:
- * - That file covers individual unit behaviors (tick, register, handler success/failure, etc.)
- * - This file covers orchestration contracts: lifecycle sequencing, the full retry-to-dead
- *   sequence, edge-case error coercion, and the precise intermediate state produced by
- *   stale reclamation before a handler picks the job back up.
- *
- * Not covered here (see `job-queue-processor.test.ts` for those):
- * - Single-step retry / dead transitions
- * - Individual notifier call assertions
- * - Eager reclamation smoke test (covered in the existing eager-stale-reclamation suite)
- * - Concurrency limit enforcement
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
@@ -61,13 +44,8 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
     db.close();
   });
 
-  // ─── Eager stale reclamation — synchronous contract ───────────────────────
-
   describe('eager stale reclamation on start()', () => {
     it('reclaimStale() is called synchronously inside start(), before any interval tick fires', () => {
-      // The contract: start() calls reclaimStale() before setting up the interval,
-      // so crash-recovery is instant. Verify the call is synchronous by checking the
-      // count *immediately* after start() returns, before any await.
       const reclaimTimestamps: number[] = [];
       const original = repo.reclaimStale.bind(repo);
       repo.reclaimStale = (staleBefore: number) => {
@@ -79,32 +57,21 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
       processor.start();
       const after = Date.now();
 
-      // reclaimStale must have fired at least once, and it must have happened
-      // within the synchronous window of start().
       expect(reclaimTimestamps.length).toBeGreaterThanOrEqual(1);
       expect(reclaimTimestamps[0]).toBeGreaterThanOrEqual(before);
-      expect(reclaimTimestamps[0]).toBeLessThanOrEqual(after + 5); // +5 ms tolerance
+      expect(reclaimTimestamps[0]).toBeLessThanOrEqual(after + 5);
     });
   });
 
-  // ─── stop() drains in-flight jobs ─────────────────────────────────────────
-
   describe('stop() drains in-flight jobs', () => {
     it('resolves immediately when there are no in-flight jobs at stop() time', async () => {
-      // Distinct from "stop() resolves after in-flight jobs complete" in the existing file.
-      // Verifies the fast path: inFlight === 0 → resolve() is called synchronously.
       processor.start();
-      // No jobs enqueued — inFlight stays 0.
       await expect(processor.stop()).resolves.toBeUndefined();
     });
   });
 
-  // ─── Full error → retry → dead sequence ───────────────────────────────────
-
   describe('error → retry → dead full sequence', () => {
     it('exhausts retries across multiple tick() calls and marks the job dead', async () => {
-      // maxRetries=1 means: failure 1 → pending (retryCount=1), failure 2 → dead.
-      // The existing file tests single-step (one failure); this test drives the full sequence.
       let failCount = 0;
       const multiStepProcessor = new JobQueueProcessor(repo, {
         pollIntervalMs: 5000,
@@ -117,17 +84,14 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
 
       const job = repo.enqueue({ queue: 'exhaust-q', payload: {}, maxRetries: 1 });
 
-      // First attempt: retryCount 0 → 1, status → pending (with delayed run_at).
       await multiStepProcessor.tick();
       await flush();
 
       expect(repo.getJob(job.id)?.status).toBe('pending');
       expect(repo.getJob(job.id)?.retryCount).toBe(1);
 
-      // Override run_at so the retried job is immediately eligible.
       db.prepare(`UPDATE job_queue SET run_at = ? WHERE id = ?`).run(Date.now() - 1, job.id);
 
-      // Second attempt: retryCount 1 === maxRetries 1 → dead.
       await multiStepProcessor.tick();
       await flush();
 
@@ -139,8 +103,6 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
     });
 
     it('converts non-Error throws to string for the error field', async () => {
-      // The processor catches any thrown value and uses err instanceof Error ? err.message : String(err).
-      // Verify that a plain-string throw is stored correctly.
       processor.register('str-throw-q', async () => {
         // eslint-disable-next-line @typescript-eslint/only-throw-error
         throw 'plain string error';
@@ -156,8 +118,6 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
     });
   });
 
-  // ─── setChangeNotifier — status-transition coverage ───────────────────────
-
   describe('setChangeNotifier status transitions', () => {
     it('notifier receives "job_queue" for all status transitions: completed, retried, dead', async () => {
       const tables: string[] = [];
@@ -167,15 +127,8 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
       processor.register('notify-q', async () => {
         callCount++;
         if (callCount < 3) throw new Error('transient');
-        // Third call succeeds.
       });
 
-      // maxRetries=2 → failure 1 → pending, failure 2 → pending, failure 3 → WAIT,
-      // actually maxRetries=2 means: retryCount goes 0→1→2, and on the 3rd failure
-      // retryCount(2) === maxRetries(2) → dead.
-      // So: tick1 → fail → pending (notifier), tick2 → fail → pending (notifier),
-      //     tick3 → fail → dead (notifier)
-      // We test with maxRetries=0 for simplicity (one call → dead) to verify the table name.
       tables.length = 0;
       callCount = 0;
 
@@ -187,7 +140,6 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
       expect(tables.length).toBeGreaterThan(0);
       expect(tables.every((t) => t === 'job_queue')).toBe(true);
 
-      // Also verify for a successful job.
       tables.length = 0;
       processor.register('notify-ok-q', async () => {});
       const okJob = repo.enqueue({ queue: 'notify-ok-q', payload: {} });
@@ -240,15 +192,8 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
     });
   });
 
-  // ─── Stale reclamation — intermediate pending state ────────────────────────
-
   describe("stale reclamation is scoped to the processor's registered queues", () => {
     it("a non-owner processor does not reclaim another processor's lane; the owner reclaims AND aborts", async () => {
-      // Two processors share one repository (app.ts wires a general + delivery
-      // processor over the same DB). A stale sweep by the NON-owner would flip
-      // the row to pending while the owner's handler keeps running (the
-      // non-owner holds no cancellation record), overlapping a replacement
-      // claim. The sweep must stay within lanes the processor registered.
       const abortedClaims: string[] = [];
       let releaseSecond!: () => void;
       const manualRelease = new Promise<void>((resolve) => {
@@ -257,10 +202,6 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
 
       const delivery = new JobQueueProcessor(repo, {
         pollIntervalMs: 5000,
-        // Large threshold keeps the heartbeat lease (threshold/3) far outside
-        // the test's wall-clock so only the forced stale check runs. Two
-        // slots so the reclaim tick has a SPARE slot — proving the replacement
-        // claim is deferred by the settling exclusion, not by slot pressure.
         maxConcurrent: 2,
         staleThresholdMs: 60_000,
       });
@@ -304,7 +245,6 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
       expect(repo.getJob(job.id)?.status).toBe('processing');
       expect(firstClaim).toBeTruthy();
 
-      // Age the lease past the stale threshold.
       const staleLease = Date.now() - 120_000;
       db.prepare(`UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?`).run(
         staleLease,
@@ -312,25 +252,16 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
         job.id
       );
 
-      // The NON-owner ticks: its stale check runs (fresh lastStaleCheck) but is
-      // scoped to its own lanes — the delivery row must stay claimed.
       await general.tick();
       expect(repo.getJob(job.id)?.status).toBe('processing');
       expect(repo.getJob(job.id)?.claimToken).toBe(firstClaim);
       expect(abortedClaims).toEqual([]);
 
-      // The owner ticks: reclaims its lane and aborts the exact old handler.
-      // Its first tick set lastStaleCheck, so force the check window open.
       (delivery as unknown as { lastStaleCheck: number }).lastStaleCheck = 0;
       await delivery.tick();
       expect(abortedClaims).toEqual([job.id]);
-      // The aborting handler has NOT settled yet — the just-reclaimed row must
-      // stay pending through this tick's dequeue pass even though a spare slot
-      // exists (maxConcurrent 2), so the replacement never overlaps it.
       expect(repo.getJob(job.id)?.status).toBe('pending');
 
-      // Once the aborted handler settles, the exclusion lifts and the next
-      // tick claims the row under a NEW claim token.
       await flush();
       await delivery.tick();
       const after = repo.getJob(job.id);
@@ -347,9 +278,6 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
 
   describe('settling deferral is bounded for non-cancellable handlers', () => {
     it('honors a per-processor settlementGraceMs longer than the default', async () => {
-      // message_delivery's abort path can await a 30s provider-owned
-      // acknowledgment before settling, so its replacement deferral must be
-      // configured beyond that bound (default is 10s).
       const delivery = new JobQueueProcessor(repo, {
         pollIntervalMs: 5000,
         maxConcurrent: 2,
@@ -383,18 +311,11 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
     });
 
     it('lifts the replacement exclusion once the settlement grace expires', async () => {
-      // A handler that never observes its abort signal (e.g. a lane handler
-      // registered without consuming JobHandlerContext.signal) never settles,
-      // so its finally never lifts the exclusion. The grace expiry must let
-      // the replacement proceed anyway — no starvation until daemon restart.
-      // maxConcurrent 1 (fully saturated by the wedged handler) also proves the
-      // expiry evicts the wedged claim's SLOT, not just the dequeue exclusion.
       const delivery = new JobQueueProcessor(repo, {
         pollIntervalMs: 5000,
         maxConcurrent: 1,
         staleThresholdMs: 60_000,
       });
-      // Never settles and ignores the abort signal entirely.
       delivery.register('message_delivery', () => new Promise(() => {}));
 
       const job = repo.enqueue({
@@ -414,11 +335,8 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
       );
       (delivery as unknown as { lastStaleCheck: number }).lastStaleCheck = 0;
       await delivery.tick();
-      // Reclaimed → pending, and the never-settling predecessor holds the
-      // exclusion; no re-claim in this tick.
       expect(repo.getJob(job.id)?.status).toBe('pending');
 
-      // Simulate the grace elapsing without waiting 10s of wall-clock.
       const map = (
         delivery as unknown as {
           settlingReclaimedJobIds: Map<string, { claimToken: string | null; expireAt: number }>;
@@ -433,18 +351,12 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
     });
 
     it('stop() drains a live handler whose admission slot was evicted', async () => {
-      // Codex P2 (PR #2499): grace-expiry slot eviction releases the ADMISSION
-      // counter so a replacement can claim capacity, but the abort-ignoring
-      // predecessor is still running. stop() must drain on the LIVE handler
-      // count — not the admission counter — or teardown proceeds while the
-      // predecessor can still hydrate a session / touch resources.
       const releases: Array<() => void> = [];
       const delivery = new JobQueueProcessor(repo, {
         pollIntervalMs: 5000,
         maxConcurrent: 1,
         staleThresholdMs: 60_000,
       });
-      // Ignores the abort signal until explicitly released.
       delivery.register(
         'message_delivery',
         () => new Promise((resolve) => releases.push(() => resolve({ outcome: 'settled' })))
@@ -459,8 +371,6 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
       const firstClaim = repo.getJob(job.id)?.claimToken;
       expect(firstClaim).toBeTruthy();
 
-      // Go stale → reclaim (deferring the replacement) → expire the grace so the
-      // wedged predecessor's admission slot is evicted while it still runs.
       const staleLease = Date.now() - 120_000;
       db.prepare(`UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?`).run(
         staleLease,
@@ -476,11 +386,9 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
       ).settlingReclaimedJobIds;
       map.set(job.id, { claimToken: firstClaim, expireAt: Date.now() - 1 });
       await delivery.tick();
-      // The replacement claimed the row — capacity was freed by slot eviction.
       expect(repo.getJob(job.id)?.status).toBe('processing');
       expect(repo.getJob(job.id)?.claimToken).not.toBe(firstClaim);
 
-      // The evicted predecessor is still live, so stop() must NOT resolve yet.
       let resolved = false;
       const stopPromise = delivery.stop().then(() => {
         resolved = true;
@@ -488,17 +396,12 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
       await new Promise((resolve) => setTimeout(resolve, 80));
       expect(resolved).toBe(false);
 
-      // Release both handlers → live count drains → stop() resolves.
       releases.forEach((release) => release());
       await stopPromise;
       expect(resolved).toBe(true);
     });
 
     it('does not regress the delivery lifecycle stage on out-of-order reports', async () => {
-      // Codex P2 (PR #2499): a fast cold-start init/history frame records
-      // first_sdk_response before the driving attempt reports query_ready /
-      // sdk_admitted; the later reports must not move the tracked stage
-      // backward or emit the lifecycle events out of order.
       const delivery = new JobQueueProcessor(repo, { pollIntervalMs: 5000, maxConcurrent: 1 });
       delivery.register('message_delivery', (_job, context) => {
         context?.reportStage?.('first_sdk_response', { responseType: 'assistant' });
@@ -520,10 +423,6 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
     });
 
     it('excludes slot-evicted records from filtered admission counts', async () => {
-      // Codex P2 (PR #2499): after grace expiry evicts a wedged predecessor's
-      // slot and admits its replacement, both records stay live. The
-      // queue-filtered snapshot must report the ADMITTED capped count (1),
-      // matching tick()'s budget, while inFlightTotal still shows both.
       const delivery = new JobQueueProcessor(repo, {
         pollIntervalMs: 5000,
         maxConcurrent: 1,
@@ -540,8 +439,6 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
       const firstClaim = repo.getJob(job.id)?.claimToken;
       expect(firstClaim).toBeTruthy();
 
-      // Go stale → reclaim (defers the replacement) → expire the grace so the
-      // wedged predecessor's slot is evicted and the replacement is admitted.
       const staleLease = Date.now() - 120_000;
       db.prepare(`UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?`).run(
         staleLease,
@@ -566,16 +463,7 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
     });
 
     it('a late-settling earlier attempt does not lift the replacement deferral', async () => {
-      // Attempt A goes stale and its grace expires → attempt B claims the row.
-      // B then ALSO goes stale and is aborted, installing B's own deferral. If
-      // A finally settles now, its processJob finally must NOT clear B's
-      // deferral (the old unconditional delete did) — otherwise the next tick
-      // claims attempt C while B's handler is still settling, recreating the
-      // overlap the deferral exists to prevent.
       const settledCount = { value: 0 };
-      // Each invocation gets its OWN held promise: release[i]() settles only
-      // attempt i, and handlers never observe the abort signal — exactly the
-      // wedged-handler shape the claim-token match must defend against.
       const releases: Array<() => void> = [];
       const delivery = new JobQueueProcessor(repo, {
         pollIntervalMs: 5000,
@@ -606,19 +494,15 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
         (delivery as unknown as { lastStaleCheck: number }).lastStaleCheck = 0;
       };
 
-      // Attempt A claims and runs (held).
       await delivery.tick();
       await new Promise((resolve) => setTimeout(resolve, 10));
       const claimA = repo.getJob(job.id)?.claimToken;
       expect(claimA).toBeTruthy();
 
-      // A goes stale → reclaimed + aborted, deferral(A) installed. A ignores
-      // the abort (only the manual release settles it).
       ageStale();
       await delivery.tick();
       expect(repo.getJob(job.id)?.status).toBe('pending');
 
-      // Grace(A) expires → attempt B claims under a new token.
       const map = (
         delivery as unknown as {
           settlingReclaimedJobIds: Map<string, { claimToken: string | null; expireAt: number }>;
@@ -630,26 +514,20 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
       expect(claimB).toBeTruthy();
       expect(claimB).not.toBe(claimA);
 
-      // B ALSO goes stale → reclaimed + aborted → deferral(B) installed.
       ageStale();
       await delivery.tick();
       expect(repo.getJob(job.id)?.status).toBe('pending');
       expect(map.get(job.id)?.claimToken).toBe(claimB);
 
-      // A finally settles — its finally runs with A's claim token. The
-      // deferral keyed to B must survive so no claim C overlaps B.
       releases[0]();
       await flush();
-      expect(settledCount.value).toBe(1); // only attempt A settled
+      expect(settledCount.value).toBe(1);
       expect(map.has(job.id)).toBe(true);
       expect(map.get(job.id)?.claimToken).toBe(claimB);
 
-      // And the next tick still defers the row (B has not settled).
       await delivery.tick();
       expect(repo.getJob(job.id)?.status).toBe('pending');
 
-      // B settles under its own token → its finally lifts the deferral and the
-      // next claim (C) proceeds.
       releases[1]();
       await flush();
       expect(map.has(job.id)).toBe(false);
@@ -660,9 +538,6 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
 
   describe('stale job reclamation — ordering contract', () => {
     it('reclaimStale() resets the job to pending before the handler picks it up', async () => {
-      // The contract: reclaimStale transitions the job pending, THEN the next dequeue
-      // picks it up. Verify the intermediate state is exactly 'pending' at the moment
-      // reclaimStale returns, not 'completed'.
       const job = repo.enqueue({ queue: 'reclaim-order-q', payload: {} });
       repo.dequeue('reclaim-order-q', 1);
       const staleLease = Date.now() - 30_000;
@@ -676,7 +551,6 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
       const original = repo.reclaimStale.bind(repo);
       repo.reclaimStale = (staleBefore: number) => {
         const count = original(staleBefore);
-        // Capture the job status immediately after reclaimStale updates the DB.
         statusAtReclaim = repo.getJob(job.id)?.status;
         return count;
       };
@@ -687,21 +561,15 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
       });
       staleProcessor.register('reclaim-order-q', async () => {});
 
-      // tick() calls checkStaleJobs (lastStaleCheck=0 → runs) then dequeues.
       await staleProcessor.tick();
       await flush();
       await staleProcessor.stop();
 
-      // At the moment reclaimStale returned, status must be 'pending' (not yet completed).
       expect(statusAtReclaim).toBe('pending');
-      // After the full tick and flush, the job is processed to completion.
       expect(repo.getJob(job.id)?.status).toBe('completed');
     });
 
     it('stale check is skipped on the second tick within the same 60 s window', async () => {
-      // After start() sets lastStaleCheck = Date.now(), the first tick() via
-      // the interval will see (now - lastStaleCheck < 60_000) = true → skip.
-      // We replicate this by calling start(), then immediately ticking manually.
       let reclaimCallCount = 0;
       const original = repo.reclaimStale.bind(repo);
       repo.reclaimStale = (staleBefore: number) => {
@@ -711,15 +579,12 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
 
       processor.register('throttle-q', async () => {});
 
-      // start() calls reclaimStale() eagerly and sets lastStaleCheck = Date.now().
       processor.start();
       const countAfterStart = reclaimCallCount;
       expect(countAfterStart).toBeGreaterThanOrEqual(1);
 
-      // A tick() fired immediately after start() (within the same second) must NOT
-      // run the stale check again — lastStaleCheck was just updated.
       await processor.tick();
-      expect(reclaimCallCount).toBe(countAfterStart); // no additional reclaim calls
+      expect(reclaimCallCount).toBe(countAfterStart);
     });
   });
 });

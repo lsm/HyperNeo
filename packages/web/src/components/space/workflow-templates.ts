@@ -1,12 +1,3 @@
-/**
- * workflow-templates.ts
- *
- * Shared utility types and functions for building workflow templates and node
- * drafts. Extracted from WorkflowEditor.tsx so they can be used by both the
- * visual editor (VisualWorkflowEditor.tsx) and any future editors without
- * pulling in the full legacy component.
- */
-
 import type {
   DeclarativeToolGuard,
   HandoffTransition,
@@ -19,90 +10,45 @@ import type {
 import { generateUUID } from '@hyperneo/shared';
 import type { NodeDraft } from './WorkflowNodeCard';
 
-// ============================================================================
-// Template Definitions
-// ============================================================================
-
 export interface WorkflowTemplate {
   label: string;
   description: string;
-  /** Template start node name. */
   startStepName?: string;
-  /** Template end node name. */
   endStepName?: string;
-  /** Legacy shorthand for single-agent linear templates. */
-  stepRoles?: string[]; // agent role names to look up from agent list
-  /** Rich step definitions for multi-agent templates. */
+  stepRoles?: string[];
   steps?: WorkflowTemplateStep[];
-  /** Optional workflow-level channels to seed with the template. */
   channels?: WorkflowChannel[];
-  /** Optional workflow hooks to seed with the template. */
   hooks?: import('@hyperneo/shared').WorkflowHook[];
-  /** Optional tags to seed with the template. */
   tags?: string[];
-  /** Legacy workflow-level post-approval route; migrated onto the end node when loaded. */
   postApproval?: PostApprovalRoute;
 }
 
 export interface WorkflowTemplateStep {
-  /** Display name for the node. */
   name: string;
-  /** Single-agent role/name lookup key. Ignored when agentSlots is provided. */
   role?: string;
-  /** Explicit agent ID to use (skips role lookup when set). */
   agentId?: string;
-  /** Multi-agent slot definitions for parallel node execution. */
   agentSlots?: WorkflowTemplateAgentSlot[];
-  /** Optional default node system prompt. */
   systemPrompt?: string;
-  /** Optional model override for single-agent templates. */
   model?: string;
-  /** Optional thinking-level override for single-agent templates. */
   thinkingLevel?: import('@hyperneo/shared').ThinkingLevel;
-  /** Optional default node instructions. */
   instructions?: string;
-  /** Per-slot fresh-context flag (clear model context each handoff). */
   resetContextPerTurn?: boolean;
-  /** Optional post-approval route triggered when this node approves the task. */
   postApproval?: PostApprovalRoute;
-  /**
-   * Per-agent declarative tool guards for single-agent nodes (e.g. the coder's
-   * raw-merge blocker). Preserved through workflowToTemplate → buildTemplateNodes
-   * so cloned built-in templates keep their runtime enforcement.
-   */
   toolGuards?: DeclarativeToolGuard[];
-  /**
-   * Declared outbound handoff transitions. Preserved through workflowToTemplate
-   * → buildTemplateNodes so a workflow cloned via the template picker keeps its
-   * handoff contract (gates/hooks/channels already clone).
-   */
   handoffTransitions?: HandoffTransition[];
 }
 
 export interface WorkflowTemplateAgentSlot {
-  /** Unique slot name inside the node (e.g. "Reviewer 1"). */
   name: string;
-  /** Agent role/name lookup key used to assign the slot. */
   role: string;
-  /** Explicit agent ID to use for this slot (skips role lookup when set). */
   agentId?: string;
-  /** Optional model override for this slot. */
   model?: string;
-  /** Optional thinking-level override for this slot. */
   thinkingLevel?: import('@hyperneo/shared').ThinkingLevel;
-  /** Optional default slot system prompt. */
   systemPrompt?: string;
-  /** Optional default slot instructions. */
   instructions?: string;
-  /** Per-slot fresh-context flag (clear model context each handoff). */
   resetContextPerTurn?: boolean;
-  /** Per-slot declarative tool guards (mirrors WorkflowNodeAgent.toolGuards). */
   toolGuards?: DeclarativeToolGuard[];
 }
-
-// ============================================================================
-// Private helpers
-// ============================================================================
 
 function makeLocalId(): string {
   return generateUUID();
@@ -152,8 +98,6 @@ function resolveTemplateAgent(
 
   if (matches.length === 0) return undefined;
 
-  // Prefer distinct matches for repeated slots of the same role, then fall back
-  // to the last available match if there are more slots than agents.
   const used = usageByRole.get(key) ?? 0;
   usageByRole.set(key, used + 1);
   return matches[Math.min(used, matches.length - 1)];
@@ -187,20 +131,10 @@ function extractInstructionText(
   return trimmed ? trimmed : undefined;
 }
 
-// ============================================================================
-// Public API
-// ============================================================================
-
-/**
- * Filter agents for step assignment: exclude any agent whose name or role is
- * 'leader' (case-insensitive). The 'leader' role is reserved for the
- * orchestration layer and must not be assigned to workflow steps.
- */
 export function filterAgents(agents: SpaceWorkerAgent[]): SpaceWorkerAgent[] {
   return agents.filter((a) => a.name.toLowerCase() !== 'leader');
 }
 
-/** Convert a persisted workflow into a template picker entry. */
 export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
   const startNodeName = workflow.nodes.find((node) => node.id === workflow.startNodeId)?.name;
   const endNodeName = workflow.nodes.find((node) => node.id === workflow.endNodeId)?.name;
@@ -258,19 +192,12 @@ export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
   };
 }
 
-/**
- * Convert daemon-provided built-in template workflows into editor template entries.
- */
 export function getAvailableTemplates(workflows: SpaceWorkflow[]): WorkflowTemplate[] {
   return workflows
     .map((workflow) => workflowToTemplate(workflow))
     .filter((template) => Boolean(template.startStepName?.trim() && template.endStepName?.trim()));
 }
 
-/**
- * Build workflow node drafts from a template definition.
- * Supports both legacy single-agent stepRoles and multi-agent steps.
- */
 export function buildTemplateNodes(
   template: WorkflowTemplate,
   agents: SpaceWorkerAgent[]
@@ -312,8 +239,6 @@ export function buildTemplateNodes(
         agents: agentSlots,
         customPrompt: step.systemPrompt?.trim() ? { value: step.systemPrompt.trim() } : undefined,
         postApproval: step.postApproval ? { ...step.postApproval } : undefined,
-        // Seed the sticky step-level field so the post-approval toggle cannot
-        // drop the hidden merge gate on a template-picker draft.
         requirePrMerge: step.postApproval?.requirePrMerge === true ? true : undefined,
         ...(step.handoffTransitions?.length
           ? { handoffTransitions: step.handoffTransitions.map((t) => ({ ...t })) }
@@ -353,15 +278,10 @@ export function buildTemplateNodes(
             : {}),
         },
       ],
-      // Step-level model/thinkingLevel/customPrompt left undefined to avoid
-      // duplicating slot values. The NodeConfigPanel fallback
-      // (slot.field ?? step.field) reads from the slot when present.
       model: undefined,
       thinkingLevel: undefined,
       customPrompt: undefined,
       postApproval: step.postApproval ? { ...step.postApproval } : undefined,
-      // Seed the sticky step-level field so the post-approval toggle cannot
-      // drop the hidden merge gate on a template-picker draft.
       requirePrMerge: step.postApproval?.requirePrMerge === true ? true : undefined,
       ...(step.handoffTransitions?.length
         ? { handoffTransitions: step.handoffTransitions.map((t) => ({ ...t })) }

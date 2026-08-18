@@ -1,20 +1,3 @@
-/**
- * SettingsManager Tests
- *
- * Unit tests for global settings management plus the file-only settings
- * writer.
- *
- * NOTE: Legacy per-server MCP helpers (`toggleMcpServer`,
- * `getDisabledMcpServers`, `setDisabledMcpServers`, `getMcpServerSettings`,
- * `updateMcpServerSettings`) and the `extractSDKOptions` derivation were
- * removed in M5 of `unify-mcp-config-model`. Their tests are gone with them.
- * The file-only writer also no longer writes `disabledMcpjsonServers` /
- * `enabledMcpjsonServers` / `enableAllProjectMcpServers` — MCP enablement
- * flows through the unified `app_mcp_servers` registry + `mcp_enablement`
- * overrides table, and `QueryOptionsBuilder` always emits `settingSources: []`
- * so the SDK never reads those keys back.
- */
-
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { writeFileSync, readFileSync, mkdirSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -32,20 +15,16 @@ describe('SettingsManager', () => {
   let originalEnv: string | undefined;
 
   beforeEach(() => {
-    // Create temp directories
     tempDir = join(tmpdir(), `settings-test-${Date.now()}`);
     workspacePath = join(tempDir, 'workspace');
     mkdirSync(workspacePath, { recursive: true });
 
-    // Save original env
     originalEnv = process.env.TEST_USER_SETTINGS_DIR;
 
-    // Create isolated user settings dir
     const userSettingsDir = join(tempDir, 'user-settings');
     mkdirSync(userSettingsDir, { recursive: true });
     process.env.TEST_USER_SETTINGS_DIR = userSettingsDir;
 
-    // Mock Database
     mockDb = {
       getGlobalSettings: mock(() => ({ ...DEFAULT_GLOBAL_SETTINGS })),
       updateGlobalSettings: mock((updates: Partial<GlobalSettings>) => ({
@@ -59,14 +38,12 @@ describe('SettingsManager', () => {
   });
 
   afterEach(() => {
-    // Restore original env
     if (originalEnv !== undefined) {
       process.env.TEST_USER_SETTINGS_DIR = originalEnv;
     } else {
       delete process.env.TEST_USER_SETTINGS_DIR;
     }
 
-    // Cleanup temp directory
     try {
       rmSync(tempDir, { recursive: true, force: true });
     } catch {
@@ -116,8 +93,6 @@ describe('SettingsManager', () => {
 
   describe('prepareSDKOptions', () => {
     it('writes file-only settings without returning SDK options', async () => {
-      // `prepareSDKOptions` no longer derives any SDK options (M5). It
-      // just writes file-only settings. The return value is `void`.
       const result = await settingsManager.prepareSDKOptions();
       expect(result).toBeUndefined();
     });
@@ -130,14 +105,8 @@ describe('SettingsManager', () => {
     });
 
     it('does NOT write legacy MCP enablement keys (M5)', async () => {
-      // Even when (legacy) MCP-related fields are present on settings,
-      // they must never appear in `.claude/settings.local.json` — the
-      // unified `app_mcp_servers` registry owns enablement now.
       (mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
         ...DEFAULT_GLOBAL_SETTINGS,
-        // Cast through unknown so leftover legacy fields can be
-        // asserted-against in tests without the type signature
-        // allowing them to be set in source code.
       } as GlobalSettings);
 
       await settingsManager.prepareSDKOptions();
@@ -159,7 +128,6 @@ describe('SettingsManager', () => {
     });
 
     it('should read existing settings file', () => {
-      // Create settings file
       const settingsDir = join(workspacePath, '.claude');
       mkdirSync(settingsDir, { recursive: true });
       const settingsPath = join(settingsDir, 'settings.local.json');
@@ -178,7 +146,6 @@ describe('SettingsManager', () => {
     });
 
     it('should handle malformed JSON gracefully', () => {
-      // Create malformed settings file
       const settingsDir = join(workspacePath, '.claude');
       mkdirSync(settingsDir, { recursive: true });
       const settingsPath = join(settingsDir, 'settings.local.json');
@@ -285,7 +252,6 @@ describe('SettingsManager', () => {
     });
 
     it('should filter sources based on settingSources', () => {
-      // Create user settings
       const userSettingsDir = process.env.TEST_USER_SETTINGS_DIR!;
       writeFileSync(
         join(userSettingsDir, 'settings.json'),
@@ -294,7 +260,6 @@ describe('SettingsManager', () => {
         })
       );
 
-      // Create project settings
       const projectSettingsDir = join(workspacePath, '.claude');
       mkdirSync(projectSettingsDir, { recursive: true });
       writeFileSync(
@@ -304,7 +269,6 @@ describe('SettingsManager', () => {
         })
       );
 
-      // Only enable project source
       (mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
         ...DEFAULT_GLOBAL_SETTINGS,
         settingSources: ['project'] as SettingSource[],
@@ -318,7 +282,6 @@ describe('SettingsManager', () => {
     });
 
     it('should read from .mcp.json files', () => {
-      // Create project .mcp.json
       const projectMcpPath = join(workspacePath, '.mcp.json');
       writeFileSync(
         projectMcpPath,
@@ -353,7 +316,6 @@ describe('SettingsManager', () => {
         settingSources: ['project'],
       });
 
-      // Should not throw
       const result = settingsManager.listMcpServersFromSources();
       expect(result.project).toEqual([]);
     });
@@ -419,7 +381,6 @@ describe('SettingsManager', () => {
     });
 
     it('should preserve existing settings not managed by HyperNeo', async () => {
-      // Create existing settings file with custom settings
       const settingsDir = join(workspacePath, '.claude');
       mkdirSync(settingsDir, { recursive: true });
       const settingsPath = join(settingsDir, 'settings.local.json');
@@ -502,7 +463,6 @@ describe('SettingsManager', () => {
     });
 
     it('should skip sources excluded from global settingSources', () => {
-      // Disable project source
       (mockDb.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
         ...DEFAULT_GLOBAL_SETTINGS,
         settingSources: ['user', 'local'],
@@ -541,7 +501,6 @@ describe('SettingsManager', () => {
     });
 
     it('should read MCP servers from user settings.json', () => {
-      // TEST_USER_SETTINGS_DIR points to the isolated user settings dir
       const userSettingsPath = join(process.env.TEST_USER_SETTINGS_DIR!, 'settings.json');
       writeFileSync(
         userSettingsPath,
@@ -574,7 +533,6 @@ describe('SettingsManager', () => {
     });
 
     it('project source overrides user source for same server name', () => {
-      // User has a server named 'shared-tool'
       const userSettingsPath = join(process.env.TEST_USER_SETTINGS_DIR!, 'settings.json');
       writeFileSync(
         userSettingsPath,
@@ -585,7 +543,6 @@ describe('SettingsManager', () => {
         })
       );
 
-      // Project overrides 'shared-tool' with a different command
       const settingsDir = join(workspacePath, '.claude');
       mkdirSync(settingsDir, { recursive: true });
       writeFileSync(

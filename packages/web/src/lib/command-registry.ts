@@ -1,26 +1,8 @@
-/**
- * Command registry for the global command palette.
- *
- * Commands are pure metadata + a `run` handler. The registry exposes a
- * fuzzy-search helper that ranks commands by a lightweight subsequence score,
- * boosted by prefix matches on the label and category.
- *
- * Keep this module free of Preact / DOM imports so it can be unit-tested
- * without a happy-dom environment.
- */
-
 export type CommandCategory = 'session' | 'navigation' | 'space' | 'settings' | 'tools' | 'help';
 
 export interface CommandShortcut {
-  /**
-   * Physical key code (e.g. "KeyK", "Period", "Comma").
-   * Uses KeyboardEvent.code so shortcuts stay consistent across
-   * keyboard layouts/locales.
-   */
   code: string;
-  /** Require meta (⌘ on mac) OR ctrl */
   mod?: boolean;
-  /** Require shift in addition to mod */
   shift?: boolean;
 }
 
@@ -60,29 +42,19 @@ function isMacPlatform(): boolean {
 }
 
 function codeToLabel(code: string): string {
-  // Strip the "Key" prefix for letter keys (KeyK → K).
   if (code.startsWith('Key')) return code.slice(3);
-  // Keep common codes readable.
   if (code === 'Period') return '.';
   if (code === 'Comma') return ',';
   if (code === 'Slash') return '/';
   return code;
 }
 
-/** Generate a platform-aware display string for a shortcut. */
 export function formatShortcutDisplay(sc: CommandShortcut): string {
   const mod = isMacPlatform() ? '⌘' : 'Ctrl+';
   const shift = sc.shift ? (isMacPlatform() ? '⇧' : 'Shift+') : '';
   return `${mod}${shift}${codeToLabel(sc.code)}`;
 }
 
-/**
- * Subsequence-based fuzzy score.
- *
- * Returns a positive number when every character in `query` appears in
- * `haystack` in order (case-insensitive). Higher numbers = closer match.
- * Returns 0 for no match.
- */
 export function fuzzyScore(haystack: string, query: string): number {
   if (!query) return 1;
   const hay = haystack.toLowerCase();
@@ -94,7 +66,6 @@ export function fuzzyScore(haystack: string, query: string): number {
   if (wordStart >= 0) return Math.max(1, 400 - wordStart);
   if (hay.includes(needle)) return Math.max(1, 300 - hay.indexOf(needle));
 
-  // subsequence walk
   let hi = 0;
   let lastIdx = -1;
   let gaps = 0;
@@ -169,11 +140,6 @@ export class CommandRegistry {
     return Array.from(this.commands.values());
   }
 
-  /**
-   * Search for commands matching `query`. Empty query returns all commands
-   * in insertion order. Otherwise returns commands with score > 0 sorted by
-   * descending score, then by label.
-   */
   search(query: string): RankedCommand[] {
     const all = this.list();
     const trimmed = query.trim();
@@ -192,16 +158,6 @@ export class CommandRegistry {
     return ranked;
   }
 
-  /**
-   * Find a command that matches the given keyboard event via its shortcut.
-   * Returns undefined for commands without a registered shortcut.
-   *
-   * Matching is strict:
-   * - `mod` requires the platform-specific modifier (metaKey on macOS,
-   *   ctrlKey elsewhere) and rejects the opposite modifier.
-   * - `altKey` must be false for commands that do not declare `alt`.
-   * - `shiftKey` must match exactly.
-   */
   findByShortcut(event: KeyboardEvent): CommandDescriptor | undefined {
     const code = event.code;
     const isMac =
@@ -228,5 +184,4 @@ export class CommandRegistry {
   }
 }
 
-/** Singleton registry instance shared by the app. */
 export const commandRegistry = new CommandRegistry();

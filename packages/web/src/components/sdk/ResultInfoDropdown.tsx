@@ -1,16 +1,3 @@
-/**
- * ResultInfoDropdown Component
- *
- * Dropdown content showing the SDK `result` envelope for an agent exec
- * (usage tokens, cost, duration, num_turns, errors). Designed as the
- * symmetric counterpart to `MessageInfoDropdown` (system:init), so both
- * dropdowns hang off the same `SpaceTaskThreadMessageActions` row.
- *
- * Theme: emerald for success, amber for error subtypes — distinct from the
- * sky-blue init theme so users can tell the two affordances apart at a
- * glance. Layout mirrors `MessageInfoDropdown` (header → labelled rows →
- * footnote) for consistency.
- */
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 
 type ResultMessage = Extract<SDKMessage, { type: 'result' }>;
@@ -55,9 +42,6 @@ export function ResultInfoDropdown({ result }: Props) {
   const errors = (result as { errors?: string[] }).errors;
   const modelUsage = (result as { modelUsage?: Record<string, unknown> }).modelUsage;
 
-  // Theme tokens — emerald for success, amber for error subtypes. Single
-  // place to keep the "success/error" branch so the rest of the body just
-  // uses these consts and the two paths look identical to the eye.
   const t = isError
     ? {
         bg: 'bg-amber-50 dark:bg-amber-900/70',
@@ -83,7 +67,6 @@ export function ResultInfoDropdown({ result }: Props) {
       class={`w-80 max-h-[60vh] overflow-y-scroll ${t.bg} rounded-lg border ${t.border} p-3 space-y-3 shadow-2xl backdrop-blur-sm`}
       data-testid="result-info-dropdown"
     >
-      {/* Header */}
       <div class={`flex items-center gap-2 pb-2 border-b ${t.border}`}>
         <svg class={`w-4 h-4 ${t.icon}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
           {isError ? (
@@ -108,7 +91,6 @@ export function ResultInfoDropdown({ result }: Props) {
         </div>
       </div>
 
-      {/* Usage tokens */}
       <div>
         <div class={`text-xs font-medium ${t.headText} mb-1`}>Usage</div>
         <div class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
@@ -135,7 +117,6 @@ export function ResultInfoDropdown({ result }: Props) {
         </div>
       </div>
 
-      {/* Duration / turns / cost */}
       <div>
         <div class={`text-xs font-medium ${t.headText} mb-1`}>Run</div>
         <div class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
@@ -166,7 +147,6 @@ export function ResultInfoDropdown({ result }: Props) {
         </div>
       </div>
 
-      {/* Errors (only for error subtypes that carry an `errors` array) */}
       {isError && errors && errors.length > 0 && (
         <div>
           <div class={`text-xs font-medium ${t.headText} mb-1`}>Errors ({errors.length})</div>
@@ -183,9 +163,6 @@ export function ResultInfoDropdown({ result }: Props) {
         </div>
       )}
 
-      {/* modelUsage breakdown — collapsed key list. We don't deeply parse
-			    the per-model shape here because it varies; just surface the
-			    model names so the user knows which models contributed. */}
       {modelUsage && Object.keys(modelUsage).length > 0 && (
         <div>
           <div class={`text-xs font-medium ${t.headText} mb-1`}>
@@ -201,7 +178,6 @@ export function ResultInfoDropdown({ result }: Props) {
         </div>
       )}
 
-      {/* Footnote — stop reason. */}
       {stopReason && (
         <div
           class={`flex flex-wrap gap-x-3 gap-y-1 text-xs ${t.subText} pt-2 border-t ${t.border}`}

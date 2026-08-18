@@ -1,18 +1,5 @@
 // @ts-nocheck
 
-/**
- * Unit tests for EditTaskModal — the inline editor for task title,
- * description, and priority. Tests pin the contract that:
- *   - it only renders when `isOpen` is true
- *   - confirm forwards the edited fields (title trimmed, description trimmed)
- *   - confirm is disabled when no changes are made
- *   - confirm is disabled when title is empty after trimming
- *   - cancel fires `onCancel` and respects `busy`
- *   - `busy` disables all inputs and buttons
- *   - the form resets between opens (no stale values leak)
- *   - the `error` prop renders inline
- */
-
 import { cleanup, fireEvent, render } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EditTaskModal } from '../EditTaskModal';
@@ -124,7 +111,6 @@ describe('EditTaskModal', () => {
 
   it('confirm is disabled when only whitespace changes are made (semantic no-op)', () => {
     const { getByTestId } = renderModal();
-    // Add surrounding whitespace — after trim, value equals initial
     fireEvent.input(getByTestId('edit-task-title'), { target: { value: '  My Task  ' } });
     fireEvent.input(getByTestId('edit-task-description'), {
       target: { value: '  Do the thing  ' },
@@ -199,7 +185,6 @@ describe('EditTaskModal', () => {
     );
     fireEvent.input(getByTestId('edit-task-title'), { target: { value: 'Stale Title' } });
 
-    // Close
     rerender(
       <EditTaskModal
         isOpen={false}
@@ -209,7 +194,6 @@ describe('EditTaskModal', () => {
         {...DEFAULT_PROPS}
       />
     );
-    // Reopen — form should reset to initial values
     rerender(
       <EditTaskModal
         isOpen={true}
@@ -247,10 +231,8 @@ describe('EditTaskModal', () => {
         {...DEFAULT_PROPS}
       />
     );
-    // User types a new title
     fireEvent.input(getByTestId('edit-task-title'), { target: { value: 'My New Title' } });
 
-    // Simulate external update changing the initial title (e.g. space.task.updated event)
     rerender(
       <EditTaskModal
         isOpen={true}
@@ -263,7 +245,6 @@ describe('EditTaskModal', () => {
       />
     );
 
-    // User's edit should be preserved — not overwritten by the prop change
     const title = getByTestId('edit-task-title') as HTMLInputElement;
     expect(title.value).toBe('My New Title');
   });
@@ -281,7 +262,6 @@ describe('EditTaskModal', () => {
       />
     );
 
-    // Simulate external update changing the description while modal is open
     rerender(
       <EditTaskModal
         isOpen={true}
@@ -294,8 +274,6 @@ describe('EditTaskModal', () => {
       />
     );
 
-    // Confirm button should stay disabled — user made no local edits,
-    // and the baseline is frozen from modal-open time (same as local state).
     const confirm = getByTestId('edit-task-confirm') as HTMLButtonElement;
     expect(confirm.disabled).toBe(true);
   });

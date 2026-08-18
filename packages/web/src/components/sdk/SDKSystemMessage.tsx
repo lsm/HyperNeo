@@ -1,22 +1,3 @@
-/**
- * SDKSystemMessage Renderer
- *
- * Renders system messages:
- * - init: Session initialization with tools, models, permissions
- * - compact_boundary: Compaction metadata
- * - status: Status updates (compacting, etc.)
- * - hook_response: Hook execution results
- * - informational: Non-info level messages
- * - worker_shutting_down: Worker shutdown (live-tail only)
- * - model_refusal_fallback: Model fallback events
- * - task_notification: Subagent completion with usage
- * - memory_recall: Memory recall events
- * - local_command_output: Slash command output
- * - notification: Priority notifications
- * - files_persisted: File persistence failures (conditional)
- * - plugin_install: Plugin install status (conditional)
- */
-
 import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import type {
@@ -53,24 +34,18 @@ type SystemMessage = Extract<SDKMessage, { type: 'system' }>;
 interface Props {
   message: SystemMessage;
   isLiveTail?: boolean;
-  /** UUIDs of hook_started/hook_progress phases whose run reached
-   * hook_response in the same turn; gates the running spinner so historical
-   * phases don't look live. */
   completedHookUuids?: Set<string>;
 }
 
 export function SDKSystemMessage({ message, isLiveTail = false, completedHookUuids }: Props) {
-  // Init message - session started
   if (isSDKSystemInit(message)) {
     return <SystemInitMessage message={message} />;
   }
 
-  // Compact boundary - shows when message compaction occurred
   if (isSDKCompactBoundary(message)) {
     return <CompactBoundaryMessage message={message} />;
   }
 
-  // Status message
   if (isSDKStatusMessage(message)) {
     const statusMessage = message as SDKStatusMessage;
     if (statusMessage.status === 'compacting') {
@@ -90,12 +65,9 @@ export function SDKSystemMessage({ message, isLiveTail = false, completedHookUui
         </div>
       );
     }
-    return null; // Don't show null status
+    return null;
   }
 
-  // Hook started / progress — compact "running" card (hook_response has its own card below).
-  // A hook_id whose hook_response is already in the slice is history: render it
-  // settled instead of spinning so completed hooks don't look still-running.
   if (message.subtype === 'hook_started') {
     return (
       <HookRunningCard
@@ -115,76 +87,60 @@ export function SDKSystemMessage({ message, isLiveTail = false, completedHookUui
     );
   }
 
-  // Hook response
   if (isSDKHookResponse(message)) {
     const hookMessage = message as SDKHookResponseMessage;
     return <HookResponseCard message={hookMessage} />;
   }
 
-  // API retry message
   if (isSDKAPIRetryMessage(message)) {
     return <ApiRetryMessage message={message as SDKAPIRetryMessage} />;
   }
 
-  // Informational message - only render when level is not 'info'
   if (message.subtype === 'informational') {
     if ((message as SDKInformationalMessage).level === 'info') return null;
     return <InformationalMessage message={message as SDKInformationalMessage} />;
   }
 
-  // Worker shutting down - only render in live-tail mode
   if (message.subtype === 'worker_shutting_down' && isLiveTail) {
     return <WorkerShuttingDownMessage message={message as SDKWorkerShuttingDownMessage} />;
   }
 
-  // Model refusal fallback
   if (isSDKModelRefusalFallbackMessage(message)) {
     return <ModelRefusalFallbackMessage message={message} />;
   }
 
-  // Model refusal with no fallback configured — surface the refusal content
-  // so the user sees why the turn stopped (no retry ran).
   if (message.subtype === 'model_refusal_no_fallback') {
     return <ModelRefusalNoFallbackMessage message={message as SDKModelRefusalNoFallbackMessage} />;
   }
 
-  // Permission denied
   if (message.subtype === 'permission_denied') {
     return <PermissionDeniedMessage message={message as SDKPermissionDeniedMessage} />;
   }
 
-  // Task notification (subagent completion)
   if (message.subtype === 'task_notification') {
     return <TaskNotificationMessage message={message as SDKTaskNotificationMessage} />;
   }
 
-  // Memory recall
   if (message.subtype === 'memory_recall') {
     return <MemoryRecallMessage message={message as SDKMemoryRecallMessage} />;
   }
 
-  // Local command output
   if (message.subtype === 'local_command_output') {
     return <LocalCommandOutputMessage message={message as SDKLocalCommandOutputMessage} />;
   }
 
-  // Notification
   if (message.subtype === 'notification') {
     return <NotificationMessage message={message as SDKNotificationMessage} />;
   }
 
-  // Files persisted - only render on failure
   if (message.subtype === 'files_persisted') {
     const filesMsg = message as SDKFilesPersistedEvent;
-    if (filesMsg.failed.length === 0) return null; // Hide success = noise
+    if (filesMsg.failed.length === 0) return null;
     return <FilesPersistedMessage message={filesMsg} />;
   }
 
-  // Plugin install - render on failed/completed, hide started
   if (message.subtype === 'plugin_install') {
     const pluginMsg = message as SDKPluginInstallMessage;
-    // Hide 'started' (bracket open) and 'installed' (per-plugin success noise in
-    // multi-plugin syncs). Render only 'failed' and the terminal 'completed'.
     if (pluginMsg.status === 'started' || pluginMsg.status === 'installed') return null;
     return <PluginInstallMessage message={pluginMsg} />;
   }
@@ -280,10 +236,6 @@ function ModelRefusalNoFallbackMessage({ message }: { message: SDKModelRefusalNo
   );
 }
 
-/**
- * Permission Denied Message - Shows when a tool call is auto-denied by mode, rule, or canUseTool.
- * The SDK emits this when HyperNeo's permissionMode/disallowedTools config blocks a tool call.
- */
 function PermissionDeniedMessage({ message }: { message: SDKPermissionDeniedMessage }) {
   return (
     <div class="my-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-100">
@@ -302,9 +254,6 @@ function PermissionDeniedMessage({ message }: { message: SDKPermissionDeniedMess
   );
 }
 
-/**
- * Task Notification Message - Shows subagent completion with usage stats
- */
 function TaskNotificationMessage({ message }: { message: SDKTaskNotificationMessage }) {
   const isSuccess = message.status === 'completed';
   const isError = message.status === 'failed' || message.status === 'stopped';
@@ -336,9 +285,6 @@ function TaskNotificationMessage({ message }: { message: SDKTaskNotificationMess
   );
 }
 
-/**
- * Memory Recall Message - Shows surfaced memories
- */
 function MemoryRecallMessage({ message }: { message: SDKMemoryRecallMessage }) {
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -394,9 +340,6 @@ function MemoryRecallMessage({ message }: { message: SDKMemoryRecallMessage }) {
   );
 }
 
-/**
- * Local Command Output Message - Shows slash command output
- */
 function LocalCommandOutputMessage({ message }: { message: SDKLocalCommandOutputMessage }) {
   return (
     <div class="my-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900/30 dark:text-slate-100">
@@ -405,9 +348,6 @@ function LocalCommandOutputMessage({ message }: { message: SDKLocalCommandOutput
   );
 }
 
-/**
- * Notification Message - Priority notification banner
- */
 function NotificationMessage({ message }: { message: SDKNotificationMessage }) {
   const priorityColors = {
     low: 'border-blue-200 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-100',
@@ -429,9 +369,6 @@ function NotificationMessage({ message }: { message: SDKNotificationMessage }) {
   );
 }
 
-/**
- * Files Persisted Message - Shows file persistence failures
- */
 function FilesPersistedMessage({ message }: { message: SDKFilesPersistedEvent }) {
   return (
     <div class="my-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900 dark:border-red-800 dark:bg-red-950/30 dark:text-red-100">
@@ -456,9 +393,6 @@ function FilesPersistedMessage({ message }: { message: SDKFilesPersistedEvent })
   );
 }
 
-/**
- * Plugin Install Message - Shows plugin install status
- */
 function PluginInstallMessage({ message }: { message: SDKPluginInstallMessage }) {
   const isSuccess = message.status === 'completed' || message.status === 'installed';
   const isError = message.status === 'failed';
@@ -486,9 +420,6 @@ function PluginInstallMessage({ message }: { message: SDKPluginInstallMessage })
   );
 }
 
-/**
- * System Init Message - Shows session startup info
- */
 function SystemInitMessage({ message }: { message: Extract<SystemMessage, { subtype: 'init' }> }) {
   const [showDetails, setShowDetails] = useState(false);
 
@@ -624,18 +555,6 @@ function SystemInitMessage({ message }: { message: Extract<SystemMessage, { subt
   );
 }
 
-/**
- * Hook Response Card - Collapsible card for hook execution results
- * Matches the visual pattern of ToolResultCard (header button + chevron + expand/collapse).
- * Default collapsed since hooks are noise, not signal.
- */
-/**
- * Hook Running Card — compact indicator for hook_started / hook_progress.
- * Spinner + hook_name + hook_event + the latest stdout snippet. The terminal
- * hook_response renders via HookResponseCard instead. When `completed` is true
- * the hook already has a response in the slice, so this row is history and
- * renders a settled (non-animated) marker instead of a running spinner.
- */
 function HookRunningCard({
   message,
   progress,
@@ -692,11 +611,6 @@ function HookRunningCard({
   );
 }
 
-/**
- * A hook_started/hook_progress row is "completed" when its UUID is in the
- * turn-scoped completed set — its run reached hook_response in the same turn.
- * See useMessageMaps.completedHookUuids.
- */
 function isHookPhaseCompleted(
   message: { uuid?: string },
   completedHookUuids?: Set<string>
@@ -708,7 +622,6 @@ function isHookPhaseCompleted(
 function HookResponseCard({ message }: { message: SDKHookResponseMessage }) {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  // Muted slate/violet color scheme
   const colors = {
     bg: 'bg-slate-50 dark:bg-slate-900/30',
     border: 'border-slate-200 dark:border-slate-700',
@@ -717,19 +630,16 @@ function HookResponseCard({ message }: { message: SDKHookResponseMessage }) {
     iconColor: 'text-slate-500 dark:text-slate-400',
   };
 
-  // Truncated first line of stdout for summary
   const summary = message.stdout?.trim() ? message.stdout.split('\n')[0].slice(0, 80) : undefined;
 
   return (
     <div class="my-2">
       <div class={`border rounded-lg overflow-hidden ${colors.bg} ${colors.border}`}>
-        {/* Header - clickable to expand/collapse */}
         <button
           onClick={() => setIsExpanded(!isExpanded)}
           class="w-full flex items-center justify-between p-3 transition-colors hover:bg-opacity-80 dark:hover:bg-opacity-80"
         >
           <div class="flex items-center gap-2 min-w-0 flex-1">
-            {/* Hook icon - link/chain */}
             <svg
               class={`w-5 h-5 flex-shrink-0 ${colors.iconColor}`}
               fill="none"
@@ -757,7 +667,6 @@ function HookResponseCard({ message }: { message: SDKHookResponseMessage }) {
           </div>
 
           <div class="flex items-center gap-2 flex-shrink-0">
-            {/* Error indicator */}
             {message.exit_code !== undefined && message.exit_code !== 0 && (
               <svg
                 class="w-4 h-4 text-red-500"
@@ -773,7 +682,6 @@ function HookResponseCard({ message }: { message: SDKHookResponseMessage }) {
                 />
               </svg>
             )}
-            {/* Chevron */}
             <svg
               class={`w-5 h-5 transition-transform ${colors.iconColor} ${isExpanded ? 'rotate-180' : ''}`}
               fill="none"
@@ -790,7 +698,6 @@ function HookResponseCard({ message }: { message: SDKHookResponseMessage }) {
           </div>
         </button>
 
-        {/* Expanded content */}
         {isExpanded && (
           <div class={`p-3 border-t bg-white dark:bg-gray-900 space-y-2 ${colors.border}`}>
             {message.stdout?.trim() && (
@@ -813,9 +720,6 @@ function HookResponseCard({ message }: { message: SDKHookResponseMessage }) {
   );
 }
 
-/**
- * Compact Boundary Message - Shows compaction metadata only
- */
 function CompactBoundaryMessage({
   message,
 }: {
@@ -823,7 +727,6 @@ function CompactBoundaryMessage({
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  // Yellow/amber color scheme with canary yellow borders for visibility
   const colors = {
     bg: 'bg-yellow-50 dark:bg-yellow-900/20',
     text: 'text-yellow-900 dark:text-yellow-100',
@@ -841,13 +744,11 @@ function CompactBoundaryMessage({
         class={`border rounded-lg overflow-hidden ${colors.bg}`}
         style={{ borderColor: colors.borderColor }}
       >
-        {/* Header - clickable to expand/collapse */}
         <button
           onClick={() => setIsExpanded(!isExpanded)}
           class="w-full flex items-center justify-between p-3 transition-colors hover:bg-opacity-80 dark:hover:bg-opacity-80"
         >
           <div class="flex items-center gap-2 min-w-0 flex-1">
-            {/* Compress/zip icon */}
             <svg
               class={`w-5 h-5 flex-shrink-0 ${colors.iconColor}`}
               fill="none"
@@ -868,7 +769,6 @@ function CompactBoundaryMessage({
           </div>
 
           <div class="flex items-center gap-2 flex-shrink-0">
-            {/* Chevron icon */}
             <svg
               class={`w-5 h-5 transition-transform ${colors.iconColor} ${isExpanded ? 'rotate-180' : ''}`}
               fill="none"
@@ -885,7 +785,6 @@ function CompactBoundaryMessage({
           </div>
         </button>
 
-        {/* Expanded content - metadata details */}
         {isExpanded && (
           <div
             class="p-3 border-t bg-white dark:bg-gray-900"

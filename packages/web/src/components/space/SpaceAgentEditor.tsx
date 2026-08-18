@@ -1,21 +1,3 @@
-/**
- * SpaceAgentEditor Component
- *
- * Modal form for creating or editing a worker agent in a Space.
- *
- * Fields:
- * - From Template (built-in seeded templates)
- * - Name (required, unique within space)
- * - Description (optional)
- * - Model (dropdown override, optional for default model inheritance)
- * - Tools (explicit overrides from KNOWN_TOOLS; SDK defaults are always inherited)
- * - Custom Prompt (monospace textarea with line numbers; appended after HyperNeo contract)
- *
- * Tool presets: "Inherit defaults" (no overrides) · "Read Only" (deny mutators) · "Custom"
- *
- * Validation: name required + unique.
- */
-
 import type {
   SettingSource,
   SpaceWorkerAgent,
@@ -33,19 +15,8 @@ import {
   type WorkflowModelSelection,
 } from './visual-editor/WorkflowModelSelect';
 
-// ============================================================================
-// Constants
-// ============================================================================
-
 type ToolName = (typeof KNOWN_TOOLS)[number];
 
-/**
- * Tool presets map preset name → explicit override list.
- *
- * SDK defaults are always inherited at runtime; these profiles only express
- * overrides. An empty profile (no overrides) is "Inherit defaults". Read Only
- * lists non-mutating tools so the runtime denies Bash/Write/Edit/MultiEdit/NotebookEdit.
- */
 const TOOL_PRESETS: Record<string, ToolName[]> = {
   'Read Only': ['Read', 'Grep', 'Glob'],
 };
@@ -61,11 +32,6 @@ const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }
   { value: 'think32k', label: 'Think 32k' },
 ];
 
-// ============================================================================
-// Pure helpers (module-level to avoid re-creation on each render)
-// ============================================================================
-
-/** Detect which preset name matches a given explicit override list, or 'Custom' if no match. */
 function detectPreset(toolList: string[] | null | undefined): string {
   if (toolList == null || toolList.length === 0) return 'Inherited';
   for (const [preset, presetTools] of Object.entries(TOOL_PRESETS)) {
@@ -76,10 +42,6 @@ function detectPreset(toolList: string[] | null | undefined): string {
   return 'Custom';
 }
 
-// ============================================================================
-// Sub-components
-// ============================================================================
-
 interface LineNumberedTextareaProps {
   value: string;
   onChange: (value: string) => void;
@@ -87,7 +49,6 @@ interface LineNumberedTextareaProps {
   rows?: number;
 }
 
-/** Monospace textarea with a line-number gutter on the left */
 function LineNumberedTextarea({
   value,
   onChange,
@@ -99,7 +60,6 @@ function LineNumberedTextarea({
 
   return (
     <div class="relative flex border border-dark-600 rounded-lg overflow-hidden bg-dark-800 focus-within:border-blue-500 transition-colors">
-      {/* Line numbers gutter */}
       <div
         aria-hidden="true"
         class="flex flex-col items-end px-2 py-2 select-none text-gray-400 text-xs font-mono bg-dark-850 border-r border-dark-700 flex-shrink-0"
@@ -111,7 +71,6 @@ function LineNumberedTextarea({
           </span>
         ))}
       </div>
-      {/* Textarea */}
       <textarea
         value={value}
         onInput={(e) => onChange((e.target as HTMLTextAreaElement).value)}
@@ -125,20 +84,11 @@ function LineNumberedTextarea({
   );
 }
 
-// ============================================================================
-// Main component
-// ============================================================================
-
 export interface SpaceAgentEditorProps {
-  /** Existing agent to edit. Null = create mode. */
   agent: SpaceWorkerAgent | null;
-  /** Draft generated from an ad-hoc Space session. */
   promotionDraft?: SpaceWorkerAgentPromotionDraft | null;
-  /** Names of other agents in this space (for uniqueness validation) */
   existingAgentNames: string[];
-  /** Called after a successful save */
   onSave: () => void;
-  /** Called when the user cancels */
   onCancel: () => void;
 }
 
@@ -153,7 +103,6 @@ export function SpaceAgentEditor({
   const isPromotion = !isEdit && promotionDraft !== null && promotionDraft !== undefined;
   const builtInTemplates = spaceStore.agentTemplates.value;
 
-  // Form state
   const [name, setName] = useState(agent?.name ?? promotionDraft?.name ?? '');
   const [description, setDescription] = useState(
     agent?.description ?? promotionDraft?.description ?? ''
@@ -188,7 +137,6 @@ export function SpaceAgentEditor({
   const [selectedTemplateName, setSelectedTemplateName] = useState<string>('');
   const [selectedTemplateHash, setSelectedTemplateHash] = useState<string | null>(null);
 
-  // UI state
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -198,9 +146,6 @@ export function SpaceAgentEditor({
     setActivePreset(presetName);
     if (presetName in TOOL_PRESETS) {
       const presetTools = TOOL_PRESETS[presetName];
-      // An empty preset profile is inherit-all, so never mark it as an
-      // override (that would leave an editable empty list where one checkbox
-      // click persists a restrictive profile).
       if (presetTools.length === 0) {
         setToolsOverridden(false);
         setActivePreset('Inherited');
@@ -219,11 +164,6 @@ export function SpaceAgentEditor({
   };
 
   const startCustom = () => {
-    // Enter override mode seeded with every known tool, so the user builds a
-    // custom profile by unchecking — in particular unchecking a mutator
-    // (Bash/Write/Edit/MultiEdit/NotebookEdit) denies it at runtime. Starting
-    // from an empty enabled list would otherwise read as "inherits all" while
-    // leaving every box unchecked.
     setToolsOverridden(true);
     setActivePreset('Custom');
     setTools([...(KNOWN_TOOLS as readonly string[])]);
@@ -243,12 +183,6 @@ export function SpaceAgentEditor({
     setSaveError(null);
   };
 
-  // Edit mode only: the preset whose name matches the current draft name
-  // (case-insensitive). Powers the "Reset to <Preset> default" button — the
-  // explicit recovery affordance for an agent that lost preset tracking (e.g.
-  // after a manual edit cleared templateName). Resetting reloads the preset's
-  // fields into the draft and, because the draft then matches the preset, the
-  // save path re-stamps templateName/templateHash (see handleSubmit).
   const matchingPreset = isEdit
     ? (builtInTemplates.find((t) => t.name.trim().toLowerCase() === name.trim().toLowerCase()) ??
       null)
@@ -319,10 +253,6 @@ export function SpaceAgentEditor({
           customPrompt !== (agent.customPrompt ?? '') ||
           explicitToolsCleared ||
           (toolsOverridden && JSON.stringify(tools) !== JSON.stringify(agent.tools ?? [])));
-      // Edit mode: when the draft matches a selected preset — via the
-      // "Reset to <Preset> default" button or the "From Template" dropdown —
-      // re-stamp tracking so the row rejoins drift detection. This recovers an
-      // orphaned preset agent and takes precedence over the clear below.
       const editReattachPreset = isEdit && selectedTemplateStillMatches ? selectedTemplate : null;
       const baseParams = {
         name: name.trim(),
@@ -405,7 +335,6 @@ export function SpaceAgentEditor({
   return (
     <Modal isOpen onClose={onCancel} title={title} size="lg">
       <form onSubmit={handleSubmit} class="space-y-5">
-        {/* Save error */}
         {saveError && (
           <div class="bg-red-900/20 border border-red-800 rounded-lg px-4 py-3 text-red-400 text-sm">
             {saveError}
@@ -422,7 +351,6 @@ export function SpaceAgentEditor({
           </div>
         )}
 
-        {/* Template selector */}
         <div>
           <label class="block text-sm font-medium text-gray-200 mb-1.5" for="agent-template-select">
             From Template
@@ -452,10 +380,6 @@ export function SpaceAgentEditor({
           )}
         </div>
 
-        {/* Reset to preset default — edit mode only, when the agent's name
-            matches a known preset. Reloads the preset's description, tools,
-            and custom prompt into the draft and re-stamps template tracking
-            on save. Recovers an agent orphaned from preset tracking. */}
         {isEdit && matchingPreset && (
           <div class="flex items-center gap-2">
             <button
@@ -474,7 +398,6 @@ export function SpaceAgentEditor({
           </div>
         )}
 
-        {/* Name */}
         <div>
           <label class="block text-sm font-medium text-gray-200 mb-1.5">
             Name
@@ -496,7 +419,6 @@ export function SpaceAgentEditor({
           {errors['name'] && <p class="mt-1 text-xs text-red-400">{errors['name']}</p>}
         </div>
 
-        {/* Description */}
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-1.5">
             Description
@@ -511,7 +433,6 @@ export function SpaceAgentEditor({
           />
         </div>
 
-        {/* Model */}
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-1.5">
             Model
@@ -533,7 +454,6 @@ export function SpaceAgentEditor({
           {errors['model'] && <p class="mt-1 text-xs text-red-400">{errors['model']}</p>}
         </div>
 
-        {/* Thinking Level */}
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-1.5">
             Thinking Level
@@ -554,7 +474,6 @@ export function SpaceAgentEditor({
           </select>
         </div>
 
-        {/* Setting Sources */}
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-1.5">
             Setting Sources
@@ -632,14 +551,12 @@ export function SpaceAgentEditor({
           </div>
         </div>
 
-        {/* Tools */}
         <div>
           <div class="flex items-center justify-between mb-2">
             <label class="block text-sm font-medium text-gray-200">
               Tools
               {!toolsOverridden && <span class="text-gray-400 text-xs ml-2">(inherited)</span>}
             </label>
-            {/* Tool presets */}
             <div class="flex gap-1.5">
               {TOOL_PRESET_BUTTONS.map((preset) => {
                 const active =
@@ -668,7 +585,6 @@ export function SpaceAgentEditor({
             </div>
           </div>
 
-          {/* Inheritance banner */}
           <div class="rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-3 mb-3 text-sm text-blue-100">
             <p class="font-medium">SDK defaults are always inherited.</p>
             <p class="mt-1 text-xs text-blue-200/80">
@@ -741,7 +657,6 @@ export function SpaceAgentEditor({
           {errors['tools'] && <p class="mt-1.5 text-xs text-red-400">{errors['tools']}</p>}
         </div>
 
-        {/* Custom Prompt */}
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-2">
             {isPromotion ? 'Long-Horizon Profile' : 'Custom Prompt'}
@@ -763,7 +678,6 @@ export function SpaceAgentEditor({
           />
         </div>
 
-        {/* Actions */}
         <div class="flex gap-3 pt-1">
           <Button type="button" variant="secondary" onClick={onCancel} fullWidth>
             Cancel

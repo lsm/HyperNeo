@@ -1,11 +1,3 @@
-/**
- * SDK Session File Manager Tests
- *
- * Tests for validation and auto-repair of SDK session files.
- * These files can become corrupted when SDK context compaction removes
- * tool_use blocks while keeping tool_result blocks, causing API errors.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -37,7 +29,6 @@ describe('SDK Session File Manager', () => {
   let originalTestSdkSessionDir: string | undefined;
 
   beforeEach(() => {
-    // Set up isolated SDK session directory for tests
     const testSdkDir = join(
       TMP_DIR,
       `sdk-sessions-${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -45,7 +36,6 @@ describe('SDK Session File Manager', () => {
     originalTestSdkSessionDir = process.env.TEST_SDK_SESSION_DIR;
     process.env.TEST_SDK_SESSION_DIR = testSdkDir;
 
-    // Create test directory structure
     const projectKey = testWorkspacePath.replace(/[/.]/g, '-');
     testSessionDir = join(testSdkDir, 'projects', projectKey);
     mkdirSync(testSessionDir, { recursive: true });
@@ -53,7 +43,6 @@ describe('SDK Session File Manager', () => {
   });
 
   afterEach(() => {
-    // Cleanup test SDK session directory
     if (process.env.TEST_SDK_SESSION_DIR && existsSync(process.env.TEST_SDK_SESSION_DIR)) {
       try {
         rmSync(process.env.TEST_SDK_SESSION_DIR, { recursive: true, force: true });
@@ -62,7 +51,6 @@ describe('SDK Session File Manager', () => {
       }
     }
 
-    // Restore original environment
     if (originalTestSdkSessionDir !== undefined) {
       process.env.TEST_SDK_SESSION_DIR = originalTestSdkSessionDir;
     } else {
@@ -199,13 +187,11 @@ describe('SDK Session File Manager', () => {
 
     test('should return valid for file with matching tool_use/tool_result pairs', () => {
       const messages = [
-        // User message
         JSON.stringify({
           type: 'user',
           uuid: 'user-1',
           message: { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
         }),
-        // Assistant with tool_use
         JSON.stringify({
           type: 'assistant',
           uuid: 'assistant-1',
@@ -214,7 +200,6 @@ describe('SDK Session File Manager', () => {
             content: [{ type: 'tool_use', id: 'tool_001', name: 'Bash', input: {} }],
           },
         }),
-        // User with tool_result
         JSON.stringify({
           type: 'user',
           uuid: 'user-2',
@@ -240,7 +225,6 @@ describe('SDK Session File Manager', () => {
 
     test('should detect orphaned tool_result (missing tool_use)', () => {
       const messages = [
-        // User with tool_result but NO preceding tool_use
         JSON.stringify({
           type: 'user',
           uuid: 'user-1',
@@ -255,7 +239,6 @@ describe('SDK Session File Manager', () => {
             ],
           },
         }),
-        // Assistant response
         JSON.stringify({
           type: 'assistant',
           uuid: 'assistant-1',
@@ -277,7 +260,6 @@ describe('SDK Session File Manager', () => {
 
     test('should detect multiple orphaned tool_results', () => {
       const messages = [
-        // First orphaned tool_result
         JSON.stringify({
           type: 'user',
           uuid: 'user-1',
@@ -292,7 +274,6 @@ describe('SDK Session File Manager', () => {
             ],
           },
         }),
-        // Second orphaned tool_result
         JSON.stringify({
           type: 'user',
           uuid: 'user-2',
@@ -318,7 +299,6 @@ describe('SDK Session File Manager', () => {
 
     test('should handle mixed valid and orphaned tool_results', () => {
       const messages = [
-        // Valid tool_use
         JSON.stringify({
           type: 'assistant',
           uuid: 'assistant-1',
@@ -327,7 +307,6 @@ describe('SDK Session File Manager', () => {
             content: [{ type: 'tool_use', id: 'valid_tool', name: 'Bash', input: {} }],
           },
         }),
-        // Valid tool_result
         JSON.stringify({
           type: 'user',
           uuid: 'user-1',
@@ -342,7 +321,6 @@ describe('SDK Session File Manager', () => {
             ],
           },
         }),
-        // Orphaned tool_result
         JSON.stringify({
           type: 'user',
           uuid: 'user-2',
@@ -410,14 +388,12 @@ describe('SDK Session File Manager', () => {
       writeFileSync(testSessionFile, content + '\n', 'utf-8');
 
       const result = validateSDKSessionFile(testWorkspacePath, testSdkSessionId);
-      // Should still find the valid messages
       expect(result.errors.length).toBeGreaterThan(0);
       expect(result.errors[0]).toContain('Failed to parse line 1');
     });
   });
 
   describe('repairSDKSessionFile', () => {
-    // Mock database for testing
     const createMockDb = (messages: Array<{ type: string; uuid: string; message: unknown }>) => {
       return {
         getSDKMessages: () => ({
@@ -455,11 +431,10 @@ describe('SDK Session File Manager', () => {
 
       expect(result.success).toBe(true);
       expect(result.repairedCount).toBe(0);
-      expect(result.backupPath).toBeNull(); // No backup needed for valid file
+      expect(result.backupPath).toBeNull();
     });
 
     test('should create backup before repair', () => {
-      // Create file with orphaned tool_result
       const messages = [
         JSON.stringify({
           type: 'user',
@@ -473,7 +448,6 @@ describe('SDK Session File Manager', () => {
       ];
       writeFileSync(testSessionFile, messages.join('\n') + '\n', 'utf-8');
 
-      // Mock DB with the missing tool_use message
       const mockDb = createMockDb([
         {
           type: 'assistant',
@@ -496,7 +470,6 @@ describe('SDK Session File Manager', () => {
     });
 
     test('should insert missing tool_use message', () => {
-      // Create file with orphaned tool_result
       const messages = [
         JSON.stringify({
           type: 'user',
@@ -513,7 +486,6 @@ describe('SDK Session File Manager', () => {
       ];
       writeFileSync(testSessionFile, messages.join('\n') + '\n', 'utf-8');
 
-      // Mock DB with the missing tool_use message
       const mockDb = createMockDb([
         {
           type: 'assistant',
@@ -542,11 +514,10 @@ describe('SDK Session File Manager', () => {
       expect(result.success).toBe(true);
       expect(result.repairedCount).toBe(1);
 
-      // Verify the file was repaired
       const repairedContent = readFileSync(testSessionFile, 'utf-8');
       const lines = repairedContent.split('\n').filter((l) => l.trim());
 
-      expect(lines.length).toBe(2); // Should now have 2 messages
+      expect(lines.length).toBe(2);
 
       const firstMsg = JSON.parse(lines[0]);
       const secondMsg = JSON.parse(lines[1]);
@@ -557,11 +528,10 @@ describe('SDK Session File Manager', () => {
       expect(firstMsg.message.content[0].id).toBe('orphan_t1');
 
       expect(secondMsg.type).toBe('user');
-      expect(secondMsg.parentUuid).toBe('recovered-assistant-uuid'); // Should be updated
+      expect(secondMsg.parentUuid).toBe('recovered-assistant-uuid');
     });
 
     test('should report error when tool_use not found in DB', () => {
-      // Create file with orphaned tool_result
       const messages = [
         JSON.stringify({
           type: 'user',
@@ -574,7 +544,6 @@ describe('SDK Session File Manager', () => {
       ];
       writeFileSync(testSessionFile, messages.join('\n') + '\n', 'utf-8');
 
-      // Mock DB with NO matching tool_use
       const mockDb = createMockDb([]);
 
       const result = repairSDKSessionFile(
@@ -622,7 +591,6 @@ describe('SDK Session File Manager', () => {
     });
 
     test('should return true after successful repair', () => {
-      // Create file with orphaned tool_result
       const messages = [
         JSON.stringify({
           type: 'user',
@@ -636,7 +604,6 @@ describe('SDK Session File Manager', () => {
       ];
       writeFileSync(testSessionFile, messages.join('\n') + '\n', 'utf-8');
 
-      // Mock DB with the missing tool_use message
       const mockDb = {
         getSDKMessages: () => ({
           messages: [
@@ -664,7 +631,6 @@ describe('SDK Session File Manager', () => {
     });
 
     test('should return false when repair fails', () => {
-      // Create file with orphaned tool_result
       const messages = [
         JSON.stringify({
           type: 'user',
@@ -676,7 +642,6 @@ describe('SDK Session File Manager', () => {
       ];
       writeFileSync(testSessionFile, messages.join('\n') + '\n', 'utf-8');
 
-      // Mock DB with NO matching tool_use
       const mockDb = {
         getSDKMessages: () => ({ messages: [], hasMore: false }),
       } as unknown as Database;
@@ -691,10 +656,6 @@ describe('SDK Session File Manager', () => {
       expect(result).toBe(false);
     });
   });
-
-  // ============================================================================
-  // SDK Session File Cleanup & Archive Tests
-  // ============================================================================
 
   describe('deleteSDKSessionFiles', () => {
     test('should return success with empty deletedFiles when no files exist', () => {
@@ -711,7 +672,6 @@ describe('SDK Session File Manager', () => {
     });
 
     test('should delete SDK session file by sdkSessionId', () => {
-      // Create a test file
       const content = JSON.stringify({
         type: 'user',
         uuid: 'u1',
@@ -737,7 +697,6 @@ describe('SDK Session File Manager', () => {
     test('should find and delete SDK files by kaiSessionId when sdkSessionId is null', () => {
       const kaiSessionId = 'test-hyperneo-id-12345678';
 
-      // Create a file that contains the HyperNeo session ID
       const content = JSON.stringify({
         type: 'user',
         uuid: 'u1',
@@ -762,7 +721,6 @@ describe('SDK Session File Manager', () => {
     });
 
     afterEach(() => {
-      // Cleanup archive directory
       if (existsSync(archiveDir)) {
         try {
           rmSync(archiveDir, { recursive: true, force: true });
@@ -786,7 +744,6 @@ describe('SDK Session File Manager', () => {
     });
 
     test('should archive SDK session file and create metadata', () => {
-      // Create a test file
       const content = JSON.stringify({
         type: 'user',
         uuid: 'u1',
@@ -803,18 +760,14 @@ describe('SDK Session File Manager', () => {
       expect(result.archivedFiles).toHaveLength(1);
       expect(result.totalSize).toBeGreaterThan(0);
 
-      // Original file should be removed
       expect(existsSync(testSessionFile)).toBe(false);
 
-      // Archive should contain the file
       const archivedFile = join(archiveDir, `${testSdkSessionId}.jsonl`);
       expect(existsSync(archivedFile)).toBe(true);
 
-      // Metadata file should exist
       const metadataFile = join(archiveDir, 'archive-metadata.json');
       expect(existsSync(metadataFile)).toBe(true);
 
-      // Verify metadata content
       const metadata = JSON.parse(readFileSync(metadataFile, 'utf-8'));
       expect(metadata.kaiSessionId).toBe(kaiSessionId);
       expect(metadata.originalWorkspacePath).toBe(testWorkspacePath);
@@ -829,7 +782,6 @@ describe('SDK Session File Manager', () => {
     });
 
     test('should find SDK session files in workspace', () => {
-      // Create test files
       const file1 = join(testSessionDir, 'sdk-session-1.jsonl');
       const file2 = join(testSessionDir, 'sdk-session-2.jsonl');
 
@@ -852,7 +804,6 @@ describe('SDK Session File Manager', () => {
       expect(sdkSessionIds).toContain('sdk-session-1');
       expect(sdkSessionIds).toContain('sdk-session-2');
 
-      // Each file should have size and modifiedAt
       for (const file of files) {
         expect(file.size).toBeGreaterThan(0);
         expect(file.modifiedAt).toBeInstanceOf(Date);
@@ -862,7 +813,6 @@ describe('SDK Session File Manager', () => {
     test('should extract HyperNeo session IDs from file content', () => {
       const kaiId = 'a1b2c3d4-e5f6-4789-abcd-ef0123456789';
 
-      // Create a file with UUID-like content (appears multiple times)
       const content = [
         JSON.stringify({ type: 'user', uuid: 'u1', kaiId }),
         JSON.stringify({ type: 'assistant', uuid: 'a1', kaiId }),
@@ -1009,10 +959,6 @@ describe('SDK Session File Manager', () => {
     });
   });
 
-  // ============================================================================
-  // removeToolResultFromSessionFile Tests
-  // ============================================================================
-
   describe('removeToolResultFromSessionFile', () => {
     test('should return false when SDK session file does not exist', () => {
       const result = removeToolResultFromSessionFile(
@@ -1042,7 +988,6 @@ describe('SDK Session File Manager', () => {
     });
 
     test('should return false when message UUID is not found in file', () => {
-      // Create a file without the target message
       const messages = [
         JSON.stringify({
           type: 'user',
@@ -1065,7 +1010,6 @@ describe('SDK Session File Manager', () => {
     });
 
     test('should return false when message has no tool_result blocks', () => {
-      // Create a file with target message but no tool_result
       const messages = [
         JSON.stringify({
           type: 'user',
@@ -1088,7 +1032,6 @@ describe('SDK Session File Manager', () => {
     });
 
     test('should successfully remove tool_result content from message', () => {
-      // Create a file with a tool_result message
       const messages = [
         JSON.stringify({
           type: 'assistant',
@@ -1123,7 +1066,6 @@ describe('SDK Session File Manager', () => {
 
       expect(result).toBe(true);
 
-      // Verify the content was replaced
       const updatedContent = readFileSync(testSessionFile, 'utf-8');
       const lines = updatedContent.split('\n').filter((l) => l.trim());
       const userMessage = JSON.parse(lines[1]);
@@ -1135,7 +1077,6 @@ describe('SDK Session File Manager', () => {
     test('should find file by kaiSessionId when sdkSessionId is null', () => {
       const kaiSessionId = 'findable-hyperneo-session-id-12345678';
 
-      // Create a file containing the HyperNeo session ID
       const messages = [
         JSON.stringify({
           type: 'user',
@@ -1166,7 +1107,6 @@ describe('SDK Session File Manager', () => {
     });
 
     test('should handle multiple tool_result blocks in same message', () => {
-      // Create a file with multiple tool_result blocks
       const messages = [
         JSON.stringify({
           type: 'user',
@@ -1198,7 +1138,6 @@ describe('SDK Session File Manager', () => {
 
       expect(result).toBe(true);
 
-      // Verify both tool_results were modified
       const updatedContent = readFileSync(testSessionFile, 'utf-8');
       const lines = updatedContent.split('\n').filter((l) => l.trim());
       const userMessage = JSON.parse(lines[0]);
@@ -1264,10 +1203,6 @@ describe('SDK Session File Manager', () => {
     });
   });
 
-  // ============================================================================
-  // truncateSessionFileAtMessage Tests
-  // ============================================================================
-
   describe('truncateSessionFileAtMessage', () => {
     const testTruncateWorkspacePath = '/tmp/test-workspace-sdk-truncation';
     const testTruncateSdkSessionId = 'test-sdk-session-truncation';
@@ -1276,7 +1211,6 @@ describe('SDK Session File Manager', () => {
     let testTruncateSessionFile: string;
 
     beforeEach(() => {
-      // Create test directory structure
       const projectKey = testTruncateWorkspacePath.replace(/[/.]/g, '-');
       testTruncateSessionDir = join(process.env.TEST_SDK_SESSION_DIR!, 'projects', projectKey);
       mkdirSync(testTruncateSessionDir, { recursive: true });
@@ -1284,7 +1218,6 @@ describe('SDK Session File Manager', () => {
     });
 
     afterEach(() => {
-      // Cleanup test files
       if (existsSync(testTruncateSessionDir)) {
         try {
           rmSync(testTruncateSessionDir, { recursive: true, force: true });
@@ -1319,7 +1252,6 @@ describe('SDK Session File Manager', () => {
     });
 
     test('should return {truncated: false, linesRemoved: 0} when UUID is not found in file', () => {
-      // Create a file without the target message UUID
       const messages = [
         JSON.stringify({
           type: 'user',
@@ -1344,7 +1276,6 @@ describe('SDK Session File Manager', () => {
       expect(result.truncated).toBe(false);
       expect(result.linesRemoved).toBe(0);
 
-      // File should remain unchanged
       const content = readFileSync(testTruncateSessionFile, 'utf-8');
       expect(content.split('\n').filter((l) => l.trim())).toHaveLength(2);
     });
@@ -1377,9 +1308,8 @@ describe('SDK Session File Manager', () => {
       );
 
       expect(result.truncated).toBe(true);
-      expect(result.linesRemoved).toBe(3); // Line 2, line 3, and trailing newline
+      expect(result.linesRemoved).toBe(3);
 
-      // Verify only the first message remains
       const content = readFileSync(testTruncateSessionFile, 'utf-8');
       const lines = content.split('\n').filter((l) => l.trim());
       expect(lines).toHaveLength(1);
@@ -1389,7 +1319,6 @@ describe('SDK Session File Manager', () => {
 
     test('should truncate file at message with spaced UUID format `"uuid": "<uuid>"`', () => {
       const messages = [
-        // This message uses spaced format
         JSON.stringify({ type: 'user', uuid: 'message-uuid-1', message: { role: 'user' } }).replace(
           '"uuid":"message-uuid-1"',
           '"uuid": "message-uuid-1"'
@@ -1410,18 +1339,16 @@ describe('SDK Session File Manager', () => {
       );
 
       expect(result.truncated).toBe(true);
-      expect(result.linesRemoved).toBe(3); // First line, second line, trailing newline
+      expect(result.linesRemoved).toBe(3);
 
-      // Verify file is empty (all lines removed)
       const content = readFileSync(testTruncateSessionFile, 'utf-8');
       expect(content).toBe('');
     });
 
     test('should fall back to loose UUID match when exact match fails', () => {
-      // Create a malformed message where uuid is not in standard JSON format
       const messages = [
         JSON.stringify({ type: 'user', uuid: 'message-uuid-1' }),
-        '{"type":"user","customField":"message-uuid-special","message":{}}', // UUID in custom field
+        '{"type":"user","customField":"message-uuid-special","message":{}}',
       ];
       writeFileSync(testTruncateSessionFile, messages.join('\n') + '\n', 'utf-8');
 
@@ -1433,9 +1360,8 @@ describe('SDK Session File Manager', () => {
       );
 
       expect(result.truncated).toBe(true);
-      expect(result.linesRemoved).toBe(2); // Second line and trailing newline
+      expect(result.linesRemoved).toBe(2);
 
-      // Verify only first message remains
       const content = readFileSync(testTruncateSessionFile, 'utf-8');
       const lines = content.split('\n').filter((l) => l.trim());
       expect(lines).toHaveLength(1);
@@ -1460,7 +1386,6 @@ describe('SDK Session File Manager', () => {
 
       expect(result.truncated).toBe(true);
 
-      // Verify first 3 messages are preserved
       const content = readFileSync(testTruncateSessionFile, 'utf-8');
       const lines = content.split('\n').filter((l) => l.trim());
       expect(lines).toHaveLength(3);
@@ -1484,9 +1409,8 @@ describe('SDK Session File Manager', () => {
       );
 
       expect(result.truncated).toBe(true);
-      expect(result.linesRemoved).toBe(3); // Both lines plus trailing newline
+      expect(result.linesRemoved).toBe(3);
 
-      // Verify file is empty
       const content = readFileSync(testTruncateSessionFile, 'utf-8');
       expect(content).toBe('');
     });
@@ -1497,7 +1421,6 @@ describe('SDK Session File Manager', () => {
         JSON.stringify({ type: 'assistant', uuid: 'msg-2', message: { content: 'Second' } }),
         JSON.stringify({ type: 'user', uuid: 'msg-3', message: { content: 'Third' } }),
       ];
-      // Add extra trailing newlines
       writeFileSync(testTruncateSessionFile, messages.join('\n') + '\n\n\n', 'utf-8');
 
       const result = truncateSessionFileAtMessage(
@@ -1508,10 +1431,8 @@ describe('SDK Session File Manager', () => {
       );
 
       expect(result.truncated).toBe(true);
-      // linesRemoved includes the target line, empty lines, etc.
       expect(result.linesRemoved).toBeGreaterThan(0);
 
-      // Verify only first 2 messages remain
       const content = readFileSync(testTruncateSessionFile, 'utf-8');
       const lines = content.split('\n').filter((l) => l.trim());
       expect(lines).toHaveLength(2);
@@ -1539,9 +1460,8 @@ describe('SDK Session File Manager', () => {
         'msg-3'
       );
 
-      // Should remove line 3 (index 2), line 4 (index 3), line 5 (index 4), and trailing newline (index 5)
       expect(result.truncated).toBe(true);
-      expect(result.linesRemoved).toBe(originalLines.length - 2); // 6 total lines - 2 kept lines
+      expect(result.linesRemoved).toBe(originalLines.length - 2);
 
       const newContent = readFileSync(testTruncateSessionFile, 'utf-8');
       const newLines = newContent.split('\n').filter((l) => l.trim());
@@ -1555,7 +1475,6 @@ describe('SDK Session File Manager', () => {
       ];
       writeFileSync(testTruncateSessionFile, messages.join('\n') + '\n', 'utf-8');
 
-      // Make file read-only (mode 0o444)
       try {
         const fs = require('node:fs');
         fs.chmodSync(testTruncateSessionFile, 0o444);
@@ -1567,11 +1486,9 @@ describe('SDK Session File Manager', () => {
           'msg-2'
         );
 
-        // Should handle error gracefully and return false
         expect(result.truncated).toBe(false);
         expect(result.linesRemoved).toBe(0);
       } finally {
-        // Restore write permissions for cleanup
         try {
           const fs = require('node:fs');
           fs.chmodSync(testTruncateSessionFile, 0o644);
@@ -1582,19 +1499,13 @@ describe('SDK Session File Manager', () => {
     });
   });
 
-  // ========================================================================
-  // Cross-workspace / worktree resume helpers (Task #12 regression tests)
-  // ========================================================================
-
   describe('findSDKSessionFileGlobally', () => {
     test('should return null when projects directory does not exist', () => {
-      // TEST_SDK_SESSION_DIR is set to a fresh temp dir with no projects/ subdir
       const result = findSDKSessionFileGlobally('nonexistent-session-id');
       expect(result).toBeNull();
     });
 
     test('should return null when no project directory contains the session file', () => {
-      // Create projects dir but no matching file
       mkdirSync(join(process.env.TEST_SDK_SESSION_DIR!, 'projects', '-some-project'), {
         recursive: true,
       });
@@ -1603,7 +1514,6 @@ describe('SDK Session File Manager', () => {
     });
 
     test('should find a session file stored under a different workspace path', () => {
-      // Simulate: session was created with workspace A, file lives in A's project dir
       const workspaceA = '/tmp/workspace-a';
       const sessionId = 'resume-test-session-id';
       const projectKeyA = workspaceA.replace(/[/.]/g, '-');
@@ -1612,14 +1522,12 @@ describe('SDK Session File Manager', () => {
       const filePath = join(projectDirA, `${sessionId}.jsonl`);
       writeFileSync(filePath, JSON.stringify({ type: 'user', uuid: 'u1' }) + '\n', 'utf-8');
 
-      // The session's current workspace is B (different) — file not at B
       const result = findSDKSessionFileGlobally(sessionId);
 
       expect(result).toBe(filePath);
     });
 
     test('should return null for a non-existent session id', () => {
-      // projects/ dir exists but the session file is not there
       const projectDir = join(process.env.TEST_SDK_SESSION_DIR!, 'projects', '-tmp-workspace-c');
       mkdirSync(projectDir, { recursive: true });
       writeFileSync(join(projectDir, 'other-session.jsonl'), '{}', 'utf-8');
@@ -1635,12 +1543,10 @@ describe('SDK Session File Manager', () => {
     const workspaceB = '/tmp/migrate-workspace-b';
 
     test('should copy session file from source workspace to target workspace', () => {
-      // Create file at workspace A's project dir
       const fileA = getSDKSessionFilePath(workspaceA, sessionId);
       mkdirSync(join(fileA, '..'), { recursive: true });
       writeFileSync(fileA, JSON.stringify({ type: 'user' }) + '\n', 'utf-8');
 
-      // Migrate to workspace B
       const success = migrateSDKSessionFile(workspaceA, workspaceB, sessionId);
 
       expect(success).toBe(true);
@@ -1648,10 +1554,8 @@ describe('SDK Session File Manager', () => {
       const fileB = getSDKSessionFilePath(workspaceB, sessionId);
       expect(existsSync(fileB)).toBe(true);
 
-      // Source file should still exist (non-destructive)
       expect(existsSync(fileA)).toBe(true);
 
-      // Content should match
       const contentB = readFileSync(fileB, 'utf-8');
       expect(contentB).toContain('"type":"user"');
     });
@@ -1662,7 +1566,6 @@ describe('SDK Session File Manager', () => {
     });
 
     test('should return true without copying when source and target resolve to same path', () => {
-      // When both workspaces encode to the same project dir
       const fileA = getSDKSessionFilePath(workspaceA, sessionId);
       mkdirSync(join(fileA, '..'), { recursive: true });
       writeFileSync(fileA, '{}', 'utf-8');
@@ -1672,7 +1575,6 @@ describe('SDK Session File Manager', () => {
     });
 
     test('should return true without error when target file already exists', () => {
-      // Both source and target already have the file (e.g. prior migration)
       const fileA = getSDKSessionFilePath(workspaceA, sessionId);
       const fileB = getSDKSessionFilePath(workspaceB, sessionId);
       mkdirSync(join(fileA, '..'), { recursive: true });
@@ -1683,7 +1585,6 @@ describe('SDK Session File Manager', () => {
       const success = migrateSDKSessionFile(workspaceA, workspaceB, sessionId);
       expect(success).toBe(true);
 
-      // Target content should remain unchanged (idempotent: no overwrite)
       const content = readFileSync(fileB, 'utf-8');
       expect(content).toContain('"type":"existing"');
     });

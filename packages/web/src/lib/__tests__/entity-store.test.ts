@@ -19,9 +19,6 @@ describe('EntityStore', () => {
     store = new EntityStore<Item>();
   });
 
-  // -------------------------------------------------------------------------
-  // applySnapshot
-  // -------------------------------------------------------------------------
   describe('applySnapshot', () => {
     it('populates items from rows', () => {
       store.applySnapshot([makeItem('a'), makeItem('b'), makeItem('c')]);
@@ -52,9 +49,6 @@ describe('EntityStore', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // applyDelta — added
-  // -------------------------------------------------------------------------
   describe('applyDelta with added', () => {
     it('inserts new items', () => {
       store.applySnapshot([makeItem('a')]);
@@ -71,9 +65,6 @@ describe('EntityStore', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // applyDelta — removed
-  // -------------------------------------------------------------------------
   describe('applyDelta with removed', () => {
     it('deletes items by id', () => {
       store.applySnapshot([makeItem('a'), makeItem('b'), makeItem('c')]);
@@ -89,9 +80,6 @@ describe('EntityStore', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // applyDelta — updated
-  // -------------------------------------------------------------------------
   describe('applyDelta with updated', () => {
     it('merges updated items', () => {
       store.applySnapshot([makeItem('a', 'original', 1)]);
@@ -106,9 +94,6 @@ describe('EntityStore', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // applyDelta — combined
-  // -------------------------------------------------------------------------
   describe('applyDelta combined', () => {
     it('applies removed, then updated, then added in order', () => {
       store.applySnapshot([makeItem('a'), makeItem('b'), makeItem('c')]);
@@ -124,9 +109,6 @@ describe('EntityStore', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // clear
-  // -------------------------------------------------------------------------
   describe('clear', () => {
     it('empties items', () => {
       store.applySnapshot([makeItem('a'), makeItem('b')]);
@@ -143,9 +125,6 @@ describe('EntityStore', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // getById
-  // -------------------------------------------------------------------------
   describe('getById', () => {
     it('returns the correct item', () => {
       const item = makeItem('x', 'hello', 42);
@@ -159,9 +138,6 @@ describe('EntityStore', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // toArray
-  // -------------------------------------------------------------------------
   describe('toArray', () => {
     it('returns all values', () => {
       store.applySnapshot([makeItem('a'), makeItem('b'), makeItem('c')]);
@@ -176,9 +152,6 @@ describe('EntityStore', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Signal reactivity
-  // -------------------------------------------------------------------------
   describe('signal reactivity', () => {
     it('a computed that reads items.value re-evaluates after applyDelta', () => {
       store.applySnapshot([makeItem('a')]);

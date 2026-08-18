@@ -33,8 +33,6 @@ export class StructuredLogFileSink {
     try {
       line = `${JSON.stringify(redactStructuredLogEvent(event))}\n`;
     } catch (error) {
-      // One unserializable record (bigint / circular metadata) must not kill
-      // the sink for the rest of the process — drop just this record.
       this.dropped++;
       this.warnOnce(
         `unserializable log record dropped: ${
@@ -82,8 +80,6 @@ export class StructuredLogFileSink {
       await mkdir(dirname(this.options.path), { recursive: true });
       const info = await stat(this.options.path);
       this.currentBytes = info.size;
-      // Tighten a log file created by an older version at the umask default
-      // (e.g. 0644) — see writeLine for the privacy rationale. Best-effort.
       await chmod(this.options.path, 0o600).catch(() => {});
     } catch (error) {
       if (isMissingFile(error)) {
@@ -99,11 +95,6 @@ export class StructuredLogFileSink {
     if (this.currentBytes > 0 && this.currentBytes + bytes > this.options.maxBytes) {
       await this.rotate();
     }
-    // 0o600 on CREATE (mode is ignored once the file exists): the JSONL holds
-    // redacted-but-sensitive daemon diagnostics, so under a common 022 umask it
-    // must not come up world/group-readable. Rotation recreates the live file
-    // through this same call, so rotated-in files inherit the mode too.
-    // (Codex P2, PR #2499.)
     await appendFile(this.options.path, line, { encoding: 'utf8', mode: 0o600 });
     this.currentBytes += bytes;
   }
@@ -159,11 +150,6 @@ export function redactStructuredLogEvent(event: StructuredLogEvent): StructuredL
 function redactLogValue(value: unknown): unknown {
   if (typeof value === 'string') return redactString(value);
   if (Array.isArray(value)) {
-    // A sensitive header tuple (Array.from(headers.entries())) is a two-element
-    // array [name, value]; the value has no adjacent `Name:` label once the
-    // object is serialized, so element-wise recursion would persist it. Redact
-    // the second element before falling back to the ordinary array walk.
-    // (Codex P1, PR #2499.)
     if (value.length === 2 && typeof value[0] === 'string' && SENSITIVE_KEY.test(value[0])) {
       return [value[0], '[REDACTED]'];
     }
@@ -172,9 +158,6 @@ function redactLogValue(value: unknown): unknown {
   if (!value || typeof value !== 'object') return value;
 
   const object = value as Record<string, unknown>;
-  // Object-form header entries (`{ name, value }` from headersToAcp) carry the
-  // credential in `value` with no sensitive key on that field itself; redact it
-  // when `name` is a sensitive header name. (Codex P1, PR #2499.)
   if (typeof object.name === 'string' && SENSITIVE_KEY.test(object.name) && 'value' in object) {
     return { ...object, value: '[REDACTED]' };
   }
@@ -187,78 +170,36 @@ function redactLogValue(value: unknown): unknown {
 }
 
 function redactString(value: string): string {
-  return (
-    value
-      .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
-      // URL userinfo (`scheme://user:pass@host`) can carry Basic credentials
-      // without any `authorization`/`token`/`password` label; redact the
-      // userinfo component. Match through the FINAL `@` (the host delimiter) so
-      // a password containing an unescaped `@` is fully consumed. (Codex P1.)
-      .replace(/(\/\/)[^/\s?#]+@/gi, '$1[REDACTED]@')
-      // A truncated message can cut a URL inside its userinfo (no host `@`);
-      // redact `scheme://user:password` through end of string. (Codex P1.)
-      .replace(/(\/\/)[^/\s?#]+:[^/\s?#]+$/gi, '$1[REDACTED]')
-      // Azure SAS `sig=<signature>` query parameter — a short key too generic to
-      // treat as sensitive everywhere, so match it only in query position.
-      // (Codex P1, PR #2499.)
-      .replace(/([?&]sig=)[^&\s]+/gi, '$1[REDACTED]')
-      // Header tuple form (Array.from(headers.entries())) serializes a header as
-      // `["Name","value"]` — the value carries no adjacent `Name:` label, so no
-      // other rule catches it. Redact the second element when the first is a
-      // sensitive header name. The value matcher is escape-aware so a quoted
-      // Digest/AWS value is consumed through its real closing quote. (Codex P1.)
-      .replace(
-        /([[,]\s*["'][\w.-]{0,64}(?:authorization|cookie|set-cookie|api[-_]?key|private[-_]?key|token|secret|password|credential|signature)[\w.-]{0,64}["']\s*,\s*)(["'])((?:\\[\s\S]|(?!\2)[^\\])*)\2/gi,
-        '$1$2[REDACTED]$2'
-      )
-      // Authorization values legitimately contain structural commas (Digest
-      // `username="u", nonce="…", response="…"`, AWS `…, Signature=…`), so —
-      // like cookies — redact through end of line; a `,`/`}` boundary would
-      // persist the nonce/response/signature verbatim. (Codex P2, PR #2499.)
-      .replace(/(authorization\s*:\s*)(?![\s"'])[^\r\n]+/gi, '$1[REDACTED]')
-      // Header-form cookie values carry session credentials and legitimately
-      // contain `;` and `,` (e.g. Expires dates), so redact to end of line rather
-      // than the `,`/`}` boundaries the other rules use. The lookahead
-      // also rejects a bare space so `\s*` cannot backtrack to zero-width and
-      // swallow quoted values (those keep the quoted rule's quoted output).
-      .replace(/((?:cookie|set-cookie)\s*:\s*)(?![\s"'])[^\r\n]+/gi, '$1[REDACTED]')
-      // Plain colon-form values for the other sensitive keys (`token: abc`,
-      // `api-key: sk-…`, `AWS_SECRET_ACCESS_KEY: …`) — same boundaries as the
-      // authorization rule. The key matches a sensitive COMPONENT inside a
-      // compound name (`[\w.-]{0,64}` around the alternation), so serialized
-      // env/config objects like `{"AWS_SECRET_ACCESS_KEY":"…"}` are caught.
-      // Quoted values keep the quoted rule's output via the lookahead. (Codex P1.)
-      .replace(
-        /((?:[\w.-]{0,64}(?:api[-_]?key|private[-_]?key|token|secret|password|credential|signature)[\w.-]{0,64})\s*:\s*)(?![\s"'])([^,}\r\n]+)/gi,
-        '$1[REDACTED]'
-      )
-      .replace(
-        /(["']?(?:[\w.-]{0,64}(?:api[-_]?key|private[-_]?key|token|secret|password|credential|signature|authorization|cookie|set-cookie)[\w.-]{0,64})["']?\s*[:=]\s*)(["'])((?:\\[\s\S]|(?!\2)[^\\])*)\2/gi,
-        '$1$2[REDACTED]$2'
-      )
-      // A truncated message can end inside a quoted credential (the logger caps
-      // messages at a fixed length), so there is no closing quote for the rule
-      // above; redact the unterminated value through end of string. (Codex P1.)
-      .replace(
-        /(["']?(?:[\w.-]{0,64}(?:api[-_]?key|private[-_]?key|token|secret|password|credential|signature|authorization|cookie|set-cookie)[\w.-]{0,64})["']?\s*[:=]\s*)(["'])((?:\\[\s\S]|(?!\2)[^\\])*)$/gi,
-        '$1$2[REDACTED]'
-      )
-      // Equals-form Authorization/Cookie values legitimately contain spaces
-      // (Digest `username=…, nonce=…`, AWS `Credential=…, Signature=…`,
-      // Set-Cookie attributes); the generic `=` rule below stops at the first
-      // whitespace and would persist the credential/nonce/signature. Redact
-      // through end of line, mirroring the colon-form rules. (Codex P1, PR #2499.)
-      .replace(/(authorization\s*=\s*)(?![\s"'])[^\r\n]+/gi, '$1[REDACTED]')
-      .replace(/((?:cookie|set-cookie)\s*=\s*)(?![\s"'])[^\r\n]+/gi, '$1[REDACTED]')
-      // Space-bearing secret values (passphrases, PEM material) run through end
-      // of line; the single-token keys below keep a tighter boundary so a value
-      // followed by a JSON object is not over-consumed. (Codex P1, PR #2499.)
-      .replace(/((?:password|secret|private[-_]?key)\s*=\s*)(?![\s"'])[^\r\n]+/gi, '$1[REDACTED]')
-      .replace(
-        /((?:[\w.-]{0,64}(?:api[-_]?key|token|credential|signature)[\w.-]{0,64})\s*=\s*)([^\s&;,}]+)/gi,
-        '$1[REDACTED]'
-      )
-  );
+  return value
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
+    .replace(/(\/\/)[^/\s?#]+@/gi, '$1[REDACTED]@')
+    .replace(/(\/\/)[^/\s?#]+:[^/\s?#]+$/gi, '$1[REDACTED]')
+    .replace(/([?&]sig=)[^&\s]+/gi, '$1[REDACTED]')
+    .replace(
+      /([[,]\s*["'][\w.-]{0,64}(?:authorization|cookie|set-cookie|api[-_]?key|private[-_]?key|token|secret|password|credential|signature)[\w.-]{0,64}["']\s*,\s*)(["'])((?:\\[\s\S]|(?!\2)[^\\])*)\2/gi,
+      '$1$2[REDACTED]$2'
+    )
+    .replace(/(authorization\s*:\s*)(?![\s"'])[^\r\n]+/gi, '$1[REDACTED]')
+    .replace(/((?:cookie|set-cookie)\s*:\s*)(?![\s"'])[^\r\n]+/gi, '$1[REDACTED]')
+    .replace(
+      /((?:[\w.-]{0,64}(?:api[-_]?key|private[-_]?key|token|secret|password|credential|signature)[\w.-]{0,64})\s*:\s*)(?![\s"'])([^,}\r\n]+)/gi,
+      '$1[REDACTED]'
+    )
+    .replace(
+      /(["']?(?:[\w.-]{0,64}(?:api[-_]?key|private[-_]?key|token|secret|password|credential|signature|authorization|cookie|set-cookie)[\w.-]{0,64})["']?\s*[:=]\s*)(["'])((?:\\[\s\S]|(?!\2)[^\\])*)\2/gi,
+      '$1$2[REDACTED]$2'
+    )
+    .replace(
+      /(["']?(?:[\w.-]{0,64}(?:api[-_]?key|private[-_]?key|token|secret|password|credential|signature|authorization|cookie|set-cookie)[\w.-]{0,64})["']?\s*[:=]\s*)(["'])((?:\\[\s\S]|(?!\2)[^\\])*)$/gi,
+      '$1$2[REDACTED]'
+    )
+    .replace(/(authorization\s*=\s*)(?![\s"'])[^\r\n]+/gi, '$1[REDACTED]')
+    .replace(/((?:cookie|set-cookie)\s*=\s*)(?![\s"'])[^\r\n]+/gi, '$1[REDACTED]')
+    .replace(/((?:password|secret|private[-_]?key)\s*=\s*)(?![\s"'])[^\r\n]+/gi, '$1[REDACTED]')
+    .replace(
+      /((?:[\w.-]{0,64}(?:api[-_]?key|token|credential|signature)[\w.-]{0,64})\s*=\s*)([^\s&;,}]+)/gi,
+      '$1[REDACTED]'
+    );
 }
 
 async function unlinkIfPresent(path: string): Promise<void> {

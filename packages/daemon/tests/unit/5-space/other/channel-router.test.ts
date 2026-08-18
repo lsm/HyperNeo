@@ -1,32 +1,3 @@
-/**
- * ChannelRouter Unit Tests
- *
- * Covers ungated channel routing:
- * - activateNode(): first activation creates tasks for each agent slot
- * - activateNode(): idempotent — returns existing tasks on repeated calls
- * - activateNode(): concurrent activation (UNIQUE constraint) handled gracefully
- * - activateNode(): cancelled run auto-reopens when parent task is not archived
- * - activateNode(): completed run auto-reopens when parent task is not archived
- * - activateNode(): archived-task run throws ActivationError
- * - activateNode(): missing run throws ActivationError
- * - activateNode(): missing workflow throws ActivationError
- * - activateNode(): missing node throws ActivationError
- * - activateNode(): multi-agent node creates one task per agent slot
- * - deliverMessage(): auto-activates target node when no active tasks
- * - deliverMessage(): does not re-activate when target node is already active
- * - deliverMessage(): sets activatedTasks only on first activation
- * - deliverMessage(): throws when target role not found in workflow
- * - deliverMessage(): fan-out — node name target activates all agents in that node
- * - deliverMessage(): within-node DM — same-node agent-to-agent
- * - deliverMessage(): isFanOut flag set for node-name targets
- * - deliverMessage(): isFanOut false for agent-role targets
- * - deliverMessage(): cyclic channel increments iterationCount
- * - deliverMessage(): cyclic iteration cap throws ActivationError
- * - canDeliver(): open topology allows all deliveries
- * - canDeliver(): cyclic channel — blocked when cycle count >= maxCycles
- * - canDeliver(): cyclic channel — allowed when below cap
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -50,10 +21,6 @@ import type { SpaceWorkflow, WorkflowChannel } from '@hyperneo/shared';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 
-// ---------------------------------------------------------------------------
-// DB helpers
-// ---------------------------------------------------------------------------
-
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
@@ -76,16 +43,6 @@ function seedAgent(db: BunDatabase, agentId: string, spaceId: string): void {
   ).run(agentId, spaceId, `Agent ${agentId}`, Date.now(), Date.now());
 }
 
-// ---------------------------------------------------------------------------
-// Workflow builder helpers
-// ---------------------------------------------------------------------------
-
-/**
- * End nodes must have exactly 1 agent (validator enforced — they own the
- * `task.reportedStatus` completion signal). When the last user-provided node is
- * multi-agent, we synthesize a separate terminal single-agent end node so the
- * multi-agent node remains the start (or middle) and validation passes.
- */
 function withSyntheticEndNode(
   nodes: Array<{
     id: string;
@@ -172,7 +129,6 @@ describe('ChannelRouter', () => {
     workflowRunRepo = new SpaceWorkflowRunRepository(db);
     channelCycleRepo = new ChannelCycleRepository(db);
 
-    // One-task-per-run architecture: ensure every test run has a canonical task.
     const createRunOriginal = workflowRunRepo.createRun.bind(workflowRunRepo);
     (
       workflowRunRepo as unknown as {
@@ -209,10 +165,6 @@ describe('ChannelRouter', () => {
   afterEach(() => {
     db.close();
   });
-
-  // -------------------------------------------------------------------------
-  // activateNode — first activation
-  // -------------------------------------------------------------------------
 
   describe('activateNode', () => {
     test('creates one pending task for a single-agent node', async () => {
@@ -389,10 +341,6 @@ describe('ChannelRouter', () => {
       expect(tasks[0].workflowRunId).toBe(run.id);
     });
 
-    // -----------------------------------------------------------------------
-    // Idempotent activation
-    // -----------------------------------------------------------------------
-
     test('returns existing tasks on repeated activation (idempotent)', async () => {
       const workflow = buildWorkflow(SPACE_ID, workflowManager, [
         { id: NODE_A, name: 'Node A', agentId: AGENT_CODER },
@@ -540,10 +488,6 @@ describe('ChannelRouter', () => {
       expect(secondTasks[0].status).toBe('cancelled');
     });
 
-    // -----------------------------------------------------------------------
-    // Concurrent activation — DB uniqueness
-    // -----------------------------------------------------------------------
-
     test('handles concurrent activation via UNIQUE constraint gracefully', async () => {
       const workflow = buildWorkflow(SPACE_ID, workflowManager, [
         {
@@ -631,10 +575,6 @@ describe('ChannelRouter', () => {
         'Agent slot stale-slot on workflow node node-a now references'
       );
     });
-
-    // -----------------------------------------------------------------------
-    // Error cases
-    // -----------------------------------------------------------------------
 
     test('rejects cancelled run activation unless caller explicitly allows terminal reopen', async () => {
       const workflow = buildWorkflow(SPACE_ID, workflowManager, [
@@ -731,10 +671,6 @@ describe('ChannelRouter', () => {
       );
     });
   });
-
-  // -------------------------------------------------------------------------
-  // deliverMessage — basic routing
-  // -------------------------------------------------------------------------
 
   describe('deliverMessage', () => {
     test('auto-activates target node when no active tasks exist', async () => {
@@ -851,10 +787,6 @@ describe('ChannelRouter', () => {
       expect(result.targetNodeId).toBe(NODE_B);
     });
 
-    // -----------------------------------------------------------------------
-    // Fan-out — node name targeting
-    // -----------------------------------------------------------------------
-
     test('fan-out: node name activates all agents in the target node', async () => {
       const workflow = buildWorkflow(SPACE_ID, workflowManager, [
         {
@@ -941,10 +873,6 @@ describe('ChannelRouter', () => {
       expect(result.isFanOut).toBe(false);
     });
 
-    // -----------------------------------------------------------------------
-    // Cyclic channels — rate-based dead-loop detection
-    // -----------------------------------------------------------------------
-
     test('cyclic channel: records a traversal event on successful delivery', async () => {
       const channels: WorkflowChannel[] = [
         { id: 'ch-fwd', from: 'Sender', to: 'Receiver' },
@@ -979,10 +907,6 @@ describe('ChannelRouter', () => {
     });
 
     test('cyclic channel: a long review spread over time never trips (lifetime cap no longer blocks)', async () => {
-      // Reproduces the PR #2473 / task #942 false-block: many review rounds on
-      // the same cyclic channel (here 11 — over the old maxCycles of 5), but
-      // spread out over hours. The retired lifetime cap blocked this; the
-      // rate-based detector must allow it.
       const channels: WorkflowChannel[] = [
         { id: 'ch-fwd', from: 'Sender', to: 'Receiver' },
         { id: 'ch-bwd', from: 'Receiver', to: 'Sender', maxCycles: 5 },
@@ -1004,15 +928,12 @@ describe('ChannelRouter', () => {
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-      // 11 round-trips, 20 minutes apart. None cluster inside any 5-minute
-      // window, so the rolling rate stays well below the threshold (15).
       const now = Date.now();
       for (let i = 1; i <= 11; i++) {
         channelCycleRepo.recordCycleEvent(run.id, 1, now - i * 20 * 60 * 1000);
       }
       expect(channelCycleRepo.countRecentCycleEvents(run.id, 1, now)).toBe(0);
 
-      // Delivery proceeds — no false block.
       const delivered = await router.deliverMessage(run.id, 'planner', 'coder', 'round 12');
       expect(delivered.runId).toBe(run.id);
     });
@@ -1039,7 +960,6 @@ describe('ChannelRouter', () => {
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-      // 15 rapid traversals within the window → the next send trips.
       const now = Date.now();
       for (let i = 0; i < 15; i++) channelCycleRepo.recordCycleEvent(run.id, 1, now - i * 1000);
 
@@ -1155,22 +1075,18 @@ describe('ChannelRouter', () => {
       const now = Date.now();
       for (let i = 0; i < 15; i++) channelCycleRepo.recordCycleEvent(run.id, 1, now - i * 1000);
 
-      // A retrying agent attempts the blocked send several times in a row.
       for (let i = 0; i < 3; i++) {
         await expect(
           routerWithBus.deliverMessage(run.id, 'planner', 'coder', 'retry')
         ).rejects.toThrow(/dead loop/);
       }
 
-      // Only the first trip surfaces — the UI is not spammed.
       expect(deadLoopEvents).toHaveLength(1);
 
       unsub();
     });
 
     test('cyclic channel: a new loop after a human-touch reset surfaces a fresh notification', async () => {
-      // Dedupe is cleared when a cyclic send is allowed again, so a distinct
-      // second incident after explicit human intervention is still surfaced.
       const bus = new InternalEventBus<DaemonInternalEventMap>();
       const deadLoopEvents: DaemonInternalEventMap['space.workflowRun.deadLoop'][] = [];
       const unsub = bus.subscribe(
@@ -1211,7 +1127,6 @@ describe('ChannelRouter', () => {
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-      // First incident: block + notify.
       const t0 = Date.now();
       for (let i = 0; i < 15; i++) channelCycleRepo.recordCycleEvent(run.id, 1, t0 - i * 1000);
       await expect(
@@ -1219,7 +1134,6 @@ describe('ChannelRouter', () => {
       ).rejects.toThrow(/dead loop/);
       expect(deadLoopEvents).toHaveLength(1);
 
-      // Human touch clears the loop; the next send is allowed (and drops dedupe).
       channelCycleRepo.resetAllForRun(run.id);
       const delivered = await routerWithBus.deliverMessage(
         run.id,
@@ -1229,7 +1143,6 @@ describe('ChannelRouter', () => {
       );
       expect(delivered.runId).toBe(run.id);
 
-      // A second, distinct rapid loop must surface a FRESH notification.
       const t1 = Date.now();
       for (let i = 0; i < 15; i++) channelCycleRepo.recordCycleEvent(run.id, 1, t1 - i * 1000);
       await expect(
@@ -1241,8 +1154,6 @@ describe('ChannelRouter', () => {
     });
 
     test('cyclic channel: human touch (resetAllForRun) lifts a dead-loop block', async () => {
-      // Router-level coverage of the reset-on-human-touch contract — the repo
-      // layer is covered separately in channel-cycle-repository.test.ts.
       const channels: WorkflowChannel[] = [
         { id: 'ch-fwd', from: 'Sender', to: 'Receiver' },
         { id: 'ch-bwd', from: 'Receiver', to: 'Sender' },
@@ -1266,15 +1177,12 @@ describe('ChannelRouter', () => {
       const now = Date.now();
       for (let i = 0; i < 15; i++) channelCycleRepo.recordCycleEvent(run.id, 1, now - i * 1000);
 
-      // Blocked before the human touch.
       await expect(router.deliverMessage(run.id, 'planner', 'coder', 'blocked')).rejects.toThrow(
         /dead loop/
       );
 
-      // Human touch resets the run's cycle state.
       channelCycleRepo.resetAllForRun(run.id);
 
-      // After reset, delivery succeeds again (the block is lifted).
       const delivered = await router.deliverMessage(run.id, 'planner', 'coder', 'after reset');
       expect(delivered.runId).toBe(run.id);
     });
@@ -1309,9 +1217,6 @@ describe('ChannelRouter', () => {
     });
 
     test('cyclic channel: a reservation persists when activation throws after reserve (self-healing)', async () => {
-      // Reserve-before-activation: if activation fails AFTER the reservation
-      // commits, one extra row remains. It biases safely toward blocking and
-      // ages out after the window — pin this documented edge.
       const channels: WorkflowChannel[] = [
         { id: 'ch-fwd', from: 'Coding', to: 'Review' },
         { id: 'ch-bwd', from: 'Review', to: 'Coding' },
@@ -1332,21 +1237,13 @@ describe('ChannelRouter', () => {
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-      // Delete the target agent so activation throws AFTER the cyclic
-      // reservation has already committed (target resolution still succeeds
-      // because resolveNodeAgents does not validate agent existence).
       db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(AGENT_CODER);
 
       expect(channelCycleRepo.countRecentCycleEvents(run.id, 1)).toBe(0);
       await expect(router.deliverMessage(run.id, 'planner', 'coder', 'orphan')).rejects.toThrow();
-      // The reservation row persisted despite the activation failure.
       expect(channelCycleRepo.countRecentCycleEvents(run.id, 1)).toBe(1);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // canDeliver
-  // -------------------------------------------------------------------------
 
   describe('canDeliver', () => {
     test('open topology: always allowed when no channels declared', async () => {
@@ -1463,7 +1360,6 @@ describe('ChannelRouter', () => {
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
       const now = Date.now();
-      // 14 recent traversals — one short of the threshold.
       for (let i = 0; i < 14; i++) channelCycleRepo.recordCycleEvent(run.id, 1, now - i * 1000);
 
       const result = await router.canDeliver(run.id, 'planner', 'coder');
@@ -1471,10 +1367,6 @@ describe('ChannelRouter', () => {
     });
 
     test('canDeliver is read-only: it never records a traversal event', async () => {
-      // Locks the documented contract: canDeliver is a non-mutating query that
-      // may prune out-of-window rows but must never INSERT. Seeds straddle the
-      // window boundary so a regression that recorded on the query path would
-      // shift the in-window count.
       const channels: WorkflowChannel[] = [
         { id: 'ch-fwd', from: 'Node A', to: 'Node B' },
         { id: 'ch-bwd', from: 'Node B', to: 'Node A' },
@@ -1497,13 +1389,12 @@ describe('ChannelRouter', () => {
 
       const now = Date.now();
       const WINDOW = 5 * 60 * 1000;
-      channelCycleRepo.recordCycleEvent(run.id, 1, now - 10_000); // well inside
-      channelCycleRepo.recordCycleEvent(run.id, 1, now - (WINDOW - 1000)); // just inside the boundary
-      channelCycleRepo.recordCycleEvent(run.id, 1, now - (WINDOW + 1000)); // just outside (pruned)
+      channelCycleRepo.recordCycleEvent(run.id, 1, now - 10_000);
+      channelCycleRepo.recordCycleEvent(run.id, 1, now - (WINDOW - 1000));
+      channelCycleRepo.recordCycleEvent(run.id, 1, now - (WINDOW + 1000));
       const before = channelCycleRepo.countRecentCycleEvents(run.id, 1);
-      expect(before).toBe(2); // the two in-window events
+      expect(before).toBe(2);
 
-      // Repeated queries must not insert any new traversal.
       for (let i = 0; i < 5; i++) {
         const result = await router.canDeliver(run.id, 'planner', 'coder');
         expect(result.allowed).toBe(true);

@@ -1,25 +1,3 @@
-/**
- * Space Agent Tools — MCP tools for the Space leader agent session.
- *
- * These tools allow the Space agent to inspect workflows, manage existing
- * workflow runs, and create/query Space tasks. They are in the Space namespace
- * (not Room).
- *
- * Tools (per M7 spec):
- *   list_workflows      — show all workflows with their descriptions and steps
- *   get_workflow_run    — check the status of a running workflow
- *   change_plan         — update task description or switch to a different workflow mid-run
- *   list_tasks          — see current and past tasks
- *   get_workflow_detail — get a specific workflow's full definition (steps, transitions, rules)
- *   suggest_workflow    — get workflow recommendations for a described piece of work
- *
- * Design note: workflow selection is LLM-driven and task-first. The agent uses
- * workflow discovery tools to reason about orchestration, then creates a task.
- * Runtime attaches and advances workflow execution from the task lifecycle.
- *
- * See: docs/plans/multi-agent-v2-customizable-agents-workflows/07-workflow-selection-intelligence.md
- */
-
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
@@ -113,38 +91,17 @@ type LongHorizonAgentUpdateArgs = {
   setting_sources?: SpaceLongHorizonAgent['settingSources'] | null;
 };
 
-/**
- * A template-suggested subscription that was NOT seeded because its source is
- * unregistered or its topic pattern failed validation. Reported back to the
- * caller so missing wiring (e.g. a not-yet-built `crm` extension) is visible
- * rather than silently dropped.
- */
 type SkippedTemplateSubscription = {
   source: string;
   topic: string;
   reason: string;
 };
 
-/**
- * A template reminder default that was NOT seeded because it failed
- * validation (e.g. an unparseable cron expression) or its create threw.
- * Reported back to the caller so the omission is visible.
- */
 type SkippedTemplateReminder = {
   title: string;
   reason: string;
 };
 
-/**
- * Validate a template reminder default before seeding. Returns a reason when
- * the reminder should be skipped (today: a `cron` trigger whose expression is
- * missing or unparseable — `repo.createReminder` stores cron verbatim, so this
- * mirrors the `isValidCronExpression` gate the task-schedule path enforces).
- *
- * Pure and exported so the skip decision is unit-testable independent of the
- * handler. The seeder wraps the subsequent `createReminder` in try/catch too,
- * so a thrown insert also routes here rather than aborting the whole create.
- */
 export function validateTemplateReminder(
   reminder: SpaceLongHorizonAgentTemplate['reminderDefaults'][number]
 ): { ok: true } | { ok: false; reason: string } {
@@ -303,28 +260,12 @@ function mcpReminderShape(reminder: {
   };
 }
 
-/**
- * Resolve a `node_id` selector ({execution UUID, agent name}) to a concrete
- * node_execution row. Preference order:
- *   1. Exact match on `NodeExecution.id` (execution UUID)
- *   2. Most recently created execution matching the agent name (case-insensitive)
- *
- * Under the DB's UNIQUE constraint on `(workflowRunId, workflowNodeId, agentName)`
- * an agent name only duplicates when it appears in multiple workflow nodes; in
- * that case the most recent creation is chosen.
- *
- * Returns null when no execution matches.
- */
 function resolveNodeExecution(executions: NodeExecution[], selector: string): NodeExecution | null {
   const trimmed = selector.trim();
   if (!trimmed) return null;
-  // 1. Exact execution id.
   const byId = executions.find((exec) => exec.id === trimmed);
   if (byId) return byId;
 
-  // 2. Agent-name match (case-insensitive). `executions` is ordered ASC by
-  //    createdAt (per NodeExecutionRepository.listByWorkflowRun), so the last
-  //    matching row is the most recent.
   const targetName = normalizeAgentNameToken(trimmed);
   const byName = executions.filter(
     (exec) => normalizeAgentNameToken(exec.agentName) === targetName
@@ -406,14 +347,8 @@ async function resolveHandleForTaskRouting(
         )
     : [];
   const longHorizonActors = actors.filter((actor) => {
-    // Reserved system actors (e.g. @system-runtime) are conflicts even though
-    // they do not start with `agent:`.
     if (actor.actorId.startsWith('system:')) return true;
     if (!actor.actorId.startsWith('agent:')) return false;
-    // The synthetic Space coordinator actor uses actorId `agent:coordinator:<spaceId>`,
-    // but its persisted long-horizon record id is `space-lh-agent:coordinator:<spaceId>`.
-    // Treat it as a conflict only when a workflow worker with the same slot name exists;
-    // otherwise normal @coordinator delivery to the Space coordinator should proceed.
     if (actor.actorId === `agent:coordinator:${spaceId}`) return taskWorker !== null;
     if (!longHorizonAgentRepo) return true;
     const agentId = decodeURIComponent(actor.actorId.slice('agent:'.length));
@@ -444,157 +379,42 @@ function describeAmbiguousTargetActors(actors: ActorRef[], exec?: NodeExecution)
   ].join('\n');
 }
 
-// ---------------------------------------------------------------------------
-// Config
-// ---------------------------------------------------------------------------
-
 export interface SpaceAgentToolsConfig {
-  /** The Space this agent is operating within. */
   spaceId: string;
-  /** SQLite database for long-horizon agent assignment metadata. */
   db?: BunDatabase;
-  /** Long-horizon agent repository for durable agent event subscriptions. */
   longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
-  /** SpaceRuntime for starting and managing workflow runs. */
   runtime: SpaceRuntime;
-  /** Workflow manager for listing available workflows. */
   workflowManager: SpaceWorkflowManager;
-  /** Space manager for approve_task autonomy checks. */
   spaceManager?: Pick<SpaceManager, 'getSpace'>;
-  /** Task repository for read queries (list/filter). */
   taskRepo: SpaceTaskRepository;
-  /** Node execution repository for workflow run node execution queries. */
   nodeExecutionRepo: NodeExecutionRepository;
-  /** Workflow run repository for listing and updating runs. */
   workflowRunRepo: SpaceWorkflowRunRepository;
-  /**
-   * Returns true if the run exists and is non-terminal. Used by `archive_task`
-   * to reject archiving the canonical task of an active run (which would strand
-   * it — see task #849, G1). Mirrors the guard in the `spaceTask.update` RPC
-   * handler so agent-driven archives can't bypass it.
-   */
   isWorkflowRunActive?: (runId: string) => boolean;
-  /** Task manager for create/retry/cancel/reassign operations. */
   taskManager: SpaceTaskManager;
-  /** Space agent manager for reassign validation. */
   spaceAgentManager: SpaceAgentManager;
-  /** Session manager for live Space session message delivery and interrupts. */
   sessionManager?: Pick<SessionManager, 'getCachedSession' | 'getSessionAsync' | 'sendUserMessage'>;
-  /**
-   * Clear a long-term agent session's persisted provider. Called when
-   * `update_agent` explicitly clears the provider override (provider: null) so
-   * wake-time provider retention can't restore the stale value.
-   */
   clearLongTermAgentSessionProvider?: (spaceId: string, agentId: string) => Promise<void>;
-  /** Optional runtime live-session lookup (used for workflow node sessions). */
   getRuntimeSession?: (sessionId: string) => AgentSession | undefined;
-  /**
-   * Task Agent Manager for injecting messages into running task agent sessions.
-   * When provided, enables the `send_message_to_task` and `list_task_members` tools.
-   */
   taskAgentManager?: TaskAgentManager;
-  /** InternalEventBus<DaemonInternalEventMap> for emitting task events. */
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
-  /**
-   * Callback to lazily activate a workflow node.
-   *
-   * Used by `send_message_to_task` when the caller targets a specific workflow node
-   * (via `node_id`) and that node has no live agent session: the callback invokes
-   * `ChannelRouter.activateNode()` which reuses an existing session (cyclic re-entry)
-   * or creates a pending node_execution that the tick loop will pick up.
-   *
-   * When omitted, `send_message_to_task` can still deliver to already-live sessions
-   * but cannot activate inactive nodes.
-   */
   activateNode?: (runId: string, nodeId: string) => Promise<void>;
-  /**
-   * Pending message queue for messages addressed to workflow node agents that
-   * have been activated but do not have a live session yet.
-   */
   pendingMessageQueue?: PendingAgentMessageQueue;
-  /**
-   * Resolves the space's current autonomy level for task-approval autonomy
-   * enforcement (approve_pending_completion / submit_for_approval paths).
-   */
   getSpaceAutonomyLevel?: (spaceId: string) => Promise<number>;
-  /**
-   * The calling agent's name (e.g., 'space-agent' or a long-horizon agent handle).
-   * Used for outbound sender attribution and authorization.
-   */
   myAgentName?: string;
-  /**
-   * Optional name aliases for the calling agent. Checked alongside myAgentName during
-   * authorization.
-   */
   myAgentNameAliases?: string[];
-  /**
-   * The calling long-term Space agent's id (from `promptProvenance.agentId`).
-   * When set and the id resolves to a `SpaceLongHorizonAgent` in this space with
-   * a non-null `autonomyLevel`, that level acts as a ceiling on the agent's
-   * effective autonomy for its own `space-agent-tools` calls
-   * (`min(space.autonomyLevel, agent.autonomyLevel)`). Only long-term agent
-   * sessions pass this — coordinators and ad-hoc members are uncapped.
-   */
   myAgentId?: string;
-  /**
-   * Session ID of the calling agent. Used to stamp `createdBySession` on tasks
-   * created via `create_standalone_task`.
-   */
   mySessionId?: string;
-  /**
-   * The calling session's Space MCP role (coordinator, ad-hoc member, long-term
-   * agent, …). `approve_pending_completion` is gated to the `coordinator` and
-   * `legacy_task_agent` roles only — worker node agents must self-close via
-   * `approve_task`. When omitted, `approve_pending_completion` rejects the caller.
-   */
   callerRole?: SpaceMcpSessionRole;
 
-  /**
-   * Optional self-heal callback exposed as the `restore_node_agent` tool.
-   *
-   * When provided, the tool is added to this MCP server so it remains callable
-   * even if the `node-agent` MCP server is missing — breaking the namespace paradox
-   * where the self-heal tool lived in the same namespace as the server it repairs.
-   *
-   * Only set for specialised sessions that intentionally mirror this restore hook.
-   */
   onRestoreNodeAgent?: (args: { reason?: string }) => Promise<void> | void;
-  /**
-   * MCP audit log repository for recording write operations.
-   * Optional — when absent, no audit entries are written.
-   */
   auditLogRepo?: McpAuditLogRepository;
-  /**
-   * Schedule management service — required for the schedule management tools
-   * (create_scheduled_task, list_scheduled_tasks, etc.). Encapsulates the
-   * atomic create+enqueue, validation, and reschedule logic shared with the
-   * RPC handlers.
-   * Optional — when absent, schedule tools are not registered.
-   */
   scheduleService?: import('../schedule/schedule-service').ScheduleService;
-  /**
-   * Reply routing registry for symmetric message routing. When a member session
-   * sends a message to a task/node agent, the registry records the sender's
-   * session ID so that replies via 'space-agent' route back to the originating
-   * session instead of the canonical space:chat: session.
-   */
   replyRoutingRegistry?: ReplyRoutingRegistry;
-  /** Goal service for terminal goal-task side effects and goal MCP tools. */
   goalService?: import('../goals/goal-service').SpaceGoalService;
-  /** Forge scope/evidence service for EvolutionScope MCP tools. */
   evolutionScopeService?: import('../evolution-scope-service').EvolutionScopeService;
-  /**
-   * Goal repository for reconciling Forge self-nag schedules after a scope
-   * update via `update_forge_scope` (mirrors the RPC `onScopeSaved` hook).
-   * Optional — when absent (with scheduleService), self-nag reconciliation is
-   * skipped on the MCP path.
-   */
   goalRepo?: import('../../../storage/repositories/space-goal-repository').SpaceGoalRepository;
-  /** Forge episode/review service for lesson, proposal, and rollup MCP tools. */
   evolutionEpisodeService?: import('../evolution-episode-service').EvolutionEpisodeService;
-  /** Generic Space actor resolver for @handle/@role DMs. */
   messageResolver?: ActorResolver;
-  /** Deliver to or activate long-term Space agents. */
   longTermAgentDelivery?: {
     deliverToSession?: (
       actor: ActorRef,
@@ -605,22 +425,9 @@ export interface SpaceAgentToolsConfig {
       message: MessageRecord
     ) => Promise<string | null | undefined>;
   };
-  /**
-   * External event store for the `get_external_event` on-demand fetch tool.
-   * Optional — when absent, the tool is not registered. Reads are scoped to
-   * the current space so events never leak across spaces.
-   */
   externalEventStore?: ExternalEventStore;
 }
 
-// ---------------------------------------------------------------------------
-// Tool handlers (separated for testability)
-// ---------------------------------------------------------------------------
-
-/**
- * Create handler functions that can be tested directly without an MCP server.
- * Returns a map of tool name → handler function.
- */
 export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
   const {
     spaceId,
@@ -825,20 +632,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     });
   }
 
-  /**
-   * Resolves the calling long-term agent's autonomy ceiling, if any.
-   *
-   * - No calling agent (`myAgentId` unset) → null (uncapped).
-   * - Resolves to a `SpaceLongHorizonAgent` in this space → its `autonomyLevel`
-   *   (null when the operator left it unset → uncapped).
-   * - Resolves to a long-horizon agent in another space → null (unreachable in
-   *   production since sessions are space-scoped; defer to the space level).
-   * - Resolves to a worker agent (worker-agent long-term session, which has no
-   *   autonomy concept) → null (uncapped).
-   * - `myAgentId` is set but resolves to no record in either repo (a long-horizon
-   *   agent deleted while its session is still live) → fail closed at level 1, so
-   *   a vanished low-trust agent cannot silently become uncapped.
-   */
   function getCallingAgentAutonomyLevel(): SpaceAgentAutonomyLevel | null {
     if (!myAgentId) return null;
     const repo = config.longHorizonAgentRepo;
@@ -848,19 +641,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       if (agent.spaceId !== spaceId) return null;
       return agent.autonomyLevel ?? null;
     }
-    // No long-horizon record. A worker-agent long-term session legitimately has
-    // none → uncapped; anything else (e.g. a deleted long-horizon agent) fails closed.
     const workerAgent = spaceAgentManager.getById(myAgentId);
     if (workerAgent && workerAgent.spaceId === spaceId) return null;
     return 1;
   }
 
-  /**
-   * Effective autonomy = `min(spaceLevel, agentCeiling)`. The agent ceiling only
-   * binds for long-term agent sessions (where `myAgentId` resolves to a
-   * `SpaceLongHorizonAgent` with a level). Returns the components so callers can
-   * produce precise error messages and audit entries.
-   */
   async function resolveEffectiveAutonomy(): Promise<{
     level: number;
     spaceLevel: number;
@@ -872,7 +657,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     return { level, spaceLevel, agentLevel };
   }
 
-  /** True when the agent ceiling — not the space level — is the binding constraint. */
   function isAgentCeilingBinding(spaceLevel: number, agentLevel: number | null): boolean {
     return agentLevel != null && agentLevel < spaceLevel;
   }
@@ -1062,7 +846,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       .catch(() => {});
   }
 
-  /** Helper to log MCP write operations to the audit log. */
   function logAudit(
     toolName: string,
     paramsSummary: Record<string, unknown>,
@@ -1084,22 +867,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     }
   }
 
-  /**
-   * Seed a freshly-created long-horizon agent's `suggestedEventSubscriptions`.
-   *
-   * The runtime's `refreshLongHorizonSubscription` composes the trie pattern
-   * but does NOT check `KNOWN_SOURCES`, so an unknown source (e.g. `crm`,
-   * `calendar`, `tasks` whose extensions do not exist yet) would otherwise be
-   * stored as a permanently-inert subscription. We validate the source
-   * ourselves and skip-with-reason instead. Pattern composition failures
-   * (e.g. a GitHub resource outside `pull_request`) are likewise skipped and
-   * the stored row rolled back so no orphan is left behind.
-   *
-   * Seeding is best-effort: invalid suggestions never fail the whole create,
-   * and a thrown insert/refresh/rollback is caught and reported too (mirroring
-   * the reminder seeder) so the create never aborts after the agent row — and
-   * earlier subscriptions/reminders — are committed.
-   */
   function seedLongHorizonTemplateSubscriptions(
     agentId: string,
     subscriptions: SpaceLongHorizonAgentTemplate['suggestedEventSubscriptions']
@@ -1132,9 +899,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         });
         const refresh = runtime.refreshLongHorizonSubscription(spaceId, stored.id);
         if (!refresh.success) {
-          // Roll back the stored row best-effort. A thrown delete must NOT
-          // propagate to the outer catch — otherwise the reported reason would
-          // describe the cleanup failure instead of refresh.error.
           try {
             repo.deleteSubscription(stored.id);
           } catch {
@@ -1149,9 +913,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         }
         seeded.push({ source: stored.source, topic: stored.topic });
       } catch (err) {
-        // Never let a thrown insert/refresh/rollback abort the create — same
-        // best-effort contract as the reminder seeder. Best-effort cleanup of
-        // any row stored before the throw.
         if (stored) {
           try {
             repo.deleteSubscription(stored.id);
@@ -1169,17 +930,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     return { seeded, skipped };
   }
 
-  /**
-   * Seed a freshly-created long-horizon agent's `reminderDefaults`.
-   *
-   * Mirrors the subscription seeder's best-effort contract: a reminder that
-   * fails validation (see {@link validateTemplateReminder}) or whose insert
-   * throws is skipped with a reason and never aborts the create. Aborting
-   * here would leave the committed agent row, already-seeded subscriptions,
-   * and earlier reminders behind — a live half-configured agent — and an
-   * automated retry would then mint a suffixed duplicate handle via
-   * `uniqueLongHorizonAgentHandle`.
-   */
   function seedLongHorizonTemplateReminders(
     agentId: string,
     reminders: SpaceLongHorizonAgentTemplate['reminderDefaults']
@@ -1194,13 +944,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         continue;
       }
       try {
-        // Compute the first cron occurrence so the reminder is immediately
-        // due-eligible. `listDueReminders` keys on `next_run_at <= now` and the
-        // LH reminder scheduler fires from that; without nextRunAt the row is
-        // inert until the daemon restarts and runs the startup backfill. Mirrors
-        // create_agent_reminder and the RPC reminder path. validateTemplateReminder
-        // already guaranteed the cron parses, so this only returns null on a bad
-        // timezone (leave null → startup backfill still catches it, no regression).
         const nextRunAt =
           reminder.triggerType === 'cron' && reminder.cronExpression
             ? getNextRunAt(reminder.cronExpression, reminder.timezone ?? 'UTC')
@@ -1336,11 +1079,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         if (
           mySessionId &&
           args.session_id !== mySessionId &&
-          // The coordinator exemption applies only to the real space coordinator
-          // (the space:chat session, which carries no calling agent id). A
-          // long-term agent that happens to be named "coordinator"/"space-agent"
-          // must still pass the autonomy ceiling — otherwise the ceiling is
-          // bypassable by renaming via update_agent.
           (outboundSenderLevel !== 'space-agent' || myAgentId)
         ) {
           await requireSessionWriteAutonomy('send_session_message');
@@ -1525,9 +1263,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           handle: uniqueLongHorizonAgentHandle(args.name),
           displayName: args.name,
           instructions: args.custom_prompt ?? args.description ?? '',
-          // A restricted caller must not manufacture an uncapped child to bypass
-          // its own ceiling; the child inherits the caller's ceiling (null when
-          // the caller itself is uncapped).
           autonomyLevel: getCallingAgentAutonomyLevel(),
           model: args.model ?? null,
           thinkingLevel: args.thinking_level ?? null,
@@ -1556,22 +1291,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         return jsonResult({ success: false, error: 'template_name is required' });
       }
 
-      // Long-horizon templates are keyed like 'marketing.default'; worker
-      // presets by name ('Coder', 'Reviewer', ...). LH keys never collide
-      // with preset names, so matching LH by key (case-insensitive) first
-      // keeps the lookup unambiguous and preserves the preset path verbatim.
       const lhTemplate = getLongHorizonAgentTemplates().find(
         (candidate) => candidate.key.toLowerCase() === templateName.toLowerCase()
       );
       if (lhTemplate) {
-        // Reserved singleton guard. The coordinator is auto-created per space
-        // by `ensureCoordinator` (deterministic id + handle). Passing its
-        // template here would otherwise hit `uniqueLongHorizonAgentHandle`,
-        // which treats `coordinator` as taken and mints an active `coordinator-2`
-        // — a row `isCoordinatorLongHorizonAgent` does NOT recognize as the
-        // coordinator, yet it would still receive the template's subscriptions
-        // and reminder, starving the real coordinator and spawning a duplicate
-        // worker. Reject reserved-handle templates instead.
         if (isReservedAgentHandle(lhTemplate.handle)) {
           return jsonResult({
             success: false,
@@ -1592,12 +1315,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             if (modelError) return jsonResult({ success: false, error: modelError });
           }
           const repo = requireLongHorizonAgentRepo();
-          // Cap the template's suggested autonomy at the caller's ceiling: a
-          // restricted caller must not manufacture a more-trusted child (same
-          // rule create_agent and the preset path apply via
-          // getCallingAgentAutonomyLevel). Uncapped callers (null — e.g. a
-          // worker-agent session or a direct call) keep the template's full
-          // suggestion.
           const callerCeiling = getCallingAgentAutonomyLevel();
           const autonomyLevel: SpaceAgentAutonomyLevel =
             callerCeiling == null || lhTemplate.suggestedAutonomyLevel <= callerCeiling
@@ -1620,8 +1337,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             lhTemplate.suggestedEventSubscriptions
           );
           const reminders = seedLongHorizonTemplateReminders(agent.id, lhTemplate.reminderDefaults);
-          // Emit after seeding so listeners (none depend on subs/reminders today)
-          // never observe a half-seeded agent.
           emitLongHorizonAgentCreated(agent);
           logAudit('create_agent_from_template', {
             template_name: args.template_name,
@@ -1666,8 +1381,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           displayName: name,
           templateKey: template.name,
           instructions: template.customPrompt ?? template.description,
-          // Inherit the caller's ceiling (see create_agent) — a restricted caller
-          // cannot spawn a more trusted agent from a preset template either.
           autonomyLevel: getCallingAgentAutonomyLevel(),
           model: args.model ?? null,
           provider: args.provider ?? null,
@@ -1691,10 +1404,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         template_name: preset.name,
         description: preset.description,
       }));
-      // Exclude reserved-handle templates (e.g. coordinator.default): they are
-      // auto-created singletons that `create_agent_from_template` rejects, so
-      // advertising them as creatable would send a caller down a path that
-      // deterministically fails.
       const longHorizonTemplates = getLongHorizonAgentTemplates()
         .filter((template) => !isReservedAgentHandle(template.handle))
         .map((template) => ({
@@ -1750,10 +1459,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             args.tools === null ? {} : args.tools ? { tools: args.tools } : undefined,
         });
         if (args.provider === null) {
-          // Explicit provider-override clear: wake-time provider retention would
-          // otherwise restore the stale provider from the session config and make
-          // the clear a no-op. Drop the persisted provider so the next ensure
-          // re-resolves it.
           await config.clearLongTermAgentSessionProvider?.(spaceId, args.agent_id);
         }
         const refresh = runtime.refreshLongHorizonAgentSubscriptions(spaceId, args.agent_id);
@@ -1957,64 +1662,34 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    /**
-     * Fetch the full raw record for a single external event by id.
-     *
-     * On-demand counterpart to the lean "essence" injected into sessions as a
-     * message: use this for the rare deep-dive case where the digested summary
-     * is not enough and you need the complete payload (incl. `rawPayload`,
-     * `body`, `actor`, `eventType`, source-native fields, etc.).
-     *
-     * Returns a clear not-found result for unknown ids. Reads are scoped to the
-     * current space — an id that resolves to an event in another space is
-     * treated as not-found so events never leak across spaces.
-     */
     async get_external_event(args: { eventId: string }): Promise<ToolResult> {
       const store = config.externalEventStore;
       if (!store) {
         return jsonResult({ success: false, error: 'External event lookup is not available.' });
       }
       const record = store.getById(args.eventId);
-      // Scope by space: getById resolves by id only, so an id belonging to
-      // another space must be treated as not-found.
       if (!record || record.event.spaceId !== spaceId) {
         return jsonResult({ success: false, error: `External event not found: ${args.eventId}` });
       }
       return jsonResult({ success: true, event: record.event, state: record.state });
     },
 
-    /**
-     * List all available SpaceWorkflow records for this space.
-     * The LLM agent calls this first to understand available options.
-     */
     async list_workflows(): Promise<ToolResult> {
       const workflows = workflowManager.listWorkflowSummaries(spaceId);
       return jsonResult({ success: true, workflows });
     },
 
-    /**
-     * Get the current status of a workflow run, including its current step.
-     */
     async get_workflow_run(args: { run_id: string }): Promise<ToolResult> {
       const run = workflowRunRepo.getRun(args.run_id);
       if (!run || run.spaceId !== spaceId) {
         return jsonResult({ success: false, error: `Workflow run not found: ${args.run_id}` });
       }
 
-      // Include node executions for this run
       const executions = nodeExecutionRepo.listByWorkflowRun(run.id);
 
       return jsonResult({ success: true, run, executions });
     },
 
-    /**
-     * Update the current workflow run's task description, or switch to a
-     * different workflow mid-run (cancels the current run and starts a new one).
-     *
-     * - Provide `description` to update the run description in place.
-     * - Provide `workflow_id` or `workflow_handle` to switch workflows: the current run is cancelled
-     *   and a new run is started with the same title and updated description.
-     */
     async change_plan(args: {
       run_id: string;
       description?: string;
@@ -2033,10 +1708,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         });
       }
 
-      // Resolve workflow identifier to UUID.
-      // If workflow_id is provided but unusable (missing or belongs to another
-      // space), attempt handle resolution so clients that cache both identifiers
-      // still work after a workflow is re-created (new UUID, same handle).
       let targetWorkflowId = args.workflow_id;
       if (targetWorkflowId) {
         const wf = workflowManager.getWorkflow(targetWorkflowId);
@@ -2053,10 +1724,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           if (byHandle) {
             targetWorkflowId = byHandle.id;
           } else {
-            // Both selectors failed — ID is unusable and handle is stale.
-            // Reject immediately rather than falling through; the validation
-            // block below does not check space membership, so a cross-space
-            // ID would pass existence/disabled checks incorrectly.
             return jsonResult({
               success: false,
               error: `Workflow not found (id=${targetWorkflowId}, handle=${trimmedHandle})`,
@@ -2081,8 +1748,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         targetWorkflowId = byHandle.id;
       }
 
-      // Switching workflow: validate the target workflow exists BEFORE cancelling
-      // the old run, so a bad workflow_id never leaves the user with no active run.
       if (targetWorkflowId) {
         const targetWorkflow = workflowManager.getWorkflow(targetWorkflowId);
         if (!targetWorkflow) {
@@ -2098,9 +1763,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           });
         }
 
-        // Cancel the task and stop its agent session atomically with the run so
-        // the obsolete worker cannot receive external events in the window
-        // before the next reconcile tick (the run gate no longer refuses them).
         await runtime.cancelWorkflowRun(spaceId, run.id);
 
         try {
@@ -2124,7 +1786,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         }
       }
 
-      // Description-only update.
       if (args.description !== undefined) {
         const updated = workflowRunRepo.updateRun(run.id, { description: args.description });
         return jsonResult({ success: true, run: updated });
@@ -2136,11 +1797,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       });
     },
 
-    /**
-     * Get the full definition of a specific workflow — steps, transitions, and rules.
-     * Use this when list_workflows gives enough name/description to narrow down to one
-     * candidate and you want to inspect its complete structure before starting a run.
-     */
     async get_workflow_detail(args: {
       workflow_id?: string;
       workflow_handle?: string;
@@ -2148,8 +1804,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       let workflow = null;
       if (args.workflow_id) {
         workflow = workflowManager.getWorkflow(args.workflow_id);
-        // Fall back to handle when the ID is unusable: either it returned null,
-        // it resolved to a workflow in a different space, or it is disabled.
         const idUnusable = !workflow || workflow.spaceId !== spaceId || !!workflow.disabled;
         if (idUnusable && typeof args.workflow_handle === 'string') {
           const trimmedHandle = args.workflow_handle.trim();
@@ -2182,19 +1836,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       return jsonResult({ success: true, workflow });
     },
 
-    /**
-     * Return all workflows in the space so the Space Agent LLM can pick one.
-     *
-     * Previously this tool did keyword pre-ranking, but that could bias the
-     * LLM toward a substring-overlap pick (e.g. a "review feedback" task
-     * always surfacing a "review" workflow first). Selection is fully
-     * LLM-driven, so we just expose the full catalogue and let the caller
-     * reason over it.
-     *
-     * The `description` argument is retained for forward compatibility and
-     * call-site clarity, but is not used by the handler. Callers can still
-     * read it from structured tool logs for observability.
-     */
     async suggest_workflow(_args: { description: string }): Promise<ToolResult> {
       const allWorkflows = workflowManager
         .listWorkflowSummaries(spaceId)
@@ -2209,13 +1850,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       return jsonResult({ success: true, workflows: allWorkflows });
     },
 
-    /**
-     * List SpaceTasks for this space, optionally filtered by status and/or workflowRunId.
-     *
-     * Use `compact: true` to return a trimmed projection (id, title, status,
-     * priority, createdAt) suitable for dense lists. Otherwise the full
-     * SpaceTask rows are returned.
-     */
     async list_tasks(args: {
       status?: SpaceTaskStatus;
       workflow_run_id?: string;
@@ -2263,14 +1897,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       return jsonResult({ success: true, total, tasks });
     },
 
-    /**
-     * Create a standalone task not associated with any workflow run.
-     *
-     * Supports structured dependencies via `depends_on`. The underlying
-     * SpaceTaskManager.createTask() validates that every dependency ID
-     * exists in the same space and rejects circular references; those
-     * errors are surfaced here as `{ success: false, error }`.
-     */
     async create_standalone_task(args: {
       title: string;
       description: string;
@@ -2283,9 +1909,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       let preferredWorkflowId = args.workflow_id ?? null;
       if (preferredWorkflowId) {
         const wf = workflowManager.getWorkflow(preferredWorkflowId);
-        // Consider the ID "unusable" when the workflow is missing, belongs to a
-        // different space, or is disabled. In any of those cases, a valid handle
-        // in the same request should take precedence.
         const isUnusable = !wf || wf.spaceId !== spaceId || !!wf.disabled;
         if (isUnusable && typeof args.workflow_handle === 'string') {
           const trimmedHandle = args.workflow_handle.trim();
@@ -2305,16 +1928,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             }
             preferredWorkflowId = byHandle.id;
           } else {
-            // Both identifiers were supplied but neither resolved — fail fast
-            // rather than silently routing to an auto-selected workflow.
             return jsonResult({
               success: false,
               error: `Workflow not found by id or handle: ${trimmedHandle}`,
             });
           }
         }
-        // If unusable and no handle provided, keep the stale ID;
-        // the task runtime will fall back to automatic workflow selection.
       } else if (typeof args.workflow_handle === 'string') {
         const trimmedHandle = args.workflow_handle.trim();
         if (trimmedHandle === '') {
@@ -2368,10 +1987,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    /**
-     * Update an existing task's title, description, priority, or dependencies.
-     * The task must exist and belong to this space.
-     */
     async update_task(args: {
       task_id: string;
       title?: string;
@@ -2439,9 +2054,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    /**
-     * Get the full detail of a task by UUID or by numeric task number (e.g. #5).
-     */
     async get_task_detail(args: { task_id?: string; task_number?: number }): Promise<ToolResult> {
       let task: SpaceTask | null = null;
       if (args.task_number !== undefined) {
@@ -2461,9 +2073,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       return jsonResult({ success: true, task });
     },
 
-    /**
-     * Retry a failed or cancelled task by resetting it to pending.
-     */
     async retry_task(args: { task_id: string; description?: string }): Promise<ToolResult> {
       try {
         const existing = taskRepo.getTask(args.task_id);
@@ -2478,10 +2087,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         }
         let task: SpaceTask;
         if (existing.workflowRunId) {
-          // Only retryable statuses may be recovered — recovering an active
-          // (in_progress/review/approved/open) task would destructively null its
-          // post-approval fields without stopping its live session. Mirrors
-          // retryTask's contract.
           const retryableStatuses: SpaceTaskStatus[] = ['blocked', 'cancelled', 'done'];
           if (!retryableStatuses.includes(existing.status)) {
             return jsonResult({
@@ -2489,10 +2094,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
               error: `Cannot retry task in '${existing.status}' status. Task must be in 'blocked', 'cancelled', or 'done' status.`,
             });
           }
-          // Route workflow-backed retries through runtime recovery so the run,
-          // execution state, and workflow event interests (cleared by a prior
-          // cancel) are restored. The description is passed into the recovery
-          // transaction so it commits atomically (reverts on failure).
           const targetStatus = existing.status === 'blocked' ? 'open' : 'in_progress';
           task = (
             await runtime.recoverWorkflowBackedTask(existing.spaceId, args.task_id, targetStatus, {
@@ -2509,10 +2110,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    /**
-     * Cancel a task and optionally cancel its workflow run.
-     * Cascades cancellation to pending dependent tasks automatically.
-     */
     async cancel_task(args: {
       task_id: string;
       cancel_workflow_run?: boolean;
@@ -2520,18 +2117,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         const cancelled = await taskManager.cancelTaskCascade(args.task_id);
         const task = cancelled[0]!;
-        // Emit for every cancelled task (the requested task plus cascaded
-        // dependents) so the task-owned subscription cleanup (clearRunInterests
-        // on cancel) fires for each — cancelTaskCascade updates the DB directly
-        // without publishing space.task.updated events.
         for (const cancelledTask of cancelled) {
           emitTaskUpdated(cancelledTask);
         }
 
         if (args.cancel_workflow_run && task.workflowRunId) {
-          // Always invoke runtime teardown — even if the run is already cancelled
-          // (e.g. space.stop cancelled it), cancelWorkflowRun still stops
-          // remaining task sessions and clears interests.
           const existingRun = workflowRunRepo.getRun(task.workflowRunId);
           if (existingRun !== null) {
             await runtime.cancelWorkflowRun(spaceId, task.workflowRunId);
@@ -2551,11 +2141,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    /**
-     * Publish a draft task, transitioning it from `draft` to `open`.
-     * Published tasks become eligible for the runtime's orchestration tick loop.
-     * Only valid for tasks currently in `draft` status.
-     */
     async publish_task(args: { task_id: string }): Promise<ToolResult> {
       const task = taskRepo.getTask(args.task_id);
       if (!task) {
@@ -2587,11 +2172,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    /**
-     * Archive a task, transitioning it to `archived` status.
-     * Archived tasks are excluded from most queries and cannot be reactivated.
-     * Valid from any status that allows the `archived` transition.
-     */
     async archive_task(args: { task_id: string }): Promise<ToolResult> {
       const task = taskRepo.getTask(args.task_id);
       if (!task) {
@@ -2603,11 +2183,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           error: `Task ${args.task_id} does not belong to this space.`,
         });
       }
-      // Reject archiving the canonical task of an active (non-terminal) workflow
-      // run — it would strand the run (listByWorkflowRun excludes archived, so
-      // processRunTick early-returns; no reconciliation cancels the orphan).
-      // Mirrors the spaceTask.update RPC guard so agent-driven archives can't
-      // bypass it. (task #849, G1)
       if (task.workflowRunId && config.isWorkflowRunActive?.(task.workflowRunId)) {
         return jsonResult({
           success: false,
@@ -2631,16 +2206,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    /**
-     * Reassign a task to a different agent.
-     */
     async reassign_task(args: {
       task_id: string;
       custom_agent_id?: string | null;
       assigned_agent?: 'coder' | 'general';
     }): Promise<ToolResult> {
       try {
-        // Validate custom_agent_id if being set to a non-null value
         if (args.custom_agent_id != null) {
           const agent = spaceAgentManager.getById(args.custom_agent_id);
           if (!agent) {
@@ -2651,8 +2222,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           }
         }
 
-        // Pass args.custom_agent_id as-is (including undefined) so the manager
-        // only updates that field when it was explicitly provided.
         const task = await taskManager.reassignTask(
           args.task_id,
           args.custom_agent_id,
@@ -2665,20 +2234,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    /**
-     * Send a message to a task. Requires a `node_id` (execution UUID or agent name)
-     * to target a specific workflow node agent.
-     *
-     * Auto-activate semantics:
-     * - When `node_id` is given but the target node has no live sub-session, the
-     *   `activateNode` callback (if configured) is invoked to lazily activate the
-     *   node, reusing an existing session for cyclic re-entry or marking a pending
-     *   execution that the tick loop will spawn.
-     *
-     * Tombstone model: archived tasks are the only non-recoverable state; every
-     * other status (open/in_progress/review/done/blocked/cancelled) can be
-     * reactivated.
-     */
     async send_message_to_task(args: {
       task_id?: string;
       task_number?: number;
@@ -2701,7 +2256,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           error: 'Task agent communication is not available in this context.',
         });
       }
-      // --- Resolve task by id or by space-scoped task number ---
       if (args.task_id) {
         task = taskRepo.getTask(args.task_id);
         if (!task) {
@@ -3009,12 +2563,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         });
       }
 
-      // Record reply route so node-agent replies go back to this session.
       if (replyRoutingRegistry && mySessionId) {
         replyRoutingRegistry.set(task.id, mySessionId, resolved.agentName);
       }
 
-      // Attempt direct injection when the execution already has a live session.
       if (resolved.agentSessionId) {
         try {
           const sdkMessageId = await taskAgentManager.injectSubSessionMessage(
@@ -3056,7 +2608,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         }
       }
 
-      // No live session → activate and retry.
       if (!activateNode) {
         audit('failed', {
           target: 'node',
@@ -3085,7 +2636,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         });
       }
 
-      // Re-read the execution — activateNode may have restored the session id.
       const refreshedExecution = nodeExecutionRepo.getById(resolved.id);
       const sessionIdAfter = refreshedExecution?.agentSessionId ?? null;
       if (sessionIdAfter) {
@@ -3162,8 +2712,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         queuedMessageId = record.id;
       }
 
-      // No live session yet — the tick loop will spawn one. When a queue is
-      // available, the queued row will be flushed into that session on activation.
       audit(queuedMessageId !== null ? 'queued' : 'activated', {
         target: 'node',
         node_id: resolved.id,
@@ -3193,9 +2741,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       });
     },
 
-    /**
-     * List all node executions for a task's workflow run.
-     */
     async list_task_members(args: { task_id: string }): Promise<ToolResult> {
       const task = taskRepo.getTask(args.task_id);
       if (!task) {
@@ -3219,10 +2764,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       return jsonResult({ success: true, task_id: args.task_id, executions });
     },
 
-    /**
-     * Approve a task that is in 'review' status, transitioning it to 'done'.
-     * Records approval audit trail with agent as the source.
-     */
     async approve_task(args: { task_id: string; reason?: string }): Promise<ToolResult> {
       const task = taskRepo.getTask(args.task_id);
       if (!task) {
@@ -3295,7 +2836,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           },
         });
 
-        // Best-effort goal terminal handling — must not block approve_task.
         try {
           config.goalService?.handleTaskTerminal(updated.id);
         } catch (err) {
@@ -3322,23 +2862,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    /**
-     * Human-approval path for tasks paused at a `submit_for_approval` checkpoint
-     * (`pendingCheckpointType === 'task_completion'`). This is the MCP surface for
-     * the coordinator to close the human-approval loop programmatically — the
-     * same path the UI "Approve" banner triggers via the
-     * `spaceTask.approvePendingCompletion` RPC.
-     *
-     * NOT autonomy-gated: it represents an explicit human decision routed through
-     * the coordinator (the coordinator's own autonomy is enforced by its prompt,
-     * not here). Restricted to the `coordinator` / `legacy_task_agent` caller
-     * roles — worker node agents self-close via `approve_task` instead.
-     *
-     * - approved: true  → review → approved via `runtime.dispatchPostApproval`,
-     *   which stamps approval metadata and fires the PostApprovalRouter.
-     * - approved: false → review → in_progress (rejection); reason recorded as
-     *   approvalReason.
-     */
     async approve_pending_completion(args: {
       task_id: string;
       approved: boolean;
@@ -3378,20 +2901,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         let updated: SpaceTask;
         if (args.approved) {
-          // Delegate review → approved + PostApprovalRouter to the runtime. This
-          // is the sole approval path — `setTaskStatus('approved')` is never
-          // called directly here so the centralised transition + router
-          // invariant holds. The `approvalSource` is always 'human' for this
-          // tool: it exists precisely to route an explicit human decision.
-          //
-          // Layer C robustness (task #848): the status transition commits inside
-          // dispatchPostApproval BEFORE the async post-approval dispatch. If that
-          // dispatch throws (e.g. an SDK "user interrupted" abort during
-          // sub-session spawn), the approval is nonetheless durable — capture the
-          // failure as a post-approval-blocked reason rather than surfacing the
-          // raw throw (which would make the caller retry and hit the
-          // double-approval guard). Only rethrow when the task never reached
-          // `approved` (the transition itself failed).
           try {
             await runtime.dispatchPostApproval(args.task_id, 'human' as SpaceApprovalSource, {
               approvalReason: args.reason ?? null,
@@ -3411,10 +2920,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           if (!refreshed) throw new Error(`Task not found: ${args.task_id}`);
           updated = refreshed;
         } else {
-          // review → in_progress (reject). setTaskStatus clears the pending-
-          // completion fields in the same UPDATE (centralised "exit review"
-          // cleanup), so the follow-up updateTask only stamps the rejection
-          // reason. Mirrors the RPC handler's reject branch.
           updated = await taskManager.setTaskStatus(args.task_id, 'in_progress');
           updated = await taskManager.updateTask(args.task_id, {
             approvalReason: args.reason ?? null,
@@ -3435,9 +2940,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    /**
-     * List goals for this space, optionally filtered by status.
-     */
     async list_goals(args: { status?: SpaceGoalStatus } = {}): Promise<ToolResult> {
       try {
         const goals = requireGoalService().listGoals({ spaceId, status: args.status });
@@ -3448,9 +2950,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    /**
-     * Get one goal in this space.
-     */
     async get_goal(args: { goal_id: string }): Promise<ToolResult> {
       try {
         const goal = requireGoalInSpace(args.goal_id);
@@ -3461,9 +2960,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    /**
-     * Create a long-horizon goal in this space.
-     */
     async create_goal(args: {
       title: string;
       description?: string;
@@ -3515,9 +3011,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    /**
-     * Update public goal fields and rolling state.
-     */
     async update_goal(args: { goal_id: string } & GoalToolUpdateArgs): Promise<ToolResult> {
       try {
         requireGoalInSpace(args.goal_id);
@@ -3621,10 +3114,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         if (args.goal_id) requireGoalInSpace(args.goal_id);
         if (args.parent_scope_id) requireEvolutionScopeInSpace(args.parent_scope_id);
         if (args.policy) validateGoalAutomationSelfNagPolicy({ policy: args.policy });
-        // Create the scope and reconcile its self-nag schedule atomically: if
-        // reconciliation fails (e.g. enqueueing the first fire job throws), the
-        // scope insertion rolls back so a retried creation can't leave a
-        // duplicate goal-linked scope.
         const createAndReconcile = () => {
           const created = requireEvolutionScopeService().createScope({
             spaceId,
@@ -3667,7 +3156,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         requireGoalInSpace(args.goal_id);
         if (args.policy) validateGoalAutomationSelfNagPolicy({ policy: args.policy });
-        // Create the scope and reconcile atomically (see create_forge_scope).
         const createAndReconcile = () => {
           const created = requireEvolutionScopeService().createScopeFromGoal({
             spaceGoalId: args.goal_id,
@@ -3742,15 +3230,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         if (args.goal_id) requireGoalInSpace(args.goal_id);
         if (args.parent_scope_id) requireEvolutionScopeInSpace(args.parent_scope_id);
 
-        // Compose the policy update. Three partial inputs (policy_patch,
-        // episode_judge_model, episode_judge_provider) mirror the UI's
-        // deep-merge semantics rather than full-policy replacement, so an
-        // agent can toggle e.g. automation.completedTaskThreshold without
-        // clobbering episodeJudgeModel. They are folded into a single patch
-        // applied via the service's mergeEvolutionPolicy path (same code the
-        // RPC handler uses). If any patch input is supplied it deep-merges onto
-        // the existing policy and TAKES PRECEDENCE — a supplied full `policy`
-        // is ignored. `policy` alone (no patch) is a full replacement.
         const patch: EvolutionPolicy = {};
         if (args.policy_patch) Object.assign(patch, args.policy_patch);
         if (args.episode_judge_model !== undefined) {
@@ -3759,11 +3238,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         if (args.episode_judge_provider !== undefined) {
           patch.episodeJudgeProvider = args.episode_judge_provider ?? undefined;
         }
-        // Precedence is whether a patch input was SUPPLIED, not whether the
-        // composed patch has keys — an explicit `policy_patch: {}` (e.g. a
-        // wrapper's empty default) must still take precedence over a full
-        // `policy` per the tool contract, rather than falling through to a
-        // full replacement that erases existing settings.
         const hasPatch =
           args.policy_patch !== undefined ||
           args.episode_judge_model !== undefined ||
@@ -3779,11 +3253,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           parentScopeId: args.parent_scope_id,
           metricDefinitions: args.metric_definitions,
         };
-        // Compute the policy the scope will retain after this update, matching
-        // the RPC `beforeScopeUpdate` hook + the service's persistence so the
-        // validated outcome is identical: policy_patch deep-merges onto the
-        // existing policy and takes precedence over a supplied full `policy`
-        // (which is ignored when a patch is present); a bare `policy` replaces.
         let resultingPolicy: EvolutionPolicy | undefined;
         if (hasPatch) {
           resultingPolicy = mergeEvolutionPolicy(existing.policy, patch);
@@ -3792,24 +3261,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           resultingPolicy = args.policy;
           serviceParams.policy = resultingPolicy;
         }
-        // Validate the EFFECTIVE policy the scope will retain after this update
-        // — the new/merged policy when one is supplied, otherwise the existing
-        // policy (parity with the RPC beforeScopeUpdate hook, which validates
-        // existing.policy on a metadata-only edit so an invalid policy created
-        // out-of-band can't linger through a no-policy update).
         validateGoalAutomationSelfNagPolicy({
           policy: resultingPolicy ?? existing.policy,
         });
 
         const scope = requireEvolutionScopeService().updateScope(args.scope_id, serviceParams);
         logAudit('update_forge_scope', { scope_id: args.scope_id });
-        // Reconcile Forge self-nag schedules to match the RPC `onScopeSaved`
-        // hook, so a goal_id relink or automation/self-nag change takes effect
-        // immediately instead of leaving the schedule on the old cadence or
-        // firing against the former goal until a daemon restart. A
-        // reconciliation failure (e.g. enqueueing the replacement fire job
-        // throws) propagates so the caller sees it — mirroring the RPC path —
-        // rather than reporting success with an unreconciled schedule.
         if (scope && config.goalRepo && config.scheduleService) {
           syncGoalAutomationSelfNagScheduleForScope({
             goalRepo: config.goalRepo,
@@ -4241,9 +3698,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    /**
-     * Create a recurring (cron) or one-shot (at) scheduled task.
-     */
     async create_scheduled_task(args: {
       title: string;
       description: string;
@@ -4287,9 +3741,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    /**
-     * List all scheduled tasks for this space.
-     */
     async list_scheduled_tasks(args: { status?: TaskScheduleStatus }): Promise<ToolResult> {
       if (!config.scheduleService) {
         return jsonResult({ success: false, error: 'Schedule management not available' });
@@ -4303,9 +3754,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    /**
-     * Get schedule details including last spawned task.
-     */
     async get_scheduled_task(args: { schedule_id: string }): Promise<ToolResult> {
       if (!config.scheduleService) {
         return jsonResult({ success: false, error: 'Schedule management not available' });
@@ -4322,15 +3770,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    /**
-     * Pause a schedule — stops creating new tasks.
-     */
     async pause_scheduled_task(args: { schedule_id: string }): Promise<ToolResult> {
       if (!config.scheduleService) {
         return jsonResult({ success: false, error: 'Schedule management not available' });
       }
       try {
-        // Space-scope guard: callers can only pause schedules in their own space.
         const existing = config.scheduleService.getSchedule(args.schedule_id);
         if (!existing || existing.spaceId !== spaceId) {
           return jsonResult({ success: false, error: `Schedule not found: ${args.schedule_id}` });
@@ -4344,9 +3788,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    /**
-     * Resume a paused schedule.
-     */
     async resume_scheduled_task(args: { schedule_id: string }): Promise<ToolResult> {
       if (!config.scheduleService) {
         return jsonResult({ success: false, error: 'Schedule management not available' });
@@ -4365,9 +3806,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       }
     },
 
-    /**
-     * Delete a schedule permanently.
-     */
     async delete_scheduled_task(args: { schedule_id: string }): Promise<ToolResult> {
       if (!config.scheduleService) {
         return jsonResult({ success: false, error: 'Schedule management not available' });
@@ -4395,14 +3833,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// MCP server factory
-// ---------------------------------------------------------------------------
-
-/**
- * Create an MCP server exposing all Space agent tools.
- * Pass the returned server to the SDK session init.
- */
 export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
   const handlers = createSpaceAgentToolHandlers(config);
 
@@ -4711,7 +4141,6 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       (args) => handlers.archive_task(args)
     ),
 
-    // Task agent communication tools
     tool(
       'send_message_to_task',
       'Send a message to a specific workflow node agent or long-term Space agent on a task. Use node_id for workflow nodes, or target for @handle/@role/@session/@worker addresses. Inactive workflow nodes or long-term agents are activated/queued when supported. Provide either task_id or task_number — if both are given, task_id takes precedence.',
@@ -4781,7 +4210,6 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
     ),
   ];
 
-  // Long-horizon agent tools need database-backed assignment metadata.
   if (config.db) {
     tools.unshift(
       tool(
@@ -4977,7 +4405,6 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
     );
   }
 
-  // External event on-demand fetch — only registered when the store is provided.
   if (config.externalEventStore) {
     tools.push(
       tool(
@@ -5000,7 +4427,6 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
     z.union([z.string(), z.number(), z.boolean(), z.null()])
   );
 
-  // Goal management tools — only registered when goalService is provided.
   if (config.goalService) {
     const goalUpdateShape = {
       title: z.string().min(1).optional().describe('New goal title'),
@@ -5153,7 +4579,6 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
     );
   }
 
-  // Forge management tools — only registered when Forge services are provided.
   if (config.evolutionScopeService && config.evolutionEpisodeService) {
     const forgeScopeKindSchema = z.enum(['mission', 'project', 'campaign', 'workflow', 'custom']);
     const forgePolicySchema = z.record(z.string(), z.unknown());
@@ -5462,7 +4887,6 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
     );
   }
 
-  // Schedule management tools — only registered when scheduleService is provided.
   if (config.scheduleService) {
     tools.push(
       tool(
@@ -5548,8 +4972,6 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
     );
   }
 
-  // Optional legacy restore mirror. Workflow node sessions should use the
-  // node-agent namespace directly; space-agent-tools is no longer attached there.
   if (config.onRestoreNodeAgent) {
     const restoreCallback = config.onRestoreNodeAgent;
     tools.push(

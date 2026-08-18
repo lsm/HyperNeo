@@ -1,5 +1,3 @@
-// Components
-
 export { Button, ButtonGroup, DataInteractive } from './components/button/button.tsx';
 export { Checkbox } from './components/checkbox/checkbox.tsx';
 export {
@@ -110,5 +108,4 @@ export { Skeleton } from './components/skeleton/skeleton.tsx';
 export { Spinner } from './components/spinner/spinner.tsx';
 export { TouchTarget } from './components/touch-target/touch-target.tsx';
 
-// Hooks
 export { useClose } from './hooks/use-close.ts';

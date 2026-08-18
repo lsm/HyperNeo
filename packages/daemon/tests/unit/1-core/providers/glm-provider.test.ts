@@ -1,7 +1,3 @@
-/**
- * Unit tests for GLM Provider
- */
-
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { GlmProvider } from '../../../../src/lib/providers/glm-provider';
 
@@ -10,7 +6,6 @@ describe('GlmProvider', () => {
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(() => {
-    // Store original env
     originalEnv = { ...process.env };
     delete process.env.GLM_API_KEY;
     delete process.env.ZHIPU_API_KEY;
@@ -18,7 +13,6 @@ describe('GlmProvider', () => {
   });
 
   afterEach(() => {
-    // Restore env
     process.env = originalEnv;
   });
 
@@ -68,11 +62,6 @@ describe('GlmProvider', () => {
   });
 
   describe('getModels', () => {
-    /**
-     * Build a provider whose credential probe always succeeds, so existing
-     * tests that just want the static model list don't need to mock every
-     * fetch call individually.
-     */
     function makeProbeOkProvider(): GlmProvider {
       const fetchImpl = mock(
         async () => new Response('{}', { status: 200 })
@@ -176,7 +165,7 @@ describe('GlmProvider', () => {
       expect(provider.ownsModel('glm-5-turbo')).toBe(true);
       expect(provider.ownsModel('glm-5v-turbo')).toBe(true);
       expect(provider.ownsModel('glm-4.7')).toBe(true);
-      expect(provider.ownsModel('GLM-4')).toBe(true); // case insensitive
+      expect(provider.ownsModel('GLM-4')).toBe(true);
     });
 
     it('should not own other provider models', () => {
@@ -257,9 +246,6 @@ describe('GlmProvider', () => {
     it('should set CLAUDE_CODE_AUTO_COMPACT_WINDOW per model context window', () => {
       process.env.GLM_API_KEY = 'test-key';
 
-      // glm-5.2[1m] has a 1M context window — env var must reflect it so the
-      // SDK's auto-compact threshold matches the real capacity (otherwise the
-      // SDK would cap to its 200k fallback for unknown models).
       expect(provider.buildSdkConfig('glm-5.2').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
         '1000000'
       );
@@ -284,9 +270,6 @@ describe('GlmProvider', () => {
     });
 
     it('should route uppercase model IDs through the same lookup as lowercase', () => {
-      // Regression: without normalising case, "GLM-5.2" bypassed the
-      // glm-5.2 → [1m] shortcut, fell through to verbatim routing, missed
-      // the context-window lookup, and silently fell back to 200k.
       process.env.GLM_API_KEY = 'test-key';
 
       const upperConfig = provider.buildSdkConfig('GLM-5.2');
@@ -301,16 +284,11 @@ describe('GlmProvider', () => {
     });
 
     it('should handle double [1m] suffix by stripping all trailing suffixes', () => {
-      // Regression: glm-5.2[1m][1m] would only strip ONE suffix, leaving glm-5.2[1m],
-      // which then gets another [1m] appended → glm-5.2[1m][1m] again, breaking the
-      // metadata lookup (CONTEXT_WINDOW_BY_MODEL_ID only has glm-5.2[1m]).
       process.env.GLM_API_KEY = 'test-key';
 
       const config = provider.buildSdkConfig('glm-5.2[1m][1m]');
 
-      // Should route to single-suffix glm-5.2[1m]
       expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5.2[1m]');
-      // Should use 1M capacity from metadata, not 200K fallback
       expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1000000');
     });
 
@@ -319,9 +297,7 @@ describe('GlmProvider', () => {
 
       const config = provider.buildSdkConfig('glm-5.2[1m][1m][1m]');
 
-      // Should route to single-suffix glm-5.2[1m]
       expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5.2[1m]');
-      // Should use 1M capacity from metadata
       expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1000000');
     });
 
@@ -446,10 +422,6 @@ describe('GlmProvider', () => {
     });
 
     it('should mark every GLM model with preferContextWindowMetadata', () => {
-      // GLM IDs are unknown to the SDK's PP() helper. The context-fetcher must
-      // trust this metadata for the context bar instead of falling back to the
-      // SDK's reported capacity (which is the generic 200k fallback for unknown
-      // IDs and doesn't reflect the real GLM window).
       for (const model of GlmProvider.MODELS) {
         expect(model.preferContextWindowMetadata).toBe(true);
       }

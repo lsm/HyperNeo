@@ -1,14 +1,3 @@
-/**
- * Built-in validator registry tests (epic #2299, P2 #2302).
- *
- * Locks in the exit criterion — the engine special-cases no validator id:
- *   - the registry is the single source of truth for admission + dispatch,
- *   - production seeding registers the named presets (`pr_ready`, `pr_merged`),
- *   - `pr_merged` (the net-new capability) dispatches through the registry to
- *     its `external_state` preset over the github connector with no engine
- *     branch on the id.
- */
-
 import { afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import type { BuiltInValidatorFn } from '../../../../src/lib/space/runtime/hook-executor';
 import type { HookExecutorContext } from '../../../../src/lib/space/runtime/hook-executor';
@@ -19,7 +8,6 @@ import {
   isRegisteredBuiltInValidator,
   registerBuiltInValidator,
 } from '../../../../src/lib/space/runtime/built-in-validator-registry';
-// Importing the registration module runs its side-effect seeding.
 import '../../../../src/lib/space/runtime/built-in-validators';
 import { registerProductionBuiltInValidators } from '../../../../src/lib/space/runtime/built-in-validators';
 import { createPrMergedValidator } from '../../../../src/lib/space/runtime/connectors/presets';
@@ -63,10 +51,6 @@ function ctx(): HookExecutorContext {
   };
 }
 
-/**
- * Snapshot/restore the global registry around each test so a case that clears
- * it (or re-registers pr_merged with a mock spawn) does not pollute the others.
- */
 let registrySnapshot = new Map<string, BuiltInValidatorFn>();
 
 beforeAll(() => {
@@ -98,8 +82,6 @@ describe('built-in validator registry', () => {
   });
 
   test('production seeding registers pr_ready + pr_merged (the named presets)', () => {
-    // Re-run the production seeding explicitly (idempotent) so the assertion
-    // does not depend on other tests' registry mutations.
     clearBuiltInValidatorRegistry();
     registerProductionBuiltInValidators();
     expect(getRegisteredBuiltInValidatorIds()).toEqual(

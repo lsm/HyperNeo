@@ -1,22 +1,3 @@
-/**
- * GoalRepository — Short ID tests
- *
- * Covers:
- *  - createGoal assigns shortId when allocator is present
- *  - createGoal without allocator leaves shortId undefined
- *  - sequential allocation within the same room
- *  - separate counters per room
- *  - getGoalByShortId finds by short ID
- *  - getGoalByShortId returns null for unknown short ID
- *  - getGoalByShortId returns null when room does not match
- *  - lazy backfill in getGoal (legacy rows)
- *  - getGoal does not alter existing short IDs
- *  - getGoal returns null for non-existent ID
- *  - lazy backfill in listGoals (all missing)
- *  - listGoals mixed rows (some with, some without)
- *  - listGoals does not alter already-assigned short IDs
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { GoalRepository } from '../../../../src/storage/repositories/goal-repository';
@@ -139,7 +120,6 @@ describe('GoalRepository — short ID', () => {
       expect(goal).not.toBeNull();
       expect(goal!.shortId).toBe('g-1');
 
-      // Verify the row was actually updated in the DB
       const row = db.prepare(`SELECT short_id FROM goals WHERE id = 'legacy-id'`).get() as {
         short_id: string;
       };
@@ -150,7 +130,6 @@ describe('GoalRepository — short ID', () => {
       const goal = repo.createGoal({ roomId: 'room-1', title: 'G' });
       expect(goal.shortId).toBe('g-1');
 
-      // Counter is at 1; calling getGoal should not allocate another
       const fetched = repo.getGoal(goal.id);
       expect(fetched!.shortId).toBe('g-1');
       expect(allocator.getCounter('goal', 'room-1')).toBe(1);
@@ -180,11 +159,9 @@ describe('GoalRepository — short ID', () => {
     });
 
     it('returns mix of goals with and without short_id, all populated after call', () => {
-      // Goal created with allocator gets g-1
       const withShortId = repo.createGoal({ roomId: 'room-1', title: 'Has short ID' });
       expect(withShortId.shortId).toBe('g-1');
 
-      // Legacy row without short_id
       db.prepare(
         `INSERT INTO goals (id, room_id, title, description, status, priority, progress, linked_task_ids, metrics, created_at, updated_at)
 				 VALUES ('leg-old', 'room-1', 'Legacy', '', 'active', 'normal', 0, '[]', '{}', 999, 999)`
@@ -194,7 +171,6 @@ describe('GoalRepository — short ID', () => {
       expect(goals.length).toBe(2);
       expect(goals.every((g) => !!g.shortId)).toBe(true);
 
-      // The legacy row should have gotten g-2 (counter was already at 1)
       const legacyGoal = goals.find((g) => g.id === 'leg-old');
       expect(legacyGoal!.shortId).toBe('g-2');
     });
@@ -207,7 +183,6 @@ describe('GoalRepository — short ID', () => {
       const goals = repo.listGoals('room-1');
       const afterCounter = allocator.getCounter('goal', 'room-1');
 
-      // Counter should not have changed — no new allocations needed
       expect(afterCounter).toBe(beforeCounter);
       expect(goals.find((g) => g.id === g1.id)!.shortId).toBe('g-1');
       expect(goals.find((g) => g.id === g2.id)!.shortId).toBe('g-2');
@@ -216,7 +191,6 @@ describe('GoalRepository — short ID', () => {
 
   describe('lazy backfill in getGoalsForTask', () => {
     it('backfills short_id for legacy rows returned by getGoalsForTask', () => {
-      // Insert a legacy row without short_id, with task-1 linked
       db.prepare(
         `INSERT INTO goals (id, room_id, title, description, status, priority, progress, linked_task_ids, metrics, created_at, updated_at)
 				 VALUES ('goal-leg', 'room-1', 'Legacy Goal', '', 'active', 'normal', 0, '["task-1"]', '{}', 1000, 1000)`
@@ -226,7 +200,6 @@ describe('GoalRepository — short ID', () => {
       expect(goals.length).toBe(1);
       expect(goals[0].shortId).toBe('g-1');
 
-      // Verify the DB row was updated
       const row = db.prepare(`SELECT short_id FROM goals WHERE id = 'goal-leg'`).get() as {
         short_id: string;
       };
@@ -237,7 +210,6 @@ describe('GoalRepository — short ID', () => {
       const goal = repo.createGoal({ roomId: 'room-1', title: 'G' });
       expect(goal.shortId).toBe('g-1');
 
-      // Link task-1 to the goal
       repo.updateGoal(goal.id, { linkedTaskIds: ['task-1'] });
 
       const beforeCounter = allocator.getCounter('goal', 'room-1');

@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for file-utils.ts
- *
- * Tests file utility functions for handling file uploads and conversions.
- */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
@@ -13,12 +8,9 @@ import {
   extractImagesFromClipboard,
 } from '../file-utils';
 
-// Helper to create mock File objects with controlled size
 function createMockFile(name: string, size: number, type: string): File {
-  // Create a file with the mock properties
   const file = new File([''], name, { type });
 
-  // Override the size property to return our mock size
   Object.defineProperty(file, 'size', {
     value: size,
     writable: false,
@@ -107,7 +99,6 @@ describe('file-utils', () => {
     });
 
     it('should return error for file exceeding size limit', () => {
-      // 4MB file (exceeds 3.75MB limit)
       const file = createMockFile('test.png', 4 * 1024 * 1024, 'image/png');
       const error = validateImageFile(file);
       expect(error).toContain('under');
@@ -115,20 +106,17 @@ describe('file-utils', () => {
     });
 
     it('should return null for file at exactly max size', () => {
-      // 3.75MB file
       const file = createMockFile('test.png', 3.75 * 1024 * 1024, 'image/png');
       expect(validateImageFile(file)).toBeNull();
     });
 
     it('should return error for file just over max size', () => {
-      // 3.76MB file
       const file = createMockFile('test.png', 3.76 * 1024 * 1024, 'image/png');
       const error = validateImageFile(file);
       expect(error).toContain('under');
     });
 
     it('should validate type before size', () => {
-      // Large invalid type should show type error
       const file = createMockFile('test.txt', 10 * 1024 * 1024, 'text/plain');
       const error = validateImageFile(file);
       expect(error).toBe('Only images are supported (PNG, JPEG, GIF, WebP)');
@@ -136,7 +124,6 @@ describe('file-utils', () => {
   });
 
   describe('fileToBase64', () => {
-    // Mock FileReader for testing
     let originalFileReader: typeof FileReader;
 
     beforeEach(() => {
@@ -148,8 +135,7 @@ describe('file-utils', () => {
     });
 
     it('should convert file to base64 string', async () => {
-      // Create a mock FileReader that returns a known base64 string
-      const mockBase64Data = 'SGVsbG8gV29ybGQ='; // "Hello World" in base64
+      const mockBase64Data = 'SGVsbG8gV29ybGQ=';
       const mockDataUrl = `data:image/png;base64,${mockBase64Data}`;
 
       class MockFileReader {
@@ -198,8 +184,7 @@ describe('file-utils', () => {
     });
 
     it('should reject when base64 size exceeds limit', async () => {
-      // Create a large base64 string that exceeds 5MB limit
-      const largeBase64Data = 'A'.repeat(6 * 1024 * 1024); // 6MB of base64
+      const largeBase64Data = 'A'.repeat(6 * 1024 * 1024);
       const mockDataUrl = `data:image/png;base64,${largeBase64Data}`;
 
       class MockFileReader {
@@ -259,7 +244,6 @@ describe('file-utils', () => {
   });
 
   describe('extractImagesFromClipboard', () => {
-    // Helper to create mock DataTransferItemList
     function createMockItemList(
       items: Array<{ kind: string; type: string; file?: File | null }>
     ): DataTransferItemList {

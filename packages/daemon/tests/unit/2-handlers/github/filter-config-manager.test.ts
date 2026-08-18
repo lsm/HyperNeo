@@ -6,10 +6,6 @@ import {
 } from '../../../../src/lib/github/filter-config-manager';
 import type { GitHubFilterConfig } from '@hyperneo/shared';
 
-// ============================================================================
-// Test Data Factories
-// ============================================================================
-
 function createFilterConfig(overrides: Partial<GitHubFilterConfig> = {}): GitHubFilterConfig {
   return {
     repositories: ['owner/repo'],
@@ -23,10 +19,6 @@ function createFilterConfig(overrides: Partial<GitHubFilterConfig> = {}): GitHub
     ...overrides,
   };
 }
-
-// ============================================================================
-// FilterConfigManager Tests
-// ============================================================================
 
 describe('FilterConfigManager', () => {
   let db: Database;
@@ -84,11 +76,9 @@ describe('FilterConfigManager', () => {
     it('should return cached config within TTL', () => {
       manager.setGlobalFilter(createFilterConfig({ repositories: ['cached/repo'] }));
 
-      // First call caches
       const config1 = manager.getGlobalFilter();
       expect(config1.repositories).toEqual(['cached/repo']);
 
-      // Second call should use cache
       const config2 = manager.getGlobalFilter();
       expect(config2.repositories).toEqual(['cached/repo']);
     });
@@ -97,19 +87,15 @@ describe('FilterConfigManager', () => {
       const shortTtlManager = new FilterConfigManager(db, { cacheTtl: 10 });
       shortTtlManager.setGlobalFilter(createFilterConfig({ repositories: ['expire/repo'] }));
 
-      // First call caches
       const config1 = shortTtlManager.getGlobalFilter();
       expect(config1.repositories).toEqual(['expire/repo']);
 
-      // Wait for cache to expire
       await new Promise((r) => setTimeout(r, 20));
 
-      // Update directly in DB
       db.prepare("UPDATE github_filter_configs SET config = ? WHERE id = 'global'").run(
         JSON.stringify(createFilterConfig({ repositories: ['updated/repo'] }))
       );
 
-      // Should fetch fresh from DB
       const config2 = shortTtlManager.getGlobalFilter();
       expect(config2.repositories).toEqual(['updated/repo']);
     });
@@ -125,15 +111,12 @@ describe('FilterConfigManager', () => {
     });
 
     it('should update existing global config via direct DB update', () => {
-      // First insert
       manager.setGlobalFilter(createFilterConfig({ repositories: ['first/repo'] }));
 
-      // Directly update in DB to test update path
       db.prepare("UPDATE github_filter_configs SET config = ? WHERE id = 'global'").run(
         JSON.stringify(createFilterConfig({ repositories: ['second/repo'] }))
       );
 
-      // Clear cache to force DB read
       manager.clearCache();
 
       const retrieved = manager.getGlobalFilter();
@@ -142,14 +125,12 @@ describe('FilterConfigManager', () => {
 
     it('should invalidate global cache on set', () => {
       manager.setGlobalFilter(createFilterConfig({ repositories: ['first/repo'] }));
-      manager.getGlobalFilter(); // Cache it
+      manager.getGlobalFilter();
 
-      // Directly update in DB
       db.prepare("UPDATE github_filter_configs SET config = ? WHERE id = 'global'").run(
         JSON.stringify(createFilterConfig({ repositories: ['second/repo'] }))
       );
 
-      // Clear cache (simulating what setGlobalFilter does)
       manager.clearCache();
 
       const config = manager.getGlobalFilter();
@@ -186,11 +167,9 @@ describe('FilterConfigManager', () => {
         authors: { mode: 'blocklist', users: ['bot'] },
       });
 
-      // First call - from DB
       const config1 = manager.getFilterForRepository('cached/repo');
       expect(config1.authors.mode).toBe('blocklist');
 
-      // Second call - from cache
       const config2 = manager.getFilterForRepository('cached/repo');
       expect(config2.authors.mode).toBe('blocklist');
     });
@@ -232,9 +211,7 @@ describe('FilterConfigManager', () => {
       });
 
       const config = manager.getFilterForRepository('partial/repo');
-      // Specified field from repo config
       expect(config.authors.mode).toBe('blocklist');
-      // Inherited from global
       expect(config.labels.mode).toBe('require_all');
       expect(config.labels.labels).toEqual(['bug', 'priority']);
     });
@@ -255,7 +232,7 @@ describe('FilterConfigManager', () => {
       manager.setRepositoryFilter('cache/repo', {
         authors: { mode: 'all' },
       });
-      manager.getFilterForRepository('cache/repo'); // Cache it
+      manager.getFilterForRepository('cache/repo');
 
       manager.setRepositoryFilter('cache/repo', {
         authors: { mode: 'allowlist' },
@@ -274,25 +251,23 @@ describe('FilterConfigManager', () => {
 
       manager.clearRepositoryFilter('clear/repo');
 
-      // Should fall back to global/default
       const config = manager.getFilterForRepository('clear/repo');
-      expect(config.authors.mode).toBe('all'); // Default
+      expect(config.authors.mode).toBe('all');
     });
 
     it('should invalidate cache for cleared repo', () => {
       manager.setRepositoryFilter('clear-cache/repo', {
         authors: { mode: 'allowlist' },
       });
-      manager.getFilterForRepository('clear-cache/repo'); // Cache it
+      manager.getFilterForRepository('clear-cache/repo');
 
       manager.clearRepositoryFilter('clear-cache/repo');
 
       const config = manager.getFilterForRepository('clear-cache/repo');
-      expect(config.authors.mode).toBe('all'); // Default, not cached value
+      expect(config.authors.mode).toBe('all');
     });
 
     it('should handle clearing non-existent config', () => {
-      // Should not throw
       expect(() => manager.clearRepositoryFilter('nonexistent/repo')).not.toThrow();
     });
   });
@@ -333,7 +308,6 @@ describe('FilterConfigManager', () => {
         })
       );
 
-      // Directly update in DB since UPSERT has bug with NULL repository
       const current = manager.getGlobalFilter();
       const updated = {
         ...current,
@@ -345,8 +319,8 @@ describe('FilterConfigManager', () => {
       manager.clearCache();
 
       const config = manager.getGlobalFilter();
-      expect(config.repositories).toEqual(['original/repo']); // Unchanged
-      expect(config.authors.mode).toBe('allowlist'); // Updated
+      expect(config.repositories).toEqual(['original/repo']);
+      expect(config.authors.mode).toBe('allowlist');
     });
   });
 
@@ -354,7 +328,6 @@ describe('FilterConfigManager', () => {
     it('should add new repositories via updateGlobalFilter', () => {
       manager.setGlobalFilter(createFilterConfig({ repositories: ['first/repo'] }));
 
-      // Directly update in DB to test the logic
       const current = manager.getGlobalFilter();
       const updated = {
         ...current,
@@ -374,7 +347,6 @@ describe('FilterConfigManager', () => {
     it('should remove repositories via updateGlobalFilter', () => {
       manager.setGlobalFilter(createFilterConfig({ repositories: ['keep/repo', 'remove/repo'] }));
 
-      // Directly update in DB
       const current = manager.getGlobalFilter();
       const updated = {
         ...current,
@@ -395,18 +367,15 @@ describe('FilterConfigManager', () => {
       manager.setGlobalFilter(createFilterConfig());
       manager.setRepositoryFilter('cached/repo', { authors: { mode: 'allowlist' } });
 
-      // Populate cache
       manager.getGlobalFilter();
       manager.getFilterForRepository('cached/repo');
 
       manager.clearCache();
 
-      // Update DB directly
       db.prepare("UPDATE github_filter_configs SET config = ? WHERE id = 'global'").run(
         JSON.stringify(createFilterConfig({ repositories: ['from-db/repo'] }))
       );
 
-      // Should fetch fresh from DB, not cache
       const config = manager.getGlobalFilter();
       expect(config.repositories).toEqual(['from-db/repo']);
     });
@@ -419,20 +388,16 @@ describe('FilterConfigManager', () => {
         authors: { mode: 'allowlist' },
       });
 
-      // First call caches
       const config1 = shortTtlManager.getFilterForRepository('ttl/repo');
       expect(config1.authors.mode).toBe('allowlist');
 
-      // Wait for cache to expire
       await new Promise((r) => setTimeout(r, 20));
 
-      // Update DB directly
       db.prepare('UPDATE github_filter_configs SET config = ? WHERE repository = ?').run(
         JSON.stringify(createFilterConfig({ authors: { mode: 'blocklist', users: ['bot'] } })),
         'ttl/repo'
       );
 
-      // Should fetch fresh from DB
       const config2 = shortTtlManager.getFilterForRepository('ttl/repo');
       expect(config2.authors.mode).toBe('blocklist');
     });

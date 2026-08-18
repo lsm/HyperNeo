@@ -1,34 +1,9 @@
-/**
- * Migration 74 Tests
- *
- * Migration 74: Remaining schema cleanup for end-node / workflow completion.
- * - node_executions: new table for per-node execution tracking
- * - space_workflows: drop config (migrate tags out) and max_iterations
- * - space_workflow_nodes: drop order_index and agent_id
- * - space_agents: drop role, config, inject_workflow_context
- * - node config JSON: wrap string systemPrompt/instructions to {mode, value}
- *
- * Covers:
- * - node_executions table is created with correct schema and indexes
- * - space_workflows: config column is dropped, tags column has extracted data
- * - space_workflows: max_iterations column is dropped
- * - space_workflow_nodes: order_index and agent_id are dropped, config is preserved
- * - space_agents: role, config, inject_workflow_context are dropped
- * - Node config JSON migration wraps string systemPrompt/instructions
- * - Idempotency: running M74 twice does not error or duplicate data
- * - Data preservation round-trip for all table rebuilds
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
 import { runMigration74 } from '../../../../../src/storage/schema/migrations.ts';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function tableExists(db: BunDatabase, name: string): boolean {
   return !!db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`).get(name);
@@ -46,14 +21,9 @@ function indexExists(db: BunDatabase, indexName: string): boolean {
   return !!row;
 }
 
-/**
- * Create a pre-M74 schema (as it exists after M73) for testing upgrade paths.
- * This simulates a database that has had all migrations up to M73 applied.
- */
 function createPreM74Schema(db: BunDatabase): void {
   db.exec('PRAGMA foreign_keys = OFF');
 
-  // spaces table (simplified)
   db.exec(`
 		CREATE TABLE spaces (
 			id TEXT PRIMARY KEY,
@@ -74,7 +44,6 @@ function createPreM74Schema(db: BunDatabase): void {
 		)
 	`);
 
-  // space_agents (pre-M74: has role, config, inject_workflow_context, instructions)
   db.exec(`
 		CREATE TABLE space_agents (
 			id TEXT PRIMARY KEY,
@@ -96,7 +65,6 @@ function createPreM74Schema(db: BunDatabase): void {
 	`);
   db.exec(`CREATE INDEX idx_space_agents_space_id ON space_agents(space_id)`);
 
-  // space_workflows (pre-M74: has config, max_iterations)
   db.exec(`
 		CREATE TABLE space_workflows (
 			id TEXT PRIMARY KEY,
@@ -117,7 +85,6 @@ function createPreM74Schema(db: BunDatabase): void {
 	`);
   db.exec(`CREATE INDEX idx_space_workflows_space_id ON space_workflows(space_id)`);
 
-  // space_workflow_nodes (pre-M74: has agent_id, order_index)
   db.exec(`
 		CREATE TABLE space_workflow_nodes (
 			id TEXT PRIMARY KEY,
@@ -137,7 +104,6 @@ function createPreM74Schema(db: BunDatabase): void {
     `CREATE INDEX idx_space_workflow_nodes_order ON space_workflow_nodes(workflow_id, order_index)`
   );
 
-  // space_workflow_runs (post-M73 schema)
   db.exec(`
 		CREATE TABLE space_workflow_runs (
 			id TEXT PRIMARY KEY,
@@ -157,7 +123,6 @@ function createPreM74Schema(db: BunDatabase): void {
 	`);
   db.exec(`CREATE INDEX idx_space_workflow_runs_space_id ON space_workflow_runs(space_id)`);
 
-  // space_tasks (post-M73 schema)
   db.exec(`
 		CREATE TABLE space_tasks (
 			id TEXT PRIMARY KEY,
@@ -192,10 +157,6 @@ function createPreM74Schema(db: BunDatabase): void {
   db.exec('PRAGMA foreign_keys = ON');
 }
 
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
-
 describe('Migration 74: Remaining schema cleanup', () => {
   let testDir: string;
   let db: BunDatabase;
@@ -221,17 +182,12 @@ describe('Migration 74: Remaining schema cleanup', () => {
     }
   });
 
-  // -------------------------------------------------------------------------
-  // node_executions: new table
-  // -------------------------------------------------------------------------
-
   test('node_executions table is created with correct columns', () => {
     createPreM74Schema(db);
     runMigration74(db);
 
     expect(tableExists(db, 'node_executions')).toBe(true);
 
-    // Check required columns
     const requiredColumns = [
       'id',
       'workflow_run_id',
@@ -265,7 +221,6 @@ describe('Migration 74: Remaining schema cleanup', () => {
 
     const now = Date.now();
 
-    // Insert a space, workflow, and run first
     db.prepare(
       `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
     ).run('sp-1', 's', '/ws', 'Space', now, now);
@@ -279,7 +234,6 @@ describe('Migration 74: Remaining schema cleanup', () => {
       `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
     ).run('run-1', 'sp-1', 'wf-1', 'Run', 'pending', now, now);
 
-    // Valid statuses
     for (const status of ['pending', 'in_progress', 'done', 'blocked', 'cancelled']) {
       expect(() => {
         db.prepare(
@@ -289,7 +243,6 @@ describe('Migration 74: Remaining schema cleanup', () => {
       }).not.toThrow();
     }
 
-    // Invalid status
     expect(() => {
       db.prepare(
         `INSERT INTO node_executions (id, workflow_run_id, workflow_node_id, agent_name, agent_id, status, created_at, updated_at)
@@ -304,7 +257,6 @@ describe('Migration 74: Remaining schema cleanup', () => {
 
     const now = Date.now();
 
-    // Setup: space → agent → workflow → run → node_execution
     db.prepare(
       `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
     ).run('sp-1', 's', '/ws', 'Space', now, now);
@@ -322,16 +274,13 @@ describe('Migration 74: Remaining schema cleanup', () => {
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run('ne-1', 'run-1', 'node-1', 'Agent', 'ag-1', 'in_progress', now, now);
 
-    // Verify agent_id is set
     const before = db.prepare(`SELECT agent_id FROM node_executions WHERE id = ?`).get('ne-1') as {
       agent_id: string | null;
     };
     expect(before.agent_id).toBe('ag-1');
 
-    // Delete the space_agent
     db.prepare(`DELETE FROM space_agents WHERE id = ?`).run('ag-1');
 
-    // Verify agent_id was set to NULL (not a constraint violation)
     const after = db.prepare(`SELECT agent_id FROM node_executions WHERE id = ?`).get('ne-1') as {
       agent_id: string | null;
     };
@@ -342,10 +291,6 @@ describe('Migration 74: Remaining schema cleanup', () => {
     runMigrations(db, () => {});
     expect(tableExists(db, 'node_executions')).toBe(true);
   });
-
-  // -------------------------------------------------------------------------
-  // space_workflows: drop config and max_iterations
-  // -------------------------------------------------------------------------
 
   test('space_workflows: config and max_iterations columns are dropped', () => {
     createPreM74Schema(db);
@@ -363,24 +308,20 @@ describe('Migration 74: Remaining schema cleanup', () => {
       `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
     ).run('sp-1', 's', '/ws', 'Space', now, now);
 
-    // Insert a workflow with tags in config
     const configWithTags = JSON.stringify({ tags: ['coding', 'review'], extra: 'data' });
     db.prepare(
       `INSERT INTO space_workflows (id, space_id, name, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
     ).run('wf-1', 'sp-1', 'WF1', configWithTags, now, now);
 
-    // Insert a workflow without tags in config
     const configNoTags = JSON.stringify({ other: 'value' });
     db.prepare(
       `INSERT INTO space_workflows (id, space_id, name, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
     ).run('wf-2', 'sp-1', 'WF2', configNoTags, now, now);
 
-    // Insert a workflow with null config
     db.prepare(
       `INSERT INTO space_workflows (id, space_id, name, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
     ).run('wf-3', 'sp-1', 'WF3', null, now, now);
 
-    // Insert a workflow with empty tags
     const configEmptyTags = JSON.stringify({ tags: [] });
     db.prepare(
       `INSERT INTO space_workflows (id, space_id, name, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
@@ -388,7 +329,6 @@ describe('Migration 74: Remaining schema cleanup', () => {
 
     runMigration74(db);
 
-    // Verify tags are correctly extracted
     const wf1 = db.prepare(`SELECT tags FROM space_workflows WHERE id = 'wf-1'`).get() as {
       tags: string;
     };
@@ -451,10 +391,6 @@ describe('Migration 74: Remaining schema cleanup', () => {
     expect(row.gates).toBe('[{"id": "g-1"}]');
   });
 
-  // -------------------------------------------------------------------------
-  // space_workflow_nodes: drop order_index and agent_id
-  // -------------------------------------------------------------------------
-
   test('space_workflow_nodes: order_index and agent_id are dropped', () => {
     createPreM74Schema(db);
     runMigration74(db);
@@ -497,13 +433,8 @@ describe('Migration 74: Remaining schema cleanup', () => {
     runMigration74(db);
 
     expect(indexExists(db, 'idx_space_workflow_nodes_workflow_id')).toBe(true);
-    // The order index should NOT exist since order_index column is dropped
     expect(indexExists(db, 'idx_space_workflow_nodes_order')).toBe(false);
   });
-
-  // -------------------------------------------------------------------------
-  // space_agents: drop role, config, inject_workflow_context
-  // -------------------------------------------------------------------------
 
   test('space_agents: role, config, inject_workflow_context are dropped', () => {
     createPreM74Schema(db);
@@ -566,10 +497,6 @@ describe('Migration 74: Remaining schema cleanup', () => {
     expect(indexExists(db, 'idx_space_agents_space_id')).toBe(true);
   });
 
-  // -------------------------------------------------------------------------
-  // Node config JSON migration
-  // -------------------------------------------------------------------------
-
   test('node config JSON: string systemPrompt is wrapped to {mode, value}', () => {
     createPreM74Schema(db);
 
@@ -581,7 +508,6 @@ describe('Migration 74: Remaining schema cleanup', () => {
       `INSERT INTO space_workflows (id, space_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
     ).run('wf-1', 'sp-1', 'WF', now, now);
 
-    // Node config with plain string systemPrompt and instructions
     const configBefore = JSON.stringify({
       agents: [
         {
@@ -604,9 +530,7 @@ describe('Migration 74: Remaining schema cleanup', () => {
     const cfg = JSON.parse(row.config) as Record<string, unknown>;
     const agent = (cfg.agents as Array<Record<string, unknown>>)[0];
 
-    // systemPrompt should be wrapped
     expect(agent.systemPrompt).toEqual({ mode: 'override', value: 'You are a coding expert' });
-    // instructions should be wrapped
     expect(agent.instructions).toEqual({ mode: 'override', value: 'Follow TDD' });
   });
 
@@ -624,7 +548,7 @@ describe('Migration 74: Remaining schema cleanup', () => {
     const configBefore = JSON.stringify({
       agents: [
         { agentId: 'ag-1', name: 'coder', systemPrompt: null, instructions: '' },
-        { agentId: 'ag-2', name: 'reviewer' }, // no systemPrompt or instructions
+        { agentId: 'ag-2', name: 'reviewer' },
       ],
     });
     db.prepare(
@@ -639,11 +563,8 @@ describe('Migration 74: Remaining schema cleanup', () => {
     const cfg = JSON.parse(row.config) as Record<string, unknown>;
     const agents = cfg.agents as Array<Record<string, unknown>>;
 
-    // null systemPrompt should NOT be wrapped (should remain null)
     expect(agents[0].systemPrompt).toBeNull();
-    // empty string instructions should NOT be wrapped
     expect(agents[0].instructions).toBe('');
-    // missing fields should remain absent
     expect(agents[1].systemPrompt).toBeUndefined();
     expect(agents[1].instructions).toBeUndefined();
   });
@@ -681,21 +602,15 @@ describe('Migration 74: Remaining schema cleanup', () => {
     const cfg = JSON.parse(row.config) as Record<string, unknown>;
     const agent = (cfg.agents as Array<Record<string, unknown>>)[0];
 
-    // Should NOT be double-wrapped
     expect(agent.systemPrompt).toEqual({ mode: 'override', value: 'Already wrapped' });
     expect(agent.instructions).toEqual({ mode: 'expand', value: 'Already expanded' });
   });
-
-  // -------------------------------------------------------------------------
-  // Idempotency
-  // -------------------------------------------------------------------------
 
   test('runMigration74 is idempotent — running twice does not error', () => {
     createPreM74Schema(db);
     runMigration74(db);
     expect(() => runMigration74(db)).not.toThrow();
 
-    // Verify schema is still correct
     expect(tableExists(db, 'node_executions')).toBe(true);
     expect(columnExists(db, 'space_workflows', 'config')).toBe(false);
     expect(columnExists(db, 'space_workflow_nodes', 'order_index')).toBe(false);
@@ -720,7 +635,6 @@ describe('Migration 74: Remaining schema cleanup', () => {
       `INSERT INTO space_workflow_nodes (id, workflow_id, name, agent_id, order_index, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run('node-1', 'wf-1', 'Code', null, 0, configBefore, now, now);
 
-    // Run migration twice
     runMigration74(db);
     runMigration74(db);
 
@@ -730,33 +644,24 @@ describe('Migration 74: Remaining schema cleanup', () => {
     const cfg = JSON.parse(row.config) as Record<string, unknown>;
     const agent = (cfg.agents as Array<Record<string, unknown>>)[0];
 
-    // Should be wrapped exactly once, not double-wrapped
     expect(agent.systemPrompt).toEqual({ mode: 'override', value: 'Original' });
   });
-
-  // -------------------------------------------------------------------------
-  // Full migration chain
-  // -------------------------------------------------------------------------
 
   test('full migration chain: all M74 changes applied correctly', () => {
     runMigrations(db, () => {});
 
-    // node_executions exists
     expect(tableExists(db, 'node_executions')).toBe(true);
     expect(indexExists(db, 'idx_node_executions_run')).toBe(true);
     expect(indexExists(db, 'idx_node_executions_node')).toBe(true);
 
-    // space_workflows: no config/max_iterations, has tags
     expect(columnExists(db, 'space_workflows', 'config')).toBe(false);
     expect(columnExists(db, 'space_workflows', 'max_iterations')).toBe(false);
     expect(columnExists(db, 'space_workflows', 'tags')).toBe(true);
 
-    // space_workflow_nodes: no order_index/agent_id
     expect(columnExists(db, 'space_workflow_nodes', 'order_index')).toBe(false);
     expect(columnExists(db, 'space_workflow_nodes', 'agent_id')).toBe(false);
     expect(columnExists(db, 'space_workflow_nodes', 'config')).toBe(true);
 
-    // space_agents: no role/config/inject_workflow_context
     expect(columnExists(db, 'space_agents', 'role')).toBe(false);
     expect(columnExists(db, 'space_agents', 'config')).toBe(false);
     expect(columnExists(db, 'space_agents', 'inject_workflow_context')).toBe(false);

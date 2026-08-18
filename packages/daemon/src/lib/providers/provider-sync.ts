@@ -1,12 +1,3 @@
-/**
- * Provider Sync
- *
- * Bridges the providers table ↔ ProviderRegistry at runtime.
- * - syncProviderToRegistry: creates/updates a Provider instance from a DB record
- * - syncAllProviders: startup sweep that registers all enabled rows
- * - removeProviderFromRegistry: shutdown + unregister
- */
-
 import type { ProviderRecord, CustomEndpointConfig } from '@hyperneo/shared';
 import type { ProviderCredentials } from '@hyperneo/shared/provider';
 import { getProviderRegistry } from './registry.js';
@@ -18,10 +9,6 @@ import { resolveKimiRegion } from './kimi-provider.js';
 
 const logger = new Logger('providers:sync');
 
-// ---------------------------------------------------------------------------
-// Sync a single DB record into the registry
-// ---------------------------------------------------------------------------
-
 export async function syncProviderToRegistry(
   record: ProviderRecord,
   credentials?: ProviderCredentials | null,
@@ -29,16 +16,9 @@ export async function syncProviderToRegistry(
 ): Promise<void> {
   const registry = getProviderRegistry();
 
-  // Built-in providers are already registered by initializeProviders().
-  // If one was unregistered (e.g., user deleted and is re-adding it),
-  // restore only that provider instead of re-creating every core provider.
   if (record.kind === 'built_in') {
     await registerBuiltInProvider(registry, record.providerId);
     const provider = registry.get(record.providerId);
-    // Kimi: apply provider-level region from configJson so the correct base
-    // URL (api.kimi.com vs api.moonshot.ai) is used without requiring
-    // per-session configuration. Falls back to 'china' when configJson is
-    // missing or malformed.
     if (provider && provider.id === 'kimi' && 'setDefaultRegion' in provider) {
       let parsedRegion: unknown;
       try {
@@ -51,11 +31,6 @@ export async function syncProviderToRegistry(
       logger.info(`Kimi provider region set to '${region}'`);
     }
     if (provider?.setCredentials && credentials) {
-      // On startup sync, for providers that manage their own auth state (e.g.
-      // Codex), skip applying stale credential-store rows when the provider's
-      // own auth file/cache says it has been logged out. This prevents
-      // resurrecting credentials that were cleared by a failed runtime refresh.
-      // For add/update flows (isStartupSync=false) always apply credentials.
       if (isStartupSync && provider.logout && provider.getCredentials) {
         const own = await provider.getCredentials();
         if (!own) {
@@ -69,7 +44,6 @@ export async function syncProviderToRegistry(
     return;
   }
 
-  // Custom endpoint: create a new CustomEndpointProvider instance.
   if (record.kind === 'custom_endpoint') {
     if (!record.customEndpointConfigJson) {
       logger.warn(`Custom endpoint provider ${record.providerId} has no config; skipping`);
@@ -84,14 +58,12 @@ export async function syncProviderToRegistry(
       return;
     }
 
-    // If baseUrl was overridden in the provider record, merge it into the config.
     if (record.baseUrl) {
       config = { ...config, baseUrl: record.baseUrl };
     }
 
     const providerId = customProviderIdFor(config.id);
 
-    // Shutdown existing instance if present.
     const existing = registry.get(providerId);
     if (existing?.shutdown) {
       try {
@@ -114,15 +86,10 @@ export async function syncProviderToRegistry(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Startup: sync all enabled provider records
-// ---------------------------------------------------------------------------
-
 export async function syncAllProviders(
   listEnabled: () => ProviderRecord[],
   credentialManager: ProviderCredentialManager
 ): Promise<void> {
-  // Ensure built-ins are registered first.
   initializeProviders();
 
   const records = listEnabled();
@@ -135,10 +102,6 @@ export async function syncAllProviders(
     }
   }
 }
-
-// ---------------------------------------------------------------------------
-// Remove a provider from the registry
-// ---------------------------------------------------------------------------
 
 export async function removeProviderFromRegistry(providerId: string): Promise<void> {
   const registry = getProviderRegistry();

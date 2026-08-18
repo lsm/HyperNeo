@@ -1,10 +1,3 @@
-/**
- * CustomEndpointEditor
- *
- * Reusable editor modal and pure helpers for custom endpoint configuration.
- * Extracted from CustomEndpointsSettings so it can be reused by AddProviderModal.
- */
-
 import { useEffect } from 'preact/hooks';
 import type {
   CustomEndpointConfig,
@@ -31,11 +24,9 @@ const TYPE_OPTIONS: Array<{ value: CustomEndpointType; label: string }> = [
 ];
 
 export interface ModelDraft extends CustomEndpointModel {
-  /** Resolved capability values for the editor (defaults applied). */
   resolved: CustomEndpointModelCapabilities;
 }
 
-/** Resolve effective capabilities given the global+per-type defaults. */
 export function resolveCapabilities(
   type: CustomEndpointType,
   caps?: Partial<CustomEndpointModelCapabilities>
@@ -72,14 +63,7 @@ export interface EditorState {
   headersText: string;
   defaultModelId: string;
   models: ModelDraft[];
-  /**
-   * Capability overrides carried from the chosen preset (if any). Applied to
-   * every newly added model so preset behaviour (e.g. `streamUsage: true` for
-   * OpenRouter / LiteLLM) follows through the editor instead of being lost
-   * on subsequent `addModel` clicks.
-   */
   presetCapabilities?: Partial<CustomEndpointModelCapabilities>;
-  /** IDs of fetched models the user has checked for addition. */
   selectedFetchedModelIds?: string[];
 }
 
@@ -152,7 +136,6 @@ export function editorToConfig(state: EditorState): CustomEndpointConfig {
     const out: CustomEndpointModel = { id: m.id.trim() };
     if (m.name?.trim()) out.name = m.name.trim();
     if (m.providerModelId?.trim()) out.providerModelId = m.providerModelId.trim();
-    // Persist only fields the user explicitly changed away from defaults.
     const baseDefaults = resolveCapabilities(state.type);
     const delta: Partial<CustomEndpointModelCapabilities> = {};
     const keys: (keyof CustomEndpointModelCapabilities)[] = [
@@ -187,10 +170,6 @@ export function editorToConfig(state: EditorState): CustomEndpointConfig {
   return config;
 }
 
-/**
- * Probe a custom endpoint and return whether it responds.
- * Throws on network errors; returns `{ success, message }` for HTTP outcomes.
- */
 export async function testCustomEndpoint(
   state: EditorState
 ): Promise<{ success: boolean; message: string }> {
@@ -251,8 +230,6 @@ export function validateEditor(state: EditorState): string | null {
   }
   return null;
 }
-
-// ─── Model row editor ─────────────────────────────────────────────────────────
 
 function ModelEditor({
   model,
@@ -362,8 +339,6 @@ function ModelEditor({
     </div>
   );
 }
-
-// ─── Editor modal ─────────────────────────────────────────────────────────────
 
 export interface EditorModalProps {
   state: EditorState;
@@ -693,8 +668,6 @@ export function EditorModal({
   );
 }
 
-// ─── Preset picker ────────────────────────────────────────────────────────────
-
 export interface PresetPickerProps {
   onPick: (preset: CustomEndpointPreset) => void;
   onClose: () => void;
@@ -743,7 +716,6 @@ export function PresetPicker({ onPick, onClose }: PresetPickerProps) {
   );
 }
 
-// Re-export helpers for testing.
 export const __test__ = {
   resolveCapabilities,
   parseHeaders,

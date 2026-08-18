@@ -13,23 +13,19 @@ export function useFocusTrap(
   const { initialFocus, restoreFocus = true } = options;
   const previousActiveElement = useRef<HTMLElement | null>(null);
 
-  // Save the previously focused element
   useEffect(() => {
     if (!enabled) return;
     previousActiveElement.current = document.activeElement as HTMLElement;
   }, [enabled]);
 
-  // Set initial focus
   useEffect(() => {
     if (!enabled) return;
     const container = containerRef.current;
     if (!container) return;
 
-    // Focus the initial focus element or first focusable
     if (initialFocus?.current) {
       focusElement(initialFocus.current);
     } else {
-      // Look for element with data-autofocus first
       const autoFocusEl = container.querySelector<HTMLElement>('[data-autofocus]');
       if (autoFocusEl) {
         focusElement(autoFocusEl);
@@ -38,7 +34,6 @@ export function useFocusTrap(
         if (focusables.length > 0) {
           focusElement(focusables[0]);
         } else {
-          // Focus the container itself as fallback
           if (container.tabIndex === -1 || container.getAttribute('tabindex') !== null) {
             focusElement(container);
           }
@@ -47,7 +42,6 @@ export function useFocusTrap(
     }
   }, [enabled, containerRef, initialFocus]);
 
-  // Trap focus within container
   useEffect(() => {
     if (!enabled) return;
     const container = containerRef.current;
@@ -66,11 +60,9 @@ export function useFocusTrap(
       const currentIndex = focusables.indexOf(active);
 
       if (event.shiftKey) {
-        // Move backwards
         const nextIndex = currentIndex <= 0 ? focusables.length - 1 : currentIndex - 1;
         focusElement(focusables[nextIndex]);
       } else {
-        // Move forwards
         const nextIndex = currentIndex >= focusables.length - 1 ? 0 : currentIndex + 1;
         focusElement(focusables[nextIndex]);
       }
@@ -81,7 +73,6 @@ export function useFocusTrap(
     return () => {
       document.removeEventListener('keydown', handleKeyDown, true);
 
-      // Restore focus on cleanup
       if (restoreFocus && previousActiveElement.current) {
         focusElement(previousActiveElement.current);
         previousActiveElement.current = null;

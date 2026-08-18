@@ -1,26 +1,7 @@
-/**
- * Unit tests for WorkflowList
- *
- * Tests:
- * - Loading state shows spinner
- * - Empty state with create CTA
- * - Renders workflow cards with name, description, step count
- * - Tag chips rendered
- * - Mini step visualization renders dots
- * - "Create Workflow" header button fires onCreateWorkflow
- * - Edit button on card fires onEditWorkflow with correct ID
- * - Delete confirmation flow (inline confirm pattern)
- * - Delete failure shows error banner
- * - Real-time updates via SpaceStore signal
- */
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
 import { signal, type Signal } from '@preact/signals';
 import type { SpaceWorkflowSummary, DuplicateDriftReport } from '@hyperneo/shared';
-
-// ---- Mocks ----
-// Signals are initialized immediately so vi.mock's lazy getter can reference them safely.
 
 const mockLoading: Signal<boolean> = signal(false);
 
@@ -85,7 +66,6 @@ describe('WorkflowList', () => {
     defaultProps.workflows = [];
     defaultProps.onCreateWorkflow.mockClear();
     defaultProps.onEditWorkflow.mockClear();
-    // Default: no duplicates, no per-workflow drift.
     mockHubRequest.mockReset();
     mockHubRequest.mockImplementation(async (method: string) => {
       if (method === 'spaceWorkflow.detectDuplicateDrift') return { reports: [] };
@@ -214,7 +194,6 @@ describe('WorkflowList', () => {
 
       await waitFor(() => expect(getByText('Update available')).toBeTruthy());
       expect(getByText('Customized')).toBeTruthy();
-      // Dangerous case: no quick Apply — must review the diff first.
       expect(queryByText('Apply update')).toBeNull();
       expect(getByText('Review diff')).toBeTruthy();
     });
@@ -235,7 +214,6 @@ describe('WorkflowList', () => {
       const props = { ...defaultProps, workflows: [workflowWithTemplate()] };
       const { queryByText } = render(<WorkflowList {...props} />);
 
-      // Give the async detectDrift a tick; nothing should render.
       await waitFor(() =>
         expect(mockHubRequest).toHaveBeenCalledWith('spaceWorkflow.detectDrift', {
           id: 'wf-1',
@@ -484,7 +462,6 @@ describe('WorkflowList', () => {
         if (method === 'spaceWorkflow.detectDrift')
           return { updateAvailable: false, customized: false };
         if (method === 'spaceWorkflow.resyncDuplicates') {
-          // The older duplicate was kept — it still has an executable run.
           return { deletedIds: [], skippedDueToExecutableRuns: ['wf-older'] };
         }
         return undefined;
@@ -507,7 +484,6 @@ describe('WorkflowList', () => {
     });
 
     it('renders no Duplicate badge when the RPC returns no reports', async () => {
-      // Default mockHubRequest returns { reports: [] }
       const props = {
         ...defaultProps,
         workflows: [makeWorkflow({ id: 'wf-a', name: 'Only', templateName: 'Coding Workflow' })],

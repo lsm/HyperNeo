@@ -1,28 +1,10 @@
-/**
- * Unit tests for ChannelResolver
- *
- * Covers:
- *   - canSend() by node name
- *   - getPermittedTargets() results
- *   - getChannels() accessor
- *   - isEmpty() for empty/non-empty topology
- */
-
 import { describe, test, expect } from 'bun:test';
 import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
 import type { WorkflowChannel } from '@hyperneo/shared';
 
-// ---------------------------------------------------------------------------
-// Test data helpers
-// ---------------------------------------------------------------------------
-
 function ch(from: string, to: string | string[], gateId?: string): WorkflowChannel {
   return { id: `ch-${from}-${Array.isArray(to) ? to.join('-') : to}`, from, to, gateId };
 }
-
-// ===========================================================================
-// isEmpty / getChannels
-// ===========================================================================
 
 describe('ChannelResolver.isEmpty', () => {
   test('returns true when no channels declared', () => {
@@ -42,15 +24,10 @@ describe('ChannelResolver.getChannels', () => {
     const resolver = new ChannelResolver(channels);
     const result = resolver.getChannels();
     expect(result).toHaveLength(2);
-    // It's a shallow copy — mutations don't affect the resolver
     result.splice(0);
     expect(resolver.getChannels()).toHaveLength(2);
   });
 });
-
-// ===========================================================================
-// canSend()
-// ===========================================================================
 
 describe('ChannelResolver.canSend', () => {
   test('returns true when a matching channel exists', () => {
@@ -99,10 +76,6 @@ describe('ChannelResolver.canSend', () => {
     expect(resolver.canSend('Code', 'Review')).toBe(true);
   });
 });
-
-// ===========================================================================
-// getPermittedTargets()
-// ===========================================================================
 
 describe('ChannelResolver.getPermittedTargets', () => {
   test('returns empty array when no channels declared', () => {

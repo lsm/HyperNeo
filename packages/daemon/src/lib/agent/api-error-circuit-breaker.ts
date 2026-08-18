@@ -1,37 +1,13 @@
-/**
- * API Error Circuit Breaker
- *
- * Detects and breaks infinite error loops caused by repeated API failures.
- *
- * Problem: When Claude Agent SDK hits certain API errors (like "prompt is too long"),
- * it captures the error as a user message and tries to respond to it, creating an
- * infinite loop that consumes resources and clutters the conversation.
- *
- * Solution: Track error patterns and trip the circuit breaker when the same error
- * occurs repeatedly within a short time window.
- *
- * Error patterns detected:
- * - "prompt is too long" (context exceeded)
- * - Repeated 400/429 API errors
- * - Any error appearing 3+ times within 30 seconds
- */
-
 import { Logger } from '../logger';
 import { TRANSIENT_CONNECTION_ERROR_REGEXES } from './transient-error-patterns';
 import { PROMPT_TOO_LONG_RE, matchPromptTooLong } from '@hyperneo/shared/provider/error-taxonomy';
 
-/**
- * Tracked error occurrence
- */
 interface ErrorOccurrence {
   pattern: string;
   timestamp: number;
   fullMessage: string;
 }
 
-/**
- * Circuit breaker state
- */
 export interface CircuitBreakerState {
   isTripped: boolean;
   tripReason: string | null;
@@ -39,19 +15,11 @@ export interface CircuitBreakerState {
   lastTripTime: number | null;
 }
 
-/**
- * Circuit breaker configuration
- */
 export interface CircuitBreakerConfig {
-  /** Number of identical errors before tripping (default: 3) */
   errorThreshold: number;
-  /** Time window in ms to count errors (default: 30000 = 30s) */
   timeWindowMs: number;
-  /** How long to stay tripped before auto-reset (default: 60000 = 1 min) */
   cooldownMs: number;
-  /** Maximum messages allowed in rapid succession (default: 10) */
   rapidFireThreshold: number;
-  /** Time window for rapid fire detection in ms (default: 3000 = 3s) */
   rapidFireWindowMs: number;
 }
 
@@ -63,43 +31,22 @@ const DEFAULT_CONFIG: CircuitBreakerConfig = {
   rapidFireWindowMs: 3000,
 };
 
-/**
- * Error patterns that trigger the circuit breaker
- * These are critical errors that should NOT cause retry loops
- */
 const FATAL_ERROR_PATTERNS = [
-  // Context exceeded - SDK should NOT retry this
-  // Detailed form: "prompt is too long: N tokens > M maximum"
-  // Bare form:     "Prompt is too long" (e.g. Kimi)
-  // Canonical detector from the provider error taxonomy registry.
   PROMPT_TOO_LONG_RE,
-  // Invalid request that won't succeed on retry
   /invalid_request_error/i,
-  // Connection errors - indicate network/API unavailability
   /Error:\s*Connection\s+error/i,
   /Connection\s+error/i,
-  // Image size errors - SDK should NOT retry large images
   /ImageSizeError/i,
   /Image.*size.*exceeds.*limit/i,
   /image.*base64.*size.*exceeds/i,
 ];
 
-/**
- * Transient error patterns that should NOT be counted by the circuit breaker.
- *
- * Sourced from the shared transient-error-patterns.ts module so that
- * query-runner.ts (substring includes) and the circuit breaker (regex)
- * stay in sync automatically.
- */
 const TRANSIENT_CONNECTION_PATTERNS = TRANSIENT_CONNECTION_ERROR_REGEXES;
 
 export class ApiErrorCircuitBreaker {
   private logger: Logger;
   private config: CircuitBreakerConfig;
   private recentErrors: ErrorOccurrence[] = [];
-  // Track message timestamps per agent context for rapid-fire detection
-  // Key: parent_tool_use_id (or 'main' for main agent)
-  // This allows main agent and subagents to have independent thresholds
   private messageTimestampsByAgent: Map<string, number[]> = new Map();
   private state: CircuitBreakerState = {
     isTripped: false,
@@ -108,7 +55,6 @@ export class ApiErrorCircuitBreaker {
     lastTripTime: null,
   };
 
-  // Callback to execute when circuit breaker trips
   private onTrip?: (reason: string, errorCount: number) => Promise<void>;
 
   constructor(sessionId: string, config: Partial<CircuitBreakerConfig> = {}) {
@@ -116,20 +62,11 @@ export class ApiErrorCircuitBreaker {
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
 
-  /**
-   * Set callback to execute when circuit breaker trips
-   */
   setOnTripCallback(callback: (reason: string, errorCount: number) => Promise<void>): void {
     this.onTrip = callback;
   }
 
-  /**
-   * Check if a message contains an API error pattern
-   * Returns the error pattern if found, null otherwise
-   */
   private extractErrorPattern(messageContent: string): string | null {
-    // First, check directly in the message content for ImageSizeError
-    // SDK might inject this error directly without stderr wrapper
     if (
       /ImageSizeError/i.test(messageContent) ||
       /image.*size.*exceeds.*limit/i.test(messageContent)
@@ -137,18 +74,14 @@ export class ApiErrorCircuitBreaker {
       return 'image_size_error';
     }
 
-    // Check for local-command-stderr errors (SDK error capture format)
     const stderrMatch = messageContent.match(
       /<local-command-stderr>([\s\S]*?)<\/local-command-stderr>/
     );
     if (stderrMatch) {
       const errorContent = stderrMatch[1];
 
-      // Check for fatal error patterns
       for (const pattern of FATAL_ERROR_PATTERNS) {
         if (pattern.test(errorContent)) {
-          // Extract a normalized pattern for grouping. Capture the max-token
-          // context when available; fall back to a generic key for bare messages.
           const promptTooLong = matchPromptTooLong(errorContent);
           if (promptTooLong) {
             return promptTooLong.maxTokens !== undefined
@@ -156,12 +89,10 @@ export class ApiErrorCircuitBreaker {
               : 'prompt_too_long';
           }
 
-          // Connection error
           if (/Connection\s+error/i.test(errorContent)) {
             return 'connection_error';
           }
 
-          // Image size error
           if (/ImageSizeError/i.test(errorContent) || /image.*size.*exceeds/i.test(errorContent)) {
             return 'image_size_error';
           }
@@ -170,11 +101,9 @@ export class ApiErrorCircuitBreaker {
         }
       }
 
-      // Check for generic API errors (400, 429, etc.)
       const apiErrorMatch = errorContent.match(/Error:\s*(\d{3})\s*\{/);
       if (apiErrorMatch) {
         const statusCode = apiErrorMatch[1];
-        // 400 and 429 are retriable in some cases, but repeated failures should trip
         if (statusCode === '400' || statusCode === '429') {
           return `api_error:${statusCode}`;
         }
@@ -184,12 +113,7 @@ export class ApiErrorCircuitBreaker {
     return null;
   }
 
-  /**
-   * Process an incoming SDK message and check for error patterns
-   * Returns true if circuit breaker tripped, false otherwise
-   */
   async checkMessage(message: unknown): Promise<boolean> {
-    // Only check user messages (SDK injects errors as user messages)
     const msg = message as {
       type?: string;
       message?: { content?: unknown };
@@ -201,12 +125,8 @@ export class ApiErrorCircuitBreaker {
 
     const now = Date.now();
 
-    // Get agent context: main agent uses 'main', subagents use their parent_tool_use_id
-    // This allows main agent and subagents to have independent rapid-fire thresholds
     const agentContext = msg.parent_tool_use_id ?? 'main';
 
-    // MASTER RATE LIMITER: Check for rapid-fire message pattern per agent context
-    // This catches ANY runaway loop regardless of error type
     let agentTimestamps = this.messageTimestampsByAgent.get(agentContext);
     if (!agentTimestamps) {
       agentTimestamps = [];
@@ -214,25 +134,21 @@ export class ApiErrorCircuitBreaker {
     }
     agentTimestamps.push(now);
 
-    // Clean up old timestamps outside rapid-fire window
     const rapidFireCutoff = now - this.config.rapidFireWindowMs;
     const filteredTimestamps = agentTimestamps.filter((t) => t > rapidFireCutoff);
     this.messageTimestampsByAgent.set(agentContext, filteredTimestamps);
 
-    // Check for rapid-fire pattern for this specific agent
     if (filteredTimestamps.length >= this.config.rapidFireThreshold) {
       await this.trip('rapid_fire', filteredTimestamps.length);
       return true;
     }
 
-    // Extract message content
     const content = msg.message?.content;
     let messageText = '';
 
     if (typeof content === 'string') {
       messageText = content;
     } else if (Array.isArray(content)) {
-      // Content blocks format
       for (const block of content) {
         if (typeof block === 'object' && block !== null) {
           const b = block as { type?: string; text?: string; content?: string };
@@ -249,17 +165,8 @@ export class ApiErrorCircuitBreaker {
       return false;
     }
 
-    // Check for fatal error patterns FIRST — an SDK stderr payload like
-    // "Error: Connection error ... connection reset" contains both a fatal
-    // marker (Connection error) and a transient substring (connection reset).
-    // The fatal marker must take precedence so repeated persistent outages
-    // increment circuit-breaker error counts as intended.
     const errorPattern = this.extractErrorPattern(messageText);
 
-    // Skip transient connection errors — these are mid-stream HTTP drops that
-    // the daemon's own retry logic handles. Only skip when no fatal error pattern
-    // was detected inside a stderr block, so transient substrings cannot mask
-    // genuine repeated connection failures.
     if (!errorPattern) {
       for (const pattern of TRANSIENT_CONNECTION_PATTERNS) {
         if (pattern.test(messageText)) {
@@ -272,21 +179,17 @@ export class ApiErrorCircuitBreaker {
       return false;
     }
 
-    // Record this error occurrence
     this.recentErrors.push({
       pattern: errorPattern,
       timestamp: now,
-      fullMessage: messageText.substring(0, 200), // Truncate for logging
+      fullMessage: messageText.substring(0, 200),
     });
 
-    // Clean up old errors outside time window
     const cutoff = now - this.config.timeWindowMs;
     this.recentErrors = this.recentErrors.filter((e) => e.timestamp > cutoff);
 
-    // Count occurrences of this pattern
     const patternCount = this.recentErrors.filter((e) => e.pattern === errorPattern).length;
 
-    // Check if threshold exceeded
     if (patternCount >= this.config.errorThreshold) {
       await this.trip(errorPattern, patternCount);
       return true;
@@ -295,19 +198,14 @@ export class ApiErrorCircuitBreaker {
     return false;
   }
 
-  /**
-   * Trip the circuit breaker
-   */
   private async trip(reason: string, errorCount: number): Promise<void> {
     this.state.isTripped = true;
     this.state.tripReason = reason;
     this.state.tripCount++;
     this.state.lastTripTime = Date.now();
 
-    // Clear recent errors after trip
     this.recentErrors = [];
 
-    // Execute callback if set
     if (this.onTrip) {
       try {
         await this.onTrip(reason, errorCount);
@@ -317,9 +215,6 @@ export class ApiErrorCircuitBreaker {
     }
   }
 
-  /**
-   * Reset the circuit breaker (after successful operation or manual reset)
-   */
   reset(): void {
     this.state.isTripped = false;
     this.state.tripReason = null;
@@ -327,26 +222,15 @@ export class ApiErrorCircuitBreaker {
     this.messageTimestampsByAgent.clear();
   }
 
-  /**
-   * Mark a successful API call (resets error tracking)
-   */
   markSuccess(): void {
-    // Clear recent errors on success (but keep timestamps for rate limiting)
     this.recentErrors = [];
   }
 
-  /**
-   * Get current circuit breaker state
-   */
   getState(): CircuitBreakerState {
     return { ...this.state };
   }
 
-  /**
-   * Check if circuit breaker is currently tripped
-   */
   isTripped(): boolean {
-    // Auto-reset after cooldown period
     if (this.state.isTripped && this.state.lastTripTime) {
       const elapsed = Date.now() - this.state.lastTripTime;
       if (elapsed > this.config.cooldownMs) {
@@ -356,9 +240,6 @@ export class ApiErrorCircuitBreaker {
     return this.state.isTripped;
   }
 
-  /**
-   * Get human-readable message for the trip reason
-   */
   getTripMessage(): string {
     if (!this.state.tripReason) {
       return 'Unknown error';

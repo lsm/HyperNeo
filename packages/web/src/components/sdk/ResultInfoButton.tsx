@@ -1,16 +1,3 @@
-/**
- * ResultInfoButton Component
- *
- * Icon button that triggers the result-info dropdown shown beneath an agent's
- * end-of-turn reply. Surfaces the SDK `result` envelope (usage tokens, cost,
- * duration, num_turns, errors) — the symmetric counterpart to
- * `MessageInfoButton` for `system:init`.
- *
- * Glyph: a check-badge — a checkmark inside a small badge — to read as
- * "exec completed" rather than "info circle" (which is the init affordance).
- * For error subtypes the button is colored amber via the `isError` prop so
- * the affordance also signals failure at a glance.
- */
 import { IconButton } from '../ui/IconButton.tsx';
 
 interface Props {

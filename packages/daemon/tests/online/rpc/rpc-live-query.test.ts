@@ -1,11 +1,3 @@
-/**
- * LiveQuery online integration tests.
- *
- * Room-scoped live-query names were retired with the public Room API surface.
- * This file keeps a small online smoke test for the active LiveQuery pipeline and
- * asserts the old Room query names are no longer registered.
- */
-
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { LiveQuerySnapshotEvent } from '@hyperneo/shared';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';

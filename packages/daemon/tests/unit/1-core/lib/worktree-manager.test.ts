@@ -1,9 +1,3 @@
-/**
- * WorktreeManager Tests
- *
- * Tests for git worktree management.
- */
-
 import { describe, expect, it, beforeEach, afterEach, spyOn } from 'bun:test';
 import { vi } from 'vitest';
 import { WorktreeManager } from '../../../../src/lib/worktree-manager';
@@ -11,8 +5,6 @@ import { Logger } from '../../../../src/lib/logger';
 import type { Session } from '@hyperneo/shared';
 import type { SimpleGit } from 'simple-git';
 
-// Mock simple-git. vi.mock is hoisted above imports, so the mock fns must
-// live in vi.hoisted() to be referenceable from the factory.
 const gitMocks = vi.hoisted(() => ({
   raw: vi.fn(async () => ''),
   revparse: vi.fn(async () => ''),
@@ -27,10 +19,6 @@ vi.mock('simple-git', () => ({
   simpleGit: () => gitMocks,
 }));
 
-// node:fs / node:os namespace exports are not configurable in ESM, so
-// `spyOn(fs, ...)` cannot work under Vitest. Mock both modules with vi.fn()
-// indirection: each mock passes through to the real implementation until a
-// test installs its own via mockImplementation/mockReturnValue.
 const fsOsMocks = vi.hoisted(() => ({
   existsSync: vi.fn(),
   mkdirSync: vi.fn(),
@@ -43,9 +31,6 @@ function passthrough<Args extends unknown[], R>(
   mockFn: ReturnType<typeof vi.fn>,
   real: (...args: Args) => R
 ): (...args: Args) => R {
-  // Call the mock fn itself (not just its implementation) so calls are
-  // recorded for toHaveBeenCalledWith assertions; fall back to the real
-  // implementation when no mock implementation is installed.
   return (...args: Args) =>
     mockFn.getMockImplementation() ? (mockFn as (...args: Args) => R)(...args) : real(...args);
 }
@@ -69,7 +54,6 @@ vi.mock('node:os', async (importOriginal) => {
   };
 });
 
-// Mock fs functions
 let existsSyncResults: Map<string, boolean>;
 const mkdirSyncSpy = fsOsMocks.mkdirSync;
 const writeFileSyncSpy = fsOsMocks.writeFileSync;
@@ -84,34 +68,25 @@ describe('WorktreeManager', () => {
     manager = new WorktreeManager();
     existsSyncResults = new Map();
 
-    // Reset mocks
     mockGitRaw.mockReset();
     mockGitRevparse.mockReset();
     mockGitBranch.mockReset();
 
-    // Default mock implementations
     mockGitRaw.mockResolvedValue('');
     mockGitRevparse.mockResolvedValue('');
     mockGitBranch.mockResolvedValue({});
 
-    // Mock existsSync
     existsSyncSpy.mockImplementation((path) => {
       return existsSyncResults.get(path as string) ?? false;
     });
 
-    // Mock mkdirSync
     mkdirSyncSpy.mockImplementation(() => undefined as unknown as string);
 
-    // Mock writeFileSync — suppress sentinel writes in unit tests
     writeFileSyncSpy.mockImplementation(() => undefined);
 
-    // Mock readFileSync — default: return the normalized gitRoot so no collision.
-    // Production code calls readFileSync(path, 'utf-8') which returns string; cast
-    // to any to satisfy the overloaded type signature in tests.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     readFileSyncSpy.mockImplementation((): any => '/test/repo');
 
-    // Mock homedir
     homedirSpy.mockReturnValue('/home/testuser');
   });
 
@@ -123,7 +98,6 @@ describe('WorktreeManager', () => {
     homedirSpy.mockReset();
   });
 
-  // Helper: compute short key via the public method so path expectations stay in sync
   function shortKeyFor(repoPath: string): string {
     return manager.getProjectShortKey(repoPath);
   }
@@ -166,7 +140,6 @@ describe('WorktreeManager', () => {
 
   describe('encodeRepoPath (via getWorktreeBaseDir)', () => {
     it('should encode Unix paths correctly', async () => {
-      // We test encodeRepoPath indirectly through createWorktree behavior
       existsSyncResults.set('/Users/alice/project/.git', true);
       mockGitRevparse.mockResolvedValue('.git');
 
@@ -189,7 +162,6 @@ describe('WorktreeManager', () => {
 
     it('should return a string containing only safe filesystem characters', () => {
       const key = manager.getProjectShortKey('/Users/alice/some.weird path/my@project!');
-      // Only alphanumeric, hyphens, underscores, and the separator '-' between parts
       expect(key).toMatch(/^[a-zA-Z0-9_-]+$/);
     });
 
@@ -202,7 +174,6 @@ describe('WorktreeManager', () => {
 
     it('should produce an 8-char hex hash suffix (no BigInt truncation)', () => {
       const key = manager.getProjectShortKey('/test/repo');
-      // Format: {prefix}-{8 hex chars}
       const parts = key.split('-');
       const hash = parts[parts.length - 1];
       expect(hash).toMatch(/^[0-9a-f]{8}$/);
@@ -211,13 +182,11 @@ describe('WorktreeManager', () => {
     it('should produce different keys for different paths', () => {
       const key1 = manager.getProjectShortKey('/Users/alice/project-a');
       const key2 = manager.getProjectShortKey('/Users/bob/project-a');
-      // Same basename but different full paths → different hashes
       expect(key1).not.toBe(key2);
     });
 
     it('should sanitize special characters in basename', () => {
       const key = manager.getProjectShortKey('/home/user/my.project@v2');
-      // dots and @ should be replaced with '-'
       expect(key).toMatch(/^[a-zA-Z0-9_-]+-[0-9a-f]{8}$/);
     });
   });
@@ -237,7 +206,6 @@ describe('WorktreeManager', () => {
     it('should create worktree directory if it does not exist', async () => {
       const shortKey = shortKeyFor('/test/repo');
       existsSyncResults.set('/test/repo/.git', true);
-      // project dir does not exist → triggers mkdirSync + writeFileSync
       existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, false);
       existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, false);
       existsSyncResults.set(
@@ -259,7 +227,6 @@ describe('WorktreeManager', () => {
       const shortKey = shortKeyFor('/test/repo');
       const normalizedGitRoot = '/test/repo';
       existsSyncResults.set('/test/repo/.git', true);
-      // project dir exists, sentinel exists, same repo — no collision
       existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
       existsSyncResults.set(
         `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
@@ -296,15 +263,11 @@ describe('WorktreeManager', () => {
       );
       mockGitRevparse.mockResolvedValue('.git');
       readFileSyncSpy.mockReturnValue('/test/repo' as any);
-      // checkBranchExists returns empty → no stale branch, then worktree add succeeds
-      mockGitRaw
-        .mockResolvedValueOnce('') // checkBranchExists — branch does not exist
-        .mockResolvedValue(''); // worktree add
+      mockGitRaw.mockResolvedValueOnce('').mockResolvedValue('');
 
       const result = await manager.createWorktree({
         sessionId: 'session-123',
         repoPath: '/test/repo',
-        // No custom branch name — uses auto-generated session/session-123
       });
 
       expect(result?.branch).toBe('session/session-123');
@@ -326,10 +289,7 @@ describe('WorktreeManager', () => {
       );
       mockGitRevparse.mockResolvedValue('.git');
       readFileSyncSpy.mockReturnValue('/test/repo' as any);
-      // checkBranchExists returns the stale branch; branch -D goes through mockGitBranch
-      mockGitRaw
-        .mockResolvedValueOnce('  custom-branch\n') // checkBranchExists — stale branch found
-        .mockResolvedValue(''); // worktree add (branch -D uses mockGitBranch, not mockGitRaw)
+      mockGitRaw.mockResolvedValueOnce('  custom-branch\n').mockResolvedValue('');
 
       const result = await manager.createWorktree({
         sessionId: 'session-123',
@@ -337,9 +297,7 @@ describe('WorktreeManager', () => {
         branchName: 'custom-branch',
       });
 
-      // Should reuse the original branch name, not fall back to UUID
       expect(result?.branch).toBe('custom-branch');
-      // git branch -D goes through mockGitBranch
       expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'custom-branch']);
     });
 
@@ -358,19 +316,14 @@ describe('WorktreeManager', () => {
       );
       mockGitRevparse.mockResolvedValue('.git');
       readFileSyncSpy.mockReturnValue('/test/repo' as any);
-      mockGitRaw
-        .mockResolvedValueOnce('  session/session-123\n') // checkBranchExists — stale auto branch
-        .mockResolvedValue(''); // worktree add (branch -D uses mockGitBranch)
+      mockGitRaw.mockResolvedValueOnce('  session/session-123\n').mockResolvedValue('');
 
       const result = await manager.createWorktree({
         sessionId: 'session-123',
         repoPath: '/test/repo',
-        // No custom branch name — uses auto-generated session/session-123
       });
 
-      // Should reuse the auto-generated branch name
       expect(result?.branch).toBe('session/session-123');
-      // git branch -D goes through mockGitBranch
       expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'session/session-123']);
     });
 
@@ -389,9 +342,7 @@ describe('WorktreeManager', () => {
       );
       mockGitRevparse.mockResolvedValue('.git');
       readFileSyncSpy.mockReturnValue('/test/repo' as any);
-      mockGitRaw
-        .mockResolvedValueOnce('  task/task-42-implement-feature\n') // checkBranchExists — stale task branch
-        .mockResolvedValue(''); // worktree add (branch -D uses mockGitBranch)
+      mockGitRaw.mockResolvedValueOnce('  task/task-42-implement-feature\n').mockResolvedValue('');
 
       const result = await manager.createWorktree({
         sessionId: 'session-123',
@@ -399,7 +350,6 @@ describe('WorktreeManager', () => {
         branchName: 'task/task-42-implement-feature',
       });
 
-      // Should reuse the task branch name, not fall back to opaque UUID
       expect(result?.branch).toBe('task/task-42-implement-feature');
       expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'task/task-42-implement-feature']);
     });
@@ -419,10 +369,7 @@ describe('WorktreeManager', () => {
       );
       mockGitRevparse.mockResolvedValue('.git');
       readFileSyncSpy.mockReturnValue('/test/repo' as any);
-      mockGitRaw
-        .mockResolvedValueOnce('  task/task-42-implement-feature\n') // checkBranchExists — branch found
-        .mockResolvedValue(''); // worktree add succeeds with fallback branch name
-      // branch -D fails because branch is checked out in another active worktree
+      mockGitRaw.mockResolvedValueOnce('  task/task-42-implement-feature\n').mockResolvedValue('');
       mockGitBranch.mockRejectedValueOnce(
         new Error("error: cannot delete branch 'task/task-42' checked out at '/other'")
       );
@@ -433,7 +380,6 @@ describe('WorktreeManager', () => {
         branchName: 'task/task-42-implement-feature',
       });
 
-      // Should fall back to UUID-based branch so task can still proceed
       expect(result?.branch).toBe('session/session-123');
     });
 
@@ -484,12 +430,10 @@ describe('WorktreeManager', () => {
       mockGitRevparse.mockResolvedValue('.git');
       readFileSyncSpy.mockReturnValue('/test/repo' as any);
 
-      // First call for worktree add fails
       mockGitRaw
-        .mockResolvedValueOnce('') // checkBranchExists - branch doesn't exist
-        .mockRejectedValueOnce(new Error('Failed to add worktree')); // worktree add
+        .mockResolvedValueOnce('')
+        .mockRejectedValueOnce(new Error('Failed to add worktree'));
 
-      // After failure, worktree dir exists (partially created)
       existsSyncResults.set(
         `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
         true
@@ -503,18 +447,12 @@ describe('WorktreeManager', () => {
         })
       ).rejects.toThrow('Failed to create worktree');
 
-      // Should have tried to clean up
       expect(mockGitRaw).toHaveBeenCalled();
     });
   });
 
   describe('removeWorktree', () => {
     it('should handle worktree not found gracefully', async () => {
-      // Empty worktree list - worktree doesn't exist in git's list
-      // Should not throw, just log and continue
-
-      // This is a unit test for the logic flow, not the git commands
-      // The actual git operations are mocked at module level
       const worktree = {
         isWorktree: true,
         worktreePath: '/nonexistent/worktree',
@@ -522,8 +460,6 @@ describe('WorktreeManager', () => {
         branch: 'session/test',
       };
 
-      // The test verifies the function doesn't throw for missing worktrees
-      // The actual git commands would fail if not mocked
       expect(worktree.worktreePath).toBe('/nonexistent/worktree');
     });
 
@@ -616,7 +552,7 @@ describe('WorktreeManager', () => {
       existsSyncResults.set('/test/worktree', true);
       existsSyncResults.set('/test/repo/.git', true);
       mockGitRevparse.mockResolvedValue('.git');
-      mockGitRaw.mockResolvedValue('worktree /test/repo\nHEAD abc123\n'); // Different worktree
+      mockGitRaw.mockResolvedValue('worktree /test/repo\nHEAD abc123\n');
 
       const result = await manager.verifyWorktree({
         isWorktree: true,
@@ -687,7 +623,7 @@ describe('WorktreeManager', () => {
 
   describe('renameBranch', () => {
     it('should return false if new branch already exists', async () => {
-      mockGitRaw.mockResolvedValue('  new-branch\n'); // Branch exists
+      mockGitRaw.mockResolvedValue('  new-branch\n');
 
       const result = await manager.renameBranch('/test/repo', 'old-branch', 'new-branch');
 
@@ -695,7 +631,7 @@ describe('WorktreeManager', () => {
     });
 
     it('should rename branch successfully', async () => {
-      mockGitRaw.mockResolvedValue(''); // Branch doesn't exist
+      mockGitRaw.mockResolvedValue('');
 
       const result = await manager.renameBranch('/test/repo', 'old-branch', 'new-branch');
 
@@ -704,7 +640,7 @@ describe('WorktreeManager', () => {
     });
 
     it('should return false on git error', async () => {
-      mockGitRaw.mockResolvedValue(''); // Branch doesn't exist
+      mockGitRaw.mockResolvedValue('');
       mockGitBranch.mockRejectedValue(new Error('Git error'));
 
       const result = await manager.renameBranch('/test/repo', 'old-branch', 'new-branch');
@@ -724,15 +660,15 @@ describe('WorktreeManager', () => {
 
     it('should prune and remove orphaned worktrees', async () => {
       existsSyncResults.set('/test/repo/.git', true);
-      existsSyncResults.set('/test/repo/.hyperneo/worktrees/session-1', false); // Orphaned
+      existsSyncResults.set('/test/repo/.hyperneo/worktrees/session-1', false);
 
       mockGitRevparse.mockResolvedValue('.git');
       mockGitRaw
-        .mockResolvedValueOnce('') // prune
+        .mockResolvedValueOnce('')
         .mockResolvedValueOnce(
           'worktree /test/repo\nHEAD abc123\n\nworktree /test/repo/.hyperneo/worktrees/session-1\nHEAD def456\nbranch refs/heads/session/session-1\nprunable\n'
-        ) // list
-        .mockResolvedValue(''); // remove
+        )
+        .mockResolvedValue('');
 
       const result = await manager.cleanupOrphanedWorktrees('/test/repo');
 
@@ -744,16 +680,15 @@ describe('WorktreeManager', () => {
 
       mockGitRevparse.mockResolvedValue('.git');
       mockGitRaw
-        .mockResolvedValueOnce('') // prune
+        .mockResolvedValueOnce('')
         .mockResolvedValueOnce(
           'worktree /test/repo\nHEAD abc123\n\nworktree /test/repo/.hyperneo/worktrees/task-wt\nHEAD def456\nbranch refs/heads/task/task-42-implement-feature\nprunable\n'
-        ) // list
-        .mockResolvedValue(''); // remove
+        )
+        .mockResolvedValue('');
 
       const result = await manager.cleanupOrphanedWorktrees('/test/repo');
 
       expect(result).toContain('/test/repo/.hyperneo/worktrees/task-wt');
-      // Should also delete the task/ branch
       expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'task/task-42-implement-feature']);
     });
 
@@ -771,7 +706,7 @@ describe('WorktreeManager', () => {
   describe('getCommitsAhead', () => {
     it('should return no commits when branch does not exist', async () => {
       mockGitRevparse.mockRejectedValue(new Error('Branch not found'));
-      mockGitRaw.mockResolvedValue('origin/main'); // For getDefaultBranch
+      mockGitRaw.mockResolvedValue('origin/main');
 
       const result = await manager.getCommitsAhead({
         isWorktree: true,
@@ -785,13 +720,13 @@ describe('WorktreeManager', () => {
     });
 
     it('should return commits ahead of base branch', async () => {
-      mockGitRevparse.mockResolvedValue('abc123'); // Branch exists
+      mockGitRevparse.mockResolvedValue('abc123');
       mockGitRaw
-        .mockResolvedValueOnce('origin/main') // getDefaultBranch symbolic-ref
-        .mockResolvedValueOnce('merge-base-123') // merge-base
-        .mockResolvedValueOnce('file1.ts\nfile2.ts') // diff --name-only
-        .mockResolvedValueOnce('+ added line') // diff for file1
-        .mockResolvedValueOnce('abc1234|John Doe|2024-01-01 12:00:00|Fix bug'); // log
+        .mockResolvedValueOnce('origin/main')
+        .mockResolvedValueOnce('merge-base-123')
+        .mockResolvedValueOnce('file1.ts\nfile2.ts')
+        .mockResolvedValueOnce('+ added line')
+        .mockResolvedValueOnce('abc1234|John Doe|2024-01-01 12:00:00|Fix bug');
 
       const result = await manager.getCommitsAhead({
         isWorktree: true,
@@ -811,7 +746,7 @@ describe('WorktreeManager', () => {
     });
 
     it('should throw on git error', async () => {
-      mockGitRevparse.mockResolvedValue('abc123'); // Branch exists
+      mockGitRevparse.mockResolvedValue('abc123');
       mockGitRaw.mockRejectedValue(new Error('Git error'));
 
       await expect(
@@ -825,9 +760,6 @@ describe('WorktreeManager', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // getSessionFileDiff — full single-file diff (git.fileDiff RPC)
-  // ---------------------------------------------------------------------------
   describe('getSessionFileDiff', () => {
     it('returns an empty response when the session has no workspace', async () => {
       const session = {
@@ -853,15 +785,11 @@ describe('WorktreeManager', () => {
         gitBranch: null,
       } as unknown as Session;
       const result = await manager.getSessionFileDiff(session, '   ');
-      // All-whitespace is rejected (no git ops) — patch is null. The path is
-      // echoed as-is rather than trimmed, matching how real paths are handled.
       expect(result.patch).toBeNull();
       expect(result.path).toBe('   ');
     });
 
     it('passes the path untrimmed to git operations', async () => {
-      // A tracked file may legitimately begin/end with whitespace; trimming it
-      // would query a different file. Verify the pathspec keeps the original.
       const diffCalls: string[][] = [];
       existsSyncResults.set('/test/repo/.git', true);
       mockGitRevparse.mockResolvedValue('.git');
@@ -886,8 +814,6 @@ describe('WorktreeManager', () => {
           gitBranch: 'main',
         } as unknown as Session;
         const result = await manager.getSessionFileDiff(session, ' src/spaced .ts');
-        // The pathspec (last arg after `--`) is literal-wrapped and must carry
-        // the surrounding whitespace untrimmed inside the :(literal) prefix.
         expect(
           diffCalls.some((args) => args[args.length - 1] === ':(literal) src/spaced .ts')
         ).toBe(true);
@@ -912,7 +838,6 @@ describe('WorktreeManager', () => {
     it('returns the working-tree diff and numstat for a modified file (direct mode)', async () => {
       existsSyncResults.set('/test/repo/.git', true);
       mockGitRevparse.mockResolvedValue('.git');
-      // base branch resolves to 'main', same as the session branch → no branch patch.
       mockGitRaw.mockImplementation(async (args: string[]) => {
         const cmd = Array.isArray(args) ? args.join(' ') : String(args ?? '');
         if (cmd.includes('symbolic-ref')) return 'origin/main';
@@ -960,7 +885,6 @@ describe('WorktreeManager', () => {
 
       expect(result.patch).toContain('+branch only line');
       expect(result.patch).toContain('+working tree line');
-      // Branch (5/2) + working tree (3/1).
       expect(result.additions).toBe(8);
       expect(result.deletions).toBe(3);
     });
@@ -982,7 +906,6 @@ describe('WorktreeManager', () => {
       } as unknown as Session;
       const result = await manager.getSessionFileDiff(session, 'src/new.ts');
 
-      // Untracked + base==branch → no patch anywhere.
       expect(result.patch).toBeNull();
     });
 
@@ -993,7 +916,7 @@ describe('WorktreeManager', () => {
         const cmd = Array.isArray(args) ? args.join(' ') : String(args ?? '');
         if (cmd.includes('symbolic-ref')) return 'origin/main';
         if (cmd.includes('status --porcelain')) return ' M src/big.ts\0';
-        if (cmd.startsWith('diff')) return 'x'.repeat(1_000_001); // > MAX_FULL_PATCH_CHARS
+        if (cmd.startsWith('diff')) return 'x'.repeat(1_000_001);
         return '';
       });
 
@@ -1004,28 +927,17 @@ describe('WorktreeManager', () => {
       } as unknown as Session;
       const result = await manager.getSessionFileDiff(session, 'src/big.ts');
 
-      // Single oversized read must still be flagged (combinePatches alone would
-      // drop the per-read truncated flag and present the slice as complete).
       expect(result.truncated).toBe(true);
       expect(result.patch?.length).toBe(1_000_000);
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // Subdirectory workspace diffs — git pathspecs resolve relative to the git
-  // client's cwd, but porcelain/diff paths are repo-root-relative. A client
-  // started from a workspace subdir resolves `-- sub/file.ts` to sub/sub/file.ts
-  // and returns nothing. These tests use a path-aware getGit spy (the module
-  // mock returns one shared client regardless of base dir) to lock in the
-  // repoInfo.gitRoot fix in getSessionFileDiff and getReviewSummary.
-  // ---------------------------------------------------------------------------
   describe('subdirectory direct workspace diffs', () => {
     function installPathAwareGit() {
       return spyOn(
         manager as unknown as { getGit(repoPath: string): SimpleGit },
         'getGit'
       ).mockImplementation((repoPath: string) => {
-        // diff-with-pathspec only resolves when run from the repo root /repo.
         return {
           raw: async (args: string[]) => {
             const cmd = Array.isArray(args) ? args.join(' ') : String(args ?? '');
@@ -1055,8 +967,6 @@ describe('WorktreeManager', () => {
           gitBranch: 'main',
         } as unknown as Session;
         const result = await manager.getSessionFileDiff(session, 'sub/file.ts');
-        // From the workspace subdir this would resolve to sub/sub/file.ts and
-        // return no patch; running from gitRoot (/repo) yields the diff.
         expect(result.patch).toContain('+diff body');
       } finally {
         spy.mockRestore();
@@ -1064,9 +974,6 @@ describe('WorktreeManager', () => {
     });
 
     it('populates review file patches for a direct session in a repo subdir', async () => {
-      // This is the user-facing path the reviewer flagged ("No inline diff
-      // available" for every working-tree file) — getReviewSummary must also
-      // run from gitRoot.
       const spy = installPathAwareGit();
       try {
         const session = {
@@ -1084,9 +991,6 @@ describe('WorktreeManager', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // getWorktreeBaseDir — TEST_WORKTREE_BASE_DIR override
-  // ---------------------------------------------------------------------------
   describe('getWorktreeBaseDir TEST_WORKTREE_BASE_DIR override', () => {
     const originalEnv = process.env.TEST_WORKTREE_BASE_DIR;
 
@@ -1107,7 +1011,6 @@ describe('WorktreeManager', () => {
 
       existsSyncResults.set('/test/repo/.git', true);
       mockGitRevparse.mockResolvedValue('.git');
-      // project dir does NOT exist yet → triggers mkdirSync
       existsSyncResults.set(`${testBaseDir}/${shortKey}`, false);
       existsSyncResults.set(`${testBaseDir}/${shortKey}/worktrees`, false);
       existsSyncResults.set(`${testBaseDir}/${shortKey}/worktrees/sess-override`, false);
@@ -1118,7 +1021,6 @@ describe('WorktreeManager', () => {
         repoPath,
       });
 
-      // Worktree path must use the override base dir, not ~/.hyperneo
       expect(result?.worktreePath).toBe(`${testBaseDir}/${shortKey}/worktrees/sess-override`);
       expect(result?.worktreePath).not.toContain('/home/testuser');
     });
@@ -1150,14 +1052,8 @@ describe('WorktreeManager', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // verifyWorktree — backward compatibility with old long-path format
-  // ---------------------------------------------------------------------------
   describe('verifyWorktree old-format path compatibility', () => {
     it('recognizes a worktree stored with the old encoded path format', async () => {
-      // Old format: ~/.hyperneo/projects/-Users-alice-my-app/worktrees/session-abc
-      // verifyWorktree uses the DB-stored worktreePath directly, so old and new
-      // path formats coexist in the DB indefinitely with no conflict.
       const oldFormatPath =
         '/home/testuser/.hyperneo/projects/-Users-alice-my-app/worktrees/session-abc';
       const mainRepoPath = '/Users/alice/my-app';
@@ -1165,7 +1061,6 @@ describe('WorktreeManager', () => {
       existsSyncResults.set(oldFormatPath, true);
       existsSyncResults.set(`${mainRepoPath}/.git`, true);
       mockGitRevparse.mockResolvedValue('.git');
-      // git worktree list includes the old-format path
       mockGitRaw.mockResolvedValue(
         `worktree ${oldFormatPath}\nHEAD abc123\nbranch refs/heads/session/session-abc\n`
       );
@@ -1198,15 +1093,10 @@ describe('WorktreeManager', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // getWorktreeBaseDir — collision detection
-  // All three scenarios use the existing fs mocks from the outer beforeEach.
-  // ---------------------------------------------------------------------------
   describe('getWorktreeBaseDir collision detection', () => {
     let loggerWarnSpy: ReturnType<typeof spyOn>;
 
     beforeEach(() => {
-      // Spy on Logger.prototype.warn to capture collision warnings
       loggerWarnSpy = spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
     });
 
@@ -1218,13 +1108,10 @@ describe('WorktreeManager', () => {
       const repoPath = '/Users/alice/my-app';
       const shortKey = manager.getProjectShortKey(repoPath);
 
-      // Git root detection
       existsSyncResults.set(`${repoPath}/.git`, true);
       mockGitRevparse.mockResolvedValue('.git');
 
-      // project dir does NOT exist yet → triggers mkdirSync + writeFileSync
       existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, false);
-      // worktrees dir also doesn't exist
       existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, false);
       existsSyncResults.set(
         `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/sess-1`,
@@ -1237,16 +1124,13 @@ describe('WorktreeManager', () => {
         repoPath,
       });
 
-      // Worktree path uses the short key
       expect(result?.worktreePath).toBe(
         `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/sess-1`
       );
-      // Sentinel was written
       expect(writeFileSyncSpy).toHaveBeenCalledWith(
         `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
         repoPath
       );
-      // No collision warning
       expect(loggerWarnSpy).not.toHaveBeenCalledWith(expect.stringContaining('collision'));
     });
 
@@ -1254,11 +1138,9 @@ describe('WorktreeManager', () => {
       const repoPath = '/Users/bob/cool-lib';
       const shortKey = manager.getProjectShortKey(repoPath);
 
-      // Git root detection
       existsSyncResults.set(`${repoPath}/.git`, true);
       mockGitRevparse.mockResolvedValue('.git');
 
-      // project dir EXISTS, sentinel EXISTS, sentinel contains the SAME repo path
       existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
       existsSyncResults.set(
         `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
@@ -1278,25 +1160,20 @@ describe('WorktreeManager', () => {
         repoPath,
       });
 
-      // Same short-key path returned
       expect(result?.worktreePath).toBe(
         `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/sess-2`
       );
-      // No collision warning
       expect(loggerWarnSpy).not.toHaveBeenCalledWith(expect.stringContaining('collision'));
     });
 
     it('collision: sentinel belongs to different repo → logs warning and uses full encoding', async () => {
-      // Repo path B whose shortKey dir is pre-occupied by repo path A
       const repoPathB = '/Users/carol/projects/app';
       const shortKey = manager.getProjectShortKey(repoPathB);
-      const repoPathA = '/Users/dan/projects/other-app'; // occupies the shortKey dir
+      const repoPathA = '/Users/dan/projects/other-app';
 
-      // Git root detection for B
       existsSyncResults.set(`${repoPathB}/.git`, true);
       mockGitRevparse.mockResolvedValue('.git');
 
-      // project dir EXISTS with sentinel pointing to A (not B)
       existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
       existsSyncResults.set(
         `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
@@ -1304,7 +1181,6 @@ describe('WorktreeManager', () => {
       );
       readFileSyncSpy.mockReturnValue(repoPathA as any);
 
-      // Fallback encoded path for B: '-Users-carol-projects-app'
       const encodedB = '-Users-carol-projects-app';
       existsSyncResults.set(`/home/testuser/.hyperneo/projects/${encodedB}/worktrees`, false);
       existsSyncResults.set(
@@ -1318,13 +1194,11 @@ describe('WorktreeManager', () => {
         repoPath: repoPathB,
       });
 
-      // Should use the full encoded fallback, NOT the short key
       expect(result?.worktreePath).toBe(
         `/home/testuser/.hyperneo/projects/${encodedB}/worktrees/sess-collision`
       );
       expect(result?.worktreePath).not.toContain(shortKey);
 
-      // Warning must have been logged
       expect(loggerWarnSpy).toHaveBeenCalledWith(
         expect.stringContaining(`Short key collision detected for "${shortKey}"`)
       );
@@ -1334,11 +1208,9 @@ describe('WorktreeManager', () => {
       const repoPath = '/Users/eve/legacy-app';
       const shortKey = manager.getProjectShortKey(repoPath);
 
-      // Git root detection
       existsSyncResults.set(`${repoPath}/.git`, true);
       mockGitRevparse.mockResolvedValue('.git');
 
-      // project dir EXISTS but no sentinel file
       existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
       existsSyncResults.set(
         `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
@@ -1357,11 +1229,9 @@ describe('WorktreeManager', () => {
         repoPath,
       });
 
-      // Short-key path is returned
       expect(result?.worktreePath).toBe(
         `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/sess-legacy`
       );
-      // Sentinel was written (to "adopt" the existing dir)
       expect(writeFileSyncSpy).toHaveBeenCalledWith(
         `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
         repoPath

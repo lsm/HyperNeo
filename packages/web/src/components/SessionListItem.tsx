@@ -12,17 +12,9 @@ import { UnreadBadge } from './ui/UnreadBadge.tsx';
 interface SessionListItemProps {
   session: Session;
   onSessionClick: (sessionId: string) => void;
-  /** Archive the session. May open a confirm dialog (handled by the parent). */
   onArchive: (sessionId: string) => void | Promise<void>;
 }
 
-/**
- * Known agent statuses that count as "actively processing" and should pulse.
- * idle/interrupted are at rest, and — because persisted processingState is only
- * cast to the union at the type level — any unrecognized/legacy status also
- * falls through to the at-rest path, matching the foundation's own
- * unknown-status → idle fallback.
- */
 const ACTIVE_PROCESSING_STATUSES = new Set([
   'queued',
   'processing',
@@ -30,18 +22,6 @@ const ACTIVE_PROCESSING_STATUSES = new Set([
   'rate_limit_cooldown',
 ]);
 
-/**
- * Status Indicator Component
- *
- * Renders the unified indicator for a sidebar row:
- * - Actively processing → pulsing phase-colored dot
- * - Unseen messages → blue unread badge (count)
- * - Otherwise (at rest) → static lifecycle-colored dot
- *
- * Tones are derived from the indicator foundation so colors stay consistent
- * across the app. Processing takes priority over unread; idle, interrupted,
- * and unrecognized statuses are treated as "at rest" (no pulse).
- */
 function StatusIndicator({ session, sessionId }: { session: Session; sessionId: string }) {
   const status = allSessionStatuses.value.get(sessionId);
 
@@ -49,32 +29,24 @@ function StatusIndicator({ session, sessionId }: { session: Session; sessionId: 
 
   const { processingState, unreadCount } = status;
 
-  // Actively processing → pulsing phase-colored dot.
   if (ACTIVE_PROCESSING_STATUSES.has(processingState.status)) {
     const config = getAgentProcessingStateConfig(processingState);
     return <StatusDot tone={config.tone} pulse aria-label={config.label} />;
   }
 
-  // Unseen messages — blue numeric badge.
   if (unreadCount > 0) {
     return <UnreadBadge count={unreadCount} />;
   }
 
-  // At rest — static lifecycle-colored dot.
   const lifecycle = getSessionLifecycleStatusConfig(session.status);
   return <StatusDot tone={lifecycle.tone} aria-label={lifecycle.label} />;
 }
 
-/**
- * Individual session list item — Codex-style borderless single-line row, with a
- * hover-revealed archive action that arms an inline red confirm before firing.
- */
 export default function SessionListItem({
   session,
   onSessionClick,
   onArchive,
 }: SessionListItemProps) {
-  // Each item subscribes to currentSessionId independently so only styling updates.
   const isActive = currentSessionIdSignal.value === session.id;
   const [confirming, setConfirming] = useState(false);
   const [archiving, setArchiving] = useState(false);
@@ -137,7 +109,6 @@ export default function SessionListItem({
             )}
           </button>
 
-          {/* Row actions — hover-revealed archive only (arms inline red confirm). */}
           {session.status !== 'archived' && (
             <div class="flex items-center pr-1">
               {confirming ? (

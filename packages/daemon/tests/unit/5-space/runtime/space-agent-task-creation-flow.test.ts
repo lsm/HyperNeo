@@ -1,15 +1,3 @@
-/**
- * Unit tests for the agent-to-task creation flow (Task 2.1)
- *
- * Verifies the full end-to-end flow:
- * - Space agent creates tasks via create_standalone_task tool
- * - Created tasks have all expected fields
- * - Tasks appear in list_tasks results
- *
- * Happy paths covered: 3 (agent creates task), 4 (task visibility in list),
- * 10 (artifacts/fields), 12 (user interaction fields)
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -26,13 +14,7 @@ import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts
 import { createSpaceAgentToolHandlers } from '../../../../src/lib/space/tools/space-agent-tools.ts';
 import type { SpaceWorkflow } from '@hyperneo/shared';
 
-// ---------------------------------------------------------------------------
-// DB + space setup helpers
-// ---------------------------------------------------------------------------
-
 function makeDb(): BunDatabase {
-  // Use in-memory SQLite — faster than file-based DB and avoids filesystem
-  // I/O contention that caused beforeEach hook timeouts in CI.
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
@@ -75,10 +57,6 @@ function buildSingleStepWorkflow(
     completionAutonomyLevel: 3,
   });
 }
-
-// ---------------------------------------------------------------------------
-// Test context
-// ---------------------------------------------------------------------------
 
 interface TestCtx {
   db: BunDatabase;
@@ -153,14 +131,9 @@ function makeHandlers(ctx: TestCtx) {
   });
 }
 
-/** Helper to parse a tool result into a JS object */
 function parseResult(result: { content: Array<{ text: string }> }) {
   return JSON.parse(result.content[0].text);
 }
-
-// ---------------------------------------------------------------------------
-// Agent-to-task creation: all expected fields
-// ---------------------------------------------------------------------------
 
 describe('Agent-to-task creation flow — field completeness', () => {
   let ctx: TestCtx;
@@ -181,31 +154,25 @@ describe('Agent-to-task creation flow — field completeness', () => {
     expect(parsed.success).toBe(true);
 
     const task = parsed.task;
-    // Required identity fields
     expect(task.id).toBeDefined();
     expect(typeof task.id).toBe('string');
     expect(task.spaceId).toBe(ctx.spaceId);
     expect(typeof task.taskNumber).toBe('number');
     expect(task.taskNumber).toBeGreaterThanOrEqual(1);
 
-    // Content fields
     expect(task.title).toBe('Implement user authentication');
     expect(task.description).toBe('Add JWT-based authentication to the API');
 
-    // Status and priority
     expect(task.status).toBe('open');
     expect(task.priority).toBe('high');
 
-    // Default collection fields
     expect(task.labels).toEqual([]);
     expect(task.dependsOn).toEqual([]);
 
-    // Null fields for standalone tasks (no workflow association)
     expect(task.result).toBeNull();
     expect(task.workflowRunId ?? null).toBeNull();
     expect(task.createdByTaskId ?? null).toBeNull();
 
-    // Timestamps
     expect(typeof task.createdAt).toBe('number');
     expect(task.createdAt).toBeGreaterThan(0);
   });
@@ -250,7 +217,6 @@ describe('Agent-to-task creation flow — field completeness', () => {
     });
     const returned = parseResult(result).task;
 
-    // Re-read from repository
     const stored = ctx.taskRepo.getTask(returned.id);
     expect(stored).not.toBeNull();
     expect(stored!.id).toBe(returned.id);
@@ -278,10 +244,6 @@ describe('Agent-to-task creation flow — field completeness', () => {
     }
   });
 });
-
-// ---------------------------------------------------------------------------
-// Agent creates task → task appears in list_tasks
-// ---------------------------------------------------------------------------
 
 describe('Agent-to-task creation flow — task appears in list_tasks', () => {
   let ctx: TestCtx;
@@ -353,7 +315,6 @@ describe('Agent-to-task creation flow — task appears in list_tasks', () => {
     });
     const task2Id = parseResult(r2).task.id;
 
-    // Transition second task to in_progress
     await ctx.taskManager.startTask(task2Id);
 
     const openTasks = await handlers.list_tasks({ status: 'open' });
@@ -386,7 +347,6 @@ describe('Agent-to-task creation flow — task appears in list_tasks', () => {
     expect(compactTask.status).toBe('open');
     expect(compactTask.priority).toBe('high');
     expect(compactTask.createdAt).toBeDefined();
-    // Compact should NOT include description
     expect(compactTask.description).toBeUndefined();
   });
 });

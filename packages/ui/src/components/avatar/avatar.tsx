@@ -3,13 +3,9 @@ import { useCallback, useContext, useEffect, useState } from 'preact/hooks';
 import { render } from '../../internal/render.ts';
 import type { ElementType } from '../../internal/types.ts';
 
-// --- Types ---
-
 type AvatarSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 type AvatarShape = 'circle' | 'rounded';
 type AvatarStatus = 'online' | 'busy' | 'away' | 'offline';
-
-// --- Avatar Context ---
 
 interface AvatarContextValue {
   size: AvatarSize;
@@ -27,8 +23,6 @@ function useAvatarContext(component: string): AvatarContextValue {
   }
   return ctx;
 }
-
-// --- Avatar Group Context ---
 
 interface AvatarGroupContextValue {
   size: AvatarSize;
@@ -48,8 +42,6 @@ function useAvatarGroupContext(component: string): AvatarGroupContextValue {
   }
   return ctx;
 }
-
-// --- Avatar (individual) ---
 
 interface AvatarProps {
   src?: string;
@@ -94,8 +86,6 @@ function AvatarFn({
 AvatarFn.displayName = 'Avatar';
 export const Avatar = AvatarFn;
 
-// --- AvatarGroup ---
-
 interface AvatarGroupProps {
   max?: number;
   size?: AvatarSize;
@@ -105,11 +95,9 @@ interface AvatarGroupProps {
 }
 
 function AvatarGroupFn({ max, size = 'md', as: Tag = 'div', children, ...rest }: AvatarGroupProps) {
-  // Count visible children
   const [count, setCount] = useState(0);
 
   useEffect(() => {
-    // Count avatar children after mount
     let visible = 0;
     const traverse = (node: preact.ComponentChildren) => {
       if (!node) return;
@@ -161,8 +149,6 @@ function AvatarGroupFn({ max, size = 'md', as: Tag = 'div', children, ...rest }:
 AvatarGroupFn.displayName = 'AvatarGroup';
 export const AvatarGroup = AvatarGroupFn;
 
-// --- AvatarGroupOverflow ---
-
 interface AvatarGroupOverflowProps {
   as?: ElementType;
   children?: unknown;
@@ -189,8 +175,6 @@ function AvatarGroupOverflowFn({ as: Tag = 'span', children, ...rest }: AvatarGr
 
 AvatarGroupOverflowFn.displayName = 'AvatarGroupOverflow';
 export const AvatarGroupOverflow = AvatarGroupOverflowFn;
-
-// --- AvatarImage ---
 
 interface AvatarImageProps {
   src?: string;
@@ -241,8 +225,6 @@ function AvatarImageFn({ src, alt, onLoad, onError, as: Tag = 'img', ...rest }: 
 AvatarImageFn.displayName = 'AvatarImage';
 export const AvatarImage = AvatarImageFn;
 
-// --- AvatarFallback ---
-
 interface AvatarFallbackProps {
   as?: ElementType;
   children?: unknown;
@@ -255,7 +237,6 @@ function AvatarFallbackFn({ as: Tag = 'span', children, ...rest }: AvatarFallbac
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    // Show fallback after a tick (allows image to attempt load first)
     const timer = setTimeout(() => setVisible(true), 0);
     return () => clearTimeout(timer);
   }, []);
@@ -275,8 +256,6 @@ function AvatarFallbackFn({ as: Tag = 'span', children, ...rest }: AvatarFallbac
 
 AvatarFallbackFn.displayName = 'AvatarFallback';
 export const AvatarFallback = AvatarFallbackFn;
-
-// --- AvatarStatus ---
 
 interface AvatarStatusProps {
   status: AvatarStatus;

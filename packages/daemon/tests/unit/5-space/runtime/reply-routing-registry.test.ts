@@ -18,7 +18,6 @@ describe('ReplyRoutingRegistry', () => {
     const registry = new ReplyRoutingRegistry();
     registry.set('task-1', 'session-adhoc-1', 'coder');
     expect(registry.get('task-1', 'coder')).toBe('session-adhoc-1');
-    // Without agentName, should return null (different key)
     expect(registry.get('task-1')).toBeNull();
   });
 
@@ -41,7 +40,6 @@ describe('ReplyRoutingRegistry', () => {
     expect(registry.get('task-1')).toBeNull();
     expect(registry.get('task-1', 'coder')).toBeNull();
     expect(registry.get('task-1', 'reviewer')).toBeNull();
-    // task-2 should be unaffected
     expect(registry.get('task-2')).toBe('session-d');
   });
 
@@ -57,13 +55,11 @@ describe('ReplyRoutingRegistry', () => {
   });
 
   test('expired entries return null', async () => {
-    const registry = new ReplyRoutingRegistry(100); // 100ms TTL
+    const registry = new ReplyRoutingRegistry(100);
     registry.set('task-1', 'session-adhoc-1');
 
-    // Immediately available
     expect(registry.get('task-1')).toBe('session-adhoc-1');
 
-    // Wait for expiry
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(registry.get('task-1')).toBeNull();
   });
@@ -80,18 +76,15 @@ describe('ReplyRoutingRegistry', () => {
   });
 
   test('purgeExpired removes stale entries without requiring get()', async () => {
-    const registry = new ReplyRoutingRegistry(100); // 100ms TTL
+    const registry = new ReplyRoutingRegistry(100);
     registry.set('task-1', 'session-a');
     registry.set('task-2', 'session-b');
     expect(registry.size).toBe(2);
 
-    // Wait for expiry
     await new Promise((resolve) => setTimeout(resolve, 150));
 
-    // Entries are still in the map (not accessed via get)
     expect(registry.size).toBe(2);
 
-    // Explicit purge removes them
     registry.purgeExpired();
     expect(registry.size).toBe(0);
     expect(registry.get('task-1')).toBeNull();

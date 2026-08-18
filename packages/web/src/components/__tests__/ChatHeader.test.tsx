@@ -1,12 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for ChatHeader Component
- *
- * The header now renders only the session title and a single far-right
- * "info" button (which opens the merged session info panel). The old
- * three-dots kebab next to the title is gone, and the info button is
- * visible at every breakpoint (no longer lg-only).
- */
 import { describe, it, expect, vi } from 'vitest';
 
 import { render, cleanup } from '@testing-library/preact';
@@ -104,7 +96,6 @@ describe('ChatHeader', () => {
     });
 
     it('should set contextPanelOpenSignal to true when menu button is clicked', () => {
-      // Reset signal state
       contextPanelOpenSignal.value = false;
 
       const { container } = render(<ChatHeader {...defaultProps} />);
@@ -114,7 +105,6 @@ describe('ChatHeader', () => {
 
       expect(contextPanelOpenSignal.value).toBe(true);
 
-      // Clean up
       contextPanelOpenSignal.value = false;
     });
   });
@@ -130,9 +120,7 @@ describe('ChatHeader', () => {
     it('does not render the old three-dots kebab / session-options menu', () => {
       const { container } = render(<ChatHeader {...defaultProps} />);
 
-      // The kebab trigger used this title; it must be gone.
       expect(container.querySelector('button[title="Session options"]')).toBeNull();
-      // None of the former kebab action labels should appear in the header.
       expect(container.textContent).not.toContain('Export Chat');
       expect(container.textContent).not.toContain('Reset Agent');
       expect(container.textContent).not.toContain('Archive Session');
@@ -143,14 +131,10 @@ describe('ChatHeader', () => {
 
       const infoButton = container.querySelector('button[title="Session info"]')!;
       const wrapper = infoButton.parentElement;
-      // Wrapper must not carry `hidden` (the old lg-only guard).
       expect(wrapper?.className).not.toContain('hidden');
     });
 
     it('still renders the info button when features.sessionInfo is false', () => {
-      // The button is the entry point for session actions (Export/Reset/...);
-      // it must stay even when session metadata is disabled (lobby/space
-      // sessions), matching the old always-present kebab.
       const { container } = render(
         <ChatHeader {...defaultProps} features={{ sessionInfo: false }} />
       );

@@ -1,12 +1,3 @@
-/**
- * Scoped Invalidation Tests
- *
- * Tests for the scope-aware live-query invalidation feature:
- * - TableChangeScope extraction from ReactiveDatabase proxy
- * - Scope-based filtering in LiveQueryEngine
- * - Fallback to full reevaluation when scope is absent
- */
-
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
 import { EventEmitter } from 'node:events';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
@@ -23,10 +14,6 @@ import type {
 import { LiveQueryEngine } from '../../../../src/storage/live-query';
 import type { QueryDiff } from '../../../../src/storage/live-query';
 import type { Session, SessionConfig, SessionMetadata } from '@hyperneo/shared';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function makeTempDbPath(): string {
   return join(tmpdir(), `scoped-test-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
@@ -65,7 +52,6 @@ function makeSession(
   };
 }
 
-/** Create a mock ReactiveDatabase that can fire scoped change events. */
 function createMockReactiveDatabase() {
   const emitter = new EventEmitter();
   const versions: Record<string, number> = {};
@@ -87,7 +73,6 @@ function createMockReactiveDatabase() {
     getTableVersion(table: string): number {
       return versions[table] ?? 0;
     },
-    /** Bump version and fire change event with optional scope. */
     bumpAndFire(table: string, scope?: TableChangeScope): void {
       versions[table] = (versions[table] ?? 0) + 1;
       const v = versions[table];
@@ -95,10 +80,6 @@ function createMockReactiveDatabase() {
     },
   };
 }
-
-// ---------------------------------------------------------------------------
-// Tests: ReactiveDatabase scope extraction
-// ---------------------------------------------------------------------------
 
 describe('ReactiveDatabase — scope extraction', () => {
   let dbPath: string;
@@ -141,7 +122,6 @@ describe('ReactiveDatabase — scope extraction', () => {
     };
     reactiveDb.db.saveSDKMessage('sess-1', message as any);
 
-    // First event is for sessions (no scope), second is sdk_messages with scope
     const sdkEvent = events.find((e) => e.tables.includes('sdk_messages'));
     expect(sdkEvent).toBeDefined();
     expect(sdkEvent!.scope).toEqual({ sessionId: 'sess-1' });
@@ -217,7 +197,6 @@ describe('ReactiveDatabase — scope extraction', () => {
     };
     reactiveDb.db.saveSDKMessage('sess-4', message as any);
 
-    // Should find the sdk_messages per-table event with scope
     const scopedEvent = events.find((e) => e.scope?.sessionId === 'sess-4');
     expect(scopedEvent).toBeDefined();
     expect(scopedEvent!.scope).toEqual({ sessionId: 'sess-4' });
@@ -329,10 +308,6 @@ describe('ReactiveDatabase — scope extraction', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Tests: LiveQueryEngine scope filtering
-// ---------------------------------------------------------------------------
-
 describe('LiveQueryEngine — scope filtering', () => {
   let db: BunDatabase;
   let mockReactive: ReturnType<typeof createMockReactiveDatabase>;
@@ -360,14 +335,12 @@ describe('LiveQueryEngine — scope filtering', () => {
   });
 
   test('scoped change only re-evaluates matching query', async () => {
-    // Set up data for two sessions
     db.exec(`INSERT INTO items (id, name, session_id) VALUES ('a1', 'Alpha', 'sess-A')`);
     db.exec(`INSERT INTO items (id, name, session_id) VALUES ('b1', 'Beta', 'sess-B')`);
 
     const diffsA: QueryDiff<{ id: string; name: string }>[] = [];
     const diffsB: QueryDiff<{ id: string; name: string }>[] = [];
 
-    // Subscribe for both sessions with scope filters
     engine.subscribe(SQL_SESSION_A, ['sess-A'], (diff) => diffsA.push(diff), {
       scopeFilter: (scope) => {
         if (!scope.sessionId) return true;
@@ -381,19 +354,16 @@ describe('LiveQueryEngine — scope filtering', () => {
       },
     });
 
-    // Both should have initial snapshots
     expect(diffsA.length).toBe(1);
     expect(diffsB.length).toBe(1);
 
-    // Write for sess-A
     db.exec(`INSERT INTO items (id, name, session_id) VALUES ('a2', 'Alpha2', 'sess-A')`);
     mockReactive.bumpAndFire('items', { sessionId: 'sess-A' });
 
     await Promise.resolve();
 
-    // Only sess-A should have a delta
     expect(diffsA.length).toBe(2);
-    expect(diffsB.length).toBe(1); // No change for sess-B
+    expect(diffsB.length).toBe(1);
   });
 
   test('unscoped change re-evaluates all queries (fallback)', async () => {
@@ -416,17 +386,13 @@ describe('LiveQueryEngine — scope filtering', () => {
       },
     });
 
-    // Write for sess-A without scope — both queries should be re-evaluated
     db.exec(`INSERT INTO items (id, name, session_id) VALUES ('a2', 'Alpha2', 'sess-A')`);
-    mockReactive.bumpAndFire('items'); // no scope → both queries re-evaluate
+    mockReactive.bumpAndFire('items');
 
     await Promise.resolve();
 
-    // sess-A sees new data → delta
     expect(diffsA.length).toBe(2);
     expect(diffsA[1].type).toBe('delta');
-    // sess-B is re-evaluated but data is unchanged → no callback (hash dedup)
-    // This is the expected behavior: unscoped changes always trigger re-evaluation
     expect(diffsB.length).toBe(1);
   });
 
@@ -436,17 +402,14 @@ describe('LiveQueryEngine — scope filtering', () => {
     const diffs: QueryDiff<{ id: string; name: string }>[] = [];
 
     engine.subscribe(SQL_SESSION_A, ['sess-A'], (diff) => diffs.push(diff));
-    // No scopeFilter — always re-evaluate
 
     expect(diffs.length).toBe(1);
 
-    // Change for sess-A with scoped event — should re-evaluate and produce delta
     db.exec(`INSERT INTO items (id, name, session_id) VALUES ('a2', 'Alpha2', 'sess-A')`);
     mockReactive.bumpAndFire('items', { sessionId: 'sess-A' });
 
     await Promise.resolve();
 
-    // Without scopeFilter, the query is always re-evaluated regardless of scope
     expect(diffs.length).toBe(2);
     expect(diffs[1].type).toBe('delta');
   });
@@ -472,9 +435,8 @@ describe('LiveQueryEngine — scope filtering', () => {
       }
     );
 
-    expect(diffs.length).toBe(1); // initial snapshot
+    expect(diffs.length).toBe(1);
 
-    // Write 10 messages for a completely different session
     for (let i = 0; i < 10; i++) {
       db.exec(`INSERT INTO items (id, name, session_id) VALUES ('x${i}', 'X${i}', 'sess-X')`);
       mockReactive.bumpAndFire('items', { sessionId: 'sess-X' });
@@ -482,7 +444,6 @@ describe('LiveQueryEngine — scope filtering', () => {
 
     await Promise.resolve();
 
-    // Should still be just the snapshot — no deltas from unrelated session
     expect(diffs.length).toBe(1);
   });
 
@@ -499,7 +460,6 @@ describe('LiveQueryEngine — scope filtering', () => {
 
     expect(diffs.length).toBe(1);
 
-    // Write for sess-A — should trigger re-evaluation
     db.exec(`INSERT INTO items (id, name, session_id) VALUES ('a2', 'Alpha2', 'sess-A')`);
     mockReactive.bumpAndFire('items', { sessionId: 'sess-A' });
 
@@ -530,14 +490,13 @@ describe('LiveQueryEngine — scope filtering', () => {
       scopeFilter: (s) => !s.sessionId || s.sessionId === 'sess-C',
     });
 
-    // Write for sess-B
     db.exec(`INSERT INTO items (id, name, session_id) VALUES ('b2', 'Beta2', 'sess-B')`);
     mockReactive.bumpAndFire('items', { sessionId: 'sess-B' });
 
     await Promise.resolve();
 
-    expect(diffsA.length).toBe(1); // Only snapshot
-    expect(diffsB.length).toBe(2); // Snapshot + delta
-    expect(diffsC.length).toBe(1); // Only snapshot
+    expect(diffsA.length).toBe(1);
+    expect(diffsB.length).toBe(2);
+    expect(diffsC.length).toBe(1);
   });
 });

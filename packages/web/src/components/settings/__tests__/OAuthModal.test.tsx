@@ -1,12 +1,8 @@
 // @ts-nocheck
-/**
- * Tests for OAuthModal Component
- */
 
 import { render, cleanup } from '@testing-library/preact';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// Mock the Button component
 vi.mock('../../ui/Button.tsx', () => ({
   Button: ({ children, onClick, variant, size }) => (
     <button data-testid="button" data-variant={variant} data-size={size} onClick={onClick}>
@@ -58,7 +54,6 @@ describe('OAuthModal', () => {
       const spinner = document.body.querySelector('.animate-spin');
       expect(spinner).toBeTruthy();
 
-      // Check for the waiting text span with class text-sm
       const waitingContainer = document.body.querySelector(
         '.flex.items-center.justify-center.py-4'
       );
@@ -161,7 +156,6 @@ describe('OAuthModal', () => {
     it('should call clipboard.writeText when Copy Code button is clicked', async () => {
       const writeTextMock = vi.fn().mockResolvedValue(undefined);
 
-      // Use vi.stubGlobal to properly mock navigator.clipboard
       vi.stubGlobal('navigator', {
         clipboard: {
           writeText: writeTextMock,
@@ -273,11 +267,9 @@ describe('OAuthModal', () => {
         />
       );
 
-      // Device flow takes precedence, so we should see the code
       const codeElement = document.body.querySelector('code');
       expect(codeElement?.textContent).toBe('ABCD-1234');
 
-      // And we should see the verification URL button, not the auth URL button
       const buttons = document.body.querySelectorAll('[data-testid="button"]');
       const openButton = Array.from(buttons).find((btn) =>
         btn.textContent?.includes('Open Verification URL')

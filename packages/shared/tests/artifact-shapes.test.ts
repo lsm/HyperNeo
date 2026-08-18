@@ -52,7 +52,6 @@ describe('artifact-shapes: deriveArtifactKey (identity rules)', () => {
       'review'
     );
     expect(deriveArtifactKey('decision', { recommendation: 'approve' })).toBe('current');
-    // kind-less explicit key is kept verbatim (the terminal/multi-round case).
     expect(deriveArtifactKey('decision', { recommendation: 'request_changes' }, 'round-3')).toBe(
       'round-3'
     );
@@ -68,12 +67,8 @@ describe('artifact-shapes: deriveArtifactKey (identity rules)', () => {
   });
 
   test('note without explicitKey stays a single rolling row; with explicitKey is multi-instance', () => {
-    // Default: single rolling 'current' row regardless of kind.
     expect(deriveArtifactKey('note', { text: 'a' })).toBe('current');
     expect(deriveArtifactKey('note', { text: 'b', kind: 'status' })).toBe('current');
-    // Explicit key opts into a bounded multi-instance audit trail, namespaced
-    // by kind so distinct note streams (e.g. merge-conflict attempts) never
-    // collapse onto each other.
     expect(deriveArtifactKey('note', { text: 'a', kind: 'merge_conflict' }, 'attempt-0')).toBe(
       'merge_conflict:attempt-0'
     );
@@ -145,7 +140,6 @@ describe('artifact-shapes: resolveLegacyShape (data-aware router)', () => {
     expect(resolveLegacyShape('result', { pr_url: 'u' })).toBe('link');
     expect(resolveLegacyShape('result', { url: 'u' })).toBe('link');
     expect(resolveLegacyShape('result', { review_url: 'u' })).toBe('link');
-    // The post-approval merge audit stores the URL under merged_pr_url.
     expect(resolveLegacyShape('result', { merged_pr_url: 'u' })).toBe('link');
   });
 

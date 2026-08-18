@@ -1,14 +1,3 @@
-/**
- * Contract tests for the named-query registry defined in live-query-handlers.ts
- *
- * These tests verify that:
- *  1. The registry is exported and contains the expected named queries.
- *  2. Active row shapes returned by executing SQL match the frontend contracts.
- *  3. JSON blob columns are parsed to JS values before delivery.
- *  4. Retired Room-scoped query names are absent from the active registry.
- *  5. All active queries have deterministic ORDER BY with tiebreakers.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createTables, runMigration74, runMigrations } from '../../../../src/storage/schema';
@@ -22,24 +11,12 @@ import {
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { NeoTask, RoomGoal } from '@hyperneo/shared';
 
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
-
 describe('NAMED_QUERY_REGISTRY', () => {
   let db: BunDatabase;
   const roomId = 'room-contract-test';
   const now = Date.now();
 
-  // Backfill conversation_turn_index the way migration 170 / the repository
-  // does, so the conversation-turn compact + active-turn queries see correctly
-  // indexed rows from seed data that doesn't stamp it. Idempotent (#2338).
   function backfillConversationTurns(): void {
-    // Mirrors migration 178's backfill exactly: anchors get the task-wide
-    // running count (global turn number); non-anchor rows carry forward their
-    // OWN session's latest anchor's turn. So interleaved-session tests exercise
-    // the same per-session grouping as production (#2338), not the legacy
-    // task-wide running count.
     db.exec(`DROP TABLE IF EXISTS _test_turn_backfill`);
     db.exec(`
       CREATE TEMP TABLE _test_turn_backfill AS
@@ -90,7 +67,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
     db = new BunDatabase(':memory:');
     createTables(db);
     runMigration74(db);
-    // Insert minimal room row to satisfy FK constraints
     db.exec(
       `INSERT OR IGNORE INTO rooms (id, name, created_at, updated_at) VALUES ('${roomId}', 'Test Room', ${now}, ${now})`
     );
@@ -99,10 +75,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
   afterEach(() => {
     db.close();
   });
-
-  // -------------------------------------------------------------------------
-  // Registry shape
-  // -------------------------------------------------------------------------
 
   test('registry contains all expected query names', () => {
     expect(NAMED_QUERY_REGISTRY.has('tasks.byRoom')).toBe(false);
@@ -138,13 +110,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
     expect([...NAMED_QUERY_REGISTRY.keys()]).not.toContain('skills.byRoom');
   });
 
-  // -------------------------------------------------------------------------
-  // nodeExecutions.byRun — projection includes lastActivityAt (#943)
-  // -------------------------------------------------------------------------
-
   test('nodeExecutions.byRun projects lastActivityAt alongside updatedAt', () => {
-    // The shared setup (createTables + runMigration74) creates node_executions
-    // at the pre-#943 schema; bring the column up so the projection is real.
     runMigration191(db);
     const workflowRunId = 'run-nodeexec-projection';
     const expectedActivity = now + 12_345;
@@ -166,10 +132,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
     expect(rows[0]).toHaveProperty('lastActivityAt', expectedActivity);
     expect(rows[0]).toHaveProperty('updatedAt', now);
   });
-
-  // -------------------------------------------------------------------------
-  // tasks.byRoom — column aliasing and JSON parsing
-  // -------------------------------------------------------------------------
 
   describe.skip('legacy tasks.byRoom registry shape (retired public query)', () => {
     function insertTask(overrides: Record<string, unknown> = {}): string {
@@ -227,10 +189,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
       insertTask();
       const [row] = queryAndMap();
 
-      // Type assertion — if the shape is wrong, TS will catch it in CI
       const _typed = row as unknown as NeoTask;
 
-      // Verify key structural properties at runtime
       expect(typeof _typed.id).toBe('string');
       expect(typeof _typed.roomId).toBe('string');
       expect(typeof _typed.title).toBe('string');
@@ -270,7 +230,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
       insertTask();
       const defaultRows = queryAndMap('tasks.byRoom');
       const allRows = queryAndMap('tasks.byRoom.all');
-      // Both should have the same columns (keys)
       const defaultKeys = Object.keys(defaultRows[0]).sort();
       const allKeys = Object.keys(allRows[0]).sort();
       expect(allKeys).toEqual(defaultKeys);
@@ -365,9 +324,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
 					updated_at INTEGER NOT NULL
 				);
 			`);
-      // Migration 122 / createTables already adds `task_id` directly to
-      // sdk_messages. Tests inserting messages must stamp `task_id` so the
-      // live-query SQL (which filters via sm.task_id = ?) can reach them.
       db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id ON sdk_messages(task_id)`);
       db.exec(
         `INSERT OR IGNORE INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
@@ -376,9 +332,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
       sessionTaskIds.clear();
     });
 
-    // Map session_id → task_id so message inserts can stamp the denormalised
-    // `sdk_messages.task_id` column the live-query SQL filters on. Reset per
-    // test via the outer beforeEach replaying through this.
     const sessionTaskIds = new Map<string, string>();
 
     function insertSpaceTask(overrides: Record<string, unknown> = {}): string {
@@ -397,10 +350,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
 					'[]', ${now}, ${now}
 				)
 			`);
-      // Bind the task agent session to this task so subsequent message
-      // inserts stamp `sdk_messages.task_id` exactly the way the
-      // SDKMessageRepository does in production (derived from the
-      // session_context.taskId carried by the orchestration session).
       if (overrides.taskAgentSessionId) {
         sessionTaskIds.set(String(overrides.taskAgentSessionId), id);
       }
@@ -428,14 +377,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			`);
     }
 
-    /**
-     * Mirror NodeExecutionRepository.create — insert a node_executions row.
-     * Also bind the agent_session_id to every space_task on the same
-     * workflow_run_id so subsequent message inserts stamp `sdk_messages.task_id`
-     * against the orchestration task (the way the SDKMessageRepository would
-     * if it were called with a node-agent session whose session_context.taskId
-     * is the orchestration task).
-     */
     function insertNodeExecution(params: {
       id: string;
       workflowRunId: string;
@@ -475,11 +416,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
 				)
 			`);
       if (agentSessionId) {
-        // Bind the node-agent session to the orchestration task on this
-        // workflow run — i.e. the task whose own task_agent_session_id is
-        // distinct from the node agent's session. This mirrors what the
-        // SDKMessageRepository would derive from sessions.session_context.taskId
-        // in production.
         const tasks = db
           .prepare(
             `SELECT id, task_agent_session_id FROM space_tasks
@@ -555,7 +491,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         maxRetries: 5,
         retryAt,
       });
-      // Raw extracted keys are stripped from the mapped member shape.
       expect(row.retryCount).toBeUndefined();
       expect(row.maxRetries).toBeUndefined();
       expect(row.retryAt).toBeUndefined();
@@ -563,7 +498,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
     test('rateLimitCooldown is null when cooldown fields are missing', () => {
       const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
-      // status is rate_limit_cooldown but the sibling fields are absent
       insertSession(sessionId, 'space_task_agent', '{"status":"rate_limit_cooldown"}');
 
       const [row] = queryAndMap(taskId);
@@ -619,8 +553,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
       const workflowNodeId = 'node-coder-1';
       const agentName = 'coder';
 
-      // Insert the orchestration task (target_task) — this is the Task Agent's own task.
-      // It has a different session ID from the node agent sub-session.
       const taskId = insertSpaceTask({
         id: 'orch-task-1',
         taskAgentSessionId: orchestrationSessionId,
@@ -628,7 +560,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         status: 'in_progress',
       });
 
-      // Insert a separate step task for the node agent (different from the orchestration task).
       insertSpaceTask({
         id: 'step-task-1',
         agentName,
@@ -638,7 +569,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         status: 'in_progress',
       });
 
-      // Insert a matching node_execution record with agent_session_id
       insertNodeExecution({
         id: 'ne-1',
         workflowRunId,
@@ -648,16 +578,14 @@ describe('NAMED_QUERY_REGISTRY', () => {
         status: 'in_progress',
       });
 
-      // Insert session and SDK messages for the node agent
       insertSession(nodeSessionId, 'worker', '{"status":"processing","phase":"coding"}');
       insertSdkMessage('sdk-node-1', nodeSessionId);
       insertSdkMessage('sdk-node-2', nodeSessionId);
 
       const rows = queryAndMap(taskId);
-      // Should return the orchestration row (Leg 1) and the node agent row (Leg 2)
       const nodeAgentRow = rows.find((r) => r.kind === 'node_agent');
       expect(nodeAgentRow).toBeDefined();
-      expect(nodeAgentRow!.label).toBeTruthy(); // COALESCE(sa.name, ne.agent_name, 'agent')
+      expect(nodeAgentRow!.label).toBeTruthy();
       expect(nodeAgentRow!.role).toBe('coder');
       expect(nodeAgentRow!.state).toBe('active');
       expect(nodeAgentRow!.processingStatus).toBe('processing');
@@ -668,12 +596,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(nodeAgentRow!.agentName).toBe('coder');
     });
 
-    // Regression for task #857 / #864: a post-approval worker (e.g. the
-    // Reviewer slot in the stable coding workflow) is spawned WITHOUT a
-    // node_executions row. Its identity is persisted on the session under
-    // metadata.promptProvenance. Activity / messages / actor queries must
-    // attribute it as its declared slot (not the placeholder 'agent') and carry
-    // its node id, so replies can target it.
     test('post-approval worker (execution-less) is attributed as its declared slot, not "agent"', () => {
       const workflowRunId = 'wr-post-approval';
       const reviewNodeId = 'node-review';
@@ -686,15 +608,12 @@ describe('NAMED_QUERY_REGISTRY', () => {
         workflowRunId,
         status: 'in_progress',
       });
-      // Canonical post-approval session link (migration 103 column).
       db.prepare(`UPDATE space_tasks SET post_approval_session_id = ? WHERE id = ?`).run(
         reviewerSessionId,
         taskId
       );
       insertSession(orchestrationSessionId, 'space_task_agent', '{"status":"idle"}');
 
-      // The worker session has NO node_executions row. Its identity lives in
-      // metadata.promptProvenance (stamped by createCustomAgentInit at spawn).
       sessionTaskIds.set(reviewerSessionId, taskId);
       const provenance = {
         source: 'space_agent_custom_prompt',
@@ -715,13 +634,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
         JSON.stringify({ promptProvenance: provenance }),
         JSON.stringify({ spaceId, taskId })
       );
-      // Display label resolves via the provenance agentId fallback.
       db.prepare(
         `INSERT INTO space_agents (id, space_id, name) VALUES ('agent-reviewer', ?, 'Reviewer')`
       ).run(spaceId);
-      // Reviewer assistant message. Agent output carries origin NULL in
-      // production, which is what makes the actor projection take the worker
-      // branch (and previously collapsed to the 'agent' placeholder).
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, task_id)
          VALUES ('sdk-reviewer-1', ?, 'assistant', NULL, ?, ?, 'consumed', NULL, ?)`
@@ -735,7 +650,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         taskId
       );
 
-      // ── Activity feed ──────────────────────────────────────────────────
       const rows = queryAndMap(taskId);
       const reviewerRow = rows.find((r) => r.sessionId === reviewerSessionId);
       expect(reviewerRow).toBeDefined();
@@ -744,23 +658,16 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(reviewerRow!.agentName).toBe('reviewer');
       expect(reviewerRow!.label).toBe('Reviewer');
       expect(reviewerRow!.workflowNodeId).toBe(reviewNodeId);
-      // Execution-less: no node_executions row, so nodeExecutionId is null while
-      // the node id / agent name are still carried for targeting.
       expect(reviewerRow!.nodeExecutionId).toBeNull();
       expect(reviewerRow!.nodeExecution).toEqual({
         nodeExecutionId: null,
         nodeId: reviewNodeId,
         agentName: 'reviewer',
-        // The activity SQL does not emit an executionStatus column for any
-        // node agent (it drives `state` instead), so this is undefined.
         status: undefined,
         result: null,
-        // The task's post_approval_session_id points at this worker, so it is
-        // the current post-approval target the composer should resolve.
         isCurrentPostApproval: true,
       });
 
-      // ── Unified task messages ──────────────────────────────────────────
       const msgs = queryMessages(taskId);
       const reviewerMsg = msgs.find((m) => m.sessionId === reviewerSessionId);
       expect(reviewerMsg).toBeDefined();
@@ -768,7 +675,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(reviewerMsg!.role).toBe('reviewer');
       expect(reviewerMsg!.label).toBe('Reviewer');
 
-      // ── Actor projection ───────────────────────────────────────────────
       const actorEntry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
       const actorRows = (db.prepare(actorEntry.sql).all(taskId) as Record<string, unknown>[]).map(
         (r) => (actorEntry.mapRow ? actorEntry.mapRow(r) : r)
@@ -783,10 +689,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(from.nodeId).toBe(reviewNodeId);
     });
 
-    // Regression for review P1: setTaskStatus clears post_approval_session_id
-    // on approved→done (mark_complete). The activity feed must surface the
-    // completed worker from durable provenance (its sdk_messages + session
-    // promptProvenance), not the transient pointer.
     test('post-approval worker stays in the activity feed after the task completes (pointer cleared)', () => {
       const workflowRunId = 'wr-post-approval-done';
       const reviewNodeId = 'node-review-done';
@@ -794,9 +696,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
       const taskId = insertSpaceTask({
         id: 'orch-task-pa-done',
         workflowRunId,
-        status: 'done', // completed — pointer is cleared below
+        status: 'done',
       });
-      // Simulate the approved→done transition clearing the pointer.
       db.prepare(`UPDATE space_tasks SET post_approval_session_id = NULL WHERE id = ?`).run(taskId);
       sessionTaskIds.set(reviewerSessionId, taskId);
       db.prepare(
@@ -845,7 +746,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
       const workflowRunId = 'wr-no-session-test';
       const taskId = insertSpaceTask({ workflowRunId, status: 'in_progress' });
 
-      // Insert node_execution WITHOUT agent_session_id
       insertNodeExecution({
         id: 'ne-no-sess',
         workflowRunId,
@@ -882,8 +782,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         status: 'pending',
       });
 
-      // No SDK messages at all — the activity feed should still surface
-      // both the orchestration session and the node-agent session.
       const rows = queryAndMap(taskId);
       expect(rows).toHaveLength(2);
       const orch = rows.find((r) => r.kind === 'task_agent');
@@ -1061,7 +959,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         uuid,
         message: { role: 'user', content: [{ type: 'text', text: 'handoff' }] },
       });
-      // One user message per send_status; stamp sdk_uuid so the retry EXISTS can match.
       const cases: Array<{ id: string; uuid: string; sendStatus: string; expected: string }> = [
         {
           id: 'stm-consumed',
@@ -1093,7 +990,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         );
         db.prepare(`UPDATE sdk_messages SET sdk_uuid = ? WHERE id = ?`).run(c.uuid, c.id);
       }
-      // An active message_delivery job with retry_count > 0 → the retry row reads "retrying".
       db.prepare(
         `INSERT INTO job_queue (id, queue, status, payload, retry_count, max_retries, run_at, created_at)
          VALUES (?, 'message_delivery', 'pending', ?, 1, 8, ?, ?)`
@@ -1118,10 +1014,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
     });
 
     test('a pending user row does not become the turnId for subsequent assistant rows (full feed)', () => {
-      // Task #862 (review P2): the widened full feed emits a pending prompt, but
-      // it must NOT anchor a conversation turn — saveUserMessageCore withholds
-      // the anchor until consumed/failed. Subsequent assistant rows must keep
-      // inheriting the last SETTLED user row's id as turnUserMessageId.
       const workflowRunId = 'wr-stm-sentinel';
       const sessionIdValue = 'session-stm-sentinel';
       const taskId = insertSpaceTask({
@@ -1135,7 +1027,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         uuid,
         message: { role: 'user', content: 'x' },
       });
-      // Settled anchor establishes the turn.
       insertSdkMessageAt(
         'anchor',
         sessionIdValue,
@@ -1146,7 +1037,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         null,
         userPayload('u-anchor')
       );
-      // Pending prompt — emitted for its badge but not a turn sentinel.
       insertSdkMessageAt(
         'pending',
         sessionIdValue,
@@ -1157,7 +1047,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         null,
         userPayload('u-pending')
       );
-      // Assistant row produced after the pending prompt.
       insertSdkMessageAt('assist', sessionIdValue, now + 3000, 'assistant', 'consumed', 'system');
 
       const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!;
@@ -1543,8 +1432,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
       const correlatedScans = plan.filter((step) =>
         step.detail.includes('CORRELATED SCALAR SUBQUERY')
       );
-      // The worker_shutting_down tail check remains correlated. Replacement
-      // detection must not add another per-message scan over sdk_messages.
       expect(correlatedScans).toHaveLength(1);
       expect(entry.sql).toContain('sdk_message_replacements');
       expect(entry.sql).not.toContain('$.retracted_message_uuids');
@@ -1657,16 +1544,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(byId.get('node:actor-node-pending:pending')?.createdAt).toBe(now + 11000);
     });
 
-    // -------------------------------------------------------------------------
-    // taskMilestones.byTask — curated milestone timeline
-    // -------------------------------------------------------------------------
-
     describe('taskMilestones.byTask', () => {
-      // The contract-test harness builds `space_tasks` with a minimal column
-      // set; production gains the lifecycle timestamp columns (started_at,
-      // completed_at, approved_at, pending_completion_*, created_by) via later
-      // ALTER migrations that this harness does not replay. The milestone SQL
-      // reads those columns, so ensure they exist before each test.
       beforeEach(() => {
         const present = new Set(
           (db.prepare('PRAGMA table_info(space_tasks)').all() as Array<{ name: string }>).map(
@@ -1687,7 +1565,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         ensure('created_by', 'TEXT');
         ensure('block_reason', 'TEXT');
         ensure('archived_at', 'INTEGER');
-        // GitHub milestones source from the live external-event tables.
         db.exec(`
 					CREATE TABLE IF NOT EXISTS space_external_events (
 						id TEXT PRIMARY KEY, space_id TEXT NOT NULL, source TEXT NOT NULL, topic TEXT NOT NULL,
@@ -1739,8 +1616,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         occurredAt: number,
         workflowRunId = 'wr-ms-github'
       ): void {
-        // Live GitHub data lives in space_external_events + deliveries (the
-        // legacy space_github_events table receives zero production writes).
         db.exec(`
 					INSERT INTO space_external_events (
 						id, space_id, source, topic, dedupe_key, occurred_at, ingested_at,
@@ -1805,14 +1680,11 @@ describe('NAMED_QUERY_REGISTRY', () => {
           tone: 'success',
           title: 'Completed',
         });
-        // Ordered ascending by time.
         const times = rows.map((r) => r.createdAt as number);
         expect([...times].sort((a, b) => a - b)).toEqual(times);
       });
 
       test('renders a blocked task as Blocked (not Completed)', () => {
-        // Blocked is keyed on status (its own branch), so it emits a warning
-        // "Blocked" milestone even when completed_at is set, never a green Completed.
         const taskId = insertSpaceTask({ id: 'ms-blocked', status: 'blocked' });
         db.exec(`
 					UPDATE space_tasks
@@ -1831,8 +1703,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
       });
 
       test('emits a Blocked milestone even when completed_at is cleared (prompt-overflow block)', () => {
-        // Runtime blocks like prompt-overflow pass completedAt: null, so the
-        // blocked milestone must not require completed_at.
         const taskId = insertSpaceTask({ id: 'ms-blocked-cleared', status: 'blocked' });
         db.exec(`
 					UPDATE space_tasks
@@ -1868,9 +1738,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
       });
 
       test('does not emit Completed for a surviving completed_at during review', () => {
-        // A blocked→review transition is permitted and leaves completed_at set
-        // (updateTask clears it only on open/in_progress); the timeline must not
-        // show a green Completed beside Submitted for review.
         const taskId = insertSpaceTask({ id: 'ms-review-carry', status: 'review' });
         db.exec(`
 					UPDATE space_tasks
@@ -1910,9 +1777,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
       });
 
       test('renders archived tasks as Archived (the sole terminal milestone)', () => {
-        // archiveTask stamps only archived_at — archiving from review/approved
-        // leaves completed_at NULL, and archiving from blocked/cancelled must
-        // not leave a surviving green "Completed".
         const taskId = insertSpaceTask({ id: 'ms-archived-review', status: 'archived' });
         db.exec(`
 					UPDATE space_tasks
@@ -1926,8 +1790,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           tone: 'neutral',
           title: 'Archived',
         });
-        // No completed_at was set, so no Completed milestone; and even if one
-        // had survived, status='archived' excludes it from the completed branch.
         expect(byId.get('task:completed')).toBeUndefined();
       });
 
@@ -1941,7 +1803,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const rows = queryMilestones(taskId);
         const byId = new Map(rows.map((r) => [r.id, r]));
         expect(byId.get('task:archived')?.title).toBe('Archived');
-        // completed_at is set but status='archived', so no Completed/Blocked row.
         expect(byId.get('task:completed')).toBeUndefined();
       });
 
@@ -2003,9 +1864,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
       });
 
       test('includes task-panel instructions persisted with origin NULL (production path)', () => {
-        // space.task.sendMessage -> injectSubSessionMessage(isSynthetic=false)
-        // persists the user row with origin = NULL (not 'human'), so the
-        // milestone must classify via isReplay, not origin.
         const taskId = insertSpaceTask({
           id: 'ms-panel',
           status: 'in_progress',
@@ -2027,8 +1885,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
       });
 
       test('excludes synthetic agent handoffs that share origin NULL (isSynthetic=true)', () => {
-        // Production handoffs are injected with isSynthetic=true (no isReplay,
-        // origin NULL) — the isSynthetic flag is the discriminator.
         const taskId = insertSpaceTask({
           id: 'ms-handoff',
           status: 'in_progress',
@@ -2065,7 +1921,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           agentSessionId: nodeSessionId,
           status: 'in_progress',
         });
-        // A top-level worker answer (no parent_tool_use_id) — kept.
         insertSdkMessageAt(
           'sdk-top',
           nodeSessionId,
@@ -2079,7 +1934,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
             message: { role: 'assistant', content: [{ type: 'text', text: 'top-level answer' }] },
           }
         );
-        // A nested subagent answer (parent_tool_use_id set) — dropped.
         const iso = new Date(now + 2000).toISOString();
         db.exec(`
 					INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, parent_tool_use_id, task_id)
@@ -2095,9 +1949,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
       });
 
       test('renders queued human instructions from pending_agent_messages', () => {
-        // space.task.sendMessage to an unstarted agent queues with source='human';
-        // no sdk_messages row exists until flushed, so the timeline must surface
-        // the pending row directly.
         const taskId = insertSpaceTask({ id: 'ms-queued', status: 'in_progress' });
         db.exec(`
 					INSERT INTO pending_agent_messages (
@@ -2137,7 +1988,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           agentSessionId: nodeSessionId,
           status: 'in_progress',
         });
-        // Assistant turn with a real text answer.
         insertSdkMessageAt(
           'sdk-answer',
           nodeSessionId,
@@ -2154,7 +2004,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
             },
           }
         );
-        // Assistant turn with only tool_use blocks (no text) — must not emit an answer row.
         insertSdkMessageAt(
           'sdk-tools',
           nodeSessionId,
@@ -2186,7 +2035,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           taskAgentSessionId: 'sess-drop',
         });
         sessionTaskIds.set('sess-drop', taskId);
-        // Non-human user message (agent→agent handoff) — must be dropped.
         insertSdkMessageAt(
           'sdk-handoff',
           'sess-drop',
@@ -2200,7 +2048,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
             message: { role: 'user', content: 'handoff body' },
           }
         );
-        // Result message — must be dropped (status comes from lifecycle, not per-turn results).
         insertSdkMessageAt(
           'sdk-result',
           'sess-drop',
@@ -2217,16 +2064,13 @@ describe('NAMED_QUERY_REGISTRY', () => {
         );
 
         const rows = queryMilestones(taskId);
-        expect(rows).toHaveLength(1); // only the creation milestone
+        expect(rows).toHaveLength(1);
         expect(rows[0].category).toBe('creation');
       });
 
       test('emits artifact anchors by canonical shape with real content', () => {
-        // Production artifacts use the shape vocabulary (link/decision/note/…)
-        // as artifact_type; legacy types are mapped to a shape before persisting.
         const workflowRunId = 'wr-ms-art';
         const taskId = insertSpaceTask({ id: 'ms-art', workflowRunId, status: 'in_progress' });
-        // PR → link shape, kind=pr
         insertArtifact(
           'art-pr',
           workflowRunId,
@@ -2234,7 +2078,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           { kind: 'pr', url: 'https://x/y/pull/42', number: 42, summary: 'PR #42 opened' },
           now + 1000
         );
-        // Review verdict → decision shape, kind=review
         insertArtifact(
           'art-decision',
           workflowRunId,
@@ -2242,7 +2085,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           { kind: 'review', recommendation: 'request_changes', summary: 'Address the nits' },
           now + 2000
         );
-        // Progress → note shape
         insertArtifact('art-note', workflowRunId, 'note', { summary: 'halfway there' }, now + 3000);
 
         const rows = queryMilestones(taskId);
@@ -2253,13 +2095,11 @@ describe('NAMED_QUERY_REGISTRY', () => {
           title: 'PR',
           body: 'PR #42 opened',
         });
-        // Artifacts carry only node_id (a template id / UUID), not an agent
-        // name, so the producer chip is omitted rather than mislabeled.
         expect(byId.get('artifact:art-pr')?.sourceLabel).toBeNull();
         expect(byId.get('artifact:art-decision')).toMatchObject({
           category: 'review',
           title: 'Review decision',
-          tone: 'danger', // request_changes is a non-approval outcome
+          tone: 'danger',
           body: 'Address the nits',
         });
         expect(byId.get('artifact:art-note')?.tone).toBe('progress');
@@ -2281,7 +2121,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(verdict).toMatchObject({
           category: 'review',
           title: 'Review decision',
-          // recommendation=approved is a positive outcome.
           tone: 'success',
         });
         expect(verdict?.body).toBe('Approved — looks good');
@@ -2290,7 +2129,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
       test('renders structured-shape bodies and keeps non-review decisions generic', () => {
         const workflowRunId = 'wr-ms-shapes2';
         const taskId = insertSpaceTask({ id: 'ms-shapes2', workflowRunId, status: 'in_progress' });
-        // metric: body carries name + value
         insertArtifact(
           'art-metric',
           workflowRunId,
@@ -2298,7 +2136,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           { name: 'p95-latency', value: 850, unit: 'ms' },
           now + 1000
         );
-        // A QA result maps to a decision WITHOUT kind='review' → generic, not a review
         insertArtifact(
           'art-qa',
           workflowRunId,
@@ -2306,7 +2143,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           { recommendation: 'approve', summary: 'QA passed' },
           now + 2000
         );
-        // check: body carries name + status
         insertArtifact(
           'art-check',
           workflowRunId,
@@ -2314,7 +2150,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           { name: 'ci', status: 'running', counts: { passed: 20 } },
           now + 3000
         );
-        // commit_set: body carries commit count + branch
         insertArtifact(
           'art-commits',
           workflowRunId,
@@ -2351,8 +2186,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           workflowRunId,
           status: 'in_progress',
         });
-        // 'disapproval' contains 'approval', 'proposal' contains 'pr' — neither
-        // should be labelled a review/PR milestone under exact-type matching.
         insertArtifact('art-dis', workflowRunId, 'disapproval', { summary: 'no' }, now + 1000);
         insertArtifact('art-prop', workflowRunId, 'proposal', { summary: 'idea' }, now + 2000);
 
@@ -2368,7 +2201,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
       test('dates overwrite-style progress artifacts by their last update', () => {
         const workflowRunId = 'wr-ms-progress';
         const taskId = insertSpaceTask({ id: 'ms-progress', workflowRunId, status: 'in_progress' });
-        // Upsert in place: created_at preserved, updated_at advances.
         db.exec(`
 					INSERT INTO workflow_run_artifacts (id, run_id, node_id, artifact_type, artifact_key, data, created_at, updated_at)
 					VALUES ('art-prog', '${workflowRunId}', 'coder-node', 'progress', 'current',
@@ -2382,16 +2214,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
       });
 
       test('SQL prepares and runs against the full production schema (drift guard)', () => {
-        // Build a fresh DB through the complete migration chain (not the
-        // hand-written minimal harness schema) and exercise every source branch.
-        // This catches column drift like the removed assigned_agent/agent_name
-        // columns that the minimal harness masks.
         const real = new BunDatabase(':memory:');
         createTables(real);
         runMigrations(real, () => {});
-        // runMigrations re-enables FK at the end; this test only validates that
-        // the SQL prepares/runs against the real column set, so drop the parent
-        // rows it would otherwise require.
         real.exec('PRAGMA foreign_keys = OFF');
         real.exec(
           `INSERT OR IGNORE INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES ('s1','s1','/tmp','S',${now},${now})`
@@ -2416,9 +2241,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
       test('emits GitHub CI milestones from the live external-event tables', () => {
         const taskId = insertSpaceTask({ id: 'ms-github', status: 'in_progress' });
-        // Production check failures are emitted with action `check_failed`
-        // (github-normalizer maps check_run → pull_request/{pr}.check_failed),
-        // so the fixture uses that real topic rather than a fabricated one.
         insertGithubEvent(
           'gh-1',
           taskId,
@@ -2449,9 +2271,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
       test('renders external-CI status_failure / status_error as CI check failed (danger)', () => {
         const taskId = insertSpaceTask({ id: 'ms-github-status', status: 'in_progress' });
-        // External/legacy CI (Jenkins/Travis/custom) failures are re-expressed
-        // as pull_request/{pr}.status_failure / .status_error; they must render
-        // as danger "CI check failed", same as a native check_failed.
         insertGithubEvent(
           'gh-status-fail',
           taskId,
@@ -2483,13 +2302,10 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const pending = rows.find((r) => r.body.includes('pending'));
         expect(failure).toMatchObject({ title: 'CI check failed', tone: 'danger' });
         expect(error).toMatchObject({ title: 'CI check failed', tone: 'danger' });
-        // pending is not a failure → neutral "PR update".
         expect(pending).toMatchObject({ title: 'PR update', tone: 'neutral' });
       });
 
       test('colors a non-CI GitHub event by the matching task delivery, not the global event state', () => {
-        // One event fans out to two tasks; task A's delivery failed, task B's
-        // succeeded. The danger tone must follow each task's own delivery row.
         const taskA = insertSpaceTask({ id: 'ms-gh-a', status: 'in_progress' });
         const taskB = insertSpaceTask({ id: 'ms-gh-b', status: 'in_progress' });
         const evId = 'gh-fanout';
@@ -2512,8 +2328,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
         const rowsA = queryMilestones(taskA).filter((r) => r.category === 'github');
         const rowsB = queryMilestones(taskB).filter((r) => r.category === 'github');
-        expect(rowsA[0]?.tone).toBe('danger'); // this task's delivery failed
-        expect(rowsB[0]?.tone).toBe('neutral'); // this task's delivery succeeded
+        expect(rowsA[0]?.tone).toBe('danger');
+        expect(rowsB[0]?.tone).toBe('neutral');
       });
 
       test('emits collapsed api_retry rows with attempt/status detail', () => {
@@ -2606,15 +2422,10 @@ describe('NAMED_QUERY_REGISTRY', () => {
     });
 
     test('classifies by session type, not current task_agent_session_id pointer', () => {
-      // Simulate a scenario where the orchestration session was replaced
-      // (rehydrate self-heal) but historical messages still exist. The
-      // session.type column is the stable source of truth — messages from
-      // the old session must keep their task_agent classification even
-      // though the task pointer now points at a different session.
       const oldOrchSessionId = 'space:test-space:task:orch-old';
       const newOrchSessionId = 'space:test-space:task:orch-new';
       const taskId = insertSpaceTask({
-        taskAgentSessionId: newOrchSessionId, // pointer rotated to new session
+        taskAgentSessionId: newOrchSessionId,
         status: 'in_progress',
       });
 
@@ -2630,20 +2441,15 @@ describe('NAMED_QUERY_REGISTRY', () => {
         '{"status":"processing"}',
         `{"taskId":"${taskId}"}`
       );
-      // Ensure the message helper stamps task_id for this session
       sessionTaskIds.set(oldOrchSessionId, taskId);
       insertSdkMessage('sdk-old', oldOrchSessionId);
 
       const rows = queryMessages(taskId);
       const oldRow = rows.find((r) => r.sessionId === oldOrchSessionId);
       expect(oldRow).toBeDefined();
-      expect(oldRow!.kind).toBe('task_agent'); // still task_agent because session.type says so
+      expect(oldRow!.kind).toBe('task_agent');
       expect(oldRow!.label).toBe('Task Agent');
     });
-
-    // -------------------------------------------------------------------------
-    // spaceTaskMessages.byTask.compact — per-session turn compaction
-    // -------------------------------------------------------------------------
 
     describe('spaceTaskMessages.byTask.compact', () => {
       function insertSdkMessageAt(
@@ -2660,8 +2466,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
             type: 'assistant',
             message: { role: 'assistant', content: [{ type: 'text', text: id }] },
           } as Record<string, unknown>);
-        // Use the production helpers so test data stays aligned with the
-        // values the SDKMessageRepository would actually stamp.
         const sdkLike = { type: messageType, ...payload } as unknown as SDKMessage;
         const isRenderable = computeIsRenderable(sdkLike);
         const isTerminal = computeIsTerminal(sdkLike);
@@ -2729,15 +2533,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
       });
 
       test('includes a queued prompt to a dormant session even when its turn is older than the recent-turn cutoff', () => {
-        // Task #862 (review P2): a message queued to a session whose last turn
-        // index is older than the compact feed's recent-turn window would be
-        // dropped entirely (conversation_turn_index < rt.minTurn). The OR clause
-        // must include active nonterminal user rows independently of the cutoff.
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
 
-        // Session A: a settled anchor establishes turn 1, then a queued prompt
-        // inherits the session's turn (1) because nonterminal rows are not anchors.
         insertSdkMessageAt(
           'a-anchor',
           sessionId,
@@ -2756,8 +2554,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           `UPDATE sdk_messages SET send_status = 'enqueued', sdk_uuid = 'u-a-queued' WHERE id = 'a-queued'`
         ).run();
 
-        // Session B (node agent on the same task) pushes the task-wide turn count
-        // past the 100-turn recent window, so rt.minTurn > 1.
         const sessionB = 'sess-dormant-b';
         insertSession(sessionB, 'worker', '{"status":"processing"}');
         sessionTaskIds.set(sessionB, taskId);
@@ -2804,8 +2600,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         ];
         for (const c of cases) {
           insertSdkMessageAt(c.id, sessionId, now + 1000, userPayload(c.uuid), 'user');
-          // The compact helper hardcodes send_status='consumed' + no sdk_uuid;
-          // stamp both so the mapping + retry EXISTS behave like production.
           db.prepare(`UPDATE sdk_messages SET send_status = ?, sdk_uuid = ? WHERE id = ?`).run(
             c.sendStatus,
             c.uuid,
@@ -2839,7 +2633,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
 
-        // turn 1: user anchor + assistants + result
         insertSdkMessageAt(
           'u1',
           sessionId,
@@ -2851,7 +2644,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           insertSdkMessageAt(`t1-a${i}`, sessionId, now + (1 + i) * 1000);
         }
         insertResultMessageAt('t1-r', sessionId, now + 5000, 'success');
-        // turn 2: another user anchor + assistants + result
         insertSdkMessageAt(
           'u2',
           sessionId,
@@ -2865,8 +2657,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         insertResultMessageAt('t2-r', sessionId, now + 10000, 'error_during_execution');
 
         const rows = queryCompact(taskId);
-        // Each conversation turn contributes its anchor + its last assistant
-        // summary + its result; nothing else (#2338).
         expect(rows.map((r) => r.id)).toEqual(['u1', 't1-a3', 't1-r', 'u2', 't2-a3', 't2-r']);
         expect(rows.find((r) => r.id === 'u1')!.turnIndex).toBe(1);
         expect(rows.find((r) => r.id === 'u2')!.turnIndex).toBe(2);
@@ -2889,8 +2679,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         insertResultMessageAt('r1', sessionId, now + 8000, 'success');
 
         const rows = queryCompact(taskId);
-        // No matter how many assistant rows precede it, the result is kept and
-        // only the last assistant is summarized (#2338).
         expect(rows.map((r) => r.id)).toEqual(['u1', 'n6', 'r1']);
       });
 
@@ -2898,8 +2686,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
 
-        // A user message mid-run (before any result) starts a NEW conversation
-        // turn and must always be visible — the swallow bug the redesign fixes.
         insertSdkMessageAt(
           'u1',
           sessionId,
@@ -2921,8 +2707,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         insertResultMessageAt('r1', sessionId, now + 7000, 'success');
 
         const rows = queryCompact(taskId);
-        // u-mid is its own anchor (turn 2) and survives; turn 1 (u1..a2) has no
-        // result, turn 2 (u-mid..r1) closes with the result.
         expect(rows.map((r) => r.id)).toEqual(['u1', 'a2', 'u-mid', 'a4', 'r1']);
         expect(rows.find((r) => r.id === 'u1')!.turnIndex).toBe(1);
         expect(rows.find((r) => r.id === 'u-mid')!.turnIndex).toBe(2);
@@ -2961,10 +2745,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const orchIds = rows.filter((r) => r.sessionId === orchestrationSessionId).map((r) => r.id);
         const nodeIds = rows.filter((r) => r.sessionId === nodeSessionId).map((r) => r.id);
 
-        // Conversation-turn compaction (#2338): per (session, turn) the feed
-        // keeps the anchor + the last assistant summary + the result. With no
-        // user anchors both sessions are turn 0; each keeps its last assistant
-        // (orch-n6 / node-n6) and its result.
         expect(orchIds).toEqual(['orch-n6', 'orch-r']);
         expect(nodeIds).toEqual(['node-n6', 'node-r']);
       });
@@ -3001,8 +2781,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         insertResultMessageAt('r1', sessionId, now + 1700, 'success');
 
         const rows = queryCompact(taskId);
-        // tool_result user rows are not anchors and are not selected; only the
-        // last assistant summary + result survive (#2338).
         expect(rows.map((r) => r.id)).toEqual(['a6', 'r1']);
         expect(rows.map((r) => r.id)).not.toContain('u1');
       });
@@ -3021,10 +2799,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         insertSdkMessageAt('a1', sessionId, now + 2000);
         insertResultMessageAt('r1', sessionId, now + 3000, 'success');
 
-        // A routed GitHub event (PR / review / CI) carries no conversation
-        // turnIndex, but legacy compact surfaced it — it must stay visible
-        // alongside the thread, classified by its own kind (not as an
-        // anchor/summary/result).
         db.exec(`
 					INSERT INTO space_github_events (
 						id, space_id, task_id, source, delivery_id, event_type, action,
@@ -3046,7 +2820,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(gh).toBeDefined();
         expect(gh!.kind).toBe('github');
         expect(gh!.messageType).toBe('github_pr_activity');
-        // Ordered by createdAt: u1 < a1 < github(now+2500) < r1.
         expect(rows.map((r) => r.id)).toEqual(['u1', 'a1', 'gh-compact-1', 'r1']);
       });
 
@@ -3061,14 +2834,10 @@ describe('NAMED_QUERY_REGISTRY', () => {
           { type: 'user', message: { role: 'user', content: 'go' } },
           'user'
         );
-        // Assistant text reply — would become the segment summary.
         insertSdkMessageAt('a-text', sessionId, now + 2000, {
           type: 'assistant',
           message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] },
         });
-        // A file write in the SAME turn. seg_summary drops tool rows when text
-        // exists, so without the mutating-tool branch this row would vanish and
-        // the Artifacts/Todos panel (which reads compact) would miss the op.
         insertSdkMessageAt('a-write', sessionId, now + 3000, {
           type: 'assistant',
           message: {
@@ -3086,7 +2855,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         insertResultMessageAt('r1', sessionId, now + 4000, 'success');
 
         const rows = queryCompact(taskId);
-        // The Write tool row survives alongside the text summary + result.
         expect(rows.map((r) => r.id)).toEqual(['u1', 'a-text', 'a-write', 'r1']);
       });
 
@@ -3101,8 +2869,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           { type: 'user', message: { role: 'user', content: 'go' } },
           'user'
         );
-        // No assistant text → seg_summary's tool tier keeps the last-N tool rows
-        // (here w1, w2). The mutating-tool branch must NOT re-emit them.
         insertSdkMessageAt('w1', sessionId, now + 2000, {
           type: 'assistant',
           message: {
@@ -3135,8 +2901,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
         const rows = queryCompact(taskId);
         const ids = rows.map((r) => r.id);
-        // Each tool row appears exactly once — no duplicate from the new branch
-        // overlapping seg_summary's tool tier.
         expect(ids.filter((id) => id === 'w1')).toHaveLength(1);
         expect(ids.filter((id) => id === 'w2')).toHaveLength(1);
         expect(ids).toEqual(['u1', 'w1', 'w2', 'r1']);
@@ -3153,10 +2917,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           { type: 'user', message: { role: 'user', content: 'go' } },
           'user'
         );
-        // A HyperNeo-native action prompt (resume-choice unblock card). It is
-        // renderable, non-terminal, and neither user/system/assistant/github, so
-        // without a dedicated branch it would vanish from compact and the card
-        // would disappear from the task pane after refresh.
         insertSdkMessageAt(
           'ha-resume',
           sessionId,
@@ -3210,9 +2970,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const rawRows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
         const fullRows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
 
-        // Conversation-turn compaction: only the last assistant summary +
-        // system rows survive; the older retracted assistant row drops out of
-        // compact (it remains in the full feed below).
         expect(compactRows.map((row) => row.id)).toEqual([
           'visible-after-retry',
           'fallback-notice',
@@ -3228,8 +2985,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
 
-        // system:init lands at position 1 of the session — well outside the
-        // tail-of-5 window once the agent has produced any non-trivial run.
         insertSdkMessageAt(
           'sys-init',
           sessionId,
@@ -3259,8 +3014,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         insertResultMessageAt('r1', sessionId, now + 10_000, 'success');
 
         const rows = queryCompact(taskId);
-        // system:init survives (non-hook system rows are always kept) alongside
-        // the anchor, the last assistant summary (a7), and the result (#2338).
         expect(rows.map((r) => r.id)).toEqual(['sys-init', 'u-initial', 'a7', 'r1']);
       });
 
@@ -3337,9 +3090,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const rawRows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
         const fullRows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
 
-        // Conversation-turn compaction: the older assistant (visible-before)
-        // drops out of compact; only the last assistant summary (visible-after)
-        // + the tail shutdown system row survive. The full feed keeps all three.
         expect(compactRows.map((row) => row.id)).toEqual(['visible-after', 'tail-shutdown']);
         expect(fullRows.map((row) => row.id)).toEqual([
           'visible-before',
@@ -3392,10 +3142,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const rawRows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
         const fullRows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
 
-        // Compact ties same-ms rows by insertion order (insOrder = rowid), so
-        // the three same-timestamp operational rows render in emission order
-        // (thinking_tokens → session_state_changed → commands_changed), not the
-        // UUID-alphabetical order the full feed's id tiebreak produces (#2338).
         expect(compactRows.map((row) => row.id)).toEqual([
           'visible',
           'operational-thinking_tokens',
@@ -3430,13 +3176,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
       });
     });
 
-    // -----------------------------------------------------------------------
-    // SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL — server-derived running
-    // roster source. Backing SQL for the separate `spaceTaskActiveTurn.byTask`
-    // LiveQuery; the client renders this directly without re-deriving from
-    // the (potentially truncated) compact rows.
-    // -----------------------------------------------------------------------
-
     describe('active-turn entries SQL', () => {
       function insertSdkMessageAt(
         id: string,
@@ -3453,8 +3192,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
             uuid: id,
             message: { role: 'assistant', content: [{ type: 'text', text: id }] },
           } as Record<string, unknown>);
-        // Use the production helpers so test data stays aligned with the
-        // values the SDKMessageRepository would actually stamp.
         const sdkLike = { type: messageType, ...payload } as unknown as SDKMessage;
         const isRenderable = computeIsRenderable(sdkLike);
         const isTerminal = computeIsTerminal(sdkLike);
@@ -3526,7 +3263,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
 
-        // turn 1 (closed): user anchor + assistant text + result.
         insertSdkMessageAt(
           'u1',
           sessionId,
@@ -3541,7 +3277,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         });
         insertResultAt('t1-r', sessionId, now + 3000, 'success');
 
-        // turn 2 (active, no result): user anchor + tool_use only.
         insertSdkMessageAt(
           'u2',
           sessionId,
@@ -3560,8 +3295,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         });
 
         const summaries = await buildSummaries(taskId);
-        // Active roster = the conversation turn holding the session's most
-        // recent agent row, i.e. turn 2 (#2338).
         expect(summaries).toHaveLength(1);
         expect(summaries[0].sessionId).toBe(sessionId);
         expect(summaries[0].turnIndex).toBe(2);
@@ -3569,23 +3302,15 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const toolEntry = entries.find((e) => e.kind === 'tool_use') as Record<string, unknown>;
         expect(toolEntry.toolName).toBe('Bash');
         expect(toolEntry.preview).toBe('bun test');
-        // tool_use block id is emitted so the roster can link to a
-        // matching task_notification and render its terminal status inline.
         expect(toolEntry.toolUseId).toBe('tu-1');
-        // No closed-turn (turn 1) entries leak through.
         const previews = entries.map((e) => String(e.preview ?? e.text ?? ''));
         expect(previews).not.toContain('closed-text');
       });
 
       test('keeps an in-turn prompt in the active roster but excludes a deferred one', async () => {
-        // Task #862 (review P2): a deferred prompt is explicitly waiting for the
-        // next turn — it must stay in the main thread but NOT appear in the live
-        // active-turn roster as input "inside" the active turn. An enqueued
-        // (in-turn) prompt should still appear.
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
 
-        // Active turn 1 (no result yet).
         insertSdkMessageAt(
           'u1',
           sessionId,
@@ -3593,7 +3318,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           { type: 'user', uuid: 'u1', message: { role: 'user', content: 'go' } },
           'user'
         );
-        // Enqueued → in the active turn, belongs in the roster.
         insertSdkMessageAt(
           'u-enq',
           sessionId,
@@ -3604,7 +3328,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         db.prepare(
           `UPDATE sdk_messages SET send_status = 'enqueued', sdk_uuid = 'u-enq' WHERE id = 'u-enq'`
         ).run();
-        // Deferred → waiting for the next turn, must be excluded from the roster.
         insertSdkMessageAt(
           'u-def',
           sessionId,
@@ -3615,7 +3338,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         db.prepare(
           `UPDATE sdk_messages SET send_status = 'deferred', sdk_uuid = 'u-def' WHERE id = 'u-def'`
         ).run();
-        // A non-terminal agent row makes turn 1 the active roster turn.
         insertSdkMessageAt(
           'a1',
           sessionId,
@@ -3656,10 +3378,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
         insertSdkMessageAt('a1', sessionId, now + 1000);
         insertResultAt('r1', sessionId, now + 2000, 'success');
-        // A resume-choice action prompt lands AFTER the result. It is non-user
-        // and non-terminal, so unless active_turn is restricted to actual agent
-        // rows it would become the "latest agent row" and reopen the closed
-        // turn's roster under the unblock card.
         insertSdkMessageAt(
           'ha-resume',
           sessionId,
@@ -3694,9 +3412,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           message: { role: 'assistant', content: [{ type: 'text', text: 'first' }] },
         });
         insertResultAt('r1', sessionId, now + 3000, 'success');
-        // No new user anchor — the agent continues in the SAME conversation
-        // turn. The continuing assistant row is non-terminal, so the roster must
-        // stay active (a "turn has no result" predicate would wrongly hide it).
         insertSdkMessageAt('a2', sessionId, now + 4000, {
           type: 'assistant',
           message: {
@@ -3723,10 +3438,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
           'user'
         );
         insertSdkMessageAt('a1', sessionId, now + 2000);
-        insertResultAt('r1', sessionId, now + 3000, 'success'); // turn 1 closed
-        // A queued prompt that failed delivery (markEnqueuedMessageFailed) opens
-        // a new turn holding ONLY a failed user row (no agent work). The session
-        // is idle — the roster must NOT show it as active.
+        insertResultAt('r1', sessionId, now + 3000, 'success');
         insertSdkMessageAt(
           'u-fail',
           sessionId,
@@ -3742,8 +3454,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
       test('does not fall back to an older turn when a newer user-only turn exists (#2338)', async () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
-        // Turn 1: prompt + assistant row, but NO result (e.g. recovery stopped
-        // the query mid-turn). a1 is a non-terminal candidate → would be active.
         insertSdkMessageAt(
           'u1',
           sessionId,
@@ -3755,9 +3465,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           type: 'assistant',
           message: { role: 'assistant', content: [{ type: 'text', text: 'working' }] },
         });
-        // A newer user-only turn (e.g. a queued prompt that failed delivery) →
-        // turn 2. The session is idle; the roster must NOT fall back to turn 1's
-        // non-terminal assistant.
         insertSdkMessageAt(
           'u-fail',
           sessionId,
@@ -3777,10 +3484,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           type: 'assistant',
           message: { role: 'assistant', content: [{ type: 'text', text: 'working' }] },
         });
-        // sdk_rows deliberately admits malformed-JSON system rows (`OR NOT
-        // json_valid`), so this row reaches `joined`. The active_turn api_retry
-        // probe must guard its json_extract with json_valid, or json_extract
-        // raises 'malformed JSON' and aborts the whole subscription.
         db.prepare(
           `INSERT INTO sdk_messages (
              id, session_id, message_type, message_subtype, sdk_message, timestamp,
@@ -3795,8 +3498,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           taskId
         );
 
-        // Must not throw; the malformed row is excluded from the candidate set
-        // and the active turn (a1) is still detected.
         const summaries = await buildSummaries(taskId);
         expect(summaries).toHaveLength(1);
       });
@@ -3813,7 +3514,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
               { type: 'thinking', thinking: 'Considering options' },
               { type: 'text', text: 'Investigating the failing test' },
               { type: 'tool_use', id: 'tu-1', name: 'Bash', input: { command: 'ls' } },
-              { type: 'text', text: '   ' }, // whitespace-only — server should drop
+              { type: 'text', text: '   ' },
             ],
           },
         });
@@ -3883,9 +3584,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           { type: 'user', message: { role: 'user', content: 'go' } },
           'user'
         );
-        // A retry/backoff lands before any assistant row. The turn has no result
-        // yet, so it must stay active — otherwise the task looks idle/silent
-        // through the retry delay.
         insertSdkMessageAt(
           'retry-only',
           sessionId,
@@ -3919,9 +3617,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           { type: 'user', message: { role: 'user', content: 'go' } },
           'user'
         );
-        // A long SessionStart/Setup hook runs before any assistant row. The turn
-        // must stay active so hook_entries can surface it (otherwise the task
-        // looks idle through the hook).
         const hookBase = { hook_id: 'h1', hook_name: 'SessionStart', hook_event: 'SessionStart' };
         insertSdkMessageAt(
           'hk-start',
@@ -3956,7 +3651,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
 
-        // Anchor the active turn with a tool_use so active-turn detection fires.
         insertSdkMessageAt('a1', sessionId, now + 1000, {
           type: 'assistant',
           uuid: 'a1',
@@ -3964,7 +3658,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
             content: [{ type: 'tool_use', id: 'tu-1', name: 'Bash', input: { command: 'ls' } }],
           },
         });
-        // A completed hook run (3 messages, same hook_id).
         insertSdkMessageAt(
           'h1s',
           sessionId,
@@ -4010,7 +3703,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           },
           'system'
         );
-        // A still-running hook (only started).
         insertSdkMessageAt(
           'h2s',
           sessionId,
@@ -4029,7 +3721,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const summaries = await buildSummaries(taskId);
         const entries = summaries[0].entries as Array<Record<string, unknown>>;
         const hooks = entries.filter((e) => e.kind === 'hook');
-        // One entry per hook_id, despite hook-A having 3 messages.
         expect(hooks).toHaveLength(2);
         const hookA = hooks.find((h) => h.hookName === 'pre-commit');
         const hookB = hooks.find((h) => h.hookName === 'lint');
@@ -4049,9 +3740,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
             content: [{ type: 'tool_use', id: 'tu-1', name: 'Bash', input: { command: 'ls' } }],
           },
         });
-        // All three hook phases share the same millisecond. sdk_messages ids
-        // are random UUIDs, so the tiebreak must be insertion order (rowid):
-        // inserted started → progress → response, so response is newest.
         const same = now + 2000;
         insertSdkMessageAt(
           'hs',
@@ -4104,15 +3792,10 @@ describe('NAMED_QUERY_REGISTRY', () => {
           (e) => e.kind === 'hook'
         );
         expect(hooks).toHaveLength(1);
-        // Response (last inserted) wins despite the shared timestamp.
         expect(hooks[0].status).toBe('completed');
       });
 
       test('distinguishes real human input from synthetic agent handoffs via isReplay', async () => {
-        // Two sessions, each with its own active conversation turn: one opened
-        // by a real human input, one by a synthetic agent handoff. (A single
-        // session can't host both — each user message starts a new conversation
-        // turn, so only the latest would be in the active roster.)
         const humanSession = 'sess-human';
         const handoffSession = 'sess-handoff';
         const taskId = insertSpaceTask({ taskAgentSessionId: humanSession });
@@ -4120,7 +3803,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         insertSession(handoffSession, 'space_task_agent', '{"status":"processing"}');
         sessionTaskIds.set(handoffSession, taskId);
 
-        // Real human input — isReplay falsy.
         insertSdkMessageAt(
           'u-human',
           humanSession,
@@ -4135,7 +3817,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
             content: [{ type: 'tool_use', id: 'tu-h', name: 'Bash', input: { command: 'ls' } }],
           },
         });
-        // Synthetic handoff — isReplay = true.
         insertSdkMessageAt(
           'u-handoff',
           handoffSession,
@@ -4162,7 +3843,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const summaries = await buildSummaries(taskId);
         const allEntries = summaries.flatMap((s) => s.entries as Array<Record<string, unknown>>);
         const kinds = allEntries.map((e) => e.kind);
-        // Server distinguishes the two user-row variants on the wire.
         expect(kinds).toContain('user_message');
         expect(kinds).toContain('agent_handoff');
         const userEntry = allEntries.find((e) => e.kind === 'user_message') as Record<
@@ -4181,7 +3861,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
 
-        // User row with only a tool_result block — should be dropped.
         insertSdkMessageAt(
           'u1',
           sessionId,
@@ -4202,7 +3881,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           },
           'user'
         );
-        // Anchor the active turn with an assistant block.
         insertSdkMessageAt('a1', sessionId, now + 2000, {
           type: 'assistant',
           uuid: 'a1',
@@ -4215,10 +3893,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(summaries).toHaveLength(1);
         const entries = summaries[0].entries as Array<Record<string, unknown>>;
         const kinds = entries.map((e) => e.kind);
-        // No user_message / agent_handoff entry from the tool_result row.
         expect(kinds).not.toContain('user_message');
         expect(kinds).not.toContain('agent_handoff');
-        // The assistant tool_use survives.
         expect(kinds).toContain('tool_use');
       });
 
@@ -4244,8 +3920,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           status: 'in_progress',
         });
 
-        // Both sessions have an active turn (no result row yet) — both
-        // should appear in the summaries.
         insertSdkMessageAt('orch-a1', orchestrationSessionId, now + 1000, {
           type: 'assistant',
           uuid: 'orch-a1',
@@ -4289,10 +3963,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           status: 'in_progress',
         });
 
-        // Both sessions emit the SAME hook_id at the same millisecond. The
-        // ROW_NUMBER window must partition per (session, turn, hook_id); a
-        // hook_id-only partition would keep just the globally-newest rn=1 and
-        // drop the other session's hook before summaries are grouped by sessionId.
         const shared = { hook_id: 'h-shared', hook_name: 'lint', hook_event: 'PreToolUse' };
         for (const [sid, prefix] of [
           [orchestrationSessionId, 'o'],
@@ -4340,11 +4010,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
       test('messages.bySession orders same-millisecond hook phases by insertion order (rowid)', async () => {
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
         const same = now + 1000;
-        // Insertion order is started -> progress -> response, but the
-        // sdk_messages ids are reverse-alphabetical (hz, hy, hx). An `id`
-        // tiebreak would emit them backwards (response, progress, started);
-        // the rowid tiebreak preserves emission order so the chat transcript
-        // never renders a later hook phase before an earlier one.
         const base = { hook_id: 'h-fast', hook_name: 'fast', hook_event: 'PreToolUse' };
         insertSdkMessageAt(
           'hz',
@@ -4387,9 +4052,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
         const same = now + 1000;
-        // Assistant tool_use row inserted FIRST (lower rowid) but its sdk_messages
-        // id ('tzzz-a') sorts AFTER the hook's id ('haaa'), so a UUID-based
-        // tiebreak would render the hook before the tool that triggered it.
         insertSdkMessageAt('tzzz-a', sessionId, same, {
           type: 'assistant',
           uuid: 'tzzz-a',
@@ -4416,16 +4078,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
         const summaries = await buildSummaries(taskId);
         const kinds = (summaries[0].entries as Array<Record<string, unknown>>).map((e) => e.kind);
-        // The tool_use (inserted first) must precede the hook it triggered.
         expect(kinds).toEqual(['tool_use', 'hook']);
       });
     });
-
-    // ---------------------------------------------------------------------
-    // Integration: the central decoupling claim of the PR — a long active
-    // turn yields ≤5 rows in the compact feed (server cap unchanged) AND
-    // every entry in `activeTurnSummaries` (no cap on the summary side).
-    // ---------------------------------------------------------------------
 
     describe('compact-feed cap and active-turn-summary decoupling', () => {
       function insertSdkMessageAt(
@@ -4443,10 +4098,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
             uuid: id,
             message: { role: 'assistant', content: [{ type: 'text', text: id }] },
           } as Record<string, unknown>);
-        // Use the production helpers so test data stays aligned with the
-        // values the SDKMessageRepository would actually stamp. Without
-        // this, derived columns fall back to schema defaults, which lets
-        // the compact query include rows that should be filtered out.
         const sdkLike = { type: messageType, ...payload } as unknown as SDKMessage;
         const isRenderable = computeIsRenderable(sdkLike);
         const isTerminal = computeIsTerminal(sdkLike);
@@ -4499,10 +4150,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           uuid: 'a1',
           message: { content: [{ type: 'text', text: 'hi' }] },
         });
-        // hook_started/progress/response are no longer globally hidden, but in
-        // the task thread they surface only as roster entries (the active-turn
-        // summary collapses them). The compact payload must filter them
-        // server-side instead of shipping + client-suppressing each phase.
         for (const [sub, id] of [
           ['hook_started', 'hs'],
           ['hook_progress', 'hp'],
@@ -4535,10 +4182,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
       test('hook burst does not consume the compact tail (excluded before ranking)', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
-        // Oldest assistant row, then 6 newer hook rows. Without excluding hooks
-        // before nonTerminalRankDesc is assigned, the 6 newer hook rows would
-        // occupy ranks 1-5 (tail limit) and rank this assistant row OUT of the
-        // compact feed. The upstream filter in `ranked` must keep the assistant.
         insertSdkMessageAt('a-old', sessionId, now + 1000, {
           type: 'assistant',
           uuid: 'a-old',
@@ -4575,9 +4218,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           uuid: 'a-good',
           message: { content: [{ type: 'text', text: 'ok' }] },
         });
-        // A malformed system row must not raise 'malformed JSON' from the
-        // hook-subtype json_extract and kill the whole subscription; the
-        // json_valid guard lets it fall through and the good row still ships.
         insertSdkMessageAt(
           'bad-sys',
           sessionId,
@@ -4586,8 +4226,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           'system'
         );
         db.exec('PRAGMA ignore_check_constraints = ON');
-        // Drop the json_extract expression index so the UPDATE doesn't try to
-        // re-index the malformed blob (mirrors live-query-messages malformed-JSON test).
         db.exec('DROP INDEX IF EXISTS idx_sdk_messages_uuid_status');
         db.prepare(`UPDATE sdk_messages SET sdk_message = ? WHERE id = ?`).run(
           '{not-json',
@@ -4614,9 +4252,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           uuid: 'a-good',
           message: { content: [{ type: 'text', text: 'ok' }] },
         });
-        // A malformed ASSISTANT row in the recent-turn window must not raise
-        // from seg_summary's json_type/json_each (no short-circuit without
-        // json_valid) and kill the subscription. Round-13 only covered system.
         insertSdkMessageAt('bad-asst', sessionId, now + 3000, {
           type: 'assistant',
           uuid: 'bad-asst',
@@ -4631,8 +4266,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         db.exec('PRAGMA ignore_check_constraints = OFF');
 
         const ids = queryCompact(taskId).map((r) => String(r.id));
-        // Good assistant summary + anchor survive; the malformed row is skipped
-        // (not a summary candidate after the json_valid guard).
         expect(ids).toContain('a-good');
         expect(ids).not.toContain('bad-asst');
       });
@@ -4641,10 +4274,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
 
-        // Insert 8 distinct assistant tool_use rows in the same active turn.
-        // Each emits one ActivityEntry (one tool_use block per row), so the
-        // summary should carry exactly 8 entries while the compact feed
-        // caps at 5.
         const turnSize = 8;
         const toolNames = [
           'Bash',
@@ -4672,24 +4301,16 @@ describe('NAMED_QUERY_REGISTRY', () => {
             },
           });
         }
-        // Active turn: no terminal `result` row inserted.
 
-        // Compact feed: capped at the per-turn non-terminal limit (5).
         const compactRows = queryCompact(taskId);
-        expect(compactRows.length).toBeLessThanOrEqual(
-          5 // SPACE_TASK_MESSAGES_COMPACT_NON_TERMINAL_PER_TURN_LIMIT
-        );
-        // Sanity: cap was actually exercised — we inserted more than the cap.
+        expect(compactRows.length).toBeLessThanOrEqual(5);
         expect(turnSize).toBeGreaterThan(compactRows.length);
 
-        // Active-turn summary: uncapped, full chronological activity.
         const summaries = await buildSummaries(taskId);
         expect(summaries).toHaveLength(1);
         const entries = summaries[0].entries as Array<Record<string, unknown>>;
         expect(entries).toHaveLength(turnSize);
         expect(entries.map((e) => e.toolName)).toEqual(toolNames);
-        // Confirms entries are not subject to the compact cap that limits
-        // the row stream — this is the decoupling the PR establishes.
         expect(entries.length).toBeGreaterThan(compactRows.length);
       });
 
@@ -4810,10 +4431,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // goals.byRoom — column aliasing, JSON parsing, snake_case exceptions
-  // -------------------------------------------------------------------------
-
   describe.skip('legacy goals.byRoom registry shape (retired public query)', () => {
     function insertGoal(overrides: Record<string, unknown> = {}): string {
       const id = `goal-${Date.now()}-${Math.random()}`;
@@ -4887,7 +4504,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
     test('schedulePaused is converted from SQLite integer to boolean', () => {
       insertGoal();
       const [row] = queryAndMap();
-      // schedule_paused defaults to 0 → false
       expect(row.schedulePaused).toBe(false);
     });
 
@@ -4907,7 +4523,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
       insertGoal({ metrics: { coverage: 80 }, linkedTaskIds: ['t1'] });
       const [row] = queryAndMap();
 
-      // Type assertion — if the shape is wrong, TS will catch it in CI
       const _typed = row as unknown as RoomGoal;
 
       expect(typeof _typed.id).toBe('string');
@@ -4976,10 +4591,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
       });
     });
   });
-
-  // -------------------------------------------------------------------------
-  // sessionGroupMessages.byGroup — canonical timeline from sdk_messages + events
-  // -------------------------------------------------------------------------
 
   describe('sessionGroupMessages.byGroup', () => {
     const groupId = 'group-contract-test';
@@ -5151,10 +4762,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // skills.byRoom — global skills with per-room override via LEFT JOIN
-  // -------------------------------------------------------------------------
-
   describe.skip('legacy skills.byRoom registry shape (retired public query)', () => {
     function insertSkill(
       id: string,
@@ -5201,7 +4808,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
       insertSkill('s-1', 'alpha', { enabled: true });
       insertSkill('s-2', 'beta', { enabled: true });
 
-      // Override alpha to disabled in the room
       setOverride(roomId, 's-1', false);
 
       const rows = queryAndMap();
@@ -5267,10 +4873,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // General registry invariants
-  // -------------------------------------------------------------------------
-
   describe('invariants', () => {
     test('all entries have non-empty SQL', () => {
       for (const [name, entry] of NAMED_QUERY_REGISTRY) {
@@ -5280,8 +4882,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
     test('all entries have paramCount >= 0', () => {
       for (const [name, entry] of NAMED_QUERY_REGISTRY) {
-        // Global queries (e.g. mcpServers.global) need no params and use paramCount: 0.
-        // Room-scoped queries require at least 1 param (e.g. roomId).
         expect(entry.paramCount).toBeGreaterThanOrEqual(0, `${name} has negative paramCount`);
       }
     });
@@ -5290,18 +4890,10 @@ describe('NAMED_QUERY_REGISTRY', () => {
       for (const [name, entry] of NAMED_QUERY_REGISTRY) {
         const upperSql = entry.sql.toUpperCase();
         expect(upperSql).toContain('ORDER BY');
-        // Strip trailing LIMIT / OFFSET clauses before checking the tiebreaker so that
-        // paginated queries also pass this invariant.
         const sqlForCheck = upperSql
           .replace(/\s+LIMIT\s+\?(\s+OFFSET\s+\?)?/, '')
           .replace(/\s+/g, ' ')
           .trim();
-        // Must end with `<col> ASC|DESC` where col is a unique per-row key: the
-        // explicit `id` (UUID), the implicit `rowid` (monotonic insertion
-        // order), or `insOrder` (the rowid alias the compact feed exposes via
-        // its base CTE). `rowid`/`insOrder` are the preferred tiebreaks for
-        // tables whose `id` is a random UUID, since they preserve emission order
-        // for same-ms rows.
         const hasTiebreaker = /\b(ID|ROWID|INSORDER)\s+(ASC|DESC)\s*$/.test(sqlForCheck);
         expect(hasTiebreaker).toBe(
           true,
@@ -5311,17 +4903,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Scope filter contracts
-  // -------------------------------------------------------------------------
-
   describe('scope filters', () => {
     describe('sessions.list', () => {
       test('has no scope filter so visible→hidden updateSession transitions invalidate', () => {
-        // `sessions.list` post-update scope cannot distinguish a session
-        // becoming hidden from one that was always hidden, so the only
-        // safe behaviour is to re-evaluate on every `sessions` write.
-        // Any scope filter here would be unsound — keep it absent.
         const entry = NAMED_QUERY_REGISTRY.get('sessions.list')!;
         expect(entry.buildScopeFilter).toBeUndefined();
       });
@@ -5416,8 +5000,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
       test('accepts writes whose scope.spaceId matches the watched space', () => {
         const filter = buildFilter();
-        // New session created with spaceId set to ours — even before the
-        // spaces.session_ids row catches up — must be considered in scope.
         expect(
           filter({
             sessionId: 'brand-new-session',
@@ -5434,8 +5016,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
       test('reads membership live so members added after subscription are in scope', () => {
         const filter = buildFilter();
-        // At subscription time `late-joiner` is not a member, but the new
-        // implementation re-reads membership on every call.
         expect(filter({ sessionId: 'late-joiner' })).toBe(false);
         scopedDb.exec(
           `UPDATE spaces SET session_ids = '["existing-1","existing-2","late-joiner"]' WHERE id = '${SPACE_ID}'`
@@ -5447,8 +5027,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const filter = buildFilter();
         expect(filter({ sessionId: 'existing-2' })).toBe(true);
         scopedDb.exec(`UPDATE spaces SET session_ids = '["existing-1"]' WHERE id = '${SPACE_ID}'`);
-        // `existing-2` is no longer a member, scope.spaceId is absent —
-        // filter should reject and avoid unnecessary re-evaluation.
         expect(filter({ sessionId: 'existing-2' })).toBe(false);
       });
 
@@ -5468,10 +5046,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
       });
 
       test('row mapping carries processingState and messageCount like global sessions', () => {
-        // The scope-filter cases above reuse a spaces-only DB; exercising the
-        // SELECT + mapRow needs the sessions table too. messageCount now comes
-        // from the maintained sessions.visible_message_count column, NOT a
-        // correlated COUNT(*) over sdk_messages.
         scopedDb.exec(`
           CREATE TABLE sessions (
             id TEXT PRIMARY KEY,
@@ -5500,22 +5074,13 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
         const row = mapped.find((r) => r.id === 'existing-1')!;
         expect(row.processingState).toBe('{"status":"processing","phase":"thinking"}');
-        // The badge reads the maintained counter directly.
         expect(row.messageCount).toBe(2);
-        // A sibling session with no messages + no processing state reports
-        // 0 / undefined (not null), matching the global sessions shape.
         const other = mapped.find((r) => r.id === 'existing-2')!;
         expect(other.messageCount).toBe(0);
         expect(other.processingState).toBeUndefined();
       });
 
       test('messageCount is decoupled from sdk_messages — no per-session COUNT(*)', () => {
-        // The whole point of the maintained counter: the query must NOT count
-        // sdk_messages inline. Adding message rows cannot move the badge, which
-        // proves the correlated subquery is gone; only an explicit update to the
-        // maintained column moves it. (The visibility predicate that used to live
-        // here is now enforced incrementally by SDKMessageRepository and covered
-        // by its own tests.)
         scopedDb.exec(`
           CREATE TABLE sessions (
             id TEXT PRIMARY KEY,
@@ -5552,13 +5117,11 @@ describe('NAMED_QUERY_REGISTRY', () => {
         };
 
         expect(readCount()).toBe(5);
-        // Pile on visible-looking message rows — the badge must not budge.
         scopedDb.exec(`
           INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, send_status, parent_tool_use_id, timestamp)
           VALUES ('m1', 'existing-1', 'assistant', NULL, NULL, NULL, '2026-07-31 12:00:01')
         `);
         expect(readCount()).toBe(5);
-        // Only an explicit update to the maintained column moves it.
         scopedDb.exec(`UPDATE sessions SET visible_message_count = 6 WHERE id = 'existing-1'`);
         expect(readCount()).toBe(6);
       });

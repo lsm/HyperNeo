@@ -1,37 +1,3 @@
-/**
- * Usage Accounting Invariant Suite
- *
- * Asserts arithmetic invariants — not single examples — that must hold across
- * the full input space for the two units feeding the user-visible context and
- * token displays:
- *
- *   • ContextFetcher.toContextInfo  — context-window breakdown accounting
- *   • SDKMessageHandler             — token/cost accumulation, thinking_tokens
- *                                     deltas, api_retry rendering
- *
- * Guards the mis-accounting classes fixed in #2241/#2242 (autocompact buffer
- * double-count, breakdown categories exceeding totalUsed) plus the
- * thinking-token and retry paths. Each test names the invariant it enforces so
- * a regression points straight at the violated contract:
- *
- *   I1  non-free breakdown categories never exceed totalUsed
- *   I2  a complete SDK breakdown sums (non-free) to exactly totalUsed
- *   I3  autocompact buffer excluded from breakdown rows (counted 0× as usage)
- *   I4  autocompact reserved tokens counted exactly once
- *        (freeSpace + nonFreeSum + reserved == capacity; threshold == capacity − reserved)
- *   I5  percentUsed always within [0, 100]
- *   I6  thinking deltas within a turn sum to the turn's peak (no re-count)
- *   I7  a stuck cumulative estimate stamps once, not once per block (#614)
- *   I8  thinking baseline never carries across turns (result / idle / init resets)
- *   I9  api_retry messages account zero tokens
- *   I10 totalTokens == inputTokens + outputTokens (exact, monotonic)
- *   I11 cost is monotonic across an SDK restart; each run's peak counted once
- *
- * Per the repo's testing lesson, assertions are on rendered/output state
- * (computed breakdown, stamped messages, accumulated metadata) — never on raw
- * inputs that would trivially pass.
- */
-
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { SDKControlGetContextUsageResponse } from '@anthropic-ai/claude-agent-sdk';
 import type { MessageHub, Session } from '@hyperneo/shared';
@@ -49,12 +15,9 @@ import type { ErrorManager } from '../../../../src/lib/error-manager';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
 
-// ---------------------------------------------------------------- helpers ----
-
 type SdkResponse = SDKControlGetContextUsageResponse;
 type FetchMetadata = Parameters<typeof ContextFetcher.toContextInfo>[1];
 
-/** Minimal typed SDK context-usage response builder (mirrors the SDK shape). */
 function baseResponse(overrides: Partial<SdkResponse> = {}): SdkResponse {
   return {
     categories: [],
@@ -73,7 +36,6 @@ function baseResponse(overrides: Partial<SdkResponse> = {}): SdkResponse {
   };
 }
 
-/** Deterministic LCG so property-test failures are reproducible (no Math.random). */
 function makeRng(seed: number): () => number {
   let s = seed >>> 0;
   return () => {
@@ -86,19 +48,13 @@ function approxEqual(a: number, b: number, eps = 1e-9): boolean {
   return Math.abs(a - b) <= eps;
 }
 
-/** Sum of all non-"free space" breakdown category token counts. */
 function nonFreeSum(info: ReturnType<typeof ContextFetcher.toContextInfo>): number {
   return Object.entries(info.breakdown)
     .filter(([name]) => !name.toLowerCase().includes('free space'))
     .reduce((sum, [, data]) => sum + data.tokens, 0);
 }
 
-// -------------------------------------------------- ContextFetcher invariants
-
 describe('ContextFetcher breakdown invariants (I1, I2, I3, I5)', () => {
-  // A spread of hand-picked scenarios covering native vs metadata-corrected
-  // providers, over-/under-/exactly-scaled category sums, with and without an
-  // autocompact buffer row and a free-space row.
   const SCENARIOS: Array<{ label: string; response: SdkResponse; metadata?: FetchMetadata }> = [
     {
       label: 'native anthropic, categories sum exactly to total',
@@ -115,9 +71,6 @@ describe('ContextFetcher breakdown invariants (I1, I2, I3, I5)', () => {
       }),
     },
     {
-      // SDK reports a raw usage scaled to a 1M window while totalUsed reflects
-      // the real (smaller) usage. Categories must be normalized down so no row
-      // exceeds totalUsed and the sum matches.
       label: 'kimi, over-scaled categories normalized down to totalUsed',
       response: baseResponse({
         totalTokens: 90584,
@@ -183,23 +136,14 @@ describe('ContextFetcher breakdown invariants (I1, I2, I3, I5)', () => {
   });
 
   it('holds across the provider × capacity matrix (native, metadata-corrected, and capacity===sdk branches)', () => {
-    // Categorical dimensions (provider, capacity) are iterated explicitly so
-    // each branch is genuinely exercised; the LCG only varies the continuous
-    // token counts. (An earlier revision let the LCG sample the provider
-    // dimension on its first draw, which clusters at ~0.24–0.31 and left every
-    // iteration on the native/anthropic branch — exercising no kimi/glm path.)
     const CASES: Array<{
       label: string;
       provider: string;
       sdkWindow: number;
       metadata?: FetchMetadata;
     }> = [
-      // Native: SDK capacity trusted, no metadata correction.
       { label: 'anthropic sdk=200k', provider: 'anthropic', sdkWindow: 200000 },
       { label: 'anthropic sdk=1m', provider: 'anthropic', sdkWindow: 1_000_000 },
-      // Non-native glm — metadata corrects the SDK window. window===sdk (200k)
-      // is the capacity===sdkCapacityValue case where the free-space correction
-      // is skipped; the larger windows exercise the correction branch.
       {
         label: 'glm window=200k (correction skipped)',
         provider: 'glm',
@@ -218,7 +162,6 @@ describe('ContextFetcher breakdown invariants (I1, I2, I3, I5)', () => {
         sdkWindow: 200000,
         metadata: { id: 'glm-model', contextWindow: 1_000_000, provider: 'glm' },
       },
-      // Non-native kimi.
       {
         label: 'kimi window=200k (correction skipped)',
         provider: 'kimi',
@@ -245,7 +188,6 @@ describe('ContextFetcher breakdown invariants (I1, I2, I3, I5)', () => {
       for (let rep = 0; rep < REPS; rep++) {
         const rng = makeRng(++seed);
 
-        // Build K non-free usage categories with random raw token counts.
         const categoryCount = 1 + Math.floor(rng() * 4);
         const categories: SdkResponse['categories'] = [];
         let rawUsage = 0;
@@ -255,8 +197,6 @@ describe('ContextFetcher breakdown invariants (I1, I2, I3, I5)', () => {
           categories.push({ name: `Usage ${i}`, tokens, color: 'blue' });
         }
 
-        // totalUsed may differ from the raw category sum (over- or under-scaled),
-        // which is the case the normalization step exists to handle.
         const scale = 0.25 + rng() * 3;
         const totalUsed = Math.max(1, Math.round(rawUsage * scale));
 
@@ -268,7 +208,6 @@ describe('ContextFetcher breakdown invariants (I1, I2, I3, I5)', () => {
           });
         }
         if (rng() < 0.5) {
-          // Autocompact buffer row — must be excluded from the breakdown.
           categories.push({
             name: 'Reserved for Autocompact',
             tokens: Math.floor(rng() * 40_000) + 1,
@@ -302,30 +241,25 @@ describe('ContextFetcher breakdown invariants (I1, I2, I3, I5)', () => {
     const nonFree = entries.filter(([name]) => !name.toLowerCase().includes('free space'));
     const sum = nonFree.reduce((acc, [, data]) => acc + data.tokens, 0);
 
-    // I1: non-free categories never exceed totalUsed.
     expect(sum, `[${label}] I1 nonFreeSum <= totalUsed`).toBeLessThanOrEqual(info.totalUsed);
     for (const [name, data] of nonFree) {
       expect(data.tokens, `[${label}] I1 ${name} <= totalUsed`).toBeLessThanOrEqual(info.totalUsed);
     }
 
-    // I2: a complete SDK breakdown sums (non-free) to exactly totalUsed.
     if (info.totalUsed > 0 && nonFree.some(([, data]) => data.tokens > 0)) {
       expect(sum, `[${label}] I2 nonFreeSum == totalUsed`).toBe(info.totalUsed);
     }
 
-    // I3: autocompact buffer never appears as a breakdown row.
     for (const [name] of entries) {
       expect(name.toLowerCase(), `[${label}] I3 no autocompact row`).not.toContain('autocompact');
     }
 
-    // I5: percentUsed is always within [0, 100].
     expect(info.percentUsed, `[${label}] I5 percentUsed >= 0`).toBeGreaterThanOrEqual(0);
     expect(info.percentUsed, `[${label}] I5 percentUsed <= 100`).toBeLessThanOrEqual(100);
   }
 });
 
 describe('Autocompact buffer counted exactly once (I3, I4)', () => {
-  // Metadata-corrected scenario where the SDK emits an autocompact buffer row.
   function autocompactScenario(
     overrides: Partial<{
       messages: number;
@@ -344,9 +278,6 @@ describe('Autocompact buffer counted exactly once (I3, I4)', () => {
     const reserved = overrides.reserved ?? 33037;
     const window = overrides.window ?? 272000;
     const sdkFreeSpace = overrides.sdkFreeSpace ?? 45037;
-    // The SDK window is fixed at 200k; only the metadata window varies, so the
-    // capacity===sdkCapacityValue (free-space correction skipped) branch is hit
-    // exactly when window === 200000.
     const sdkCapacity = 200000;
     const response = baseResponse({
       totalTokens: messages,
@@ -380,10 +311,7 @@ describe('Autocompact buffer counted exactly once (I3, I4)', () => {
     const { info, reserved, capacity } = autocompactScenario();
     const free = info.breakdown['Free space']?.tokens ?? 0;
     const used = nonFreeSum(info);
-    // The buffer is reserved and unavailable, so it is subtracted from free
-    // space exactly once — not also counted as a usage row, and not twice.
     expect(free + used + reserved).toBe(capacity);
-    // Equivalently: free space already accounts for the reserved zone.
     expect(free).toBe(Math.max(0, capacity - used - reserved));
   });
 
@@ -402,21 +330,13 @@ describe('Autocompact buffer counted exactly once (I3, I4)', () => {
     const free = info.breakdown['Free space']?.tokens ?? 0;
     expect(free).toBe(0);
     expect(capacity - (info.autoCompactThreshold ?? capacity)).toBe(reserved);
-    // Even clamped, the reserved buffer is not also inflated into usage.
     expect(used).toBe(info.totalUsed);
   });
 
   it('I3/I4: holds across each capacity incl. the capacity===sdk skip-correction branch', () => {
-    // Iterate the capacity dimension explicitly — an earlier revision let the
-    // LCG pick it on its first draw, which clusters at ~0.51–0.55 and selected
-    // capacity 262144 on 100/100 iterations, never exercising 200000 (the
-    // capacity===sdkCapacityValue branch where the free-space correction at
-    // context-fetcher.ts is skipped) or 1_000_000.
     const { sdkCapacity } = autocompactScenario();
     let seed = 0;
     for (const capacity of [200000, 262144, 1_000_000]) {
-      // capacity===sdkCapacityValue → free-space correction is SKIPPED; the SDK
-      // breakdown is trusted as-is. Otherwise the buffer is subtracted once.
       const correctionBranch = capacity !== sdkCapacity;
       for (let rep = 0; rep < 30; rep++) {
         const rng = makeRng(++seed + 700);
@@ -428,22 +348,14 @@ describe('Autocompact buffer counted exactly once (I3, I4)', () => {
           window: capacity,
         });
         const label = `capacity=${capacity} rep=${rep}`;
-        // I3: autocompact excluded from the breakdown in every branch.
         expect(info.breakdown['Reserved for Autocompact'], label).toBeUndefined();
         const sumUsed = nonFreeSum(info);
         const free = info.breakdown['Free space']?.tokens ?? 0;
-        // I4-threshold: the buffer is counted exactly once in the threshold
-        // (the threshold derivation is branch-independent).
         expect(capacity - (info.autoCompactThreshold ?? capacity), label).toBe(reserved);
 
         if (correctionBranch) {
-          // capacity !== sdkCapacityValue → free space is recomputed, with the
-          // reserved buffer subtracted exactly once (clamped at zero).
           expect(free, label).toBe(Math.max(0, capacity - sumUsed - reserved));
         } else {
-          // capacity === sdkCapacityValue → the SDK breakdown is trusted as-is
-          // and the buffer is NOT re-subtracted (no double count). Free space
-          // equals the SDK-reported input, proving the correction was skipped.
           expect(free, label).toBe(sdkFreeSpace);
         }
       }
@@ -451,14 +363,6 @@ describe('Autocompact buffer counted exactly once (I3, I4)', () => {
   });
 });
 
-// ---------------------------------------------- SDKMessageHandler test harness
-
-/**
- * Lean harness for the usage-accounting code paths. The handler is constructed
- * exactly as in production; only the I/O collaborators (db, messageHub,
- * internalEventBus, stateManager) are mocked so assertions run on the
- * accumulated session metadata and persisted messages.
- */
 function createHandler(): {
   handler: SDKMessageHandler;
   session: Session;
@@ -555,8 +459,6 @@ function createHandler(): {
   return { handler: new SDKMessageHandler(ctx), session, saveSpy, updateSpy };
 }
 
-// Message builders ------------------------------------------------------------
-
 function thinkingTokensMsg(uuid: string, estimated: number): SDKMessage {
   return {
     type: 'system',
@@ -631,7 +533,6 @@ function apiRetryMsg(uuid: string): SDKMessage {
   } as unknown as SDKMessage;
 }
 
-/** Read the `estimated_thinking_tokens` stamped on a persisted assistant message. */
 function stampedDelta(saveSpy: ReturnType<typeof mock>, uuid: string): number | undefined {
   const call = saveSpy.mock.calls.find((c) => (c[1] as SDKMessage).uuid === uuid);
   if (!call) return undefined;
@@ -639,15 +540,6 @@ function stampedDelta(saveSpy: ReturnType<typeof mock>, uuid: string): number | 
   return typeof value === 'number' ? value : undefined;
 }
 
-/**
- * Expected per-block `estimated_thinking_tokens` stamp for a NON-DECREASING
- * cumulative-estimate sequence. After each block the stamped baseline equals
- * the previous peak, so block i contributes `peaks[i] − peaks[i−1]` (or
- * `peaks[0]` for the first block), and a plateau (no increase) produces no
- * stamp (`undefined`). Asserting these per-message — not just their sum —
- * catches a regression that collapses several increases into one late stamp
- * (which would still sum to the peak but mis-attribute every block).
- */
 function expectedThinkingDeltas(peaks: number[]): Array<number | undefined> {
   return peaks.map((peak, i) => {
     const prev = i === 0 ? 0 : peaks[i - 1];
@@ -655,8 +547,6 @@ function expectedThinkingDeltas(peaks: number[]): Array<number | undefined> {
     return delta > 0 ? delta : undefined;
   });
 }
-
-// --------------------------------------------- thinking_tokens delta invariants
 
 describe('thinking_tokens delta invariants (I6, I7, I8)', () => {
   let handler: SDKMessageHandler;
@@ -669,22 +559,15 @@ describe('thinking_tokens delta invariants (I6, I7, I8)', () => {
   });
 
   it('I6: each increase is attributed to its own block and plateaus stamp nothing', async () => {
-    // Non-decreasing cumulative estimate, split across several assistant
-    // blocks. Each increase must land on the block where it occurred; a
-    // plateau (repeated estimate) must produce no stamp. Asserting per-block
-    // deltas — not just their sum — catches a regression that collapses
-    // several increases into one late stamp (which would still sum to the peak
-    // but mis-attribute every block in the user-visible display).
     const peaks = [100, 250, 250, 400, 400, 600];
     for (let i = 0; i < peaks.length; i++) {
       await handler.handleMessage(thinkingTokensMsg(`tt-${i}`, peaks[i]));
       await handler.handleMessage(thinkingAssistant(`a-${i}`));
     }
-    const expected = expectedThinkingDeltas(peaks); // [100, 150, undefined, 150, undefined, 200]
+    const expected = expectedThinkingDeltas(peaks);
     for (let i = 0; i < peaks.length; i++) {
       expect(stampedDelta(saveSpy, `a-${i}`), `a-${i}`).toBe(expected[i]);
     }
-    // Aggregate invariant still holds: stamped deltas sum to the turn peak.
     const sum = expected.reduce<number>((acc, d) => acc + (d ?? 0), 0);
     expect(sum).toBe(600);
   });
@@ -699,7 +582,6 @@ describe('thinking_tokens delta invariants (I6, I7, I8)', () => {
       let current = Math.floor(rng() * 200) + 1;
       const peaks = [current];
       for (let i = 1; i < len; i++) {
-        // Non-decreasing with frequent plateaus (the stuck-cumulative shape).
         current = rng() < 0.4 ? current : current + Math.floor(rng() * 300) + 1;
         peaks.push(current);
       }
@@ -711,7 +593,6 @@ describe('thinking_tokens delta invariants (I6, I7, I8)', () => {
       for (let i = 0; i < peaks.length; i++) {
         expect(stampedDelta(saveSpy, `a-${seed}-${i}`), `seed=${seed} a-${i}`).toBe(expected[i]);
       }
-      // Aggregate: per-block deltas sum to the turn peak.
       const sum = expected.reduce<number>((acc, d) => acc + (d ?? 0), 0);
       expect(sum, `seed=${seed} peaks=${peaks.join(',')}`).toBe(peaks[peaks.length - 1]);
     }
@@ -722,7 +603,6 @@ describe('thinking_tokens delta invariants (I6, I7, I8)', () => {
     await handler.handleMessage(thinkingTokensMsg('tt-0', estimate));
     for (let i = 0; i < 4; i++) {
       if (i > 0) {
-        // Provider keeps emitting the same cumulative total.
         await handler.handleMessage(thinkingTokensMsg(`tt-${i}`, estimate));
       }
       await handler.handleMessage(thinkingAssistant(`a-${i}`));
@@ -732,8 +612,8 @@ describe('thinking_tokens delta invariants (I6, I7, I8)', () => {
       const d = stampedDelta(saveSpy, `a-${i}`);
       if (d !== undefined) stamps.push(d);
     }
-    expect(stamps).toEqual([estimate]); // only the first block stamps
-    expect(stamps.reduce((acc, d) => acc + d, 0)).toBe(estimate); // not estimate * 4
+    expect(stamps).toEqual([estimate]);
+    expect(stamps.reduce((acc, d) => acc + d, 0)).toBe(estimate);
   });
 
   it('I8: a result message resets the baseline so the next turn stamps its own estimate', async () => {
@@ -741,10 +621,8 @@ describe('thinking_tokens delta invariants (I6, I7, I8)', () => {
     await handler.handleMessage(thinkingAssistant('a-1'));
     expect(stampedDelta(saveSpy, 'a-1')).toBe(500);
 
-    // Turn end resets tracking.
     await handler.handleMessage(resultMsg('r-1', { input_tokens: 10, output_tokens: 5 }, 0.001));
 
-    // New turn: its first block must stamp its own estimate, not estimate − 500.
     await handler.handleMessage(thinkingTokensMsg('tt-2', 300));
     await handler.handleMessage(thinkingAssistant('a-2'));
     expect(stampedDelta(saveSpy, 'a-2')).toBe(300);
@@ -773,8 +651,6 @@ describe('thinking_tokens delta invariants (I6, I7, I8)', () => {
   });
 });
 
-// -------------------------------------------------------- api_retry invariant
-
 describe('api_retry usage invariants (I9)', () => {
   let handler: SDKMessageHandler;
   let session: Session;
@@ -786,7 +662,6 @@ describe('api_retry usage invariants (I9)', () => {
   });
 
   it('I9: an api_retry message mutates zero usage counters', async () => {
-    // Seed non-zero counters so a regression that adds tokens is detectable.
     session.metadata = {
       messageCount: 7,
       totalTokens: 1234,
@@ -799,8 +674,6 @@ describe('api_retry usage invariants (I9)', () => {
 
     await handler.handleMessage(apiRetryMsg('retry-1'));
 
-    // api_retry carries operational metadata only; it must not feed token/cost
-    // accounting (retried-request tokens are billed via the normal result path).
     expect(session.metadata?.totalTokens).toBe(before.totalTokens);
     expect(session.metadata?.inputTokens).toBe(before.inputTokens);
     expect(session.metadata?.outputTokens).toBe(before.outputTokens);
@@ -812,14 +685,11 @@ describe('api_retry usage invariants (I9)', () => {
   it('I9: a retry followed by a successful result bills tokens exactly once (via the result path)', async () => {
     await handler.handleMessage(apiRetryMsg('retry-1'));
     await handler.handleMessage(resultMsg('r-1', { input_tokens: 100, output_tokens: 50 }, 0.001));
-    // Only the single result message's tokens are accumulated.
     expect(session.metadata?.totalTokens).toBe(150);
     expect(session.metadata?.inputTokens).toBe(100);
     expect(session.metadata?.outputTokens).toBe(50);
   });
 });
-
-// ----------------------------------------- token + cost accumulation invariants
 
 describe('token + cost accumulation invariants (I10, I11)', () => {
   let handler: SDKMessageHandler;
@@ -834,7 +704,7 @@ describe('token + cost accumulation invariants (I10, I11)', () => {
   it('I10: totalTokens == inputTokens + outputTokens and totals are monotonic across turns', async () => {
     const turns = [
       { input_tokens: 100, output_tokens: 50 },
-      { input_tokens: 0, output_tokens: 0 }, // zero-token result (synthetic) must not break the identity
+      { input_tokens: 0, output_tokens: 0 },
       { input_tokens: 320, output_tokens: 180 },
       { input_tokens: 75, output_tokens: 25 },
     ];
@@ -850,23 +720,19 @@ describe('token + cost accumulation invariants (I10, I11)', () => {
       const totalTokens = session.metadata?.totalTokens ?? 0;
       expect(inputTokens, `turn ${i}`).toBe(expectedInput);
       expect(outputTokens, `turn ${i}`).toBe(expectedOutput);
-      // I10 exactness invariant.
       expect(totalTokens, `turn ${i}`).toBe(inputTokens + outputTokens);
       expect(totalTokens).toBe(expectedInput + expectedOutput);
-      // Monotonic non-decreasing.
       expect(totalTokens).toBeGreaterThanOrEqual(prevTotal);
       prevTotal = totalTokens;
     }
   });
 
   it('I11: totalCost is monotonic across an SDK restart; each run counted once', async () => {
-    // Run 1: cumulative cost climbs. Run 2: SDK restarted, cost drops then
-    // climbs again. The baseline fold must count run 1's peak exactly once.
     const sequence = [
       { cost: 0.42, expectedTotal: 0.42 },
       { cost: 0.73, expectedTotal: 0.73 },
-      { cost: 0.25, expectedTotal: 0.98 }, // restart: fold 0.73 once, +0.25
-      { cost: 0.5, expectedTotal: 1.23 }, // continue run 2
+      { cost: 0.25, expectedTotal: 0.98 },
+      { cost: 0.5, expectedTotal: 1.23 },
     ];
     let prev = -Infinity;
     for (let i = 0; i < sequence.length; i++) {
@@ -874,14 +740,10 @@ describe('token + cost accumulation invariants (I10, I11)', () => {
         resultMsg(`r-${i}`, { input_tokens: 10, output_tokens: 5 }, sequence[i].cost)
       );
       const total = session.metadata?.totalCost ?? 0;
-      // Monotonic non-decreasing across the restart.
       expect(total, `step ${i}`).toBeGreaterThanOrEqual(prev - 1e-9);
-      // Each run's cumulative total counted exactly once.
       expect(approxEqual(total, sequence[i].expectedTotal), `step ${i}`).toBe(true);
       prev = total;
     }
-    // Final = run-1 peak (0.73) + run-2 peak (0.50), no double count of the
-    // pre-restart total and no loss of the restarted run.
     expect(approxEqual(session.metadata?.totalCost ?? 0, 0.73 + 0.5)).toBe(true);
   });
 });

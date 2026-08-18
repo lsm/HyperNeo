@@ -1,7 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for Portal Component
- */
 
 import { render, cleanup, waitFor } from '@testing-library/preact';
 import { describe, it, expect } from 'vitest';
@@ -9,7 +6,6 @@ import { Portal } from '../Portal';
 
 describe('Portal', () => {
   beforeEach(() => {
-    // Clean up document body
     document.body.innerHTML = '';
   });
 
@@ -40,7 +36,6 @@ describe('Portal', () => {
         </Portal>
       );
 
-      // The container should be empty since Portal returns null
       expect(container.innerHTML).toBe('');
     });
 
@@ -79,14 +74,12 @@ describe('Portal', () => {
       );
 
       await waitFor(() => {
-        // Should be a direct child of body (inside portal container)
         const portalContainer = document.body.querySelector('[data-portal="true"]');
         expect(portalContainer?.parentElement).toBe(document.body);
       });
     });
 
     it('should render into specified selector', async () => {
-      // Create a custom target element
       const targetDiv = document.createElement('div');
       targetDiv.id = 'portal-target';
       document.body.appendChild(targetDiv);
@@ -104,7 +97,6 @@ describe('Portal', () => {
     });
 
     it('should render into HTMLElement reference', async () => {
-      // Create a custom target element
       const targetDiv = document.createElement('div');
       targetDiv.id = 'element-target';
       document.body.appendChild(targetDiv);
@@ -250,7 +242,6 @@ describe('Portal', () => {
     });
 
     it('should update when target changes', async () => {
-      // Create two target elements
       const target1 = document.createElement('div');
       target1.id = 'target-1';
       document.body.appendChild(target1);
@@ -270,7 +261,6 @@ describe('Portal', () => {
         expect(content).toBeTruthy();
       });
 
-      // Cleanup and rerender with new target
       unmount();
 
       render(
@@ -301,7 +291,6 @@ describe('Portal', () => {
     });
 
     it('should be appended as last child of target', async () => {
-      // Add some existing content to body
       const existingDiv = document.createElement('div');
       existingDiv.className = 'existing-content';
       document.body.appendChild(existingDiv);
@@ -317,7 +306,6 @@ describe('Portal', () => {
         const portalContainer = document.body.querySelector('[data-portal="true"]');
         const portalIndex = children.indexOf(portalContainer!);
 
-        // Portal should be after existing content
         expect(portalIndex).toBeGreaterThan(0);
       });
     });
@@ -373,7 +361,6 @@ describe('Portal', () => {
         </Portal>
       );
 
-      // Wait a bit to ensure nothing was mounted
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       const content = document.body.querySelector('.orphan-content');

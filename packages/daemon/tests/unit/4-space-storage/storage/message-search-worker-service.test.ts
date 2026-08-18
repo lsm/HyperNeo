@@ -24,9 +24,6 @@ function createSearchDb(): string {
   return path;
 }
 
-// MessageSearchWorkerService spawns a Bun `Worker` (new Worker(new URL(...))),
-// which is Bun-specific. Under non-Bun runtimes (Vitest/Node, Deno) the worker
-// cannot start, so these tests are Bun-only until the service is ported.
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
 
 describe.skipIf(!isBun)('MessageSearchWorkerService', () => {

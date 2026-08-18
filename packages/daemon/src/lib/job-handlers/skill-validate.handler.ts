@@ -36,7 +36,6 @@ export function createSkillValidateHandler(
           );
         }
       }
-      // builtin skills are always valid — no-op
 
       skillsManager.setSkillValidationStatus(skillId, 'valid');
       return { valid: true, skillId };

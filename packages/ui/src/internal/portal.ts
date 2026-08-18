@@ -39,7 +39,6 @@ export function Portal({ children, enabled = true }: PortalProps): VNode | null 
       }
       containerRef.current = null;
 
-      // Clean up portal root if empty
       const root = document.getElementById(PORTAL_ROOT_ID);
       if (root && root.children.length === 0) {
         root.remove();

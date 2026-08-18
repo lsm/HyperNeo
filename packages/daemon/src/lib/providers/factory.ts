@@ -1,12 +1,3 @@
-/**
- * Provider Factory - Initialization and registration of built-in providers
- *
- * This module handles:
- * - Creating instances of built-in providers
- * - Registering them with the global registry
- * - Providing a single initialization point for the provider system
- */
-
 import { AnthropicProvider } from './anthropic-provider.js';
 import { GlmProvider } from './glm-provider.js';
 import { KimiProvider } from './kimi-provider.js';
@@ -30,27 +21,14 @@ import { Logger } from '../logger.js';
 
 const logger = new Logger('providers:factory');
 
-/**
- * Initialization state
- */
 let initialized = false;
 
-/**
- * Built-in providers explicitly disabled via providers.update are tracked here
- * so initializeProviders() does not resurrect them on subsequent calls.
- */
 const disabledBuiltInProviderIds = new Set<string>();
 
-/**
- * Mark a built-in provider as disabled so initializeProviders() skips it.
- */
 export function markBuiltInProviderDisabled(providerId: string): void {
   disabledBuiltInProviderIds.add(providerId);
 }
 
-/**
- * Mark a built-in provider as enabled so initializeProviders() can register it.
- */
 export function markBuiltInProviderEnabled(providerId: string): void {
   disabledBuiltInProviderIds.delete(providerId);
 }
@@ -61,41 +39,25 @@ function hasCoreProviders(registry: ProviderRegistry): boolean {
   return CORE_PROVIDER_IDS.every((id) => registry.has(id));
 }
 
-/**
- * Initialize the provider system
- *
- * Registers all built-in providers with the global registry.
- * This should be called once at application startup.
- *
- * @returns The global provider registry
- */
 export function initializeProviders(): ProviderRegistry {
   const registry = getProviderRegistry();
 
-  // If already initialized and the core providers are still present, return the
-  // existing registry. This handles the case where getProviderRegistry() was
-  // called but no providers were registered, and the case where the registry was
-  // reset without resetting the factory.
   if (initialized && hasCoreProviders(registry)) {
     return registry;
   }
 
-  // Register Anthropic provider (always available)
   if (!disabledBuiltInProviderIds.has('anthropic')) {
     registerIfMissing(registry, new AnthropicProvider());
   }
 
-  // Register GLM provider (will be available if API key is set)
   if (!disabledBuiltInProviderIds.has('glm')) {
     registerIfMissing(registry, new GlmProvider());
   }
 
-  // Register Kimi provider (will be available if KIMI_API_KEY or MOONSHOT_API_KEY is set)
   if (!disabledBuiltInProviderIds.has('kimi')) {
     registerIfMissing(registry, new KimiProvider());
   }
 
-  // Register MiniMax provider (will be available if MINIMAX_API_KEY is set)
   if (!disabledBuiltInProviderIds.has('minimax')) {
     registerIfMissing(registry, new MinimaxProvider());
   }
@@ -104,13 +66,10 @@ export function initializeProviders(): ProviderRegistry {
     registerIfMissing(registry, new DeepSeekProvider());
   }
 
-  // Register OpenRouter provider (will be available if OPENROUTER_API_KEY is set)
   if (!disabledBuiltInProviderIds.has('openrouter')) {
     registerIfMissing(registry, new OpenRouterProvider());
   }
 
-  // Register Ollama providers. Local Ollama is available by default at localhost:11434;
-  // Ollama Cloud requires OLLAMA_CLOUD_API_KEY.
   if (!disabledBuiltInProviderIds.has('ollama')) {
     registerIfMissing(registry, new OllamaProvider({ kind: 'local' }));
   }
@@ -118,44 +77,23 @@ export function initializeProviders(): ProviderRegistry {
     registerIfMissing(registry, new OllamaProvider({ kind: 'cloud' }));
   }
 
-  // Register Anthropic-to-Codex bridge provider for OpenAI/Codex-backed models.
-  // Discovers credentials from env (OPENAI_API_KEY), ~/.hyperneo/auth.json,
-  // and one-time import from ~/.codex/auth.json.
   if (!disabledBuiltInProviderIds.has('anthropic-codex')) {
     registerIfMissing(registry, new AnthropicToCodexBridgeProvider());
   }
 
-  // Register ACP provider for JSON-RPC stdio agent runtimes.
   if (!disabledBuiltInProviderIds.has('acp')) {
     registerIfMissing(registry, new AcpProvider());
   }
 
-  // Register Anthropic Copilot provider (embedded Anthropic-compatible server).
-  // process.cwd() is the fallback cwd; per-session workspace is threaded via
-  // ANTHROPIC_AUTH_TOKEN (encoded by buildSdkConfig) and parsed per-request in server.ts.
-  // Lazy registration keeps @github/copilot-sdk out of the startup import graph so
-  // bun build --compile can tree-shake and bundle the SDK without crashing startup.
   if (!disabledBuiltInProviderIds.has('anthropic-copilot')) {
     registerCopilotProvider(registry);
   }
-
-  // Additional built-in providers can be registered here
-  // Example:
-  // registerIfMissing(registry, new DeepSeekProvider());
 
   initialized = true;
 
   return registry;
 }
 
-/**
- * Register a single built-in provider by ID if it is not already in the registry.
- *
- * Use this when a built-in provider was unregistered (e.g., user deleted it)
- * and needs to be restored without re-creating every other built-in provider.
- *
- * Copilot is async because its module is loaded lazily.
- */
 export async function registerBuiltInProvider(
   registry: ProviderRegistry,
   providerId: string
@@ -200,20 +138,6 @@ export async function registerBuiltInProvider(
   }
 }
 
-/**
- * Synchronise registered custom-endpoint providers with the given config list.
- *
- * Re-entrant: safe to call after `initializeProviders()` whenever the user
- * adds/removes/updates a custom endpoint via the RPC handlers. Existing
- * `CustomEndpointProvider` instances whose config is no longer present are
- * shut down and unregistered.
- *
- * Providers whose **effective config is unchanged** are left in place. Only
- * removed or modified endpoints trigger a tear-down. This matters because
- * `CustomEndpointProvider.shutdown()` stops embedded bridge servers with
- * forced-close semantics, which would otherwise drop in-flight streams for
- * unrelated endpoints whenever any one endpoint is edited.
- */
 export async function syncCustomEndpointProviders(
   configs: CustomEndpointConfig[] | undefined
 ): Promise<void> {
@@ -246,7 +170,6 @@ export async function syncCustomEndpointProviders(
     const existing = registry.get(providerId);
     const fingerprint = fingerprintCustomEndpointConfig(config);
     if (existing && lastSyncedConfigByProviderId.get(providerId) === fingerprint) {
-      // Unchanged — leave the live provider (and its bridges) alone.
       continue;
     }
     if (existing) {
@@ -269,14 +192,6 @@ export async function syncCustomEndpointProviders(
   }
 }
 
-/**
- * Stable, deterministic fingerprint of a custom endpoint config for change
- * detection. Recursively sorts object keys at every depth so nested fields
- * (e.g. `models[].capabilities`, `models[].providerModelId`, `headers.*`)
- * are included in the fingerprint. Naively passing a sorted key list to
- * `JSON.stringify` only whitelists top-level keys and silently drops nested
- * ones, which would treat semantically different configs as identical.
- */
 function fingerprintCustomEndpointConfig(config: CustomEndpointConfig): string {
   return JSON.stringify(canonicalise(config));
 }
@@ -312,14 +227,6 @@ export async function waitForOptionalProviderRegistration(
   await registerLoadedCopilotProvider(registry ?? initializeProviders());
 }
 
-/**
- * Register a single built-in provider by ID if it is not already in the registry.
- * This is the surgical re-registration path used when a provider is re-enabled
- * after being disabled and removed from the registry.
- *
- * Unlike `initializeProviders()`, this only touches the requested provider so
- * disabled built-ins are not accidentally recreated.
- */
 export async function ensureBuiltInProviderRegistered(providerId: string): Promise<void> {
   const registry = getProviderRegistry();
   if (registry.has(providerId)) return;
@@ -366,8 +273,6 @@ async function registerLoadedCopilotProvider(registry: ProviderRegistry): Promis
   if (registry.has('anthropic-copilot')) return;
   if (disabledBuiltInProviderIds.has('anthropic-copilot')) return;
 
-  // This dynamic import must remain a literal string: bun build --compile
-  // discovers and embeds @github/copilot-sdk and vscode-jsonrpc through it.
   const providerModule = await copilotProviderModule;
   if (providerModule && !registry.has('anthropic-copilot')) {
     registerIfMissing(registry, new providerModule.AnthropicToCopilotBridgeProvider(process.cwd()));
@@ -377,16 +282,8 @@ async function registerLoadedCopilotProvider(registry: ProviderRegistry): Promis
 let copilotProviderModule: Promise<typeof import('./anthropic-copilot/index.js') | null> | null =
   null;
 
-/** Tracks the last fingerprint we synced per provider so we can skip no-op rebuilds. */
 const lastSyncedConfigByProviderId = new Map<string, string>();
 
-/**
- * Get the provider context manager
- *
- * Creates a context manager instance backed by the global provider registry.
- *
- * @returns ProviderContextManager instance
- */
 export function getProviderContextManager(): ProviderContextManager {
   const registry = initializeProviders();
   if (!registry.has('anthropic-copilot')) {
@@ -410,7 +307,6 @@ export function resetProviderFactory(): void {
   disabledBuiltInProviderIds.clear();
 }
 
-// Re-export types from shared package
 export type {
   Provider,
   ProviderCapabilities,

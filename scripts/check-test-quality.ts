@@ -1,16 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Test-quality audit
- *
- * Flags two categories of test-quality issues:
- * 1. Dead mock assertions — a component is mocked and the test title claims to
- *    exercise the mocked component, but the assertion only does a broad
- *    container.textContent check that would pass even if the parent stopped
- *    using the mocked child.
- * 2. Describe-scope mismatches — a test lives in a describe('X') block where X
- *    is a function name, but the test never calls X and instead calls a
- *    different function Y.
- */
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -22,8 +10,6 @@ interface Finding {
   column: number;
   message: string;
 }
-
-/* ── File discovery ─────────────────────────────────────────────────────── */
 
 function findTestFiles(dir: string, files: string[] = []): string[] {
   const entries = readdirSync(dir, { withFileTypes: true });
@@ -38,8 +24,6 @@ function findTestFiles(dir: string, files: string[] = []): string[] {
   }
   return files;
 }
-
-/* ── AST helpers ──────────────────────────────────────────────────────── */
 
 function parseFile(filePath: string): ts.SourceFile {
   return ts.createSourceFile(
@@ -74,8 +58,6 @@ function getCallArgString(
 function nodeText(sf: ts.SourceFile, node: ts.Node): string {
   return node.getText(sf);
 }
-
-/* ── Collect top-level mocks ──────────────────────────────────────────── */
 
 interface MockInfo {
   modulePath: string;
@@ -139,8 +121,6 @@ function isComponentMock(mock: MockInfo): boolean {
   );
 }
 
-/* ── Collect describe/it blocks ───────────────────────────────────────── */
-
 interface ItBlock {
   title: string | null;
   body: ts.ArrowFunction | ts.FunctionExpression;
@@ -174,7 +154,6 @@ function isDescribeOrItCall(
       }
     }
   }
-  // Handle it.each(...)(...) and describe.each(...)(...)
   if (ts.isCallExpression(expr)) {
     const callee = expr.expression;
     if (ts.isPropertyAccessExpression(callee)) {
@@ -186,7 +165,6 @@ function isDescribeOrItCall(
           if (obj.text === 'it' || obj.text === 'test') return { kind: 'it', call: node };
         }
         if (ts.isPropertyAccessExpression(obj)) {
-          // handles it.only.each, describe.skip.each
           const innerName = obj.name.text;
           if (innerName === 'only' || innerName === 'skip') {
             const innerObj = obj.expression;
@@ -252,8 +230,6 @@ function isItBlock(child: DescribeBlock | ItBlock): child is ItBlock {
   return !('children' in child);
 }
 
-/* ── Pattern 1: Dead mock assertions ──────────────────────────────────── */
-
 function findDeadMockAssertions(sf: ts.SourceFile, filePath: string): Finding[] {
   const findings: Finding[] = [];
   const mocks = collectTopLevelMocks(sf).filter(isComponentMock);
@@ -261,7 +237,6 @@ function findDeadMockAssertions(sf: ts.SourceFile, filePath: string): Finding[] 
 
   const describes = collectDescribeBlocks(sf, sf);
 
-  // Build selectors per mock
   for (const mock of mocks) {
     function visitForMock(node: ts.Node) {
       if (isMockCall(node)) {
@@ -269,12 +244,10 @@ function findDeadMockAssertions(sf: ts.SourceFile, filePath: string): Finding[] 
         if (path === mock.modulePath && node.arguments.length >= 2) {
           const factory = node.arguments[1];
           const text = nodeText(sf, factory);
-          // Extract data-testid values
           const testIdMatches = text.matchAll(/data-testid=(?:"|')([^"']+)/g);
           for (const m of testIdMatches) {
             mock.selectors.add(m[1]);
           }
-          // Extract class names that look like mock-specific markers
           const classMatches = text.matchAll(/class=(?:"|')([^"']+)/g);
           for (const m of classMatches) {
             for (const cls of m[1].split(/\s+/)) {
@@ -342,20 +315,17 @@ function findDeadMockAssertions(sf: ts.SourceFile, filePath: string): Finding[] 
     const hasContainerAssert = hasContainerTextContentAssertion(itBlock.body);
     if (!hasContainerAssert) return;
 
-    // Check if test title mentions a mocked component
     if (!itBlock.title) return;
     const lowerTitle = itBlock.title.toLowerCase();
 
     for (const mock of mocks) {
       if (!mock.componentName) continue;
       const lowerComponent = mock.componentName.toLowerCase();
-      // Title must explicitly reference the mocked component
       const mentionsComponent =
         lowerTitle.includes(lowerComponent) ||
         lowerTitle.includes(`via ${lowerComponent}`) ||
         lowerTitle.includes(`through ${lowerComponent}`);
 
-      // Title must suggest the mocked component is the subject
       const impliesComponentInvolved =
         lowerTitle.includes('render') ||
         lowerTitle.includes('markdown') ||
@@ -393,8 +363,6 @@ function findDeadMockAssertions(sf: ts.SourceFile, filePath: string): Finding[] 
 
   return findings;
 }
-
-/* ── Pattern 2: Describe-scope mismatch ───────────────────────────────── */
 
 function extractIdentifiers(node: ts.Node): Set<string> {
   const ids = new Set<string>();
@@ -435,13 +403,11 @@ function extractIdentifiers(node: ts.Node): Set<string> {
             ].includes(obj.text)
           ) {
             ids.add(methodName);
-            // Also track the object name — it might match a describe title (e.g. toastsSignal.subscribe)
             ids.add(obj.text);
           }
         } else {
           ids.add(methodName);
         }
-        // Track callback arguments to array methods like .map(fn), .filter(fn)
         if (
           ['map', 'filter', 'forEach', 'reduce', 'find', 'some', 'every', 'flatMap'].includes(
             methodName
@@ -455,7 +421,6 @@ function extractIdentifiers(node: ts.Node): Set<string> {
         }
       }
     }
-    // Track object names from property access like sessionsSignal.value
     if (ts.isPropertyAccessExpression(n)) {
       const obj = n.expression;
       if (ts.isIdentifier(obj)) {
@@ -487,7 +452,6 @@ function extractIdentifiers(node: ts.Node): Set<string> {
         }
       }
     }
-    // Track object names in element access like heroiconToLucide['HomeIcon']
     if (ts.isElementAccessExpression(n)) {
       if (ts.isIdentifier(n.expression)) {
         ids.add(n.expression.text);
@@ -601,7 +565,6 @@ const TEST_UTILITIES = new Set([
   'useFormStatus',
   'useOptimistic',
   'useActionState',
-  // Assertion methods
   'toBe',
   'toEqual',
   'toStrictEqual',
@@ -646,7 +609,6 @@ const TEST_UTILITIES = new Set([
   'resolves',
   'rejects',
   'not',
-  // Array / object / string helpers
   'keys',
   'entries',
   'values',
@@ -766,7 +728,6 @@ const TEST_UTILITIES = new Set([
   'clz32',
 ]);
 
-// Common English/concept words used as describe labels that are not function names
 const CONCEPT_WORDS = new Set([
   'constructor',
   'integration',
@@ -1236,13 +1197,9 @@ const CONCEPT_WORDS = new Set([
 ]);
 
 function isCamelCaseFunctionName(word: string): boolean {
-  // Must be camelCase or PascalCase, at least 2 chars
   if (!/^[a-zA-Z][a-zA-Z0-9]+$/.test(word)) return false;
-  // Must not be all uppercase (e.g. IDs)
   if (/^[A-Z]+$/.test(word)) return false;
-  // Must not be a testing utility
   if (TEST_UTILITIES.has(word)) return false;
-  // Must not be a common concept word
   if (CONCEPT_WORDS.has(word.toLowerCase())) return false;
   return true;
 }
@@ -1303,7 +1260,6 @@ function fileImportsName(sf: ts.SourceFile, name: string): boolean {
   return found;
 }
 
-// Files with known valid describe-scope patterns that would be false positives
 const DESCRIBE_SCOPE_IGNORE_LIST = new Set([
   'packages/web/src/lib/__tests__/aaa-toast.test.ts',
   'packages/ui/tests/icon-map.test.ts',
@@ -1317,30 +1273,24 @@ const DESCRIBE_SCOPE_IGNORE_LIST = new Set([
 ]);
 
 function findDescribeScopeMismatches(sf: ts.SourceFile, filePath: string): Finding[] {
-  // Only check .test.ts files — .test.tsx component tests have too many valid variations
   if (filePath.endsWith('.test.tsx')) return [];
 
-  // Skip hook tests
   if (fileImportsRenderHook(sf)) return [];
 
-  // Skip files with known false-positive patterns
   if (DESCRIBE_SCOPE_IGNORE_LIST.has(filePath)) return [];
 
   const findings: Finding[] = [];
   const describes = collectDescribeBlocks(sf, sf);
 
   function visitDescribe(desc: DescribeBlock) {
-    // Always recurse into nested describe blocks
     for (const child of desc.children) {
       if (!isItBlock(child)) {
         visitDescribe(child);
       }
     }
 
-    // Only check this describe block if it meets criteria
     if (!desc.title) return;
 
-    // Only flag single-word titles that look like function/component names
     const trimmed = desc.title.trim();
     const words = trimmed.split(/\s+/);
     if (words.length !== 1) return;
@@ -1348,14 +1298,10 @@ function findDescribeScopeMismatches(sf: ts.SourceFile, filePath: string): Findi
     const describeName = words[0];
     if (!isCamelCaseFunctionName(describeName)) return;
 
-    // Skip PascalCase component names — component tests often group sub-components
     if (/^[A-Z]/.test(describeName)) return;
 
-    // Skip if describe title matches the filename (module-level grouping)
     if (titleMatchesFilename(describeName, filePath)) return;
 
-    // Skip if the describe title is not imported — it's likely a property/method
-    // name rather than a standalone function under test
     if (!fileImportsName(sf, describeName)) return;
 
     for (const child of desc.children) {
@@ -1364,7 +1310,6 @@ function findDescribeScopeMismatches(sf: ts.SourceFile, filePath: string): Findi
         const hasDescribeFunction = ids.has(describeName);
         if (hasDescribeFunction) continue;
 
-        // Check if test calls a different function/component name
         const otherFunctions = Array.from(ids).filter(
           (id) => isCamelCaseFunctionName(id) && id !== describeName && !TEST_UTILITIES.has(id)
         );
@@ -1385,8 +1330,6 @@ function findDescribeScopeMismatches(sf: ts.SourceFile, filePath: string): Findi
 
   return findings;
 }
-
-/* ── Main ─────────────────────────────────────────────────────────────── */
 
 function main(): void {
   const repoRoot = process.cwd();

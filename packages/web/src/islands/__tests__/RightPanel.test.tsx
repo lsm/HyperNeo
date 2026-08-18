@@ -2,8 +2,6 @@ import { signal, type Signal } from '@preact/signals';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Keep the session/git branch inactive so these tests exercise the Space
-// goal/scope toggle behavior in isolation.
 vi.mock('../../lib/session-store', () => ({
   sessionStore: {
     activeSessionId: signal<string | null>(null),
@@ -210,10 +208,6 @@ describe('RightPanelToggle', () => {
 });
 
 describe('RightPanelToggle git target', () => {
-  // sessionInfo/sessionState are computed (readonly) on the real store, but the
-  // mock backs them with writable signals — cast through to set them. A non-null
-  // sessionState means loading finished (even on a terminal error); null means
-  // the loading gap.
   const mockSession = (id: string | null, info: Session | null, loaded = true) => {
     sessionStore.activeSessionId.value = id;
     (sessionStore.sessionState as unknown as Signal<unknown>).value = loaded
@@ -223,7 +217,6 @@ describe('RightPanelToggle git target', () => {
   };
 
   beforeEach(() => {
-    // Keep the Space branches inactive so only the git target can apply.
     navSectionSignal.value = 'chats';
     currentSpaceIdSignal.value = null;
     currentSpaceCanonicalIdSignal.value = null;
@@ -279,9 +272,6 @@ describe('RightPanelToggle git target', () => {
   });
 
   it('keeps the git toggle available while the next session metadata loads', () => {
-    // doSelect sets the new activeSessionId and nulls sessionState before the
-    // metadata lands. Defer the workspace decision during that gap so an open
-    // panel retargets instead of being closed by the auto-clear effect.
     sessionStore.activeSessionId.value = 's1';
     (sessionStore.sessionState as unknown as Signal<unknown>).value = null;
     (sessionStore.sessionInfo as unknown as Signal<Session | null>).value = null;
@@ -290,9 +280,6 @@ describe('RightPanelToggle git target', () => {
   });
 
   it('hides the git toggle on a terminal session load error', () => {
-    // A failed load leaves activeSessionId set and sessionState populated with
-    // an error state whose sessionInfo is null — that is NOT a workspace, and
-    // must not keep the toggle available (or shadow Space targets).
     mockSession('s1', null, true);
     const { container } = render(<RightPanelToggle />);
     expect(container.querySelector('button')).toBeNull();

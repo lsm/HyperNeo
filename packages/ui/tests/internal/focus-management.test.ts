@@ -130,7 +130,6 @@ describe('getFocusableElements', () => {
     container.appendChild(btn2);
     container.appendChild(btn3);
     const result = getFocusableElements(container);
-    // tabIndex=1 < tabIndex=2, tabIndex=0 treated as MAX_SAFE_INTEGER
     expect(result[0]).toBe(btn2);
     expect(result[1]).toBe(btn1);
     expect(result[2]).toBe(btn3);
@@ -187,7 +186,6 @@ describe('focusIn', () => {
     const btn2 = document.createElement('button');
     container.appendChild(btn1);
     container.appendChild(btn2);
-    // Spy on btn2.focus to verify it's called (happy-dom doesn't update activeElement)
     const spy2 = vi.spyOn(btn2, 'focus').mockImplementation(() => {
       Object.defineProperty(document, 'activeElement', { value: btn2, configurable: true });
     });
@@ -201,7 +199,6 @@ describe('focusIn', () => {
     const btn2 = document.createElement('button');
     container.appendChild(btn1);
     container.appendChild(btn2);
-    // Set active element to btn1 so Next targets btn2
     Object.defineProperty(document, 'activeElement', { value: btn1, configurable: true });
     const spy2 = vi.spyOn(btn2, 'focus').mockImplementation(() => {
       Object.defineProperty(document, 'activeElement', { value: btn2, configurable: true });
@@ -216,7 +213,6 @@ describe('focusIn', () => {
     const btn2 = document.createElement('button');
     container.appendChild(btn1);
     container.appendChild(btn2);
-    // Set active element to btn2 so Previous targets btn1
     Object.defineProperty(document, 'activeElement', { value: btn2, configurable: true });
     const spy1 = vi.spyOn(btn1, 'focus').mockImplementation(() => {
       Object.defineProperty(document, 'activeElement', { value: btn1, configurable: true });
@@ -236,7 +232,6 @@ describe('focusIn', () => {
     const btn2 = document.createElement('button');
     container.appendChild(btn1);
     container.appendChild(btn2);
-    // Set active to btn2 (last), wrapping should go to btn1
     Object.defineProperty(document, 'activeElement', { value: btn2, configurable: true });
     const spy1 = vi.spyOn(btn1, 'focus').mockImplementation(() => {
       Object.defineProperty(document, 'activeElement', { value: btn1, configurable: true });
@@ -251,8 +246,6 @@ describe('focusIn', () => {
     const btn2 = document.createElement('button');
     container.appendChild(btn1);
     container.appendChild(btn2);
-    // No active element → indexOf returns -1 → startIndex = max(0,-1-1) = max(0,-2) = 0
-    // But with WrapAround from 0, wraps to last element (btn2)
     Object.defineProperty(document, 'activeElement', { value: document.body, configurable: true });
     const spy2 = vi.spyOn(btn2, 'focus').mockImplementation(() => {
       Object.defineProperty(document, 'activeElement', { value: btn2, configurable: true });
@@ -261,9 +254,6 @@ describe('focusIn', () => {
       // btn1 focus should NOT become active (simulate no focus change)
     });
     const result = focusIn(container, Focus.Previous | Focus.WrapAround);
-    // With no active element indexOf=-1, startIndex=max(0,-2)=0 direction=-1
-    // i=0: offset=(0+0+2)%2=0 → btn1 → focus, activeElement===btn1? No (mocked to not update)
-    // i=1: offset=(0-1+2)%2=1 → btn2 → focus, activeElement===btn2? Yes
     expect(spy2).toHaveBeenCalled();
     expect(result).toBe(true);
   });
@@ -295,7 +285,6 @@ describe('focusIn', () => {
   it('throws when focus direction is missing', () => {
     const btn = document.createElement('button');
     container.appendChild(btn);
-    // Passing 0 doesn't set any direction bit
     expect(() => focusIn(container, 0 as Focus)).toThrow('Missing Focus direction');
   });
 });

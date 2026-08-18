@@ -10,10 +10,6 @@ import {
   pullRequestNumberFrom,
 } from '../../../../src/lib/external-events/github/github-pr-head-ref';
 
-// Characterization tests for the GitHub pull-request head-ref identity helpers.
-// These were previously inline in github-event-extension.ts with no direct unit
-// coverage; every branch is pinned here.
-
 function makeWatched(owner = 'watched-owner', repo = 'watched-repo'): GitHubWatchedRepo {
   return {
     id: 'wh-1',
@@ -46,8 +42,6 @@ describe('gitHubRepoPath', () => {
 
   it('URL-encodes each segment so special characters round-trip safely', () => {
     expect(gitHubRepoPath('own ers', 're/po')).toBe('own%20ers/re%2Fpo');
-    // Slashes inside an owner/repo are encoded so they cannot masquerade as the
-    // path separator.
     expect(gitHubRepoPath('a/b', 'c/d')).toBe('a%2Fb/c%2Fd');
   });
 });
@@ -126,11 +120,9 @@ describe('headRepoFromPullRequest', () => {
   });
 
   it('falls back to the watched repo path when owner login or repo name is missing/empty', () => {
-    // No owner object at all.
     expect(headRepoFromPullRequest({ head: { repo: { name: 'fork-repo' } } }, makeWatched())).toBe(
       'watched-owner/watched-repo'
     );
-    // Owner present but login missing/non-string.
     expect(
       headRepoFromPullRequest({ head: { repo: { owner: {}, name: 'fork-repo' } } }, makeWatched())
     ).toBe('watched-owner/watched-repo');
@@ -140,7 +132,6 @@ describe('headRepoFromPullRequest', () => {
         makeWatched()
       )
     ).toBe('watched-owner/watched-repo');
-    // Name missing/non-string.
     expect(
       headRepoFromPullRequest({ head: { repo: { owner: { login: 'fork-owner' } } } }, makeWatched())
     ).toBe('watched-owner/watched-repo');
@@ -150,7 +141,6 @@ describe('headRepoFromPullRequest', () => {
         makeWatched()
       )
     ).toBe('watched-owner/watched-repo');
-    // Empty-string login or name are treated as absent.
     expect(
       headRepoFromPullRequest(
         { head: { repo: { owner: { login: '' }, name: 'fork-repo' } } },
@@ -222,8 +212,6 @@ describe('parseHeadRefKey', () => {
     const repoPath = 'octocat/Hello-World';
     const headSha = 'abc123';
     expect(parseHeadRefKey(headRefKey(repoPath, headSha))).toEqual({ repoPath, headSha });
-    // A repoPath that itself contains an @ still round-trips: the last @ is the
-    // separator.
     const atRepoPath = 'a@b';
     expect(parseHeadRefKey(headRefKey(atRepoPath, headSha))).toEqual({
       repoPath: atRepoPath,
@@ -232,8 +220,6 @@ describe('parseHeadRefKey', () => {
   });
 
   it('does NOT round-trip when the SHA contains an @ (documented design constraint)', () => {
-    // Git SHAs are hex (no @), so this never occurs in practice; the test pins
-    // the boundary so a future caller does not assume full invertibility.
     expect(parseHeadRefKey(headRefKey('a', 'b@c'))).toEqual({ repoPath: 'a@b', headSha: 'c' });
   });
 });
@@ -256,11 +242,9 @@ describe('pickPrNumbersByHeadSha', () => {
   });
 
   it('skips entries whose head.sha does not equal the queried SHA', () => {
-    // A different SHA.
     expect(
       pickPrNumbersByHeadSha([{ state: 'open', number: 7, head: { sha: 'other' } }], 'abc')
     ).toEqual([]);
-    // A missing head object, or a non-string head.sha, both decode to '' (≠ 'abc').
     expect(pickPrNumbersByHeadSha([{ state: 'open', number: 7 }], 'abc')).toEqual([]);
     expect(
       pickPrNumbersByHeadSha([{ state: 'open', number: 7, head: { sha: 123 } }], 'abc')
@@ -272,13 +256,12 @@ describe('pickPrNumbersByHeadSha', () => {
     expect(pickPrNumbersByHeadSha(row('closed'), 'abc')).toEqual([]);
     expect(pickPrNumbersByHeadSha(row('merged'), 'abc')).toEqual([]);
     expect(pickPrNumbersByHeadSha(row(''), 'abc')).toEqual([]);
-    expect(pickPrNumbersByHeadSha(row('OPEN'), 'abc')).toEqual([]); // case-sensitive
-    expect(pickPrNumbersByHeadSha(row(undefined), 'abc')).toEqual([]); // missing state
-    expect(pickPrNumbersByHeadSha(row(123), 'abc')).toEqual([]); // non-string state
+    expect(pickPrNumbersByHeadSha(row('OPEN'), 'abc')).toEqual([]);
+    expect(pickPrNumbersByHeadSha(row(undefined), 'abc')).toEqual([]);
+    expect(pickPrNumbersByHeadSha(row(123), 'abc')).toEqual([]);
   });
 
   it('skips entries with a non-positive or non-numeric number', () => {
-    // A non-number coerces to 0; 0 and negatives then fail the > 0 guard.
     expect(pickPrNumbersByHeadSha([{ state: 'open', head: { sha: 'abc' } }], 'abc')).toEqual([]);
     expect(
       pickPrNumbersByHeadSha([{ state: 'open', number: '7', head: { sha: 'abc' } }], 'abc')
@@ -314,9 +297,6 @@ describe('pickPrNumbersByHeadSha', () => {
   });
 
   it('excludes a closed/merged PR whose head SHA still matches (stale-topic guard)', () => {
-    // A commit can be the retained head of a finished PR; only the open PR is
-    // attributed so a deploy never wakes a stale subscription. Mirrors the
-    // deployment-webhook guard pinned in github-event-extension.test.ts.
     const pulls = [
       { state: 'closed', number: 9, head: { sha: 'abc' } },
       { state: 'open', number: 7, head: { sha: 'abc' } },
@@ -325,10 +305,6 @@ describe('pickPrNumbersByHeadSha', () => {
   });
 
   it('matches a headless open PR when the queried SHA is empty (boundary)', () => {
-    // headShaFromPullRequest decodes a missing/non-string head.sha to '', so an
-    // empty-SHA query matches a headless row. Real deployments always carry a
-    // SHA (resolveDeploymentPrNumbers returns early when !sha), so this never
-    // fires in practice — pinned to document the function boundary.
     expect(pickPrNumbersByHeadSha([{ state: 'open', number: 5 }], '')).toEqual([5]);
     expect(pickPrNumbersByHeadSha([{ state: 'open', number: 5, head: { sha: 123 } }], '')).toEqual([
       5,

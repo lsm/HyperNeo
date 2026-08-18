@@ -1,16 +1,3 @@
-/**
- * SpaceRuntime — Edge Case and Resilience Tests
- *
- * Tests adversarial and failure-mode scenarios to ensure the runtime
- * is robust under adverse conditions:
- *
- *   1. Rapid status changes between ticks — only final state generates notification
- *   2. Runtime rehydration with workflow tasks in blocked → dedup still works
- *   3. Deduplication for standalone tasks across many ticks
- *   4. Workflow run cancelled externally → no stale event
- *   5. InternalEventBus errors do not crash the tick loop
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import type { SpaceTask } from '@hyperneo/shared';
@@ -27,10 +14,6 @@ import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
-
-// ---------------------------------------------------------------------------
-// BusEventCollector — captures InternalEventBus events for test assertions
-// ---------------------------------------------------------------------------
 
 type BusEventKind =
   | 'task_blocked'
@@ -87,13 +70,7 @@ class BusEventCollector {
   }
 }
 
-// ---------------------------------------------------------------------------
-// DB helpers
-// ---------------------------------------------------------------------------
-
 function makeDb(): BunDatabase {
-  // Use in-memory SQLite — faster than file-based DB and avoids filesystem
-  // I/O contention that caused beforeEach hook timeouts in CI.
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
@@ -124,14 +101,10 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string): void {
 
 class MockTaskAgentManager {
   readonly cancelledSessions: string[] = [];
-  /** taskId → live sub-session IDs this mock tracks (stands in for subSessions). */
   readonly liveSubSessionsByTaskId = new Map<string, string[]>();
 
   cancelBySessionId(sessionId: string): void {
     this.cancelledSessions.push(sessionId);
-    // Mirror the real manager: a cancelled session is no longer "live", so a
-    // later sweep pass (e.g. after the run transitions to cancelled) doesn't
-    // return it again.
     for (const [taskId, ids] of this.liveSubSessionsByTaskId) {
       this.liveSubSessionsByTaskId.set(
         taskId,
@@ -182,10 +155,6 @@ function buildLinearWorkflow(
     completionAutonomyLevel: 3,
   });
 }
-
-// ---------------------------------------------------------------------------
-// Suite setup
-// ---------------------------------------------------------------------------
 
 describe('SpaceRuntime — edge cases and resilience', () => {
   let db: BunDatabase;
@@ -264,16 +233,9 @@ describe('SpaceRuntime — edge cases and resilience', () => {
     }
   });
 
-  // -------------------------------------------------------------------------
-  // 1. InternalEventBus errors — tick resilience
-  // -------------------------------------------------------------------------
-
   describe('InternalEventBus — tick loop resilience', () => {
     test('tick does not crash when InternalEventBus publishAsync throws', async () => {
-      // Create a bus that throws on publishAsync
       const throwingBus = new InternalEventBus<DaemonInternalEventMap>();
-      // Subscribe a handler that throws — the bus itself handles this,
-      // but safeNotify also catches errors from publishAsync
       throwingBus.subscribe(
         'space.task.blocked',
         () => {
@@ -290,7 +252,6 @@ describe('SpaceRuntime — edge cases and resilience', () => {
       const { run } = await rt.startWorkflowRun(SPACE_ID, wf.id, 'Run');
       updateFirstNodeExecution(run.id, { status: 'blocked', result: 'Build failed' });
 
-      // Tick must complete without throwing even though a subscriber throws
       await expect(rt.executeTick()).resolves.toBeUndefined();
     });
 
@@ -344,10 +305,6 @@ describe('SpaceRuntime — edge cases and resilience', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // 2. Rapid status changes between ticks
-  // -------------------------------------------------------------------------
-
   describe('rapid status changes between ticks', () => {
     test('task goes blocked→pending→in_progress→blocked between ticks — one notification on final state', async () => {
       const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
@@ -355,11 +312,9 @@ describe('SpaceRuntime — edge cases and resilience', () => {
       ]);
       const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, wf.id, 'Run');
 
-      // Tick 1: initial pending execution — no notification
       await runtime.executeTick();
       expect(collector.events).toHaveLength(0);
 
-      // Simulate rapid execution-state transitions between ticks.
       updateFirstNodeExecution(run.id, { status: 'blocked', result: 'First failure' });
       updateFirstNodeExecution(run.id, {
         status: 'pending',
@@ -370,7 +325,6 @@ describe('SpaceRuntime — edge cases and resilience', () => {
       updateFirstNodeExecution(run.id, { status: 'in_progress' });
       updateFirstNodeExecution(run.id, { status: 'blocked', result: 'Final failure' });
 
-      // Tick 2: final state is blocked — exactly one notification
       await runtime.executeTick();
 
       const blockedEvents = collector.events.filter((e) => e.kind === 'task_blocked');
@@ -387,17 +341,14 @@ describe('SpaceRuntime — edge cases and resilience', () => {
         status: 'open',
       });
 
-      // Tick 1: pending — no notification
       await runtime.executeTick();
       expect(collector.events).toHaveLength(0);
 
-      // Simulate rapid status cycling (between ticks)
       taskRepo.updateTask(task.id, { status: 'blocked', error: 'Transient error' });
       taskRepo.updateTask(task.id, { status: 'open', error: null });
       taskRepo.updateTask(task.id, { status: 'in_progress' });
       taskRepo.updateTask(task.id, { status: 'blocked', error: 'Persistent error' });
 
-      // Tick 2: final state is blocked — exactly 1 notification
       await runtime.executeTick();
 
       const naEvents = collector.events.filter((e) => e.kind === 'task_blocked');
@@ -406,13 +357,8 @@ describe('SpaceRuntime — edge cases and resilience', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // 3. SpaceRuntime rehydration with workflow tasks in blocked
-  // -------------------------------------------------------------------------
-
   describe('rehydration — workflow tasks in blocked on restart', () => {
     test('workflow task in blocked is not re-notified on first tick after restart', async () => {
-      // Tick 1 on original runtime: task enters blocked
       const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: 'step-rehydrate', name: 'Only Step', agentId: AGENT },
       ]);
@@ -424,25 +370,21 @@ describe('SpaceRuntime — edge cases and resilience', () => {
       const originalEvents = collector.events.filter((e) => e.kind === 'task_blocked');
       expect(originalEvents).toHaveLength(1);
 
-      // Simulate daemon restart: create a fresh SpaceRuntime with empty dedup set
       const freshBus = new InternalEventBus<DaemonInternalEventMap>();
       const freshCollector = new BusEventCollector(freshBus);
       const freshRuntime = makeRuntime({ internalEventBus: freshBus });
 
-      // First tick on fresh runtime: run is already blocked, so processRunTick skips it.
       await freshRuntime.executeTick();
 
       const reNotified = freshCollector.events.filter((e) => e.kind === 'task_blocked');
       expect(reNotified).toHaveLength(0);
 
-      // Subsequent ticks remain quiet for already-blocked runs.
       await freshRuntime.executeTick();
       expect(freshCollector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(0);
       freshCollector.destroy();
     });
 
     test('multiple workflow runs with blocked tasks — none re-notified after restart', async () => {
-      // Set up two workflow runs, each with a task in blocked
       const wfA = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: 'step-rehy-a', name: 'Step A', agentId: AGENT },
       ]);
@@ -459,7 +401,6 @@ describe('SpaceRuntime — edge cases and resilience', () => {
       await runtime.executeTick();
       expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(2);
 
-      // Simulate restart
       const freshBus = new InternalEventBus<DaemonInternalEventMap>();
       const freshCollector = new BusEventCollector(freshBus);
       const freshRuntime = makeRuntime({ internalEventBus: freshBus });
@@ -472,10 +413,6 @@ describe('SpaceRuntime — edge cases and resilience', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // 4. Deduplication — standalone tasks across many ticks
-  // -------------------------------------------------------------------------
-
   describe('deduplication — standalone tasks across many ticks', () => {
     test('same standalone task in blocked for 5+ ticks emits only 1 notification', async () => {
       const task = taskRepo.createTask({
@@ -485,7 +422,6 @@ describe('SpaceRuntime — edge cases and resilience', () => {
         status: 'blocked',
       });
 
-      // Run many ticks — should emit only 1 notification total
       for (let i = 0; i < 5; i++) {
         await runtime.executeTick();
       }
@@ -505,7 +441,7 @@ describe('SpaceRuntime — edge cases and resilience', () => {
         status: 'in_progress',
       });
       db.prepare('UPDATE space_tasks SET started_at = ? WHERE id = ?').run(
-        Date.now() - 30000, // 30s ago, well past 1s timeout
+        Date.now() - 30000,
         task.id
       );
 
@@ -525,33 +461,23 @@ describe('SpaceRuntime — edge cases and resilience', () => {
         status: 'blocked',
       });
 
-      // Tick 1 → 1 notification
       await runtime.executeTick();
       expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
-      // Tick 2 → deduped, still 1
       await runtime.executeTick();
       expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
-      // Task resolves (leaves blocked)
       taskRepo.updateTask(task.id, { status: 'in_progress', error: null });
 
-      // Tick 3 → in_progress, no new notification
       await runtime.executeTick();
       expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
-      // Task hits blocked again
       taskRepo.updateTask(task.id, { status: 'blocked', error: 'Second error' });
 
-      // Tick 4 → dedup key cleared when task left blocked, so re-notifies
       await runtime.executeTick();
       expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(2);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // 5. Workflow-backed dependency block cleanup
-  // -------------------------------------------------------------------------
 
   describe('workflow-backed dependency block cleanup', () => {
     test('blocking an in-progress workflow task stops run and active node agents', async () => {
@@ -858,9 +784,6 @@ describe('SpaceRuntime — edge cases and resilience', () => {
     });
 
     test('cancelling a run interrupts a live node session whose execution row has a null agentSessionId', async () => {
-      // Mid-activation window: the coder's SDK subprocess is live and tracked by
-      // TaskAgentManager, but its NodeExecution row has not yet recorded the
-      // agentSessionId. The per-row cancel loop cannot see it.
       const tam = new MockTaskAgentManager();
       const rt = makeRuntime({ taskAgentManager: tam as never });
       const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
@@ -882,7 +805,6 @@ describe('SpaceRuntime — edge cases and resilience', () => {
       });
 
       expect(cancelled?.status).toBe('cancelled');
-      // The live coder IS interrupted despite the null execution-row agentSessionId.
       expect(tam.cancelledSessions).toContain('live-coder-session-null-window');
     });
 
@@ -900,7 +822,6 @@ describe('SpaceRuntime — edge cases and resilience', () => {
         agentSessionId: 'row-session-dedupe',
       });
       taskRepo.updateTask(task.id, { status: 'in_progress' });
-      // Same session is also reported by the live-session sweep.
       tam.liveSubSessionsByTaskId.set(task.id, ['row-session-dedupe']);
 
       await rt.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, { status: 'cancelled' });
@@ -962,10 +883,6 @@ describe('SpaceRuntime — edge cases and resilience', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // 6. External run cancellation — no stale notifications
-  // -------------------------------------------------------------------------
-
   describe('external run cancellation — no stale notifications', () => {
     test('run cancelled externally between ticks — no notification on subsequent tick', async () => {
       const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
@@ -973,18 +890,14 @@ describe('SpaceRuntime — edge cases and resilience', () => {
       ]);
       const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, wf.id, 'Run');
 
-      // Tick 1: task in_progress, no notification
       taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
       await runtime.executeTick();
       expect(collector.events).toHaveLength(0);
 
-      // External cancellation: update run status directly in DB (simulating external API call)
       workflowRunRepo.transitionStatus(run.id, 'cancelled');
 
-      // Tick 2: run is now cancelled, SpaceRuntime skips it in processRunTick
       await runtime.executeTick();
 
-      // No notifications for a cancelled run
       expect(collector.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(0);
       expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(0);
     });
@@ -996,41 +909,31 @@ describe('SpaceRuntime — edge cases and resilience', () => {
       const { run } = await runtime.startWorkflowRun(SPACE_ID, wf.id, 'Run');
       updateFirstNodeExecution(run.id, { status: 'blocked', result: 'Error' });
 
-      // Tick 1: task_blocked emitted
       await runtime.executeTick();
       expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
 
-      // External cancellation between ticks
       workflowRunRepo.transitionStatus(run.id, 'cancelled');
 
-      // Tick 2: run is cancelled, executor removed by cleanupTerminalExecutors.
       await runtime.executeTick();
 
-      // Still only 1 task_blocked (from tick 1)
       expect(collector.events.filter((e) => e.kind === 'task_blocked')).toHaveLength(1);
-      // No workflow_run_completed for cancelled runs
       expect(collector.events.filter((e) => e.kind === 'workflow_run_completed')).toHaveLength(0);
     });
 
     test('run cancelled between rehydration and first tick — no notification emitted', async () => {
-      // Start a run on the original runtime
       const wf = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: 'step-cancel-rehy', name: 'Only Step', agentId: AGENT },
       ]);
       const { run } = await runtime.startWorkflowRun(SPACE_ID, wf.id, 'Run');
 
-      // Simulate: between daemon restart and first tick, run gets cancelled externally
       workflowRunRepo.transitionStatus(run.id, 'cancelled');
 
-      // Fresh runtime (simulating restart): first executeTick() rehydrates,
-      // then processes — cancelled run should emit nothing
       const freshBus = new InternalEventBus<DaemonInternalEventMap>();
       const freshCollector = new BusEventCollector(freshBus);
       const freshRuntime = makeRuntime({ internalEventBus: freshBus });
 
       await freshRuntime.executeTick();
 
-      // No notifications for a run that was already cancelled before first tick
       expect(freshCollector.events).toHaveLength(0);
       freshCollector.destroy();
     });

@@ -243,9 +243,6 @@ export function SectionHeadingsDemo() {
         </div>
       </div>
 
-      {/* ============================================================ */}
-      {/* 11 - With Actions and Popover */}
-      {/* ============================================================ */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">With actions and popover</h3>
         <div class="border-b border-gray-200 pb-5 dark:border-white/10">

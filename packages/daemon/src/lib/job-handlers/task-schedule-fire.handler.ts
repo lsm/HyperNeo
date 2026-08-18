@@ -1,21 +1,3 @@
-/**
- * Job handler for taskSchedule.fire queue.
- *
- * When a schedule fires:
- *   1. Look up the schedule — skip if not 'active', missing, or its host space
- *      is archived/missing.
- *   2. Idempotency check — skip if `schedule.pendingJobId` no longer matches
- *      this job (a previous attempt already advanced the schedule).
- *   3. Atomically: create a SpaceTask, compute the next fire time, enqueue the
- *      next fire job (cron) and write all of `lastCreatedTaskId`, `lastRunAt`,
- *      `nextRunAt`, `pendingJobId`, `status` in one SQLite transaction. If any
- *      step throws, the rollback ensures we never leave a half-fired schedule
- *      (e.g. task created but pendingJobId not advanced) — the queue's retry
- *      will then re-run the handler cleanly.
- *
- * Uses the self-scheduling pattern from github-poll.handler.ts.
- */
-
 import type { Database as BunDatabase } from '../../storage/sqlite-compat';
 import type { TaskSchedule } from '@hyperneo/shared';
 import { TASK_SCHEDULE_FIRE } from '../job-queue-constants';
@@ -32,13 +14,6 @@ import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-
 
 const log = new Logger('task-schedule-fire-handler');
 
-/**
- * Internal sentinel thrown inside the fire transaction when the
- * compare-and-swap on `pending_job_id` fails — i.e. a concurrent
- * pause/delete/reschedule invalidated our claim on this fire. The handler
- * catches this and converts it to a normal `job_superseded` skip; the queue
- * does not retry it.
- */
 class ScheduleSupersededError extends Error {
   constructor(scheduleId: string, jobId: string) {
     super(`Schedule ${scheduleId} superseded; job ${jobId} no longer the pending fire`);
@@ -67,12 +42,6 @@ export interface TaskScheduleFireHandlerDeps {
   goalService?: SpaceGoalService;
   goalRepo?: SpaceGoalRepository;
   goalAutomationService?: Pick<GoalAutomationService, 'onSelfNag'>;
-  /**
-   * Optional event emitter for broadcasting schedule/task changes.
-   * When provided, the handler emits `space.task.created` and
-   * `space.schedule.updated` after a successful fire so the web
-   * client can refresh its state without polling.
-   */
   eventHub?: {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     publish: (event: string, data: any) => Promise<unknown>;
@@ -98,7 +67,6 @@ export async function handleTaskScheduleFire(
 
   const schedule = scheduleRepo.getById(scheduleId);
 
-  // Guard: skip if schedule doesn't exist or is no longer active.
   if (!schedule || schedule.status !== 'active') {
     log.debug('task-schedule-fire: skipping inactive/missing schedule', { scheduleId });
     return {
@@ -110,18 +78,6 @@ export async function handleTaskScheduleFire(
     };
   }
 
-  // Guard: skip if the host space is archived, missing, paused, or stopped.
-  // Without this, a non-active space would still spawn fresh tasks every cron
-  // tick, violating the space lifecycle contract (paused/stopped must prevent
-  // new scheduled work).
-  //
-  // We don't just bail here: if we leave the schedule with `pendingJobId`
-  // pointing at *this* (now-consumed) job, the next cron tick never lands
-  // because the schedule has no future job linked. Instead we advance the
-  // schedule forward — for cron, we recompute `nextRunAt` and enqueue a fresh
-  // fire job; for `at`, we leave the schedule "unwired" by clearing
-  // pendingJobId so SpaceManager.resumeSpace/startSpace can recover it. The
-  // space-resume path then re-seeds any missed schedules.
   const space = spaceRepo.getSpace(schedule.spaceId);
   if (!space || space.status !== 'active' || space.paused || space.stopped) {
     log.debug('task-schedule-fire: skipping schedule for non-active space', {
@@ -132,24 +88,17 @@ export async function handleTaskScheduleFire(
       stopped: space?.stopped,
     });
 
-    // Clear pendingJobId / advance nextRunAt so the space-resume reseed has
-    // a clean handle. Do this in a CAS transaction so a concurrent
-    // pause/delete/reschedule mid-handler still wins.
     try {
       db.transaction(() => {
         const fresh = scheduleRepo.getById(scheduleId);
         if (!fresh || fresh.status !== 'active') return;
-        if (fresh.pendingJobId !== job.id) return; // someone else moved on
+        if (fresh.pendingJobId !== job.id) return;
 
         if (fresh.triggerType === 'cron' && fresh.cronExpression) {
           const next = getNextRunAt(fresh.cronExpression, fresh.timezone, Date.now());
-          // On cron-config errors (null next), just clear the pending linkage so
-          // resume / operator-fix can re-seed; the schedule stays active.
           scheduleRepo.update(scheduleId, { nextRunAt: next ?? undefined });
           scheduleRepo.updatePendingJobId(scheduleId, null);
         } else {
-          // `at` schedule — clear pending so resume re-evaluates whether the
-          // deadline has passed and either completes or re-enqueues.
           scheduleRepo.updatePendingJobId(scheduleId, null);
         }
       })();
@@ -158,7 +107,6 @@ export async function handleTaskScheduleFire(
         scheduleId,
         error: err instanceof Error ? err.message : err,
       });
-      // Non-fatal — the next space-resume reseed will pick this up.
     }
 
     return {
@@ -170,11 +118,6 @@ export async function handleTaskScheduleFire(
     };
   }
 
-  // Idempotency fence: if `pendingJobId` no longer matches this job's id, a
-  // previous successful attempt already advanced the schedule (and recorded
-  // the task) — re-running here would create a duplicate. This catches the
-  // case where a transient post-success error caused the queue to retry, or
-  // where startup recovery re-seeded a job we ended up running too.
   if (schedule.pendingJobId !== null && schedule.pendingJobId !== job.id) {
     log.debug('task-schedule-fire: skipping — pendingJobId moved past this job', {
       scheduleId,
@@ -206,12 +149,6 @@ export async function handleTaskScheduleFire(
     });
   }
 
-  // Atomically create the task, compute the next fire, enqueue it, and update
-  // the schedule's bookkeeping fields. SpaceTaskRepository.createTask already
-  // runs synchronously against `db`, so wrapping the whole sequence in a
-  // single SQLite transaction is safe — and crucial: a partial failure (e.g.
-  // task inserted but no `lastRunAt` recorded) would otherwise allow the
-  // retry to spawn a duplicate task.
   let taskId: string | null = null;
   let nextRunAt: number | null = null;
 
@@ -269,11 +206,6 @@ export async function handleTaskScheduleFire(
         goalId: schedule.goalId,
       });
 
-      // Compare-and-swap: only commit if the schedule's pending_job_id is
-      // still our job id. If a concurrent pause/delete/reschedule happened
-      // between the initial read and now, the precondition fails and we
-      // throw — the surrounding transaction rolls back, including the
-      // just-created task and the just-enqueued next job.
       const applied = scheduleRepo.updateAfterFireIfPending(scheduleId, job.id, {
         lastCreatedTaskId: task.id,
         lastRunAt: now,
@@ -302,8 +234,6 @@ export async function handleTaskScheduleFire(
       log.debug('task-schedule-fire: created task', { scheduleId, taskId, nextRunAt });
     }
 
-    // Emit events so the web client can refresh its state without polling.
-    // Fire-and-forget — handler success must not depend on event delivery.
     if (eventHub) {
       if (taskId) {
         const emittedTask = taskRepo.getTask(taskId);
@@ -335,10 +265,6 @@ export async function handleTaskScheduleFire(
       }
     }
   } catch (err) {
-    // A concurrent pause/delete invalidated our pending_job_id mid-flight;
-    // the transaction rolled back the task and any next-job enqueue, so
-    // nothing was persisted. Surface this as a normal skip — the job queue
-    // should not retry it (the schedule is no longer wanting this fire).
     if (err instanceof ScheduleSupersededError) {
       log.debug('task-schedule-fire: skipping — superseded mid-flight', {
         scheduleId,
@@ -356,9 +282,6 @@ export async function handleTaskScheduleFire(
       scheduleId,
       error: err instanceof Error ? err.message : err,
     });
-    // Re-throw so the job queue retries with backoff. The transaction
-    // rolled back so no half-state was persisted; the next attempt sees
-    // the same `pendingJobId === job.id` and proceeds cleanly.
     throw err;
   }
 

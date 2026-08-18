@@ -1,9 +1,3 @@
-/**
- * QueryOptionsBuilder Tests
- *
- * Tests SDK query options construction from session config.
- */
-
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
@@ -290,8 +284,6 @@ describe('QueryOptionsBuilder', () => {
       }
     });
 
-    // Starting an 'anthropic-codex' bridge provider spins up a real Bun.serve
-    // bridge server, which has no Node equivalent — Bun-only.
     it.skipIf(typeof (globalThis as { Bun?: unknown }).Bun === 'undefined')(
       'should filter provider-managed auto-compact env overrides for bridge providers',
       async () => {
@@ -314,30 +306,21 @@ describe('QueryOptionsBuilder', () => {
           KEEP_GLOBAL: 'global',
           KEEP_SESSION: 'session',
         });
-        // Provider cleanup owns this value later; user overrides must not win here.
         expect(options.env).not.toHaveProperty('CLAUDE_CODE_AUTO_COMPACT_WINDOW');
       }
     );
 
     it('should not override SDK auto-compaction settings for native anthropic provider', async () => {
-      // Default provider is anthropic — SDK already knows correct context window.
-      // Transcript retention is the only settings key the daemon still sets.
       const options = await builder.build();
       expect(options.settings).toEqual({ cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS });
     });
 
     it('should pin SDK transcript retention for every session', async () => {
-      // The SDK subprocess purges transcripts idle > cleanupPeriodDays (default
-      // 30) on startup, wedging long-idle resumable sessions. Retention must be
-      // pinned regardless of provider settings.
       const options = await builder.build();
       expect(options.settings?.cleanupPeriodDays).toBe(SDK_TRANSCRIPT_RETENTION_DAYS);
     });
 
     it('withSdkTranscriptRetention merges over caller settings without dropping them', () => {
-      // Direct query() launches (title generation, workflow selection, model
-      // discovery, GitHub agents, evolution services) pass their own settings
-      // through this helper; existing keys must survive.
       expect(withSdkTranscriptRetention()).toEqual({
         cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS,
       });
@@ -349,7 +332,6 @@ describe('QueryOptionsBuilder', () => {
 
     it('should remove undefined values from options', async () => {
       const options = await builder.build();
-      // Should not have undefined values
       for (const [_key, value] of Object.entries(options)) {
         expect(value).not.toBeUndefined();
       }
@@ -362,20 +344,11 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('should not override SDK auto-compaction for anthropic-codex (handled natively)', () => {
-      // anthropic-codex routes through recognised Anthropic model IDs whose
-      // PP() capacities cover the real Codex windows, so SDK auto-compact is
-      // trusted. Belt-and-suspenders with CLAUDE_CODE_AUTO_COMPACT_WINDOW env.
       expect(buildProviderSettings('anthropic-codex')).toBeUndefined();
       expect(buildProviderSettings('anthropic-codex', 272_000)).toBeUndefined();
     });
 
     it('should not override SDK auto-compaction for GLM (env var + [1m] suffix configures SDK correctly)', () => {
-      // GLM sets CLAUDE_CODE_AUTO_COMPACT_WINDOW per model in buildSdkConfig,
-      // and the [1m] suffix on glm-5.2[1m] is recognised by the SDK's
-      // context-window resolver. The SDK's effective window matches metadata,
-      // so its own auto-compact fires correctly (1M − 33k buffer). If [1m]
-      // recognition regresses, the context-fetcher capacity-mismatch warning
-      // surfaces it. GLM stays native, so no HyperNeo fallback override is needed.
       expect(buildProviderSettings('glm')).toBeUndefined();
       expect(buildProviderSettings('glm', 1_000_000)).toBeUndefined();
     });
@@ -392,31 +365,10 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('should not disable SDK auto-compaction when context window is unavailable (avoid dead zone)', () => {
-      // Previously returned { autoCompactEnabled: false }, creating a dead zone
-      // with no compaction path (no SDK auto-compact, no HyperNeo fallback) and
-      // guaranteeing context overflow. Returning undefined lets the SDK use its
-      // built-in auto-compact (enabled by default); the reactive prompt-too-long
-      // recovery handles any sub-200k mismatch.
       expect(buildProviderSettings('openrouter')).toBeUndefined();
     });
 
     it('should keep SDK native auto-compact ON for Kimi (do not disable to chase 262k)', () => {
-      // The SDK's resolver only knows its internal model DB + the `[1m]` suffix
-      // (→ 1M); every other ID falls back to 200k. Kimi (262k, no `[1m]` analog)
-      // therefore resolves to 200k, and every override is clamped to that:
-      // `settings.autoCompactWindow` AND `CLAUDE_CODE_AUTO_COMPACT_WINDOW` both
-      // yield maxTokens=200000 / threshold=167000 (verified against SDK 0.3.x).
-      // The SDK also never queries `/v1/models` for an Anthropic-compatible base,
-      // and `message_start.usage.model_context_window` injection has no effect.
-      //
-      // There is NO way to make the SDK believe 262k. Previously Kimi disabled
-      // SDK auto-compact and used HyperNeo's async post-turn fallback to chase the
-      // 262k headroom — but that fallback fires after turns, so it cannot prevent
-      // within-turn or resume overflow (Kimi overflowed ~7.7% of sessions).
-      //
-      // Keeping SDK native auto-compact ON arms it at 200k − 33k = 167k, safely
-      // below Kimi's real 262k window, so Kimi always accepts. The SDK clamps the
-      // 262144 window we pass down to its 200k belief; that is expected and safe.
       expect(buildProviderSettings('kimi')).toBeUndefined();
       expect(buildProviderSettings('kimi', 262_144)).toEqual({
         autoCompactEnabled: true,
@@ -425,9 +377,6 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('should explicitly pass the 1M window for Kimi K3', () => {
-      // Kimi K3 advertises a 1M context window. The SDK clamps unknown IDs to
-      // its 200k fallback, but we still surface the real window so the
-      // intent is explicit and the context-fetcher can correct the display.
       expect(buildProviderSettings('kimi', 1_048_576, 'kimi-k3')).toEqual({
         autoCompactEnabled: true,
         autoCompactWindow: 1_048_576,
@@ -439,9 +388,6 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('should pass the 256K window for the k3-256k K3 variant', () => {
-      // k3-256k is the same K3 model capped at 256K context (image only, no
-      // video). It is treated as a K3 for SDK-resolution purposes but must NOT
-      // inherit the 1M flagship's window.
       expect(buildProviderSettings('kimi', 262_144, 'k3-256k')).toEqual({
         autoCompactEnabled: true,
         autoCompactWindow: 262_144,
@@ -513,38 +459,20 @@ describe('QueryOptionsBuilder', () => {
 
     it('should not disable SDK auto-compaction for OpenRouter when model is unknown (avoid dead zone)', async () => {
       registerOpenRouterProvider();
-      // Empty cache — model not found
       setModelsCache(new Map());
       mockSession.config.provider = 'openrouter';
       mockSession.config.model = 'unknown-model';
       const options = await builder.build();
-      // No provider settings lets the SDK use its built-in auto-compact instead
-      // of creating a dead zone (no SDK compact, no HyperNeo fallback). Only the
-      // daemon-owned retention key remains.
       expect(options.settings).toEqual({ cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS });
     });
 
     it('should leave provider settings empty for native anthropic provider', async () => {
-      // Default mockSession uses anthropic provider — only the daemon-owned
-      // retention key is present.
       const options = await builder.build();
       expect(options.settings).toEqual({ cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS });
     });
   });
 
   describe('subagent model env guard (CLAUDE_CODE_SUBAGENT_MODEL)', () => {
-    // Regression: the daemon's process.env carries per-provider routing vars
-    // (applied around each query, globally). getMergedEnvironmentVars() runs
-    // BEFORE this session's provider env is applied, so a leftover
-    // CLAUDE_CODE_SUBAGENT_MODEL from another provider's session (e.g. a
-    // concurrent Kimi worker) used to be copied verbatim into options.env —
-    // and since the SDK spawns with env = {...options.env} (replace, not
-    // merge), that snapshot becomes the complete subprocess env. Subagents
-    // then sent the foreign model ID upstream and GLM rejected it with 400
-    // code 1214 "modelCode 不存在" while main turns kept working (the var
-    // only affects subagents). Subagents otherwise inherit the main model
-    // via the CLI's own defaults, so the guard never sets the var itself —
-    // it only stops the foreign snapshot.
     const foreignSubagentModel = 'k3-256k';
     let savedSubagentModel: string | undefined;
     let savedToolSearch: string | undefined;
@@ -606,11 +534,6 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('omits the subagent model when the provider does not define one, even with an ambient leftover', async () => {
-      // Providers that never mention the var (GLM, DeepSeek, MiniMax, native
-      // Anthropic, …) must not inherit another provider's value: subagents
-      // resolve to the main model from the query env, and
-      // applyEnvVarsToProcessForSession() clears the ambient var from
-      // process.env before the subprocess spawns.
       registerCompatProvider({
         ANTHROPIC_BASE_URL: 'https://open.bigmodel.cn/api/anthropic',
       });
@@ -753,15 +676,12 @@ describe('QueryOptionsBuilder', () => {
       const options = await builder.build();
       const result = builder.addSessionStateOptions(options);
 
-      // Default provider (anthropic) supports thinking — 'off' must emit explicit disable
       expect(result.thinking).toEqual({ type: 'disabled' });
     });
 
     it('should omit thinking config for providers with thinkingModes=off', async () => {
       mockSession.config.provider = 'minimax';
       mockSession.config.thinkingLevel = 'think32k';
-      // Pass minimal options directly — avoid build() because it instantiates
-      // the provider context and MiniMax lacks an API key in CI.
       const result = builder.addSessionStateOptions(
         {} as import('@anthropic-ai/claude-agent-sdk').Options
       );
@@ -824,9 +744,6 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('emits a granular thinking budget for kimi K3 when a level is selected', async () => {
-      // K3 advertises low/high/max efforts on the Anthropic-compatible endpoint,
-      // so a selected thinking level is forwarded as an enabled budget_tokens
-      // payload (Kimi buckets it into its effort tiers) rather than dropped.
       mockSession.config.provider = 'kimi';
       mockSession.config.model = 'kimi-k3';
       mockSession.config.thinkingLevel = 'think8k';
@@ -870,12 +787,6 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('honours per-model thinking mode override even when provider aggregate advertises thinking', async () => {
-      // Custom-endpoint scenario: the provider exposes one thinking model
-      // and one non-thinking model. Provider aggregate says `on`, but the
-      // selected model is the non-thinking one — the builder must skip
-      // emitting any thinking payload. This is critical for the
-      // anthropic-messages pass-through bridge because it forwards body
-      // bytes verbatim and a `thinking` field would 4xx upstream.
       const registry = getProviderRegistry();
       registry.register({
         id: 'custom:per-model-thinking',
@@ -940,10 +851,6 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('forces an enabled budget for mixed Kimi K3 primary and K2.7 fallback chains', () => {
-      // K3 can't be disabled and K2.7 requires enabled thinking, but both accept
-      // an enabled budget — so the chain is satisfiable. The guard forces a
-      // conservative default instead of failing, mirroring the K2.7-primary
-      // ordering so the result doesn't depend on model order.
       mockSession.config.provider = 'kimi';
       mockSession.config.model = 'kimi-k3';
       mockSession.config.fallbackModel = 'kimi-k2.7-code';
@@ -956,9 +863,6 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('allows mixed Kimi K2.7 primary and K3 fallback when K2.7 forces enabled thinking', () => {
-      // A K2.7 primary forces an enabled budget even when the level is 'off', so
-      // the single thinking option ({enabled}) satisfies both the K2.7 primary
-      // and the K3 fallback — both accept enabled thinking now.
       mockSession.config.provider = 'kimi';
       mockSession.config.model = 'kimi-for-coding';
       mockSession.config.fallbackModel = 'k3';
@@ -1102,19 +1006,11 @@ describe('QueryOptionsBuilder', () => {
 
     it('leaves mcpServers undefined when none are configured', async () => {
       const options = await builder.build();
-      // In M5 the SDK is locked to `strictMcpConfig: true` +
-      // `settingSources: []`, so it will not auto-load `.mcp.json` —
-      // `mcpServers` simply stays undefined when no skill/registry entry
-      // contributes one.
       expect(options.mcpServers).toBeUndefined();
     });
   });
 
   describe('setting sources configuration', () => {
-    // Post-M5: `settingSources` defaults to the global settings value
-    // (['user', 'project', 'local']) so CLAUDE.md and user/project settings are
-    // loaded.  MCP remains locked to `strictMcpConfig: true` (unified
-    // `app_mcp_servers` registry only) regardless of settingSources.
     it('should default settingSources to global settings', async () => {
       const options = await builder.build();
       expect(options.settingSources).toEqual(['user', 'project', 'local']);
@@ -1184,28 +1080,19 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('honors a coordinator sdkToolsPreset instead of clobbering it (Task #794)', async () => {
-      // The long-horizon coordinator runs in the space:chat session. Its config
-      // carries the curated 24-tool preset (set at provisioning); the builder
-      // must let it flow through rather than overwriting with the restricted list.
       mockSession.type = 'space_chat';
       mockSession.config.sdkToolsPreset = [...LONG_HORIZON_AGENT_BUILTIN_TOOLS];
       const options = await builder.build();
 
       expect(options.tools).toEqual([...LONG_HORIZON_AGENT_BUILTIN_TOOLS]);
-      // Read-only by design: no Write/Edit/MultiEdit in the tool surface.
       expect(options.tools).not.toContain('Write');
       expect(options.tools).not.toContain('Edit');
       expect(options.tools).not.toContain('MultiEdit');
-      // Scheduling / self-pacing tools the coordinator needs are present.
       expect(options.tools).toContain('CronCreate');
       expect(options.tools).toContain('Monitor');
-      // The preset tools are auto-allowed (no permission prompts for the
-      // coordinator's own surface) alongside the space MCP wildcards.
       expect(options.allowedTools).toEqual(
         expect.arrayContaining([...LONG_HORIZON_AGENT_BUILTIN_TOOLS])
       );
-      // Belt-and-suspenders: file mutation stays disallowed even though the
-      // preset already omits it.
       expect(options.disallowedTools).toEqual(
         expect.arrayContaining(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
       );
@@ -1249,24 +1136,13 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('should not affect worker sessions tool allowlist (coder/reviewer tool access unchanged)', async () => {
-      // Worker sessions (type: 'worker') must not be affected by space_chat restrictions
       mockSession.type = 'worker';
       const options = await builder.build();
-      // Worker sessions still pass through `strictMcpConfig: true` (set
-      // unconditionally in M5); `tools` is undefined because no preset
-      // or per-room override imposes a restriction.
       expect(options.strictMcpConfig).toBe(true);
       expect(options.tools).toBeUndefined();
     });
   });
 
-  // ============================================================================
-  // M5 (unify-mcp-config-model): strictMcpConfig is forced unconditionally;
-  // settingSources defaults to global settings (['user', 'project', 'local']) but can be
-  // overridden per-session. The M1 `HYPERNEO_LEGACY_MCP_AUTOLOAD` kill switch was
-  // removed. These tests pin the post-M5 contract per session type so any
-  // regression that re-introduces auto-loading is caught.
-  // ============================================================================
   describe('M5: unconditional strict MCP + configurable settingSources', () => {
     const sessionTypes: Array<'worker' | 'space_task_agent' | 'general' | 'coder' | 'planner'> = [
       'worker',
@@ -1286,12 +1162,6 @@ describe('QueryOptionsBuilder', () => {
     }
 
     it('does not inject project .mcp.json servers into the mcpServers map (regression)', async () => {
-      // Pre-M1 behavior was for the SDK to auto-load any `.mcp.json` at the
-      // workspace root because `settingSources` defaulted to `['project', 'local']`.
-      // Post-M5 the SDK still respects settingSources for *settings* files, but
-      // `strictMcpConfig: true` blocks `.mcp.json` auto-loading regardless.
-      // An ad-hoc worker session with no programmatic mcpServers emits an
-      // `undefined` mcpServers option — i.e. nothing to inject.
       mockSession.type = 'worker';
       mockSession.config.mcpServers = undefined;
       const options = await builder.build();
@@ -1312,9 +1182,6 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('ignores HYPERNEO_LEGACY_MCP_AUTOLOAD — the M1 kill switch was removed in M5', async () => {
-      // Setting the legacy env var must have no effect; settingSources stays
-      // at the global default and strictMcpConfig stays true regardless of
-      // value or session type.
       const previous = process.env.HYPERNEO_LEGACY_MCP_AUTOLOAD;
       try {
         for (const val of ['1', 'true', 'yes']) {
@@ -1347,7 +1214,6 @@ describe('QueryOptionsBuilder', () => {
       });
       const options = await newBuilder.build();
 
-      // Should include home directories for settings/storage and temp directories for shell operations
       const expected = [homedir() + '/.claude', homedir() + '/.hyperneo'];
       expected.push('/tmp', '/tmp/claude', expect.stringContaining('/tmp/zsh-'));
       expect(options.additionalDirectories).toEqual(expected);
@@ -1407,11 +1273,6 @@ describe('QueryOptionsBuilder', () => {
 
       expect(options.hooks?.PreToolUse).toBeDefined();
       expect(options.hooks?.PreToolUse).toHaveLength(1);
-      // No matcher: the loop detector observes every PreToolUse so that
-      // untracked tools (Edit, Write, Bash, …) can serve as the
-      // "different action" that breaks a denied streak. Decision logic
-      // (which tools to deny, which to merely use as reset signals)
-      // lives inside the hook itself.
       expect(options.hooks?.PreToolUse?.[0]?.matcher).toBeUndefined();
       expect(options.hooks?.PreToolUse?.[0]?.hooks).toHaveLength(1);
     });
@@ -1433,16 +1294,11 @@ describe('QueryOptionsBuilder', () => {
 
       expect(options.hooks?.PreToolUse).toHaveLength(2);
       expect(options.hooks?.PreToolUse?.[0]?.matcher).toBeUndefined();
-      // Output limiter runs after loop detector and workflow guards so guards
-      // evaluate the original command shape and the limiter only mutates input.
       expect(options.hooks?.PreToolUse?.[1]?.matcher).toBeUndefined();
       expect(options.hooks?.PreToolUse?.[1]?.hooks).toHaveLength(1);
     });
 
     it('should default a partial outputLimiter setting to enabled', async () => {
-      // SettingsRepository.updateGlobalSettings shallow-merges top-level keys,
-      // so an update like { outputLimiter: { bash: { headLines: 50 } } } can
-      // omit enabled. It should still install the hook using resolved defaults.
       mockSettingsManager.getGlobalSettings = mock(() => ({
         settingSources: ['user', 'project', 'local'],
         sandbox: { excludedCommands: ['git'] },
@@ -1481,7 +1337,6 @@ describe('QueryOptionsBuilder', () => {
       }));
 
       const options = await new QueryOptionsBuilder(mockContext).build();
-      // PostToolUse has loop detector + output limiter
       expect(options.hooks?.PostToolUse).toHaveLength(2);
       const postHook = options.hooks?.PostToolUse?.[1]?.hooks[0];
       expect(postHook).toBeDefined();
@@ -1598,7 +1453,6 @@ describe('QueryOptionsBuilder', () => {
       });
       const options = await guardBuilder.build();
 
-      // PreToolUse: loop detector -> guard (Bash matcher) -> output limiter pre-hook
       expect(options.hooks?.PreToolUse).toHaveLength(3);
       const guardEntry = options.hooks?.PreToolUse?.find((e) => e.matcher === 'Bash');
       expect(guardEntry).toBeDefined();
@@ -1630,9 +1484,6 @@ describe('QueryOptionsBuilder', () => {
     it('installs paired PostToolUse and PostToolUseFailure observers for the Bash dead-loop detector', async () => {
       const options = await builder.build();
 
-      // The Bash failure-aware detector needs the PostToolUse and
-      // PostToolUseFailure events to populate its outcome ring. Without
-      // these the Bash deny path is permanently disabled.
       expect(options.hooks?.PostToolUse).toBeDefined();
       expect(options.hooks?.PostToolUse).toHaveLength(1);
       expect(options.hooks?.PostToolUse?.[0]?.matcher).toBeUndefined();
@@ -1662,7 +1513,7 @@ describe('QueryOptionsBuilder', () => {
         'GH_TOKEN=token gh pr merge 123',
         'command gh pr merge 123',
         'env GH_TOKEN=token gh pr merge 123',
-        'gh pr \\\nmerge 123', // line continuation
+        'gh pr \\\nmerge 123',
       ]) {
         const result = await hook!(
           {
@@ -1729,8 +1580,6 @@ describe('QueryOptionsBuilder', () => {
       });
       const options = await guardBuilder.build();
 
-      // Both guards share the same matcher, so they should be under one entry.
-      // (The loop-detector matcher is also present at a different index.)
       const bashEntries = options.hooks?.PreToolUse?.filter((e) => e.matcher === 'Bash');
       expect(bashEntries).toHaveLength(1);
       expect(bashEntries?.[0]?.hooks).toHaveLength(2);
@@ -1742,7 +1591,7 @@ describe('QueryOptionsBuilder', () => {
         toolGuards: [
           {
             matcher: 'Bash',
-            pattern: '[invalid(', // unmatched paren — invalid regex
+            pattern: '[invalid(',
             decision: 'deny' as const,
             reason: 'Bad pattern',
           },
@@ -1750,7 +1599,6 @@ describe('QueryOptionsBuilder', () => {
       });
       const options = await guardBuilder.build();
 
-      // Hook is compiled (no crash), but the no-op callback returns {}
       const bashEntry = options.hooks?.PreToolUse?.find((e) => e.matcher === 'Bash');
       const hook = bashEntry?.hooks[0];
       expect(hook).toBeDefined();
@@ -1846,7 +1694,6 @@ describe('QueryOptionsBuilder', () => {
       const options = await builder.build();
 
       expect(options.agent).toBeUndefined();
-      // agents should not contain coordinator specialists
       if (options.agents) {
         const agentNames = Object.keys(options.agents);
         expect(agentNames).not.toContain('Coordinator');
@@ -1854,19 +1701,16 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('should NOT set coordinator agent when coordinatorMode is undefined', async () => {
-      // coordinatorMode not set - defaults to falsy
       const options = await builder.build();
 
       expect(options.agent).toBeUndefined();
     });
 
     it('should transition from non-coordinator to coordinator options (OFF -> ON)', async () => {
-      // Build with coordinator OFF
       mockSession.config.coordinatorMode = false;
       const optionsOff = await builder.build();
       expect(optionsOff.agent).toBeUndefined();
 
-      // Build with coordinator ON (simulating config update + query restart)
       mockSession.config.coordinatorMode = true;
       const builderOn = new QueryOptionsBuilder(mockContext);
       const optionsOn = await builderOn.build();
@@ -1875,17 +1719,14 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('should transition ON -> OFF -> ON correctly', async () => {
-      // ON
       mockSession.config.coordinatorMode = true;
       let options = await new QueryOptionsBuilder(mockContext).build();
       expect(options.agent).toBe('Coordinator');
 
-      // OFF
       mockSession.config.coordinatorMode = false;
       options = await new QueryOptionsBuilder(mockContext).build();
       expect(options.agent).toBeUndefined();
 
-      // ON again
       mockSession.config.coordinatorMode = true;
       options = await new QueryOptionsBuilder(mockContext).build();
       expect(options.agent).toBe('Coordinator');
@@ -1920,11 +1761,9 @@ describe('QueryOptionsBuilder', () => {
       });
       const options = await newBuilder.build();
 
-      // Coordinator should NOT have worktree text
       const coordinatorPrompt = (options.agents!['Coordinator'] as { prompt: string }).prompt;
       expect(coordinatorPrompt).not.toContain('Git Worktree Isolation');
 
-      // Specialists should have worktree text
       const coderPrompt = (options.agents!['Coder'] as { prompt: string }).prompt;
       expect(coderPrompt).toContain('Git Worktree Isolation');
     });
@@ -1933,11 +1772,6 @@ describe('QueryOptionsBuilder', () => {
       mockSession.config.coordinatorMode = true;
       const options = await builder.build();
 
-      // Session-level tools must NOT be restricted to coordinator's tools.
-      // Options.tools is the BASE set for the entire session including sub-agents.
-      // If restricted to ['Task', 'TodoWrite', 'AskUserQuestion'], sub-agents like
-      // Coder (tools: ['Read', 'Edit', 'Write', ...]) get an empty tool set
-      // because AgentDefinition.tools is a filter on the base set.
       expect(options.tools).not.toEqual(['Task', 'TodoWrite', 'AskUserQuestion']);
     });
 
@@ -1946,7 +1780,6 @@ describe('QueryOptionsBuilder', () => {
       mockSession.config.sdkToolsPreset = { type: 'preset', preset: 'claude_code' };
       const options = await builder.build();
 
-      // Coordinator mode should NOT override the preset - sub-agents need full tools
       expect(options.tools).toEqual({ type: 'preset', preset: 'claude_code' });
     });
 
@@ -1954,7 +1787,6 @@ describe('QueryOptionsBuilder', () => {
       mockSession.config.coordinatorMode = true;
       const options = await builder.build();
 
-      // allowedTools ensures sub-agents can use tools under dontAsk permission mode
       expect(options.allowedTools).toBeDefined();
       expect(options.allowedTools).toContain('Read');
       expect(options.allowedTools).toContain('Write');
@@ -1967,22 +1799,18 @@ describe('QueryOptionsBuilder', () => {
       mockSession.config.coordinatorMode = true;
       const options = await builder.build();
 
-      // canUseTool should not be set by coordinator mode
-      // (only set if explicitly via setCanUseTool for AskUserQuestion handler)
       expect(options.canUseTool).toBeUndefined();
     });
 
     it('should preserve existing canUseTool when coordinatorMode is on', async () => {
       mockSession.config.coordinatorMode = true;
 
-      // Set an existing canUseTool callback (like AskUserQuestion handler)
       const originalCallback = async () => {
         return { behavior: 'allow' as const };
       };
       builder.setCanUseTool(originalCallback);
       const options = await builder.build();
 
-      // The original callback should be passed through unchanged
       expect(options.canUseTool).toBe(originalCallback);
     });
   });
@@ -2175,7 +2003,6 @@ describe('QueryOptionsBuilder', () => {
       });
 
       it('leaves tools undefined for Anthropic when agents are configured', async () => {
-        // Default provider is anthropic; no registry setup needed.
         mockSession.config.agents = {
           'test-agent': {
             description: 'Test agent',
@@ -2234,8 +2061,6 @@ describe('QueryOptionsBuilder', () => {
     it('should include enableFileCheckpointing in debug logging', async () => {
       mockSession.config.enableFileCheckpointing = true;
       const options = await builder.build();
-      // Verify the option is included in the final options object
-      // (Debug logging will show this value automatically)
       expect('enableFileCheckpointing' in options).toBe(true);
     });
   });
@@ -2334,7 +2159,6 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('should exclude disabled skills', async () => {
-      // getEnabledSkills() only returns enabled skills — simulate that
       const mockSkillsManager = {
         getEnabledSkills: mock(() => [enabledSkills[0]]),
       };
@@ -2347,7 +2171,6 @@ describe('QueryOptionsBuilder', () => {
       const builder = new QueryOptionsBuilder(context);
       const options = await builder.build();
 
-      // Only the enabled plugin skill should appear
       expect(options.plugins).toEqual([{ type: 'local', path: '/path/to/plugin' }]);
     });
 
@@ -2416,7 +2239,6 @@ describe('QueryOptionsBuilder', () => {
         get: mock(() => disabledAppMcpServer),
       };
       const mockSkillsManager = {
-        // Skill itself is enabled (getEnabledSkills returns it)
         getEnabledSkills: mock(() => [enabledSkills[1]]),
       };
       const context: QueryOptionsBuilderContext = {
@@ -2430,13 +2252,12 @@ describe('QueryOptionsBuilder', () => {
       const builder = new QueryOptionsBuilder(context);
       const options = await builder.build();
 
-      // Disabled AppMcpServer must not be injected even though the skill is enabled
       expect(options.mcpServers).toBeUndefined();
     });
 
     it('should skip MCP server skills when referenced app_mcp_servers entry is deleted', async () => {
       const mockAppMcpServerRepo = {
-        get: mock(() => null), // Simulates deleted entry
+        get: mock(() => null),
       };
       const mockSkillsManager = {
         getEnabledSkills: mock(() => [enabledSkills[1]]),
@@ -2452,7 +2273,6 @@ describe('QueryOptionsBuilder', () => {
       const builder = new QueryOptionsBuilder(context);
       const options = await builder.build();
 
-      // MCP server skill should be silently skipped
       expect(options.mcpServers).toBeUndefined();
     });
 
@@ -2478,17 +2298,13 @@ describe('QueryOptionsBuilder', () => {
       const builder = new QueryOptionsBuilder(context);
       const options = await builder.build();
 
-      // strictMcpConfig should be true for space_chat
       expect(options.strictMcpConfig).toBe(true);
-      // Skill-injected server must be present in mcpServers so strictMcpConfig doesn't block it
       expect(options.mcpServers!['test-search']).toEqual({
         command: 'npx',
         args: ['-y', 'test-mcp'],
         env: { TEST_API_KEY: 'test-key' },
       });
-      // Original space server must still be present
       expect(options.mcpServers!['space-agent-tools']).toEqual({ command: 'space-cmd' });
-      // Skill MCP server wildcard should be auto-allowed
       expect(options.allowedTools).toContain('test-search__*');
     });
 
@@ -2517,20 +2333,12 @@ describe('QueryOptionsBuilder', () => {
       const builder = new QueryOptionsBuilder(context);
       const options = await builder.build();
 
-      // Builtin skills are injected as local plugins so the SDK discovers their SKILL.md.
-      // The path must point at the *wrapper* plugin directory
-      // (~/.hyperneo/skill-plugins/<commandName>), not the raw skill directory
-      // (~/.hyperneo/skills/<commandName>), because only the wrapper has the
-      // .claude-plugin/plugin.json manifest the SDK requires — otherwise the
-      // SDK silently drops the plugin entry and `/<commandName>` never registers.
       expect(options.plugins).toBeDefined();
       expect(options.plugins).toHaveLength(1);
       expect(options.plugins![0]).toMatchObject({ type: 'local' });
       const pluginPath = (options.plugins![0] as { type: string; path: string }).path;
       expect(pluginPath).toContain('.hyperneo/skill-plugins/playwright');
-      // Must NOT point at the raw skill directory — that path lacks the plugin manifest.
       expect(pluginPath).not.toMatch(/\.hyperneo\/skills\/playwright(?:$|\/)/);
-      // Builtin skills do not contribute to mcpServers
       expect(options.mcpServers).toBeUndefined();
     });
 
@@ -2582,7 +2390,6 @@ describe('QueryOptionsBuilder', () => {
         createdAt: Date.now(),
       };
       const mockSkillsManager = {
-        // getEnabledSkills returns only enabled skills — disabled are not returned
         getEnabledSkills: mock(() => []),
       };
       const context: QueryOptionsBuilderContext = {
@@ -2594,8 +2401,7 @@ describe('QueryOptionsBuilder', () => {
       const builder = new QueryOptionsBuilder(context);
       const options = await builder.build();
 
-      // Disabled skill should not appear in plugins
-      void builtinSkill; // referenced to avoid lint warning
+      void builtinSkill;
       expect(options.plugins).toBeUndefined();
     });
 
@@ -2687,14 +2493,6 @@ describe('QueryOptionsBuilder', () => {
       });
     });
 
-    // ------------------------------------------------------------------
-    // MCP M6: per-session `mcp_enablement` overrides must filter the
-    // skill bridge too, not just the spawn path's direct `config.mcpServers`
-    // injection. Without this wiring a user disabling a skill-wrapped MCP
-    // server via the Tools modal would see the toggle persist but the
-    // server would still be injected (because the skill bridge bypasses
-    // config.mcpServers).
-    // ------------------------------------------------------------------
     describe('mcp_enablement override filtering (MCP M6)', () => {
       const targetAppServer = {
         id: 'mcp-server-uuid',
@@ -2769,14 +2567,10 @@ describe('QueryOptionsBuilder', () => {
         const builder = new QueryOptionsBuilder(ctx);
         const options = await builder.build();
 
-        // Skill-wrapped server must not be injected despite the skill itself
-        // and the registry row both being enabled.
         expect(options.mcpServers?.['test-search']).toBeUndefined();
       });
 
       it('includes the server when the session override explicitly enables a globally-disabled registry row', async () => {
-        // Start from a disabled registry row so we can verify the session
-        // override can override-in (not just override-out).
         const disabledAppServer = { ...targetAppServer, enabled: false };
         const mockAppMcpServerRepo = {
           get: mock(() => disabledAppServer),
@@ -2809,8 +2603,6 @@ describe('QueryOptionsBuilder', () => {
         const builder = new QueryOptionsBuilder(ctx);
         const options = await builder.build();
 
-        // Skill-wrapped server attaches under the skill name only (no duplicate
-        // under the registry name `test-search-server`).
         expect(options.mcpServers?.['test-search']).toEqual({
           command: 'npx',
           args: ['-y', 'test-mcp'],
@@ -2820,7 +2612,6 @@ describe('QueryOptionsBuilder', () => {
       });
 
       it('honours the session > room > space > registry precedence chain', async () => {
-        // room disables; session does NOT override — server must be hidden.
         mockSession.context = { roomId: 'room-1', spaceId: 'space-1' };
         const ctxRoomDisables = buildContext([
           { scopeType: 'room', scopeId: 'room-1', serverId: 'mcp-server-uuid', enabled: false },
@@ -2829,8 +2620,6 @@ describe('QueryOptionsBuilder', () => {
         const options1 = await builder1.build();
         expect(options1.mcpServers?.['test-search']).toBeUndefined();
 
-        // Same room-level disable, but now a session-scope override re-enables —
-        // more specific scope wins.
         const ctxSessionReenables = buildContext([
           { scopeType: 'room', scopeId: 'room-1', serverId: 'mcp-server-uuid', enabled: false },
           {
@@ -2846,8 +2635,6 @@ describe('QueryOptionsBuilder', () => {
       });
 
       it('falls back to the registry default when no enablement repo is provided', async () => {
-        // No mcpEnablementRepo — pre-M6 behaviour preserved: registry row's
-        // enabled flag is the only signal.
         const disabledAppServer = { ...targetAppServer, enabled: false };
         const mockAppMcpServerRepo = {
           get: mock(() => disabledAppServer),
@@ -2870,10 +2657,6 @@ describe('QueryOptionsBuilder', () => {
   });
 
   describe('configured registry MCP servers (skill-less path)', () => {
-    // Regression coverage for task #853: an enabled `app_mcp_servers` entry
-    // that has NO wrapping `mcp_server` skill must still reach the session via
-    // Options.mcpServers, so tools its instruction skills reference are present.
-
     type RepoServer = {
       id: string;
       name: string;
@@ -2980,15 +2763,13 @@ describe('QueryOptionsBuilder', () => {
           id: 'srv-broken',
           name: 'broken-server',
           sourceType: 'stdio',
-          command: '', // invalid: stdio requires a command
+          command: '',
           enabled: true,
         },
       ]);
       const builder = new QueryOptionsBuilder(ctx);
       const options = await builder.build();
 
-      // Invalid server is skipped deterministically, not silently passed through
-      // as a { command: undefined } config the SDK would fail to spawn.
       expect(options.mcpServers?.['broken-server']).toBeUndefined();
     });
 
@@ -3002,8 +2783,6 @@ describe('QueryOptionsBuilder', () => {
           enabled: true,
         },
       ]);
-      // Genuine runtime servers (space-agent-tools, node-agent, …) use names
-      // that never overlap registry entries, so they coexist and win their key.
       mockSession.config.mcpServers = { 'space-agent-tools': { command: 'runtime-cmd' } };
       const builder = new QueryOptionsBuilder(ctx);
       const options = await builder.build();
@@ -3014,9 +2793,6 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('does not let a registry server named like a runtime key shadow the genuine runtime server', async () => {
-      // A registry entry accidentally/maliciously named like a runtime key must
-      // not replace or drop the genuine in-process server. Runtime spreads last,
-      // so it wins — a reserved-name registry row is simply shadowed.
       const ctx = buildRegistryContext([
         {
           id: 'srv-evil',
@@ -3035,8 +2811,6 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('detaches a registry server that is deleted (removed from the registry)', async () => {
-      // resolveEffectiveRegistryServers re-reads the registry each call, so a
-      // deleted row is absent from the effective set on the next recompute.
       const registry = [
         {
           id: 'srv-del',
@@ -3051,8 +2825,6 @@ describe('QueryOptionsBuilder', () => {
 
       expect(builder.getEffectiveMcpServers()?.['doomed-srv']).toBeDefined();
 
-      // Row deleted (no longer in list) — server detaches immediately, with no
-      // stale config.mcpServers copy to resurrect it.
       registry.pop();
       expect(builder.getEffectiveMcpServers()?.['doomed-srv']).toBeUndefined();
     });
@@ -3072,8 +2844,6 @@ describe('QueryOptionsBuilder', () => {
 
       expect(builder.getEffectiveMcpServers()?.['old-name']).toBeDefined();
 
-      // Renamed: old name gone, new name present (same id). Only the new name
-      // attaches; the old name does not linger.
       registry[0]!.name = 'new-name';
       const eff = builder.getEffectiveMcpServers();
       expect(eff?.['old-name']).toBeUndefined();
@@ -3135,8 +2905,6 @@ describe('QueryOptionsBuilder', () => {
       const builder = new QueryOptionsBuilder(ctx);
       const options = await builder.build();
 
-      // The skill path attaches the server under the skill name; the registry
-      // path must NOT re-add it under the registry name (would spawn a dupe).
       expect(options.mcpServers?.['my-skill-name']).toEqual({
         command: 'npx',
         args: ['-y', 'tool'],
@@ -3170,16 +2938,11 @@ describe('QueryOptionsBuilder', () => {
       const builder = new QueryOptionsBuilder(ctx);
       const options = await builder.build();
 
-      // Registry-enabled, but its skill is disabled → stays detached under both
-      // the skill name and the registry name.
       expect(options.mcpServers?.['my-skill-name']).toBeUndefined();
       expect(options.mcpServers?.['registry-server-name']).toBeUndefined();
     });
 
     it('getEffectiveMcpServers recomputes to reflect enable/disable (active-session reconciliation)', async () => {
-      // The reconciliation path calls getEffectiveMcpServers() to recompute the
-      // live set after a config change. Verify a single builder reflects the
-      // current registry state on each call.
       const server = {
         id: 'srv-cbm',
         name: 'codebase-memory-mcp',
@@ -3192,9 +2955,6 @@ describe('QueryOptionsBuilder', () => {
 
       expect(builder.getEffectiveMcpServers()?.['codebase-memory-mcp']).toBeDefined();
 
-      // Simulate the server being disabled (e.g. via mcp.registry.setEnabled);
-      // the repo `list()` mock returns the same live object, so mutating it is
-      // visible on the next recompute.
       server.enabled = false;
       const options = await builder.build();
       expect(options.mcpServers?.['codebase-memory-mcp']).toBeUndefined();
@@ -3251,7 +3011,6 @@ describe('QueryOptionsBuilder', () => {
       const builder = new QueryOptionsBuilder(context);
       const options = await builder.build();
 
-      // Skill override disables the skill — must not appear in plugins
       expect(options.plugins).toBeUndefined();
     });
 
@@ -3274,7 +3033,6 @@ describe('QueryOptionsBuilder', () => {
       const builder = new QueryOptionsBuilder(context);
       const options = await builder.build();
 
-      // Skill override disables the MCP skill — must not appear in mcpServers
       expect(options.mcpServers).toBeUndefined();
     });
 
@@ -3316,7 +3074,6 @@ describe('QueryOptionsBuilder', () => {
         settingsManager: mockSettingsManager,
         skillsManager:
           mockSkillsManager as unknown as import('../../../../src/lib/skills-manager').SkillsManager,
-        // Disable only pluginSkill; anotherPlugin should still appear
         skillOverrides: [{ skillId: pluginSkill.id, enabled: false }],
       };
       const builder = new QueryOptionsBuilder(context);
@@ -3359,13 +3116,6 @@ describe('QueryOptionsBuilder', () => {
     });
   });
 
-  // Session-scoped skill disable list (task #122).
-  //
-  // `ToolsConfig.disabledSkills` lets the session Tools modal opt out of
-  // individual skills without mutating the global registry. The filter is
-  // additive on top of explicit skill overrides — see `getSessionDisabledSkillIds()` in
-  // `query-options-builder.ts` — and applies to both plugin and mcp_server
-  // skills, so the SDK build never sees the disabled entries.
   describe('session disabledSkills override', () => {
     const pluginSkill = {
       id: 'skill-plugin-session-1',
@@ -3429,15 +3179,10 @@ describe('QueryOptionsBuilder', () => {
       const builder = new QueryOptionsBuilder(context);
       const options = await builder.build();
 
-      // Session disable wins — plugin must not be injected.
       expect(options.plugins).toBeUndefined();
     });
 
     it('excludes a builtin skill listed in tools.disabledSkills', async () => {
-      // Regression guard: `buildPluginsFromBuiltinSkills` must honour the
-      // session disable list the same way the plugin and mcp_server paths do.
-      // Without this filter, a session-disabled builtin would still show up
-      // as a `/<commandName>` slash command for that session.
       mockSession.config.tools = { disabledSkills: [builtinSkill.id] };
       const mockSkillsManager = {
         getEnabledSkills: mock(() => [builtinSkill]),
@@ -3451,7 +3196,6 @@ describe('QueryOptionsBuilder', () => {
       const builder = new QueryOptionsBuilder(context);
       const options = await builder.build();
 
-      // Builtin skill is filtered — no plugin entry materialises for it.
       expect(options.plugins).toBeUndefined();
     });
 
@@ -3474,7 +3218,6 @@ describe('QueryOptionsBuilder', () => {
       const builder = new QueryOptionsBuilder(context);
       const options = await builder.build();
 
-      // Skill bridge respects the session disable — no entry in mcpServers.
       expect(options.mcpServers).toBeUndefined();
     });
 
@@ -3498,15 +3241,10 @@ describe('QueryOptionsBuilder', () => {
       const builder = new QueryOptionsBuilder(context);
       const options = await builder.build();
 
-      // `pluginSkill` is filtered, `otherPlugin` survives — proves the filter
-      // is keyed by skill ID rather than wiping the whole list.
       expect(options.plugins).toEqual([{ type: 'local', path: '/plugins/other-session-plugin' }]);
     });
 
     it('is additive with skill overrides (explicit disable wins even when session list is empty)', async () => {
-      // Regression guard: a session with `disabledSkills: []` must still
-      // honour an explicit skill override that says enabled=false. The two scopes
-      // are independent disable lists.
       mockSession.config.tools = { disabledSkills: [] };
       const mockSkillsManager = {
         getEnabledSkills: mock(() => [pluginSkill]),
@@ -3525,8 +3263,6 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('is a no-op when tools.disabledSkills is undefined', async () => {
-      // Default for legacy sessions — must not regress the existing
-      // "all enabled skills are injected" behaviour.
       mockSession.config.tools = {};
       const mockSkillsManager = {
         getEnabledSkills: mock(() => [pluginSkill]),
@@ -3544,7 +3280,6 @@ describe('QueryOptionsBuilder', () => {
     });
   });
 
-  // Task 7.1 regression: Skill/WebSearch/WebFetch tools must remain available after Skills registry changes
   describe('regression: Skill, WebSearch, WebFetch tool availability (Task 7.1)', () => {
     beforeEach(() => {
       mockSession.type = 'space_chat';
@@ -3574,12 +3309,6 @@ describe('QueryOptionsBuilder', () => {
       expect(options.allowedTools).toContain('WebFetch');
     });
   });
-
-  // NOTE: Per-session `disabledMcpServers` filtering was removed in M5
-  // (unify-mcp-config-model). MCP enablement now flows through the unified
-  // `app_mcp_servers` registry plus per-room/per-session `mcp_enablement`
-  // overrides — `QueryOptionsBuilder` no longer trims `mcpServers` based on
-  // a per-session list. Tests for the legacy filter are gone.
 
   describe('always-on agent/agents propagation (room agents)', () => {
     const coderExplorerDef = {
@@ -3633,7 +3362,6 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('preserves config.agents when coordinatorMode is undefined (always-on default)', async () => {
-      // coordinatorMode is never set — the always-on pattern default
       mockSession.config.agent = 'Coder';
       mockSession.config.agents = {
         Coder: coderAgentDef,
@@ -3649,7 +3377,6 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('coordinatorMode ON overwrites room agent config with coordinator agents', async () => {
-      // Even if room agent config is set, coordinator mode takes over
       mockSession.config.agent = 'Coder';
       mockSession.config.agents = {
         Coder: coderAgentDef,
@@ -3659,17 +3386,13 @@ describe('QueryOptionsBuilder', () => {
 
       const options = await builder.build();
 
-      // Coordinator mode overwrites agent to 'Coordinator'
       expect(options.agent).toBe('Coordinator');
-      // Coordinator specialists are present
       expect(options.agents!['Coordinator']).toBeDefined();
       expect(options.agents!['Debugger']).toBeDefined();
-      // The coordinator's Coder specialist wins over the room-agent Coder def
       expect(options.agents!['Coder']).toBeDefined();
     });
 
     it('coordinatorMode ON merges room custom agents into coordinator agents map', async () => {
-      // Custom non-conflicting agents from room config are preserved in coordinator mode
       mockSession.config.agents = {
         'my-custom': { description: 'Custom agent', prompt: 'Custom.' },
       };
@@ -3678,9 +3401,7 @@ describe('QueryOptionsBuilder', () => {
       const options = await builder.build();
 
       expect(options.agent).toBe('Coordinator');
-      // Custom agent is merged in (no name conflict with specialist names)
       expect(options.agents!['my-custom']).toBeDefined();
-      // Built-in specialists are also present
       expect(options.agents!['Coordinator']).toBeDefined();
       expect(options.agents!['Coder']).toBeDefined();
     });
@@ -3692,7 +3413,6 @@ describe('QueryOptionsBuilder', () => {
         'coder-explorer': coderExplorerDef,
         'coder-tester': coderTesterDef,
       };
-      // coordinatorMode is off (room agent mode)
       mockSession.worktree = {
         worktreePath: '/worktree/path',
         mainRepoPath: '/main/repo',
@@ -3705,12 +3425,9 @@ describe('QueryOptionsBuilder', () => {
 
       const options = await newBuilder.build();
 
-      // System prompt gets worktree isolation (session-level protection)
       const systemPrompt = options.systemPrompt as { append?: string };
       expect(systemPrompt.append).toContain('Git Worktree Isolation');
 
-      // Sub-agent prompts are NOT modified — cwd is the worktree path,
-      // which provides the actual directory isolation for sub-agents
       expect((options.agents!['coder-explorer'] as { prompt: string }).prompt).toBe(
         coderExplorerDef.prompt
       );
@@ -3733,11 +3450,9 @@ describe('QueryOptionsBuilder', () => {
 
       const options = await newBuilder.build();
 
-      // Coordinator mode injects worktree isolation into specialist agents
       const coderPrompt = (options.agents!['Coder'] as { prompt: string }).prompt;
       expect(coderPrompt).toContain('Git Worktree Isolation');
 
-      // But NOT into the Coordinator itself
       const coordinatorPrompt = (options.agents!['Coordinator'] as { prompt: string }).prompt;
       expect(coordinatorPrompt).not.toContain('Git Worktree Isolation');
     });

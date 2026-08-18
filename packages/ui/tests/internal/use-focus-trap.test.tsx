@@ -8,7 +8,6 @@ afterEach(() => {
   cleanup();
 });
 
-// Test component that uses useFocusTrap
 function TrapContainer({
   enabled = true,
   initialFocusRef,
@@ -57,7 +56,6 @@ describe('useFocusTrap', () => {
     );
     await act(async () => {});
 
-    // Focus should remain on outside button
     expect(document.activeElement).toBe(outside);
     document.body.removeChild(outside);
   });
@@ -218,13 +216,11 @@ describe('useFocusTrap', () => {
     await act(async () => {});
 
     const trapBtn = container.querySelector('#trap-btn2') as HTMLElement;
-    // trap should have focused the button
     expect(document.activeElement).toBe(trapBtn);
 
     unmount();
     await act(async () => {});
 
-    // focus is NOT restored to outside
     expect(document.activeElement).not.toBe(outside);
     document.body.removeChild(outside);
   });
@@ -267,7 +263,6 @@ describe('useFocusTrap', () => {
       );
     });
 
-    // Focus should remain on btnA
     expect(document.activeElement).toBe(btnA);
   });
 });

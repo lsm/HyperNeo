@@ -3,9 +3,6 @@ import { Check, ThumbsUp, User, CheckCircle, Circle, Smile, Paperclip } from 'lu
 import { Listbox, ListboxButton, ListboxOptions, ListboxOption } from '../../src/mod.ts';
 import { classNames } from '../../src/internal/class-names.ts';
 
-// ============================================================
-// 01 - Simple with Icons
-// ============================================================
 const timeline = [
   {
     id: 1,
@@ -105,9 +102,6 @@ export function SimpleWithIcons() {
   );
 }
 
-// ============================================================
-// 02 - With Comments
-// ============================================================
 const activity = [
   {
     id: 1,
@@ -227,9 +221,6 @@ export function WithComments() {
   );
 }
 
-// ============================================================
-// 03 - With Comments and Mood Selector (Headless)
-// ============================================================
 const moods = [
   { name: 'Excited', value: 'excited', bgColor: 'bg-red-500' },
   { name: 'Loved', value: 'loved', bgColor: 'bg-pink-400' },
@@ -309,7 +300,6 @@ export function WithCommentsAndMood() {
         ))}
       </ul>
 
-      {/* New comment form with mood selector */}
       <div class="mt-6 flex gap-x-3">
         <img
           alt=""
@@ -399,9 +389,6 @@ export function WithCommentsAndMood() {
   );
 }
 
-// ============================================================
-// FeedsDemo - Main wrapper
-// ============================================================
 export function FeedsDemo() {
   return (
     <div class="space-y-8">

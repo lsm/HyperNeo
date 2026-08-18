@@ -1,9 +1,3 @@
-/**
- * Space Workflow Run Repository
- *
- * Repository for SpaceWorkflowRun CRUD operations.
- */
-
 import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
 import type {
@@ -33,17 +27,10 @@ export interface UpdateWorkflowRunParams {
 export class SpaceWorkflowRunRepository {
   constructor(private db: BunDatabase) {}
 
-  /**
-   * Create a new workflow run
-   */
   createRun(params: CreateWorkflowRunParams): SpaceWorkflowRun {
     return this.insertRun(params, null);
   }
 
-  /**
-   * Atomically append the immutable definition snapshot and create a run pinned to it.
-   * Production run creation must use this method; createRun remains for legacy/test fixtures.
-   */
   createPinnedRun(
     params: CreateWorkflowRunParams & { rawWorkflow: SpaceWorkflow }
   ): SpaceWorkflowRun {
@@ -69,17 +56,6 @@ export class SpaceWorkflowRunRepository {
     })();
   }
 
-  /**
-   * List unpinned runs that are still executable — rows that pre-date Phase-1 pinning (plus
-   * any whose head was deleted before backfill) AND that have at least one non-archived
-   * task. A run whose tasks are all archived is a tombstone, so the predicate is
-   * "EXISTS a non-archived task" rather than strictly "the canonical task is non-archived"
-   * — a run with a live canonical task plus archived duplicates still qualifies. The
-   * startup backfill pins these so the read cutover can resolve them through an immutable
-   * version instead of the mutable head. Fully-archived (tombstoned) runs are excluded:
-   * they can never be executed again, so pinning them only burns startup work and creates
-   * unexecutable pins (RFC §4/§11 scope the upgrade backfill to non-archived runs).
-   */
   listPinnableRuns(): Array<{ id: string; workflowId: string; spaceId: string }> {
     const rows = this.db
       .prepare(
@@ -99,16 +75,6 @@ export class SpaceWorkflowRunRepository {
     }));
   }
 
-  /**
-   * Atomically append the immutable definition snapshot and pin an EXISTING run to it.
-   * The startup backfill uses this for runs that pre-date creation-time pinning. Mirrors
-   * `createPinnedRun` but UPDATEs an existing row instead of inserting.
-   *
-   * Idempotent: `appendVersion` is `INSERT OR IGNORE` and the stamp carries a
-   * `WHERE definition_version IS NULL` guard, so re-running on an already-pinned run is a
-   * no-op and the version history never duplicates. Returns false if the run was already
-   * pinned (or no longer exists).
-   */
   pinExistingRun(runId: string, rawWorkflow: SpaceWorkflow): boolean {
     const { versionHash, payload } = computeDefinitionVersion(rawWorkflow);
     const appendVersion = new SpaceWorkflowDefinitionVersionRepository(this.db);
@@ -121,10 +87,6 @@ export class SpaceWorkflowRunRepository {
         source: 'backfill',
         createdAt: Date.now(),
       });
-      // Stamp only the definition pin — do NOT bump updated_at. This is an internal
-      // migration with no run activity; bumping it would distort UI recency ordering of
-      // terminal runs (VisualWorkflowEditor sorts by updated_at), surfacing an older
-      // backfilled run over the genuinely latest one.
       const result = this.db
         .prepare(
           `UPDATE space_workflow_runs SET definition_version = ?
@@ -135,26 +97,12 @@ export class SpaceWorkflowRunRepository {
     })();
   }
 
-  /**
-   * Pin every existing run that lacks a creation-time definition version to its current
-   * head (RFC §4 Phase 1 read-cutover backfill). `loadWorkflow` resolves a workflow id to
-   * its RAW persisted definition — the repo-level read, pre-sanitization, the same input
-   * `createPinnedRun` pins — so a run is stamped with the version of exactly what it
-   * executes today.
-   *
-   * Content-neutral by construction: at cutover time each run's pin equals its current
-   * head, so resolving through the pin changes nothing for in-flight runs. Runs whose head
-   * has been deleted are skipped (left null → the read-cutover fallback returns null,
-   * matching today's behavior). Idempotent and per-run guarded: a single malformed row
-   * must not propagate and prevent daemon startup.
-   */
   backfillDefinitionPins(loadWorkflow: (workflowId: string) => SpaceWorkflow | null): number {
     let count = 0;
     for (const run of this.listPinnableRuns()) {
       try {
         const workflow = loadWorkflow(run.workflowId);
-        if (!workflow) continue; // deleted head → leave unpinned (read-cutover fallback)
-        // pinExistingRun only stamps the pin; the startup backfill sweep runs after this.
+        if (!workflow) continue;
         if (this.pinExistingRun(run.id, workflow)) count += 1;
       } catch (err) {
         log.warn(`backfillDefinitionPins: skipped run ${run.id} (non-fatal):`, err);
@@ -192,9 +140,6 @@ export class SpaceWorkflowRunRepository {
     return this.getRun(id)!;
   }
 
-  /**
-   * Get a workflow run by ID
-   */
   getRun(id: string): SpaceWorkflowRun | null {
     const stmt = this.db.prepare(`SELECT * FROM space_workflow_runs WHERE id = ?`);
     const row = stmt.get(id) as Record<string, unknown> | undefined;
@@ -203,10 +148,6 @@ export class SpaceWorkflowRunRepository {
     return this.rowToRun(row);
   }
 
-  /**
-   * Batch-fetch runs by id in a single round-trip. Missing ids are omitted.
-   * Used to collapse N+1 lookups in EvolutionScopeService.buildPreflightContext.
-   */
   getRunsByIds(ids: string[]): SpaceWorkflowRun[] {
     if (ids.length === 0) return [];
     const placeholders = ids.map(() => '?').join(', ');
@@ -216,9 +157,6 @@ export class SpaceWorkflowRunRepository {
     return rows.map((row) => this.rowToRun(row));
   }
 
-  /**
-   * List workflow runs for a space
-   */
   listBySpace(spaceId: string): SpaceWorkflowRun[] {
     const stmt = this.db.prepare(
       `SELECT * FROM space_workflow_runs WHERE space_id = ? ORDER BY created_at DESC`
@@ -235,15 +173,6 @@ export class SpaceWorkflowRunRepository {
     return rows.map((r) => this.rowToRun(r));
   }
 
-  /**
-   * List in-progress workflow runs for a space.
-   *
-   * Only `in_progress` runs are returned — `pending` is a transient state that
-   * exists only briefly inside `startWorkflowRun` between `createRun` and the
-   * `updateStatus('in_progress')` call. Including `pending` here would cause
-   * a run that failed mid-creation to be rehydrated without a task and silently
-   * loop forever in the executor map.
-   */
   getActiveRuns(spaceId: string): SpaceWorkflowRun[] {
     const stmt = this.db.prepare(
       `SELECT * FROM space_workflow_runs WHERE space_id = ? AND status = 'in_progress' ORDER BY created_at ASC`
@@ -252,14 +181,6 @@ export class SpaceWorkflowRunRepository {
     return rows.map((r) => this.rowToRun(r));
   }
 
-  /**
-   * List runs that need an executor on startup: in_progress and blocked.
-   *
-   * This superset of getActiveRuns() is used exclusively by rehydrateExecutors()
-   * so that runs awaiting review get an executor reloaded on restart.
-   *
-   * `pending` is still excluded for the same reason as in getActiveRuns().
-   */
   getRehydratableRuns(spaceId: string): SpaceWorkflowRun[] {
     const stmt = this.db.prepare(
       `SELECT * FROM space_workflow_runs WHERE space_id = ? AND status IN ('in_progress', 'blocked') ORDER BY created_at ASC`
@@ -268,9 +189,6 @@ export class SpaceWorkflowRunRepository {
     return rows.map((r) => this.rowToRun(r));
   }
 
-  /**
-   * Update a workflow run with partial updates
-   */
   updateRun(id: string, params: UpdateWorkflowRunParams): SpaceWorkflowRun | null {
     const fields: string[] = [];
     const values: SQLiteValue[] = [];
@@ -325,27 +243,10 @@ export class SpaceWorkflowRunRepository {
     return this.getRun(id);
   }
 
-  /**
-   * Update only the status of a run, bypassing lifecycle transition guards.
-   *
-   * Intended for test fixtures and internal helpers only — use transitionStatus()
-   * for all production code that changes run status.
-   */
   updateStatusUnchecked(id: string, status: WorkflowRunStatus): SpaceWorkflowRun | null {
     return this.updateRun(id, { status });
   }
 
-  /**
-   * Atomically validate and apply a lifecycle status transition.
-   *
-   * Reads the current status from the DB, validates the requested transition
-   * against the WorkflowRunStatusMachine, and persists the new status only
-   * when the transition is allowed.
-   *
-   * @returns The updated run on success.
-   * @throws {Error} when the run is not found.
-   * @throws {Error} when the transition is not permitted by the lifecycle rules.
-   */
   transitionStatus(id: string, to: WorkflowRunStatus): SpaceWorkflowRun {
     const run = this.getRun(id);
     if (!run) throw new Error(`WorkflowRun not found: ${id}`);
@@ -354,38 +255,12 @@ export class SpaceWorkflowRunRepository {
     return updated;
   }
 
-  /**
-   * Delete a workflow run by ID
-   */
   deleteRun(id: string): boolean {
     const stmt = this.db.prepare(`DELETE FROM space_workflow_runs WHERE id = ?`);
     const result = stmt.run(id);
     return result.changes > 0;
   }
 
-  /**
-   * Delete every TOMBSTONED run that belongs to a given workflow.
-   *
-   * Needed because migration 60 rebuilt `space_workflow_runs` without an
-   * `ON DELETE CASCADE` FK on `workflow_id`, so callers that remove a workflow
-   * must explicitly clean up its runs to avoid orphans.
-   *
-   * Deletion-safe (RFC §4 #3): only PROVABLE tombstones are deleted — runs that
-   * have ≥1 task and NO non-archived task (i.e. `isParentTaskArchived` is true),
-   * regardless of run status. Everything else is protected and left in place
-   * (see `hasExecutableRuns`): runs with no task at all (startup window / failed
-   * task creation) and runs with a non-archived task (they reopen). Consulting
-   * task state rather than run status means a legacy non-terminal run whose
-   * tasks are all archived is cleaned up instead of stranding the user. Callers
-   * that need to know whether executable runs block full cleanup should check
-   * `hasExecutableRuns` first; this method silently leaves protected runs in
-   * place as defense in depth.
-   *
-   * @returns The number of run rows deleted. NOTE: under FK enforcement this
-   *          count may include cascade effects (e.g. `space_tasks.workflow_run_id
-   *          ON DELETE SET NULL`), so it is an upper bound, not a precise run
-   *          count. No caller relies on the exact value.
-   */
   deleteByWorkflowId(workflowId: string): number {
     const result = this.db
       .prepare(
@@ -403,9 +278,6 @@ export class SpaceWorkflowRunRepository {
     return result.changes;
   }
 
-  /**
-   * Convert a database row to a SpaceWorkflowRun object
-   */
   private rowToRun(row: Record<string, unknown>): SpaceWorkflowRun {
     return {
       id: row.id as string,

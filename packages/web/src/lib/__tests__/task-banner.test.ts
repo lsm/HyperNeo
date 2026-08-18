@@ -6,14 +6,6 @@ import {
   type TaskBannerInput,
 } from '../task-banner.ts';
 
-// ── Fixtures ──────────────────────────────────────────────────────────────
-
-/**
- * Minimal task fixture. Only the banner-relevant fields are declared; the
- * helper reads via `Pick<SpaceTask, …>` so the object does not need the full
- * `SpaceTask` shape. We assert that via `TaskBannerInput` instead of the
- * full type.
- */
 function makeTask(overrides: Partial<TaskBannerInput> = {}): TaskBannerInput {
   return {
     status: 'in_progress',
@@ -40,8 +32,6 @@ function hook(status: HookBannerSummary['status']): HookBannerSummary {
     },
   };
 }
-
-// ── Precedence ────────────────────────────────────────────────────────────
 
 describe('resolveActiveTaskBanner — precedence order', () => {
   test("status='blocked' wins over every other banner signal", () => {
@@ -92,11 +82,8 @@ describe('resolveActiveTaskBanner — precedence order', () => {
   });
 });
 
-// ── Branch: post_approval_blocked ─────────────────────────────────────────
-
 describe('post_approval_blocked branch', () => {
   test('only fires when status is `approved`', () => {
-    // `review` status with a stale blocked reason must NOT promote to post_approval_blocked
     const task = makeTask({
       status: 'review',
       postApprovalBlockedReason: 'stale reason',
@@ -110,7 +97,6 @@ describe('post_approval_blocked branch', () => {
         status: 'approved',
         postApprovalBlockedReason: reason,
       });
-      // With no task_completion checkpoint and no gates → null
       expect(resolveActiveTaskBanner(task)).toBeNull();
     }
   });
@@ -127,8 +113,6 @@ describe('post_approval_blocked branch', () => {
   });
 });
 
-// ── Branch: task_completion_pending ───────────────────────────────────────
-
 describe('task_completion_pending branch', () => {
   test("fires ONLY when status is 'review' (the checkpoint is paused)", () => {
     const task = makeTask({
@@ -139,16 +123,10 @@ describe('task_completion_pending branch', () => {
   });
 
   test("does NOT fire once status has left 'review' — even with the checkpoint field still set", () => {
-    // Regression for the stale-Approve-button bug: after a human approves, the
-    // task moves to `approved` but the pending-completion fields may linger
-    // until the post-approval cleanup runs. The banner must disappear the
-    // instant status leaves `review`, regardless of stale pending fields.
     for (const status of ['open', 'in_progress', 'approved', 'done'] as const) {
       const task = makeTask({
         status,
         pendingCheckpointType: 'task_completion',
-        // Clear the post-approval signal so the 'approved' case is not captured
-        // by the post_approval_blocked branch above.
         postApprovalBlockedReason: null,
       });
       expect(resolveActiveTaskBanner(task, undefined)).toBeNull();
@@ -164,9 +142,6 @@ describe('task_completion_pending branch', () => {
   });
 
   test('unknown checkpoint type values are ignored — they fall through to null', () => {
-    // PR 5/5 narrowed `pendingCheckpointType` to `'gate' | 'task_completion' |
-    // null`. If a stale daemon ever ships a different literal, this helper
-    // must NOT render a banner — the unknown value falls through.
     const task = makeTask({
       pendingCheckpointType: 'legacy_unknown' as unknown as SpaceTask['pendingCheckpointType'],
     });
@@ -179,8 +154,6 @@ describe('task_completion_pending branch', () => {
     ).toBeNull();
   });
 });
-
-// ── Branch: hook_pending ──────────────────────────────────────────────────
 
 describe('hook_pending branch', () => {
   test('requires a workflowRunId — standalone tasks never show a hook banner', () => {
@@ -219,5 +192,3 @@ describe('hook_pending branch', () => {
     });
   });
 });
-
-// ── Branch: hook_pending (gate_pending removed) ───────────────────────────

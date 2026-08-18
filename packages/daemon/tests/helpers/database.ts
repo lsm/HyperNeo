@@ -1,7 +1,3 @@
-/**
- * Shared test utilities for database tests
- */
-
 import type { Session } from '@hyperneo/shared';
 import { mock } from 'bun:test';
 import { Database } from '../../src/storage/database';
@@ -12,9 +8,6 @@ import {
   type InternalEventBus,
 } from '../../src/lib/internal-event-bus';
 
-/**
- * Create an in-memory test database
- */
 export async function createTestDb(): Promise<Database> {
   const db = new Database(':memory:');
   const reactiveDb = createReactiveDatabase(db);
@@ -22,9 +15,6 @@ export async function createTestDb(): Promise<Database> {
   return db;
 }
 
-/**
- * Create a mocked database with bun:test mocks
- */
 export function createMockDb(): Database {
   return {
     getSession: mock(() => null),
@@ -32,24 +22,14 @@ export function createMockDb(): Database {
   } as unknown as Database;
 }
 
-/**
- * Create a test InternalEventBus.
- */
 export async function createTestInternalEventBus(
   _name?: string
 ): Promise<InternalEventBus<DaemonInternalEventMap>> {
   return createDaemonInternalEventBus();
 }
 
-/**
- * Backwards-compatible test helper alias while remaining fixtures migrate their
- * local variable names from daemonHub to InternalEventBus.
- */
 export const createTestDaemonHub = createTestInternalEventBus;
 
-/**
- * Create a test session with default values
- */
 export function createTestSession(id: string): Session {
   return {
     id,

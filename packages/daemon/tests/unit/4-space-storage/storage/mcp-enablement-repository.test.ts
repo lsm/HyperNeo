@@ -1,12 +1,3 @@
-/**
- * McpEnablementRepository Unit Tests
- *
- * Covers CRUD + list queries on the unified mcp_enablement override table, the
- * composite primary key (server_id, scope_type, scope_id), and the
- * notifyChange('mcp_enablement') reactivity contract that LiveQueryEngine
- * relies on.
- */
-
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createTables } from '../../../../src/storage/schema';
@@ -16,10 +7,6 @@ import {
 } from '../../../../src/storage/reactive-database';
 import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
 import { McpEnablementRepository } from '../../../../src/storage/repositories/mcp-enablement-repository';
-
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
 
 describe('McpEnablementRepository', () => {
   let bunDb: BunDatabase;
@@ -48,10 +35,6 @@ describe('McpEnablementRepository', () => {
   afterEach(() => {
     bunDb.close();
   });
-
-  // ---------------------------------------------------------------------------
-  // setOverride
-  // ---------------------------------------------------------------------------
 
   describe('setOverride', () => {
     test('inserts a new row and returns it', () => {
@@ -95,10 +78,6 @@ describe('McpEnablementRepository', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // getOverride
-  // ---------------------------------------------------------------------------
-
   describe('getOverride', () => {
     test('returns the row when present', () => {
       repo.setOverride('room', 'room-1', serverA, true);
@@ -118,10 +97,6 @@ describe('McpEnablementRepository', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // list queries
-  // ---------------------------------------------------------------------------
-
   describe('listForScope / listForServer / listAll / listForScopes', () => {
     beforeEach(() => {
       repo.setOverride('space', 'space-1', serverA, false);
@@ -138,7 +113,6 @@ describe('McpEnablementRepository', () => {
 
     test('listForServer returns every override targeting a server', () => {
       const rows = repo.listForServer(serverA);
-      // serverA has two overrides: space:space-1 and room:room-1
       expect(rows).toHaveLength(2);
       expect(rows.map((r) => r.scopeType).sort()).toEqual(['room', 'space']);
     });
@@ -152,7 +126,6 @@ describe('McpEnablementRepository', () => {
         { scopeType: 'session', scopeId: 'sess-1' },
         { scopeType: 'space', scopeId: 'space-1' },
       ]);
-      // Excludes the room:room-1 row, includes the 2 space:space-1 rows + 1 session row.
       expect(rows).toHaveLength(3);
       const byScope = rows.reduce<Record<string, number>>((acc, r) => {
         acc[r.scopeType] = (acc[r.scopeType] ?? 0) + 1;
@@ -165,10 +138,6 @@ describe('McpEnablementRepository', () => {
       expect(repo.listForScopes([])).toEqual([]);
     });
   });
-
-  // ---------------------------------------------------------------------------
-  // clearOverride
-  // ---------------------------------------------------------------------------
 
   describe('clearOverride', () => {
     test('deletes the row and returns true', () => {
@@ -189,10 +158,6 @@ describe('McpEnablementRepository', () => {
       expect(notifyChangeSpy).not.toHaveBeenCalled();
     });
   });
-
-  // ---------------------------------------------------------------------------
-  // clearScope
-  // ---------------------------------------------------------------------------
 
   describe('clearScope', () => {
     test('deletes every row at that scope, returns count, and notifies once', () => {
@@ -215,10 +180,6 @@ describe('McpEnablementRepository', () => {
       expect(notifyChangeSpy).not.toHaveBeenCalled();
     });
   });
-
-  // ---------------------------------------------------------------------------
-  // FK cascade: deleting a server removes its overrides
-  // ---------------------------------------------------------------------------
 
   describe('foreign key cascade', () => {
     test('deleting the underlying app_mcp_servers row removes overrides', () => {

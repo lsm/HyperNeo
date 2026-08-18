@@ -1,14 +1,3 @@
-/**
- * ACP Integration Test
- *
- * Full lifecycle test exercising initialize → authenticate →
- * createSession → sendPrompt → adapter iteration → close.
- *
- * Uses a deterministic mock transport so the test is reliable
- * when run alongside other test files (no subprocess spawning).
- * The fixture mock-acp-server.ts is available for manual protocol validation.
- */
-
 import { describe, expect, test, mock } from 'bun:test';
 import type {
   AcpJsonRpcNotification,
@@ -18,10 +7,6 @@ import type {
 } from '@hyperneo/shared';
 import { AcpClient } from '../../../../src/lib/acp/acp-client';
 import { AcpQueryAdapter } from '../../../../src/lib/acp/acp-query-adapter';
-
-// ---------------------------------------------------------------------------
-// Mock transport that simulates the fixture mock-acp-server.ts responses
-// ---------------------------------------------------------------------------
 
 class MockAcpTransport {
   options: AcpTransportOptions | undefined;
@@ -38,7 +23,6 @@ class MockAcpTransport {
     const id = this.requestId++;
     return new Promise<AcpJsonRpcResponse>((resolve) => {
       this.pending.set(id, resolve);
-      // Simulate async server response
       setTimeout(() => this.handleRequest(id, method, params), 0);
     });
   };
@@ -83,7 +67,6 @@ class MockAcpTransport {
       }
       case 'session/prompt': {
         const p = params as { sessionId: string };
-        // Queue notifications
         this.notificationQueue.push({
           jsonrpc: '2.0',
           method: 'session/update',
@@ -132,9 +115,7 @@ class MockAcpTransport {
             },
           },
         });
-        // Emit notifications asynchronously
         setTimeout(() => this.drainNotifications(), 5);
-        // Then resolve the request
         setTimeout(() => this.resolve(id, { stopReason: 'end_turn' }), 20);
         break;
       }
@@ -170,20 +151,16 @@ describe('ACP Integration', () => {
   test('full lifecycle with mock ACP server', async () => {
     const client = new MockedAcpClient({ command: 'mock-agent' });
 
-    // Initialize
     const initResult = await client.initialize();
     expect(initResult.agentInfo?.name).toBe('mock-acp-server');
     expect(initResult.authMethods?.length).toBeGreaterThan(0);
 
-    // Authenticate
     await client.authenticate();
 
-    // Create session
     const session = await client.createSession('/tmp/project');
     expect(session.sessionId).toBe('mock-session-001');
     expect(session.configOptions.length).toBeGreaterThan(0);
 
-    // Query adapter
     const adapter = new AcpQueryAdapter(client, [{ type: 'text', text: 'hello' }]);
     expect(adapter.sessionId).toBe('mock-session-001');
 
@@ -192,8 +169,6 @@ describe('ACP Integration', () => {
       messages.push(msg);
     }
 
-    // Should have: assistant message (text), assistant message (tool_use),
-    // tool_progress, result
     expect(messages.length).toBeGreaterThanOrEqual(3);
 
     const types = messages.map((m) => (m as { type: string }).type);
@@ -201,7 +176,6 @@ describe('ACP Integration', () => {
     expect(types).toContain('tool_progress');
     expect(types).toContain('result');
 
-    // Verify text accumulation
     const assistantMsgs = messages.filter((m) => (m as { type: string }).type === 'assistant');
     const textMsg = assistantMsgs.find((m) =>
       (m as { message: { content: { type: string }[] } }).message.content.some(
@@ -215,7 +189,6 @@ describe('ACP Integration', () => {
       )?.text
     ).toBe('Hello world');
 
-    // Verify tool_use
     const toolMsg = assistantMsgs.find((m) =>
       (m as { message: { content: { type: string }[] } }).message.content.some(
         (c) => c.type === 'tool_use'
@@ -228,7 +201,6 @@ describe('ACP Integration', () => {
     expect(toolBlock?.id).toBe('tc-mock-1');
     expect(toolBlock?.name).toBe('Read file');
 
-    // Close
     adapter.close();
   });
 
@@ -244,7 +216,6 @@ describe('ACP Integration', () => {
       updates.push(update);
     }
 
-    // Should receive all session/update notifications
     expect(updates.length).toBe(4);
     expect((updates[0] as { update: { sessionUpdate: string } }).update.sessionUpdate).toBe(
       'agent_message_chunk'

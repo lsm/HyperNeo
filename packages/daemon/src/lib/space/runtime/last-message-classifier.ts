@@ -4,14 +4,6 @@ export type LastMessageClassification =
   | { terminal: true; reason: string }
   | { terminal: false; reason: string };
 
-/**
- * Classify whether an idle node-agent session ended at a safe terminal point.
- *
- * Terminal means the SDK stream clearly reached a final result or a clean
- * assistant end-turn. Non-terminal means the persisted transcript ends in a
- * state that can indicate interrupted work (plain user/tool_result input,
- * thinking-only assistant output, or unresolved tool_use blocks).
- */
 export function classifyLastMessageForIdleAgent(
   message: SDKMessage | null | undefined
 ): LastMessageClassification {

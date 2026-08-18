@@ -1,13 +1,3 @@
-/**
- * Unit tests for the `space.github.health` integration health snapshot RPC.
- *
- * Covers:
- *   - The handler aggregates token, polling interval, webhook summary,
- *     reaction-poll targets, recent failed deliveries, and a per-repo rollup.
- *   - Rate-limit state retained on the instance (cooldown window + last-seen
- *     remaining/reset) is reflected in the snapshot.
- *   - The handler is gated behind the RPC config capability.
- */
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createHash } from 'node:crypto';
 import { InProcessTransport, MessageHub } from '@hyperneo/shared';
@@ -31,7 +21,6 @@ function setupDb(): BunDatabase {
   return db;
 }
 
-/** Insert a minimal space row so external-event FK constraints are satisfied. */
 function seedSpace(db: BunDatabase, spaceId: string): void {
   const now = Date.now();
   db.prepare(
@@ -97,7 +86,6 @@ class WebhooksDisabledConfigStore implements ExternalEventExtensionConfigStore {
   async setSpaceConfig(): Promise<void> {}
 }
 
-/** In-memory CredentialStore for exercising the setToken/clearToken RPCs. */
 class MemoryCredentialStore {
   private readonly entries = new Map<string, string>();
   async get(service: string, account: string): Promise<string | null> {
@@ -114,7 +102,6 @@ class MemoryCredentialStore {
   }
 }
 
-/** Minimal fetch impl that validates the PAT against a fake /user endpoint. */
 function fakeUserFetch(login: string): typeof fetch {
   return (async (url: string | URL | Request) => {
     const path = typeof url === 'string' ? url : url.toString();
@@ -125,7 +112,6 @@ function fakeUserFetch(login: string): typeof fetch {
   }) as typeof fetch;
 }
 
-/** Mirrors the daemon's credentialFingerprint helper (SHA-256) for test seeding. */
 function fp(token: string): string {
   return `sha256:${createHash('sha256').update(token).digest('hex').slice(0, 16)}`;
 }
@@ -173,7 +159,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       fetchImpl: fakeUserFetch('octocat'),
     });
 
-    // Repo A: webhook delivery, active hook.
     const repoA = extension.repo.upsertWatchedRepo({
       spaceId: 'space-1',
       owner: 'acme',
@@ -183,7 +168,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       webhookLastCheckedAt: 1_700_000_002_000,
     });
     extension.repo.markWebhookReceived(repoA.id);
-    // Repo B: webhook delivery, inactive hook with an error.
     extension.repo.upsertWatchedRepo({
       spaceId: 'space-1',
       owner: 'acme',
@@ -193,7 +177,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       webhookLastError: 'GitHub webhook is disabled',
       webhookLastCheckedAt: 1_700_000_003_000,
     });
-    // Repo C: polling-only with two PRs tracked for reaction polling.
     const repoC = extension.repo.upsertWatchedRepo({
       spaceId: 'space-1',
       owner: 'acme',
@@ -207,7 +190,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       lastPollCredentialFingerprint: fp('ghp_token'),
     });
 
-    // Seed a failed delivery so recentErrors is non-empty.
     seedSpace(db, 'space-1');
     const store = new ExternalEventStore(db);
     const { event } = store.store(buildEvent('space-1', '42'));
@@ -222,7 +204,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       reason: 'agent session missing',
     });
 
-    // Simulate rate-limit state retained from a prior poll cycle.
     const resetAt = Date.now() + 120_000;
     const ext = extension as unknown as {
       rateLimitedUntil: number;
@@ -348,7 +329,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       pollingEnabled: true,
     });
     const repo = extension.repo.listPollingRepos('space-1')[0];
-    // Simulate a finite budget observed by an earlier cycle.
     const ext = extension as unknown as {
       lastRateLimitInfo: {
         remaining: number;
@@ -367,8 +347,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     };
     ext.lastRateLimitObservedAt = Date.now() - 1_000;
 
-    // Every endpoint responds 304 (cached, no rate-limit headers) — the steady
-    // state. This must NOT overwrite the prior finite observation.
     const notModified = (() => new Response(null, { status: 304 })) as typeof fetch;
     await extension.pollWatchedRepo(repo, notModified);
 
@@ -390,7 +368,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     const extension = new GitHubEventExtension(db, 'ghp_token', {
       fetchImpl: fakeUserFetch('octocat'),
     });
-    // Enabled repo with an active hook.
     extension.repo.upsertWatchedRepo({
       spaceId: 'space-1',
       owner: 'acme',
@@ -398,8 +375,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       webhookEnabled: true,
       webhookActive: true,
     });
-    // Disabled repo (space.github.disable flips this) that still carries an
-    // active remote hook — it must not inflate the active tally.
     extension.repo.upsertWatchedRepo({
       spaceId: 'space-1',
       owner: 'acme',
@@ -464,7 +439,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       terminal: true,
       reason: 'agent session missing',
     });
-    // Backdate the failure beyond the 24h health window so it is historical only.
     db.prepare('UPDATE space_external_event_deliveries SET updated_at = ? WHERE event_id = ?').run(
       Date.now() - 48 * 60 * 60 * 1000,
       event.id
@@ -502,20 +476,13 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
         payload: {},
       });
 
-    // Two status events of different states → status count 2.
     seed('github/acme/widgets/pull_request/42.status_failure', 's1');
     seed('github/acme/widgets/pull_request/42.status_success', 's2', now - 60_000);
-    // review_thread + deployment_status + branch_protection, one each.
     seed('github/acme/widgets/pull_request/42.thread_resolved', 't1');
     seed('github/acme/widgets/pull_request/42.deployment_status_success', 'd1');
     seed('github/acme/widgets/repo/main.branch_protection_edited', 'b1');
-    // The app-only merge_group webhook is undeliverable over a repo hook; the
-    // row-8 `.enqueued` fallback must roll up into the merge_group type.
     seed('github/acme/widgets/pull_request/42.enqueued', 'q1');
-    // check_suite intentionally unseeded — asserts the 0/null stable-layout entry.
-    // An older-type event must NOT appear in the breakdown.
     seed('github/acme/widgets/pull_request/42.comment_created', 'x1');
-    // A status event outside the 24h window must not count toward `status`.
     seed('github/acme/widgets/pull_request/42.status_error', 'old1', now - 48 * 60 * 60 * 1000);
 
     try {
@@ -523,7 +490,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
         spaceId: 'space-1',
       });
-      // One entry per surfaced type, in display order (stable layout).
       expect(snapshot.eventTypes.map((e) => e.type)).toEqual([
         'status',
         'review_thread',
@@ -537,10 +503,8 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       expect(byType.get('status')?.lastAt).toBe(now);
       expect(byType.get('review_thread')?.count).toBe(1);
       expect(byType.get('deployment')?.count).toBe(1);
-      // .enqueued rolls up into merge_group (repo-webhook fallback).
       expect(byType.get('merge_group')?.count).toBe(1);
       expect(byType.get('branch_protection')?.count).toBe(1);
-      // The unseeded type still emits a stable 0 / null entry.
       expect(byType.get('check_suite')?.count).toBe(0);
       expect(byType.get('check_suite')?.lastAt).toBeNull();
     } finally {
@@ -549,15 +513,12 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
   });
 
   test('recentErrors surfaces GitHub failures even when newer failures are from another source', async () => {
-    // The source filter must apply before the LIMIT, otherwise 5 newer
-    // non-GitHub failures would crowd out a still-recent GitHub failure.
     const db = setupDb();
     seedSpace(db, 'space-1');
     const extension = new GitHubEventExtension(db, 'ghp_token', {
       fetchImpl: fakeUserFetch('octocat'),
     });
     const store = new ExternalEventStore(db);
-    // One GitHub failure.
     const gh = store.store(buildEvent('space-1', '100'));
     store.registerExpectedDelivery(gh.event.id, 'gh-delivery', {
       workflowRunId: 'run-1',
@@ -569,7 +530,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       terminal: true,
       reason: 'agent session missing',
     });
-    // Five NEWER failures from a different registered source (updated_at desc).
     for (let i = 0; i < 5; i++) {
       const other = store.store({
         ...buildEvent('space-1', `other-${i}`),
@@ -587,7 +547,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
         terminal: true,
         reason: 'gitlab failure',
       });
-      // Backdate slightly so the GitHub failure is older than the GitLab ones.
       db.prepare(
         'UPDATE space_external_event_deliveries SET updated_at = ? WHERE event_id = ?'
       ).run(Date.now() - 60_000, other.event.id);
@@ -610,8 +569,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     const extension = new GitHubEventExtension(db, 'ghp_token', {
       fetchImpl: fakeUserFetch('octocat'),
     });
-    // Repo delivered via webhook, then had webhooks toggled off. The row stays
-    // enabled and retains lastWebhookAt, but must not read as a live path.
     const repo = extension.repo.upsertWatchedRepo({
       spaceId: 'space-1',
       owner: 'acme',
@@ -654,7 +611,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
 
   test('a valid-but-unauthorized PAT records an inaccessible polling repo', async () => {
     const db = setupDb();
-    // /user validates (token is "valid"), but every repo endpoint is denied.
     const deniedFetch = (async (url: string | URL | Request) => {
       const path = typeof url === 'string' ? url : url.toString();
       if (path.endsWith('/user')) {
@@ -677,7 +633,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
 
     try {
       const clientHub = await setupHub(extension, new HealthConfigStore());
-      // Run one poll cycle so the inaccessibility is recorded on the cursor.
       await extension.pollWatchedRepo(extension.repo.listPollingRepos('space-1')[0], deniedFetch);
       const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
         spaceId: 'space-1',
@@ -691,8 +646,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
 
   test('a partially accessible repo records a partial poll error, not inaccessible', async () => {
     const db = setupDb();
-    // issue_comments/review_comments succeed, /pulls is denied (e.g. a
-    // fine-grained PAT with issue-comment but no pull-request access).
     const partialFetch = (async (url: string | URL | Request) => {
       const path = typeof url === 'string' ? url : url.toString();
       if (path.endsWith('/user')) {
@@ -722,9 +675,7 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
         spaceId: 'space-1',
       });
-      // Reached some endpoints, so it is NOT fully inaccessible.
       expect(snapshot.polling.inaccessibleRepoCount).toBe(0);
-      // But /pulls failed, so it is a partial (Degraded) condition.
       expect(snapshot.polling.partialErrorRepoCount).toBe(1);
       expect(snapshot.repositories[0].lastPartialPollError).toContain('Resource not accessible');
     } finally {
@@ -734,7 +685,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
 
   test('a network-thrown poll records an inaccessible repo instead of aborting', async () => {
     const db = setupDb();
-    // Every repo endpoint rejects (connection reset / timeout / DNS).
     const throwingFetch = (async (url: string | URL | Request) => {
       const path = typeof url === 'string' ? url : url.toString();
       if (path.endsWith('/user')) {
@@ -755,7 +705,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
 
     try {
       const clientHub = await setupHub(extension, new HealthConfigStore());
-      // Must not throw — the failure is recorded on the cursor instead.
       await extension.pollWatchedRepo(extension.repo.listPollingRepos('space-1')[0], throwingFetch);
       const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
         spaceId: 'space-1',
@@ -802,8 +751,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
   });
 
   test('clearToken RPC clears the active cooldown so a fresh PAT can poll', async () => {
-    // Drive the call site (the RPC), not just the private method, so a revert
-    // of the setToken/clearToken wiring is caught.
     const db = setupDb();
     const credentialStore = new MemoryCredentialStore();
     const extension = new GitHubEventExtension(db, undefined, {
@@ -832,17 +779,8 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
   });
 
   test('a silent keychain rotation (no generation bump) clears a stale rate-limit cooldown', async () => {
-    // The cooldown-clear block in buildHealthSnapshot compares
-    // lastRateLimitFingerprint (the credential that observed the cooldown)
-    // against the just-validated fingerprint. A keychain rotation performed
-    // OUTSIDE the setToken/clearToken RPCs does not bump credentialGeneration,
-    // so the generation-guarded clears (the setToken/clearToken paths above)
-    // cannot fire — only this fingerprint-mismatch path catches it. This was the
-    // dead/broken half across rounds 58-60; commit it so a regression is caught
-    // by the suite, not a throwaway repro.
     const db = setupDb();
     const credentialStore = new MemoryCredentialStore();
-    // Initial credential that observed the cooldown.
     await credentialStore.set('neokai.external-events.github', 'default', 'ghp_A');
     const extension = new GitHubEventExtension(db, undefined, {
       credentialStore,
@@ -852,12 +790,8 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       rateLimitedUntil: number;
       lastRateLimitFingerprint?: string;
     };
-    // A cooldown observed by ghp_A, tagged with its fingerprint.
     ext.rateLimitedUntil = Date.now() + 3_600_000;
     ext.lastRateLimitFingerprint = fp('ghp_A');
-    // Silent rotation to a different credential — a direct store write, no
-    // setToken RPC — so credentialGeneration does NOT bump and the generation-
-    // guarded clear path cannot fire. Only the fingerprint-mismatch path can.
     await credentialStore.set('neokai.external-events.github', 'default', 'ghp_B');
 
     const clientHub = await setupHub(extension, new HealthConfigStore());
@@ -886,12 +820,9 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       }) => void;
       rateLimitedUntil: number;
     };
-    // A poll cycle is in flight under generation G.
     ext.pollCycleCredentialGeneration = ext.credentialGeneration;
     const staleGeneration = ext.credentialGeneration;
-    // The credential changes mid-cycle (setToken/clearToken bumped generation).
     ext.credentialGeneration = staleGeneration + 1;
-    // The stale cycle's rate-limit write must be ignored.
     ext.applyRateLimit({
       remaining: 0,
       resetAt: Date.now() + 60_000,
@@ -899,7 +830,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       retryAfter: false,
     });
     expect(ext.rateLimitedUntil).toBe(0);
-    // A cycle whose generation still matches applies normally.
     ext.pollCycleCredentialGeneration = ext.credentialGeneration;
     ext.applyRateLimit({
       remaining: 0,
@@ -911,14 +841,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
   });
 
   test('a poll-cycle rate limit is tagged with the cycle fingerprint, not a concurrently-mutated lastResolvedToken', () => {
-    // pollWatchedRepoCore captures pollCycleCredentialFingerprint from the token
-    // it actually resolves (after resolveToken), so applyRateLimit attributes a
-    // rate limit to the right credential even if a concurrent health refresh
-    // overwrites the shared lastResolvedToken field during the poll's await.
-    // Before this fix the capture ran in the wrapper before resolveToken, where
-    // lastResolvedToken could be null ('none') — the cooldown was then wrongly
-    // tagged and cleared on the next validation. The cycle fingerprint must win
-    // over lastResolvedToken in the applyRateLimit precedence chain.
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'ghp_token', {
       fetchImpl: fakeUserFetch('octocat'),
@@ -936,11 +858,8 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       }) => void;
       lastRateLimitFingerprint?: string;
     };
-    // The core resolved ghp_token and captured its fingerprint for this cycle.
     ext.pollCycleCredentialGeneration = ext.credentialGeneration;
     ext.pollCycleCredentialFingerprint = fp('ghp_token');
-    // A concurrent health refresh resolved a rotated token and overwrote the
-    // shared field during the poll's in-flight await — must NOT win.
     ext.lastResolvedToken = 'ghp_rotated_token';
     ext.applyRateLimit({
       remaining: 0,
@@ -952,11 +871,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
   });
 
   test('a shorter rate limit under the SAME credential preserves the longer cooldown', () => {
-    // Token A owns a long cooldown. A SHORTER rate limit observed again for the
-    // SAME token A must not shorten the existing backoff (preserve-longer) and
-    // must not retag the fingerprint. Preserve-longer applies only within a
-    // credential — a different credential's observation replaces (see the
-    // cross-credential replace test below).
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'ghp_A', {
       fetchImpl: fakeUserFetch('octocat'),
@@ -975,8 +889,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     const longUntil = Date.now() + 3_600_000;
     ext.rateLimitedUntil = longUntil;
     ext.lastRateLimitFingerprint = fp('ghp_A');
-    // Same credential (A) observes a shorter window — preserve-longer keeps A's
-    // longer deadline and fingerprint.
     ext.lastResolvedToken = 'ghp_A';
     ext.applyRateLimit({
       remaining: 0,
@@ -985,16 +897,10 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       retryAfter: false,
     });
     expect(ext.lastRateLimitFingerprint).toBe(fp('ghp_A'));
-    // Deadline preserved at A's long window (not shortened to the 60s observation).
     expect(ext.rateLimitedUntil).toBe(longUntil);
   });
 
   test('a shorter rate limit under a DIFFERENT credential replaces the stale cooldown', () => {
-    // Token A owns a long cooldown. A silent rotation to B is validated with a
-    // shorter active rate-limit window. A's deadline is irrelevant to B, so B's
-    // observation REPLACES it (preserve-longer does not apply across credentials)
-    // — otherwise buildHealthSnapshot would clear A's deadline and leave B with
-    // no cooldown while it is still rate-limited.
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'ghp_A', {
       fetchImpl: fakeUserFetch('octocat'),
@@ -1012,7 +918,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     };
     ext.rateLimitedUntil = Date.now() + 3_600_000;
     ext.lastRateLimitFingerprint = fp('ghp_A');
-    // B (a different credential) observes a shorter window — replaces A's cooldown.
     ext.lastResolvedToken = 'ghp_B';
     ext.applyRateLimit({
       remaining: 0,
@@ -1021,18 +926,11 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       retryAfter: false,
     });
     expect(ext.lastRateLimitFingerprint).toBe(fp('ghp_B'));
-    // B's shorter deadline applies (A's longer one is discarded as stale).
     expect(ext.rateLimitedUntil).toBeLessThan(Date.now() + 3_600_000);
     expect(ext.rateLimitedUntil).toBeGreaterThan(Date.now());
   });
 
   test('a validation rate limit is attributed to the validated token, not an in-flight poll credential', async () => {
-    // An in-flight repo poll under token A has set pollCycleCredentialFingerprint
-    // to fp(A). A concurrent /user validation of token B observes a low budget
-    // and applies a cooldown via applyRateLimit(..., true). It must be tagged to
-    // B (the validated token) — otherwise buildHealthSnapshot sees fp(A) !== the
-    // validated fp(B) and immediately clears B's cooldown, re-enabling polling
-    // against an exhausted quota.
     const db = setupDb();
     const credentialStore = new MemoryCredentialStore();
     await credentialStore.set('neokai.external-events.github', 'default', 'ghp_B');
@@ -1041,7 +939,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       fetchImpl: (async (url: string | URL | Request) => {
         const path = typeof url === 'string' ? url : url.toString();
         if (path.endsWith('/user')) {
-          // Low budget for B → applyRateLimit fires on the success path.
           return new Response(JSON.stringify({ login: 'octocat' }), {
             status: 200,
             headers: {
@@ -1060,30 +957,20 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       rateLimitedUntil: number;
       lastRateLimitFingerprint?: string;
     };
-    // Simulate an in-flight poll under token A (different from the validated B).
     ext.pollCycleCredentialGeneration = ext.credentialGeneration;
     ext.pollCycleCredentialFingerprint = fp('ghp_A');
 
     const clientHub = await setupHub(extension, new HealthConfigStore());
     await clientHub.request<GitHubHealthSnapshot>('space.github.health', { spaceId: 'space-1' });
-    // Cooldown attributed to B (the validated token), so it survives the
-    // snapshot's stale-cooldown clear (fp(B) === validated fp(B)).
     expect(ext.rateLimitedUntil).toBeGreaterThan(0);
     expect(ext.lastRateLimitFingerprint).toBe(fp('ghp_B'));
     await extension.stop();
   });
 
   test('a cooldown tagged to the now-effective credential is not cleared by a stale validated fingerprint', async () => {
-    // resolveTokenStatus validates token A; during the config reads the keychain
-    // rotates to B and a concurrent poll/validation tags a cooldown to B. The
-    // clear block must compare against the EFFECTIVE credential (B), not the stale
-    // validatedFingerprint (A) — otherwise B's valid cooldown is cleared and
-    // polling re-arms against an exhausted quota.
     const db = setupDb();
     const credentialStore = new MemoryCredentialStore();
     await credentialStore.set('neokai.external-events.github', 'default', 'ghp_A');
-    // Pre-seed a cooldown tagged to B (the post-rotation credential), standing in
-    // for one a concurrent poll/validation would record during the config awaits.
     const extension = new GitHubEventExtension(db, undefined, {
       credentialStore,
       fetchImpl: fakeUserFetch('octocat'),
@@ -1094,8 +981,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     };
     ext.rateLimitedUntil = Date.now() + 3_600_000;
     ext.lastRateLimitFingerprint = fp('ghp_B');
-    // Rotate A→B on the 3rd getGlobalConfig call (buildHealthSnapshot's
-    // isPollingGloballyEnabled, AFTER resolveTokenStatus validated A).
     let getGlobalConfigCalls = 0;
     let rotated = false;
     const rotatingConfig: ExternalEventExtensionConfigStore = {
@@ -1124,18 +1009,12 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
 
     const clientHub = await setupHub(extension, rotatingConfig);
     await clientHub.request<GitHubHealthSnapshot>('space.github.health', { spaceId: 'space-1' });
-    // B's cooldown survives — it belongs to the effective credential.
     expect(ext.rateLimitedUntil).toBeGreaterThan(0);
     expect(ext.lastRateLimitFingerprint).toBe(fp('ghp_B'));
     await extension.stop();
   });
 
   test('a transient credential-store failure on the final read keeps the active cooldown', async () => {
-    // The keychain is readable during validation (token A validated) but throws
-    // on buildHealthSnapshot's final credential read. The fallback fingerprint
-    // (env/none) differs from lastRateLimitFingerprint, but this is a read
-    // failure, not a rotation — the cooldown must NOT be cleared, or polling
-    // re-arms against the still-rate-limited token before its reset.
     const db = setupDb();
     const store = new MemoryCredentialStore();
     await store.set('neokai.external-events.github', 'default', 'ghp_A');
@@ -1143,8 +1022,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     const flakyStore = {
       get: async (service: string, account: string) => {
         getCalls++;
-        // Reads #1 (resolveToken) and #2 (getTokenStatus) succeed; the final
-        // resolveTokenOrFail read (#3) throws.
         if (getCalls >= 3) throw new Error('keychain locked');
         return store.get(service, account);
       },
@@ -1165,26 +1042,14 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
 
     const clientHub = await setupHub(extension, new HealthConfigStore());
     await clientHub.request<GitHubHealthSnapshot>('space.github.health', { spaceId: 'space-1' });
-    // Cooldown preserved — the failed read is not treated as an authoritative rotation.
     expect(ext.rateLimitedUntil).toBeGreaterThan(0);
     await extension.stop();
   });
 
   test('a silent rotation after validation marks stale access evidence unverified', async () => {
-    // resolveTokenStatus validates token A; then a config read silently rotates
-    // the keychain to B before buildHealthSnapshot's final credential read. The
-    // validated fingerprint is A's while B is effective — the rollup must not
-    // trust A's persisted lastPollAt as access proof for B, so the repo reads as
-    // never-polled under the (unverified) current credential.
     const db = setupDb();
     const credentialStore = new MemoryCredentialStore();
     await credentialStore.set('neokai.external-events.github', 'default', 'ghp_A');
-    // Rotating config: flips the keychain A→B on the THIRD getGlobalConfig call.
-    // Calls 1 (extension.start's isPollingGloballyEnabled) and 2 (the health
-    // RPC's assertRpcConfigEnabled) fire BEFORE buildHealthSnapshot; call 3 is
-    // buildHealthSnapshot's isPollingGloballyEnabled, which runs AFTER
-    // resolveTokenStatus validated A. Rotating there lands the silent rotation
-    // between validation and the snapshot's final credential read.
     let getGlobalConfigCalls = 0;
     let rotated = false;
     const rotatingConfig: ExternalEventExtensionConfigStore = {
@@ -1221,25 +1086,17 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       pollingEnabled: true,
     });
     const repo = extension.repo.listPollingRepos('space-1')[0];
-    // A successful poll recorded under A's fingerprint (also sets lastPollAt).
     extension.repo.updatePollCursor(repo.id, { lastPollCredentialFingerprint: fp('ghp_A') });
 
     const clientHub = await setupHub(extension, rotatingConfig);
     const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
       spaceId: 'space-1',
     });
-    // A's lastPollAt is not trusted for the now-effective B → never polled.
     expect(snapshot.polling.neverPolledRepoCount).toBe(1);
     await extension.stop();
   });
 
   test('pollOnce (global) counts errors only for repos the cycle attempts', async () => {
-    // A disabled repo that still carries a persisted poll error must NOT be
-    // counted: pollEnabledSpaces skips disabled rows (listPollingRepos), so the
-    // result must use the same enabled set, not listAllPollingConfiguredRepos.
-    // seedSpace is required so listAllPollingConfiguredRepos's JOIN on `spaces`
-    // includes the disabled repo — without it the buggy query also returns
-    // empty and the assertion cannot distinguish fixed from buggy code.
     const db = setupDb();
     seedSpace(db, 'space-1');
     const extension = new GitHubEventExtension(db, 'ghp_token', {
@@ -1267,16 +1124,11 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       'space.github.pollOnce',
       {}
     );
-    // No errors surfaced from the disabled repo the cycle never attempted.
     expect(result.errors).toBeUndefined();
     await extension.stop();
   });
 
   test('a verified delivery clears a prior "update uncertain" webhook error', () => {
-    // A PATCH that timed out leaves the secret uncertain (a GET cannot read
-    // GitHub's stored secret). A later delivery whose signature verifies proves
-    // GitHub is still signing with this row's secret, resolving the uncertainty —
-    // so markWebhookReceived clears it, instead of degrading the panel forever.
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'ghp_token', {
       fetchImpl: fakeUserFetch('octocat'),
@@ -1299,8 +1151,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
   });
 
   test('a verified delivery preserves a configuration error (webhook_active = 0)', () => {
-    // A delivery does not prove the hook emits every event type, so a persistent
-    // configuration error (recorded alongside webhook_active = 0) is kept.
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'ghp_token', {
       fetchImpl: fakeUserFetch('octocat'),
@@ -1329,16 +1179,11 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     });
     extension.repo.markWebhookReceived(repo.id);
     expect(extension.repo.getWatchedRepoById(repo.id)?.lastWebhookAt).not.toBeNull();
-    // Secret rotation / disabling clears the remote hook; the delivery history
-    // from the deleted hook must not survive as a false live path.
     extension.repo.clearWebhookRegistration(repo.id, {});
     expect(extension.repo.getWatchedRepoById(repo.id)?.lastWebhookAt).toBeNull();
   });
 
   test('scheduled polling runs multiple cycles and clears activePollCycle between them', async () => {
-    // Regression guard: the scheduled timer callback must not overwrite
-    // activePollCycle (managed by runExclusivePoll), or the overlap guard
-    // reschedules forever and polling dies after the first cycle.
     let repoFetches = 0;
     const countingFetch = (async (url: string | URL | Request) => {
       const path = typeof url === 'string' ? url : url.toString();
@@ -1362,22 +1207,16 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
 
     try {
       const clientHub = await setupHub(extension, new HealthConfigStore());
-      // Confirm the poll path works and the timer was armed on start.
       await clientHub.request('space.github.pollOnce', { spaceId: 'space-1' });
       const manualFetches = repoFetches;
       const armedExt = extension as unknown as { pollTimer: unknown };
-      // The scheduled timer fires at the 1s floor. Wait for at least two
-      // scheduled cycles — with the regression, only the first cycle ever runs.
       const deadline = Date.now() + 6000;
       while (repoFetches < manualFetches + 4 && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 100));
       }
-      // Manual poll path works, and the scheduled timer armed on start.
       expect(manualFetches).toBeGreaterThan(0);
       expect(armedExt.pollTimer).not.toBeNull();
-      // ≥2 scheduled cycles ran (regression: only one ever runs).
       expect(repoFetches).toBeGreaterThanOrEqual(manualFetches + 4);
-      // activePollCycle must return to undefined between cycles (not stuck).
       const ext = extension as unknown as { activePollCycle?: Promise<void> };
       let cleared = false;
       for (let i = 0; i < 30; i++) {
@@ -1393,18 +1232,12 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     }
   }, 15000);
 
-  // autoConfigureWebhook's webhook remote calls use this.githubFetch (not
-  // options.fetchImpl), so the polling-preservation one-liner
-  // (pollingEnabled: existing?.pollingEnabled ?? false) is verified via the
-  // upsert path rather than an RPC integration test here.
-
   test('a rate-limited /user 403 is not treated as a rejected credential', async () => {
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'ghp_token', {
       fetchImpl: (async (url: string | URL | Request) => {
         const path = typeof url === 'string' ? url : url.toString();
         if (path.endsWith('/user')) {
-          // GitHub primary rate limit: 403 with remaining: 0.
           return new Response(JSON.stringify({ message: 'rate limit exceeded' }), {
             status: 403,
             headers: {
@@ -1434,7 +1267,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       fetchImpl: (async (url: string | URL | Request) => {
         const path = typeof url === 'string' ? url : url.toString();
         if (path.endsWith('/user')) {
-          // Secondary/abuse limit: 403 with a rate-limit body but NO headers.
           return new Response(
             JSON.stringify({ message: 'You have exceeded a secondary rate limit' }),
             { status: 403 }
@@ -1467,7 +1299,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       repo: 'widgets',
       pollingEnabled: true,
     });
-    // Tracked PRs but lastReactionPollAt never set (reactions never succeeded).
     extension.repo.updatePollCursor(repo.id, { recentPullRequestNumbers: [7] });
 
     try {
@@ -1488,7 +1319,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       pollIntervalMs: 90_000,
       fetchImpl: fakeUserFetch('octocat'),
     });
-    // Repo A: tracked PRs with FRESH reaction activity (within the window).
     const repoA = extension.repo.upsertWatchedRepo({
       spaceId: 'space-1',
       owner: 'acme',
@@ -1499,7 +1329,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       recentPullRequestNumbers: [1],
       lastReactionPollAt: Date.now() - 60_000,
     });
-    // Repo B: tracked PRs but reactions never succeeded (stale / null).
     const repoB = extension.repo.upsertWatchedRepo({
       spaceId: 'space-1',
       owner: 'acme',
@@ -1513,8 +1342,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
         spaceId: 'space-1',
       });
-      // Aggregate freshness reflects the fresh repo, but the per-repo count is
-      // NOT masked — only the stale repo contributes.
       expect(snapshot.reactions.lastActivityAt).not.toBeNull();
       expect(snapshot.reactions.staleRepoCount).toBe(1);
     } finally {
@@ -1535,7 +1362,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       repo: 'widgets',
       pollingEnabled: true,
     });
-    // Simulate the old credential's access failure persisted on the cursor.
     extension.repo.updatePollCursor(extension.repo.listPollingRepos('space-1')[0].id, {
       recentPullRequestNumbers: [],
       lastPollError: 'Resource not accessible',
@@ -1552,10 +1378,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
   });
 
   test('an in-flight poll does not commit its errors after the credential changes mid-fetch', async () => {
-    // The cursor-commit guard: pollWatchedRepo captures the generation at entry;
-    // if the credential rotates while the fetch is in flight (setToken/clearToken
-    // bumped the generation), the obsolete cycle must not write its access
-    // failure back over the values resetRateLimitObservation cleared.
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'ghp_token', {
       pollIntervalMs: 60_000,
@@ -1568,8 +1390,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       pollingEnabled: true,
     });
 
-    // A fetch that rotates the credential on the first repo-endpoint call, then
-    // returns a permission 403 (the old token's access failure).
     const rotateAndDenyFetch = (async (url: string | URL | Request) => {
       const path = typeof url === 'string' ? url : url.toString();
       if (path.endsWith('/user')) {
@@ -1592,9 +1412,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       );
       void clientHub;
       const watched = extension.repo.getWatchedRepoById(repo.id);
-      // Without the guard these would be 'Resource not accessible…'; with it,
-      // the stale cycle forces null so the new credential re-discovers any
-      // persistent error on its own poll.
       expect(watched?.pollCursor?.lastPollError).toBeNull();
       expect(watched?.pollCursor?.lastPartialPollError).toBeNull();
     } finally {
@@ -1604,7 +1421,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
 
   test('a successful /user validation with a normal budget persists the rate-limit observation', async () => {
     const db = setupDb();
-    // /user succeeds with a healthy remaining budget and no repos polled yet.
     const extension = new GitHubEventExtension(db, 'ghp_token', {
       fetchImpl: (async (url: string | URL | Request) => {
         const path = typeof url === 'string' ? url : url.toString();
@@ -1625,8 +1441,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
         spaceId: 'space-1',
       });
-      // The validation's quota is reflected immediately (not "Unknown / no poll
-      // yet)"), and no cooldown was applied because the budget was healthy.
       expect(snapshot.rateLimit.remaining).toBe(4999);
       expect(snapshot.rateLimit.limited).toBe(false);
       expect(snapshot.rateLimit.observedAt).toBeGreaterThan(0);
@@ -1637,8 +1451,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
 
   test('a credential change during the keychain read rejects the stale validation', async () => {
     const db = setupDb();
-    // A credential store whose async read completes AFTER setToken landed
-    // (bumping the generation mid-read), returning the stale token A.
     const extensionHolder: { reset?: () => void } = {};
     const rotatingStore = {
       async get(): Promise<string | null> {
@@ -1658,7 +1470,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
         const path = typeof url === 'string' ? url : url.toString();
         if (path.endsWith('/user')) {
           userPolled = true;
-          // A rate limit for the stale token — must NOT be applied to token B.
           return new Response(JSON.stringify({ message: 'rate limit exceeded' }), {
             status: 403,
             headers: { 'X-RateLimit-Remaining': '0' },
@@ -1676,8 +1487,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
         spaceId: 'space-1',
       });
-      // The stale token's validation was rejected before /user ran, so its
-      // rate limit is not applied to the current credential.
       expect(snapshot.token.error).toBe('credential changed during validation');
       expect(snapshot.token.authRejected).toBeFalsy();
       expect(userPolled).toBe(false);
@@ -1689,10 +1498,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
 
   test('a poll cycle that throws after its fetches resolves records a partial error', async () => {
     const db = setupDb();
-    // Endpoints return 200 (so the repo is reachable) but a malformed JSON body:
-    // response.json() rejects after the fetch resolved, escaping the cursor
-    // commit so lastPollAt never advances and no error is recorded without the
-    // wrapper guard.
     const malformedFetch = (async (url: string | URL | Request) => {
       const path = typeof url === 'string' ? url : url.toString();
       if (path.endsWith('/user')) {
@@ -1718,8 +1523,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
         spaceId: 'space-1',
       });
-      // The post-fetch failure is recorded as a partial error (Degraded), not
-      // silently Healthy with a null lastPollAt.
       expect(snapshot.polling.partialErrorRepoCount).toBe(1);
       expect(snapshot.repositories[0].lastPartialPollError).toBeTruthy();
     } finally {
@@ -1732,8 +1535,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     const extension = new GitHubEventExtension(db, 'ghp_token', {
       fetchImpl: fakeUserFetch('octocat'),
     });
-    // A manually-configured repo (not auto-registered) with a prior delivery
-    // under the old secret.
     const repo = extension.repo.upsertWatchedRepo({
       spaceId: 'space-1',
       owner: 'acme',
@@ -1745,7 +1546,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     expect(extension.repo.getWatchedRepoById(repo.id)?.lastWebhookAt).not.toBeNull();
     try {
       const clientHub = await setupHub(extension, new HealthConfigStore());
-      // Re-add the same manual repo with a DIFFERENT secret.
       await clientHub.request('space.github.watchRepo', {
         spaceId: 'space-1',
         owner: 'acme',
@@ -1754,8 +1554,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
         webhookSecret: 'new-secret',
       });
       const watched = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets');
-      // The new secret is stored, but the delivery under the old secret is
-      // cleared — it must not keep the webhook path live.
       expect(watched?.webhookSecret).toBe('new-secret');
       expect(watched?.lastWebhookAt).toBeNull();
     } finally {
@@ -1778,16 +1576,12 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     });
     try {
       const clientHub = await setupHub(extension, new HealthConfigStore());
-      // A full request validates the token (/user).
       await clientHub.request('space.github.health', { spaceId: 'space-1' });
       expect(userCalls).toBe(1);
-      // A lightweight request reuses the cached status — no additional /user.
       await clientHub.request('space.github.health', { spaceId: 'space-1', lightweight: true });
       expect(userCalls).toBe(1);
-      // A later full request re-validates and refreshes the cache.
       await clientHub.request('space.github.health', { spaceId: 'space-1' });
       expect(userCalls).toBe(2);
-      // The next lightweight request reuses the refreshed cache again.
       await clientHub.request('space.github.health', { spaceId: 'space-1', lightweight: true });
       expect(userCalls).toBe(2);
     } finally {
@@ -1804,7 +1598,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
         if (path.endsWith('/user')) {
           userCalls += 1;
           if (userCalls === 1) {
-            // setToken(B) lands during the in-flight /user for A; A is rejected.
             (
               extension as unknown as { resetRateLimitObservation: () => void }
             ).resetRateLimitObservation();
@@ -1817,15 +1610,11 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     });
     try {
       const clientHub = await setupHub(extension, new HealthConfigStore());
-      // Full request: A's /user rotates the credential mid-fetch; the stale 401
-      // must not be returned as the current credential's rejection.
       const first = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
         spaceId: 'space-1',
       });
       expect(first.token.error).toBe('credential changed during validation');
       expect(first.token.authRejected).toBeFalsy();
-      // A lightweight refresh re-validates — the stale rejection was not cached
-      // for the new credential.
       const second = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
         spaceId: 'space-1',
         lightweight: true,
@@ -1839,8 +1628,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
 
   test('a rate limit before any successful access does not advance lastPollAt', async () => {
     const db = setupDb();
-    // Every repo endpoint rate-limits (403 with remaining: 0) before any 200/304,
-    // so the cycle never marks the repo accessible.
     const rateLimitedFetch = (async (url: string | URL | Request) => {
       const path = typeof url === 'string' ? url : url.toString();
       if (path.endsWith('/user')) {
@@ -1872,8 +1659,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       );
       void clientHub;
       const watched = extension.repo.getWatchedRepoById(repo.id);
-      // No endpoint ever succeeded (accessible=false); lastPollAt must not have
-      // advanced, so the repo is not falsely badged freshly polled.
       expect(watched?.lastPollAt).toBeNull();
     } finally {
       await extension.stop();
@@ -1892,9 +1677,7 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       repo: 'widgets',
       pollingEnabled: true,
     });
-    // A prior, still-unresolved partial error from an earlier cycle.
     extension.repo.updatePollCursor(repo.id, { lastPartialPollError: 'pulls HTTP 403' });
-    // Next cycle rate-limits before any 200/304 (accessible=false, no new error).
     const rateLimitedFetch = (async (url: string | URL | Request) => {
       const path = typeof url === 'string' ? url : url.toString();
       if (path.endsWith('/user')) {
@@ -1916,8 +1699,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       );
       void clientHub;
       const watched = extension.repo.getWatchedRepoById(repo.id);
-      // Recovery is unproven — the prior partial error must survive, not be
-      // cleared just because this cycle rate-limited before trying.
       expect(watched?.pollCursor?.lastPartialPollError).toBe('pulls HTTP 403');
     } finally {
       await extension.stop();
@@ -1937,8 +1718,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       pollingEnabled: true,
     });
     extension.repo.updatePollCursor(repo.id, { lastPartialPollError: 'pulls HTTP 403' });
-    // issue_comments succeeds (accessible=true), then review_comments rate-limits
-    // (partialScan=true, break) before the failed /pulls endpoint is retried.
     const partialThenLimitedFetch = (async (url: string | URL | Request) => {
       const path = typeof url === 'string' ? url : url.toString();
       if (path.endsWith('/user')) {
@@ -1961,8 +1740,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       );
       void clientHub;
       const watched = extension.repo.getWatchedRepoById(repo.id);
-      // The cycle did not retry /pulls, so the prior partial error is unresolved
-      // and must survive (not be cleared just because one endpoint succeeded).
       expect(watched?.pollCursor?.lastPartialPollError).toBe('pulls HTTP 403');
     } finally {
       await extension.stop();
@@ -1987,7 +1764,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       repo: 'stale',
       pollingEnabled: true,
     });
-    // Repo A polled just now; repo B polled 10h ago (past the staleness window).
     extension.repo.updatePollCursor(repoA.id, { lastPollCredentialFingerprint: fp('ghp_token') });
     extension.repo.updatePollCursorJson(repoB.id, {
       lastPollCredentialFingerprint: fp('ghp_token'),
@@ -2029,9 +1805,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     });
     try {
       const clientHub = await setupHub(extension, new HealthConfigStore());
-      // Establish a successful poll under the current credential, then rotate
-      // the token. The old credential's lastPollAt must not prove access for the
-      // new (unconfirmed) credential.
       await extension.pollWatchedRepo(extension.repo.listPollingRepos('space-1')[0], (async (
         url: string | URL | Request
       ) => {
@@ -2046,8 +1819,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
         spaceId: 'space-1',
       });
-      // The repo's prior poll was under the old credential; the new credential
-      // has not re-confirmed access, so it counts as not-yet-polled (not live).
       expect(snapshot.polling.neverPolledRepoCount).toBe(1);
       expect(snapshot.polling.lastPollAt).toBeNull();
     } finally {
@@ -2069,7 +1840,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       };
       lastRateLimitObservedAt: number;
     };
-    // A finite observation whose reset epoch is already in the past.
     ext.lastRateLimitInfo = {
       remaining: 0,
       resetAt: Date.now() - 60_000,
@@ -2082,8 +1852,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
         spaceId: 'space-1',
       });
-      // The stale exhausted-quota observation is dropped (no fresh observation),
-      // so remaining is unknown rather than a misleading zero.
       expect(snapshot.rateLimit.remaining).toBeNull();
       expect(ext.lastRateLimitInfo).toBeUndefined();
     } finally {
@@ -2102,13 +1870,11 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       repo: 'widgets',
       webhookEnabled: true,
     });
-    // A prior transient check error.
     extension.repo.updateWebhookStatus(repo.id, {
       lastCheckedAt: Date.now(),
       lastError: 'check timed out',
     });
     expect(extension.repo.getWatchedRepoById(repo.id)?.webhookLastError).toBe('check timed out');
-    // A correctly signed delivery lands — it proves the hook works.
     extension.repo.markWebhookReceived(repo.id);
     expect(extension.repo.getWatchedRepoById(repo.id)?.webhookLastError).toBeNull();
     await extension.stop();
@@ -2130,14 +1896,10 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
     const ext = extension as unknown as { lastTokenStatusAt: number };
     try {
       const clientHub = await setupHub(extension, new HealthConfigStore());
-      // Prime the cache with a full request.
       await clientHub.request('space.github.health', { spaceId: 'space-1' });
       expect(userCalls).toBe(1);
-      // Lightweight within the TTL reuses the cache (no extra /user).
       await clientHub.request('space.github.health', { spaceId: 'space-1', lightweight: true });
       expect(userCalls).toBe(1);
-      // Once the cache expires, a lightweight refresh revalidates (catches a
-      // remotely-revoked PAT rather than serving it forever).
       ext.lastTokenStatusAt = Date.now() - 10 * 60 * 1000;
       await clientHub.request('space.github.health', { spaceId: 'space-1', lightweight: true });
       expect(userCalls).toBe(2);
@@ -2157,13 +1919,11 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       repo: 'widgets',
       webhookEnabled: true,
     });
-    // A persistent config error (validateRemoteHook) is recorded with active=false.
     extension.repo.updateWebhookStatus(repo.id, {
       active: false,
       lastCheckedAt: Date.now(),
       lastError: 'GitHub webhook is missing required events',
     });
-    // A correctly signed delivery lands, but the hook is still misconfigured.
     extension.repo.markWebhookReceived(repo.id);
     expect(extension.repo.getWatchedRepoById(repo.id)?.webhookLastError).toBe(
       'GitHub webhook is missing required events'
@@ -2183,8 +1943,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       repo: 'widgets',
       pollingEnabled: true,
     });
-    // issue_comments succeeds (accessible=true), then review_comments rate-limits
-    // (partialScan=true, break) — no prior partial error, no new error.
     const incompleteFetch = (async (url: string | URL | Request) => {
       const path = new URL(String(url)).pathname;
       if (path.endsWith('/user')) {
@@ -2207,8 +1965,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       );
       void clientHub;
       const watched = extension.repo.listPollingRepos('space-1')[0];
-      // No prior error existed, but the cycle was incomplete — a diagnostic is
-      // recorded so the rollup degrades instead of badging Healthy.
       expect(watched?.pollCursor?.lastPartialPollError).toContain('incomplete');
     } finally {
       await extension.stop();
@@ -2240,7 +1996,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
         spaceId: 'space-1',
       });
-      // The display list is capped at 5, but the total reflects all 7 failures.
       expect(snapshot.recentErrors).toHaveLength(5);
       expect(snapshot.recentErrorTotal).toBe(7);
     } finally {
@@ -2261,7 +2016,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       pollingEnabled: true,
     });
     try {
-      // First instance: poll under the current token (stamps the fingerprint).
       await setupHub(extension, new HealthConfigStore());
       await extension.pollWatchedRepo(
         extension.repo.listPollingRepos('space-1')[0],
@@ -2269,8 +2023,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       );
       await extension.stop();
 
-      // Second instance (same DB, same token): simulates a restart. The
-      // fingerprint persisted by the first instance should still match.
       const extension2 = new GitHubEventExtension(db, 'ghp_token', {
         pollIntervalMs: 60_000,
         fetchImpl: fakeUserFetch('octocat'),
@@ -2279,7 +2031,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
         spaceId: 'space-1',
       });
-      // The same token's fingerprint survives restart → access still verified.
       expect(snapshot.polling.neverPolledRepoCount).toBe(0);
       expect(snapshot.polling.lastPollAt).not.toBeNull();
       await extension2.stop();
@@ -2300,12 +2051,7 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       repo: 'widgets',
       pollingEnabled: true,
     });
-    // Seed lastPollAt WITHOUT a fingerprint (simulates a legacy cursor or a
-    // manual seed). The rollup must treat it as unverified (neverPolled),
-    // not accept the timestamp as proof of access.
     extension.repo.updatePollCursor(repo.id, {});
-    // Wipe the fingerprint that updatePollCursor might have left (it doesn't
-    // set one — only pollWatchedRepo does), confirming the cursor has none.
     const watched = extension.repo.getWatchedRepoById(repo.id);
     expect(watched?.pollCursor?.lastPollCredentialFingerprint).toBeUndefined();
     try {
@@ -2343,8 +2089,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       const clientHub = await setupHub(extension, new HealthConfigStore());
       await clientHub.request('space.github.health', { spaceId: 'space-1' });
       expect(userCalls).toBe(1);
-      // A lightweight refresh within the TTL MUST re-validate — the rate-limited
-      // 403 is transient and must not be served from cache.
       await clientHub.request('space.github.health', { spaceId: 'space-1', lightweight: true });
       expect(userCalls).toBe(2);
     } finally {
@@ -2360,7 +2104,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
         const path = typeof url === 'string' ? url : url.toString();
         if (path.endsWith('/user')) {
           userCalls += 1;
-          // Non-rate-limited 403: installation token rejected by /user.
           return new Response(JSON.stringify({ message: 'Resource not accessible' }), {
             status: 403,
           });
@@ -2372,8 +2115,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       const clientHub = await setupHub(extension, new HealthConfigStore());
       await clientHub.request('space.github.health', { spaceId: 'space-1' });
       expect(userCalls).toBe(1);
-      // A lightweight refresh within the TTL reuses the cached permission-403 —
-      // it's stable (same token → same 403), so re-validating wastes API budget.
       await clientHub.request('space.github.health', { spaceId: 'space-1', lightweight: true });
       expect(userCalls).toBe(1);
     } finally {
@@ -2400,16 +2141,10 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       repo: 'widgets',
       pollingEnabled: true,
     });
-    // Seed a successful poll under token B.
     extension.repo.updatePollCursor(repo.id, {
       lastSeenAt: 0,
       lastPollCredentialFingerprint: fp('ghp_B'),
     });
-    // Override resolveToken to bump credentialGeneration on each call (churning)
-    // while returning a CONSTANT token (ghp_B). The generation churn drives the
-    // retry loop/sentinel; without the sentinel, the fingerprint would match
-    // ghp_B and the repo would read verified. With the sentinel, the exhausted
-    // retry path overrides to an unmatchable fingerprint.
     (extension as unknown as { resolveToken: () => Promise<string | null> }).resolveToken =
       async () => {
         tokenCall += 1;
@@ -2421,8 +2156,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
         spaceId: 'space-1',
       });
-      // The credential kept changing across all 3 retries — the sentinel fires
-      // and the repo reads as unverified (neverPolled), not trusted.
       expect(snapshot.polling.neverPolledRepoCount).toBe(1);
       expect(snapshot.polling.lastPollAt).toBeNull();
     } finally {
@@ -2432,10 +2165,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
 
   test('validatedFingerprint overrides the pre-validation read for access-scoping', async () => {
     const db = setupDb();
-    // The keychain changes WITHOUT a setToken/clearToken (credentialGeneration
-    // doesn't bump). The pre-validation resolveToken returns the OLD token, but
-    // getTokenStatus's internal resolveToken reads the NEW one from the store.
-    // The validatedFingerprint binding must override the stale pre-read.
     const store = new MemoryCredentialStore();
     await store.set('neokai.external-events.github', 'default', 'ghp_NEW');
     const extension = new GitHubEventExtension(db, undefined, {
@@ -2455,14 +2184,10 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       repo: 'widgets',
       pollingEnabled: true,
     });
-    // Seed a poll under the OLD token's fingerprint.
     extension.repo.updatePollCursor(repo.id, {
       lastSeenAt: 0,
       lastPollCredentialFingerprint: fp('ghp_OLD'),
     });
-    // Override resolveToken to return the OLD token (simulating a stale read
-    // before the keychain change is visible to it), while getTokenStatus's
-    // internal resolveToken reads ghp_NEW from the store.
     (extension as unknown as { resolveToken: () => Promise<string | null> }).resolveToken =
       async () => 'ghp_OLD';
     try {
@@ -2470,9 +2195,6 @@ describe('GitHubEventExtension health snapshot (space.github.health)', () => {
       const snapshot = await clientHub.request<GitHubHealthSnapshot>('space.github.health', {
         spaceId: 'space-1',
       });
-      // Without the validatedFingerprint binding, the pre-read (fp('ghp_OLD'))
-      // matches the repo's seeded fingerprint → verified → Healthy. With it,
-      // getTokenStatus validated ghp_NEW → fp('ghp_NEW') overrides → unverified.
       expect(snapshot.polling.neverPolledRepoCount).toBe(1);
       expect(snapshot.polling.lastPollAt).toBeNull();
     } finally {

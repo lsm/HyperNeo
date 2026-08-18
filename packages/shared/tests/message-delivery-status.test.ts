@@ -19,10 +19,6 @@ describe('sendStatusToDeliveryStatus', () => {
   });
 
   it('maps a CONSUMED message whose turn is being re-driven to retrying', () => {
-    // A delivery-driven turn that died on a recoverable provider error keeps the
-    // row consumed while the job backs off and retries. Surfacing `retrying`
-    // (with a countdown) instead of a misleading "delivered" is the fix for the
-    // silent-idle bug.
     expect(sendStatusToDeliveryStatus('consumed', { retrying: true })).toBe('retrying');
   });
 

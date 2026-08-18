@@ -1,7 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 
-// Re-declare the SDK mock so db-query tests are insulated from test-order-dependent
-// overrides in other suites (some replace tool() with a minimal { name } shape).
 mock.module('@anthropic-ai/claude-agent-sdk', () => {
   class MockMcpServer {
     readonly _registeredTools: Record<string, object> = {};
@@ -60,16 +58,9 @@ import {
   createDbQueryMcpServer,
 } from '../../../../src/lib/db-query/tools.ts';
 
-// ── Test Schema ────────────────────────────────────────────────────────────────
-
-/**
- * Create a minimal in-memory database with tables that mirror the HyperNeo schema
- * subset used by the db-query scope config.
- */
 function createTestDb(): Database {
   const db = new Database(':memory:');
 
-  // Room-scoped tables
   db.exec(`
 		CREATE TABLE IF NOT EXISTS rooms (
 			id TEXT PRIMARY KEY,
@@ -130,7 +121,6 @@ function createTestDb(): Database {
 		)
 	`);
 
-  // Space-scoped tables
   db.exec(`
 		CREATE TABLE IF NOT EXISTS spaces (
 			id TEXT PRIMARY KEY,
@@ -187,8 +177,6 @@ function createTestDb(): Database {
 
   return db;
 }
-
-// ── Seed helpers ───────────────────────────────────────────────────────────────
 
 function seedRooms(db: Database) {
   db.exec(
@@ -284,8 +272,6 @@ function seedGateData(db: Database) {
   );
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
-
 function parseResult(result: {
   content: Array<{ type: string; text: string }>;
   isError?: boolean;
@@ -298,8 +284,6 @@ function parseResult(result: {
   }
 }
 
-// ── Tests ──────────────────────────────────────────────────────────────────────
-
 describe('db-query tools', () => {
   let db: Database;
 
@@ -310,8 +294,6 @@ describe('db-query tools', () => {
   afterEach(() => {
     db.close();
   });
-
-  // ── db_query ──────────────────────────────────────────────────────────────
 
   describe('db_query', () => {
     describe('valid SELECT returns rows', () => {
@@ -570,7 +552,6 @@ describe('db-query tools', () => {
     describe('same-scope JOIN queries', () => {
       it('JOINs two room-scoped tables with deduplicated scope filter', async () => {
         seedRooms(db);
-        // Insert goals and tasks without re-seeding rooms
         db.exec(
           "INSERT INTO goals (id, room_id, title, status, mission_type, created_at) VALUES ('goal-1', 'room-1', 'Goal 1', 'active', 'one_shot', 1000)"
         );
@@ -587,18 +568,14 @@ describe('db-query tools', () => {
           { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
           db
         );
-        // Both tasks and goals have scopeColumn 'room_id' — the wrapper
-        // should deduplicate the filter to a single _dbq.room_id = ?
         const result = await handlers.db_query({
           sql: 'SELECT * FROM tasks JOIN goals ON tasks.room_id = goals.room_id',
         });
         const parsed = parseResult(result);
 
         expect(parsed.isError).toBeFalsy();
-        // room-1 has 2 tasks and 2 goals — cross join on room_id = room_id
         expect(parsed.rows).toHaveLength(4);
         for (const row of parsed.rows) {
-          // SQLite suffixes duplicate column names with :1
           expect(['Goal 1', 'Goal 2']).toContain(row['title:1']);
         }
       });
@@ -628,8 +605,6 @@ describe('db-query tools', () => {
           { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
           db
         );
-        // "active" is a CTE name, not a real table — should not trigger
-        // a "not accessible in scope" error
         const result = await handlers.db_query({
           sql: 'WITH active AS (SELECT id, title FROM tasks) SELECT * FROM active',
         });
@@ -643,16 +618,12 @@ describe('db-query tools', () => {
           { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
           db
         );
-        // Regression test: outer SELECT has explicit columns (not *),
-        // and the CTE body also has explicit columns. Both should be
-        // rewritten to * without shift corruption.
         const result = await handlers.db_query({
           sql: 'WITH active AS (SELECT id, title, status FROM tasks WHERE status = ?) SELECT id, title FROM active',
           params: ['pending'],
         });
         const parsed = parseResult(result);
         expect(parsed.isError).toBeFalsy();
-        // room-1 has task-2 with status 'pending'
         expect(parsed.rowCount).toBe(1);
         expect(parsed.rows[0].id).toBe('task-2');
         expect(parsed.rows[0].title).toBe('Task 2');
@@ -672,7 +643,6 @@ describe('db-query tools', () => {
         const parsed = parseResult(result);
 
         expect(parsed.isError).toBeFalsy();
-        // goal-1 (room-1) has exec-1, exec-2; goal-2 (room-1) has exec-3
         expect(parsed.rows).toHaveLength(3);
         const goalIds = parsed.rows.map((r: Record<string, unknown>) => r.goal_id);
         expect(goalIds.sort()).toEqual(['goal-1', 'goal-1', 'goal-2']);
@@ -690,14 +660,12 @@ describe('db-query tools', () => {
         const parsed = parseResult(result);
 
         expect(parsed.isError).toBeFalsy();
-        // room-2 has goal-3 which has no executions
         expect(parsed.rows).toHaveLength(0);
       });
     });
 
     describe('row limit cap enforced', () => {
       it('default limit is 200', async () => {
-        // Insert many rows
         seedRooms(db);
         for (let i = 0; i < 10; i++) {
           db.exec(
@@ -744,7 +712,6 @@ describe('db-query tools', () => {
           { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
           db
         );
-        // Request 5000 — should be capped at 1000
         const result = await handlers.db_query({
           sql: 'SELECT * FROM goals',
           limit: 5000,
@@ -759,7 +726,6 @@ describe('db-query tools', () => {
     describe('truncated flag', () => {
       it('truncated flag is true when results hit the default limit', async () => {
         seedRooms(db);
-        // Insert enough rows to exceed the default limit (200)
         for (let i = 0; i < 250; i++) {
           db.exec(
             `INSERT INTO goals (id, room_id, title, status, created_at) VALUES ('trunc-${i}', 'room-1', 'Truncation Test ${i}', 'active', ${i})`
@@ -769,7 +735,6 @@ describe('db-query tools', () => {
           { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
           db
         );
-        // No explicit limit — default 200 should apply
         const result = await handlers.db_query({ sql: 'SELECT * FROM goals' });
         const parsed = parseResult(result);
 
@@ -784,7 +749,6 @@ describe('db-query tools', () => {
           { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
           db
         );
-        // Only 2 tasks in room-1, well under the limit
         const result = await handlers.db_query({ sql: 'SELECT * FROM tasks' });
         const parsed = parseResult(result);
 
@@ -859,7 +823,6 @@ describe('db-query tools', () => {
 
         expect(parsed.isError).toBeFalsy();
         expect(parsed.rows).toHaveLength(2);
-        // goals has no blacklisted columns — all columns should be present
         expect(parsed.rows[0]).toHaveProperty('id');
         expect(parsed.rows[0]).toHaveProperty('title');
         expect(parsed.rows[0]).toHaveProperty('status');
@@ -889,10 +852,8 @@ describe('db-query tools', () => {
         );
         const result = await handlers.db_query({
           sql: 'SELECT * FROM rooms WHERE id = ?',
-          params: [123], // wrong type — rooms.id is TEXT
+          params: [123],
         });
-        // SQLite is flexible with types, so this may or may not error
-        // The point is that if it errors, isError is set
         if (result.isError) {
           expect(parseResult(result).raw).toContain('Query execution error');
         }
@@ -912,7 +873,6 @@ describe('db-query tools', () => {
         const parsed = parseResult(result);
 
         expect(parsed.isError).toBeFalsy();
-        // room-1 has tasks with 'in_progress' and 'pending' — 2 distinct statuses
         expect(parsed.rows).toHaveLength(2);
         const statuses = parsed.rows.map((r: Record<string, unknown>) => r.status);
         expect(statuses.sort()).toEqual(['in_progress', 'pending']);
@@ -962,14 +922,12 @@ describe('db-query tools', () => {
           { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
           db
         );
-        // goals (direct scope via room_id) JOIN mission_executions (indirect via goals)
         const result = await handlers.db_query({
           sql: 'SELECT * FROM goals JOIN mission_executions ON goals.id = mission_executions.goal_id',
         });
         const parsed = parseResult(result);
 
         expect(parsed.isError).toBeFalsy();
-        // room-1 goals: goal-1, goal-2; goal-1 → exec-1, exec-2; goal-2 → exec-3
         expect(parsed.rows).toHaveLength(3);
       });
     });
@@ -1053,7 +1011,6 @@ describe('db-query tools', () => {
         });
         const parsed = parseResult(result);
         expect(parsed.isError).toBeFalsy();
-        // room-1 has task-1 and task-2
         expect(parsed.rowCount).toBe(2);
       });
 
@@ -1097,7 +1054,6 @@ describe('db-query tools', () => {
         });
         const parsed = parseResult(result);
         expect(parsed.isError).toBeFalsy();
-        // room-1 has task-1 and task-2
         expect(parsed.rowCount).toBe(1);
         expect(parsed.rows[0].cnt).toBe(2);
       });
@@ -1113,7 +1069,6 @@ describe('db-query tools', () => {
         });
         const parsed = parseResult(result);
         expect(parsed.isError).toBeFalsy();
-        // room-1: task-1 (in_progress), task-2 (pending)
         expect(parsed.rowCount).toBe(2);
       });
 
@@ -1128,7 +1083,6 @@ describe('db-query tools', () => {
         });
         const parsed = parseResult(result);
         expect(parsed.isError).toBeFalsy();
-        // room-1 has 1 in_progress task
         expect(parsed.rows[0].cnt).toBe(1);
       });
 
@@ -1143,14 +1097,12 @@ describe('db-query tools', () => {
         });
         const parsed = parseResult(result);
         expect(parsed.isError).toBeFalsy();
-        // room-1: task-1 (1000) + task-2 (2000) = 3000
         expect(parsed.rows[0].total).toBe(3000);
       });
     });
 
     describe('DISTINCT queries in scoped mode', () => {
       it('DISTINCT deduplicates on selected columns only', async () => {
-        // Create multiple tasks with same status in room-1
         seedRooms(db);
         db.exec(
           "INSERT INTO tasks (id, room_id, title, status, priority, created_at) VALUES ('t1', 'room-1', 'A', 'active', 'high', 1000)"
@@ -1170,7 +1122,6 @@ describe('db-query tools', () => {
         });
         const parsed = parseResult(result);
         expect(parsed.isError).toBeFalsy();
-        // 3 tasks: 2 active, 1 pending → DISTINCT gives 2 rows
         expect(parsed.rowCount).toBe(2);
       });
     });
@@ -1187,7 +1138,6 @@ describe('db-query tools', () => {
         });
         const parsed = parseResult(result);
         expect(parsed.isError).toBeFalsy();
-        // room-1: task-1 (created_at=1000), task-2 (created_at=2000)
         expect(parsed.rows[0].id).toBe('task-1');
         expect(parsed.rows[1].id).toBe('task-2');
       });
@@ -1203,7 +1153,6 @@ describe('db-query tools', () => {
         });
         const parsed = parseResult(result);
         expect(parsed.isError).toBeFalsy();
-        // DESC order: task-2 first, task-1 second
         expect(parsed.rows[0].id).toBe('task-2');
         expect(parsed.rows[1].id).toBe('task-1');
       });
@@ -1231,7 +1180,6 @@ describe('db-query tools', () => {
           { dbPath: ':memory:', scopeType: 'global', scopeValue: '' },
           db
         );
-        // 3 rooms in global scope, limit to 2
         const result = await handlers.db_query({ sql: 'SELECT * FROM rooms', limit: 2 });
         const parsed = parseResult(result);
 
@@ -1246,7 +1194,6 @@ describe('db-query tools', () => {
           { dbPath: ':memory:', scopeType: 'global', scopeValue: '' },
           db
         );
-        // SQL has LIMIT 10, arg has limit 2 — should use 2 (stricter)
         const result = await handlers.db_query({
           sql: 'SELECT * FROM rooms LIMIT 10',
           limit: 2,
@@ -1265,14 +1212,11 @@ describe('db-query tools', () => {
           { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
           db
         );
-        // This is NOT an aggregate query — the COUNT is in a subquery.
-        // It goes through direct WHERE injection to preserve the subquery.
         const result = await handlers.db_query({
           sql: 'SELECT id, title, (SELECT COUNT(*) FROM tasks) AS total FROM goals',
         });
         const parsed = parseResult(result);
         expect(parsed.isError).toBeFalsy();
-        // room-1 has goal-1 and goal-2 — should get 2 rows
         expect(parsed.rowCount).toBe(2);
       });
 
@@ -1287,7 +1231,6 @@ describe('db-query tools', () => {
         });
         const parsed = parseResult(result);
         expect(parsed.isError).toBeFalsy();
-        // room-1: goal-1 → exec-1, exec-2; goal-2 → exec-3 = 3 executions
         expect(parsed.rows[0].n).toBe(3);
       });
 
@@ -1302,7 +1245,6 @@ describe('db-query tools', () => {
         });
         const parsed = parseResult(result);
         expect(parsed.isError).toBeFalsy();
-        // room-1: in_progress=1, pending=1 — neither > 1, so 0 rows
         expect(parsed.rowCount).toBe(0);
       });
 
@@ -1317,7 +1259,6 @@ describe('db-query tools', () => {
         });
         const parsed = parseResult(result);
         expect(parsed.isError).toBeFalsy();
-        // room-1: task-2 is pending
         expect(parsed.rows[0].n).toBe(1);
       });
 
@@ -1332,7 +1273,6 @@ describe('db-query tools', () => {
         });
         const parsed = parseResult(result);
         expect(parsed.isError).toBeFalsy();
-        // room-1: in_progress, pending — ordered alphabetically
         expect(parsed.rowCount).toBe(2);
         expect(parsed.rows[0].status).toBe('in_progress');
         expect(parsed.rows[1].status).toBe('pending');
@@ -1346,7 +1286,6 @@ describe('db-query tools', () => {
           { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
           db
         );
-        // room-1 has 2 tasks, SQL LIMIT 1 should return 1
         const result = await handlers.db_query({
           sql: 'SELECT * FROM tasks LIMIT 1',
         });
@@ -1362,7 +1301,6 @@ describe('db-query tools', () => {
           { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
           db
         );
-        // SQL has LIMIT 10, arg has limit 1 — should use 1 (stricter)
         const result = await handlers.db_query({
           sql: 'SELECT * FROM tasks LIMIT 10',
           limit: 1,
@@ -1373,8 +1311,6 @@ describe('db-query tools', () => {
       });
     });
   });
-
-  // ── db_list_tables ─────────────────────────────────────────────────────────
 
   describe('db_list_tables', () => {
     it('returns only scope-appropriate tables for room scope', async () => {
@@ -1390,7 +1326,6 @@ describe('db-query tools', () => {
       expect(parsed.tables).toContain('goals');
       expect(parsed.tables).toContain('mission_executions');
       expect(parsed.tables).toContain('mission_metric_history');
-      // Should NOT contain global or space tables
       expect(parsed.tables).not.toContain('rooms');
       expect(parsed.tables).not.toContain('spaces');
       expect(parsed.tables).not.toContain('space_tasks');
@@ -1407,7 +1342,6 @@ describe('db-query tools', () => {
       expect(parsed.isError).toBeFalsy();
       expect(parsed.tables).toContain('space_tasks');
       expect(parsed.tables).toContain('space_workflow_runs');
-      // Should NOT contain room or global tables
       expect(parsed.tables).not.toContain('tasks');
       expect(parsed.tables).not.toContain('goals');
       expect(parsed.tables).not.toContain('rooms');
@@ -1425,7 +1359,6 @@ describe('db-query tools', () => {
       expect(parsed.tables).toContain('rooms');
       expect(parsed.tables).toContain('sessions');
       expect(parsed.tables).toContain('spaces');
-      // Should NOT contain room or space scoped tables
       expect(parsed.tables).not.toContain('tasks');
       expect(parsed.tables).not.toContain('goals');
     });
@@ -1442,8 +1375,6 @@ describe('db-query tools', () => {
       expect(parsed.description).toContain('goals');
     });
   });
-
-  // ── db_describe_table ──────────────────────────────────────────────────────
 
   describe('db_describe_table', () => {
     it('returns column info for an in-scope table', async () => {
@@ -1473,10 +1404,7 @@ describe('db-query tools', () => {
       const parsed = parseResult(result);
 
       expect(parsed.isError).toBeFalsy();
-      // 'restrictions' is blacklisted for tasks — should appear in the
-      // hidden columns note but NOT as a column in the table definition
       expect(parsed.description).toContain('hidden');
-      // Verify restrictions does NOT appear as a column row in the table
       const columnTableMatch = parsed.description.match(
         /\|[\s\S]*?\|[\s\S]*?\|[\s\S]*?\|[\s\S]*?\|[\s\S]*?\|/g
       );
@@ -1537,8 +1465,6 @@ describe('db-query tools', () => {
     });
   });
 
-  // ── createDbQueryMcpServer ─────────────────────────────────────────────────
-
   describe('createDbQueryMcpServer', () => {
     let tmpDir: string;
 
@@ -1552,7 +1478,6 @@ describe('db-query tools', () => {
 
     it('creates a server with the correct name and tools', () => {
       const dbPath = join(tmpDir, 'test.db');
-      // Create the database file first
       const initDb = new Database(dbPath);
       initDb.exec('CREATE TABLE rooms (id TEXT PRIMARY KEY, name TEXT, config TEXT)');
       initDb.close();
@@ -1564,8 +1489,6 @@ describe('db-query tools', () => {
       });
 
       expect(server.name).toBe('db-query');
-      // Note: version is set in the real SDK's createSdkMcpServer call,
-      // but the test mock may not propagate it in all environments
       expect(server.type).toBe('sdk');
       expect(server.instance._registeredTools).toHaveProperty('db_query');
       expect(server.instance._registeredTools).toHaveProperty('db_list_tables');
@@ -1614,7 +1537,6 @@ describe('db-query tools', () => {
         scopeValue: '',
       });
 
-      // close() should not throw
       expect(() => server.close()).not.toThrow();
     });
 
@@ -1632,7 +1554,6 @@ describe('db-query tools', () => {
       });
 
       expect(server.type).toBe('sdk');
-      // Verify the handler can be invoked
       const queryHandler = (
         server.instance._registeredTools.db_query as {
           handler: (args: { sql: string }) => Promise<{ content: Array<{ text: string }> }>;
@@ -1647,11 +1568,8 @@ describe('db-query tools', () => {
     });
   });
 
-  // ── Edge cases: scope-appropriate JOINs, params, aggregates ─────────────────
-
   describe('scope-appropriate JOINs with parameterized filters', () => {
     it('tasks JOIN goals in room scope with parameterized WHERE narrows results', async () => {
-      // Seed rooms+goals first, then add tasks without re-seeding rooms
       seedGoals(db);
       db.exec(
         "INSERT INTO tasks (id, room_id, title, status, priority, restrictions, created_at) VALUES ('task-1', 'room-1', 'Task 1', 'in_progress', 'high', '{\"maxTokens\":100}', 1000)"
@@ -1663,8 +1581,6 @@ describe('db-query tools', () => {
         { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
         db
       );
-      // Both tables are room-scoped; filter by goals status via parameterized query.
-      // Scope filter for room-1 is applied; only goals with status='active' are joined.
       const result = await handlers.db_query({
         sql: 'SELECT tasks.id AS task_id, goals.id AS goal_id FROM tasks JOIN goals ON tasks.room_id = goals.room_id WHERE goals.status = ?',
         params: ['active'],
@@ -1672,13 +1588,10 @@ describe('db-query tools', () => {
       const parsed = parseResult(result);
 
       expect(parsed.isError).toBeFalsy();
-      // room-1 tasks: task-1, task-2; room-1 goals with status='active': goal-1
-      // cross join: 2 tasks × 1 active goal = 2 rows
       expect(parsed.rowCount).toBe(2);
     });
 
     it('JOIN of two room-scoped tables isolates rows from other rooms', async () => {
-      // Seed rooms+goals first, then add tasks without re-seeding rooms
       seedGoals(db);
       db.exec(
         "INSERT INTO tasks (id, room_id, title, status, priority, restrictions, created_at) VALUES ('task-1', 'room-1', 'Task 1', 'in_progress', 'high', NULL, 1000)"
@@ -1691,16 +1604,12 @@ describe('db-query tools', () => {
         db
       );
       const result = await handlers.db_query({
-        // Use SELECT * so columns aren't aliased away by the subquery wrapper
         sql: 'SELECT * FROM tasks JOIN goals ON tasks.room_id = goals.room_id',
       });
       const parsed = parseResult(result);
 
       expect(parsed.isError).toBeFalsy();
-      // room-2 has 1 task (task-3) and 1 goal (goal-3): 1×1 = 1 row
       expect(parsed.rowCount).toBe(1);
-      // Both task and goal data from room-2 should appear in the single row
-      // room_id is duplicated by the JOIN, SQLite names the second one 'room_id:1'
       expect(parsed.rows[0].room_id).toBe('room-2');
     });
   });
@@ -1712,8 +1621,6 @@ describe('db-query tools', () => {
         { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
         db
       );
-      // room-1: task-1 created_at=1000, task-2 created_at=2000 → sum=3000
-      // room-2: task-3 created_at=3000 (excluded)
       const result = await handlers.db_query({
         sql: 'SELECT SUM(created_at) AS total FROM tasks',
       });
@@ -1724,7 +1631,6 @@ describe('db-query tools', () => {
     });
 
     it('GROUP BY status with COUNT in room scope filters out other rooms', async () => {
-      // Insert extra task in room-2 to ensure isolation
       seedTasks(db);
       const handlers = createDbQueryToolHandlers(
         { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
@@ -1736,13 +1642,11 @@ describe('db-query tools', () => {
       const parsed = parseResult(result);
 
       expect(parsed.isError).toBeFalsy();
-      // room-1: task-1 (in_progress), task-2 (pending) — 2 status groups
       expect(parsed.rows).toHaveLength(2);
       const total = parsed.rows.reduce(
         (sum: number, r: Record<string, unknown>) => sum + (r.cnt as number),
         0
       );
-      // Total count across all statuses = 2 (only room-1 tasks)
       expect(total).toBe(2);
     });
 
@@ -1759,9 +1663,7 @@ describe('db-query tools', () => {
       const parsed = parseResult(result);
 
       expect(parsed.isError).toBeFalsy();
-      // room-1 tasks: task-1 (in_progress, 1000) and task-2 (pending, 2000), neither is 'completed'
       expect(parsed.rows).toHaveLength(2);
-      // ORDER BY created_at DESC: task-2 (2000) first, then task-1 (1000)
       expect(parsed.rows[0].id).toBe('task-2');
       expect(parsed.rows[1].id).toBe('task-1');
     });
@@ -1772,7 +1674,6 @@ describe('db-query tools', () => {
         { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
         db
       );
-      // room-1 has 2 tasks; LIMIT 1 should return only the first one
       const result = await handlers.db_query({
         sql: 'SELECT id FROM tasks ORDER BY created_at ASC LIMIT 1',
       });
@@ -1789,13 +1690,6 @@ describe('db-query tools', () => {
         { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
         db
       );
-      // Query mission_executions (indirect scope via goals) with two parameterized conditions.
-      // Data from seedMissionExecutions:
-      //   exec-1: goal-1 (room-1), execution_number=1, status='completed'
-      //   exec-2: goal-1 (room-1), execution_number=2, status='running'
-      //   exec-3: goal-2 (room-1), execution_number=1, status='completed'
-      // Scope filter: room-1 → exec-1, exec-2, exec-3
-      // WHERE status='completed' AND execution_number >= 1 → exec-1, exec-3
       const result = await handlers.db_query({
         sql: 'SELECT id FROM mission_executions WHERE status = ? AND execution_number >= ?',
         params: ['completed', 1],
@@ -1803,8 +1697,6 @@ describe('db-query tools', () => {
       const parsed = parseResult(result);
 
       expect(parsed.isError).toBeFalsy();
-      // exec-1 (completed, n=1) and exec-3 (completed, n=1) both match
-      // exec-2 is running (excluded by WHERE)
       expect(parsed.rows).toHaveLength(2);
       const ids = parsed.rows.map((r: Record<string, unknown>) => r.id).sort();
       expect(ids).toEqual(['exec-1', 'exec-3']);

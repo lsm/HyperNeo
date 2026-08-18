@@ -1,13 +1,3 @@
-/**
- * ArtifactCard — shape-driven renderer tests.
- *
- * Verifies that rendering is keyed on `artifact.artifactType` (a value from the
- * closed `ArtifactShape` vocabulary), that `data.kind` supplies the icon/label
- * (especially for the `link` shape), and that a default renderer handles any
- * shape. The old data-shape sniffing and hardcoded GitHub-PR URL detection are
- * gone — a PR is now `link` with `kind: 'pr'`.
- */
-
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/preact';
 import { ArtifactCard } from '../ArtifactCard';
@@ -28,8 +18,6 @@ function makeArtifact(
   };
 }
 
-// ── link shape ───────────────────────────────────────────────────────────────
-
 describe('ArtifactCard — link shape', () => {
   it('renders artifact-card-link for the link shape', () => {
     const artifact = makeArtifact({
@@ -41,7 +29,6 @@ describe('ArtifactCard — link shape', () => {
   });
 
   it('renders a PR row when kind is "pr" — no GitHub URL detection involved', () => {
-    // Note: the URL is NOT a github.com pull URL; kind alone drives the PR styling.
     const artifact = makeArtifact({
       artifactType: 'link',
       data: {
@@ -94,8 +81,6 @@ describe('ArtifactCard — link shape', () => {
   });
 
   it('does NOT special-case github.com pull URLs without kind:"pr" — renders as a plain link', () => {
-    // Removal of the hardcoded GITHUB_PR_RE detection: a PR URL with no kind is a
-    // generic link, not a PR card.
     const artifact = makeArtifact({
       artifactType: 'link',
       data: { url: 'https://github.com/owner/repo/pull/42' },
@@ -136,8 +121,6 @@ describe('ArtifactCard — link shape', () => {
   });
 });
 
-// ── commit_set shape ─────────────────────────────────────────────────────────
-
 describe('ArtifactCard — commit_set shape', () => {
   it('renders artifact-card-commit-set with the commit count and +/- totals', () => {
     const artifact = makeArtifact({
@@ -160,7 +143,6 @@ describe('ArtifactCard — commit_set shape', () => {
     expect(card.textContent).toContain('-30');
     expect(card.textContent).toContain('feat/x');
     expect(card.textContent).toContain('feat: add thing');
-    // short SHAs are shown
     expect(card.textContent).toContain('abcdef1');
   });
 
@@ -176,8 +158,6 @@ describe('ArtifactCard — commit_set shape', () => {
   });
 
   it('ignores null / non-object commit entries instead of throwing', () => {
-    // { commits: [null] } passes validateArtifactShape (no required fields) and
-    // must not crash the panel when the renderer dereferences each entry.
     const commits = [
       null,
       { sha: 'abcdef1234567890', message: 'the only real commit' },
@@ -191,8 +171,6 @@ describe('ArtifactCard — commit_set shape', () => {
     expect(card.textContent).toContain('the only real commit');
   });
 });
-
-// ── check shape ──────────────────────────────────────────────────────────────
 
 describe('ArtifactCard — check shape', () => {
   it('renders artifact-card-check with the status chip, name and counts', () => {
@@ -218,8 +196,6 @@ describe('ArtifactCard — check shape', () => {
     expect(getByTestId('artifact-card-check').textContent).toContain('fail');
   });
 });
-
-// ── metric shape ─────────────────────────────────────────────────────────────
 
 describe('ArtifactCard — metric shape', () => {
   it('renders artifact-card-metric with name, value, unit and target', () => {
@@ -247,8 +223,6 @@ describe('ArtifactCard — metric shape', () => {
   });
 });
 
-// ── decision shape ───────────────────────────────────────────────────────────
-
 describe('ArtifactCard — decision shape', () => {
   it('renders artifact-card-decision with the recommendation badge and summary', () => {
     const artifact = makeArtifact({
@@ -272,8 +246,6 @@ describe('ArtifactCard — decision shape', () => {
   });
 
   it('surfaces the review evidence link for legacy review rows mapped to decision', () => {
-    // Legacy review-history rows carry review_url (not recommendation); the
-    // renderer must keep that link visible instead of a blank card.
     const artifact = makeArtifact({
       artifactType: 'decision',
       data: { review_url: 'https://github.com/o/r/pull/1#review', cycle: 0 },
@@ -286,7 +258,6 @@ describe('ArtifactCard — decision shape', () => {
   });
 
   it('falls back to review_url when data.url is a non-http scheme (link is not dropped)', () => {
-    // A non-http data.url must not shadow a valid review_url/pr_url candidate.
     const artifact = makeArtifact({
       artifactType: 'decision',
       data: { url: 'ftp://example.com/x', review_url: 'https://github.com/o/r/pull/1#review' },
@@ -304,13 +275,10 @@ describe('ArtifactCard — decision shape', () => {
     });
     const { container, getByTestId } = render(<ArtifactCard artifact={artifact} />);
     expect(container.querySelector('a')?.getAttribute('href')).toBe('https://example.com/a');
-    // data.url was selected, so the label is 'view', not 'review'.
     expect(getByTestId('artifact-card-decision').textContent).toContain('view');
     expect(getByTestId('artifact-card-decision').textContent).not.toContain('review');
   });
 });
-
-// ── note shape ───────────────────────────────────────────────────────────────
 
 describe('ArtifactCard — note shape', () => {
   it('renders artifact-card-note with the text', () => {
@@ -332,8 +300,6 @@ describe('ArtifactCard — note shape', () => {
   });
 });
 
-// ── default renderer ─────────────────────────────────────────────────────────
-
 describe('ArtifactCard — default renderer', () => {
   it('renders artifact-card-generic for an unknown shape', () => {
     const artifact = makeArtifact({
@@ -351,12 +317,6 @@ describe('ArtifactCard — default renderer', () => {
     expect(getByTestId('artifact-card-generic')).toBeTruthy();
   });
 });
-
-// ── legacy type normalization ────────────────────────────────────────────────
-//
-// Until the backend producer + DB migration land, rows carry pre-shape types
-// (progress/result/pr/review). The UI maps them to shapes at the render boundary
-// so they keep rendering correctly instead of falling through to GenericCard.
 
 describe('ArtifactCard — legacy type normalization', () => {
   it('renders a legacy "pr" artifact as a link row', () => {
@@ -387,8 +347,6 @@ describe('ArtifactCard — legacy type normalization', () => {
   });
 
   it('renders a mixed QA "result" (pr_url + summary) as a decision, preserving the summary', () => {
-    // The full-stack QA workflow writes { pr_url, summary, test_output, ... }; it
-    // must not collapse to a bare link that hides the QA summary.
     const artifact = makeArtifact({
       artifactType: 'result',
       data: {
@@ -401,7 +359,6 @@ describe('ArtifactCard — legacy type normalization', () => {
     const { container, getByTestId } = render(<ArtifactCard artifact={artifact} />);
     const card = getByTestId('artifact-card-decision');
     expect(card.textContent).toContain('QA passed');
-    // The PR link is still reachable as the decision's evidence link.
     expect(card.textContent).not.toContain('Pull Request');
     expect(container.querySelector('a')?.getAttribute('href')).toBe(
       'https://github.com/o/r/pull/9'
@@ -418,8 +375,6 @@ describe('ArtifactCard — legacy type normalization', () => {
   });
 
   it('renders a legacy merge-audit "result" (merged_pr_url) as a link, not an empty card', () => {
-    // The post-approval merge template writes { merged_pr_url, merged_at, approval_source };
-    // the merged PR URL must render instead of a bare decision badge.
     const artifact = makeArtifact({
       artifactType: 'result',
       data: {

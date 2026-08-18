@@ -1,18 +1,3 @@
-/**
- * SpaceWorkflowRepository
- *
- * Data access layer for SpaceWorkflow and SpaceWorkflowNode records.
- *
- * Storage layout:
- *   space_workflows             — id, space_id, name, description, start_node_id, end_node_id,
- *                                  tags (JSON), channels (JSON), gates (JSON), layout (JSON),
- *                                  created_at, updated_at
- *   space_workflow_nodes        — id, workflow_id, name, description, config (JSON),
- *                                  created_at, updated_at
- *
- * The `config` column on space_workflow_nodes stores: { agents? }
- */
-
 import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
 import type {
@@ -42,10 +27,6 @@ import {
 
 const log = new Logger('space-workflow-repository');
 
-// ---------------------------------------------------------------------------
-// Internal DB row shapes
-// ---------------------------------------------------------------------------
-
 interface WorkflowRow {
   id: string;
   space_id: string;
@@ -61,10 +42,6 @@ interface WorkflowRow {
   template_hash: string | null;
   instructions: string | null;
   completion_autonomy_level: number;
-  /**
-   * JSON-encoded legacy workflow-level `PostApprovalRoute` — null when the
-   * workflow has no legacy route configured. New routes live in node config.
-   */
   post_approval?: string | null;
   disabled: number;
   handle: string | null;
@@ -82,29 +59,12 @@ interface NodeRow {
   updated_at: number;
 }
 
-// JSON stored inside space_workflow_nodes.config
 interface NodeConfigJson {
-  /** Multi-agent array */
   agents?: WorkflowNodeAgent[];
-  /** Optional post-approval route scoped to this workflow node. */
   postApproval?: PostApprovalRoute;
-  /** Declared outbound handoff transitions from this node. See HandoffTransition. */
   transitions?: HandoffTransition[];
-  /**
-   * Forward-compat: rows persisted before PR 5/5 of the
-   * task-agent-as-post-approval-executor refactor may carry a legacy
-   * post-approval action list under this key. The runtime no longer reads it;
-   * `rowToNode` strips it on load and logs a warning so the row can be
-   * re-saved cleanly the next time the workflow is updated. The field is
-   * intentionally untyped (`unknown`) because the action union has been
-   * deleted from `@hyperneo/shared`.
-   */
   completionActions?: unknown;
 }
-
-// ---------------------------------------------------------------------------
-// Mapping helpers
-// ---------------------------------------------------------------------------
 
 function parseJson<T>(raw: string | null | undefined, fallback: T): T {
   if (!raw) return fallback;
@@ -115,35 +75,20 @@ function parseJson<T>(raw: string | null | undefined, fallback: T): T {
   }
 }
 
-/**
- * Per-load migration accumulator. `rowToNode` pushes the names of any
- * deprecated fields it strips into `strippedFields` so the caller can emit a
- * single workflow-level `workflow.migrated` structured log line covering every
- * stripped field across all nodes — instead of a noisy per-node warning.
- */
 interface NodeMigrationContext {
   strippedFields: Set<string>;
 }
 
 function rowToNode(row: NodeRow, ctx?: NodeMigrationContext): WorkflowNode {
   const cfg = parseJson<NodeConfigJson>(row.config, {});
-  // Ensure agents is always a non-empty array
   const agents: WorkflowNodeAgent[] =
     cfg.agents && cfg.agents.length > 0
       ? cfg.agents.map((a: WorkflowNodeAgent) => ({
           ...a,
-          // Backfill name if missing (legacy rows)
           name: a.name?.trim() ? a.name : a.agentId,
         }))
       : [];
 
-  // Forward-compat: drop the deprecated `completionActions` key without
-  // failing the load. Older rows persisted before PR 5/5 of the
-  // task-agent-as-post-approval-executor refactor still carry it. The
-  // runtime no longer routes through it — node-level `postApproval` routes
-  // are the supported replacement. We do NOT log here per-node; the
-  // caller aggregates stripped fields and emits a single structured
-  // `workflow.migrated` log line per workflow load. See plan §6.1.
   if (cfg.completionActions !== undefined && ctx) {
     ctx.strippedFields.add('completionActions');
   }
@@ -196,10 +141,6 @@ function rowToWorkflow(row: WorkflowRow, nodes: WorkflowNode[]): SpaceWorkflow {
   return wf;
 }
 
-// ---------------------------------------------------------------------------
-// Repository
-// ---------------------------------------------------------------------------
-
 export class SpaceWorkflowRepository {
   private readonly definitionVersions: SpaceWorkflowDefinitionVersionRepository;
 
@@ -207,21 +148,13 @@ export class SpaceWorkflowRepository {
     this.definitionVersions = new SpaceWorkflowDefinitionVersionRepository(db);
   }
 
-  // -------------------------------------------------------------------------
-  // Create
-  // -------------------------------------------------------------------------
-
   createWorkflow(params: CreateSpaceWorkflowParams): SpaceWorkflow {
     const workflowId = generateUUID();
     const now = Date.now();
 
-    // Default completionAutonomyLevel to 3 (supervised) when not provided.
-    // The DB column has NOT NULL DEFAULT 3; we mirror that here so callers
-    // (e.g. the visual editor) do not need to pass an explicit value.
     const completionAutonomyLevel: SpaceAutonomyLevel =
       params.completionAutonomyLevel ?? (3 as SpaceAutonomyLevel);
 
-    // Pre-resolve node IDs so channels can reference them
     const nodeInputs = params.nodes ?? [];
     const resolvedNodes: Array<{ id: string; input: WorkflowNodeInput }> = nodeInputs.map(
       (input) => ({
@@ -266,7 +199,6 @@ export class SpaceWorkflowRepository {
         now
       );
 
-    // Insert node rows
     for (let i = 0; i < resolvedNodes.length; i++) {
       const { id, input } = resolvedNodes[i];
       this.insertNode(workflowId, input, id, i, now);
@@ -276,10 +208,6 @@ export class SpaceWorkflowRepository {
     this.recordDefinitionVersion(created, 'create');
     return created;
   }
-
-  // -------------------------------------------------------------------------
-  // Read
-  // -------------------------------------------------------------------------
 
   getWorkflow(id: string): SpaceWorkflow | null {
     const row = this.db.prepare(`SELECT * FROM space_workflows WHERE id = ?`).get(id) as
@@ -292,15 +220,6 @@ export class SpaceWorkflowRepository {
     return rowToWorkflow(row, nodes);
   }
 
-  /**
-   * Resolve the RAW persisted definition an in-flight run executes (RFC §4 Phase 1 read
-   * cutover), without manager-level sanitization. Mirrors `getWorkflow` (raw) but resolves
-   * a pinned run through its immutable version instead of the mutable head. Callers that
-   * need the sanitized runtime view use `SpaceWorkflowManager.getWorkflowForRun`; this raw
-   * variant serves paths (e.g. delivery-permission checks) that today read the raw repo
-   * row. See the manager method for the stable-timestamp, fallback, and built-in-gate
-   * boundary rationale.
-   */
   getWorkflowForRun(run: {
     workflowId: string;
     definitionVersion: string | null;
@@ -311,10 +230,6 @@ export class SpaceWorkflowRepository {
         const version = this.definitionVersions.getVersion(run.workflowId, versionHash);
         if (version) {
           const parsed = JSON.parse(version.payload) as SpaceWorkflow;
-          // Validate shape + integrity before trusting the pinned payload: a corrupt or
-          // tampered row (valid JSON but wrong shape or hash mismatch) must not flow into
-          // sanitizePostApprovalForLoad (which assumes .nodes is an array). Fall through to
-          // the live head instead of returning a malformed object.
           if (!parsed || !Array.isArray(parsed.nodes)) {
             log.warn(
               `getWorkflowForRun: pinned payload for ${versionHash} has invalid shape; falling back to live head`
@@ -327,12 +242,6 @@ export class SpaceWorkflowRepository {
             );
             return this.getWorkflow(run.workflowId);
           }
-          // updatedAt is derived from the immutable version hash so the gate-open cache
-          // fingerprint is version-stable: it does not churn on unrelated head edits, and is
-          // identical on first activation and recovery (independent of when the version row
-          // was appended — INSERT OR IGNORE can leave a reused hash's created_at stale). The
-          // startup backfill re-keys existing persisted gate-open entries to this basis, so a
-          // backfilled in-flight run's cache survives the cutover without re-evaluation.
           return {
             ...parsed,
             createdAt: version.createdAt,
@@ -421,16 +330,6 @@ export class SpaceWorkflowRepository {
     }));
   }
 
-  /**
-   * Emit the structured `workflow.migrated` log line when a load stripped
-   * deprecated fields. Format is fixed by plan §6.1 so operators / log
-   * aggregators can grep / parse it reliably:
-   *
-   *   `workflow.migrated: workflowId=<id> workflowName=<name> strippedFields=[<csv>]`
-   *
-   * The DB row is intentionally NOT rewritten — re-saving the workflow via
-   * the editor is the documented way to clear persisted legacy fields.
-   */
   private emitMigrationLog(row: WorkflowRow, ctx: NodeMigrationContext): void {
     if (ctx.strippedFields.size === 0) return;
     const stripped = [...ctx.strippedFields].sort().join(',');
@@ -439,10 +338,6 @@ export class SpaceWorkflowRepository {
         `strippedFields=[${stripped}]`
     );
   }
-
-  // -------------------------------------------------------------------------
-  // Update
-  // -------------------------------------------------------------------------
 
   updateWorkflow(id: string, params: UpdateSpaceWorkflowParams): SpaceWorkflow | null {
     const row = this.db.prepare(`SELECT * FROM space_workflows WHERE id = ?`).get(id) as
@@ -544,14 +439,6 @@ export class SpaceWorkflowRepository {
     return updated;
   }
 
-  /**
-   * Update only persisted node-agent toolGuards for existing workflow nodes.
-   *
-   * This intentionally avoids replacing rows in `space_workflow_nodes`: workflow
-   * IDs, node IDs, and node-agent slots are stable identifiers referenced by
-   * in-flight workflow runs. Nodes are matched by stable node ID and only the
-   * JSON config for that node is rewritten.
-   */
   updateWorkflowNodeToolGuards(workflowId: string, nodes: WorkflowNode[]): void {
     const now = Date.now();
     const updateNode = this.db.prepare(
@@ -580,14 +467,6 @@ export class SpaceWorkflowRepository {
     if (afterGuards) this.recordDefinitionVersion(afterGuards, 'update');
   }
 
-  /**
-   * Record an immutable version snapshot of the definition (RFC §4, Phase 1). Best-effort
-   * at write time: a failure here must never break a definition write — the read cutover
-   * resolves a pinned run through `getWorkflowForRun`, which falls back to the live head if
-   * a version row is missing, so a missed append degrades to the pre-cutover read rather
-   * than failing. Idempotent on `(workflow_id, version_hash)` — re-stamping a
-   * behaviorally-identical definition is a silent no-op.
-   */
   private recordDefinitionVersion(workflow: SpaceWorkflow, source: DefinitionVersionSource): void {
     try {
       const { versionHash, payload } = computeDefinitionVersion(workflow);
@@ -604,42 +483,12 @@ export class SpaceWorkflowRepository {
     }
   }
 
-  /**
-   * Ensure the CURRENT head of every workflow has a recorded version snapshot.
-   *
-   * Captures pre-existing definition heads at rollout so that, if a workflow is later
-   * edited, the version that existed at rollout is preserved (`updateWorkflow` records
-   * only the post-edit version). This is the rollout-time capture the history needs for
-   * the future Phase-1 read cutover (RFC §11.1).
-   *
-   * The predicate keys on the current head's computed hash, not on "has any version": a
-   * workflow can hold an older version yet lack its current head's — if a prior
-   * `updateWorkflow` committed the head but the version append was swallowed (best-effort
-   * try/catch) or the daemon crashed between the head write and the append. Only the
-   * current head matters for pinning a run created from it, so we repair that gap.
-   *
-   * Uses the live `computeDefinitionVersion` hash on the canonical domain object
-   * (`getWorkflow`), so backfilled versions are byte-consistent with later writes. A
-   * migration-time backfill cannot do this: migrations must stay self-contained (m94
-   * principle), and a raw-row hash would diverge from the domain-object hash.
-   *
-   * Idempotent — a head whose version is already recorded is skipped. Cost is
-   * O(workflows) per boot (acceptable for a startup hook); full atomicity — head + version
-   * in one transaction, which would eliminate the partial-write window and restore a
-   * cheaper predicate — is deferred to the Phase-1 read cutover alongside the broader
-   * transactional model (RFC §6.1).
-   */
   backfillExistingDefinitionVersions(): number {
     const rows = this.db
       .prepare(`SELECT id FROM space_workflows ORDER BY created_at ASC, rowid ASC`)
       .all() as Array<{ id: string }>;
     let count = 0;
     for (const { id } of rows) {
-      // Guard each iteration: a single malformed row (e.g. node `config` JSON whose
-      // `agents` isn't an array → TypeError in getWorkflow/rowToNode) must not propagate
-      // through setupRPCHandlers and prevent daemon startup. This is a non-fatal shadow
-      // feature; `recordDefinitionVersion` is already best-effort, but the getWorkflow /
-      // computeDefinitionVersion calls above it are not, so the whole body is guarded.
       try {
         const workflow = this.getWorkflow(id);
         if (!workflow) continue;
@@ -654,50 +503,12 @@ export class SpaceWorkflowRepository {
     return count;
   }
 
-  // -------------------------------------------------------------------------
-  // Delete
-  // -------------------------------------------------------------------------
-
-  /**
-   * Delete a workflow definition row. NO deletion-safety guard: this does not
-   * check for executable runs, so calling it directly can orphan in-flight runs
-   * (there is no `workflow_id` FK on `space_workflow_runs`). Production callers
-   * MUST go through `SpaceWorkflowManager.deleteWorkflow`, which refuses when
-   * `hasExecutableRuns` is true. Direct repo use is reserved for internal
-   * fixtures that intentionally simulate a legacy orphan (e.g. recovery tests).
-   */
   deleteWorkflow(id: string): boolean {
     const result = this.db.prepare(`DELETE FROM space_workflows WHERE id = ?`).run(id);
     return result.changes > 0;
   }
 
-  /**
-   * Does this workflow have at least one EXECUTABLE run that must not be orphaned?
-   *
-   * RFC §4 #3 deletion-safety predicate. A run is protected (deletion must be
-   * refused) unless it is a provable tombstone. The predicate is task-based and
-   * mirrors `ChannelRouter.isParentTaskArchived` exactly: a run is a tombstone
-   * iff it has ≥1 task and every one of them is archived. So a run is EXECUTABLE
-   * (protected) when:
-   *   - it has NO task attached — the `startWorkflowRun` startup window (the run
-   *     is inserted and promoted before its canonical task lands) and the failed-
-   *     task-creation catch path (run cancelled with no task). Zero tasks is NOT
-   *     a tombstone (the work was never provably finished);
-   *   - OR it has a non-archived task — `done`/`cancelled` REOPEN, so only an
-   *     archived task is a non-reopenable tombstone.
-   * Run status is deliberately NOT consulted: a non-terminal run whose tasks are
-   * all archived is a stale tombstone (legacy runs left stranded because archiving
-   * used to leave an `in_progress` run behind — see space-task-handlers.ts:515-524),
-   * and the active-run archive guard now prevents creating new ones, so treating
-   * such rows as cleanable is correct and unblocks the user instead of demanding
-   * they "archive tasks" that are already archived.
-   */
   hasExecutableRuns(workflowId: string): boolean {
-    // Minimal-schema safe-guard: some test fixtures and partial schemas create
-    // `space_workflows` without the runs/tasks tables. No runs table ⇒ no runs
-    // can exist ⇒ nothing to orphan ⇒ deletion is safe. Mirrors the best-effort
-    // tolerance of `recordDefinitionVersion` (which swallows "no such table" on
-    // the version-history append). In production both tables always exist.
     const runsTable = this.db
       .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='space_workflow_runs'`)
       .get();
@@ -722,18 +533,9 @@ export class SpaceWorkflowRepository {
          LIMIT 1`
       )
       .get(workflowId) as { '1': number } | null | undefined;
-    // Loose null check: Bun's sqlite `.get()` returns `null` for no rows while
-    // better-sqlite3 returns `undefined` — `!= null` treats both as "no match".
     return row != null;
   }
 
-  // -------------------------------------------------------------------------
-  // Handle lookup
-  // -------------------------------------------------------------------------
-
-  /**
-   * Get a workflow by its handle within a specific space.
-   */
   getWorkflowByHandle(spaceId: string, handle: string): SpaceWorkflow | null {
     const row = this.db
       .prepare(`SELECT * FROM space_workflows WHERE space_id = ? AND handle = ?`)
@@ -745,9 +547,6 @@ export class SpaceWorkflowRepository {
     return rowToWorkflow(row, nodes);
   }
 
-  /**
-   * Get all handles currently in use for a space (for collision detection).
-   */
   getHandlesForSpace(spaceId: string): string[] {
     const rows = this.db
       .prepare(`SELECT handle FROM space_workflows WHERE space_id = ? AND handle IS NOT NULL`)
@@ -755,16 +554,6 @@ export class SpaceWorkflowRepository {
     return rows.map((r) => r.handle);
   }
 
-  // -------------------------------------------------------------------------
-  // Agent reference queries
-  // -------------------------------------------------------------------------
-
-  /**
-   * Find all workflows in a space whose nodes reference the given worker agent ID.
-   * Used by SpaceAgentManager to prevent deletion of agents that are still in use.
-   *
-   * Checks the `config` JSON column for multi-agent nodes (agents[] format).
-   */
   getWorkflowsReferencingAgent(agentId: string): SpaceWorkflow[] {
     const nodeRows = this.db
       .prepare(
@@ -780,10 +569,6 @@ export class SpaceWorkflowRepository {
     }
     return workflows;
   }
-
-  // -------------------------------------------------------------------------
-  // Private helpers
-  // -------------------------------------------------------------------------
 
   private fetchNodes(workflowId: string, ctx?: NodeMigrationContext): WorkflowNode[] {
     const rows = this.db
@@ -891,8 +676,6 @@ export class SpaceWorkflowRepository {
   private buildNodeConfig(input: WorkflowNodeInput): NodeConfigJson {
     const nodeCfg: NodeConfigJson = {};
 
-    // Normalize agents: use `agents` array if present, otherwise fall back to legacy
-    // `agentId` shorthand (still used in tests and older call-sites).
     const legacyAgentId = (input as unknown as Record<string, unknown>)['agentId'] as
       | string
       | undefined;

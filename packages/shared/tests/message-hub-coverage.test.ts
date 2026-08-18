@@ -1,8 +1,3 @@
-/**
- * Additional tests to achieve coverage for message-hub.ts
- * Focuses on edge cases and uncovered code paths with new API
- */
-
 import { describe, test, expect, beforeEach, afterEach, jest } from 'bun:test';
 import { MessageHub } from '../src/message-hub/message-hub.ts';
 import { MessageHubRouter } from '../src/message-hub/router.ts';
@@ -14,7 +9,6 @@ import {
   type HubMessage,
 } from '../src/message-hub/protocol.ts';
 
-// Mock transport
 class MockTransport implements IMessageTransport {
   name = 'mock-transport';
   private messageHandler: ((message: HubMessage) => void) | null = null;
@@ -57,7 +51,6 @@ class MockTransport implements IMessageTransport {
     return this._state === 'connected';
   }
 
-  // Test helpers
   simulateMessage(message: HubMessage): void {
     if (this.messageHandler) {
       this.messageHandler(message);
@@ -103,9 +96,8 @@ describe('MessageHub - Coverage Tests', () => {
       const router2 = new MessageHubRouter();
 
       hub.registerRouter(router1);
-      hub.registerRouter(router2); // Should replace without error
+      hub.registerRouter(router2);
 
-      // Verify the second router is now registered
       expect(hub.getRouter()).toBe(router2);
     });
 
@@ -122,7 +114,6 @@ describe('MessageHub - Coverage Tests', () => {
 
   describe('Request Handler Error Handling', () => {
     test('should send error response when handler throws', async () => {
-      // Mock console.error to suppress error output during test
       const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
       let handlerCalled = false;
@@ -139,7 +130,6 @@ describe('MessageHub - Coverage Tests', () => {
         sessionId: 'test-session',
       });
 
-      // Should not throw - errors are caught and returned as error response
       transport.simulateMessage(requestMessage);
 
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -147,7 +137,6 @@ describe('MessageHub - Coverage Tests', () => {
       expect(handler).toHaveBeenCalled();
       expect(handlerCalled).toBe(true);
 
-      // Should send error response
       const errorResponses = transport.sentMessages.filter(
         (m) => m.type === MessageType.RESPONSE && m.error
       );
@@ -164,12 +153,10 @@ describe('MessageHub - Coverage Tests', () => {
         sessionId: 'test-session',
       });
 
-      // Should not throw
       expect(() => transport.simulateMessage(requestMessage)).not.toThrow();
 
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Should send error response for METHOD_NOT_FOUND
       const errorResponses = transport.sentMessages.filter(
         (m) => m.type === MessageType.RESPONSE && m.error
       );
@@ -198,7 +185,6 @@ describe('MessageHub - Coverage Tests', () => {
 
       expect(handler).toHaveBeenCalled();
 
-      // Should send error response
       const errorResponses = transport.sentMessages.filter(
         (m) => m.type === MessageType.RESPONSE && m.error
       );
@@ -217,7 +203,6 @@ describe('MessageHub - Coverage Tests', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Should send error response
       const errorResponses = transport.sentMessages.filter(
         (m) => m.type === MessageType.RESPONSE && m.error
       );
@@ -228,7 +213,6 @@ describe('MessageHub - Coverage Tests', () => {
 
   describe('Event Handler Error Handling', () => {
     test('should catch event handler errors and continue', async () => {
-      // Mock console.error to suppress error output during test
       const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
       let handler1Called = false;
@@ -251,12 +235,10 @@ describe('MessageHub - Coverage Tests', () => {
         sessionId: 'test-session',
       });
 
-      // Errors are caught internally and logged, not thrown
       transport.simulateMessage(eventMessage);
 
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Both handlers should have been called despite error in first
       expect(handler1).toHaveBeenCalled();
       expect(handler2).toHaveBeenCalled();
       expect(handler1Called).toBe(true);
@@ -272,7 +254,6 @@ describe('MessageHub - Coverage Tests', () => {
         sessionId: 'test-session',
       });
 
-      // Should not throw
       expect(() => transport.simulateMessage(eventMessage)).not.toThrow();
 
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -293,7 +274,6 @@ describe('MessageHub - Coverage Tests', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // Should have sent PONG
       const pongs = transport.sentMessages.filter((m) => m.type === MessageType.PONG);
       expect(pongs.length).toBe(1);
       expect(pongs[0].requestId).toBe('ping-123');
@@ -309,7 +289,6 @@ describe('MessageHub - Coverage Tests', () => {
         timestamp: new Date().toISOString(),
       };
 
-      // Should not throw
       transport.simulateMessage(pongMsg);
 
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -331,7 +310,6 @@ describe('MessageHub - Coverage Tests', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // Depth map should be cleaned up
       expect(hub['eventDepthMap'].size).toBe(0);
     });
 
@@ -352,7 +330,6 @@ describe('MessageHub - Coverage Tests', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // Depth map should still be cleaned up
       expect(hub['eventDepthMap'].size).toBe(0);
     });
 
@@ -360,14 +337,12 @@ describe('MessageHub - Coverage Tests', () => {
       const handler = jest.fn();
       hub.onEvent('test.event', handler);
 
-      // Create same message ID to simulate recursion
       const eventMsg = createEventMessage({
         method: 'test.event',
         data: { test: true },
         sessionId: 'test-session',
       });
 
-      // Manually set depth to max to trigger protection
       const maxDepth = (hub as unknown as { maxEventDepth: number }).maxEventDepth;
       hub['eventDepthMap'].set(eventMsg.id, maxDepth);
 
@@ -375,7 +350,6 @@ describe('MessageHub - Coverage Tests', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Handler should NOT be called when max depth reached
       expect(handler).not.toHaveBeenCalled();
     });
   });
@@ -402,9 +376,6 @@ describe('MessageHub - Coverage Tests', () => {
       transport.simulateMessage(joinMsg);
 
       await new Promise((resolve) => setTimeout(resolve, 10));
-
-      // Verify room was joined via router
-      // (Router internals will track this)
     });
 
     test('should handle room.leave command with router', async () => {
@@ -418,7 +389,6 @@ describe('MessageHub - Coverage Tests', () => {
       };
       router.registerConnection(mockConnection);
 
-      // First join
       const joinMsg = createRequestMessage({
         method: 'room.join',
         data: { channel: 'test-room' },
@@ -428,7 +398,6 @@ describe('MessageHub - Coverage Tests', () => {
       transport.simulateMessage(joinMsg);
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Then leave
       const leaveMsg = createRequestMessage({
         method: 'room.leave',
         data: { channel: 'test-room' },
@@ -446,7 +415,6 @@ describe('MessageHub - Coverage Tests', () => {
         sessionId: 'test-session',
       });
 
-      // Should not throw
       expect(() => transport.simulateMessage(joinMsg)).not.toThrow();
 
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -457,7 +425,6 @@ describe('MessageHub - Coverage Tests', () => {
     test('should get pending call count', () => {
       expect(hub.getPendingCallCount()).toBe(0);
 
-      // Make a query (won't complete because no handler)
       hub.request('test.method', {}).catch(() => {});
 
       expect(hub.getPendingCallCount()).toBe(1);
@@ -466,7 +433,6 @@ describe('MessageHub - Coverage Tests', () => {
 
   describe('Invalid Method Names', () => {
     test('should reject invalid method names in query', async () => {
-      // query() is async and returns a promise that rejects
       await expect(hub.request('', {})).rejects.toThrow('Invalid method name');
     });
 
@@ -507,11 +473,9 @@ describe('MessageHub - Coverage Tests', () => {
       const limitTransport = new MockTransport();
       hubWithLimit.registerTransport(limitTransport);
 
-      // Create 2 pending calls (at limit) - use valid method names with dots
       hubWithLimit.request('test.method1', {}).catch(() => {});
       hubWithLimit.request('test.method2', {}).catch(() => {});
 
-      // Third should throw
       await expect(hubWithLimit.request('test.method3', {})).rejects.toThrow(
         'Too many pending calls'
       );
@@ -526,10 +490,8 @@ describe('MessageHub - Coverage Tests', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Disconnect before response
       transport.disconnect();
 
-      // Should eventually timeout
       await expect(queryPromise).rejects.toThrow('Request timeout');
     });
   });

@@ -1,13 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for MarkdownRenderer Component
- *
- * Tests actual rendering behavior without mocking markdown libraries.
- * This prevents global mock pollution that breaks other tests.
- *
- * Note: MarkdownRenderer uses dynamic imports for unified/remark/rehype modules,
- * so all content assertions use waitFor to handle async rendering.
- */
 
 import { render, waitFor } from '@testing-library/preact';
 import { beforeEach, expect, vi } from 'vitest';
@@ -449,7 +440,6 @@ describe('MarkdownRenderer', () => {
         const paragraphs = container.querySelectorAll('p');
         expect(paragraphs.length).toBeGreaterThan(0);
         const firstP = paragraphs[0] as HTMLElement;
-        // Style values may include 'px' suffix
         expect(firstP.style.marginTop).toMatch(/^0(px)?$/);
       });
     });
@@ -460,7 +450,6 @@ describe('MarkdownRenderer', () => {
         const paragraphs = container.querySelectorAll('p');
         expect(paragraphs.length).toBeGreaterThan(0);
         const lastP = paragraphs[paragraphs.length - 1] as HTMLElement;
-        // Style values may include 'px' suffix
         expect(lastP.style.marginBottom).toMatch(/^0(px)?$/);
       });
     });

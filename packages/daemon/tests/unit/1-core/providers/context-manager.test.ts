@@ -1,9 +1,3 @@
-/**
- * Unit tests for ProviderContextManager
- *
- * Tests provider context creation and management.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import type { ProviderId } from '@hyperneo/shared/provider';
 import type { Session, ModelInfo } from '@hyperneo/shared';
@@ -16,7 +10,6 @@ import { AnthropicToCopilotBridgeProvider } from '../../../../src/lib/providers/
 
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
 
-// Mock provider for testing
 class MockProvider implements Provider {
   readonly id: string;
   readonly displayName: string;
@@ -97,7 +90,6 @@ class MockProvider implements Provider {
   }
 }
 
-// Anthropic-like provider that doesn't translate models
 class AnthropicMockProvider extends MockProvider {
   readonly id = 'anthropic' as const;
   readonly displayName = 'Anthropic';
@@ -130,11 +122,9 @@ class AnthropicMockProvider extends MockProvider {
     };
   }
 
-  // Anthropic doesn't translate model IDs
   translateModelIdForSdk = undefined;
 }
 
-// Anthropic Copilot provider mock (same model IDs as anthropic)
 class AnthropicCopilotMockProvider extends MockProvider {
   readonly id = 'anthropic-copilot' as const;
   readonly displayName = 'Anthropic Copilot';
@@ -161,7 +151,6 @@ class AnthropicCopilotMockProvider extends MockProvider {
   }
 }
 
-// Anthropic Codex provider mock (gpt- and claude- models)
 class AnthropicCodexMockProvider extends MockProvider {
   readonly id = 'anthropic-codex' as const;
   readonly displayName = 'Anthropic Codex';
@@ -188,7 +177,6 @@ class AnthropicCodexMockProvider extends MockProvider {
   }
 }
 
-// GLM-like provider
 class GlmMockProvider extends MockProvider {
   readonly id = 'glm' as const;
   readonly displayName = 'GLM Provider';
@@ -202,7 +190,6 @@ class GlmMockProvider extends MockProvider {
   }
 
   translateModelIdForSdk(modelId: string): string {
-    // GLM translates models to anthropic-compatible names
     return modelId.replace('glm-', 'claude-');
   }
 }
@@ -367,7 +354,6 @@ describe('ProviderContextManager', () => {
         },
       };
 
-      // Legacy sessions without a stored provider fall back to Anthropic
       const context = manager.createContext(session);
       expect(context.provider.id).toBe('anthropic');
     });
@@ -480,7 +466,7 @@ describe('ProviderContextManager', () => {
       const context = manager.createContext(session);
       const sdkModelId = context.getSdkModelId();
 
-      expect(sdkModelId).toBe('claude-4'); // GLM translates glm- to claude-
+      expect(sdkModelId).toBe('claude-4');
     });
 
     it('should return original model ID for anthropic', () => {
@@ -575,7 +561,7 @@ describe('ProviderContextManager', () => {
         env: { CUSTOM_VAR: 'value' },
       });
 
-      expect(options.model).toBe('claude-4'); // Translated
+      expect(options.model).toBe('claude-4');
       expect(options.maxTokens).toBe(4096);
       expect(options.env).toEqual(
         expect.objectContaining({
@@ -614,7 +600,7 @@ describe('ProviderContextManager', () => {
         model: 'original-model',
       });
 
-      expect(options.model).toBe('claude-4'); // Overridden with translated
+      expect(options.model).toBe('claude-4');
     });
 
     it('should not include env if empty', async () => {
@@ -646,7 +632,6 @@ describe('ProviderContextManager', () => {
         maxTokens: 4096,
       });
 
-      // Anthropic returns empty env vars
       expect(options.env).toBeUndefined();
     });
   });
@@ -783,8 +768,6 @@ describe('ProviderContextManager', () => {
     });
 
     it('should select anthropic-copilot over anthropic when provider explicitly set', () => {
-      // Both anthropic and anthropic-copilot own claude- models.
-      // With explicit provider set, the copilot should be selected.
       const copilotSession: Session = {
         id: 'test',
         title: 'Test',
@@ -872,7 +855,6 @@ describe('ProviderContextManager', () => {
         },
       };
 
-      // Same provider → no restart needed
       expect(manager.requiresQueryRestart(session, 'claude-opus-4.6', 'anthropic-copilot')).toBe(
         false
       );
@@ -902,7 +884,6 @@ describe('ProviderContextManager', () => {
         },
       };
 
-      // Cross-provider switch → restart required
       expect(manager.requiresQueryRestart(session, 'claude-opus-4.6', 'anthropic')).toBe(true);
     });
   });
@@ -948,7 +929,6 @@ describe('ProviderContextManager', () => {
     });
 
     it('should select anthropic-codex over anthropic for claude- models when explicitly set', () => {
-      // anthropic-codex also owns claude- models but explicit provider wins
       const session: Session = {
         id: 'test',
         title: 'Test',
@@ -1057,7 +1037,6 @@ describe('ProviderContextManager', () => {
         },
       };
 
-      // Same provider → no restart
       expect(manager.requiresQueryRestart(session, 'gpt-5.6-luna', 'anthropic-codex')).toBe(false);
     });
   });
@@ -1084,32 +1063,7 @@ describe('ProviderContextManager', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// SDK model ID aliasing invariant — real provider buildSdkConfig()
-//
-// These tests use the actual provider classes (not mocks) to assert that
-// ANTHROPIC_DEFAULT_*_MODEL env vars are set to SDK-compatible model IDs.
-//
-// Root cause of the original bug: without ANTHROPIC_DEFAULT_*_MODEL being set
-// to bridge-compatible model IDs, the Claude Agent SDK subprocess falls back to
-// its built-in defaults (e.g. claude-haiku-4-5-20251001) for background calls
-// such as summarisation and compaction.
-//
-// The invariant differs per provider:
-//   Codex bridge:   all three tier slots use Anthropic model IDs with known
-//                   large context windows (claude-opus-4-7 = 1M,
-//                   claude-sonnet-4-20250514 = 200k). The SDK recognises these
-//                   IDs and uses their real context limits instead of falling
-//                   back to ~200k for unknown Codex IDs. The bridge then maps
-//                   the Anthropic IDs back to real Codex IDs via modelAliases.
-//   Copilot bridge: all three tier slots must be set to the same resolved model ID
-//                   so the SDK's internal haiku/opus calls also go through a real
-//                   Copilot model.  The SDK's default claude-haiku-4-5-20251001
-//                   is an Anthropic API ID that the Copilot bridge cannot serve.
-// ---------------------------------------------------------------------------
-
 describe('sdk-model-id-aliasing invariant — real provider buildSdkConfig()', () => {
-  // Use a shared let so afterEach can clean up even when assertions throw.
   let codexProvider: AnthropicToCodexBridgeProvider | undefined;
 
   afterEach(() => {
@@ -1135,9 +1089,7 @@ describe('sdk-model-id-aliasing invariant — real provider buildSdkConfig()', (
       const cfg = codexProvider.buildSdkConfig('gpt-5.6-terra', {
         workspacePath: '/tmp/ws-codex-all',
       });
-      // Haiku slot uses the Codex Luna model ID
       expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe('gpt-5.6-luna');
-      // Sonnet uses the selected Codex model ID; Opus uses the flagship model
       expect(cfg.envVars['ANTHROPIC_DEFAULT_SONNET_MODEL']).toBe('gpt-5.6-terra');
       expect(cfg.envVars['ANTHROPIC_DEFAULT_OPUS_MODEL']).toBe('gpt-5.6-sol');
     }
@@ -1145,28 +1097,17 @@ describe('sdk-model-id-aliasing invariant — real provider buildSdkConfig()', (
 
   it('Copilot provider: all three DEFAULT_*_MODEL slots are set to the resolved model ID', () => {
     const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
-    // Inject a fake server URL — buildSdkConfig() requires the embedded server to be
-    // started, but for this assertion we only care about the env var values it returns.
     (p as unknown as Record<string, unknown>)['serverCache'] = {
       url: 'http://127.0.0.1:54321',
       stop: async () => {},
     };
     const cfg = p.buildSdkConfig('copilot-anthropic-sonnet');
-    // All three tiers must use the same resolved model ID so that every SDK-internal
-    // call (summarisation, compaction, etc.) routes through the real Copilot model
-    // the user selected, rather than a hardcoded fallback that might be unavailable.
-    // This prevents the original bug where the haiku slot defaulted to
-    // claude-haiku-4-5-20251001, which is an Anthropic API ID that the Copilot bridge
-    // cannot serve.
     expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe(
       cfg.envVars['ANTHROPIC_DEFAULT_SONNET_MODEL']
     );
     expect(cfg.envVars['ANTHROPIC_DEFAULT_OPUS_MODEL']).toBe(
       cfg.envVars['ANTHROPIC_DEFAULT_SONNET_MODEL']
     );
-    // The resolved model must NOT be the SDK's default haiku fallback.
     expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).not.toBe('claude-haiku-4-5-20251001');
-    // p.shutdown() intentionally omitted: serverCache.stop is a no-op and no
-    // real embedded server was started, so there is nothing to clean up.
   });
 });

@@ -1,18 +1,3 @@
-/**
- * Migration 126 Tests — drop legacy `idx_sdk_messages_parent_tool` function index.
- *
- * Background: migration 122 materialised `parent_tool_use_id` as a column and
- * added `idx_sdk_messages_parent_tool_use_id (session_id, parent_tool_use_id)`.
- * The earlier json_extract function index was kept around for compatibility
- * but no longer has callers, so it just amplifies INSERT/UPDATE cost.
- *
- * Covers:
- *   - Pre-126 schema with the function index present — migration drops it.
- *   - Re-running the migration is a no-op (idempotent via `IF EXISTS`).
- *   - Fresh, fully-migrated DB — column index is present and the function
- *     index is absent (verifies the createIndexes change too).
- */
-
 import { describe, test, expect } from 'bun:test';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { createTables, runMigration126, runMigrations } from '../../../../../src/storage/schema';

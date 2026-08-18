@@ -1,23 +1,9 @@
-/**
- * Integration-style unit tests for GitHubService job-queue-driven polling.
- *
- * Verifies the full flow:
- *   GitHubService.start()
- *     → registers github.poll handler on jobProcessor
- *     → enqueues initial github.poll job
- *   handler invocation
- *     → calls triggerPoll on the polling service
- *     → self-schedules next job
- */
-
 import { describe, expect, it, mock, beforeEach, afterEach } from 'bun:test';
 import { Database as SqliteDatabase } from '../../../../src/storage/sqlite-compat';
 import { GitHubService } from '../../../../src/lib/github/github-service';
 import { GITHUB_POLL } from '../../../../src/lib/job-queue-constants';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
 import type { Database } from '../../../../src/storage/database';
-
-// ─── Helpers ────────────────────────────────────────────────────────────────
 
 function makeJob(overrides: Partial<Job> = {}): Job {
   return {
@@ -39,7 +25,6 @@ function makeJob(overrides: Partial<Job> = {}): Job {
 }
 
 function makeDb(): Database {
-  // FilterConfigManager needs a real SQLite db with .prepare()
   const sqlite = new SqliteDatabase(':memory:');
   return {
     getDatabase: () => sqlite,
@@ -65,8 +50,6 @@ function makeConfig(overrides: Record<string, unknown> = {}) {
   } as never;
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
-
 describe('GitHubService — job-queue-driven polling', () => {
   let registerMock: ReturnType<typeof mock>;
   let enqueueMock: ReturnType<typeof mock>;
@@ -76,7 +59,7 @@ describe('GitHubService — job-queue-driven polling', () => {
   beforeEach(() => {
     registerMock = mock(() => {});
     enqueueMock = mock(() => makeJob());
-    listJobsMock = mock(() => []); // no existing jobs → enqueue initial
+    listJobsMock = mock(() => []);
     deleteJobMock = mock(() => true);
   });
 
@@ -130,7 +113,6 @@ describe('GitHubService — job-queue-driven polling', () => {
     expect(enqueueMock).toHaveBeenCalledTimes(1);
     const [arg] = enqueueMock.mock.calls[0] as [{ queue: string; runAt: number }];
     expect(arg.queue).toBe(GITHUB_POLL);
-    // runAt should be approximately now (within 2 seconds)
     expect(arg.runAt).toBeGreaterThanOrEqual(Date.now() - 100);
     expect(arg.runAt).toBeLessThanOrEqual(Date.now() + 2000);
   });
@@ -176,7 +158,6 @@ describe('GitHubService — job-queue-driven polling', () => {
       config: makeConfig(),
       apiKey: 'test-api-key',
       githubToken: 'test-github-token',
-      // no jobQueue / jobProcessor
     });
 
     svc.start();
@@ -209,7 +190,6 @@ describe('GitHubService — job-queue-driven polling', () => {
       internalEventBus: makeDaemonHub(),
       config: makeConfig(),
       apiKey: 'test-api-key',
-      // no githubToken
       jobQueue: makeJobQueue(),
       jobProcessor: makeJobProcessor(),
     });
@@ -221,7 +201,6 @@ describe('GitHubService — job-queue-driven polling', () => {
   });
 
   it('registered handler calls triggerPoll and self-schedules next job', async () => {
-    // Capture the registered handler so we can invoke it directly.
     let capturedHandler: (() => Promise<unknown>) | undefined;
     const capturingRegister = mock((_queue: string, handler: () => Promise<unknown>) => {
       capturedHandler = handler;
@@ -242,21 +221,14 @@ describe('GitHubService — job-queue-driven polling', () => {
 
     expect(capturedHandler).toBeDefined();
 
-    // Polling service was created by start(); getPollingService() returns it.
     const pollingService = svc.getPollingService()!;
     expect(pollingService).toBeDefined();
 
-    // Spy on triggerPoll.
     const triggerPollMock = mock(async () => {});
     (pollingService as never as Record<string, unknown>).triggerPoll = triggerPollMock;
 
-    // Reset enqueueMock to count only the self-schedule enqueue from the handler.
-    // The initial enqueue happened during start() already.
     enqueueMock.mockClear();
 
-    // Point the captured jobQueue to fresh mocks for the handler's dedup check.
-    // (Assigning jobQueueInService.listJobs is what matters — the handler references
-    // the jobQueue object stored on svc, not the outer listJobsMock variable.)
     const jobQueueInService = (svc as never as Record<string, unknown>).jobQueue as {
       listJobs: ReturnType<typeof mock>;
       enqueue: ReturnType<typeof mock>;
@@ -266,14 +238,11 @@ describe('GitHubService — job-queue-driven polling', () => {
 
     const result = await capturedHandler!();
 
-    // triggerPoll was called once
     expect(triggerPollMock).toHaveBeenCalledTimes(1);
 
-    // Handler returns { polled: true, nextRunAt }
     expect((result as Record<string, unknown>).polled).toBe(true);
     expect(typeof (result as Record<string, unknown>).nextRunAt).toBe('number');
 
-    // Self-schedule: one new job was enqueued with a future runAt
     expect(enqueueMock).toHaveBeenCalledTimes(1);
     const [enqueueArg] = enqueueMock.mock.calls[0] as [{ queue: string; runAt: number }];
     expect(enqueueArg.queue).toBe(GITHUB_POLL);
@@ -290,8 +259,6 @@ describe('GitHubService — job-queue-driven polling', () => {
 
     svc.stop();
 
-    // After stop() the state flag is cleared; no job-queue chain is drained
-    // (that requires stopping the JobQueueProcessor itself, done in app.ts shutdown).
     expect(svc.isPolling()).toBe(false);
     expect(pollingService.isRunning()).toBe(false);
   });
@@ -315,11 +282,9 @@ describe('GitHubService — job-queue-driven polling', () => {
 
     svc.start();
 
-    // Save the pollingService reference before stop() clears it on the service.
     const pollingService = svc.getPollingService()!;
     expect(pollingService).toBeDefined();
 
-    // Stop the service — sets pollingService.running = false
     svc.stop();
 
     const triggerPollMock = mock(async () => {});
@@ -335,11 +300,9 @@ describe('GitHubService — job-queue-driven polling', () => {
 
     const result = await capturedHandler!();
 
-    // triggerPoll must NOT be called when the service is stopped
     expect(triggerPollMock).not.toHaveBeenCalled();
     expect((result as Record<string, unknown>).polled).toBe(false);
 
-    // But the chain self-schedules so polling resumes automatically when restarted
     expect(enqueueMock).toHaveBeenCalledTimes(1);
   });
 

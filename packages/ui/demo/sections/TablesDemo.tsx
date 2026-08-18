@@ -2,9 +2,6 @@ import { Fragment } from 'preact';
 import { useState, useRef, useLayoutEffect } from 'preact/hooks';
 import { classNames } from '../../src/internal/class-names.ts';
 
-// ============================================================
-// 01 - Simple Table
-// ============================================================
 const people1 = [
   {
     name: 'Lindsay Walton',
@@ -121,9 +118,6 @@ export function SimpleTable() {
   );
 }
 
-// ============================================================
-// 03 - Simple Table in Card
-// ============================================================
 export function SimpleInCard() {
   return (
     <div class="px-4 sm:px-6 lg:px-8">
@@ -209,9 +203,6 @@ export function SimpleInCard() {
   );
 }
 
-// ============================================================
-// 04 - Full Width Table
-// ============================================================
 export function FullWidthTable() {
   return (
     <div class="px-4 sm:px-6 lg:px-8">
@@ -297,9 +288,6 @@ export function FullWidthTable() {
   );
 }
 
-// ============================================================
-// 04b - Full Width with Constrained Content
-// ============================================================
 const peopleWithAvatars = [
   {
     name: 'Lindsay Walton',
@@ -453,9 +441,6 @@ export function FullWidthConstrained() {
   );
 }
 
-// ============================================================
-// 05 - Full Width with Striped Rows
-// ============================================================
 export function StripedRows() {
   return (
     <div class="px-4 sm:px-6 lg:px-8">
@@ -538,9 +523,6 @@ export function StripedRows() {
   );
 }
 
-// ============================================================
-// 06 - With Uppercase Headings
-// ============================================================
 export function UppercaseHeadings() {
   return (
     <div class="px-4 sm:px-6 lg:px-8">
@@ -626,9 +608,6 @@ export function UppercaseHeadings() {
   );
 }
 
-// ============================================================
-// 07 - With Stacked Columns on Mobile
-// ============================================================
 export function StackedColumnsMobile() {
   return (
     <div class="px-4 sm:px-6 lg:px-8">
@@ -707,9 +686,6 @@ export function StackedColumnsMobile() {
   );
 }
 
-// ============================================================
-// 08 - With Hidden Columns on Mobile
-// ============================================================
 export function HiddenColumnsMobile() {
   return (
     <div class="px-4 sm:px-6 lg:px-8">
@@ -797,9 +773,6 @@ export function HiddenColumnsMobile() {
   );
 }
 
-// ============================================================
-// 09 - With Avatars and Multiline Content
-// ============================================================
 export function AvatarsMultiline() {
   return (
     <div class="px-4 sm:px-6 lg:px-8">
@@ -900,9 +873,6 @@ export function AvatarsMultiline() {
   );
 }
 
-// ============================================================
-// 10 - With Sticky Header
-// ============================================================
 const projects = [
   {
     id: 1,
@@ -1075,9 +1045,6 @@ export function StickyHeader() {
   );
 }
 
-// ============================================================
-// 11 - With Vertical Lines
-// ============================================================
 const people11 = [
   {
     name: 'Lindsay Walton',
@@ -1274,9 +1241,6 @@ export function VerticalLines() {
   );
 }
 
-// ============================================================
-// 12 - With Condensed Content
-// ============================================================
 const activityItems = [
   {
     user: {
@@ -1474,9 +1438,6 @@ export function CondensedContent() {
   );
 }
 
-// ============================================================
-// 13 - With Sortable Headings
-// ============================================================
 const ChevronDownIcon = () => (
   <svg class="size-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
     <path
@@ -1592,9 +1553,6 @@ export function SortableHeadings() {
   );
 }
 
-// ============================================================
-// 14 - With Grouped Rows
-// ============================================================
 const locations = [
   {
     name: 'Edinburgh',
@@ -1768,9 +1726,6 @@ export function GroupedRows() {
   );
 }
 
-// ============================================================
-// 15 - With Summary Rows
-// ============================================================
 const days = [
   {
     date: 'Today',
@@ -1975,10 +1930,6 @@ export function SummaryRows() {
     </div>
   );
 }
-
-// ============================================================
-// 17 - With Checkboxes
-// ============================================================
 
 const people17 = [
   {
@@ -2203,9 +2154,6 @@ export function WithCheckboxes() {
   );
 }
 
-// ============================================================
-// 18 - With Hidden Headings
-// ============================================================
 const transactions = [
   {
     id: 'AAPS0L',
@@ -2393,9 +2341,6 @@ export function HiddenHeadings() {
   );
 }
 
-// ============================================================
-// 19 - Full Width with Avatars
-// ============================================================
 export function FullWidthAvatars() {
   return (
     <div class="px-4 sm:px-6 lg:px-8">
@@ -2473,9 +2418,6 @@ export function FullWidthAvatars() {
   );
 }
 
-// ============================================================
-// TablesDemo - Main wrapper
-// ============================================================
 export function TablesDemo() {
   return (
     <div class="space-y-12">
@@ -2503,9 +2445,6 @@ export function TablesDemo() {
   );
 }
 
-// ============================================================
-// 20 - Sortable Headings with Icons
-// ============================================================
 function ChevronDownIconLocal({ class: className }: { class?: string }) {
   return (
     <svg class={className} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -2623,9 +2562,6 @@ export function SortableHeadingsIcon() {
   );
 }
 
-// ============================================================
-// 21 - Hidden Headings with Icons
-// ============================================================
 export function HiddenHeadingsIcon() {
   return (
     <div class="px-4 sm:px-6 lg:px-8">

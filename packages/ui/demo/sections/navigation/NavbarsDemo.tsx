@@ -13,10 +13,6 @@ import {
 import { classNames } from '../../../src/internal/class-names.ts';
 import { Bell, Menu as MenuIcon, Plus, Search, X } from 'lucide-preact';
 
-// ============================================================================
-// DATA
-// ============================================================================
-
 const user = {
   name: 'Tom Cook',
   email: 'tom@example.com',
@@ -39,10 +35,6 @@ const userNavigation = [
   { name: 'Settings', href: '#' },
   { name: 'Sign out', href: '#' },
 ];
-
-// ============================================================================
-// EXAMPLE 1: Simple Dark with Menu Button on Left
-// ============================================================================
 
 function SimpleDarkWithMenuButtonOnLeft() {
   return (
@@ -91,7 +83,6 @@ function SimpleDarkWithMenuButtonOnLeft() {
                 <Bell aria-hidden="true" class="size-6" />
               </button>
 
-              {/* Profile dropdown */}
               <Menu as="div" class="relative ml-3">
                 <MenuButton class="relative flex rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500">
                   <span class="absolute -inset-1.5" />
@@ -136,7 +127,6 @@ function SimpleDarkWithMenuButtonOnLeft() {
             </div>
           </div>
           <div class="-mr-2 flex sm:hidden">
-            {/* Mobile menu button */}
             <DisclosureButton class="group relative inline-flex items-center justify-center rounded-md p-2 text-gray-400 hover:bg-white/5 hover:text-white focus:outline-2 focus:-outline-offset-1 focus:outline-accent-500">
               <span class="absolute -inset-0.5" />
               <span class="sr-only">Open main menu</span>
@@ -171,10 +161,6 @@ function SimpleDarkWithMenuButtonOnLeft() {
   );
 }
 
-// ============================================================================
-// EXAMPLE 2: Dark with Quick Action
-// ============================================================================
-
 function DarkWithQuickAction() {
   return (
     <Disclosure
@@ -185,7 +171,6 @@ function DarkWithQuickAction() {
         <div class="flex h-16 justify-between">
           <div class="flex">
             <div class="mr-2 -ml-2 flex items-center md:hidden">
-              {/* Mobile menu button */}
               <DisclosureButton class="group relative inline-flex items-center justify-center rounded-md p-2 text-gray-400 hover:bg-white/5 hover:text-white focus:outline-2 focus:-outline-offset-1 focus:outline-accent-500">
                 <span class="absolute -inset-0.5" />
                 <span class="sr-only">Open main menu</span>
@@ -238,7 +223,6 @@ function DarkWithQuickAction() {
                 <Bell aria-hidden="true" class="size-6" />
               </button>
 
-              {/* Profile dropdown */}
               <Menu as="div" class="relative ml-3">
                 <MenuButton class="relative flex rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500">
                   <span class="absolute -inset-1.5" />
@@ -330,10 +314,6 @@ function DarkWithQuickAction() {
   );
 }
 
-// ============================================================================
-// EXAMPLE 3: Simple Dark
-// ============================================================================
-
 function SimpleDark() {
   return (
     <Disclosure
@@ -394,7 +374,6 @@ function SimpleDark() {
             </div>
           </div>
           <div class="flex lg:hidden">
-            {/* Mobile menu button */}
             <DisclosureButton class="group relative inline-flex items-center justify-center rounded-md p-2 text-gray-400 hover:bg-white/5 hover:text-white focus:outline-2 focus:outline-accent-500">
               <span class="absolute -inset-0.5" />
               <span class="sr-only">Open main menu</span>
@@ -413,7 +392,6 @@ function SimpleDark() {
                 <Bell aria-hidden="true" class="size-6" />
               </button>
 
-              {/* Profile dropdown */}
               <Menu as="div" class="relative ml-4 shrink-0">
                 <MenuButton class="relative flex rounded-full text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500">
                   <span class="absolute -inset-1.5" />
@@ -535,10 +513,6 @@ function SimpleDark() {
   );
 }
 
-// ============================================================================
-// EXAMPLE 4: Simple with Menu Button on Left
-// ============================================================================
-
 function SimpleWithMenuButtonOnLeft() {
   return (
     <Disclosure
@@ -599,7 +573,6 @@ function SimpleWithMenuButtonOnLeft() {
               <Bell aria-hidden="true" class="size-6" />
             </button>
 
-            {/* Profile dropdown */}
             <Menu as="div" class="relative ml-3">
               <MenuButton class="relative flex rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500">
                 <span class="absolute -inset-1.5" />
@@ -643,7 +616,6 @@ function SimpleWithMenuButtonOnLeft() {
             </Menu>
           </div>
           <div class="-mr-2 flex items-center sm:hidden">
-            {/* Mobile menu button */}
             <DisclosureButton class="group relative inline-flex items-center justify-center rounded-md p-2 text-text-tertiary hover:bg-surface-1 hover:text-text-secondary focus:outline-2 focus:-outline-offset-1 focus:outline-accent-500 dark:hover:bg-white/5 dark:hover:text-white dark:focus:outline-accent-500">
               <span class="absolute -inset-0.5" />
               <span class="sr-only">Open main menu</span>
@@ -738,10 +710,6 @@ function SimpleWithMenuButtonOnLeft() {
   );
 }
 
-// ============================================================================
-// EXAMPLE 5: Simple
-// ============================================================================
-
 function SimpleNavbar() {
   return (
     <Disclosure
@@ -805,7 +773,6 @@ function SimpleNavbar() {
             </div>
           </div>
           <div class="flex items-center lg:hidden">
-            {/* Mobile menu button */}
             <DisclosureButton class="group relative inline-flex items-center justify-center rounded-md p-2 text-text-tertiary hover:bg-surface-1 hover:text-text-secondary focus:outline-2 focus:-outline-offset-1 focus:outline-accent-500 dark:hover:bg-white/5 dark:hover:text-white dark:focus:outline-accent-500">
               <span class="absolute -inset-0.5" />
               <span class="sr-only">Open main menu</span>
@@ -823,7 +790,6 @@ function SimpleNavbar() {
               <Bell aria-hidden="true" class="size-6" />
             </button>
 
-            {/* Profile dropdown */}
             <Menu as="div" class="relative ml-4 shrink-0">
               <MenuButton class="relative flex rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500">
                 <span class="absolute -inset-1.5" />
@@ -953,10 +919,6 @@ function SimpleNavbar() {
   );
 }
 
-// ============================================================================
-// EXAMPLE 6: With Quick Action
-// ============================================================================
-
 function WithQuickAction() {
   return (
     <Disclosure
@@ -967,7 +929,6 @@ function WithQuickAction() {
         <div class="flex h-16 justify-between">
           <div class="flex">
             <div class="mr-2 -ml-2 flex items-center md:hidden">
-              {/* Mobile menu button */}
               <DisclosureButton class="group relative inline-flex items-center justify-center rounded-md p-2 text-text-tertiary hover:bg-surface-1 hover:text-text-secondary focus:ring-2 focus:ring-accent-500 focus:outline-hidden focus:ring-inset dark:hover:bg-white/5 dark:hover:text-white dark:focus:ring-white">
                 <span class="absolute -inset-0.5" />
                 <span class="sr-only">Open main menu</span>
@@ -1034,7 +995,6 @@ function WithQuickAction() {
                 <Bell aria-hidden="true" class="size-6" />
               </button>
 
-              {/* Profile dropdown */}
               <Menu as="div" class="relative ml-3">
                 <MenuButton class="relative flex rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500">
                   <span class="absolute -inset-1.5" />
@@ -1163,10 +1123,6 @@ function WithQuickAction() {
   );
 }
 
-// ============================================================================
-// EXAMPLE 7: Dark with Search
-// ============================================================================
-
 function DarkWithSearch() {
   return (
     <Disclosure
@@ -1199,7 +1155,6 @@ function DarkWithSearch() {
             </div>
           </div>
           <div class="relative z-10 flex items-center lg:hidden">
-            {/* Mobile menu button */}
             <DisclosureButton class="group relative inline-flex items-center justify-center rounded-md p-2 text-gray-400 hover:bg-white/5 hover:text-gray-300 focus:outline-2 focus:-outline-offset-1 focus:outline-accent-500">
               <span class="absolute -inset-0.5" />
               <span class="sr-only">Open menu</span>
@@ -1217,7 +1172,6 @@ function DarkWithSearch() {
               <Bell aria-hidden="true" class="size-6" />
             </button>
 
-            {/* Profile dropdown */}
             <Menu as="div" class="relative ml-4 shrink-0">
               <MenuButton class="relative flex rounded-full focus-visible:ring-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500">
                 <span class="absolute -inset-1.5" />
@@ -1324,10 +1278,6 @@ function DarkWithSearch() {
     </Disclosure>
   );
 }
-
-// ============================================================================
-// EXAMPLE 8: With Search
-// ============================================================================
 
 function WithSearch() {
   return (
@@ -1365,7 +1315,6 @@ function WithSearch() {
             </div>
           </div>
           <div class="relative z-10 flex items-center lg:hidden">
-            {/* Mobile menu button */}
             <DisclosureButton class="group relative inline-flex items-center justify-center rounded-md p-2 text-text-tertiary hover:bg-surface-1 hover:text-text-secondary focus:outline-2 focus:-outline-offset-1 focus:outline-accent-500 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-white dark:focus:outline-accent-500">
               <span class="absolute -inset-0.5" />
               <span class="sr-only">Open menu</span>
@@ -1383,7 +1332,6 @@ function WithSearch() {
               <Bell aria-hidden="true" class="size-6" />
             </button>
 
-            {/* Profile dropdown */}
             <Menu as="div" class="relative ml-4 shrink-0">
               <MenuButton class="relative flex rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500">
                 <span class="absolute -inset-1.5" />
@@ -1491,10 +1439,6 @@ function WithSearch() {
   );
 }
 
-// ============================================================================
-// EXAMPLE 9: Dark with Centered Search and Secondary Links
-// ============================================================================
-
 function DarkWithCenteredSearchAndSecondaryLinks() {
   return (
     <Disclosure
@@ -1527,7 +1471,6 @@ function DarkWithCenteredSearchAndSecondaryLinks() {
             </div>
           </div>
           <div class="relative z-10 flex items-center lg:hidden">
-            {/* Mobile menu button */}
             <DisclosureButton class="group relative inline-flex items-center justify-center rounded-md p-2 text-gray-400 hover:bg-white/5 hover:text-gray-300 focus:outline-2 focus:-outline-offset-1 focus:outline-accent-500">
               <span class="absolute -inset-0.5" />
               <span class="sr-only">Open menu</span>
@@ -1545,7 +1488,6 @@ function DarkWithCenteredSearchAndSecondaryLinks() {
               <Bell aria-hidden="true" class="size-6" />
             </button>
 
-            {/* Profile dropdown */}
             <Menu as="div" class="relative ml-4 shrink-0">
               <MenuButton class="relative flex rounded-full focus-visible:ring-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500">
                 <span class="absolute -inset-1.5" />
@@ -1653,10 +1595,6 @@ function DarkWithCenteredSearchAndSecondaryLinks() {
   );
 }
 
-// ============================================================================
-// EXAMPLE 10: With Centered Search and Secondary Links
-// ============================================================================
-
 function WithCenteredSearchAndSecondaryLinks() {
   return (
     <Disclosure
@@ -1693,7 +1631,6 @@ function WithCenteredSearchAndSecondaryLinks() {
             </div>
           </div>
           <div class="relative z-10 flex items-center lg:hidden">
-            {/* Mobile menu button */}
             <DisclosureButton class="group relative inline-flex items-center justify-center rounded-md p-2 text-text-tertiary hover:bg-surface-1 hover:text-text-secondary focus:outline-2 focus:-outline-offset-1 focus:outline-accent-500 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-white dark:focus:outline-accent-500">
               <span class="absolute -inset-0.5" />
               <span class="sr-only">Open menu</span>
@@ -1711,7 +1648,6 @@ function WithCenteredSearchAndSecondaryLinks() {
               <Bell aria-hidden="true" class="size-6" />
             </button>
 
-            {/* Profile dropdown */}
             <Menu as="div" class="relative ml-4 shrink-0">
               <MenuButton class="relative flex rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500">
                 <span class="absolute -inset-1.5" />
@@ -1819,14 +1755,9 @@ function WithCenteredSearchAndSecondaryLinks() {
   );
 }
 
-// ============================================================================
-// EXAMPLE 11: With Search in Column Layout
-// ============================================================================
-
 function WithSearchInColumnLayout() {
   return (
     <>
-      {/* When the mobile menu is open, add `overflow-hidden` to the `body` element to prevent double scrollbars */}
       <Popover
         as="header"
         class="relative bg-surface-0 shadow-xs data-open:fixed data-open:inset-0 data-open:z-40 data-open:overflow-y-auto lg:overflow-y-visible data-open:lg:overflow-y-visible dark:bg-surface-2/50 dark:shadow-none dark:after:pointer-events-none dark:after:absolute dark:after:inset-x-0 dark:after:bottom-0 dark:after:h-px dark:after:bg-white/10 dark:data-open:after:absolute dark:data-open:after:inset-x-0 dark:data-open:after:bottom-0"
@@ -1865,7 +1796,6 @@ function WithSearchInColumnLayout() {
               </div>
             </div>
             <div class="flex items-center md:absolute md:inset-y-0 md:right-0 lg:hidden">
-              {/* Mobile menu button */}
               <PopoverButton class="group relative -mx-2 inline-flex items-center justify-center rounded-md p-2 text-text-tertiary hover:bg-surface-1 hover:text-text-secondary focus:outline-2 focus:-outline-offset-1 focus:outline-accent-500 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-white dark:focus:outline-accent-500">
                 <span class="absolute -inset-0.5" />
                 <span class="sr-only">Open menu</span>
@@ -1883,7 +1813,6 @@ function WithSearchInColumnLayout() {
                 <Bell aria-hidden="true" class="size-6" />
               </button>
 
-              {/* Profile dropdown */}
               <Menu as="div" class="relative ml-5 shrink-0">
                 <MenuButton class="relative flex rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500">
                   <span class="absolute -inset-1.5" />
@@ -1995,14 +1924,9 @@ function WithSearchInColumnLayout() {
   );
 }
 
-// ============================================================================
-// MAIN EXPORT
-// ============================================================================
-
 export function NavbarsDemo() {
   return (
     <div class="flex flex-col gap-12">
-      {/* Example 1: Simple Dark with Menu Button on Left */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">
           Simple dark with menu button on left
@@ -2012,7 +1936,6 @@ export function NavbarsDemo() {
         </div>
       </div>
 
-      {/* Example 2: Dark with Quick Action */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Dark with quick action</h3>
         <div class="rounded-lg border border-surface-border bg-surface-2 dark:bg-surface-2/50">
@@ -2020,7 +1943,6 @@ export function NavbarsDemo() {
         </div>
       </div>
 
-      {/* Example 3: Simple Dark */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Simple dark</h3>
         <div class="rounded-lg border border-surface-border bg-surface-2 dark:bg-surface-2/50">
@@ -2028,7 +1950,6 @@ export function NavbarsDemo() {
         </div>
       </div>
 
-      {/* Example 4: Simple with Menu Button on Left */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Simple with menu button on left</h3>
         <div class="rounded-lg border border-surface-border bg-surface-0 dark:bg-surface-2/50">
@@ -2036,7 +1957,6 @@ export function NavbarsDemo() {
         </div>
       </div>
 
-      {/* Example 5: Simple */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Simple</h3>
         <div class="rounded-lg border border-surface-border bg-surface-0 dark:bg-surface-2/50">
@@ -2044,7 +1964,6 @@ export function NavbarsDemo() {
         </div>
       </div>
 
-      {/* Example 6: With Quick Action */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">With quick action</h3>
         <div class="rounded-lg border border-surface-border bg-surface-0 dark:bg-surface-2/50">
@@ -2052,7 +1971,6 @@ export function NavbarsDemo() {
         </div>
       </div>
 
-      {/* Example 7: Dark with Search */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">Dark with search</h3>
         <div class="rounded-lg border border-surface-border bg-surface-2 dark:bg-surface-2/50">
@@ -2060,7 +1978,6 @@ export function NavbarsDemo() {
         </div>
       </div>
 
-      {/* Example 8: With Search */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">With search</h3>
         <div class="rounded-lg border border-surface-border bg-surface-0 dark:bg-surface-2/50">
@@ -2068,7 +1985,6 @@ export function NavbarsDemo() {
         </div>
       </div>
 
-      {/* Example 9: Dark with Centered Search and Secondary Links */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">
           Dark with centered search and secondary links
@@ -2078,7 +1994,6 @@ export function NavbarsDemo() {
         </div>
       </div>
 
-      {/* Example 10: With Centered Search and Secondary Links */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">
           With centered search and secondary links
@@ -2088,7 +2003,6 @@ export function NavbarsDemo() {
         </div>
       </div>
 
-      {/* Example 11: With Search in Column Layout */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-3">With search in column layout</h3>
         <div class="rounded-lg border border-surface-border bg-surface-0 dark:bg-surface-2/50">

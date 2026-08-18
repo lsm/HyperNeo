@@ -1,10 +1,3 @@
-/**
- * FileManager Unit Tests
- *
- * Unit tests for file system operations with security validation.
- * Tests the FileManager class in isolation with mock filesystem.
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { FileManager } from '../../../src/lib/file-manager';
 import { mkdir, writeFile, rm, symlink } from 'node:fs/promises';
@@ -16,7 +9,6 @@ describe('FileManager (Unit)', () => {
   let fileManager: FileManager;
 
   beforeEach(async () => {
-    // Create temporary workspace for each test
     testWorkspace = join(
       tmpdir(),
       `file-manager-unit-${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -26,7 +18,6 @@ describe('FileManager (Unit)', () => {
   });
 
   afterEach(async () => {
-    // Cleanup test workspace
     await rm(testWorkspace, { recursive: true, force: true });
   });
 
@@ -165,7 +156,7 @@ describe('FileManager (Unit)', () => {
     it('should list directory contents', async () => {
       const files = await fileManager.listDirectory('.');
 
-      expect(files.length).toBe(5); // alpha.txt, beta.md, gamma/, subdir/, emptydir/
+      expect(files.length).toBe(5);
       expect(files.some((f) => f.name === 'alpha.txt')).toBe(true);
       expect(files.some((f) => f.name === 'beta.md')).toBe(true);
       expect(files.some((f) => f.name === 'gamma')).toBe(true);
@@ -188,11 +179,9 @@ describe('FileManager (Unit)', () => {
     it('should sort items alphabetically within type', async () => {
       const files = await fileManager.listDirectory('.');
 
-      // Get all directories
       const dirs = files.filter((f) => f.type === 'directory');
       const dirNames = dirs.map((d) => d.name);
 
-      // Check alphabetical order
       const sortedDirNames = [...dirNames].sort();
       expect(dirNames).toEqual(sortedDirNames);
     });
@@ -241,7 +230,7 @@ describe('FileManager (Unit)', () => {
       expect(
         files.some((f) => f.path === 'subdir/deep.txt' || f.path.endsWith('subdir/deep.txt'))
       ).toBe(true);
-      expect(files.length).toBeGreaterThan(4); // Root items + nested items
+      expect(files.length).toBeGreaterThan(4);
     });
 
     it('should handle empty directory', async () => {
@@ -289,11 +278,9 @@ describe('FileManager (Unit)', () => {
     it('should respect max depth', async () => {
       const tree = await fileManager.getFileTree('.', 1);
 
-      // Should include direct children
       const dir1 = tree.children?.find((c) => c.name === 'dir1');
       expect(dir1).toBeDefined();
 
-      // But subdirectory should have no children (max depth reached)
       expect(dir1!.children).toEqual([]);
     });
 
@@ -350,41 +337,32 @@ describe('FileManager (Unit)', () => {
 
     it('should use workspace name for root directory', async () => {
       const tree = await fileManager.getFileTree('.');
-      // Name should be the last directory in the path
       expect(tree.name).toBe(testWorkspace.split('/').pop());
     });
 
     it('should use default max depth of 3', async () => {
-      // Create deep structure
       await mkdir(join(testWorkspace, 'a', 'b', 'c', 'd'), { recursive: true });
       await writeFile(join(testWorkspace, 'a', 'b', 'c', 'd', 'deep.txt'), 'very deep');
 
-      const tree = await fileManager.getFileTree('.'); // Default depth is 3
+      const tree = await fileManager.getFileTree('.');
 
-      // Should have a directory
       const a = tree.children?.find((c) => c.name === 'a');
       expect(a).toBeDefined();
 
-      // At depth 3 (0-indexed: 0, 1, 2, 3), children should be empty
-      // a -> b -> c (at depth 3, c should have empty children)
       if (a?.children?.[0]?.children?.[0]?.children) {
-        // c's children should be empty since we hit max depth
         expect(a.children[0].children[0].children).toEqual([]);
       }
     });
 
     it('should handle currentDepth parameter internally', async () => {
-      // This tests that currentDepth works by checking deeper nesting
       const tree = await fileManager.getFileTree('.', 2);
 
       const dir1 = tree.children?.find((c) => c.name === 'dir1');
       expect(dir1).toBeDefined();
 
-      // At depth 2, we should see subdir inside dir1
       const subdir = dir1?.children?.find((c) => c.name === 'subdir');
       expect(subdir).toBeDefined();
 
-      // But subdir's children should be empty (depth limit reached)
       expect(subdir?.children).toEqual([]);
     });
   });
@@ -445,7 +423,6 @@ describe('FileManager (Unit)', () => {
     });
 
     it('should handle large file listing', async () => {
-      // Create many files
       for (let i = 0; i < 50; i++) {
         await writeFile(join(testWorkspace, `file${i}.txt`), `content${i}`);
       }
@@ -518,7 +495,7 @@ describe('FileManager (Unit)', () => {
       expect(tree.name).toBe('dir');
       expect(tree.path).toBe('dir');
       expect(tree.type).toBe('directory');
-      expect(tree.children).toEqual([]); // Empty directory
+      expect(tree.children).toEqual([]);
     });
   });
 });

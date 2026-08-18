@@ -1,10 +1,3 @@
-/**
- * Unit tests for `post-approval-validator.ts`.
- *
- * See `docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md`
- * §1.5, §4.6.
- */
-
 import { describe, expect, test } from 'bun:test';
 import type { PostApprovalRoute, WorkflowNode } from '@hyperneo/shared';
 import {
@@ -34,7 +27,7 @@ describe('collectEligiblePostApprovalTargets', () => {
     const duplicate: WorkflowNode[] = [
       node('n1', 'A', [
         { agentId: 'a1', name: 'coder' },
-        { agentId: 'a2', name: 'coder' /* dup — should collapse */ },
+        { agentId: 'a2', name: 'coder' },
       ]),
       node('n2', 'B', [{ agentId: 'a3', name: 'reviewer' }]),
     ];
@@ -78,11 +71,9 @@ describe('validatePostApproval', () => {
     };
     const result = validatePostApproval({ postApproval: route, nodes: CODING_NODES });
     expect(result.ok).toBe(false);
-    if (result.ok) return; // type narrow
+    if (result.ok) return;
     expect(result.eligibleTargets).toEqual(['task-agent', 'coder', 'reviewer']);
     expect(result.error).toContain('"ghost-agent"');
-    // The error surfaces every eligible target so the operator/LLM can fix
-    // the route without a round-trip to the docs.
     for (const target of ['task-agent', 'coder', 'reviewer']) {
       expect(result.error).toContain(`"${target}"`);
     }

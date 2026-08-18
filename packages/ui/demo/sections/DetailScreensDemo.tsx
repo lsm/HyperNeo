@@ -32,9 +32,6 @@ import {
   X,
 } from 'lucide-preact';
 
-// ==========================
-// Example 1: Invoice Detail (Stacked Layout)
-// ==========================
 function DetailScreensStacked() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [selected, setSelected] = useState<{
@@ -359,7 +356,6 @@ function DetailScreensStacked() {
 
         <div class="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
           <div class="mx-auto grid max-w-2xl grid-cols-1 grid-rows-1 items-start gap-x-8 gap-y-8 lg:mx-0 lg:max-w-none lg:grid-cols-3">
-            {/* Invoice summary */}
             <div class="lg:col-start-3 lg:row-end-1">
               <h2 class="sr-only">Summary</h2>
               <div class="rounded-lg bg-gray-50 shadow-xs outline-1 outline-gray-900/5 dark:bg-gray-800/50 dark:shadow-none dark:-outline-offset-1 dark:outline-white/10">
@@ -408,7 +404,6 @@ function DetailScreensStacked() {
               </div>
             </div>
 
-            {/* Invoice */}
             <div class="-mx-4 px-4 py-8 shadow-xs ring-1 ring-gray-900/5 sm:mx-0 sm:rounded-lg sm:px-8 sm:pb-14 lg:col-span-2 lg:row-span-2 lg:row-end-2 xl:px-16 xl:pt-16 xl:pb-20 dark:shadow-none dark:ring-white/10">
               <h2 class="text-base font-semibold text-gray-900 dark:text-white">Invoice</h2>
               <dl class="mt-6 grid grid-cols-1 text-sm/6 sm:grid-cols-2">
@@ -557,7 +552,6 @@ function DetailScreensStacked() {
             </div>
 
             <div class="lg:col-start-3">
-              {/* Activity feed */}
               <h2 class="text-sm/6 font-semibold text-gray-900 dark:text-white">Activity</h2>
               <ul role="list" class="mt-6 space-y-6">
                 {activity.map((activityItem, activityItemIdx) => (
@@ -627,7 +621,6 @@ function DetailScreensStacked() {
                 ))}
               </ul>
 
-              {/* New comment form */}
               <div class="mt-6 flex gap-x-3">
                 <img
                   alt=""
@@ -743,9 +736,6 @@ function DetailScreensStacked() {
   );
 }
 
-// ==========================
-// Example 2: Deployment Detail (Sidebar Layout)
-// ==========================
 function DetailScreensSidebar() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -886,7 +876,6 @@ function DetailScreensSidebar() {
                 </div>
               </TransitionChild>
 
-              {/* Sidebar component */}
               <div class="relative flex grow flex-col gap-y-5 overflow-y-auto bg-gray-50 px-6 dark:bg-gray-900 dark:ring dark:ring-white/10 dark:before:pointer-events-none dark:before:absolute dark:before:inset-0 dark:before:bg-black/10">
                 <div class="relative flex h-16 shrink-0 items-center">
                   <img
@@ -982,7 +971,6 @@ function DetailScreensSidebar() {
         </Transition>
       </Dialog>
 
-      {/* Static sidebar for desktop */}
       <div class="hidden xl:fixed xl:inset-y-0 xl:z-50 xl:flex xl:w-72 xl:flex-col dark:bg-gray-900">
         <div class="flex grow flex-col gap-y-5 overflow-y-auto bg-gray-50 px-6 ring-1 ring-gray-200 dark:bg-black/10 dark:ring-white/5">
           <div class="flex h-16 shrink-0 items-center">
@@ -1079,7 +1067,6 @@ function DetailScreensSidebar() {
       </div>
 
       <div class="xl:pl-72">
-        {/* Sticky search header */}
         <div class="sticky top-0 z-40 flex h-16 shrink-0 items-center gap-x-6 border-b border-gray-200 bg-white px-4 shadow-xs sm:px-6 lg:px-8 dark:border-white/5 dark:bg-gray-900 dark:shadow-none">
           <button
             type="button"
@@ -1116,7 +1103,6 @@ function DetailScreensSidebar() {
 
         <main>
           <header>
-            {/* Secondary navigation */}
             <nav class="flex overflow-x-auto border-b border-gray-200 py-4 dark:border-white/10">
               <ul
                 role="list"
@@ -1135,7 +1121,6 @@ function DetailScreensSidebar() {
               </ul>
             </nav>
 
-            {/* Heading */}
             <div class="flex flex-col items-start justify-between gap-x-8 gap-y-4 bg-gray-50 px-4 py-4 sm:flex-row sm:items-center sm:px-6 lg:px-8 dark:bg-gray-700/10">
               <div>
                 <div class="flex items-center gap-x-3">
@@ -1157,7 +1142,6 @@ function DetailScreensSidebar() {
               </div>
             </div>
 
-            {/* Stats */}
             <div class="grid grid-cols-1 bg-gray-50 sm:grid-cols-2 lg:grid-cols-4 dark:bg-gray-700/10">
               {stats.map((stat, statIdx) => (
                 <div
@@ -1181,7 +1165,6 @@ function DetailScreensSidebar() {
             </div>
           </header>
 
-          {/* Activity list */}
           <div class="border-t border-gray-200 pt-11 dark:border-white/10">
             <h2 class="px-4 text-base/7 font-semibold text-gray-900 sm:px-6 lg:px-8 dark:text-white">
               Latest activity

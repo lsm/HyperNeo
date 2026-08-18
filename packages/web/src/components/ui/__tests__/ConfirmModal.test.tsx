@@ -1,7 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for ConfirmModal Component
- */
 
 import { render, cleanup } from '@testing-library/preact';
 import { describe, it, expect, vi } from 'vitest';
@@ -94,7 +91,6 @@ describe('ConfirmModal', () => {
           message="Message"
         />
       );
-      // ConfirmModal passes showCloseButton={false} to Modal
       const closeButton = document.body.querySelector('button[aria-label="Close modal"]');
       expect(closeButton).toBeNull();
     });
@@ -443,8 +439,6 @@ describe('ConfirmModal', () => {
       );
       confirmButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
-      // Disabled buttons don't fire click events, so onConfirm should not be called
-      // unless the button is clicked programmatically
       expect(onConfirm).not.toHaveBeenCalled();
     });
   });
@@ -462,7 +456,6 @@ describe('ConfirmModal', () => {
           message="Message"
         />
       );
-      // ConfirmModal uses size="sm"
       const modal = document.body.querySelector('.bg-dark-900');
       expect(modal?.className).toContain('max-w-md');
     });

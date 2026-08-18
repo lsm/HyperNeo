@@ -1,22 +1,7 @@
-/**
- * ProviderService.restoreEnvVars PORT / HYPERNEO_PORT restoration tests
- *
- * Tests that restoreEnvVars correctly handles the PORT and HYPERNEO_PORT keys in
- * OriginalEnvVars as part of the fix that clears both before SDK query to prevent
- * the kill-chain bug (daemon port leaked → lsof → kill parent process).
- *
- * Covers:
- * - OriginalEnvVars interface includes PORT and HYPERNEO_PORT fields
- * - restoreEnvVars restores both when the original values were defined
- * - restoreEnvVars deletes both when the original value was undefined (never set)
- * - restoreEnvVars does nothing when the key is absent from the original object
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import type { OriginalEnvVars } from '../../../src/lib/agent/query-runner';
 import { ProviderService } from '../../../src/lib/provider-service';
 
-// Capture the original values so tests can restore after themselves
 const ORIGINAL_PORT = process.env.PORT;
 const ORIGINAL_HYPERNEO_PORT = process.env.HYPERNEO_PORT;
 

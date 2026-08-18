@@ -1,23 +1,3 @@
-/**
- * Unit tests for CanvasToolbar and computeFitToView.
- *
- * Tests:
- * - computeFitToView: returns default viewport when no nodes
- * - computeFitToView: centers a single node
- * - computeFitToView: fits multiple nodes with padding
- * - computeFitToView: clamps scale to MIN_SCALE
- * - computeFitToView: clamps scale to MAX_SCALE
- * - computeFitToView: asymmetric nodes (wider vs taller)
- * - CanvasToolbar: renders all buttons
- * - CanvasToolbar: zoom-in increases scale
- * - CanvasToolbar: zoom-out decreases scale
- * - CanvasToolbar: reset returns to scale=1 and offset=0
- * - CanvasToolbar: fit-to-view calls onViewportChange with centered viewport
- * - CanvasToolbar: zoom-in disabled at MAX_SCALE
- * - CanvasToolbar: zoom-out disabled at MIN_SCALE
- * - CanvasToolbar: displays current zoom percentage
- */
-
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { computeFitToView, CanvasToolbar, ZOOM_STEP, FIT_PADDING } from '../CanvasToolbar';
@@ -25,8 +5,6 @@ import { MIN_SCALE, MAX_SCALE } from '../VisualCanvas';
 import type { NodePosition, ViewportState } from '../types';
 
 afterEach(() => cleanup());
-
-// ---- computeFitToView pure logic ----
 
 describe('computeFitToView', () => {
   it('returns default viewport when nodes is empty', () => {
@@ -40,10 +18,8 @@ describe('computeFitToView', () => {
     const vh = 600;
     const result = computeFitToView(nodes, vw, vh, 0);
 
-    // Fit-to-view never zooms above 100%.
     expect(result.scale).toBe(1);
 
-    // Node should be centered
     const scaledW = 100 * result.scale;
     const scaledH = 100 * result.scale;
     const expectedOffsetX = (vw - scaledW) / 2;
@@ -57,7 +33,6 @@ describe('computeFitToView', () => {
       a: { x: 0, y: 0, width: 100, height: 80 },
       b: { x: 200, y: 100, width: 100, height: 80 },
     };
-    // Bounding box: [0,0] to [300, 180] → size 300x180
     const vw = 800;
     const vh = 600;
     const result = computeFitToView(nodes, vw, vh, FIT_PADDING);
@@ -67,62 +42,51 @@ describe('computeFitToView', () => {
     const expectedScale = Math.min(availW / 300, availH / 180, 1, MAX_SCALE);
     expect(result.scale).toBeCloseTo(expectedScale);
 
-    // Check centering: scaled nodes midpoint should be at viewport center
     const nodesW = 300;
     const nodesH = 180;
     const scaledW = nodesW * result.scale;
     const scaledH = nodesH * result.scale;
-    const expectedOffsetX = (vw - scaledW) / 2 - 0 * result.scale; // minX=0
-    const expectedOffsetY = (vh - scaledH) / 2 - 0 * result.scale; // minY=0
+    const expectedOffsetX = (vw - scaledW) / 2 - 0 * result.scale;
+    const expectedOffsetY = (vh - scaledH) / 2 - 0 * result.scale;
     expect(result.offsetX).toBeCloseTo(expectedOffsetX);
     expect(result.offsetY).toBeCloseTo(expectedOffsetY);
   });
 
   it('clamps scale to MIN_SCALE for tiny viewport', () => {
-    // Very small viewport relative to nodes
     const nodes: NodePosition = { a: { x: 0, y: 0, width: 10000, height: 10000 } };
     const result = computeFitToView(nodes, 100, 100, 0);
     expect(result.scale).toBe(MIN_SCALE);
   });
 
   it('does not scale above 100% for tiny nodes in large viewport', () => {
-    // Very small nodes in large viewport
     const nodes: NodePosition = { a: { x: 0, y: 0, width: 1, height: 1 } };
     const result = computeFitToView(nodes, 1000, 1000, 0);
     expect(result.scale).toBe(1);
   });
 
   it('fits wide content (limited by width)', () => {
-    // 400x50 nodes in 800x600 viewport with no padding.
-    // Fit-to-view must not exceed 100%.
     const nodes: NodePosition = { a: { x: 0, y: 0, width: 400, height: 50 } };
     const result = computeFitToView(nodes, 800, 600, 0);
     expect(result.scale).toBe(1);
   });
 
   it('fits tall content (limited by height)', () => {
-    // 50x400 nodes in 800x600 viewport with no padding.
-    // Fit-to-view must not exceed 100%.
     const nodes: NodePosition = { a: { x: 0, y: 0, width: 50, height: 400 } };
     const result = computeFitToView(nodes, 800, 600, 0);
     expect(result.scale).toBe(1);
   });
 
   it('handles nodes not starting at origin', () => {
-    // Nodes offset from origin
     const nodes: NodePosition = { a: { x: 500, y: 500, width: 100, height: 100 } };
     const vw = 800;
     const vh = 600;
     const result = computeFitToView(nodes, vw, vh, 0);
 
     expect(result.scale).toBe(1);
-    // offsetX: (800 - 100*2)/2 - 500*2 = 300 - 1000 = -700
     expect(result.offsetX).toBeCloseTo((vw - 100 * result.scale) / 2 - 500 * result.scale);
     expect(result.offsetY).toBeCloseTo((vh - 100 * result.scale) / 2 - 500 * result.scale);
   });
 });
-
-// ---- CanvasToolbar component ----
 
 function makeViewport(scale = 1, offsetX = 0, offsetY = 0): ViewportState {
   return { scale, offsetX, offsetY };

@@ -1,10 +1,3 @@
-/**
- * Smoke Test: Message Send
- *
- * Quick test to verify basic message sending works.
- * Part of the smoke test suite (target: < 1 minute total).
- */
-
 import { test, expect } from '../../fixtures';
 import { createSessionViaUI, cleanupTestSession } from '../helpers/wait-helpers';
 
@@ -34,10 +27,8 @@ test.describe('Smoke: Message Send', () => {
     await messageInput.fill('Hello');
     await page.locator('button[aria-label="Send message"]').first().click();
 
-    // Verify message appears in UI
     await expect(page.getByText('Hello').first()).toBeVisible();
 
-    // Wait for some response (not checking content, just that system responds)
     await page.waitForTimeout(2000);
   });
 });

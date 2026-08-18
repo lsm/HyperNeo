@@ -1,14 +1,6 @@
-/**
- * Tests for InstallSkillFromGitDialog component.
- */
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, screen, waitFor, fireEvent } from '@testing-library/preact';
 import type { AppSkill } from '@hyperneo/shared';
-
-// ---------------------------------------------------------------------------
-// Mocks — must use vi.hoisted for proper hoisting
-// ---------------------------------------------------------------------------
 
 const { mockInstallSkillFromGit, mockToastError, mockToastSuccess } = vi.hoisted(() => ({
   mockInstallSkillFromGit: vi.fn(),
@@ -16,14 +8,12 @@ const { mockInstallSkillFromGit, mockToastError, mockToastSuccess } = vi.hoisted
   mockToastSuccess: vi.fn(),
 }));
 
-// Mock skillsStore
 vi.mock('../../../lib/skills-store.ts', () => ({
   skillsStore: {
     installSkillFromGit: (...args: unknown[]) => mockInstallSkillFromGit(...args),
   },
 }));
 
-// Mock toast
 vi.mock('../../../lib/toast.ts', () => ({
   toast: {
     error: (msg: string) => mockToastError(msg),
@@ -33,7 +23,6 @@ vi.mock('../../../lib/toast.ts', () => ({
   },
 }));
 
-// Mock Modal
 vi.mock('../../ui/Modal.tsx', () => ({
   Modal: ({
     isOpen,
@@ -57,7 +46,6 @@ vi.mock('../../ui/Modal.tsx', () => ({
     ) : null,
 }));
 
-// Mock Button
 vi.mock('../../ui/Button.tsx', () => ({
   Button: ({
     children,
@@ -86,12 +74,7 @@ vi.mock('../../ui/Button.tsx', () => ({
   ),
 }));
 
-// Import after mocks
 import { InstallSkillFromGitDialog } from '../InstallSkillFromGitDialog.tsx';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function makeSkill(overrides: Partial<AppSkill> = {}): AppSkill {
   return {
@@ -108,10 +91,6 @@ function makeSkill(overrides: Partial<AppSkill> = {}): AppSkill {
     ...overrides,
   };
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe('InstallSkillFromGitDialog', () => {
   const onClose = vi.fn();
@@ -221,10 +200,8 @@ describe('InstallSkillFromGitDialog', () => {
     );
     fireEvent.input(urlInput, { target: { value: 'https://example.com/skill' } });
 
-    // Manually clear the name field (in case it was auto-derived)
     const nameInput = screen.getByPlaceholderText('e.g., playwright');
     fireEvent.input(nameInput, { target: { value: '' } });
-    // Mark as touched so auto-derive doesn't refill
     fireEvent.input(nameInput, { target: { value: '' } });
 
     fireEvent.click(screen.getByTestId('button-primary'));
@@ -265,7 +242,6 @@ describe('InstallSkillFromGitDialog', () => {
       },
     });
 
-    // Override auto-derived name
     const nameInput = screen.getByPlaceholderText('e.g., playwright');
     fireEvent.input(nameInput, { target: { value: 'playwright' } });
 
@@ -354,7 +330,6 @@ describe('InstallSkillFromGitDialog', () => {
       expect(mockToastError).toHaveBeenCalled();
     });
     expect(onClose).not.toHaveBeenCalled();
-    // Modal should still be open
     expect(screen.getByTestId('modal')).toBeTruthy();
   });
 
@@ -374,7 +349,6 @@ describe('InstallSkillFromGitDialog', () => {
 
     fireEvent.click(screen.getByTestId('button-secondary'));
 
-    // Re-open (simulate parent toggling isOpen back to true)
     cleanup();
     render(<InstallSkillFromGitDialog isOpen onClose={onClose} />);
 

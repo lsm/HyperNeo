@@ -1,19 +1,3 @@
-/**
- * LiveQuery Integration Tests
- *
- * End-to-end tests for the full reactive pipeline:
- *   Database facade → ReactiveDatabase → LiveQueryEngine
- *
- * All writes go through the proxied `reactiveDb.db`, which:
- *   1. Mutates the underlying SQLite database.
- *   2. Increments the table version.
- *   3. Emits a change event consumed by LiveQueryEngine.
- *
- * LiveQueryEngine re-evaluates queries in a microtask, so every assertion that
- * checks for deltas must first `await Promise.resolve()` (or multiple microtasks
- * for chained operations).
- */
-
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -26,10 +10,6 @@ import type { ReactiveDatabase } from '../../../../src/storage/reactive-database
 import type { QueryDiff } from '../../../../src/storage/live-query';
 import type { Session, SessionConfig, SessionMetadata } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function makeTempDbPath(): string {
   return join(tmpdir(), `live-query-int-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
@@ -74,16 +54,11 @@ function makeUserMessage(uuid: string, content: string): SDKMessage {
   } as SDKMessage;
 }
 
-// Row shape returned by the sessions query
 interface SessionRow {
   id: string;
   title: string;
   status: string;
 }
-
-// ---------------------------------------------------------------------------
-// Test setup
-// ---------------------------------------------------------------------------
 
 describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)', () => {
   let dbPath: string;
@@ -101,7 +76,6 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
     reactiveDb = createReactiveDatabase(db);
     await db.initialize(reactiveDb);
 
-    // Access the underlying BunDatabase that LiveQueryEngine needs
     bunDb = db.getDatabase();
     engine = new LiveQueryEngine(bunDb, reactiveDb);
   });
@@ -122,10 +96,6 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
     }
   });
 
-  // -------------------------------------------------------------------------
-  // Initial state
-  // -------------------------------------------------------------------------
-
   describe('initial snapshot', () => {
     test('snapshot is empty when no sessions exist', () => {
       const diffs: QueryDiff<SessionRow>[] = [];
@@ -137,7 +107,6 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
     });
 
     test('snapshot contains pre-existing sessions', () => {
-      // Insert via raw db (not proxied) to avoid events before subscription
       db.createSession(makeSession('pre1'));
       db.createSession(makeSession('pre2'));
 
@@ -149,10 +118,6 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
       expect(ids).toEqual(['pre1', 'pre2']);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Session lifecycle through full pipeline
-  // -------------------------------------------------------------------------
 
   describe('session insert', () => {
     test('createSession via proxied db triggers added delta', async () => {
@@ -197,7 +162,7 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
   describe('session update', () => {
     test('updateSession via proxied db triggers updated delta', async () => {
       reactiveDb.db.createSession(makeSession('upd1'));
-      await Promise.resolve(); // let insert delta flush
+      await Promise.resolve();
 
       const diffs: QueryDiff<SessionRow>[] = [];
       engine.subscribe(SESSIONS_SQL, [], (diff) => diffs.push(diff));
@@ -234,7 +199,6 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
       reactiveDb.db.updateSession('upd3', { status: 'archived' });
       await Promise.resolve();
 
-      // Row disappears from query because status = 'archived' is filtered out
       const delta = diffs[1];
       expect(delta.rows.length).toBe(0);
       expect(delta.removed?.length).toBe(1);
@@ -273,10 +237,6 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Transaction batching through full pipeline
-  // -------------------------------------------------------------------------
-
   describe('transaction batching', () => {
     test('beginTransaction + multiple creates + commit = single delta', async () => {
       const diffs: QueryDiff<SessionRow>[] = [];
@@ -290,7 +250,6 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
 
       await Promise.resolve();
 
-      // snapshot + exactly one delta (deduplicated from 3 writes)
       expect(diffs.length).toBe(2);
       expect(diffs[1].type).toBe('delta');
       expect(diffs[1].rows.length).toBe(3);
@@ -306,15 +265,9 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
 
       await Promise.resolve();
 
-      // The underlying SQLite write still happened (abort only suppresses event),
-      // but no change event was emitted, so LiveQueryEngine never re-evaluated.
-      expect(diffs.length).toBe(1); // only snapshot
+      expect(diffs.length).toBe(1);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // SDK messages table subscription
-  // -------------------------------------------------------------------------
 
   describe('sdk_messages query', () => {
     const MESSAGES_SQL =
@@ -329,7 +282,6 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
     });
 
     test('saveSDKMessage via proxied db triggers added delta', async () => {
-      // Session must exist for foreign-key or just to make test realistic
       reactiveDb.db.createSession(makeSession('msg-session'));
       await Promise.resolve();
 
@@ -355,11 +307,9 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
       const diffs: QueryDiff<{ id: string; session_id: string; message_type: string }>[] = [];
       engine.subscribe(MESSAGES_SQL, ['sess-a'], (diff) => diffs.push(diff));
 
-      // Insert message for sess-b — should not affect query for sess-a
       reactiveDb.db.saveSDKMessage('sess-b', makeUserMessage(crypto.randomUUID(), 'Other session'));
       await Promise.resolve();
 
-      // LiveQueryEngine re-evaluates, but result for sess-a is still empty, so no delta
       expect(diffs.length).toBe(1);
     });
 
@@ -379,10 +329,6 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Cross-table isolation
-  // -------------------------------------------------------------------------
-
   describe('cross-table isolation', () => {
     test('change to sessions table does not trigger sdk_messages query callback', async () => {
       const MESSAGES_SQL_ISO =
@@ -394,7 +340,6 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
       reactiveDb.db.createSession(makeSession('iso-session'));
       await Promise.resolve();
 
-      // Only the initial snapshot; sessions write doesn't touch sdk_messages query
       expect(msgDiffs.length).toBe(1);
     });
 
@@ -411,15 +356,10 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
       reactiveDb.db.createSession(makeSession('cross-session'));
       await Promise.resolve();
 
-      // Sessions subscription gets a delta; messages subscription stays at just the snapshot
       expect(sessionDiffs.length).toBe(2);
       expect(msgDiffs.length).toBe(1);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Version tracking through the full pipeline
-  // -------------------------------------------------------------------------
 
   describe('version tracking', () => {
     test('snapshot version is 0 before any writes', () => {
@@ -453,10 +393,6 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
       expect(diffs[2].version).toBeGreaterThan(diffs[1].version);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Processing state and context info
-  // -------------------------------------------------------------------------
 
   describe('processing state and context info', () => {
     test('processing state update triggers live query', async () => {
@@ -532,7 +468,6 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
         diffs.push(diff)
       );
 
-      // Three rapid updates without yielding
       reactiveDb.db.updateSession('ps2', {
         processingState: JSON.stringify({ status: 'processing', phase: 'streaming' }),
       });
@@ -543,10 +478,8 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
         processingState: JSON.stringify({ status: 'idle' }),
       });
 
-      // Single microtask flush — should coalesce into one delta
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // snapshot + exactly one delta (all three updates coalesced)
       expect(diffs.length).toBe(2);
       const delta = diffs[1];
       expect(delta.type).toBe('delta');

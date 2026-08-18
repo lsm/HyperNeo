@@ -1,10 +1,3 @@
-/**
- * Session Manager Tests
- *
- * Unit tests for the main session orchestrator that coordinates
- * SessionCache, SessionLifecycle, ToolsConfigManager, and MessagePersistence.
- */
-
 import { describe, expect, it, beforeEach, mock, afterEach, spyOn } from 'bun:test';
 import { SessionManager, CleanupState } from '../../../../src/lib/session/session-manager';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
@@ -35,7 +28,6 @@ describe('SessionManager', () => {
   beforeEach(() => {
     eventHandlers = new Map();
 
-    // Database mocks
     mockDb = {
       createSession: mock(() => {}),
       updateSession: mock(() => {}),
@@ -74,7 +66,6 @@ describe('SessionManager', () => {
       })),
     } as unknown as Database;
 
-    // Message hub mocks
     mockMessageHub = {
       event: mock(async () => {}),
       onRequest: mock(() => () => {}),
@@ -82,14 +73,12 @@ describe('SessionManager', () => {
       command: mock(async () => {}),
     } as unknown as MessageHub;
 
-    // Auth manager mocks
     mockAuthManager = {
       getCurrentApiKey: mock(async () => 'test-api-key'),
       initialize: mock(async () => {}),
       getAuthStatus: mock(async () => ({ isAuthenticated: true })),
     } as unknown as AuthManager;
 
-    // Settings manager mocks
     mockSettingsManager = {
       getSettings: mock(() => ({})),
       updateSettings: mock(() => {}),
@@ -100,7 +89,6 @@ describe('SessionManager', () => {
       listMcpServersFromSources: mock(() => []),
     } as unknown as SettingsManager;
 
-    // Event bus mocks - capture handlers for testing
     mockInternalEventBus = {
       publish: mock(async () => {}),
       publishAsync: mock(() => {}),
@@ -110,20 +98,17 @@ describe('SessionManager', () => {
       }),
     } as unknown as InternalEventBus<any>;
 
-    // Job queue mocks
     mockJobQueue = {
       enqueue: mock(() => ({ id: 'job-id', queue: 'session.title_generation' })),
       listJobs: mock(() => []),
     } as unknown as JobQueueRepository;
 
-    // Job processor mocks
     mockJobProcessor = {
       register: mock(() => {}),
       start: mock(() => {}),
       stop: mock(async () => {}),
     } as unknown as JobQueueProcessor;
 
-    // Config
     config = {
       defaultModel: 'claude-sonnet-4-20250514',
       maxTokens: 8192,
@@ -141,17 +126,14 @@ describe('SessionManager', () => {
       config as Parameters<typeof SessionManager>[5],
       mockJobQueue,
       mockJobProcessor,
-      undefined, // skillsManager
-      undefined // appMcpServerRepo
+      undefined,
+      undefined
     );
-    // Default: listProcesses returns empty array (no test PIDs in process table).
-    // Tests with live PIDs override this to include their fake PIDs.
     listProcessesSpy = spyOn(processWatchdog, 'listProcesses').mockResolvedValue([]);
   });
 
   afterEach(async () => {
     listProcessesSpy?.mockRestore();
-    // Ensure cleanup after each test
     try {
       await sessionManager.cleanup();
     } catch {
@@ -200,7 +182,6 @@ describe('SessionManager', () => {
   describe('createSession', () => {
     it('should delegate to sessionLifecycle.create', async () => {
       (mockDb.createSession as ReturnType<typeof mock>).mockImplementation((session: Session) => {
-        // Store created session for retrieval
         (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(session);
       });
 
@@ -259,7 +240,6 @@ describe('SessionManager', () => {
       };
       (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(mockSession);
 
-      // First access loads and caches
       const result = sessionManager.getSession('test-session-id');
 
       expect(result).not.toBeNull();
@@ -309,12 +289,6 @@ describe('SessionManager', () => {
 
       const session = sessionManager.getSession('test-session-id');
 
-      // Regression: the heal callback must be present at construction so a
-      // freshly DB-hydrated Space member session can recover its in-process
-      // space-agent-tools server after a daemon restart, before the background
-      // reattach sweep reaches it. Previously the callback was wired only as a
-      // side-effect of the attach step, so a hydrated-but-not-yet-attached
-      // session had neither the server nor the callback and hard-failed.
       expect(session).not.toBeNull();
       expect(typeof session!.onMissingMemberSpaceMcpServers).toBe('function');
     });
@@ -350,7 +324,6 @@ describe('SessionManager', () => {
         metadata: {},
       };
       (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(mockSession);
-      // No setSpaceRuntimeMcpProvider call — preserves pre-provider behavior.
 
       const session = sessionManager.getSession('no-provider-session');
 
@@ -377,9 +350,7 @@ describe('SessionManager', () => {
       sessionManager.registerSession(fakeAgentSession);
 
       const result = await sessionManager.getSessionAsync('room:1:task:2:abc');
-      // Should return the exact same instance, not a DB-loaded duplicate
       expect(result).toBe(fakeAgentSession);
-      // DB should not have been called since the instance is already in cache
       expect(mockDb.getSession).not.toHaveBeenCalled();
     });
 
@@ -402,7 +373,6 @@ describe('SessionManager', () => {
       sessionManager.registerSession(fakeAgentSession);
       await sessionManager.unregisterSession('room:1:task:2:xyz');
 
-      // After unregister, getSession should return null (not in cache, not in DB)
       (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(null);
       const result = await sessionManager.getSessionAsync('room:1:task:2:xyz');
       expect(result).toBeNull();
@@ -437,8 +407,6 @@ describe('SessionManager', () => {
       ]);
       await sessionManager.unregisterSession('room:1:task:2:abc');
 
-      // Pass snapshot with PID 7000 so snapshot-based identity
-      // verification confirms it as live (first probe captures startTime).
       const fakeSnapshot = [
         { pid: 7000, ppid: 1, pgid: 7000, elapsedSeconds: 60, command: 'live-root' },
       ];
@@ -511,11 +479,6 @@ describe('SessionManager', () => {
         workspacePath: '/test',
       });
 
-      // Task #85: `deleteSession(sessionId)` has been removed. The
-      // `session.delete` RPC handler calls
-      // `deleteSessionResources(sessionId, trigger)`, which is the only
-      // path permitted to remove the sessions DB row + sdk_messages.
-      // Note: `room.delete` RPC is retired and not registered.
       await sessionManager.deleteSessionResources('test-id', 'ui_session_delete');
 
       expect(mockDb.deleteSession).toHaveBeenCalledWith('test-id');
@@ -529,9 +492,6 @@ describe('SessionManager', () => {
         workspacePath: '/test',
       });
 
-      // Task #85: archive is the "stash" path — worktree + SDK .jsonl
-      // are moved out of the live directory but the DB row + sdk_messages
-      // are preserved so the session is still viewable in the UI.
       await sessionManager.archiveSessionResources('archive-id', 'ui_session_archive');
 
       expect(mockDb.deleteSession).not.toHaveBeenCalled();
@@ -555,7 +515,6 @@ describe('SessionManager', () => {
         metadata: {},
       };
 
-      // Before cleanup: process is live. After cleanup: transitions to exited.
       const getSplit = mock(() => ({
         live: [5000],
         exited: [5001, 5002],
@@ -563,7 +522,6 @@ describe('SessionManager', () => {
       const fakeAgentSession = {
         getSessionData: mock(() => mockSession),
         cleanup: mock(async () => {
-          // Simulate cleanup transitioning live PID to exited
           getSplit.mockImplementation(() => ({
             live: [],
             exited: [5000, 5001, 5002],
@@ -572,7 +530,6 @@ describe('SessionManager', () => {
         getTrackedAgentRootPidsSplit: getSplit,
         getExitedRootPidTimestamps: mock(() => {
           const m = new Map<number, number>();
-          // Before cleanup: 5001 and 5002 already exited
           m.set(5001, Date.now() - 3 * 60 * 1000);
           m.set(5002, Date.now() - 7 * 60 * 1000);
           m.set(5000, Date.now() - 1 * 60 * 1000);
@@ -582,16 +539,12 @@ describe('SessionManager', () => {
 
       sessionManager.registerSession(fakeAgentSession);
 
-      // Before interrupt: PIDs come from the session cache
       const beforeInterrupt = sessionManager.getTrackedAgentRootPidsSplit();
       expect(beforeInterrupt.live).toContain(5000);
       expect(beforeInterrupt.exited).toContain(5001);
 
-      // Interrupt removes the session from cache
       await sessionManager.interruptInMemorySession('session-with-pids');
 
-      // After interrupt: PIDs should still be visible via the SessionManager-level map.
-      // cleanup() transitions live PID 5000 to exited, so all three are preserved as exited.
       const afterInterrupt = sessionManager.getTrackedAgentRootPidsSplit();
       expect(afterInterrupt.live).not.toContain(5000);
       expect(afterInterrupt.exited).toContain(5000);
@@ -609,7 +562,6 @@ describe('SessionManager', () => {
         metadata: {},
       };
 
-      // Simulate cleanup that fails to kill the process
       const getSplit = mock(() => ({
         live: [8000],
         exited: [],
@@ -617,7 +569,6 @@ describe('SessionManager', () => {
       const fakeAgentSession = {
         getSessionData: mock(() => mockSession),
         cleanup: mock(async () => {
-          // Process survives cleanup â still live
           getSplit.mockImplementation(() => ({
             live: [8000],
             exited: [],
@@ -633,8 +584,6 @@ describe('SessionManager', () => {
       ]);
       await sessionManager.interruptInMemorySession('session-evicted-live');
 
-      // Pass snapshot with PID 8000 so snapshot-based identity
-      // verification confirms it as live (first probe captures startTime).
       const fakeSnapshot = [
         { pid: 8000, ppid: 1, pgid: 8000, elapsedSeconds: 60, command: 'live-root' },
       ];
@@ -654,7 +603,6 @@ describe('SessionManager', () => {
       metadata: {},
     };
 
-    // Simulate a live root that survives cleanup
     const getSplit = mock(() => ({
       live: [9001],
       exited: [],
@@ -677,7 +625,6 @@ describe('SessionManager', () => {
     ]);
     await sessionManager.interruptInMemorySession('session-promote-live');
 
-    // Pass snapshot with PID 9001 so identity is verified as live.
     const fakeSnapshot = [
       { pid: 9001, ppid: 1, pgid: 9001, elapsedSeconds: 60, command: 'live-root' },
     ];
@@ -685,7 +632,6 @@ describe('SessionManager', () => {
     expect(before.live).toContain(9001);
     expect(before.exited).not.toContain(9001);
 
-    // Pass snapshot without PID 9001 (process exited) â promoted to exited.
     const otherSnapshot = [{ pid: 1, ppid: 0, pgid: 1, elapsedSeconds: 100, command: 'init' }];
     const after = sessionManager.getTrackedAgentRootPidsSplit(otherSnapshot);
     expect(after.live).not.toContain(9001);
@@ -724,8 +670,6 @@ describe('SessionManager', () => {
     ]);
     await sessionManager.interruptInMemorySession('session-no-snapshot');
 
-    // Without a snapshot, the evicted live root stays live â no false
-    // promotion to exited when the process table is unavailable.
     const split = sessionManager.getTrackedAgentRootPidsSplit();
     expect(split.live).toContain(9002);
     expect(split.exited).not.toContain(9002);
@@ -766,18 +710,12 @@ describe('SessionManager', () => {
     const RETENTION_MS = 15 * 60 * 1000;
     const futureNow = Date.now() + RETENTION_MS + 1000;
 
-    // Call the internal method with a future timestamp and a snapshot
-    // containing PID 9999 (simulating PID reuse by an unrelated process).
-    // Access via type cast since expireEvictedRoots is private.
     const fakeSnapshot = [
       { pid: 9999, ppid: 1, pgid: 9999, elapsedSeconds: 60, command: 'unrelated' },
     ];
     (sessionManager as any).expireEvictedRoots(fakeSnapshot, futureNow);
 
     const after = sessionManager.getTrackedAgentRootPidsSplit();
-    // PID should be completely removed â not live, not exited.
-    // The retention window expired, so even though the PID exists in the
-    // snapshot (reused by an unrelated process), it is removed.
     expect(after.live).not.toContain(9999);
     expect(after.exited).not.toContain(9999);
   });
@@ -814,8 +752,6 @@ describe('SessionManager', () => {
     ]);
     await sessionManager.interruptInMemorySession('session-identity-verified');
 
-    // Pass snapshot with PID 7777 â first probe captures startTime,
-    // subsequent calls with matching elapsed time confirm identity.
     const fakeSnapshot = [
       { pid: 7777, ppid: 1, pgid: 7777, elapsedSeconds: 60, command: 'live-root' },
     ];
@@ -856,20 +792,16 @@ describe('SessionManager', () => {
     ]);
     await sessionManager.interruptInMemorySession('session-pid-reuse');
 
-    // First snapshot: PID 6666 with 60s elapsed â captures startTime.
     const snapshot1 = [
       { pid: 6666, ppid: 1, pgid: 6666, elapsedSeconds: 60, command: 'original-process' },
     ];
     const first = sessionManager.getTrackedAgentRootPidsSplit(snapshot1);
     expect(first.live).toContain(6666);
 
-    // Second snapshot: PID 6666 with 5s elapsed â startTime changed by ~55s,
-    // indicating PID reuse by a different process.
     const snapshot2 = [
       { pid: 6666, ppid: 1, pgid: 6666, elapsedSeconds: 5, command: 'replaced-process' },
     ];
     const second = sessionManager.getTrackedAgentRootPidsSplit(snapshot2);
-    // PID removed â startTime mismatch indicates PID reuse.
     expect(second.live).not.toContain(6666);
     expect(second.exited).not.toContain(6666);
   });
@@ -901,12 +833,9 @@ describe('SessionManager', () => {
     ]);
     await sessionManager.unregisterSession('session-reevict');
 
-    // First eviction establishes evictedAt and startTime for PID 5555
     const first = sessionManager.getTrackedAgentRootPidsSplit([]);
     expect(first.live).toContain(5555);
 
-    // Re-register the same PID via a new session eviction (PID reused by
-    // a new daemon-owned session before the watchdog observed it).
     const getSplit2 = mock(() => ({
       live: [5555],
       exited: [],
@@ -924,8 +853,6 @@ describe('SessionManager', () => {
     ]);
     await sessionManager.unregisterSession('session-reevict-2');
 
-    // After re-eviction, PID 5555 should still be tracked as live with
-    // refreshed evictedAt (retention window restarts from now).
     const second = sessionManager.getTrackedAgentRootPidsSplit([]);
     expect(second.live).toContain(5555);
   });
@@ -952,12 +879,8 @@ describe('SessionManager', () => {
     } as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
 
     sessionManager.registerSession(fakeAgentSession);
-    // listProcesses returns empty — PID 4321 not found, no identity baseline.
-    // The default beforeEach mock already returns [].
     await sessionManager.interruptInMemorySession('session-no-identity');
 
-    // PID 4321 should NOT be tracked as live because no startTime
-    // baseline was captured (cannot verify identity against reuse).
     const split = sessionManager.getTrackedAgentRootPidsSplit([]);
     expect(split.live).not.toContain(4321);
     expect(split.exited).not.toContain(4321);
@@ -994,8 +917,6 @@ describe('SessionManager', () => {
       sessionManager.saveGlobalToolsConfig(
         config as ReturnType<typeof sessionManager.getGlobalToolsConfig>
       );
-
-      // Config should be saved (no error means success)
     });
   });
 
@@ -1034,7 +955,6 @@ describe('SessionManager', () => {
 
   describe('generateTitleAndRenameBranch', () => {
     it('should delegate to sessionLifecycle', async () => {
-      // First create a session to populate the cache
       const mockSession: Session = {
         id: 'test-id',
         title: 'Test',
@@ -1045,7 +965,6 @@ describe('SessionManager', () => {
       };
       (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(mockSession);
 
-      // Access session to cache it
       sessionManager.getSession('test-id');
 
       const result = await sessionManager.generateTitleAndRenameBranch('test-id', 'test message');
@@ -1056,7 +975,6 @@ describe('SessionManager', () => {
 
   describe('initializeSessionWorkspace (deprecated)', () => {
     it('should delegate to generateTitleAndRenameBranch', async () => {
-      // First create a session to populate the cache
       const mockSession: Session = {
         id: 'test-id',
         title: 'Test',
@@ -1067,7 +985,6 @@ describe('SessionManager', () => {
       };
       (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(mockSession);
 
-      // Access session to cache it
       sessionManager.getSession('test-id');
 
       const result = await sessionManager.initializeSessionWorkspace('test-id', 'test message');
@@ -1084,11 +1001,8 @@ describe('SessionManager', () => {
     });
 
     it('should use the provided path, not config.workspaceRoot', async () => {
-      // This test verifies no global fallback occurs inside the method.
-      // The provided path is distinct from config.workspaceRoot ('/default/workspace').
       const result = await sessionManager.cleanupOrphanedWorktrees('/explicit/repo');
 
-      // cleanupOrphanedWorktrees should return an array (may be empty for non-git paths)
       expect(Array.isArray(result)).toBe(true);
     });
   });
@@ -1333,8 +1247,6 @@ describe('SessionManager', () => {
 
       const cleanupPromise = sessionManager.cleanup();
 
-      // During cleanup, state should be CLEANING or already CLEANED
-      // After cleanup completes, state should be CLEANED
       await cleanupPromise;
 
       expect(sessionManager.getCleanupState()).toBe(CleanupState.CLEANED);
@@ -1346,14 +1258,12 @@ describe('SessionManager', () => {
 
       await Promise.all([cleanup1, cleanup2]);
 
-      // Both should complete without error, but only one should execute
       expect(sessionManager.getCleanupState()).toBe(CleanupState.CLEANED);
     });
 
     it('should unsubscribe from event bus', async () => {
       await sessionManager.cleanup();
 
-      // Event handlers should be unsubscribed
       expect(eventHandlers.size).toBe(0);
     });
 
@@ -1367,14 +1277,11 @@ describe('SessionManager', () => {
       await sessionManager.cleanup();
       expect(sessionManager.getCleanupState()).toBe(CleanupState.CLEANED);
 
-      // Second cleanup should be a no-op
       await sessionManager.cleanup();
       expect(sessionManager.getCleanupState()).toBe(CleanupState.CLEANED);
     });
 
     it('should complete without draining pending tasks (processor handles drain)', async () => {
-      // Background task draining is now handled by the job processor,
-      // not by SessionManager. Cleanup should be immediate.
       await sessionManager.cleanup();
 
       expect(sessionManager.getCleanupState()).toBe(CleanupState.CLEANED);
@@ -1405,7 +1312,6 @@ describe('SessionManager', () => {
           hasDraftToClear: false,
         });
 
-        // Should not call title generation
         expect(mockInternalEventBus.publish).not.toHaveBeenCalledWith(
           'session.updated',
           expect.objectContaining({ source: 'title-generated' })
@@ -1444,15 +1350,10 @@ describe('SessionManager', () => {
           hasDraftToClear: true,
         });
 
-        // Should update session to clear draft
         expect(mockDb.updateSession).toHaveBeenCalled();
       });
 
       it('re-anchors a staged voice baseline when the send-clear runs', async () => {
-        // A voice pending staged at send time must not keep a baseline naming
-        // the SENT draft: the pending merges onto the now-empty draft, and a
-        // stale baseline would make later reconciliation extract no
-        // transcript — letting a stale save overwrite the only merged copy.
         const handler = eventHandlers.get('message.persisted');
 
         (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
@@ -1485,10 +1386,6 @@ describe('SessionManager', () => {
       });
 
       it('bumps inputDraftVersion when the sent-message draft clear runs', async () => {
-        // Another tab's debounced save still holds the PRE-send version; the
-        // stale-vs-current equality check in session.update would treat that
-        // write as current and resurrect the sent content — the clear must
-        // invalidate prior versions like every other draft mutation.
         const handler = eventHandlers.get('message.persisted');
 
         (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({

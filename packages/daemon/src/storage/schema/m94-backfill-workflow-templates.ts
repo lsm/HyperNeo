@@ -1,49 +1,5 @@
-/**
- * Migration 94 — Backfill workflow template tracking & remove orphan duplicates.
- *
- * Context: earlier versions of `seedBuiltInWorkflows()` predated the
- * `template_name` / `template_hash` columns, so existing Spaces ended up with
- * workflows that match a built-in template by name but have
- * `template_name = NULL` (which broke drift detection and the "Sync from
- * template" UI).
- *
- * This migration realigns legacy rows with the current built-in templates:
- *   1. For each `space_workflows` row whose (name, node names, fingerprint)
- *      structurally matches a known built-in, set `template_name` +
- *      `template_hash` if missing.
- *   2. Delete orphan duplicate workflows — same (space_id, name) as a newer
- *      row, older `created_at`, and no active `space_workflow_runs` references.
- *      Keeps the newer row; drops the earlier superseded seed.
- *
- * Historical note: an earlier revision of this migration also reattached an
- * end-node `completionActions` JSON entry on rows where it was missing. That
- * pipeline was deleted in PR 4/5 of the
- * task-agent-as-post-approval-executor refactor and the underlying columns are
- * dropped in M104, so the backfill is no longer needed. Any residual
- * `completionActions` JSON on existing node rows is silently ignored at load
- * time (see `space-workflow-repository.ts#rowToNode`).
- *
- * The migration is idempotent: re-running it on a DB that has already been
- * backfilled is a no-op (template hashes only get rewritten when they differ).
- *
- * Self-contained by design — migrations must not depend on runtime app logic
- * that may drift over time. The built-in template shapes embedded here reflect
- * the state of the templates at the time this migration was authored; that
- * matches exactly what the DB needs to be aligned to.
- */
-
 import type { Database as BunDatabase } from '../sqlite-compat';
 import { createHash } from 'node:crypto';
-
-// ---------------------------------------------------------------------------
-// Template fingerprints (frozen copy of the built-in templates' hashable shape
-// — node names, channels, gates, description, instructions).
-//
-// These MUST match exactly what `computeWorkflowHash(template)` produces for
-// the current built-in templates. If the built-in templates change, add a
-// follow-up migration rather than modifying this one — migrations are
-// historical.
-// ---------------------------------------------------------------------------
 
 interface GateField {
   name: string;
@@ -72,23 +28,13 @@ interface TemplateShape {
   description: string;
   instructions: string;
   nodeNames: string[];
-  /** Name of the end node — preserved for symmetry with the historical shape. */
   endNodeName: string;
   channels: ChannelShape[];
   gates: GateShape[];
 }
 
-// First 64 chars of `PR_READY_BASH_SCRIPT` (joined with \n) — matches what
-// `computeWorkflowHash` captures via `g.script.source.slice(0, 64)`. Must be
-// exactly 64 characters; any shorter and `fingerprintMatches` becomes dead
-// code for templates with scripted gates (Coding, Research, Plan & Decompose,
-// Coding+QA) and the migration falls back to the row's own hash.
 const PR_READY_SCRIPT_PREFIX = '# Prefer explicit PR URL from gate data JSON when available; fal';
 
-/**
- * Known built-in templates and their fingerprints.
- * Order is not significant — matched by `name`.
- */
 const KNOWN_TEMPLATES: TemplateShape[] = [
   {
     name: 'Coding Workflow',
@@ -201,21 +147,6 @@ const KNOWN_TEMPLATES: TemplateShape[] = [
   },
 ];
 
-// ---------------------------------------------------------------------------
-// Canonical fingerprint / hash — frozen historical copy.
-//
-// This mirrors the shape of `template-hash.ts` AS OF the M94 authoring date
-// (commit 6c13c7a7a). The production fingerprint in
-// `packages/daemon/src/lib/space/workflows/template-hash.ts` has since grown
-// additional fields (nodePrompts, completionAutonomyLevel, postApproval).
-//
-// We intentionally do NOT update this migration to track the evolving
-// fingerprint: M94 is a one-shot backfill that runs against pre-M94 DBs, and
-// the seeder re-stamps `template_content_hash` on every daemon start using
-// the live fingerprint. So the only role of this hash is to mark the row as
-// "templated" with a deterministic value — drift is corrected at startup.
-// ---------------------------------------------------------------------------
-
 interface WorkflowFingerprint {
   description: string;
   instructions: string;
@@ -239,9 +170,6 @@ function serializeGate(gate: GateShape): string {
     .sort()
     .join(',');
   const scriptPrefix = gate.scriptSource ? gate.scriptSource.slice(0, 64) : '';
-  // Matches production `template-hash.ts#buildWorkflowFingerprint` exactly — do
-  // NOT coerce resetOnCycle to a default value here; stringifying `undefined`
-  // is intentional in the canonical serialization.
   return `${gate.id}|${gate.requiredLevel ?? 0}|${gate.resetOnCycle}|${fields}|${scriptPrefix}`;
 }
 
@@ -316,10 +244,6 @@ function hashFingerprint(fp: WorkflowFingerprint): string {
   return createHash('sha256').update(json).digest('hex');
 }
 
-// ---------------------------------------------------------------------------
-// DB row shapes
-// ---------------------------------------------------------------------------
-
 interface WorkflowRow {
   id: string;
   space_id: string;
@@ -364,19 +288,12 @@ function tableHasColumn(db: BunDatabase, tableName: string, columnName: string):
   return !!result;
 }
 
-// ---------------------------------------------------------------------------
-// Migration entrypoint
-// ---------------------------------------------------------------------------
-
 export function runMigration94(db: BunDatabase): void {
   if (!tableExists(db, 'space_workflows')) return;
   if (!tableExists(db, 'space_workflow_nodes')) return;
-  // Guard on template columns — if they don't exist yet (migration 90 hasn't
-  // run), skip silently. The normal migration order runs M90 first.
   if (!tableHasColumn(db, 'space_workflows', 'template_name')) return;
   if (!tableHasColumn(db, 'space_workflows', 'template_hash')) return;
 
-  // Pre-compute template hashes keyed by name.
   const templatesByName = new Map<string, { tpl: TemplateShape; hash: string }>();
   for (const tpl of KNOWN_TEMPLATES) {
     const hash = hashFingerprint(buildTemplateFingerprint(tpl));
@@ -396,17 +313,11 @@ export function runMigration94(db: BunDatabase): void {
   );
   const deleteWorkflow = db.prepare(`DELETE FROM space_workflows WHERE id = ?`);
 
-  // Track which rows are considered "backfilled built-ins" — used below for
-  // orphan duplicate detection. (Only consider matched rows; custom user
-  // workflows are never deleted.)
-  const matchedByKey = new Map<string, WorkflowRow[]>(); // key: `${spaceId}|${name}`
+  const matchedByKey = new Map<string, WorkflowRow[]>();
 
-  // -----------------------------------------------------------------------
-  // Pass 1 — structural match + backfill template_name/template_hash.
-  // -----------------------------------------------------------------------
   for (const row of workflowRows) {
     const known = templatesByName.get(row.name);
-    if (!known) continue; // custom workflow — leave alone
+    if (!known) continue;
 
     const nodeRows = db
       .prepare(
@@ -416,7 +327,6 @@ export function runMigration94(db: BunDatabase): void {
 
     const nodeNames = nodeRows.map((n) => n.name);
 
-    // Structural check: node name set must match the template.
     const tplNames = new Set(known.tpl.nodeNames);
     if (
       nodeNames.length !== known.tpl.nodeNames.length ||
@@ -425,26 +335,15 @@ export function runMigration94(db: BunDatabase): void {
       continue;
     }
 
-    // Fingerprint-hash match — a stronger structural check that verifies
-    // description, channels, and gate internals as well. If the row's
-    // fingerprint already equals the template hash, it's a true match.
     const rowFp = buildWorkflowFingerprintFromDb(row, nodeNames);
     const rowHash = hashFingerprint(rowFp);
     const fingerprintMatches = rowHash === known.hash;
 
-    // Collect for duplicate detection.
     const key = `${row.space_id}|${row.name}`;
     const bucket = matchedByKey.get(key);
     if (bucket) bucket.push(row);
     else matchedByKey.set(key, [row]);
 
-    // ----- Backfill template_name / template_hash -----
-    // Policy: fill in missing template_name if the structure matches the
-    // template (we're confident about the link even if the user made minor
-    // tweaks). Set template_hash to the computed fingerprint hash of the
-    // current row — so drift detection reflects the current state
-    // faithfully. If the row matches the template exactly, that equals the
-    // canonical template hash.
     const nextTemplateName = row.template_name ?? known.tpl.name;
     const nextTemplateHash = fingerprintMatches ? known.hash : (row.template_hash ?? rowHash);
     if (row.template_name !== nextTemplateName || row.template_hash !== nextTemplateHash) {
@@ -454,14 +353,7 @@ export function runMigration94(db: BunDatabase): void {
     }
   }
 
-  // -----------------------------------------------------------------------
-  // Pass 2 — delete orphan duplicate built-ins. Keep the newest `created_at`
-  // per (space_id, name); drop older rows that have no active workflow_run
-  // references.
-  // -----------------------------------------------------------------------
   const hasRunsTable = tableExists(db, 'space_workflow_runs');
-  // "Active" = any non-terminal WorkflowRunStatus. Terminal statuses are
-  // `'done'` and `'cancelled'`. See packages/shared/src/types/space.ts.
   const activeRunsCount = hasRunsTable
     ? db.prepare(
         `SELECT COUNT(*) AS n FROM space_workflow_runs
@@ -472,13 +364,12 @@ export function runMigration94(db: BunDatabase): void {
 
   for (const [, rows] of matchedByKey) {
     if (rows.length < 2) continue;
-    // Sort newest first
     rows.sort((a, b) => b.created_at - a.created_at);
     const [, ...older] = rows;
     for (const row of older) {
       if (activeRunsCount) {
         const res = activeRunsCount.get(row.id) as { n: number } | undefined;
-        if (res && res.n > 0) continue; // keep — has active runs
+        if (res && res.n > 0) continue;
       }
       deleteWorkflow.run(row.id);
     }

@@ -3,8 +3,6 @@ import { useCallback, useContext, useRef, useState } from 'preact/hooks';
 import { render } from '../../internal/render.ts';
 import type { ElementType } from '../../internal/types.ts';
 
-// --- InputGroupContext ---
-
 interface InputGroupContextValue {
   disabled: boolean;
   hover: boolean;
@@ -17,8 +15,6 @@ InputGroupContext.displayName = 'InputGroupContext';
 export function useInputGroupContext(): InputGroupContextValue | null {
   return useContext(InputGroupContext);
 }
-
-// --- InputGroup ---
 
 interface InputGroupProps {
   as?: ElementType;
@@ -83,8 +79,6 @@ function InputGroupFn({ as: Tag = 'div', disabled = false, children, ...rest }: 
 
 InputGroupFn.displayName = 'InputGroup';
 export const InputGroup = InputGroupFn;
-
-// --- InputAddon ---
 
 interface InputAddonProps {
   as?: ElementType;

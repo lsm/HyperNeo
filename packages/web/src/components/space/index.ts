@@ -1,7 +1,3 @@
-/**
- * Space components barrel export
- */
-
 export { SpaceAgentEditor } from './SpaceAgentEditor';
 export { SpaceMemories } from './SpaceMemories';
 export { SpaceMemoryEditor } from './SpaceMemoryEditor';

@@ -1,9 +1,3 @@
-/**
- * Session Repository Tests
- *
- * Tests for session CRUD operations and partial update merging.
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
@@ -636,7 +630,6 @@ describe('SessionRepository', () => {
 
       const session = repository.getSession('session-1');
       expect(session?.metadata.messageCount).toBe(5);
-      // Other metadata fields should be preserved
       expect(session?.metadata.totalTokens).toBe(0);
       expect(session?.metadata.toolCallCount).toBe(0);
     });
@@ -650,7 +643,6 @@ describe('SessionRepository', () => {
 
       const session = repository.getSession('session-1');
       expect(session?.config.temperature).toBe(0.9);
-      // Other config fields should be preserved
       expect(session?.config.model).toBe('claude-sonnet-4-5-20250929');
     });
 
@@ -819,7 +811,6 @@ describe('SessionRepository', () => {
       const session = repository.getSession('session-1');
       expect(session?.config.model).toBe('claude-opus-4-5-20251113');
       expect(session?.config.provider).toBe('anthropic');
-      // Other config fields should be preserved from the original
       expect(session?.config.maxTokens).toBe(4096);
     });
 
@@ -827,29 +818,24 @@ describe('SessionRepository', () => {
       repository.createSession(createDefaultSession());
       const configWithFn = {
         model: 'claude-opus-4-5-20251113',
-        // spawnClaudeCodeProcess is a runtime-only function — must not crash
         spawnClaudeCodeProcess: () => {},
       } as SessionConfig;
 
-      // Should not throw — functions are silently stripped
       expect(() => repository.updateSession('session-1', { config: configWithFn })).not.toThrow();
 
       const session = repository.getSession('session-1');
       expect(session?.config.model).toBe('claude-opus-4-5-20251113');
-      // Function fields are stripped — not persisted
       expect(session?.config.spawnClaudeCodeProcess).toBeUndefined();
     });
 
     it('should not false-positive on shared (diamond) references in config', () => {
       repository.createSession(createDefaultSession());
 
-      // A shared object appearing at two separate paths is NOT a cycle.
-      // A flat WeakSet would incorrectly throw here; native JSON.stringify handles it fine.
       const shared = { command: 'mcp-server' };
       const configWithDiamond = {
         model: 'claude-sonnet-4-5-20250929',
         extra1: shared,
-        extra2: shared, // same reference, different path — valid
+        extra2: shared,
       } as SessionConfig;
 
       expect(() =>
@@ -863,8 +849,6 @@ describe('SessionRepository', () => {
     it('should throw a clear error when config contains a circular reference', () => {
       repository.createSession(createDefaultSession());
 
-      // Build a config object with a circular reference (simulates
-      // a live mcpServers object being accidentally passed in)
       const circular = { value: 'test' } as Record<string, unknown>;
       circular['self'] = circular;
 
@@ -903,18 +887,14 @@ describe('SessionRepository', () => {
       repository.createSession(createDefaultSession({ id: 'session-1' }));
       repository.createSession(createDefaultSession({ id: 'session-2' }));
 
-      // Seed overrides at every scope targeting the deleted session's id across
-      // tables. Only rows with (scope_type='session', scope_id='session-1')
-      // should be removed — room/space rows sharing the same scope_id string
-      // must survive (they belong to a different scope namespace).
       const insert = db.prepare(
         `INSERT INTO mcp_enablement (server_id, scope_type, scope_id, enabled) VALUES (?, ?, ?, ?)`
       );
       insert.run('srv-a', 'session', 'session-1', 1);
       insert.run('srv-b', 'session', 'session-1', 0);
       insert.run('srv-a', 'session', 'session-2', 1);
-      insert.run('srv-a', 'room', 'session-1', 1); // same id, different scope
-      insert.run('srv-a', 'space', 'session-1', 1); // same id, different scope
+      insert.run('srv-a', 'room', 'session-1', 1);
+      insert.run('srv-a', 'space', 'session-1', 1);
 
       repository.deleteSession('session-1');
 
@@ -946,7 +926,7 @@ describe('SessionRepository', () => {
       );
       insert.run('session-1', 'm-a', 't1');
       insert.run('session-1', 'm-b', 't2');
-      insert.run('session-2', 'm-c', 't3'); // other session survives
+      insert.run('session-2', 'm-c', 't3');
 
       repository.deleteSession('session-1');
 
@@ -1035,25 +1015,20 @@ describe('SessionRepository', () => {
 
   describe('session lifecycle', () => {
     it('should support full session lifecycle', () => {
-      // Create session
       const session = createDefaultSession();
       repository.createSession(session);
       expect(repository.getSession('session-1')?.status).toBe('active');
 
-      // Pause session
       repository.updateSession('session-1', { status: 'paused' });
       expect(repository.getSession('session-1')?.status).toBe('paused');
 
-      // Resume and update metadata
       repository.updateSession('session-1', {
         status: 'active',
         metadata: { messageCount: 10 },
       });
 
-      // End session
       repository.updateSession('session-1', { status: 'ended' });
 
-      // Archive session
       const archivedAt = new Date().toISOString();
       repository.updateSession('session-1', {
         status: 'archived',
@@ -1064,7 +1039,6 @@ describe('SessionRepository', () => {
       expect(final?.status).toBe('archived');
       expect(final?.archivedAt).toBe(archivedAt);
 
-      // Delete session
       repository.deleteSession('session-1');
       expect(repository.getSession('session-1')).toBeNull();
     });
@@ -1143,9 +1117,6 @@ describe('SessionRepository', () => {
       });
 
       it('should correctly chunk large ID lists within SQLite variable limit', () => {
-        // Create a small number of sessions and request them all at once.
-        // The chunking logic (CHUNK_SIZE=900) is exercised by having more
-        // entries than a single chunk (though we only create a few for speed).
         const ids: string[] = [];
         for (let i = 0; i < 10; i++) {
           const id = `s-chunk-${i}`;

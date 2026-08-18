@@ -57,7 +57,6 @@ export function DialogDemo() {
         </div>
       </div>
 
-      {/* Simple Dialog */}
       <Dialog open={simpleOpen} onClose={setSimpleOpen} class="relative z-50">
         <Transition
           show={simpleOpen}
@@ -97,7 +96,6 @@ export function DialogDemo() {
         </Transition>
       </Dialog>
 
-      {/* Confirm Dialog */}
       <Dialog open={confirmOpen} onClose={setConfirmOpen} role="alertdialog" class="relative z-50">
         <Transition show={confirmOpen} class="fixed inset-0 flex items-center justify-center p-4">
           <DialogBackdrop class="fixed inset-0 bg-black/70" />

@@ -12,8 +12,6 @@ import { useIsoMorphicEffect } from '../../internal/use-iso-morphic-effect.ts';
 import { useResolveButtonType } from '../../internal/use-resolve-button-type.ts';
 import { optionalRef, useSyncRefs } from '../../internal/use-sync-refs.ts';
 
-// --- Context types ---
-
 interface TabData {
   id: string;
   ref: { current: HTMLElement | null };
@@ -47,7 +45,6 @@ function useTabGroupContext(component: string): TabGroupState {
   return ctx;
 }
 
-// Sort tab/panel data arrays by DOM order
 function sortByDomOrder<T extends { ref: { current: HTMLElement | null } }>(items: T[]): T[] {
   return items.slice().sort((a, b) => {
     if (!a.ref.current || !b.ref.current) return 0;
@@ -57,8 +54,6 @@ function sortByDomOrder<T extends { ref: { current: HTMLElement | null } }>(item
     return 0;
   });
 }
-
-// --- TabGroup ---
 
 interface TabGroupProps {
   as?: ElementType;
@@ -146,8 +141,6 @@ function TabGroupFn(
 TabGroupFn.displayName = 'TabGroup';
 export const TabGroup = forwardRef(TabGroupFn);
 
-// --- TabList ---
-
 interface TabListProps {
   as?: ElementType;
   children?: unknown;
@@ -179,8 +172,6 @@ function TabListFn({ as: Tag = 'div', children, ...rest }: TabListProps, ref: Re
 TabListFn.displayName = 'TabList';
 export const TabList = forwardRef(TabListFn);
 
-// --- Tab ---
-
 interface TabProps {
   as?: ElementType;
   disabled?: boolean;
@@ -209,18 +200,15 @@ function TabFn(
   const [focus, setFocus] = useState(false);
   const [active, setActive] = useState(false);
 
-  // Register/unregister this tab
   useIsoMorphicEffect(() => {
     const tabData: TabData = { id, ref: internalRef, disabled };
     return registerTab(tabData);
   }, [id, registerTab, disabled]);
 
-  // Derive index of this tab from the ordered tabs array
   const myIndex = tabs.findIndex((t) => t.id === id);
   const selected = myIndex !== -1 && myIndex === selectedIndex;
   const panelId = panels[myIndex]?.id;
 
-  // Resolve button type
   const buttonType = useResolveButtonType(
     { as: Tag, type: rest.type as string | undefined },
     element
@@ -245,8 +233,6 @@ function TabFn(
     const nextKey = vertical ? 'ArrowDown' : 'ArrowRight';
 
     let targetIndex: number | null = null;
-    // In manual mode, arrow key navigation should NOT change selection
-    // Only Enter/Space should activate the tab
     const shouldActivateOnNavigate = !manual;
 
     switch (e.key) {
@@ -303,7 +289,6 @@ function TabFn(
 
   const handleFocus = useEvent(() => {
     setFocus(true);
-    // In automatic mode, focusing a tab selects it
     if (!manual && !disabled && myIndex !== -1) {
       setSelectedIndex(myIndex);
     }
@@ -349,8 +334,6 @@ function TabFn(
 TabFn.displayName = 'Tab';
 export const Tab = forwardRef(TabFn);
 
-// --- TabPanels ---
-
 interface TabPanelsProps {
   as?: ElementType;
   children?: unknown;
@@ -379,8 +362,6 @@ function TabPanelsFn(
 TabPanelsFn.displayName = 'TabPanels';
 export const TabPanels = forwardRef(TabPanelsFn);
 
-// --- TabPanel ---
-
 interface TabPanelProps {
   as?: ElementType;
   static?: boolean;
@@ -401,13 +382,11 @@ function TabPanelFn(
 
   const [focus, setFocus] = useState(false);
 
-  // Register/unregister this panel
   useIsoMorphicEffect(() => {
     const panelData: PanelData = { id, ref: internalRef };
     return registerPanel(panelData);
   }, [id, registerPanel]);
 
-  // Derive index of this panel from the ordered panels array
   const myIndex = panels.findIndex((p) => p.id === id);
   const selected = myIndex !== -1 && myIndex === selectedIndex;
   const tabId = tabs[myIndex]?.id;

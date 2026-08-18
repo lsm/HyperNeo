@@ -1,13 +1,3 @@
-/**
- * Tests for Reference RPC Handlers
- *
- * Tests the `reference.resolve` RPC handler:
- * - Task resolution (with room context, without room context, missing task)
- * - Goal resolution (with room context, without room context, missing goal, wrong room)
- * - File resolution (normal, truncated, missing, path traversal)
- * - Folder resolution (normal, missing, path traversal)
- */
-
 import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
@@ -21,12 +11,7 @@ import {
   type GoalRepoForReference,
 } from '../../../../src/lib/rpc-handlers/reference-handlers';
 
-// Type for captured request handlers
 type RequestHandler = (data: unknown) => Promise<unknown>;
-
-// ============================================================================
-// Helpers
-// ============================================================================
 
 function createMockMessageHub(): {
   hub: MessageHub;
@@ -108,15 +93,10 @@ function makeGoalRepo(goal: typeof SAMPLE_GOAL | null = SAMPLE_GOAL): GoalRepoFo
   };
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 describe('reference.resolve handler', () => {
   let testWorkspace: string;
 
   beforeEach(async () => {
-    // Clean up first in case a previous run left residue
     await rm(join(tmpdir(), 'ref-handlers-test'), { recursive: true, force: true });
     testWorkspace = await mkdtemp(join(tmpdir(), 'ref-handlers-test-'));
   });
@@ -124,10 +104,6 @@ describe('reference.resolve handler', () => {
   afterEach(async () => {
     await rm(testWorkspace, { recursive: true, force: true });
   });
-
-  // -------------------------------------------------------------------------
-  // Validation
-  // -------------------------------------------------------------------------
 
   describe('parameter validation', () => {
     it('throws when sessionId is missing', async () => {
@@ -178,10 +154,6 @@ describe('reference.resolve handler', () => {
       );
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Task resolution
-  // -------------------------------------------------------------------------
 
   describe('task resolution', () => {
     it('returns task data for a valid UUID in room context', async () => {
@@ -243,7 +215,6 @@ describe('reference.resolve handler', () => {
       const deps: ReferenceHandlerDeps = {
         sessionManager: makeSessionManager({
           workspacePath: testWorkspace,
-          // no roomId
         }) as never,
         taskRepo: makeTaskRepo(),
         goalRepo: makeGoalRepo(),
@@ -316,10 +287,6 @@ describe('reference.resolve handler', () => {
       });
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Goal resolution
-  // -------------------------------------------------------------------------
 
   describe('goal resolution', () => {
     it('returns goal data for a valid UUID in room context', async () => {
@@ -426,10 +393,6 @@ describe('reference.resolve handler', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // File resolution
-  // -------------------------------------------------------------------------
-
   describe('file resolution', () => {
     it('returns file content for an existing file', async () => {
       const filePath = join(testWorkspace, 'hello.txt');
@@ -467,7 +430,6 @@ describe('reference.resolve handler', () => {
     });
 
     it('truncates large files', async () => {
-      // 60 KB file — larger than 50 KB limit
       const bigContent = 'A'.repeat(60_000);
       await writeFile(join(testWorkspace, 'big.txt'), bigContent);
 
@@ -497,7 +459,6 @@ describe('reference.resolve handler', () => {
     });
 
     it('returns binary metadata (no content) for binary files', async () => {
-      // Write a buffer with null bytes — clear binary indicator
       const binaryData = Buffer.from([0x00, 0x01, 0x02, 0x89, 0x50, 0x4e, 0x47, 0x00]);
       await writeFile(join(testWorkspace, 'image.png'), binaryData);
 
@@ -546,7 +507,6 @@ describe('reference.resolve handler', () => {
     });
 
     it('returns null for path traversal attempts', async () => {
-      // Create a file outside the workspace so we know it exists
       const outsideDir = join(
         tmpdir(),
         `outside-${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -575,10 +535,6 @@ describe('reference.resolve handler', () => {
       await rm(outsideDir, { recursive: true, force: true });
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Folder resolution
-  // -------------------------------------------------------------------------
 
   describe('folder resolution', () => {
     it('returns folder entries for an existing directory', async () => {
@@ -657,10 +613,6 @@ describe('reference.resolve handler', () => {
       expect(result.resolved).toBeNull();
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Fallback / session handling
-  // -------------------------------------------------------------------------
 
   describe('session fallback', () => {
     it('uses workspaceRoot when session is not found', async () => {

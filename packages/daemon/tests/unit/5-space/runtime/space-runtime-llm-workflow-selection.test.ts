@@ -1,19 +1,3 @@
-/**
- * SpaceRuntime — LLM-driven workflow selection
- *
- * Exercises the `selectWorkflowWithLlm` callback plumbed through
- * `SpaceRuntimeConfig`:
- *   - Happy path: LLM returns an id from the candidate list, that workflow is
- *     selected even though the deterministic fallback would prefer another.
- *   - LLM returns null: fall back to the deterministic default-tagged workflow.
- *   - LLM throws: fall back to the deterministic default-tagged workflow (no
- *     exception escapes the tick).
- *   - LLM returns an id not in the candidate list (hallucination): fall back
- *     to the deterministic default-tagged workflow.
- *   - LLM is not called when only one workflow exists (trivial single-workflow
- *     short-circuit).
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -30,13 +14,7 @@ import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space
 import type { SelectWorkflowWithLlm } from '../../../../src/lib/space/runtime/llm-workflow-selector.ts';
 import type { SpaceWorkflow } from '@hyperneo/shared';
 
-// ---------------------------------------------------------------------------
-// Fixtures — mirrors helpers in space-runtime.test.ts but scoped local
-// ---------------------------------------------------------------------------
-
 function makeDb(): BunDatabase {
-  // Use in-memory SQLite — faster than file-based DB and avoids filesystem
-  // I/O contention that caused beforeEach hook timeouts in CI.
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
@@ -78,10 +56,6 @@ function buildWorkflow(
     completionAutonomyLevel: 3,
   });
 }
-
-// ---------------------------------------------------------------------------
-// Test suite
-// ---------------------------------------------------------------------------
 
 describe('SpaceRuntime — LLM workflow selection', () => {
   const SPACE_ID = 'space-llm-select';
@@ -143,7 +117,6 @@ describe('SpaceRuntime — LLM workflow selection', () => {
     let calls = 0;
     const selector: SelectWorkflowWithLlm = async (_task, workflows) => {
       calls += 1;
-      // Always ignore the default-tagged workflow and pick "Coding Flow".
       const coding = workflows.find((w) => w.name === 'Coding Flow');
       return coding?.id ?? null;
     };
@@ -211,7 +184,6 @@ describe('SpaceRuntime — LLM workflow selection', () => {
       status: 'open',
     });
 
-    // Tick itself must not throw.
     await expect(runtime.executeTick()).resolves.toBeUndefined();
 
     const updated = taskRepo.getTask(task.id)!;

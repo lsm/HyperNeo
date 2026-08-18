@@ -2,8 +2,6 @@ import { createElement, Fragment } from 'preact';
 import { render } from '../../internal/render.ts';
 import type { ElementType } from '../../internal/types.ts';
 
-// --- Spinner ---
-
 interface SpinnerProps {
   as?: ElementType;
   label?: string;
@@ -12,7 +10,6 @@ interface SpinnerProps {
 }
 
 function SpinnerFn({ as: Tag = 'span', label = 'Loading', children, ...rest }: SpinnerProps) {
-  // sr-only inline style — equivalent to Tailwind's sr-only class
   const srOnlyStyle = {
     position: 'absolute',
     width: '1px',

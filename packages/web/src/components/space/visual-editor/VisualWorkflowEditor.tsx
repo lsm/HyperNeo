@@ -1,25 +1,3 @@
-/**
- * VisualWorkflowEditor
- *
- * Top-level orchestrator for the visual workflow editor. Composes the canvas,
- * nodes, edges, config panels and toolbar into a complete editing experience.
- *
- * Handles:
- *  - Loading an existing workflow into visual state (positions from layout field,
- *    falling back to autoLayout when absent)
- *  - Adding / removing / dragging nodes
- *  - Creating / deleting edges via port drag or keyboard
- *  - Editing step properties via NodeConfigPanel
- *  - Editing edge conditions via EdgeConfigPanel
- *  - Designating the start node
- *  - Persisting layout positions on save
- *  - Tags
- *
- * NOTE: This component is designed for mount-only initialisation. If `workflow`
- * changes after mount, the component will NOT re-initialise — callers should
- * provide a stable `key` prop to force remount when switching between workflows.
- */
-
 import { useEffect, useState, useMemo, useCallback, useRef } from 'preact/hooks';
 import type {
   SpaceWorkflow,
@@ -58,10 +36,6 @@ import {
   buildSemanticWorkflowEdges,
   routeSemanticWorkflowEdges,
 } from './semanticWorkflowGraph';
-
-// ============================================================================
-// Constants
-// ============================================================================
 
 function remapHookCallerAgentSlots(
   slots: string[] | undefined,
@@ -172,10 +146,6 @@ function resolveChannelTargetNodeIds(
     .filter((nodeId): nodeId is string => !!nodeId);
 }
 
-/**
- * Thin wrapper around the shared `isChannelCyclic` that accepts pre-built
- * editor-local lookup maps (keyed by localId, not persisted node.id).
- */
 function inferChannelIsCyclic(
   channel: WorkflowChannel,
   channels: WorkflowChannel[],
@@ -195,38 +165,20 @@ function inferChannelIsCyclic(
   );
 }
 
-// ============================================================================
-// Props
-// ============================================================================
-
 export interface VisualWorkflowEditorProps {
-  /** Existing workflow to edit. Undefined means create new. */
   workflow?: SpaceWorkflow;
   onSave: () => void;
   onCancel: () => void;
 }
 
-// ============================================================================
-// Component
-// ============================================================================
-
 export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkflowEditorProps) {
   const isEditing = !!workflow;
 
-  // ------------------------------------------------------------------
-  // Initialize from existing workflow (on mount only).
-  // See file-level NOTE: callers must key this component to force remount
-  // when switching between workflows.
-  // ------------------------------------------------------------------
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const initState: VisualEditorState | null = useMemo(
     () => (workflow ? workflowToVisualState(workflow) : null),
     []
   );
-
-  // ------------------------------------------------------------------
-  // State
-  // ------------------------------------------------------------------
 
   const [name, setName] = useState(workflow?.name ?? '');
   const [description, setDescription] = useState(workflow?.description ?? '');
@@ -250,11 +202,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
     scale: 1,
   });
 
-  // Selection state — lifted so config panels can render from the editor
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null); // step.localId
-  // Edge IDs have the format "fromLocalId:toLocalId". This is safe because
-  // crypto.randomUUID() produces hyphenated hex strings that never contain
-  // colons, so the first ':' unambiguously splits from/to.
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
 
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
@@ -290,8 +238,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
     )
   );
 
-  // Determine which workflow run to use for completion indicators.
-  // Prefer an active run; fall back to the most recently updated run.
   const relevantRunId = (() => {
     if (!workflow?.id) return null;
     const runs = spaceStore.workflowRuns.value.filter((r) => r.workflowId === workflow.id);
@@ -301,31 +247,16 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
     return [...runs].sort((a, b) => b.updatedAt - a.updatedAt)[0].id;
   })();
 
-  // Load node executions for this workflow's relevant run so the editor can
-  // render running/completed node indicators. Scoped to that single run via the
-  // per-run API (not every run in the space). relevantRunId is null for a
-  // brand-new workflow with no runs — ensureNodeExecutions(null) then tears down
-  // any stale subscription without loading.
   useEffect(() => {
     spaceStore.ensureNodeExecutions(relevantRunId).catch(() => {});
   }, [relevantRunId]);
 
-  // Release the run subscription when the editor unmounts (leaving Configure →
-  // Workflows) so no run keeps streaming with no editor open. Empty deps →
-  // cleanup runs only on unmount, not when relevantRunId changes (the effect
-  // above handles rescoping). ensureNodeExecutions(null) is a safe no-op when
-  // nothing is active.
   useEffect(() => {
     return () => {
       spaceStore.ensureNodeExecutions(null).catch(() => {});
     };
   }, []);
 
-  // ------------------------------------------------------------------
-  // Key-resolution maps
-  // ------------------------------------------------------------------
-
-  /** Maps step.localId -> step key used in VisualEdge (step.id ?? step.localId). */
   const localIdToStepKey = useMemo(() => {
     const map = new Map<string, string>();
     for (const node of nodes) {
@@ -351,12 +282,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
     }
     return map;
   }, [nodes]);
-
-  // ------------------------------------------------------------------
-  // Derived: ResolvedWorkflowChannel[] for workflow-level channel connections.
-  // Resolves channel from/to agent role names to node localIds so EdgeRenderer
-  // can render the edges. Includes gate type and ID for visual distinction + selection.
-  // ------------------------------------------------------------------
 
   const cyclicChannelIndexes = useMemo(() => {
     const set = new Set<number>();
@@ -395,11 +320,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
     }));
   }, [routedSemanticEdges]);
 
-  // ------------------------------------------------------------------
-  // Helpers
-  // ------------------------------------------------------------------
-
-  /** True when the given node is the current start node. */
   const nodeIsStart = useCallback(
     (node: VisualNode): boolean => {
       return node.step.localId === startNodeId || node.step.id === startNodeId;
@@ -407,7 +327,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
     [startNodeId]
   );
 
-  /** True when the given node is the current end node. */
   const nodeIsEnd = useCallback(
     (node: VisualNode): boolean => {
       return !!endNodeId && (node.step.localId === endNodeId || node.step.id === endNodeId);
@@ -415,15 +334,10 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
     [endNodeId]
   );
 
-  // ------------------------------------------------------------------
-  // Derived: WorkflowNodeData[] for WorkflowCanvas
-  // ------------------------------------------------------------------
-
   const nodeData = useMemo<WorkflowNodeData[]>(() => {
     return regularNodes.map((node, i) => {
       const nodeId = node.step.id;
       const allNodeExecs = nodeId ? (nodeExecutionsByNodeId.get(nodeId) ?? []) : [];
-      // Filter to the most relevant run to avoid mixing state from past runs.
       const nodeExecs = relevantRunId
         ? allNodeExecs.filter((e) => e.workflowRunId === relevantRunId)
         : allNodeExecs;
@@ -459,10 +373,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
     () => buildVisualNodePositions(regularNodes),
     [regularNodes]
   );
-
-  // ------------------------------------------------------------------
-  // Derived: selected node / edge
-  // ------------------------------------------------------------------
 
   const selectedNode = selectedNodeId
     ? (nodes.find((n) => n.step.localId === selectedNodeId) ?? null)
@@ -583,10 +493,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
     return linksByNodeId;
   }, [nodes, routedSemanticEdges]);
 
-  // ------------------------------------------------------------------
-  // Node operations
-  // ------------------------------------------------------------------
-
   function addStep() {
     const newLocalId = generateUUID();
     const newStep: NodeDraft = { localId: newLocalId, name: '', agentId: '' };
@@ -595,7 +501,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
       const isFirstNode = prev.length === 0;
       if (isFirstNode) setStartStepId(newLocalId);
 
-      // Stagger new nodes vertically so they don't overlap (nodes are ~160×80px).
       const regularCount = prev.length;
       const position: Point = { x: 120, y: 80 + regularCount * 100 };
 
@@ -619,7 +524,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
   const handleDeleteNode = useCallback(
     (localId: string) => {
-      // Read current state from closure (nodes + startNodeId are deps).
       const nodeToDelete = nodes.find((n) => n.step.localId === localId);
       if (!nodeToDelete) return;
 
@@ -629,7 +533,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
         nodeToDelete.step.localId === startNodeId || nodeToDelete.step.id === startNodeId;
       const wasEnd = nodeToDelete.step.localId === endNodeId || nodeToDelete.step.id === endNodeId;
 
-      // Update all state in flat calls — no nested setter inside another updater.
       setNodes(remaining);
       setEdges((prev) => prev.filter((e) => e.fromStepKey !== key && e.toStepKey !== key));
       const deletedRefs = new Set(
@@ -690,26 +593,13 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
     [nodes]
   );
 
-  /**
-   * Set this node as the start node. Stores step.localId so that both the
-   * nodeIsStart helper and the serializer can resolve it (the serializer checks
-   * both localIdMap and nodeMap, so localId always works regardless of whether
-   * the step has a persisted step.id).
-   */
   const handleSetAsStart = useCallback((localId: string) => {
     setStartStepId(localId);
   }, []);
 
-  /**
-   * Toggle this node as the end node. Clicking again clears the designation.
-   */
   const handleSetAsEnd = useCallback((localId: string) => {
     setEndNodeId((prev) => (prev === localId ? undefined : localId));
   }, []);
-
-  // ------------------------------------------------------------------
-  // Edge operations
-  // ------------------------------------------------------------------
 
   const handleEdgeSelect = useCallback((edgeId: string | null) => {
     setSelectedEdgeId(edgeId);
@@ -735,16 +625,12 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
   }, []);
 
   const resolveSourceChannelName = useCallback((node: VisualNode): string | null => {
-    // Persist workflow channels at node granularity. Runtime fans out from the
-    // node to agent slots when delivery happens.
     if (node.step.name?.trim()) return node.step.name.trim();
     if (node.step.agentId?.trim()) return node.step.agentId.trim();
     return null;
   }, []);
 
   const resolveTargetChannelName = useCallback((node: VisualNode): string | null => {
-    // Persist workflow channels at node granularity for both single-agent and
-    // multi-agent nodes so channel config is shared by the whole node.
     if (node.step.name?.trim()) return node.step.name.trim();
     if (node.step.agentId?.trim()) return node.step.agentId.trim();
     return null;
@@ -766,14 +652,13 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
           to: toName,
         };
 
-        // Deduplicate exact same directed channel produced by repeated drags.
         if (
           prev.some(
             (ch) =>
               ch.from === newChannel.from &&
               !Array.isArray(ch.to) &&
               ch.to === newChannel.to &&
-              true // direction removed from schema
+              true
           )
         ) {
           return prev;
@@ -891,10 +776,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
     [localIdToStepKey]
   );
 
-  // ------------------------------------------------------------------
-  // Tags
-  // ------------------------------------------------------------------
-
   function addTag(value: string) {
     const trimmed = value.trim().toLowerCase();
     if (trimmed && !tags.includes(trimmed)) {
@@ -915,10 +796,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
       removeTag(tags[tags.length - 1]);
     }
   }
-
-  // ------------------------------------------------------------------
-  // Template
-  // ------------------------------------------------------------------
 
   function applyTemplate(template: WorkflowTemplate) {
     const templateSteps = buildTemplateNodes(template, agents);
@@ -948,19 +825,17 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
           to: Array.isArray(channel.to) ? [...channel.to] : channel.to,
         })),
       },
-      position: { x: 0, y: 0 }, // overwritten by autoLayout below
+      position: { x: 0, y: 0 },
     }));
 
     const localIds = templateSteps.map((step) => step.localId);
 
-    // Linear chain of edges
     const newEdges: VisualEdge[] = localIds.slice(0, -1).map((fromId, i) => ({
       fromStepKey: fromId,
       toStepKey: localIds[i + 1],
       condition: undefined,
     }));
 
-    // Compute positions via autoLayout
     const layoutSteps: WorkflowNode[] = newNodes.map((n) => ({
       id: n.step.localId,
       name: n.step.name,
@@ -1017,7 +892,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
     );
     if (!name) setName(template.label);
 
-    // Fit viewport to the new layout
     const container = canvasContainerRef.current;
     if (container) {
       setViewportState(
@@ -1041,10 +915,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
     applyTemplate(template);
   }
 
-  // ------------------------------------------------------------------
-  // Save
-  // ------------------------------------------------------------------
-
   async function handleSave() {
     if (!name.trim()) {
       setError('Workflow name is required.');
@@ -1057,7 +927,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
       return;
     }
 
-    // Validate each node has an agent assigned (single or multi-agent)
     for (let i = 0; i < regularNodes.length; i++) {
       const step = regularNodes[i].step;
       const hasMultiAgent = Array.isArray(step.agents) && step.agents.length > 0;
@@ -1067,7 +936,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
       }
     }
 
-    // Validate condition-type edges have a non-empty expression
     for (const edge of edges) {
       if (edge.condition?.type === 'condition' && !edge.condition.expression?.trim()) {
         setError('A transition using "Expression" condition requires a non-empty expression.');
@@ -1107,13 +975,9 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
         });
         await spaceStore.updateWorkflow(workflow.id, params);
       } else {
-        // visualStateToCreateParams requires a spaceId argument, but
-        // spaceStore.createWorkflow already injects the active spaceId itself.
-        // We pass an empty string as a placeholder and strip it before calling
-        // the store so the call signature stays consistent.
         const fullParams = visualStateToCreateParams(
           visualState,
-          '', // stripped below — store provides the real spaceId
+          '',
           name.trim(),
           description.trim() || undefined
         );
@@ -1128,16 +992,11 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
     }
   }
 
-  // ------------------------------------------------------------------
-  // Render
-  // ------------------------------------------------------------------
-
   return (
     <div
       data-testid="visual-workflow-editor"
       class="flex h-full flex-col overflow-hidden bg-dark-950"
     >
-      {/* ---- Header ---- */}
       <div class="flex-shrink-0 border-b border-white/10 bg-dark-900/95">
         <div class="flex h-[52px] items-center gap-2 px-3 sm:px-4">
           <button
@@ -1218,14 +1077,12 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
         </div>
       </div>
 
-      {/* ---- Error banner ---- */}
       {error && (
         <div class="px-4 py-2 bg-red-900/20 border-b border-red-800/40 flex-shrink-0">
           <p class="text-xs text-red-300">{error}</p>
         </div>
       )}
 
-      {/* ---- Settings view ---- */}
       <div
         class={[
           'scrollbar-dark min-h-0 flex-1 overflow-y-auto bg-dark-950 px-4 py-4 pr-3',
@@ -1367,7 +1224,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
         </div>
       </div>
 
-      {/* ---- Canvas area ---- */}
       <div
         class={[
           'flex-1 relative overflow-hidden bg-dark-950',
@@ -1375,7 +1231,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
         ].join(' ')}
         data-testid="workflow-canvas-view"
       >
-        {/* Add Node + Template toolbar */}
         <div
           class="absolute top-4 left-4 z-10 flex items-center gap-1.5 rounded-xl border border-white/10 bg-dark-900/90 p-1.5 shadow-2xl shadow-black/30 backdrop-blur"
           style={{ pointerEvents: 'auto' }}
@@ -1396,8 +1251,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
             Add Node
           </button>
 
-          {/* Template picker — always available in create mode.
-					    Reapplying prompts only when the canvas has diverged. */}
           {!isEditing && (
             <div class="relative">
               <button
@@ -1454,7 +1307,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
           )}
         </div>
 
-        {/* Empty state overlay */}
         {regularNodes.length === 0 && (
           <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div class="rounded-xl border border-white/10 bg-dark-900/80 px-6 py-5 text-center shadow-2xl shadow-black/30 backdrop-blur">
@@ -1487,11 +1339,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
           />
         </div>
 
-        {/* NodeConfigPanel — anchored to the right of the canvas.
-				    isFirstStep/isLastStep indicate whether the node has no incoming/outgoing
-				    edges respectively. In a DAG this means every source node shows "Workflow
-				    starts here" and every sink node shows "Workflow ends here", which is the
-				    correct terminal-message semantic for a non-linear workflow. */}
         {selectedNode && (
           <NodeConfigPanel
             step={selectedNode.step}
@@ -1528,7 +1375,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
             )}
             workflowNodeNames={nodes.map((n) => n.step.name || n.step.localId)}
             onUpdateNodeHooks={(nextHooks) => {
-              // Merge updated node-specific hooks back into the global hooks list
               const nodeName = selectedNode.step.name || selectedNode.step.localId;
               const otherHooks = hooks.filter((h) => h.sourceNode !== nodeName);
               setHooks([...otherHooks, ...nextHooks]);
@@ -1536,7 +1382,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
           />
         )}
 
-        {/* EdgeConfigPanel — floating panel in the bottom-left of the canvas */}
         {selectedEdgeInfo && (
           <div class="absolute bottom-16 left-3 w-72 z-20" style={{ pointerEvents: 'auto' }}>
             <EdgeConfigPanel
@@ -1553,7 +1398,6 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
           </div>
         )}
 
-        {/* ChannelRelationConfigPanel — edit underlying channel links for a semantic relation */}
         {selectedChannelInfo && !selectedNode && (
           <ChannelRelationConfigPanel
             title="Channel Links"

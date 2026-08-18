@@ -1,7 +1,3 @@
-/**
- * Tests for AddProviderModal
- */
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, screen, waitFor, fireEvent } from '@testing-library/preact';
 
@@ -133,7 +129,6 @@ describe('AddProviderModal', () => {
     const input = screen.getAllByPlaceholderText('API key')[0] as HTMLInputElement;
     fireEvent.input(input, { target: { value: 'sk-test' } });
 
-    // Anthropic is the first quick-add card, so its Add button is first
     const addButton = screen.getAllByText('Add')[0];
     fireEvent.click(addButton);
 
@@ -153,7 +148,6 @@ describe('AddProviderModal', () => {
     );
     await waitFor(() => screen.getByText('Anthropic'));
 
-    // Click the first Add button (Anthropic card)
     const addButton = screen.getAllByText('Add')[0];
     fireEvent.click(addButton);
 
@@ -179,12 +173,10 @@ describe('AddProviderModal', () => {
     );
     await waitFor(() => screen.getByText('OpenAI Codex'));
 
-    // OpenAI Codex is the second card, first Connect button
     const connectButton = screen.getAllByText('Connect')[0];
     fireEvent.click(connectButton);
 
     await waitFor(() => {
-      // Login must happen BEFORE create
       expect(mockLoginProvider).toHaveBeenCalledWith('anthropic-codex');
       expect(mockCreateProvider).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -197,7 +189,6 @@ describe('AddProviderModal', () => {
       expect(onProviderAdded).toHaveBeenCalled();
     });
 
-    // OAuth modal should be visible
     await waitFor(() => {
       expect(screen.getByTestId('oauth-modal')).toBeTruthy();
     });
@@ -211,7 +202,6 @@ describe('AddProviderModal', () => {
     );
     await waitFor(() => screen.getByText('GitHub Copilot'));
 
-    // GitHub Copilot is the third card, second Connect button
     const connectButton = screen.getAllByText('Connect')[1];
     fireEvent.click(connectButton);
 
@@ -220,7 +210,6 @@ describe('AddProviderModal', () => {
       expect(mockToastError).toHaveBeenCalledWith('OAuth denied');
     });
 
-    // createProvider should NOT have been called
     expect(mockCreateProvider).not.toHaveBeenCalled();
   });
 

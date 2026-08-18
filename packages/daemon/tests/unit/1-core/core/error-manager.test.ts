@@ -1,10 +1,3 @@
-/**
- * ErrorManager Tests
- *
- * Tests error categorization, user-friendly message generation,
- * and error broadcasting functionality.
- */
-
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { ErrorManager, ErrorCategory } from '../../../../src/lib/error-manager';
 import { MessageHub } from '@hyperneo/shared';
@@ -18,7 +11,6 @@ describe('ErrorManager', () => {
   let internalPublishAsyncSpy: ReturnType<typeof mock>;
 
   beforeEach(() => {
-    // Create mock MessageHub
     publishSpy = mock(async () => {});
     mockMessageHub = {
       event: publishSpy,
@@ -27,7 +19,6 @@ describe('ErrorManager', () => {
       command: mock(async () => {}),
     } as unknown as MessageHub;
 
-    // Create mock InternalEventBus (errors now emit via InternalEventBus)
     internalPublishAsyncSpy = mock(() => {});
     mockInternalEventBus = {
       publishAsync: internalPublishAsyncSpy,
@@ -298,7 +289,6 @@ describe('ErrorManager', () => {
 
       await errorManager.broadcastError(sessionId, error);
 
-      // Errors now emit via InternalEventBus for StateManager to fold into state.session
       expect(internalPublishAsyncSpy).toHaveBeenCalledTimes(1);
       expect(internalPublishAsyncSpy.mock.calls[0][0]).toBe('session.error');
       expect(internalPublishAsyncSpy.mock.calls[0][1]).toMatchObject({
@@ -321,7 +311,6 @@ describe('ErrorManager', () => {
 
       expect(result.message).toBe(errorMessage);
       expect(result.category).toBe(ErrorCategory.MESSAGE);
-      // Errors now emit via InternalEventBus
       expect(internalPublishAsyncSpy).toHaveBeenCalledTimes(1);
     });
 
@@ -444,7 +433,6 @@ describe('ErrorManager', () => {
     });
 
     it('should track PROVIDER_UNAVAILABLE errors in API connection state', async () => {
-      // Generate enough provider unavailable errors to change connection status
       for (let i = 0; i < 2; i++) {
         const error = errorManager.createError(
           new Error('bridge server unreachable'),
@@ -646,7 +634,6 @@ describe('ErrorManager', () => {
         metadata
       );
 
-      // Errors now emit via InternalEventBus for StateManager to fold into state.session
       expect(internalPublishAsyncSpy).toHaveBeenCalledTimes(1);
       expect(internalPublishAsyncSpy.mock.calls[0][0]).toBe('session.error');
       const emittedData = internalPublishAsyncSpy.mock.calls[0][1];
@@ -661,7 +648,6 @@ describe('ErrorManager', () => {
     });
 
     it('should capture additional error properties', () => {
-      // Create an error with custom properties
       const error = new Error('Custom error');
       (error as unknown as Record<string, unknown>).code = 'CUSTOM_CODE';
       (error as unknown as Record<string, unknown>).statusCode = 500;
@@ -669,7 +655,6 @@ describe('ErrorManager', () => {
 
       const structured = errorManager.createError(error, ErrorCategory.SYSTEM);
 
-      // Verify custom properties are captured with error_ prefix
       expect(structured.metadata).toMatchObject({
         error_code: 'CUSTOM_CODE',
         error_statusCode: 500,
@@ -678,13 +663,11 @@ describe('ErrorManager', () => {
     });
 
     it('should capture error.cause if present', () => {
-      // Create an error with a cause
       const cause = new Error('Root cause error');
       const error = new Error('Wrapper error', { cause });
 
       const structured = errorManager.createError(error, ErrorCategory.SYSTEM);
 
-      // Verify cause is captured
       expect(structured.metadata).toBeDefined();
       const errorCause = structured.metadata?.errorCause as {
         message: string;
@@ -707,7 +690,6 @@ describe('ErrorManager', () => {
     });
 
     it('should track connection errors and update status', async () => {
-      // Generate enough connection errors to change status
       for (let i = 0; i < 5; i++) {
         const error = errorManager.createError(
           new Error('ENOTFOUND api.anthropic.com'),
@@ -722,21 +704,17 @@ describe('ErrorManager', () => {
     });
 
     it('should mark API success and reset error count', async () => {
-      // First, create some connection errors
       for (let i = 0; i < 3; i++) {
         const error = errorManager.createError(new Error('ENOTFOUND'), ErrorCategory.CONNECTION);
         await errorManager.broadcastError('test-session', error);
       }
 
-      // Verify degraded state
       let state = errorManager.getApiConnectionState();
       expect(state.status).toBe('degraded');
       expect(state.errorCount).toBe(3);
 
-      // Mark success
       await errorManager.markApiSuccess();
 
-      // Verify recovery
       state = errorManager.getApiConnectionState();
       expect(state.status).toBe('connected');
       expect(state.errorCount).toBe(0);
@@ -744,19 +722,15 @@ describe('ErrorManager', () => {
     });
 
     it('should emit api.connection event on recovery', async () => {
-      // Create errors to change status
       for (let i = 0; i < 2; i++) {
         const error = errorManager.createError(new Error('ECONNREFUSED'), ErrorCategory.CONNECTION);
         await errorManager.broadcastError('test-session', error);
       }
 
-      // Clear previous emit calls
       internalPublishAsyncSpy.mockClear();
 
-      // Mark success to trigger recovery
       await errorManager.markApiSuccess();
 
-      // Should emit api.connection event for recovery
       const apiConnectionCalls = internalPublishAsyncSpy.mock.calls.filter(
         (call: unknown[]) => call[0] === 'api.connection'
       );
@@ -768,13 +742,10 @@ describe('ErrorManager', () => {
     });
 
     it('should not emit recovery event if already connected', async () => {
-      // Start fresh - no errors
       internalPublishAsyncSpy.mockClear();
 
-      // Mark success when already connected
       await errorManager.markApiSuccess();
 
-      // Should not emit api.connection event
       const apiConnectionCalls = internalPublishAsyncSpy.mock.calls.filter(
         (call: unknown[]) => call[0] === 'api.connection'
       );

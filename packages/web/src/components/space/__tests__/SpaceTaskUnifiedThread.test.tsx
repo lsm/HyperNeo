@@ -8,9 +8,6 @@ let mockRows = [];
 let mockIsLoading = false;
 let mockIsReconnecting = false;
 
-// Capture the messageCount handed to useAutoScroll so we can assert the
-// loading/reconnecting placeholder doesn't feed it the previous task's stale
-// row count.
 let lastAutoScrollMessageCount;
 let lastAutoScrollResetKey;
 
@@ -30,8 +27,6 @@ vi.mock('../../../hooks/useAutoScroll', () => ({
   },
 }));
 
-// MinimalThreadFeed pulls in MarkdownRenderer (lazy-loads marked). Stub it
-// so tests don't need to wait on async markdown parsing.
 vi.mock('../../chat/MarkdownRenderer.tsx', () => ({
   default: ({ content }: { content: string }) => <div data-testid="md">{content}</div>,
 }));
@@ -99,7 +94,6 @@ describe('SpaceTaskUnifiedThread', () => {
     render(<SpaceTaskUnifiedThread taskId="task-1" />);
 
     expect(screen.getByTestId('space-task-event-feed-minimal')).toBeTruthy();
-    // Each agent block becomes one minimal turn row.
     expect(screen.getAllByTestId('minimal-thread-turn').length).toBeGreaterThan(0);
   });
 
@@ -127,8 +121,6 @@ describe('SpaceTaskUnifiedThread', () => {
   });
 
   it('does not render the legacy floating agent-name tag', () => {
-    // The compact-mode-only sticky agent label has been removed; minimal
-    // rows carry their own per-row header so the floating tag is redundant.
     render(<SpaceTaskUnifiedThread taskId="task-1" />);
     expect(screen.queryByTestId('agent-name-tag')).toBeNull();
   });
@@ -154,20 +146,11 @@ describe('SpaceTaskUnifiedThread', () => {
   });
 
   describe('useAutoScroll messageCount during task switch', () => {
-    // Reproduces the loading-placeholder-consuming-the-reset scenario: on a
-    // task switch the component renders the loading placeholder (so the
-    // scroller/containerRef is null) while `rows` can still hold the PREVIOUS
-    // task. Feeding that stale non-zero length to useAutoScroll alongside the
-    // new resetKey would consume the reset and latch the mount-scroll against
-    // the old count before the new thread DOM exists. The component must pass
-    // 0 while the placeholder is showing.
     it('passes messageCount 0 (not stale rows.length) while loading', () => {
       mockIsLoading = true;
-      mockRows = makeMinimalRows(); // stale rows from the previous task
+      mockRows = makeMinimalRows();
       render(<SpaceTaskUnifiedThread taskId="task-2" />);
       expect(lastAutoScrollMessageCount).toBe(0);
-      // resetKey still reflects the new task so the real 0→M transition fires
-      // the mount-scroll when the scroller appears.
       expect(lastAutoScrollResetKey).toBe('task-2');
     });
 
@@ -205,9 +188,7 @@ describe('SpaceTaskUnifiedThread', () => {
 
       const banner = screen.getByTestId('space-thread-cooldown-banner');
       expect(banner).toBeTruthy();
-      // Agent label is surfaced so the user knows which worker is throttled.
       expect(banner.textContent).toContain('Coder Agent');
-      // RateLimitCooldownBanner renders the manual-override actions.
       expect(screen.getByText('Retry Now')).toBeTruthy();
       expect(screen.getByText('Cancel')).toBeTruthy();
     });
@@ -238,7 +219,6 @@ describe('SpaceTaskUnifiedThread', () => {
       expect(banner).toBeTruthy();
       expect(banner.textContent).toContain('Coder Agent');
       expect(banner.textContent).toContain('Anthropic authentication failed.');
-      // Provider label is resolved via getProviderLabel → "Anthropic".
       expect(screen.getByText('Re-authenticate Anthropic')).toBeTruthy();
     });
   });

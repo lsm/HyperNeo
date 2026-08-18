@@ -1,18 +1,3 @@
-/**
- * SDKMessageRepository → LiveQueryEngine reactivity for spaceSessions.bySpace.
- *
- * Regression test for the visible_message_count counter. Now that the query
- * reads a maintained sessions column instead of a correlated COUNT(*) over
- * sdk_messages, its table-deps no longer include sdk_messages — so a message
- * save must trigger re-evaluation via an explicit notifyChange('sessions')
- * emitted by SDKMessageRepository. Without it the live badge would never
- * refresh when messages arrive (the P1 from review round 2 on #2358).
- *
- * Design mirrors goal-repository-live-query.test.ts: wire the reactive layer,
- * subscribe to the real spaceSessions.bySpace SQL, write through the repo, and
- * await a microtask flush before asserting the LiveQuery delta.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
@@ -88,19 +73,15 @@ describe('SDKMessageRepository → LiveQueryEngine reactivity (spaceSessions.byS
     const diffs: QueryDiff<SpaceSessionRow>[] = [];
     engine.subscribe(sql, [SPACE_ID], (diff) => diffs.push(diff));
 
-    // Snapshot: the one session is present with count 0.
     expect(diffs).toHaveLength(1);
     expect(diffs[0].type).toBe('snapshot');
     expect(diffs[0].rows?.[0]?.messageCount).toBe(0);
 
     repo.saveSDKMessage(SESSION_ID, createAssistantMessage('hello'));
 
-    // The engine re-evaluates on the reactive 'sessions' change in a microtask.
     await Promise.resolve();
     await Promise.resolve();
 
-    // A delta fired and the session's count moved 0 → 1. The row already existed
-    // in the snapshot, so the change surfaces in `updated` (keyed by session id).
     expect(diffs).toHaveLength(2);
     expect(diffs[1].type).toBe('delta');
     expect(diffs[1].updated?.[0]?.id).toBe(SESSION_ID);
@@ -110,10 +91,8 @@ describe('SDKMessageRepository → LiveQueryEngine reactivity (spaceSessions.byS
   test('an invisible (subagent) save does not re-evaluate the badge', async () => {
     const diffs: QueryDiff<SpaceSessionRow>[] = [];
     engine.subscribe(sql, [SPACE_ID], (diff) => diffs.push(diff));
-    expect(diffs).toHaveLength(1); // snapshot only
+    expect(diffs).toHaveLength(1);
 
-    // Subagent row (parent_tool_use_id set) is invisible → counter unchanged →
-    // no notifyChange('sessions') → no re-evaluation.
     repo.saveSDKMessage(SESSION_ID, {
       type: 'assistant',
       parent_tool_use_id: 'toolu_1',
@@ -131,7 +110,6 @@ describe('SDKMessageRepository → LiveQueryEngine reactivity (spaceSessions.byS
     engine.subscribe(sql, [SPACE_ID], (diff) => diffs.push(diff));
     expect(diffs[0].rows?.[0]?.messageCount).toBe(0);
 
-    // Save a deferred user message (invisible) → no re-eval.
     const id = repo.saveUserMessage(
       SESSION_ID,
       {
@@ -144,7 +122,6 @@ describe('SDKMessageRepository → LiveQueryEngine reactivity (spaceSessions.byS
     await Promise.resolve();
     expect(diffs).toHaveLength(1);
 
-    // Flip to consumed → becomes visible → counter +1 → re-eval.
     repo.updateMessageStatus([id], 'consumed');
     await Promise.resolve();
     await Promise.resolve();

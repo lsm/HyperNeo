@@ -1,17 +1,3 @@
-/**
- * Unit Tests for SkillRepository and SkillsManager
- *
- * Covers:
- * - CRUD operations with in-memory SQLite
- * - Built-in skill deletion protection
- * - Persistence across load cycles
- * - getEnabledSkills() filtering
- * - All validation rules (plugin path traversal, mcp_server ref, builtin commandName)
- * - sourceType / config.type consistency enforcement
- * - Name uniqueness enforcement
- * - Valid configs pass validation
- */
-
 import { unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -27,10 +13,6 @@ import {
 } from '../../../src/lib/skills-manager';
 import { noOpReactiveDb } from '../../helpers/reactive-database';
 import type { AppSkill } from '@hyperneo/shared';
-
-// ---------------------------------------------------------------------------
-// Setup helpers
-// ---------------------------------------------------------------------------
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -52,10 +34,6 @@ function makeManager(db: BunDatabase): { mgr: SkillsManager; mcpRepo: AppMcpServ
   const mgr = new SkillsManager(skillRepo, mcpRepo);
   return { mgr, mcpRepo };
 }
-
-// ---------------------------------------------------------------------------
-// SkillRepository tests
-// ---------------------------------------------------------------------------
 
 describe('SkillRepository', () => {
   let db: BunDatabase;
@@ -287,7 +265,6 @@ describe('SkillRepository', () => {
     });
     db1.close();
 
-    // Re-open — data must still be there
     const db2 = new BunDatabase(tmpPath);
     const repo2 = new SkillRepository(db2, noOpReactiveDb);
     const found = repo2.get('persist-1');
@@ -296,14 +273,9 @@ describe('SkillRepository', () => {
     expect(found!.validationStatus).toBe('valid');
     db2.close();
 
-    // Clean up temp file
     unlinkSync(tmpPath);
   }, 30_000);
 });
-
-// ---------------------------------------------------------------------------
-// SkillsManager tests
-// ---------------------------------------------------------------------------
 
 describe('SkillsManager', () => {
   let db: BunDatabase;
@@ -318,8 +290,6 @@ describe('SkillsManager', () => {
   afterEach(() => {
     db.close();
   });
-
-  // --- CRUD ---
 
   test('addSkill creates a skill with generated id and createdAt', () => {
     const skill = mgr.addSkill({
@@ -438,8 +408,6 @@ describe('SkillsManager', () => {
     expect(enabled).toHaveLength(1);
   });
 
-  // --- Name uniqueness ---
-
   test('addSkill throws a friendly error on duplicate name', () => {
     mgr.addSkill({
       name: 'dupe',
@@ -463,10 +431,7 @@ describe('SkillsManager', () => {
     ).toThrow('already exists');
   });
 
-  // --- Built-in protection ---
-
   test('removeSkill returns false for built-in skill', () => {
-    // Insert a built-in skill directly via repo (bypasses manager's addSkill)
     const repo = makeRepo(db);
     repo.insert({
       id: 'builtin-1',
@@ -502,8 +467,6 @@ describe('SkillsManager', () => {
     expect(mgr.getSkill(skill.id)).toBeNull();
   });
 
-  // --- Validation: sourceType / config.type mismatch ---
-
   test('addSkill rejects mismatched sourceType and config.type', () => {
     expect(() =>
       mgr.addSkill({
@@ -518,8 +481,6 @@ describe('SkillsManager', () => {
       })
     ).toThrow('must match config.type');
   });
-
-  // --- Validation: plugin ---
 
   test('addSkill with plugin: valid absolute path passes', () => {
     const skill = mgr.addSkill({
@@ -590,8 +551,6 @@ describe('SkillsManager', () => {
     ).toThrow('traversal');
   });
 
-  // --- Validation: mcp_server ---
-
   test('addSkill with mcp_server: valid appMcpServerId passes', () => {
     const server = mcpRepo.create({ name: 'test-server', sourceType: 'stdio', command: 'npx' });
     const skill = mgr.addSkill({
@@ -634,8 +593,6 @@ describe('SkillsManager', () => {
     ).toThrow('appMcpServerId must not be empty');
   });
 
-  // --- Validation: builtin ---
-
   test('addSkill with builtin: valid commandName passes', () => {
     const skill = mgr.addSkill({
       name: 'bi-ok',
@@ -663,8 +620,6 @@ describe('SkillsManager', () => {
     ).toThrow('commandName must not be empty');
   });
 
-  // --- Validation on updateSkill ---
-
   test('updateSkill validates new config', () => {
     const skill = mgr.addSkill({
       name: 'upd-val',
@@ -680,10 +635,6 @@ describe('SkillsManager', () => {
       mgr.updateSkill(skill.id, { config: { type: 'plugin', pluginPath: 'bad/relative' } })
     ).toThrow('absolute path');
   });
-
-  // --- initializeBuiltins ---
-
-  // --- playwright built-in ---
 
   test('initializeBuiltins registers playwright skill', () => {
     mgr.initializeBuiltins();
@@ -730,8 +681,6 @@ describe('SkillsManager', () => {
     expect(skills).toHaveLength(1);
   });
 
-  // --- playwright-interactive built-in ---
-
   test('initializeBuiltins registers playwright-interactive skill', () => {
     mgr.initializeBuiltins();
 
@@ -776,8 +725,6 @@ describe('SkillsManager', () => {
     const skills = mgr.listSkills().filter((s) => s.name === 'playwright-interactive');
     expect(skills).toHaveLength(1);
   });
-
-  // --- chrome-devtools-mcp built-in ---
 
   test('initializeBuiltins registers chrome-devtools-mcp skill', () => {
     mgr.initializeBuiltins();
@@ -866,8 +813,6 @@ describe('SkillsManager', () => {
     }
   });
 
-  // --- fetch-mcp built-in ---
-
   test('initializeBuiltins registers fetch-mcp skill', () => {
     mgr.initializeBuiltins();
 
@@ -955,8 +900,6 @@ describe('SkillsManager', () => {
     }
   });
 
-  // --- total built-in count ---
-
   test('initializeBuiltins registers all five built-in skills total', () => {
     mgr.initializeBuiltins();
 
@@ -970,14 +913,6 @@ describe('SkillsManager', () => {
     expect(names).toContain('space-coordination');
   });
 
-  // --- ensureBuiltinPluginWrappers ---
-  //
-  // These tests cover the thin wiring layer that feeds the registered builtin
-  // skills into the plugin-wrapper generator. The generator itself has its own
-  // unit tests in agent/builtin-skill-plugin-wrapper.test.ts — here we only
-  // verify that the manager passes the right set of skills (sourceType ===
-  // 'builtin' only) and does not crash on edge cases.
-
   test('ensureBuiltinPluginWrappers materialises a wrapper for each builtin-typed skill', async () => {
     const { mkdtemp, rm, readFile, stat } = await import('node:fs/promises');
     const { tmpdir } = await import('node:os');
@@ -989,10 +924,6 @@ describe('SkillsManager', () => {
       mgr.initializeBuiltins();
       const result = await mgr.ensureBuiltinPluginWrappers(wrappersRoot, skillsRoot);
 
-      // Only `sourceType: 'builtin'` skills (playwright,
-      // playwright-interactive, and the Space coordination POC) should get
-      // wrappers — fetch-mcp and chrome-devtools-mcp are mcp_server-typed and
-      // must be skipped (they're loaded via mcpServers, not the SDK plugin loader).
       expect(result.size).toBe(3);
       expect(result.has('playwright')).toBe(true);
       expect(result.has('playwright-interactive')).toBe(true);
@@ -1001,8 +932,6 @@ describe('SkillsManager', () => {
       expect(result.has('chrome-devtools-mcp')).toBe(false);
       expect(result.has('chrome-devtools')).toBe(false);
 
-      // plugin.json must exist at the wrapper root — this is the marker
-      // the SDK actually scans for.
       const manifest = JSON.parse(
         await readFile(join(wrappersRoot, 'playwright', '.claude-plugin', 'plugin.json'), 'utf8')
       );
@@ -1012,8 +941,6 @@ describe('SkillsManager', () => {
       expect(spaceSkill).toContain('Space Coordination (POC)');
       expect(spaceSkill).toContain('create_standalone_task');
 
-      // The wrappers directory must be a real directory, not a symlink into
-      // the skills root, so regenerating never touches user content.
       const wst = await stat(wrappersRoot);
       expect(wst.isDirectory()).toBe(true);
     } finally {
@@ -1034,9 +961,6 @@ describe('SkillsManager', () => {
 
       const result = await mgr.ensureBuiltinPluginWrappers(wrappersRoot, skillsRoot);
 
-      // The bundled space-coordination asset cannot create its destination under
-      // a file-valued skillsRoot, but wrapper generation remains best-effort and
-      // still materialises unrelated builtin command wrappers.
       expect(result.has('playwright')).toBe(true);
       expect(result.has('playwright-interactive')).toBe(true);
       expect(result.has('space-coordination')).toBe(true);
@@ -1050,7 +974,6 @@ describe('SkillsManager', () => {
     const { tmpdir } = await import('node:os');
     const tmpRoot = await mkdtemp(join(tmpdir(), 'kai-skills-mgr-empty-'));
     try {
-      // Don't call initializeBuiltins — manager has zero skills.
       const wrappersRoot = join(tmpRoot, 'skill-plugins');
       const skillsRoot = join(tmpRoot, 'skills');
       const result = await mgr.ensureBuiltinPluginWrappers(wrappersRoot, skillsRoot);
@@ -1060,10 +983,6 @@ describe('SkillsManager', () => {
     }
   });
 });
-
-// ---------------------------------------------------------------------------
-// resolveSkillRawUrl utility
-// ---------------------------------------------------------------------------
 
 describe('resolveSkillRawUrl', () => {
   test('converts GitHub tree URL to raw SKILL.md URL', () => {
@@ -1097,7 +1016,6 @@ describe('resolveSkillRawUrl', () => {
   });
 
   test('handles branch name with dots (e.g. v2.0) in tree URL', () => {
-    // Branch = "v2.0", path = "path/to/skill"
     expect(resolveSkillRawUrl('https://github.com/org/repo/tree/v2.0/path/to/skill')).toBe(
       'https://raw.githubusercontent.com/org/repo/v2.0/path/to/skill/SKILL.md'
     );
@@ -1115,10 +1033,6 @@ describe('resolveSkillRawUrl', () => {
     );
   });
 });
-
-// ---------------------------------------------------------------------------
-// validateCommandName utility
-// ---------------------------------------------------------------------------
 
 describe('validateCommandName', () => {
   test('accepts valid command names', () => {
@@ -1161,10 +1075,6 @@ describe('validateCommandName', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// resolveGitHubApiContentsUrl utility
-// ---------------------------------------------------------------------------
-
 describe('resolveGitHubApiContentsUrl', () => {
   test('converts a GitHub tree URL to GitHub API contents URL', () => {
     expect(
@@ -1199,10 +1109,6 @@ describe('resolveGitHubApiContentsUrl', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// SkillsManager.installSkillFromGit
-// ---------------------------------------------------------------------------
-
 describe('SkillsManager.installSkillFromGit', () => {
   let db: BunDatabase;
   let mgr: SkillsManager;
@@ -1219,10 +1125,6 @@ describe('SkillsManager.installSkillFromGit', () => {
     db.close();
   });
 
-  /**
-   * Helper: mock fetch for GitHub API + download_url pattern.
-   * Returns a directory listing for api.github.com URLs and file content for raw URLs.
-   */
   function makeGitHubApiFetch(fileContent: string = '# Playwright Skill\n\nContent here') {
     return async (url: string | URL | Request) => {
       const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
@@ -1239,7 +1141,6 @@ describe('SkillsManager.installSkillFromGit', () => {
           { status: 200 }
         );
       }
-      // download_url fetch
       return new Response(fileContent, { status: 200 });
     };
   }
@@ -1331,16 +1232,14 @@ describe('SkillsManager.installSkillFromGit', () => {
         'https://github.com/openai/skills/tree/main/skills/.curated/playwright',
         'idem-fetch-test'
       );
-      // Expect 2 fetches: 1 for API directory listing, 1 for SKILL.md download
       const firstCallCount = fetchCalls;
       expect(firstCallCount).toBeGreaterThan(0);
 
-      // Second call should NOT fetch again — skill already in DB
       await mgr.installSkillFromGit(
         'https://github.com/openai/skills/tree/main/skills/.curated/playwright',
         'idem-fetch-test'
       );
-      expect(fetchCalls).toBe(firstCallCount); // still same count
+      expect(fetchCalls).toBe(firstCallCount);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -1385,7 +1284,6 @@ describe('SkillsManager.installSkillFromGit', () => {
 
   test('throws when GitHub API returns an entry with path traversal in its name', async () => {
     const originalFetch = globalThis.fetch;
-    // Simulate a malicious API response with a traversal entry name
     globalThis.fetch = (async (url: string | URL | Request) => {
       const urlStr =
         typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
@@ -1452,7 +1350,6 @@ describe('SkillsManager.installSkillFromGit', () => {
 
   test('throws when directory nesting exceeds max depth', async () => {
     const originalFetch = globalThis.fetch;
-    // Each API call returns a single nested subdirectory, forcing infinite recursion
     globalThis.fetch = (async (url: string | URL | Request) => {
       const urlStr =
         typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
@@ -1483,7 +1380,6 @@ describe('SkillsManager.installSkillFromGit', () => {
 
   test('throws when total file count exceeds max files', async () => {
     const originalFetch = globalThis.fetch;
-    // Return 101 files in the directory listing
     const manyFiles = Array.from({ length: 101 }, (_, i) => ({
       name: `file${i}.md`,
       type: 'file',

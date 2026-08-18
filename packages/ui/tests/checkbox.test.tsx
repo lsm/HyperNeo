@@ -81,7 +81,6 @@ describe('Checkbox', () => {
     const cb = screen.getByRole('checkbox');
     fireEvent.click(cb);
     expect(onChange).toHaveBeenCalledWith(true);
-    // Controlled: internal state does not change
     expect(cb.getAttribute('aria-checked')).toBe('false');
   });
 

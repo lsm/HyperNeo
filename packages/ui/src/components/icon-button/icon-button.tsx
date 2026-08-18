@@ -3,8 +3,6 @@ import { dataAttributes, useInteractionState } from '../../internal/data-attribu
 import { render } from '../../internal/render.ts';
 import type { ElementType } from '../../internal/types.ts';
 
-// --- IconButton ---
-
 interface IconButtonProps {
   as?: ElementType;
   label: string;

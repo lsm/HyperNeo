@@ -1,13 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for useTurnBlocks hook.
- *
- * useTurnBlocks takes a flat SessionGroupMessage[] and returns a structured
- * TurnBlockItem[] — an ordered mix of TurnBlock turn items and RuntimeMessage
- * items. The hook internally calls parseGroupMessage() on each raw message, so
- * test helpers produce SessionGroupMessages whose `content` is already valid JSON
- * that parseGroupMessage can parse (or a known non-JSON type like 'status').
- */
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { renderHook } from '@testing-library/preact';
@@ -19,30 +10,21 @@ import {
 } from '../useTurnBlocks';
 import type { SessionGroupMessage } from '../useGroupMessages';
 
-// ---------------------------------------------------------------------------
-// Test helpers
-// ---------------------------------------------------------------------------
-
 let _idCounter = 0;
 
 function resetIdCounter() {
   _idCounter = 0;
 }
 
-/**
- * Build a SessionGroupMessage whose content is a JSON-stringified SDKMessage
- * with a _taskMeta block. parseGroupMessage() will parse this into a real
- * SDKMessage with _taskMeta attached.
- */
 function makeAgentMessage(opts: {
   authorRole: string;
   authorSessionId: string;
   sessionId?: string | null;
   uuid?: string;
-  type?: string; // SDKMessage type ('assistant' | 'user' | 'result' | ...)
+  type?: string;
   createdAt?: number;
-  content?: object; // extra fields merged into the SDKMessage
-  messageType?: string; // SessionGroupMessage.messageType
+  content?: object;
+  messageType?: string;
 }): SessionGroupMessage {
   _idCounter++;
   const id = _idCounter;
@@ -52,7 +34,7 @@ function makeAgentMessage(opts: {
   const sdkMsg = {
     type: opts.type ?? 'assistant',
     uuid,
-    message: { content: [] }, // default empty assistant content
+    message: { content: [] },
     timestamp: createdAt,
     _taskMeta: {
       authorRole: opts.authorRole,
@@ -73,10 +55,6 @@ function makeAgentMessage(opts: {
   };
 }
 
-/**
- * Build an assistant message that contains tool_use content blocks.
- * Each toolName becomes one tool_use block.
- */
 function makeToolUseMessage(opts: {
   authorRole: string;
   authorSessionId: string;
@@ -100,9 +78,6 @@ function makeToolUseMessage(opts: {
   });
 }
 
-/**
- * Build an assistant message that contains thinking content blocks.
- */
 function makeThinkingMessage(opts: {
   authorRole: string;
   authorSessionId: string;
@@ -125,10 +100,6 @@ function makeThinkingMessage(opts: {
   });
 }
 
-/**
- * Build a 'status' runtime message. parseGroupMessage() treats non-JSON
- * messageType='status' as a special case and returns a system-role message.
- */
 function makeStatusMessage(opts: { text?: string; createdAt?: number } = {}): SessionGroupMessage {
   _idCounter++;
   const id = _idCounter;
@@ -143,9 +114,6 @@ function makeStatusMessage(opts: { text?: string; createdAt?: number } = {}): Se
   };
 }
 
-/**
- * Build a 'leader_summary' runtime message.
- */
 function makeLeaderSummaryMessage(
   opts: { text?: string; createdAt?: number } = {}
 ): SessionGroupMessage {
@@ -162,9 +130,6 @@ function makeLeaderSummaryMessage(
   };
 }
 
-/**
- * Build a 'rate_limited' runtime message.
- */
 function makeRateLimitedMessage(opts: { createdAt?: number } = {}): SessionGroupMessage {
   _idCounter++;
   const id = _idCounter;
@@ -179,9 +144,6 @@ function makeRateLimitedMessage(opts: { createdAt?: number } = {}): SessionGroup
   };
 }
 
-/**
- * Build a 'model_fallback' runtime message.
- */
 function makeModelFallbackMessage(opts: { createdAt?: number } = {}): SessionGroupMessage {
   _idCounter++;
   const id = _idCounter;
@@ -196,9 +158,6 @@ function makeModelFallbackMessage(opts: { createdAt?: number } = {}): SessionGro
   };
 }
 
-/**
- * Build a result message (session end).
- */
 function makeResultMessage(opts: {
   authorRole: string;
   authorSessionId: string;
@@ -226,13 +185,11 @@ function makeResultMessage(opts: {
   });
 }
 
-// Helper to render the hook and get results
 function renderUseTurnBlocks(messages: SessionGroupMessage[], isAtTail?: boolean): TurnBlockItem[] {
   const { result } = renderHook(() => useTurnBlocks(messages, isAtTail));
   return result.current;
 }
 
-// Type narrowing helpers
 function asTurn(item: TurnBlockItem): TurnBlock {
   expect(item.type).toBe('turn');
   return (item as { type: 'turn'; turn: TurnBlock }).turn;
@@ -243,16 +200,10 @@ function asRuntime(item: TurnBlockItem): RuntimeMessage {
   return item as RuntimeMessage;
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe('useTurnBlocks', () => {
   beforeEach(() => {
     resetIdCounter();
   });
-
-  // ── Empty input ──────────────────────────────────────────────────────────
 
   describe('empty messages', () => {
     it('returns an empty array for empty input', () => {
@@ -260,8 +211,6 @@ describe('useTurnBlocks', () => {
       expect(items).toEqual([]);
     });
   });
-
-  // ── Runtime messages ─────────────────────────────────────────────────────
 
   describe('runtime messages', () => {
     it('emits RuntimeMessage for status messages', () => {
@@ -315,14 +264,12 @@ describe('useTurnBlocks', () => {
     });
 
     it('runtime message before same-session agent messages does not split the turn', () => {
-      // Runtime message arrives BEFORE any agent message — emitted immediately, turn intact
       const msgs = [
         makeStatusMessage(),
         makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 2000 }),
         makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 3000 }),
       ];
       const items = renderUseTurnBlocks(msgs);
-      // 1 runtime + 1 turn (two messages merged)
       expect(items).toHaveLength(2);
       expect(items[0].type).toBe('runtime');
       const turn = asTurn(items[1]);
@@ -330,15 +277,12 @@ describe('useTurnBlocks', () => {
     });
 
     it('runtime message mid-turn does not fragment the agent turn', () => {
-      // Status update arrives between two messages from the same session.
-      // The turn should remain one cohesive block (not split into two).
       const msgs = [
         makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 1000 }),
         makeStatusMessage({ createdAt: 2000 }),
         makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 3000 }),
       ];
       const items = renderUseTurnBlocks(msgs);
-      // 1 turn (2 agent msgs merged) + 1 runtime (emitted after the turn)
       expect(items).toHaveLength(2);
       expect(items[0].type).toBe('turn');
       const turn = asTurn(items[0]);
@@ -354,7 +298,6 @@ describe('useTurnBlocks', () => {
         makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 4000 }),
       ];
       const items = renderUseTurnBlocks(msgs);
-      // 1 turn + 2 runtime items (emitted after the turn that caused the flush)
       expect(items).toHaveLength(3);
       expect(items[0].type).toBe('turn');
       expect(asTurn(items[0]).messageCount).toBe(2);
@@ -363,8 +306,6 @@ describe('useTurnBlocks', () => {
     });
 
     it('mid-turn runtime messages appear between turns when a new agent follows', () => {
-      // [agent1, status, agent2] — status was buffered during agent1's turn,
-      // emitted between the two turns once agent2 starts speaking.
       const msgs = [
         makeAgentMessage({ authorRole: 'coder', authorSessionId: 'worker', createdAt: 1000 }),
         makeStatusMessage({ createdAt: 2000 }),
@@ -379,8 +320,6 @@ describe('useTurnBlocks', () => {
       expect(asTurn(items[2]).sessionId).toBe('leader');
     });
   });
-
-  // ── Turn grouping ────────────────────────────────────────────────────────
 
   describe('turn grouping', () => {
     it('groups consecutive messages from the same authorSessionId into one turn', () => {
@@ -408,7 +347,6 @@ describe('useTurnBlocks', () => {
     });
 
     it('handles multi-agent interleaving correctly', () => {
-      // worker → leader → worker → leader (4 turns)
       const msgs = [
         makeAgentMessage({ authorRole: 'coder', authorSessionId: 'worker' }),
         makeAgentMessage({ authorRole: 'coder', authorSessionId: 'worker' }),
@@ -442,8 +380,6 @@ describe('useTurnBlocks', () => {
     });
   });
 
-  // ── Turn block fields ────────────────────────────────────────────────────
-
   describe('TurnBlock fields', () => {
     it('uses first message uuid as TurnBlock.id', () => {
       const msgs = [
@@ -455,7 +391,6 @@ describe('useTurnBlocks', () => {
     });
 
     it('falls back to ${sessionId}-${startTime} when first message has no uuid', () => {
-      // Create a message whose JSON content has no uuid field
       _idCounter++;
       const id = _idCounter;
       const createdAt = id * 1000;
@@ -467,7 +402,6 @@ describe('useTurnBlocks', () => {
         messageType: 'assistant',
         content: JSON.stringify({
           type: 'assistant',
-          // no uuid field
           message: { content: [] },
           timestamp: createdAt,
           _taskMeta: {
@@ -502,8 +436,6 @@ describe('useTurnBlocks', () => {
     });
 
     it('agentLabel falls back to raw agentRole for unknown roles', () => {
-      // An unregistered role not present in ROLE_COLORS silently falls back to the
-      // raw role string rather than throwing — this covers future SDK role additions.
       const msgs = [makeAgentMessage({ authorRole: 'unknown-agent', authorSessionId: 'sess-x' })];
       const items = renderUseTurnBlocks(msgs);
       const turn = asTurn(items[0]);
@@ -540,8 +472,6 @@ describe('useTurnBlocks', () => {
       expect((turn.previewMessage as { uuid?: string })?.uuid).toBe('last');
     });
   });
-
-  // ── Stats counting ───────────────────────────────────────────────────────
 
   describe('stats counting', () => {
     it('counts assistant messages', () => {
@@ -600,8 +530,6 @@ describe('useTurnBlocks', () => {
     });
   });
 
-  // ── lastAction ───────────────────────────────────────────────────────────
-
   describe('lastAction', () => {
     it('sets lastAction to the most recent tool_use name', () => {
       const msgs = [
@@ -637,13 +565,10 @@ describe('useTurnBlocks', () => {
         }),
         makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1', type: 'assistant' }),
       ];
-      // Second message has no tool_use, so lastAction should remain 'Read'
       const items = renderUseTurnBlocks(msgs);
       expect(asTurn(items[0]).lastAction).toBe('Read');
     });
   });
-
-  // ── Active turn detection ────────────────────────────────────────────────
 
   describe('active turn detection', () => {
     it('isActive=true for last turn when isAtTail=true and no result message', () => {
@@ -701,7 +626,6 @@ describe('useTurnBlocks', () => {
 
     it('defaults isAtTail to true (last turn is active when no result)', () => {
       const msgs = [makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1' })];
-      // Call without isAtTail argument
       const { result } = renderHook(() => useTurnBlocks(msgs));
       expect(asTurn(result.current[0]).isActive).toBe(true);
     });
@@ -712,13 +636,10 @@ describe('useTurnBlocks', () => {
         makeAgentMessage({ authorRole: 'leader', authorSessionId: 'leader', createdAt: 2000 }),
       ];
       const items = renderUseTurnBlocks(msgs, true);
-      // First turn should have endTime set (not active)
       expect(asTurn(items[0]).isActive).toBe(false);
       expect(asTurn(items[0]).endTime).not.toBeNull();
     });
   });
-
-  // ── Error detection ──────────────────────────────────────────────────────
 
   describe('error detection', () => {
     it('isError=true when last message is an error result', () => {
@@ -766,8 +687,6 @@ describe('useTurnBlocks', () => {
     });
 
     it('detects assistant-level error even when it is not the last message in the turn', () => {
-      // An SDKAssistantMessage can carry error:'billing_error' mid-turn before a result
-      // arrives. The turn must still report isError=true in this case.
       const errorMsg = makeAgentMessage({
         authorRole: 'coder',
         authorSessionId: 'sess-1',
@@ -778,7 +697,6 @@ describe('useTurnBlocks', () => {
         authorRole: 'coder',
         authorSessionId: 'sess-1',
         type: 'assistant',
-        // no error field — simulates a retry/continuation message
       });
       const items = renderUseTurnBlocks([errorMsg, followupMsg], true);
       const turn = asTurn(items[0]);
@@ -787,7 +705,6 @@ describe('useTurnBlocks', () => {
     });
 
     it('result-level error takes precedence over an earlier assistant-level error', () => {
-      // Both an assistant error and a result error are present; result should win.
       const errorAssistant = makeAgentMessage({
         authorRole: 'coder',
         authorSessionId: 'sess-1',
@@ -806,8 +723,6 @@ describe('useTurnBlocks', () => {
       expect(turn.errorMessage).toBe('max_turns exceeded');
     });
   });
-
-  // ── Memoization ──────────────────────────────────────────────────────────
 
   describe('memoization', () => {
     it('returns the same array reference when messages and isAtTail do not change', () => {
@@ -848,8 +763,6 @@ describe('useTurnBlocks', () => {
     });
   });
 
-  // ── Complex scenarios ────────────────────────────────────────────────────
-
   describe('complex multi-agent scenarios', () => {
     it('handles runtime messages between agent turns without merging turns', () => {
       const msgs = [
@@ -860,7 +773,6 @@ describe('useTurnBlocks', () => {
         makeAgentMessage({ authorRole: 'coder', authorSessionId: 'worker', createdAt: 5000 }),
       ];
       const items = renderUseTurnBlocks(msgs, true);
-      // 3 turns + 2 runtime = 5 items
       expect(items).toHaveLength(5);
       expect(items[0].type).toBe('turn');
       expect(items[1].type).toBe('runtime');
@@ -877,15 +789,14 @@ describe('useTurnBlocks', () => {
       ];
       const items = renderUseTurnBlocks(msgs, true);
       expect(items).toHaveLength(2);
-      // The turn should be active (it's the last turn even though there's a runtime after it)
       expect(asTurn(items[0]).isActive).toBe(true);
     });
 
     it('RuntimeMessage index reflects position in parsed message array', () => {
       const msgs = [
-        makeStatusMessage(), // index 0
-        makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1' }), // parsed index 1
-        makeLeaderSummaryMessage(), // parsed index 2
+        makeStatusMessage(),
+        makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1' }),
+        makeLeaderSummaryMessage(),
       ];
       const items = renderUseTurnBlocks(msgs);
       expect(asRuntime(items[0]).index).toBe(0);
@@ -924,9 +835,9 @@ describe('useTurnBlocks', () => {
       ];
       const items = renderUseTurnBlocks(msgs, true);
       const turn = asTurn(items[0]);
-      expect(turn.toolCallCount).toBe(3); // Read + Edit + Bash
+      expect(turn.toolCallCount).toBe(3);
       expect(turn.thinkingCount).toBe(2);
-      expect(turn.assistantCount).toBe(3); // all assistant-type messages
+      expect(turn.assistantCount).toBe(3);
       expect(turn.messageCount).toBe(4);
     });
 
@@ -941,19 +852,14 @@ describe('useTurnBlocks', () => {
       expect(asTurn(items[0]).agentRole).toBe('coder');
       expect(asTurn(items[1]).agentRole).toBe('leader');
       expect(asTurn(items[2]).agentRole).toBe('coder');
-      // Only the last turn is active
       expect(asTurn(items[0]).isActive).toBe(false);
       expect(asTurn(items[1]).isActive).toBe(false);
       expect(asTurn(items[2]).isActive).toBe(true);
     });
   });
 
-  // ── SDK system message filtering ─────────────────────────────────────────
-
   describe('SDK system message filtering', () => {
     it('discards sdk system messages so they do not accumulate in turns', () => {
-      // A session that sends only system:init before another session starts
-      // should produce NO turn (no visible content).
       const sysInit = makeAgentMessage({
         authorRole: 'leader',
         authorSessionId: 'sess-leader',
@@ -966,7 +872,6 @@ describe('useTurnBlocks', () => {
       });
 
       const items = renderUseTurnBlocks([sysInit, plannerMsg], true);
-      // The system message should not create a leader turn — only the planner turn
       expect(items).toHaveLength(1);
       expect(asTurn(items[0]).agentRole).toBe('planner');
     });
@@ -994,16 +899,12 @@ describe('useTurnBlocks', () => {
       ];
       const items = renderUseTurnBlocks(msgs, true);
       expect(items).toHaveLength(1);
-      // Only user + assistant counted (2 system messages discarded)
       expect(asTurn(items[0]).messageCount).toBe(2);
     });
   });
 
-  // ── Result message as turn boundary ─────────────────────────────────────
-
   describe('result message as turn boundary', () => {
     it('flushes the turn when a result message is received', () => {
-      // Same session: run1 ends with result, then run2 begins → 2 turns
       const msgs = [
         makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 1000 }),
         makeResultMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 2000 }),
@@ -1012,7 +913,7 @@ describe('useTurnBlocks', () => {
       const items = renderUseTurnBlocks(msgs, true);
       expect(items).toHaveLength(2);
       expect(asTurn(items[0]).sessionId).toBe('sess-1');
-      expect(asTurn(items[0]).messageCount).toBe(2); // agent msg + result
+      expect(asTurn(items[0]).messageCount).toBe(2);
       expect(asTurn(items[1]).sessionId).toBe('sess-1');
       expect(asTurn(items[1]).messageCount).toBe(1);
     });
@@ -1041,7 +942,6 @@ describe('useTurnBlocks', () => {
     });
 
     it('multiple result-bounded runs from the same session produce one turn each', () => {
-      // run1 → result → run2 → result → run3 (no result yet)
       const msgs = [
         makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 1000 }),
         makeResultMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 2000 }),
@@ -1057,22 +957,19 @@ describe('useTurnBlocks', () => {
     });
 
     it('buffered runtime messages are emitted after the result-flushed turn', () => {
-      // status arrives mid-turn, then result terminates the turn
       const msgs = [
         makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 1000 }),
         makeStatusMessage({ createdAt: 1500 }),
         makeResultMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 2000 }),
       ];
       const items = renderUseTurnBlocks(msgs, true);
-      // turn + runtime (emitted after the turn)
       expect(items).toHaveLength(2);
       expect(items[0].type).toBe('turn');
-      expect(asTurn(items[0]).messageCount).toBe(2); // agent + result
+      expect(asTurn(items[0]).messageCount).toBe(2);
       expect(items[1].type).toBe('runtime');
     });
 
     it('a standalone result-only turn is valid', () => {
-      // Edge case: only a result message arrives (no preceding agent message)
       const msgs = [
         makeResultMessage({ authorRole: 'coder', authorSessionId: 'sess-1', createdAt: 1000 }),
       ];
@@ -1084,20 +981,8 @@ describe('useTurnBlocks', () => {
     });
   });
 
-  // ── Task-dispatch preservation ───────────────────────────────────────────
-
   describe('task-dispatch preservation', () => {
     it('holds an isolated task-dispatch user message and prepends it to the next turn from the same session', () => {
-      // Reproduces the race condition from real data (timestamps in ms):
-      //   LEADER:assistant (T=862)  — already in leader turn
-      //   PLANNER:user     (T=866)  — task dispatch, only 4ms later → split off
-      //   LEADER:assistant (T=900)  — leader continues (same session)
-      //   LEADER:result    (T=19000)
-      //   PLANNER:assistant (T=21000) — continuation — WITHOUT task context normally
-      //   PLANNER:result   (T=39000)
-      //
-      // Without preservation: PLANNER gets two turns — [user@866] and [assistant@21000+].
-      // With preservation: PLANNER gets one turn — [user@866 (held), assistant@21000, result].
       const leaderAssistant1 = makeAgentMessage({
         authorRole: 'leader',
         authorSessionId: 'sess-leader',
@@ -1149,21 +1034,15 @@ describe('useTurnBlocks', () => {
       const turns = items.filter((it) => it.type === 'turn').map(asTurn);
       const plannerTurns = turns.filter((t) => t.agentRole === 'planner');
 
-      // Key assertion: planner must NOT have a split turn.
-      // It should have exactly ONE turn that includes the task user message.
       expect(plannerTurns).toHaveLength(1);
       const plannerTurn = plannerTurns[0];
-      // Planner turn includes the originally held task message as its first message
       expect(plannerTurn.messages[0].type).toBe('user');
       expect((plannerTurn.messages[0] as { uuid?: string }).uuid).toBe('task-uuid-1');
-      // messageCount = user(task) + assistant + result = 3
       expect(plannerTurn.messageCount).toBe(3);
-      // Turn start time reflects when the task was dispatched (T=866), not T=21000
       expect(plannerTurn.startTime).toBe(866);
     });
 
     it('does not hold an isolated tool-result user message (no uuid)', () => {
-      // Tool result user messages have no top-level uuid — they should NOT be held.
       _idCounter++;
       const toolResultMsg: SessionGroupMessage = {
         id: _idCounter,
@@ -1173,7 +1052,6 @@ describe('useTurnBlocks', () => {
         messageType: 'user',
         content: JSON.stringify({
           type: 'user',
-          // no uuid — this is a tool result, not a task dispatch
           message: {
             role: 'user',
             content: [{ type: 'tool_result', tool_use_id: 'x', content: 'ok' }],
@@ -1199,13 +1077,10 @@ describe('useTurnBlocks', () => {
       });
 
       const items = renderUseTurnBlocks([toolResultMsg, leaderMsg, workerMsg2], false);
-      // worker[tool-result-user], leader, worker → 3 turns (no hold, no uuid)
       expect(items.filter((it) => it.type === 'turn')).toHaveLength(3);
     });
 
     it('emits a held task message as a standalone turn if no continuation arrives', () => {
-      // Planner receives a task message but gets interrupted by the leader,
-      // and no further planner messages arrive before end-of-stream.
       const leaderAssistant = makeAgentMessage({
         authorRole: 'leader',
         authorSessionId: 'sess-leader',
@@ -1219,7 +1094,6 @@ describe('useTurnBlocks', () => {
         uuid: 'pending-task',
         createdAt: 1001,
       });
-      // Only leader messages follow — planner never sends more
       const leaderContinues = makeAgentMessage({
         authorRole: 'leader',
         authorSessionId: 'sess-leader',
@@ -1230,7 +1104,6 @@ describe('useTurnBlocks', () => {
       const items = renderUseTurnBlocks([leaderAssistant, plannerTask, leaderContinues], false);
       const turns = items.filter((it) => it.type === 'turn').map(asTurn);
 
-      // Planner's held task message is emitted as a standalone turn at the end
       const plannerTurn = turns.find((t) => t.agentRole === 'planner');
       expect(plannerTurn).toBeDefined();
       expect(plannerTurn!.messageCount).toBe(1);
@@ -1238,14 +1111,11 @@ describe('useTurnBlocks', () => {
     });
   });
 
-  // ── Real-time delta ──────────────────────────────────────────────────────
-
   describe('real-time delta', () => {
     it('adding a message to the same session extends the existing turn', () => {
       const msg1 = makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1' });
       const msg2 = makeAgentMessage({ authorRole: 'coder', authorSessionId: 'sess-1' });
 
-      // Initial render with one message
       const { result, rerender } = renderHook(
         ({ m, tail }: { m: SessionGroupMessage[]; tail: boolean }) => useTurnBlocks(m, tail),
         { initialProps: { m: [msg1], tail: true } }
@@ -1253,9 +1123,8 @@ describe('useTurnBlocks', () => {
       expect(result.current).toHaveLength(1);
       expect(asTurn(result.current[0]).messageCount).toBe(1);
 
-      // Add second message from same session
       rerender({ m: [msg1, msg2], tail: true });
-      expect(result.current).toHaveLength(1); // still one turn
+      expect(result.current).toHaveLength(1);
       expect(asTurn(result.current[0]).messageCount).toBe(2);
     });
 
@@ -1269,9 +1138,8 @@ describe('useTurnBlocks', () => {
       );
       expect(result.current).toHaveLength(1);
 
-      // Add message from a different session
       rerender({ m: [msg1, msg2], tail: true });
-      expect(result.current).toHaveLength(2); // two turns now
+      expect(result.current).toHaveLength(2);
       expect(asTurn(result.current[0]).sessionId).toBe('sess-1');
       expect(asTurn(result.current[1]).sessionId).toBe('sess-2');
     });
@@ -1284,10 +1152,8 @@ describe('useTurnBlocks', () => {
         ({ m, tail }: { m: SessionGroupMessage[]; tail: boolean }) => useTurnBlocks(m, tail),
         { initialProps: { m: [msg1], tail: true } }
       );
-      // Initially first turn is active
       expect(asTurn(result.current[0]).isActive).toBe(true);
 
-      // After session switch, first turn inactive, second is active
       rerender({ m: [msg1, msg2], tail: true });
       expect(asTurn(result.current[0]).isActive).toBe(false);
       expect(asTurn(result.current[1]).isActive).toBe(true);
@@ -1309,23 +1175,15 @@ describe('useTurnBlocks', () => {
         ({ m, tail }: { m: SessionGroupMessage[]; tail: boolean }) => useTurnBlocks(m, tail),
         { initialProps: { m: [msg1], tail: true } }
       );
-      // Preview is the only message initially
       const preview1 = asTurn(result.current[0]).previewMessage;
       expect(preview1?.uuid).toBe('uuid-first');
 
-      // After streaming new message, preview updates to the latest
       rerender({ m: [msg1, msg2], tail: true });
       const preview2 = asTurn(result.current[0]).previewMessage;
       expect(preview2?.uuid).toBe('uuid-latest');
     });
 
     it('mid-turn runtime buffering is stable across incremental re-renders', () => {
-      // Simulates a status message arriving mid-turn during streaming:
-      // Step 1: [agentMsg1] — one active turn
-      // Step 2: [agentMsg1, statusMsg] — still one turn + one buffered runtime
-      // Step 3: [agentMsg1, statusMsg, agentMsg1b] — same session: turn extended, runtime after it
-      // Step 4: [agentMsg1, statusMsg, agentMsg1b, agentMsg2] — new session: two turns with runtime between
-
       const agentMsg1 = makeAgentMessage({
         authorRole: 'coder',
         authorSessionId: 'worker',
@@ -1348,24 +1206,20 @@ describe('useTurnBlocks', () => {
         { initialProps: { m: [agentMsg1], tail: true } }
       );
 
-      // Step 1: one active turn
       expect(result.current).toHaveLength(1);
       expect(asTurn(result.current[0]).isActive).toBe(true);
 
-      // Step 2: status mid-stream — still one turn, runtime buffered after it
       rerender({ m: [agentMsg1, statusMsg], tail: true });
       expect(result.current).toHaveLength(2);
       expect(result.current[0].type).toBe('turn');
       expect(result.current[1].type).toBe('runtime');
 
-      // Step 3: same session appends — turn extends, runtime still follows
       rerender({ m: [agentMsg1, statusMsg, agentMsg1b], tail: true });
       expect(result.current).toHaveLength(2);
       expect(result.current[0].type).toBe('turn');
       expect(asTurn(result.current[0]).messageCount).toBe(2);
       expect(result.current[1].type).toBe('runtime');
 
-      // Step 4: new session — two turns with runtime between them
       rerender({ m: [agentMsg1, statusMsg, agentMsg1b, agentMsg2], tail: true });
       expect(result.current).toHaveLength(3);
       expect(result.current[0].type).toBe('turn');

@@ -1,10 +1,3 @@
-/**
- * ContextTracker Tests
- *
- * Tests context window usage tracking backed by the SDK's native
- * `query.getContextUsage()` (adapted via `ContextFetcher`).
- */
-
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { ContextTracker, reserveBasedThreshold } from '../../../../src/lib/agent/context-tracker';
 import type { ContextInfo } from '@hyperneo/shared';
@@ -196,7 +189,6 @@ describe('ContextTracker', () => {
         percentUsed: 76,
         breakdown: {},
       });
-      // Kimi 262k threshold = 262144 - 45000 = 217144.
       expect(tracker.shouldCompactAt(217_144)).toBe(false);
     });
 
@@ -257,19 +249,13 @@ describe('ContextTracker', () => {
     });
 
     it('uses the SDK 33k buffer for normal-sized windows', () => {
-      // SDK trigger = window - min(maxOutputTokens, 20000) - 13000 = window - 33000.
-      // 200k window: threshold = 200k - 33k = 167k. Matches the SDK's own trigger.
       expect(reserveBasedThreshold(200_000)).toBe(167_000);
       expect(reserveBasedThreshold(200_000, 'anthropic')).toBe(167_000);
       expect(reserveBasedThreshold(200_000, 'glm')).toBe(167_000);
-      // 1M window: threshold = 1M - 33k = 967k.
       expect(reserveBasedThreshold(1_000_000)).toBe(967_000);
     });
 
     it('uses the larger 45k reserve for Kimi to cover ~32k output + reasoning', () => {
-      // Kimi: SDK auto-compact disabled, HyperNeo is sole path. Its ~32k max
-      // output plus mandatory reasoning requires a bigger buffer than the SDK
-      // default 33k. 262144 - 45000 = 217144.
       expect(reserveBasedThreshold(262_144, 'kimi')).toBe(217_144);
     });
 
@@ -279,13 +265,10 @@ describe('ContextTracker', () => {
     });
 
     it('clamps the threshold to at least 1 for windows at or below the buffer', () => {
-      // Windows smaller than the active reserve would produce 0 or negative; floor
-      // at 1 so shouldCompactAt still fires.
-      expect(reserveBasedThreshold(80_000)).toBe(47_000); // 80k - 33k = 47k
-      expect(reserveBasedThreshold(8_000)).toBe(1); // below buffer → floored
+      expect(reserveBasedThreshold(80_000)).toBe(47_000);
+      expect(reserveBasedThreshold(8_000)).toBe(1);
       expect(reserveBasedThreshold(100)).toBe(1);
       expect(reserveBasedThreshold(1)).toBe(1);
-      // Kimi reserve is larger, so a 44k window floors to 1.
       expect(reserveBasedThreshold(44_000, 'kimi')).toBe(1);
     });
 

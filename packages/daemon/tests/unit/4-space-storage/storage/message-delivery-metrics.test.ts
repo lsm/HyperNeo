@@ -1,7 +1,3 @@
-/**
- * Delivery exactly-once observability metrics (task #861 item 13).
- */
-
 import { describe, expect, it, beforeEach } from 'bun:test';
 import {
   DeliveryMetrics,
@@ -55,7 +51,7 @@ describe('DeliveryMetrics (task #861 item 13)', () => {
     it('counts every SDK handoff in feedsObserved (plain counter)', () => {
       metrics.recordFeed('a');
       metrics.recordFeed('b');
-      metrics.recordFeed('a'); // re-feed within window → duplicate
+      metrics.recordFeed('a');
       const snap = metrics.snapshot();
       expect(snap.feedsObserved).toBe(3);
     });
@@ -84,24 +80,21 @@ describe('DeliveryMetrics (task #861 item 13)', () => {
     });
 
     it('forgetFeed exempts an intentional recovery re-drive from duplicate attribution', () => {
-      // The recovery reopen path (confirmed no-result turn) declares the prior
-      // feed void: the retry's re-feed is by design, not an exactly-once breach.
       metrics.recordFeed('recover');
       metrics.forgetFeed('recover');
-      metrics.recordFeed('recover'); // the retry's re-feed
+      metrics.recordFeed('recover');
       const snap = metrics.snapshot();
       expect(snap.duplicateFeedCount).toBe(0);
       expect(snap.duplicateUuids).not.toContain('recover');
-      // feedsObserved still counts every handoff — only attribution resets.
       expect(snap.feedsObserved).toBe(2);
     });
 
     it('forgetFeed does not un-flag an already-recorded true duplicate', () => {
       metrics.recordFeed('dup');
-      metrics.recordFeed('dup'); // a genuine double-feed — recorded
+      metrics.recordFeed('dup');
       metrics.forgetFeed('dup');
       const snap = metrics.snapshot();
-      expect(snap.duplicateFeedCount).toBe(1); // history is not rewritten
+      expect(snap.duplicateFeedCount).toBe(1);
     });
   });
 
@@ -131,7 +124,6 @@ describe('DeliveryMetrics (task #861 item 13)', () => {
       metrics.recordReclaimSkip('alreadyConsumed');
       metrics.recordReclaimSkip('alreadySubmitted');
       const { reclaimSkips } = metrics.snapshot();
-      // Non-zero prevented counts mean the synchronous consumed-flip + skip are working.
       expect(reclaimSkips.alreadyConsumed + reclaimSkips.alreadySubmitted).toBeGreaterThan(0);
     });
   });
@@ -148,7 +140,6 @@ describe('DeliveryMetrics (task #861 item 13)', () => {
       for (const ms of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) metrics.recordResidualWindow(ms);
       const snap = metrics.snapshot();
       expect(snap.residualWindowSamples).toBe(10);
-      // rank = p*(n-1); P50 = 5.5, P99 = 9 + (10-9)*0.91 = 9.91 (linear interp).
       expect(snap.residualWindowP50).toBeCloseTo(5.5, 5);
       expect(snap.residualWindowP99).toBeCloseTo(9.91, 2);
     });
@@ -179,17 +170,16 @@ describe('DeliveryMetrics (task #861 item 13)', () => {
   describe('bounded memory (review: bound the per-message feed history)', () => {
     it('caps the recent-feed window so memory does not grow with total message volume', () => {
       for (let i = 0; i < 10_000; i++) metrics.recordFeed(`uuid-${i}`);
-      // feedsObserved tracks the true total; the internal recent-window is bounded.
       const snap = metrics.snapshot();
       expect(snap.feedsObserved).toBe(10_000);
-      expect(snap.duplicateFeedCount).toBe(0); // all distinct, none re-fed
+      expect(snap.duplicateFeedCount).toBe(0);
     });
 
     it('still detects a duplicate whose first feed is within the recent window', () => {
-      for (let i = 0; i < 900; i++) metrics.recordFeed(`uuid-${i}`); // fill window below cap
+      for (let i = 0; i < 900; i++) metrics.recordFeed(`uuid-${i}`);
       metrics.recordFeed('reclaim-me');
-      for (let i = 900; i < 1200; i++) metrics.recordFeed(`uuid-${i}`); // push but keep reclaim-me in window
-      metrics.recordFeed('reclaim-me'); // re-feed within window → duplicate
+      for (let i = 900; i < 1200; i++) metrics.recordFeed(`uuid-${i}`);
+      metrics.recordFeed('reclaim-me');
       const snap = metrics.snapshot();
       expect(snap.duplicateUuids).toContain('reclaim-me');
     });

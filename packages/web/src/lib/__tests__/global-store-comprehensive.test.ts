@@ -1,16 +1,9 @@
 // @ts-nocheck
-/**
- * Comprehensive tests for global-store.ts
- *
- * Tests GlobalStore class including initialization, refresh, and
- * state management.
- */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { Session } from '@hyperneo/shared';
 import { STATE_CHANNELS } from '@hyperneo/shared';
 
-// Mock connection-manager module - must be at top level and use inline factory
 vi.mock('../connection-manager.js', () => {
   const mockHub = {
     request: vi.fn().mockResolvedValue({ acknowledged: true }),
@@ -28,13 +21,10 @@ vi.mock('../connection-manager.js', () => {
   };
 });
 
-// Now import GlobalStore - it will use the mocked connectionManager
 import { GlobalStore } from '../global-store.js';
 
-// Import connectionManager to access the mock
 import { connectionManager } from '../connection-manager.js';
 
-// Helper to create mock sessions
 function createMockSession(id: string, overrides: Partial<Session> = {}): Session {
   return {
     id,
@@ -56,7 +46,6 @@ function createMockSession(id: string, overrides: Partial<Session> = {}): Sessio
   };
 }
 
-// Helper to create a mock hub with all required methods
 function createMockHub(overrides: Record<string, unknown> = {}) {
   return {
     request: vi.fn().mockResolvedValue({ acknowledged: true }),
@@ -75,7 +64,6 @@ describe('GlobalStore', () => {
   beforeEach(() => {
     store = new GlobalStore();
     vi.clearAllMocks();
-    // Reset default mock behavior - return a working hub
     (
       connectionManager as unknown as {
         getHubIfConnected: { mockReturnValue: (arg: unknown) => void };
@@ -153,7 +141,6 @@ describe('GlobalStore', () => {
     });
 
     it('recentSessions should return last 5 sessions sorted by lastActiveAt', () => {
-      // Create sessions with different lastActiveAt timestamps
       const session1 = createMockSession('1');
       session1.lastActiveAt = '2024-01-01T00:00:00Z';
       const session2 = createMockSession('2');
@@ -172,12 +159,11 @@ describe('GlobalStore', () => {
 
       const recent = store.recentSessions.value;
       expect(recent).toHaveLength(5);
-      // Most recent first (sorted by lastActiveAt descending)
-      expect(recent[0].id).toBe('6'); // 2024-01-06
-      expect(recent[1].id).toBe('2'); // 2024-01-05
-      expect(recent[2].id).toBe('4'); // 2024-01-04
-      expect(recent[3].id).toBe('3'); // 2024-01-03
-      expect(recent[4].id).toBe('5'); // 2024-01-02
+      expect(recent[0].id).toBe('6');
+      expect(recent[1].id).toBe('2');
+      expect(recent[2].id).toBe('4');
+      expect(recent[3].id).toBe('3');
+      expect(recent[4].id).toBe('5');
     });
 
     it('activeSessions should filter by active status', () => {
@@ -219,22 +205,17 @@ describe('GlobalStore', () => {
 
       await store.initialize();
 
-      // Should subscribe to LiveQuery snapshot and delta events
       expect(mockHub.onEvent).toHaveBeenCalledWith('liveQuery.snapshot', expect.any(Function));
       expect(mockHub.onEvent).toHaveBeenCalledWith('liveQuery.delta', expect.any(Function));
-      // Should subscribe to system state changes
       expect(mockHub.onEvent).toHaveBeenCalledWith(
         STATE_CHANNELS.GLOBAL_SYSTEM,
         expect.any(Function)
       );
-      // Should subscribe to settings changes
       expect(mockHub.onEvent).toHaveBeenCalledWith(
         STATE_CHANNELS.GLOBAL_SETTINGS,
         expect.any(Function)
       );
-      // Should register reconnection handler
       expect(mockHub.onConnection).toHaveBeenCalledWith(expect.any(Function));
-      // Should fire initial LiveQuery subscribe
       expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
         queryName: 'sessions.list',
         params: [0],
@@ -253,24 +234,19 @@ describe('GlobalStore', () => {
 
       await store.initialize();
 
-      // Check that initialized flag is set
       const privateStore = store as unknown as { initialized: boolean };
       expect(privateStore.initialized).toBe(true);
 
-      // Reset the mock call count
       mockHub.request.mockClear();
 
-      // Second initialize should be a no-op
       await store.initialize();
 
-      // Hub call should not have been made again
       expect(mockHub.request).not.toHaveBeenCalled();
     });
 
     it('should derive hasArchivedSessions from totalCount metadata', async () => {
       expect(store.hasArchivedSessions.value).toBe(false);
 
-      // Set sessionsTotalCount greater than visible sessions
       store.sessions.value = [createMockSession('1')];
       store.sessionsTotalCount.value = 3;
 
@@ -280,7 +256,6 @@ describe('GlobalStore', () => {
 
   describe('refresh', () => {
     beforeEach(async () => {
-      // Initialize store first
       const mockHub = createMockHub();
       (
         connectionManager as unknown as {
@@ -316,16 +291,13 @@ describe('GlobalStore', () => {
 
       await store.refresh();
 
-      // Should re-subscribe to LiveQuery
       expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
         queryName: 'sessions.list',
         params: [0],
         subscriptionId: 'sessions-list',
       });
-      // Should fetch GLOBAL_SNAPSHOT
       expect(mockHub.request).toHaveBeenCalledWith(STATE_CHANNELS.GLOBAL_SNAPSHOT, {});
 
-      // System and settings should be updated from snapshot
       expect(store.systemState.value?.auth?.method).toBe('oauth');
       expect(store.settings.value?.permissionMode).toBe('acceptEdits');
     });
@@ -375,7 +347,6 @@ describe('GlobalStore', () => {
         }
       ).getHub.mockResolvedValue(mockHub);
 
-      // Should not throw
       await store.refresh();
     });
   });
@@ -400,7 +371,6 @@ describe('GlobalStore', () => {
 
       await store.initialize();
 
-      // Simulate LiveQuery snapshot event
       expect(snapshotHandlers.length).toBe(1);
       snapshotHandlers[0]({
         subscriptionId: 'sessions-list',
@@ -431,7 +401,6 @@ describe('GlobalStore', () => {
 
       await store.initialize();
 
-      // Simulate LiveQuery snapshot event for a different subscription
       snapshotHandlers[0]({
         subscriptionId: 'other-subscription',
         rows: [createMockSession('sess-other')],
@@ -457,12 +426,10 @@ describe('GlobalStore', () => {
         }
       ).getHub.mockResolvedValue(mockHub);
 
-      // Pre-populate sessions
       store.sessions.value = [createMockSession('1'), createMockSession('2')];
 
       await store.initialize();
 
-      // Simulate delta: add one, update one, remove one
       expect(deltaHandlers.length).toBe(1);
       deltaHandlers[0]({
         subscriptionId: 'sessions-list',

@@ -1,17 +1,3 @@
-/**
- * Unit tests for the `resetContextPerTurn` runtime mechanism in TaskAgentManager.
- *
- * Verifies the trigger/gating contract:
- *  - A task input (node→node handoff) to a slot with resetContextPerTurn set,
- *    at a turn boundary with prior context, clears the SDK context before the
- *    turn runs (and still delivers the handoff + persists it).
- *  - Human input, system recovery nags, the slot's first turn (no prior
- *    sdkSessionId), a busy session, and a slot without the flag do NOT clear.
- *
- * The clear primitive itself (AgentSession.clearConversationContext) is covered
- * in agent-session-clear-context.test.ts; here clearConversationContext is
- * mocked so we assert purely on the DECISION to invoke it.
- */
 import { describe, expect, it, mock, beforeAll, afterAll } from 'bun:test';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
@@ -34,11 +20,6 @@ function makeManager(opts: {
   nodeMissing?: boolean;
   nodeEmptyAgents?: boolean;
   hasActiveDeliveryJob?: boolean;
-  /**
-   * Controls the v2 idempotent-persist guard: the sendStatus getDeliveryContent
-   * returns for the message (undefined ⇒ no existing row → fresh persist). Used
-   * by the v2 dedup describe to exercise the consumed/failed/enqueued branches.
-   */
   deliveryContent?: { sendStatus: string };
 }): {
   manager: TaskAgentManager;
@@ -49,12 +30,6 @@ function makeManager(opts: {
   const enqueueMock = mock(async () => {});
   const getProcessingState = mock(() => ({ status: 'idle' }));
   const saveUserMessage = mock(() => 'db-id');
-  // v2 durable-delivery plumbing (harmless under the legacy path, which never
-  // reaches these repos): the dedup guard's getDeliveryContent + the
-  // deliverMessage jobQueue calls.
-  // Test simplification: signal SDK consumption at enqueue time so the v2
-  // consumption-await in injectMessageIntoSession resolves (production signals
-  // from the bridge on the SDK's onSent; these tests don't drive a real turn).
   const jobQueueEnqueue = mock(
     (args: { payload?: { sessionId?: string; messageUuid?: string } }) => {
       const uuid = args?.payload?.messageUuid;
@@ -91,18 +66,11 @@ function makeManager(opts: {
       getDatabase: () => ({}),
       saveUserMessage,
       getSDKMessageRepo: () => ({
-        // The v2 dedup guard: return the configured prior outcome, or null when
-        // no row exists yet (the first-inject case).
         getDeliveryContent: () => opts.deliveryContent ?? null,
         reopenDeliveryByUuid,
         markDeliveryFailedByUuid: () => null,
         markDeliveryDeferredByUuid,
       }),
-      // The resetContextPerTurn gate calls hasActiveDeliveryJob (→ getJobQueueRepo
-      // .activeDeliveryMessageUuids) regardless of the delivery path. Return a
-      // pending job when the test opts in, so the gate's BLOCKING branch (don't
-      // clear while a durable turn is pending) is exercised. enqueue +
-      // getActiveDeliveryRole back the v2 deliverMessage chokepoint.
       getJobQueueRepo: () => ({
         activeDeliveryMessageUuids: () =>
           new Set<string>(opts.hasActiveDeliveryJob ? ['pending-job'] : []),
@@ -121,11 +89,6 @@ function makeManager(opts: {
         agentName: AGENT_NAME,
         agentSessionId: SESSION_ID,
       })),
-      // dev's terminal-task guard (resolveNodeExecutionForSubSession) calls this on
-      // every inject; return empty so the guard finds no execution and skips the
-      // cancelled/archived rejection (these tests exercise the clear path, not the
-      // guard). SESSION_ID doesn't parse to an embedded exec id, so getById is
-      // never reached.
       listByAgentSessionId: mock(() => []),
     },
     workflowRunRepo: {
@@ -153,7 +116,6 @@ function makeManager(opts: {
   };
 }
 
-/** Sneak a mock session into the private reverse index so inject resolves it. */
 function indexSession(manager: TaskAgentManager, session: AgentSession): void {
   (manager as unknown as { agentSessionIndex: Map<string, AgentSession> }).agentSessionIndex.set(
     SESSION_ID,
@@ -162,11 +124,6 @@ function indexSession(manager: TaskAgentManager, session: AgentSession): void {
 }
 
 describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
-  // These tests validate the resetContextPerTurn CLEAR decision, which is
-  // delivery-mechanism agnostic (the clear runs before the v2/legacy branch).
-  // Opt into the legacy inline path so the mock session — which has no
-  // stateManager and only a gate-level jobQueue stub — exercises the clear
-  // decision rather than the durable-delivery plumbing.
   const previousFlag = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
   beforeAll(() => {
     process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
@@ -177,7 +134,6 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
   });
   it('clears SDK context before a task handoff to a resetContextPerTurn slot with prior context', async () => {
     const { manager, session } = makeManager({ slotResets: true });
-    // Build a session that already has prior SDK context (a prior turn ran).
     const live = {
       session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
       getProcessingState: () => ({ status: 'idle' }),
@@ -187,11 +143,9 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     } as unknown as AgentSession;
     indexSession(manager, live);
 
-    // isSyntheticMessage=true → classified as 'task' at the inject entry point.
     await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
 
     expect(session.clearMock).toHaveBeenCalledTimes(1);
-    // The handoff is still delivered and persisted (UI thread continuity).
     expect(session.saveUserMessage).toHaveBeenCalled();
     expect(session.enqueueMock).toHaveBeenCalled();
   });
@@ -209,12 +163,7 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
 
     await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
 
-    // A durable turn is pending (activeDeliveryMessageUuids non-empty) — the
-    // resetContextPerTurn gate must BLOCK the clear so it doesn't race the
-    // pending v2 turn, even though the slot is reset-enabled + idle + has prior
-    // context (the conditions that would otherwise clear).
     expect(session.clearMock).not.toHaveBeenCalled();
-    // The handoff is still delivered and persisted.
     expect(session.saveUserMessage).toHaveBeenCalled();
     expect(session.enqueueMock).toHaveBeenCalled();
   });
@@ -237,7 +186,6 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
 
   it('does NOT clear on the first turn (no prior sdkSessionId)', async () => {
     const { manager, session } = makeManager({ slotResets: true });
-    // Fresh session: no sdkSessionId yet (the SDK has not run a turn).
     const live = {
       session: { id: SESSION_ID, sdkSessionId: undefined },
       getProcessingState: () => ({ status: 'idle' }),
@@ -301,9 +249,6 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
   });
 
   it('does NOT clear for synthetic non-handoff injects (external events / hook notices)', async () => {
-    // External-event digests (agent.message.inject) and hook-failure notices
-    // (notifySourceSession) are synthetic but NOT node→node handoffs — passing
-    // inputKind='system' must keep them from clearing a reset-enabled slot.
     const { manager, session } = makeManager({ slotResets: true });
     const live = {
       session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
@@ -328,9 +273,6 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
   });
 
   it('serializes concurrent injects per session so the clear cannot interleave', async () => {
-    // Two injects to the same idle reset-enabled session must not interleave:
-    // while one is parked in the (async) clear, the other waits on the
-    // per-session lock instead of delivering into the stopping query.
     const { manager, session } = makeManager({ slotResets: true });
     let releaseClear!: () => void;
     const clearGate = new Promise<void>((resolve) => {
@@ -350,24 +292,18 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     const settle = () => new Promise((r) => setTimeout(r, 0));
 
     const p1 = manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
-    await settle(); // first inject reaches the gated clear
+    await settle();
     const p2 = manager.injectSubSessionMessage(SESSION_ID, 'a human follow-up', false);
-    await settle(); // second inject would deliver here if not serialized
+    await settle();
 
-    // First inject is parked in the clear; the second is blocked on the lock —
-    // nothing has been delivered yet (saveUserMessage runs AFTER the clear).
     expect(session.saveUserMessage).toHaveBeenCalledTimes(0);
 
     releaseClear();
     await Promise.all([p1, p2]);
-    // Both delivered once serialized.
     expect(session.saveUserMessage).toHaveBeenCalledTimes(2);
   });
 
   it('does NOT drop the handoff when the node has a corrupt/empty agents array (P2-7)', async () => {
-    // resolveNodeAgents throws on an empty agents array. The clear lookup sits
-    // on the delivery path, so a throw must not abort the handoff — it should
-    // degrade to "no clear" and still deliver.
     const { manager, session } = makeManager({ slotResets: true, nodeEmptyAgents: true });
     const live = {
       session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
@@ -381,7 +317,6 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
 
     expect(session.clearMock).not.toHaveBeenCalled();
-    // The handoff is still delivered and persisted.
     expect(session.saveUserMessage).toHaveBeenCalled();
     expect(session.enqueueMock).toHaveBeenCalled();
   });
@@ -406,12 +341,6 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
 });
 
 describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => {
-  // The sibling describe opts into the legacy path to test the clear decision;
-  // here v2 runs default-on so the durable-delivery dedup guard is exercised.
-  // saveUserMessage mints a fresh row id each call, so a flush retry reusing the
-  // pending-row id must NOT insert a second sdk_messages row or re-drive a
-  // consumed turn — it checks the existing row first (mirrors the LTA +
-  // Space-agent injectors).
   const previousFlag = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
   beforeAll(() => {
     delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
@@ -436,7 +365,7 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
   }
 
   it('first inject persists the row and enqueues a durable job', async () => {
-    const { manager, session } = makeManager({}); // no existing row
+    const { manager, session } = makeManager({});
     indexSession(manager, liveSession(session));
 
     await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
@@ -462,17 +391,11 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
 
     expect(session.reopenDeliveryByUuid).toHaveBeenCalledTimes(1);
-    // The row already exists (failed) — reuse it, don't insert a second.
     expect(session.saveUserMessage).not.toHaveBeenCalled();
     expect(session.jobQueueEnqueue).toHaveBeenCalled();
   });
 
   it('a retry finding an existing CONSUMED row skips resetContextPerTurn (no /clear of the just-delivered handoff)', async () => {
-    // A crash after the delivery job completed but before markDelivered retries
-    // the same stable id. The slot has resetContextPerTurn + prior context, so
-    // it WOULD /clear — but the consumed check runs first (hoisted above the
-    // clear) and returns, so the context holding the just-delivered handoff is
-    // not rotated away. (Codex P1.)
     const { manager, session } = makeManager({
       slotResets: true,
       deliveryContent: { sendStatus: 'consumed' },
@@ -493,11 +416,6 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
   });
 
   it('a failed-row retry that hits the deferred branch marks the row deferred (replay-selectable)', async () => {
-    // A prior attempt's enqueue failed (→ row 'failed'); a retry while the
-    // target is in rate_limit_cooldown reaches the deferred branch. The row was
-    // reopened to 'enqueued' — the deferred branch must flip it to 'deferred'
-    // or QueryModeHandler's replay (send_status='deferred' only) never selects
-    // it and the handoff is lost. (Codex P1.)
     const { manager, session } = makeManager({ deliveryContent: { sendStatus: 'failed' } });
     const live = {
       session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
@@ -510,20 +428,13 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
 
     await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
 
-    expect(session.reopenDeliveryByUuid).toHaveBeenCalledTimes(1); // failed → enqueued
-    expect(session.markDeliveryDeferredByUuid).toHaveBeenCalledTimes(1); // enqueued → deferred
-    expect(session.saveUserMessage).not.toHaveBeenCalled(); // row reused, no duplicate
+    expect(session.reopenDeliveryByUuid).toHaveBeenCalledTimes(1);
+    expect(session.markDeliveryDeferredByUuid).toHaveBeenCalledTimes(1);
+    expect(session.saveUserMessage).not.toHaveBeenCalled();
   });
 
   it('a deferred human message to a busy live session persists as a deferred row (task #949)', async () => {
-    // Full Queue/next-turn path: space.task.sendMessage forwards
-    // deliveryMode:'defer' as injectSubSessionMessage's 5th arg. Against a live,
-    // busy (processing) session it must persist via saveUserMessage('deferred')
-    // — replayed at the next idle boundary, NOT enqueued as an immediate steer.
-    // The rate_limit_cooldown test above enters the deferred branch via the
-    // cooldown clause with the default immediate mode; this guards the explicit
-    // (deliveryMode === 'defer' && isBusy) clause for a human message.
-    const { manager, session } = makeManager({}); // no existing row → fresh persist
+    const { manager, session } = makeManager({});
     const live = {
       session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
       getProcessingState: () => ({ status: 'processing' }),
@@ -533,7 +444,6 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     } as unknown as AgentSession;
     indexSession(manager, live);
 
-    // isSyntheticMessage=false → inputKind='human' (no resetContextPerTurn clear).
     await manager.injectSubSessionMessage(
       SESSION_ID,
       'queue for next turn',
@@ -547,7 +457,6 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     expect(sid).toBe(SESSION_ID);
     expect(status).toBe('deferred');
     expect(origin).toBeUndefined();
-    // Not enqueued for an immediate steer — it waits for the next idle boundary.
     expect(session.enqueueMock).not.toHaveBeenCalled();
   });
 });

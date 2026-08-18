@@ -1,9 +1,3 @@
-/**
- * Tests for goal-status.ts
- *
- * Verifies goal statuses map to the expected tones and labels.
- */
-
 import { describe, expect, it } from 'vitest';
 import { GOAL_STATUS_CONFIG, getGoalStatusClasses, getGoalStatusConfig } from './goal-status.js';
 

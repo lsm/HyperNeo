@@ -1,23 +1,3 @@
-/**
- * Unit tests for HookEditorPanel.
- *
- * Covers:
- * - enabled toggle
- * - label validation
- * - source node selector
- * - target node selector
- * - MCP method selector
- * - template data JSON editor
- * - validator kind toggle (built-in vs script)
- * - built-in validator ID selector
- * - script source validation
- * - external lookup toggles
- * - authorized callers add/edit/remove
- * - retry settings (maxAttempts, delayMs, backoffMultiplier)
- * - unsupported poll and human-only notices
- * - classification and order
- */
-
 // @ts-nocheck
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { cleanup, fireEvent, render } from '@testing-library/preact';

@@ -1,25 +1,6 @@
-/**
- * QueryRunner × startup-gate integration tests
- *
- * Verifies the daemon-wide admission gate as wired into QueryRunner.runQuery:
- * concurrent cold-starts (spawn→first-message) are capped at
- * HYPERNEO_SDK_STARTUP_MAX_CONCURRENT, queued sessions are admitted FIFO as
- * first messages arrive, streaming sessions hold no slot (no starvation), and
- * every exit path releases the permit (first message, abort, error, EOF,
- * abort-while-queued).
- *
- * The SDK `query()` is replaced with a controllable factory whose async
- * iterator only advances when a test resolves a deferred `next()`. This file
- * keeps the default 15s startup timeout; the timer-driven timeout path is
- * covered separately in query-runner-startup-gate-timeout.test.ts (which must
- * load query-runner with a short timeout env before import).
- */
-
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { tmpdir } from 'node:os';
 
-// Controlled query factory — assigned per test below. mock.module is hoisted
-// above the static imports, so query-runner resolves `query` through this.
 let queryFactory: (() => unknown) | null = null;
 
 mock.module('@anthropic-ai/claude-agent-sdk', () => {
@@ -50,10 +31,6 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => {
   };
 });
 
-// Import the module under test dynamically, AFTER mock.module above has
-// registered the SDK override: the bun:test→vitest shim does not hoist
-// mock.module like vi.mock, so a static import here would load query-runner
-// before the mock applies (see session-lifecycle-sdk-title.test.ts).
 const { QueryRunner } = await import('../../../../src/lib/agent/query-runner');
 const { getSdkStartupGate, resetSdkStartupGateForTests } = await import(
   '../../../../src/lib/agent/sdk-startup-gate'
@@ -102,10 +79,8 @@ function defer<T>(): Deferred<T> {
   return guarded;
 }
 
-/** One SDK "subprocess": query() call with a test-driven message stream. */
 interface ControlledQuery {
   queryObject: QueryLike;
-  /** Deferreds for each iterator.next() the runner has pulled. */
   pendingNexts: Array<Deferred<IteratorResult<SDKMessage>>>;
   closeCount: number;
 }
@@ -137,7 +112,6 @@ function sdkMessage(): SDKMessage {
   return { type: 'system', subtype: 'init', session_id: 'sdk-session' } as unknown as SDKMessage;
 }
 
-/** Wait for the query's next open next() pull and end the stream with EOF. */
 async function completeQuery(
   query: ControlledQuery,
   waitFor: (predicate: () => boolean, timeoutMs?: number) => Promise<void>
@@ -261,7 +235,6 @@ describe('QueryRunner startup gate', () => {
 
   const settle = (ms = 30) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  /** Poll until predicate holds (first-run dynamic imports are slow). */
   async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
     const start = Date.now();
     while (!predicate()) {
@@ -272,7 +245,6 @@ describe('QueryRunner startup gate', () => {
     }
   }
 
-  /** Resolve the given query's next pending next() with a first SDK message. */
   function deliverFirstMessage(query: ControlledQuery): void {
     query.pendingNexts[0]?.resolve({ value: sdkMessage(), done: false });
   }
@@ -304,7 +276,6 @@ describe('QueryRunner startup gate', () => {
     await waitFor(() => spawned.length === 2);
     await settle();
 
-    // Only 2 of 5 ever reach spawn; the rest wait at the gate.
     expect(spawned.length).toBe(2);
     expect(getSdkStartupGate().getStats()).toEqual({
       active: 2,
@@ -319,12 +290,9 @@ describe('QueryRunner startup gate', () => {
     for (const { runner } of runners) runner.start();
     await waitFor(() => spawned.length === 2);
 
-    // s1's first message frees its slot immediately — s3 is admitted while s1
-    // and s2 are still mid-turn (their streams stay open).
     deliverFirstMessage(spawned[0]);
     await waitFor(() => spawned.length === 3);
 
-    // s2's first message admits s4.
     deliverFirstMessage(spawned[1]);
     await waitFor(() => spawned.length === 4);
     expect(getSdkStartupGate().getStats().active).toBe(2);
@@ -346,20 +314,15 @@ describe('QueryRunner startup gate', () => {
   it('releases the slot when a pre-first-message query is aborted (process exit path)', async () => {
     process.env.HYPERNEO_SDK_STARTUP_MAX_CONCURRENT = '1';
     const [first, second] = ['s1', 's2'].map((id) => createRunner(id));
-    // Start sequentially so `first` deterministically holds the only slot.
     first.runner.start();
     await waitFor(() => spawned.length === 1);
     second.runner.start();
     await waitFor(() => getSdkStartupGate().getStats().queued === 1);
 
-    // Simulate the session being stopped: the published controller aborts,
-    // the abortable iterator breaks, the attempt ends without a first message.
     first.ctx.queryAbortController?.abort();
 
-    // The slot was released by the attempt exit → s2 is admitted.
     await waitFor(() => spawned.length === 2);
     expect(getSdkStartupGate().getStats().active).toBe(1);
-    // First attempt fully finished despite never receiving a message.
     await first.ctx.queryPromise;
   });
 
@@ -372,7 +335,6 @@ describe('QueryRunner startup gate', () => {
 
     spawned[0].pendingNexts[0]?.reject(new Error('boom: stream failed'));
 
-    // Catch-entry release frees the slot → s2 admitted; s1 surfaced an error.
     await waitFor(() => spawned.length === 2);
     await waitFor(() => handleErrorSpy.mock.calls.length > 0);
   });
@@ -386,12 +348,9 @@ describe('QueryRunner startup gate', () => {
     second.runner.start();
     await waitFor(() => getSdkStartupGate().getStats().queued === 1);
 
-    // Interrupt-style abort while s2 waits at the gate.
     second.ctx.queryAbortController?.abort();
     await second.ctx.queryPromise;
 
-    // s2 never spawned and surfaced no error (abort path), and its aborted
-    // wait did not leak or steal a slot.
     expect(spawned.length).toBe(1);
     expect(handleErrorSpy).not.toHaveBeenCalled();
     expect(getSdkStartupGate().getStats()).toEqual({
@@ -400,7 +359,6 @@ describe('QueryRunner startup gate', () => {
       maxConcurrent: 1,
     });
 
-    // s1 completes → the gate drains fully.
     await completeQuery(spawned[0], waitFor);
     await first.ctx.queryPromise;
     expect(getSdkStartupGate().getStats()).toEqual({

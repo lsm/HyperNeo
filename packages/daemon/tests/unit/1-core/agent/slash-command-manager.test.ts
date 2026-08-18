@@ -1,9 +1,3 @@
-/**
- * SlashCommandManager Tests
- *
- * Tests for slash command fetching and caching.
- */
-
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import {
   SlashCommandManager,
@@ -112,14 +106,12 @@ describe('SlashCommandManager', () => {
       const existingCommands = ['/help', '/clear', '/context'];
       manager = createManager({ availableCommands: existingCommands });
 
-      // Commands should be restored from session
       expect(manager).toBeDefined();
     });
 
     it('should not restore if session has no commands', () => {
       manager = createManager({ availableCommands: [] });
 
-      // Log should not be called for restoration
       expect(mockLogger.log).not.toHaveBeenCalled();
     });
 
@@ -153,11 +145,10 @@ describe('SlashCommandManager', () => {
 
     it('should fallback to built-in commands if SDK returns nothing', async () => {
       supportedCommandsSpy.mockResolvedValue([]);
-      manager = createManager({}, null); // No query object
+      manager = createManager({}, null);
 
       const commands = await manager.getSlashCommands();
 
-      // Should have built-in commands
       expect(commands.length).toBeGreaterThan(0);
     });
 
@@ -208,12 +199,10 @@ describe('SlashCommandManager', () => {
 
       await manager.fetchAndCache();
 
-      // Should update session in database
       expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
         availableCommands: expect.arrayContaining(['help', 'context']),
       });
 
-      // Should emit event
       expect(emitSpy).toHaveBeenCalledWith('commands.updated', {
         sessionId: 'test-session-id',
         commands: expect.arrayContaining(['help']),
@@ -245,7 +234,6 @@ describe('SlashCommandManager', () => {
       await manager.fetchAndCache();
       await manager.fetchAndCache();
 
-      // Should only call SDK once
       expect(supportedCommandsSpy).toHaveBeenCalledTimes(1);
     });
 
@@ -253,7 +241,6 @@ describe('SlashCommandManager', () => {
       supportedCommandsSpy.mockRejectedValue(new Error('SDK error'));
       manager = createManager();
 
-      // Should not throw
       await manager.fetchAndCache();
 
       expect(mockLogger.warn).toHaveBeenCalledWith(
@@ -270,9 +257,7 @@ describe('SlashCommandManager', () => {
 
       const commands = await manager.getSlashCommands();
 
-      // Should have SDK command
       expect(commands).toContain('custom');
-      // Should have SDK built-in commands
       expect(commands).toContain('clear');
       expect(commands).toContain('help');
     });
@@ -305,7 +290,6 @@ describe('SlashCommandManager', () => {
 
       const commands = await manager.getSlashCommands();
 
-      // Should not have duplicate 'help' or 'clear'
       const helpCount = commands.filter((c) => c === 'help').length;
       const clearCount = commands.filter((c) => c === 'clear').length;
       expect(helpCount).toBe(1);

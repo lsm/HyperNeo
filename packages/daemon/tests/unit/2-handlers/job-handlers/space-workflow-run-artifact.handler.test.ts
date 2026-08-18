@@ -1,12 +1,3 @@
-/**
- * Tests for the space-workflow-run-artifact sync handlers.
- *
- * These handlers run real git subprocesses, so the tests spin up a temporary
- * git repo under /tmp, create commits, stage uncommitted changes, and then
- * invoke the handlers against that repo. They also verify the handlers
- * correctly upsert cache rows and publish InternalEventBus events.
- */
-
 import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -153,8 +144,6 @@ describe('space-workflow-run-artifact.handler', () => {
 
   describe('handleSyncGateArtifacts', () => {
     it('writes an ok cache row and emits when git diff succeeds', async () => {
-      // Modify a tracked file so `git diff HEAD --numstat` has content.
-      // (Untracked files do not show up in `git diff HEAD`.)
       writeFileSync(join(repoPath, 'README.md'), 'hello\nnew line\n');
       const { deps, publish, cacheRepo } = makeDeps({ worktreePath: repoPath, db });
 
@@ -194,7 +183,6 @@ describe('space-workflow-run-artifact.handler', () => {
 
     it('writes an error cache row when no worktree can be resolved', async () => {
       const { deps, cacheRepo } = makeDeps({ worktreePath: null, db });
-      // Also stub spaceManager to return no workspacePath so all fallback chains fail
       (deps.spaceManager.getSpace as ReturnType<typeof mock>).mockImplementation(async () => ({
         id: SPACE_ID,
         slug: 'space',
@@ -251,7 +239,6 @@ describe('space-workflow-run-artifact.handler', () => {
     });
 
     it('writes an ok cache row with the diff payload', async () => {
-      // Modify the existing README to generate a diff
       writeFileSync(join(repoPath, 'README.md'), 'hello\nadded line\n');
       const { deps, cacheRepo } = makeDeps({ worktreePath: repoPath, db });
 

@@ -1,14 +1,3 @@
-/**
- * RateLimitWatchdog Tests
- *
- * Two-phase recovery:
- * - Phase A: immediate fallback-model switch (free, no retryCount bump).
- * - Phase B: cooldown at a parsed reset time or on the backoff ladder.
- *
- * Plus episode tracking (tried entries), pause/resume surfacing, and the
- * preserved cancel/retryNow/reset/destroy semantics.
- */
-
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import {
   RateLimitWatchdog,
@@ -59,7 +48,6 @@ function createMockDeps(opts: MockDepsOptions = {}): {
 } {
   let current = opts.current ?? { provider: 'anthropic', model: 'claude-sonnet-4-5' };
   const switchAndRetry = mock(async (_msg: Msg | null, entry: FallbackModelEntry) => {
-    // Simulate the session's model actually changing on a successful switch.
     current = { provider: entry.provider, model: entry.model };
     return typeof opts.switchSucceeds === 'function'
       ? opts.switchSucceeds(entry)
@@ -108,9 +96,6 @@ describe('RateLimitWatchdog', () => {
     });
 
     it('defaults maxAutoRetries to the full backoff ladder length (every step reachable)', () => {
-      // With no config override, the production budget must cover the whole
-      // ladder (10m→4h) so a no-reset-timestamp 429 can reach the 2h/4h steps
-      // before recovery goes terminal. (Parsed-reset waits are free.)
       const { deps } = createMockDeps();
       const watchdog = new RateLimitWatchdog('s', stateManager, deps);
       expect(watchdog.getState().maxRetries).toBe(BACKOFF_LADDER_MS.length);
@@ -130,14 +115,13 @@ describe('RateLimitWatchdog', () => {
       expect(watchdog.getState().status).toBe('cooldown');
       expect(watchdog.getState().retryCount).toBe(1);
       expect(watchdog.getState().lastUserMessage).toEqual({ uuid: 'm1', content: 'hi' });
-      // Pause surfaced as a (transient) rate_limit.
       expect(notifyPause).toHaveBeenCalledTimes(1);
       expect(notifyPause.mock.calls[0][0]).toMatchObject({ kind: 'rate_limit' });
       watchdog.cancel();
     });
 
     it('schedules a cooldown at a parsed reset time without bumping retryCount (free wait)', async () => {
-      const reset = Date.now() + 5 * 60 * 60 * 1000; // 5h out
+      const reset = Date.now() + 5 * 60 * 60 * 1000;
       const { deps, notifyPause } = createMockDeps({ chain: [] });
       const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
       const result = await watchdog.scheduleRetry(
@@ -148,11 +132,10 @@ describe('RateLimitWatchdog', () => {
         { uuid: 'm1', content: 'hi' }
       );
       expect(result).toBe(true);
-      expect(watchdog.getState().retryCount).toBe(0); // free wait
+      expect(watchdog.getState().retryCount).toBe(0);
       const cooldownArgs = (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock
         .calls[0][0];
       expect(cooldownArgs.retryAt).toBeGreaterThan(Date.now());
-      // Usage cap (reset known) → usage_limit.
       expect(notifyPause.mock.calls[0][0]).toMatchObject({ kind: 'usage_limit' });
       watchdog.cancel();
     });
@@ -169,13 +152,9 @@ describe('RateLimitWatchdog', () => {
     it('returns false when max cooldown retries exceeded', async () => {
       const { deps } = createMockDeps({ chain: [] });
       const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 2 });
-      // Repeated cooldowns on the SAME message (real cooldown-retry re-enqueues
-      // the same UUID). scheduleRetry clears the prior timer internally, so no
-      // cancel() between iterations — that would start a fresh episode.
       const msg = { uuid: 'm1', content: 'x' };
       await watchdog.scheduleRetry('429', msg);
       await watchdog.scheduleRetry('429', msg);
-      // 3rd cooldown attempt (retryCount already 2) → false.
       const result = await watchdog.scheduleRetry('429', msg);
       expect(result).toBe(false);
       expect(watchdog.getState().retryCount).toBe(2);
@@ -185,25 +164,21 @@ describe('RateLimitWatchdog', () => {
     it('a parsed-reset wait bypasses the maxAutoRetries budget (free wait)', async () => {
       const { deps } = createMockDeps({ chain: [] });
       const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 2 });
-      // Burn the budget on backoff (no-timestamp) cooldowns for the same message.
       const msg = { uuid: 'm1', content: 'x' };
       await watchdog.scheduleRetry('429', msg);
       await watchdog.scheduleRetry('429', msg);
-      expect(watchdog.getState().retryCount).toBe(2); // at the budget
+      expect(watchdog.getState().retryCount).toBe(2);
 
-      // A parseable reset wait is free: returns true AND does not bump retryCount
-      // even though we are already at maxAutoRetries.
       const resetIso = new Date(Date.now() + 60 * 60 * 1000).toISOString();
       const result = await watchdog.scheduleRetry(`resets ${resetIso}`, msg);
       expect(result).toBe(true);
-      expect(watchdog.getState().retryCount).toBe(2); // unchanged — free wait
+      expect(watchdog.getState().retryCount).toBe(2);
       watchdog.cancel();
     });
 
     it('notifyPause resetAt carries the 30s buffer over the parsed reset time', async () => {
       const { deps, notifyPause } = createMockDeps({ chain: [] });
       const watchdog = new RateLimitWatchdog('s', stateManager, deps);
-      // Use a whole-second reset so the second-granularity ISO parse is exact.
       const resetAt = Math.floor((Date.now() + 60 * 60 * 1000) / 1000) * 1000;
       const resetIso = new Date(resetAt).toISOString();
       await watchdog.scheduleRetry(`resets ${resetIso}`, { uuid: 'm1', content: 'x' });
@@ -239,7 +214,6 @@ describe('RateLimitWatchdog', () => {
       await flush();
       expect(switchAndRetry).toHaveBeenCalledTimes(1);
       expect(switchAndRetry.mock.calls[0][1]).toEqual(A);
-      // No cooldown scheduled for a fallback switch.
       expect(stateManager.setRateLimitCooldown).not.toHaveBeenCalled();
       expect(watchdog.getState().retryCount).toBe(0);
       expect(watchdog.getState().triedEntries).toContain('anthropic/sonnet');
@@ -258,22 +232,17 @@ describe('RateLimitWatchdog', () => {
     });
 
     it('dedupes the current model against an alias/canonical fallback via resolveModelId', async () => {
-      // Session is configured with alias `sonnet`; the fallback chain lists the
-      // canonical `claude-sonnet-4-5`. Without canonical resolution the entry
-      // looks new and the watchdog would switch to the SAME model forever.
       const canonical: FallbackModelEntry = { provider: 'anthropic', model: 'claude-sonnet-4-5' };
       const other: FallbackModelEntry = { provider: 'glm', model: 'glm-4.6' };
       const { deps, switchAndRetry } = createMockDeps({
         current: { provider: 'anthropic', model: 'sonnet' },
         chain: [canonical, other],
       });
-      // Resolve both `sonnet` and `claude-sonnet-4-5` to the same canonical id.
       deps.resolveModelId = async (_p, m) =>
         m === 'sonnet' || m === 'claude-sonnet-4-5' ? 'claude-sonnet-4-5' : m;
       const watchdog = new RateLimitWatchdog('s', stateManager, deps);
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
       await flush();
-      // The canonical entry is skipped (same model as current) → switches to `other`.
       expect(switchAndRetry.mock.calls[0][1]).toEqual(other);
     });
 
@@ -282,15 +251,15 @@ describe('RateLimitWatchdog', () => {
       const { deps, switchAndRetry } = createMockDeps({
         current: { provider: 'anthropic', model: 'sonnet' },
         chain: [A, B],
-        switchSucceeds: (e) => e !== A, // A fails, B succeeds
+        switchSucceeds: (e) => e !== A,
       });
       const watchdog = new RateLimitWatchdog('s', stateManager, deps);
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
       await flush();
-      expect(switchAndRetry).toHaveBeenCalledTimes(2); // A (fail) then B (success)
+      expect(switchAndRetry).toHaveBeenCalledTimes(2);
       expect(switchAndRetry.mock.calls[0][1]).toEqual(A);
       expect(switchAndRetry.mock.calls[1][1]).toEqual(B);
-      expect(watchdog.getState().retryCount).toBe(0); // switches are free
+      expect(watchdog.getState().retryCount).toBe(0);
       expect(stateManager.setRateLimitCooldown).not.toHaveBeenCalled();
     });
 
@@ -308,10 +277,6 @@ describe('RateLimitWatchdog', () => {
     });
 
     it('aborts the fallback switch if the episode is superseded during resolution', async () => {
-      // cancel()/reset() during the model-ID/chain/availability awaits bumps the
-      // generation. The entry-generation guard (captured before the first await)
-      // must abort the switch + re-enqueue rather than replay the stale message
-      // onto the new episode. (Codex P1: capture-before-await.)
       const A: FallbackModelEntry = { provider: 'glm', model: 'glm-a' };
       let resolveChain!: () => void;
       const { deps, switchAndRetry } = createMockDeps({
@@ -323,16 +288,11 @@ describe('RateLimitWatchdog', () => {
         });
       const watchdog = new RateLimitWatchdog('s', stateManager, deps);
       const pending = watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
-      // Advance past the resolveModelId microtask so scheduleRetry is suspended
-      // on the (controllable) chain-resolution await.
       await flush();
-      // Supersede while chain resolution is still pending.
       watchdog.cancel();
       resolveChain();
       const result = await pending;
       await flush();
-      // Recovery reports "engaged" so the caller skips the terminal 429
-      // broadcast, but no switch/cooldown side effect fires for the dead episode.
       expect(result).toBe(true);
       expect(switchAndRetry).not.toHaveBeenCalled();
       expect(stateManager.setRateLimitCooldown).not.toHaveBeenCalled();
@@ -351,20 +311,16 @@ describe('RateLimitWatchdog', () => {
       });
       const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
 
-      // 1st 429 on anthropic/sonnet → switch to A.
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
       await flush();
       expect(switchAndRetry.mock.calls[0][1]).toEqual(A);
-      // setModel simulates the session now running A.
       setModel(A.provider, A.model);
 
-      // 2nd 429 on A → switch to B.
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
       await flush();
       expect(switchAndRetry.mock.calls[1][1]).toEqual(B);
       setModel(B.provider, B.model);
 
-      // 3rd 429 on B → chain exhausted → cooldown (retryCount 1).
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
       expect(stateManager.setRateLimitCooldown).toHaveBeenCalledTimes(1);
       expect(watchdog.getState().retryCount).toBe(1);
@@ -377,23 +333,18 @@ describe('RateLimitWatchdog', () => {
         chain: [A, B],
       });
       const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 2 });
-      // Burn the two fallback switches.
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
       await flush();
       setModel(A.provider, A.model);
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
       await flush();
       setModel(B.provider, B.model);
-      // Two cooldown steps allowed. Same UUID throughout (one episode);
-      // clearPendingCooldown mirrors the real cooldown-retry path (cancel()
-      // would start a fresh episode and reset the budget).
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
       expect(watchdog.getState().retryCount).toBe(1);
       watchdog.clearPendingCooldown();
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
       expect(watchdog.getState().retryCount).toBe(2);
       watchdog.clearPendingCooldown();
-      // 3rd cooldown → exhausted → false (despite only 2 prior switchAndRetry calls).
       const result = await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
       expect(result).toBe(false);
       expect(switchAndRetry).toHaveBeenCalledTimes(2);
@@ -402,13 +353,11 @@ describe('RateLimitWatchdog', () => {
     it('a new user turn (different UUID) starts a fresh episode with a full budget', async () => {
       const { deps } = createMockDeps({ chain: [] });
       const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 1 });
-      // Burn the budget on message m1.
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'x' });
       expect(watchdog.getState().retryCount).toBe(1);
-      // A genuinely new user turn (m2) resets the episode — full budget back.
       const result = await watchdog.scheduleRetry('429', { uuid: 'm2', content: 'y' });
       expect(result).toBe(true);
-      expect(watchdog.getState().retryCount).toBe(1); // m2's first cooldown
+      expect(watchdog.getState().retryCount).toBe(1);
       watchdog.clearPendingCooldown();
     });
   });
@@ -424,46 +373,30 @@ describe('RateLimitWatchdog', () => {
     });
 
     it('isRateLimitBannerCancelled is a banner-only signal (not the raw pause flag)', async () => {
-      // The manual Resume path gates the respawn on isRateLimitBannerCancelled()
-      // (combined with retryNow() === false). This is NARROWER than the raw
-      // `paused` flag: a scheduled cooldown surfaces a pause but is NOT a banner
-      // cancel, and the banner flag is set only by cancel(notifyResume=false).
-      // Gating on `paused` instead would also respawn during the
-      // mid-fireCooldownRetry window (an auto-retry actively starting).
       const { deps, notifyResume } = createMockDeps({ chain: [] });
       const watchdog = new RateLimitWatchdog('s', stateManager, deps);
-      // Idle / never-paused → not banner-cancelled.
       expect(watchdog.isRateLimitBannerCancelled()).toBe(false);
 
-      // A scheduled cooldown surfaces a pause but is NOT a banner cancel.
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
       expect(watchdog.isRateLimitBannerCancelled()).toBe(false);
 
-      // Banner Cancel (notifyResume=false): timer dropped, episode cleared, but
-      // the task must stay paused. notifyResume is NOT called, retryNow can no
-      // longer fire, and the banner flag is set → the consumed turn is parked
-      // and a manual Resume re-spawns the execution.
       watchdog.cancel(false);
       expect(notifyResume).not.toHaveBeenCalled();
       expect(watchdog.retryNow()).toBe(false);
       expect(watchdog.isRateLimitBannerCancelled()).toBe(true);
 
-      // A normal cancel (notifyResume=true) clears the banner flag.
       watchdog.cancel(true);
       expect(notifyResume).toHaveBeenCalled();
       expect(watchdog.isRateLimitBannerCancelled()).toBe(false);
     });
 
     it('isRateLimitBannerCancelled is cleared by a new episode / fresh pause', async () => {
-      // A banner-cancelled session that later 429s again (new user turn) must
-      // not keep the stale banner flag — the new episode gets a fresh cooldown.
       const { deps } = createMockDeps({ chain: [] });
       const watchdog = new RateLimitWatchdog('s', stateManager, deps);
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
       watchdog.cancel(false);
       expect(watchdog.isRateLimitBannerCancelled()).toBe(true);
 
-      // A new episode (different UUID) clears it.
       await watchdog.scheduleRetry('429', { uuid: 'm2', content: 'hey' });
       expect(watchdog.isRateLimitBannerCancelled()).toBe(false);
       watchdog.cancel();
@@ -480,76 +413,48 @@ describe('RateLimitWatchdog', () => {
       await flush();
       expect(retryCallback).toHaveBeenCalledTimes(1);
       expect(retryCallback.mock.calls[0][0]).toEqual({ uuid: 'm1', content: 'hi' });
-      expect(retryCallback.mock.calls[0][1]).toBeUndefined(); // no switchTo on a cooldown retry
+      expect(retryCallback.mock.calls[0][1]).toBeUndefined();
       expect(notifyResume).toHaveBeenCalled();
     });
 
     it('retryNow does NOT notify resume and reschedules when the query fails to start', async () => {
-      // Manual "Retry Now" / Resume must not restore the task to in_progress if
-      // the retry query can't start — it reschedules a cooldown instead so the
-      // message is re-driven rather than orphaned (stuck/idle).
       const { deps, notifyResume } = createMockDeps({ chain: [] });
       const retryCallback = mock(async () => false);
       const watchdog = new RateLimitWatchdog('s', stateManager, deps);
       watchdog.setRetryCallback(retryCallback);
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
-      // setRateLimitCooldown called once on the initial schedule.
       expect(stateManager.setRateLimitCooldown).toHaveBeenCalledTimes(1);
       const result = watchdog.retryNow();
       expect(result).toBe(true);
       await flush();
       expect(retryCallback).toHaveBeenCalledTimes(1);
-      // Resume NOT notified (task stays paused)…
       expect(notifyResume).not.toHaveBeenCalled();
-      // …and a bounded startup-retry timer is armed (short delay, separate
-      // from the main cooldown budget) so the message is re-driven.
       expect(watchdog.isPending()).toBe(true);
       expect(watchdog.getState().status).toBe('cooldown');
       watchdog.cancel();
     });
 
     it('keeps the task paused (no resume) when startup retries are exhausted', async () => {
-      // Persistent SDK startup / resume-validation failure: every retry fails to
-      // start the query. After MAX_STARTUP_RETRIES the watchdog must NOT
-      // notifyResume — that would clear the restriction and restore the task to
-      // in_progress with no query running (session alive-but-idle → the runtime
-      // tick won't respawn it → the consumed turn is orphaned). Instead it stays
-      // paused, recoverable via the cross-restart recoverRateLimitedTasks sweep,
-      // a manual Resume (retryNow, which resets the startup-retry budget), or the
-      // persisted restrictions.resetAt.
       const { deps, notifyResume } = createMockDeps({ chain: [] });
       const retryCallback = mock(async () => false);
       const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
       watchdog.setRetryCallback(retryCallback);
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
-      // 1 initial cooldown state from scheduleRetry.
       expect(stateManager.setRateLimitCooldown).toHaveBeenCalledTimes(1);
 
-      // Fire MAX_STARTUP_RETRIES + 1 failed retries. retryNow bypasses the wait
-      // and each non-exhaustion failure re-arms a short startup-retry timer.
       for (let i = 0; i < 4; i++) {
         expect(watchdog.retryNow()).toBe(true);
         await flush();
       }
 
-      // The query was attempted once per fireCooldownRetry (4 = MAX_STARTUP + 1).
       expect(retryCallback).toHaveBeenCalledTimes(4);
-      // Resume was NEVER notified — the task is not falsely restored to
-      // in_progress; it stays paused for external recovery.
       expect(notifyResume).not.toHaveBeenCalled();
-      // The pause state was re-established on each non-exhaustion startup retry
-      // (1 initial + 3 startup retries = 4); the exhaustion branch adds none and
-      // clears nothing, so the session remains in rate_limit_cooldown.
       expect(stateManager.setRateLimitCooldown).toHaveBeenCalledTimes(4);
-      // The watchdog gives up its automatic-retry timer on exhaustion.
       expect(watchdog.isPending()).toBe(false);
       expect(watchdog.getState().status).toBe('idle');
     });
 
     it('admits a manual Retry Now after startup retries are exhausted', async () => {
-      // After exhaustion the auto-retry timer is gone, but retryNow must still
-      // work (manual Resume) so the in-memory task isn't stuck until a restart.
-      // (Codex P2: leave a retry driver after exhaustion.)
       const { deps } = createMockDeps({ chain: [] });
       const retryCallback = mock(async () => false);
       const watchdog = new RateLimitWatchdog('s', stateManager, deps);
@@ -559,8 +464,6 @@ describe('RateLimitWatchdog', () => {
         watchdog.retryNow();
         await flush();
       }
-      // Exhausted: no timer, yet a manual Retry Now is still admitted and re-fires
-      // the callback (with a fresh startup-retry budget).
       expect(watchdog.isPending()).toBe(false);
       expect(watchdog.retryNow()).toBe(true);
       await flush();
@@ -568,10 +471,6 @@ describe('RateLimitWatchdog', () => {
     });
 
     it('resets the startup-retry budget for a new user-message episode', async () => {
-      // A replacement turn must not inherit the prior turn's failed-startup
-      // count. Accumulate to the exhaustion threshold on m1, start a new episode
-      // (m2), and confirm its first failed start re-arms rather than exhausting.
-      // (Codex P2: reset startupRetries per episode.)
       const { deps } = createMockDeps({ chain: [] });
       const retryCallback = mock(async () => false);
       const watchdog = new RateLimitWatchdog('s', stateManager, deps);
@@ -581,9 +480,6 @@ describe('RateLimitWatchdog', () => {
         watchdog.retryNow();
         await flush();
       }
-      // m1 used 3 startup retries (re-armed each time; 3 is not > MAX 3). A new
-      // episode resets the budget; its first failed start re-arms. If the budget
-      // persisted (3 → 4), it would exhaust and NOT re-arm.
       await watchdog.scheduleRetry('429', { uuid: 'm2', content: 'hey' });
       watchdog.retryNow();
       await flush();
@@ -592,10 +488,6 @@ describe('RateLimitWatchdog', () => {
     });
 
     it('aborts a cooldown retry superseded mid-callback (no re-arm)', async () => {
-      // A cancel()/reset() during the awaited retry callback bumps the
-      // generation; fireCooldownRetry must abort instead of re-arming a
-      // startup-retry timer that would later fire into the dead episode.
-      // (Codex P1: guard the cooldown-restart callback with a generation.)
       const { deps } = createMockDeps({ chain: [] });
       let resolveCb!: (ok: boolean) => void;
       const retryCallback = mock(
@@ -607,20 +499,14 @@ describe('RateLimitWatchdog', () => {
       const watchdog = new RateLimitWatchdog('s', stateManager, deps);
       watchdog.setRetryCallback(retryCallback);
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
-      expect(watchdog.retryNow()).toBe(true); // fires fireCooldownRetry → awaits callback
-      // Supersede while the retry callback is pending.
-      watchdog.cancel(); // bumps generation, clears timer
-      resolveCb(false); // callback resolves failing
+      expect(watchdog.retryNow()).toBe(true);
+      watchdog.cancel();
+      resolveCb(false);
       await flush();
-      // No startup-retry timer re-armed for the dead episode.
       expect(watchdog.isPending()).toBe(false);
     });
 
     it('cancel(false) clears the cooldown without notifying resume', async () => {
-      // The cooldown banner's Cancel must NOT resume the task (which would
-      // restore it to in_progress and risk a false node-completion). cancel(false)
-      // clears the timer + bumps the generation but skips notifyResume.
-      // (Codex P1: do not resume workflow tasks when cancelling auto-retry.)
       const { deps, notifyResume } = createMockDeps({ chain: [] });
       const watchdog = new RateLimitWatchdog('s', stateManager, deps);
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
@@ -631,11 +517,6 @@ describe('RateLimitWatchdog', () => {
     });
 
     it('schedules a deferrive cooldown when a fallback re-entry exhausts the budget', async () => {
-      // Phase A selects a fallback (returning true, suppressing the terminal
-      // 429). When that switch fails and the re-entry finds the chain exhausted
-      // with the budget spent, scheduleRetry returns false; the false must not be
-      // ignored or the consumed turn sits idle with no driver.
-      // (Codex P2: handle a false result from fallback re-entry.)
       const A: FallbackModelEntry = { provider: 'glm', model: 'glm-a' };
       const { deps } = createMockDeps({
         current: { provider: 'anthropic', model: 'sonnet' },
@@ -644,21 +525,14 @@ describe('RateLimitWatchdog', () => {
       });
       const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 0 });
       const result = await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
-      expect(result).toBe(true); // Phase A selected A → suppressed the 429
-      // Let the failed switch + re-entry resolve.
+      expect(result).toBe(true);
       for (let i = 0; i < 6; i++) await flush();
-      // Re-entry exhausted the budget (maxAutoRetries 0) and returned false; the
-      // deferrive cooldown is armed so the turn is re-driven.
       expect(watchdog.isPending()).toBe(true);
       expect(stateManager.setRateLimitCooldown).toHaveBeenCalled();
       watchdog.cancel();
     });
 
     it('does not publish pause or arm a timer if superseded during the cooldown state write', async () => {
-      // cancel()/reset() during scheduleCooldown's setRateLimitCooldown await
-      // bumps the generation; the pause must not publish and the timer must not
-      // arm for the dead episode (cancel saw a null timer + an unpublished pause,
-      // so there was nothing to undo). (Codex P1: gate scheduleCooldown.)
       const { deps, notifyPause } = createMockDeps({ chain: [] });
       let resolveStateWrite!: () => void;
       Object.assign(stateManager, {
@@ -669,8 +543,8 @@ describe('RateLimitWatchdog', () => {
       });
       const watchdog = new RateLimitWatchdog('s', stateManager, deps);
       const pending = watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
-      await flush(); // advance to the setRateLimitCooldown await
-      watchdog.cancel(); // supersede during the state write
+      await flush();
+      watchdog.cancel();
       resolveStateWrite();
       await pending;
       await flush();
@@ -679,10 +553,6 @@ describe('RateLimitWatchdog', () => {
     });
 
     it('cancel() clears the stale last user message (no re-entry re-arm)', async () => {
-      // cancel() must drop lastUserMessage so the fireImmediateFallback re-entry
-      // path (gated on `if (this.lastUserMessage)`) can't re-arm recovery — via a
-      // re-entry scheduleRetry that captures the bumped generation as a fresh
-      // baseline — for the message the user just stopped. (Codex P1.)
       const { deps } = createMockDeps({ chain: [] });
       const watchdog = new RateLimitWatchdog('s', stateManager, deps);
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
@@ -692,10 +562,6 @@ describe('RateLimitWatchdog', () => {
     });
 
     it('threads the captured episode generation into switchAndRetry', async () => {
-      // The session-mutating side effects (handleModelSwitch, startQueryAndEnqueue)
-      // live inside switchAndRetry on the agent-session side, which re-checks
-      // isSuperseded(gen) before committing. Verify the watchdog passes the
-      // captured generation so that gate can fire. (Codex P1: propagate gen.)
       const A: FallbackModelEntry = { provider: 'glm', model: 'glm-a' };
       let receivedGen: number | undefined;
       const { deps } = createMockDeps({
@@ -709,13 +575,10 @@ describe('RateLimitWatchdog', () => {
       const watchdog = new RateLimitWatchdog('s', stateManager, deps);
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
       await flush();
-      expect(receivedGen).toBe(0); // first episode's generation baseline
+      expect(receivedGen).toBe(0);
     });
 
     it('threads the captured episode generation into the retry callback', async () => {
-      // Same contract as switchAndRetry, for the cooldown-retry callback path
-      // (executeRateLimitAutoRetry re-checks isSuperseded(gen) before
-      // startQueryAndEnqueue). (Codex P1: propagate gen.)
       let receivedGen: number | undefined;
       const { deps } = createMockDeps({ chain: [] });
       const retryCallback = mock(async (_msg, _switchTo, gen: number) => {
@@ -731,11 +594,6 @@ describe('RateLimitWatchdog', () => {
     });
 
     it('aborts the fallback re-entry if superseded during the canonical resolve', async () => {
-      // The re-entry awaits resolveModelId before marking the entry tried +
-      // re-entering scheduleRetry. A superseding turn (cancel, optionally a
-      // replacement 429's scheduleRetry) during that await must abort the stale
-      // continuation so it doesn't poison the new episode's tried-set or re-arm
-      // recovery for the replacement message. (Codex P2: recheck after canonical.)
       const A: FallbackModelEntry = { provider: 'glm', model: 'glm-a' };
       let glmCalls = 0;
       let resolveCanon!: () => void;
@@ -747,8 +605,6 @@ describe('RateLimitWatchdog', () => {
       deps.resolveModelId = (_p: string, model: string) => {
         if (model !== 'glm-a') return Promise.resolve(model);
         glmCalls += 1;
-        // 1st glm-a call: the availability canonical key (fast). 2nd: the
-        // re-entry's canonical resolve (slow, so we can supersede during it).
         if (glmCalls === 2) {
           return new Promise<string>((r) => {
             resolveCanon = () => r('glm-a');
@@ -758,24 +614,20 @@ describe('RateLimitWatchdog', () => {
       };
       const watchdog = new RateLimitWatchdog('s', stateManager, deps);
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
-      await flush(); // switch fails → re-entry awaits the slow canonical resolve
-      watchdog.cancel(); // supersede during the canonical resolve
+      await flush();
+      watchdog.cancel();
       resolveCanon();
       await flush();
-      // The stale continuation did NOT mark the entry tried (poisoning the next
-      // episode's tried-set) nor re-arm recovery.
       expect(watchdog.getState().triedEntries).not.toContain('glm/glm-a');
       expect(watchdog.isPending()).toBe(false);
     });
 
     it('retryNow returns false during a fallback-pending switch', async () => {
       const A: FallbackModelEntry = { provider: 'glm', model: 'glm-4.6' };
-      // Make switchAndRetry hang so fallbackPending stays true when we call retryNow.
       const { deps } = createMockDeps({
         current: { provider: 'anthropic', model: 'sonnet' },
         chain: [A],
       });
-      // Override switchAndRetry to never resolve within the test window.
       deps.switchAndRetry = () => new Promise(() => {});
       const watchdog = new RateLimitWatchdog('s', stateManager, deps);
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
@@ -799,14 +651,10 @@ describe('RateLimitWatchdog', () => {
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
       expect(watchdog.getState().fallbackPending).toBe(true);
 
-      // User sends a new message / resets → cancel() bumps the episode generation.
       watchdog.cancel();
-      // Now let the suspended switch resolve (simulating the async teardown finishing).
       resolveSwitch(true);
       await flush();
 
-      // The switch callback ran, but the episode was superseded: the chain did
-      // NOT advance (A not marked tried) and no re-enqueue / cooldown happened.
       expect(switchAndRetry).toHaveBeenCalledTimes(1);
       expect(watchdog.getState().triedEntries).not.toContain('glm/glm-4.6');
       expect(stateManager.setRateLimitCooldown).not.toHaveBeenCalled();
@@ -837,7 +685,6 @@ describe('RateLimitWatchdog', () => {
       watchdog.setRetryCallback(retryCallback);
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
       watchdog.destroy();
-      // Callback cleared: even if a retry were triggered, nothing fires.
       expect(() => watchdog.retryNow()).not.toThrow();
     });
   });

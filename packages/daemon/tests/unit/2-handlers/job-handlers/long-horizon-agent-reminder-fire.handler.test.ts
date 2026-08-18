@@ -1,7 +1,3 @@
-/**
- * Tests for the longHorizonAgentReminder.fire scanner handler.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import {
@@ -62,7 +58,6 @@ describe('handleLongHorizonAgentReminderFire', () => {
   beforeEach(() => {
     db = new Database(':memory:');
     createSpaceTables(db);
-    // job_queue is not created by createSpaceTables.
     db.exec(`
 			CREATE TABLE IF NOT EXISTS job_queue (
 				id TEXT PRIMARY KEY,
@@ -171,13 +166,11 @@ describe('handleLongHorizonAgentReminderFire', () => {
     expect(after1.nextRunAt).not.toBeNull();
     expect(after1.nextRunAt!).toBeGreaterThan(before);
 
-    // next_run_at is now in the future -> not due, does not re-fire.
     deliver.calls.length = 0;
     const r2 = await handleLongHorizonAgentReminderFire(makeJob(), makeDeps(deliver.fn));
     expect(r2.fired).toBe(0);
     expect(deliver.calls).toHaveLength(0);
 
-    // Simulate time passing: next_run_at laps into the past -> fires again.
     db.prepare('UPDATE space_long_horizon_agent_reminders SET next_run_at = ? WHERE id = ?').run(
       Date.now() - 1000,
       reminder.id
@@ -207,7 +200,6 @@ describe('handleLongHorizonAgentReminderFire', () => {
     const deliver = recordingDeliver();
     const result = await handleLongHorizonAgentReminderFire(makeJob(), makeDeps(deliver.fn));
 
-    // The due-query filters paused owners out, so it is never selected.
     expect(result.scanned).toBe(0);
     expect(result.fired).toBe(0);
     expect(deliver.calls).toHaveLength(0);
@@ -229,7 +221,6 @@ describe('handleLongHorizonAgentReminderFire', () => {
 
     expect(result.skipped).toBe(1);
     expect(result.fired).toBe(0);
-    // Stays active and still due — fires when the agent is active again.
     const after = reminderRepo.getReminder(reminder.id)!;
     expect(after.status).toBe('active');
     expect(after.nextRunAt).toBe(now - 1000);
@@ -253,7 +244,6 @@ describe('handleLongHorizonAgentReminderFire', () => {
     const advancedNext = reminderRepo.getReminder(reminder.id)!.nextRunAt!;
     expect(advancedNext).toBeGreaterThan(now);
 
-    // A retried scan sees the reminder no longer due (next_run_at moved forward).
     deliver.calls.length = 0;
     const r2 = await handleLongHorizonAgentReminderFire(makeJob(), makeDeps(deliver.fn));
     expect(r2.fired).toBe(0);
@@ -272,13 +262,11 @@ describe('handleLongHorizonAgentReminderFire', () => {
     });
 
     const deliver = recordingDeliver();
-    // Two scan jobs running concurrently (the processor has >1 slot).
     const [, r2] = await Promise.all([
       handleLongHorizonAgentReminderFire(makeJob(), makeDeps(deliver.fn)),
       handleLongHorizonAgentReminderFire(makeJob(), makeDeps(deliver.fn)),
     ]);
 
-    // Only one scan delivers; the loser re-reads the advanced row and skips.
     expect(deliver.calls).toHaveLength(1);
     expect(r2.fired + r2.skipped).toBeGreaterThanOrEqual(1);
   });
@@ -295,13 +283,11 @@ describe('handleLongHorizonAgentReminderFire', () => {
     });
 
     const deliver = recordingDeliver();
-    // Simulate a prior attempt whose message the SDK already consumed.
     const result = await handleLongHorizonAgentReminderFire(
       makeJob(),
       makeDeps(deliver.fn, () => 'consumed')
     );
 
-    // Did not re-inject, but did advance (the occurrence was delivered).
     expect(deliver.calls).toHaveLength(0);
     expect(result.fired).toBe(1);
     const after = reminderRepo.getReminder(reminder.id)!;
@@ -319,8 +305,6 @@ describe('handleLongHorizonAgentReminderFire', () => {
       runAt: now - 1000,
       nextRunAt: now - 1000,
     });
-    // A deliver that never settles — simulates a stuck SDK whose enqueueWithId
-    // never resolves (onSent never fires after a wedged `for await`).
     const neverDeliver = (): Promise<{ delivered: boolean }> => new Promise(() => {});
     const start = Date.now();
     const result = await handleLongHorizonAgentReminderFire(
@@ -328,12 +312,9 @@ describe('handleLongHorizonAgentReminderFire', () => {
       makeDeps(neverDeliver, undefined, 50)
     );
 
-    // Bounded by the 50ms timeout, not the 35s default — the lock and job slot
-    // release, so the scanner can't be pinned.
     expect(Date.now() - start).toBeLessThan(2000);
     expect(result.failed).toBe(1);
     expect(result.fired).toBe(0);
-    // Not advanced; stays due for retry next scan.
     const after = reminderRepo.getReminder(reminder.id)!;
     expect(after.status).toBe('active');
     expect(after.nextRunAt).toBe(now - 1000);
@@ -349,8 +330,6 @@ describe('handleLongHorizonAgentReminderFire', () => {
       runAt: now - 1000,
       nextRunAt: now - 1000,
     });
-    // First scan: deliver never settles (stuck before persisting); the handler
-    // times out (50ms) and returns failed, but the delivery stays registered.
     const neverDeliver = (): Promise<{ delivered: boolean }> => new Promise(() => {});
     const r1 = await handleLongHorizonAgentReminderFire(
       makeJob(),
@@ -358,8 +337,6 @@ describe('handleLongHorizonAgentReminderFire', () => {
     );
     expect(r1.failed).toBe(1);
 
-    // Second scan: the prior delivery is still in flight -> skip without
-    // starting another deliver (no stacking / amplification).
     const deliver2 = recordingDeliver();
     const r2 = await handleLongHorizonAgentReminderFire(
       makeJob(),
@@ -379,9 +356,6 @@ describe('handleLongHorizonAgentReminderFire', () => {
       runAt: now - 1000,
       nextRunAt: now - 1000,
     });
-    // The daemon treats unhandled rejections as fatal (process.exit(1) in
-    // main.ts). The in-flight cleanup must attach a rejection handler so a
-    // rejecting deliver doesn't surface as one.
     const rejections: unknown[] = [];
     const onUnhandled = (reason: unknown) => rejections.push(reason);
     process.on('unhandledRejection', onUnhandled);
@@ -394,7 +368,6 @@ describe('handleLongHorizonAgentReminderFire', () => {
         makeDeps(rejectDeliver, undefined, 5000)
       );
       expect(result.failed).toBe(1);
-      // Drain the microtask/macrotask queue so any unhandled rejection surfaces.
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(rejections).toEqual([]);
     } finally {
@@ -414,15 +387,11 @@ describe('handleLongHorizonAgentReminderFire', () => {
     });
 
     const deliver = recordingDeliver();
-    // Prior attempt persisted the row but the SDK hasn't consumed it (e.g. a
-    // stuck session that timed out on enqueue).
     const result = await handleLongHorizonAgentReminderFire(
       makeJob(),
       makeDeps(deliver.fn, () => 'enqueued')
     );
 
-    // No re-inject (no duplicate) AND no advance (one-shot not marked fired
-    // before delivery). Stays due for the next scan to re-check.
     expect(deliver.calls).toHaveLength(0);
     expect(result.fired).toBe(0);
     expect(result.skipped).toBe(1);
@@ -441,13 +410,11 @@ describe('handleLongHorizonAgentReminderFire', () => {
       runAt: now - 1000,
       nextRunAt: now - 1000,
     });
-    // Pause the space after creation.
     db.prepare('UPDATE spaces SET paused = 1 WHERE id = ?').run(spaceId);
 
     const deliver = recordingDeliver();
     const result = await handleLongHorizonAgentReminderFire(makeJob(), makeDeps(deliver.fn));
 
-    // Filtered at the due-query (not even selected) and skipped at delivery.
     expect(result.scanned).toBe(0);
     expect(result.fired).toBe(0);
     expect(deliver.calls).toHaveLength(0);
@@ -464,8 +431,6 @@ describe('handleLongHorizonAgentReminderFire', () => {
       nextRunAt: now - 1000,
     });
 
-    // The deliver hook stops the space right before injection, exercising the
-    // handler-level space recheck (the due-query already passed).
     const stopAndDeny = async (): Promise<{ delivered: boolean }> => {
       db.prepare('UPDATE spaces SET stopped = 1 WHERE id = ?').run(spaceId);
       return { delivered: false };
@@ -562,7 +527,6 @@ describe('backfillLongHorizonAgentReminderNextRunAt', () => {
 
   it('seeds next_run_at for pre-existing reminders with a NULL value', () => {
     const past = Date.now() - 60_000;
-    // 'at' reminder created before the seed fix (NULL next_run_at).
     const atReminder = reminderRepo.createReminder({
       spaceId,
       agentId,
@@ -570,7 +534,6 @@ describe('backfillLongHorizonAgentReminderNextRunAt', () => {
       triggerType: 'at',
       runAt: past,
     });
-    // cron reminder created before the seed fix (NULL next_run_at).
     const cronReminder = reminderRepo.createReminder({
       spaceId,
       agentId,
@@ -586,11 +549,10 @@ describe('backfillLongHorizonAgentReminderNextRunAt', () => {
     expect(count).toBe(2);
     const atAfter = reminderRepo.getReminder(atReminder.id)!;
     const cronAfter = reminderRepo.getReminder(cronReminder.id)!;
-    expect(atAfter.nextRunAt).toBe(past); // 'at' falls back to run_at
+    expect(atAfter.nextRunAt).toBe(past);
     expect(cronAfter.nextRunAt).not.toBeNull();
-    expect(cronAfter.nextRunAt!).toBeGreaterThan(Date.now()); // next cron occurrence
+    expect(cronAfter.nextRunAt!).toBeGreaterThan(Date.now());
 
-    // Both are now schedulable (the 'at' one is immediately due).
     const due = reminderRepo.listDueReminders(past + 1000).map((r) => r.id);
     expect(due).toContain(atReminder.id);
   });
@@ -630,8 +592,6 @@ describe('backfillLongHorizonAgentReminderNextRunAt', () => {
   });
 
   it('skips unschedulable reminders instead of firing them immediately', () => {
-    // Legacy cron reminder with no expression, and a legacy 'at' with no
-    // run_at — both unschedulable. Must be left NULL, not defaulted to `now`.
     const cronNoExpr = reminderRepo.createReminder({
       spaceId,
       agentId,

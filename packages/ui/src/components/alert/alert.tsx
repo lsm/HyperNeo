@@ -4,8 +4,6 @@ import { render } from '../../internal/render.ts';
 import type { ElementType } from '../../internal/types.ts';
 import { useId } from '../../internal/use-id.ts';
 
-// --- Alert Context ---
-
 interface AlertContextValue {
   open: boolean;
   variant: string;
@@ -27,8 +25,6 @@ function useAlertContext(component: string): AlertContextValue {
   }
   return ctx;
 }
-
-// --- Alert (root) ---
 
 type AlertVariant = 'info' | 'success' | 'warning' | 'error';
 
@@ -94,8 +90,6 @@ function AlertFn({
 AlertFn.displayName = 'Alert';
 export const Alert = AlertFn;
 
-// --- AlertIcon ---
-
 interface AlertIconProps {
   as?: ElementType;
   icon?: unknown;
@@ -108,7 +102,6 @@ function AlertIconFn({ as: Tag = 'div', icon, children, ...rest }: AlertIconProp
 
   const slot = {};
 
-  // Default icon paths for each variant
   const iconPaths: Record<string, preact.ComponentChildren> = {
     info: createElement('path', {
       'fill-rule': 'evenodd',
@@ -157,8 +150,6 @@ function AlertIconFn({ as: Tag = 'div', icon, children, ...rest }: AlertIconProp
 AlertIconFn.displayName = 'AlertIcon';
 export const AlertIcon = AlertIconFn;
 
-// --- AlertTitle ---
-
 interface AlertTitleProps {
   as?: ElementType;
   children?: unknown;
@@ -192,8 +183,6 @@ function AlertTitleFn({ as: Tag = 'h3', children, ...rest }: AlertTitleProps) {
 AlertTitleFn.displayName = 'AlertTitle';
 export const AlertTitle = AlertTitleFn;
 
-// --- AlertDescription ---
-
 interface AlertDescriptionProps {
   as?: ElementType;
   children?: unknown;
@@ -226,8 +215,6 @@ function AlertDescriptionFn({ as: Tag = 'p', children, ...rest }: AlertDescripti
 
 AlertDescriptionFn.displayName = 'AlertDescription';
 export const AlertDescription = AlertDescriptionFn;
-
-// --- AlertActions ---
 
 interface AlertActionsProps {
   as?: ElementType;

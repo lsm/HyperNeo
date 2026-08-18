@@ -437,7 +437,6 @@ describe('EvolutionEpisodeService', () => {
       objective: 'Bound preflight round-trips',
     });
     const workflow = workflowRepo.createWorkflow({ spaceId, name: 'Batched workflow' });
-    // Three tasks + three runs + artifacts each, each referenced by evidence.
     const taskIds: string[] = [];
     const runIds: string[] = [];
     for (let index = 0; index < 3; index++) {
@@ -476,7 +475,6 @@ describe('EvolutionEpisodeService', () => {
       });
     }
 
-    // Count every repo round-trip the preflight builder can make.
     const calls = {
       getTask: 0,
       getTasksByIds: 0,
@@ -523,7 +521,6 @@ describe('EvolutionEpisodeService', () => {
     });
     const listed = scopeService.listEvidence(scope.id, { includePreflightContext: true });
 
-    // The per-item methods must never run; the batch methods run exactly once.
     expect(calls.getTask).toBe(0);
     expect(calls.getRun).toBe(0);
     expect(calls.listByWorkflowRunIncludingArchived).toBe(0);
@@ -533,13 +530,11 @@ describe('EvolutionEpisodeService', () => {
     expect(calls.listByWorkflowRunIdsIncludingArchived).toBe(1);
     expect(calls.listByRuns).toBe(1);
 
-    // Behaviour is unchanged: every task + run still surfaces in the context.
     expect(listed.preflightContext?.tasks).toHaveLength(3);
     expect(listed.preflightContext?.workflowRuns).toHaveLength(3);
     expect(
       listed.preflightContext?.workflowRuns.every((entry) => runIds.includes(entry.run.id))
     ).toBe(true);
-    // One artifact per run survived the batched fetch + per-run cap.
     expect(listed.preflightContext?.workflowRuns.flatMap((entry) => entry.artifacts)).toHaveLength(
       3
     );
@@ -940,7 +935,6 @@ describe('EvolutionEpisodeService', () => {
       priority: 'high',
       status: 'accepted',
     });
-    // Dismissed items should NOT appear in the prompt
     evolutionRepo.createLesson({
       scopeId: scope.id,
       status: 'dismissed',
@@ -968,7 +962,6 @@ describe('EvolutionEpisodeService', () => {
     const input = service.buildEpisodeInput({ scopeId: scope.id, evidenceIds: [evidence.id] });
     const prompt = buildEpisodeJudgePrompt(input);
 
-    // Active + candidate lessons included; dismissed excluded
     expect(input.existingLessons).toHaveLength(2);
     expect(
       input.existingLessons.some(
@@ -980,7 +973,6 @@ describe('EvolutionEpisodeService', () => {
         (l) => l.rule === 'Prefer trace evidence over manual notes for episode generation'
       )
     ).toBe(true);
-    // Proposed + accepted proposals included; dismissed excluded
     expect(input.existingProposals).toHaveLength(2);
     expect(
       input.existingProposals.some((p) => p.title === 'Add conversation friction dashboard')
@@ -988,16 +980,13 @@ describe('EvolutionEpisodeService', () => {
     expect(
       input.existingProposals.some((p) => p.title === 'Add verification triage automation')
     ).toBe(true);
-    // Prompt surfaces lesson and proposal details
     expect(prompt).toContain('Existing accepted and candidate lessons in this scope');
     expect(prompt).toContain('Always run evidence-quality preflight before judging an episode');
     expect(prompt).toContain('Open proposals in this scope');
     expect(prompt).toContain('Add conversation friction dashboard');
     expect(prompt).toContain('Surface friction patterns in the Forge UI');
     expect(prompt).toContain('Friction evidence is captured but not visible to operators');
-    // Dismissed items are excluded
     expect(prompt).not.toContain('Dismissed');
-    // Instruction says "omit" (no refine since there is no update path)
     expect(prompt).toContain(
       'omit any that duplicate or substantially overlap with the items above'
     );

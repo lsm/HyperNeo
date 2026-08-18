@@ -1,11 +1,3 @@
-/**
- * Worker Agent Factory
- *
- * Creates `AgentSessionInit` from a visible `SpaceWorkerAgent` + workflow slot configuration.
- * Runtime behavior must be WYSIWYG: code provides structure and context, while agent
- * behavior comes only from visible prompt fields on the agent or workflow node.
- */
-
 import type { AgentSessionInit, PromptProvenanceInit } from '../../agent/agent-session';
 import type {
   AgentDefinition,
@@ -45,10 +37,6 @@ export const NON_DELEGATING_GENERAL_AGENT: AgentDefinition = {
   model: 'inherit',
 };
 
-/**
- * Soft size budget for the initial user message. When exceeded, a warning is
- * logged so future prompt bloat is caught during development. Never fails.
- */
 const USER_MESSAGE_SOFT_LIMIT_BYTES = 4 * 1024;
 const MEMORY_PROMPT_CONTENT_LIMIT = 500;
 const CORE_MEMORY_PROMPT_CHAR_LIMIT = 2_000;
@@ -56,16 +44,6 @@ const OVERSIZED_NEWEST_PREVIOUS_WORK_LIMIT = 2_000;
 
 const log = new Logger('custom-agent');
 
-/**
- * Per-slot overrides from a `WorkflowNodeAgent` entry.
- * Applied on top of the base `SpaceWorkerAgent` config when spawning a specific slot.
- *
- * Semantics:
- * - `customPrompt` is appended (expanded) after the agent's `customPrompt` by default.
- *   When `replaceAgentPrompt` is true, `customPrompt` REPLACES the agent's base prompt
- *   for this slot instead — the `claude_code` SDK preset is always applied first regardless.
- * - absent (undefined) — uses the agent's base value unchanged.
- */
 export type PromptSource =
   | 'workflow_node_custom_prompt'
   | 'workflow_node_replaced_prompt'
@@ -88,35 +66,16 @@ export interface SlotResolutionContext {
 }
 
 export interface SlotOverrides {
-  /** Override the agent's default model for this slot */
   model?: string;
-  /** Override the agent's default thinking level for this slot */
   thinkingLevel?: SpaceWorkerAgent['thinkingLevel'];
-  /** Expansion text appended to (or, with replaceAgentPrompt, replacing) the agent's customPrompt */
   customPrompt?: string;
-  /**
-   * When true, `customPrompt` REPLACES the agent's `customPrompt` for this slot — the
-   * agent's base prompt is ignored. The `claude_code` SDK preset is always applied first.
-   * Default false = append.
-   */
   replaceAgentPrompt?: boolean;
-  /** IDs of globally-enabled skills to disable for this slot */
   disabledSkillIds?: string[];
-  /** Extra MCP servers to add for this slot */
   extraMcpServers?: Record<string, McpServerConfig>;
-  /** Declarative tool guards from the workflow node agent definition */
   toolGuards?: DeclarativeToolGuard[];
-  /** Runtime metadata used to make prompt provenance observable without prompt content. */
   resolutionContext?: SlotResolutionContext;
 }
 
-/**
- * Append-only prompt composition: returns `base` + `\n\n` + `expansion`.
- *
- * - If `expansion` is absent/empty, returns `base` unchanged.
- * - If `base` is absent/empty, returns `expansion`.
- * - Both present: joined with a double newline.
- */
 export function expandPrompt(
   base: string | null | undefined,
   expansion: string | null | undefined
@@ -129,51 +88,23 @@ export function expandPrompt(
 }
 
 export interface CustomAgentConfig {
-  /** The Space agent definition */
   customAgent: SpaceWorkerAgent;
-  /** The task being executed */
   task: SpaceTask;
-  /** The workflow run context (null when running outside a workflow) */
   workflowRun: SpaceWorkflowRun | null;
-  /** Full workflow definition for factual runtime context */
   workflow?: SpaceWorkflow | null;
-  /** The Space this agent belongs to */
   space: Space;
-  /** Session ID for the new session */
   sessionId: string;
-  /** Workspace path (typically `space.workspacePath`) */
   workspacePath: string;
-  /** Linked long-horizon goal for this task, when present. */
   goal?: SpaceGoal | null;
-  /** Active scope lessons selected for this task, newest first. */
   relevantScopeLessons?: EvolutionLesson[];
-  /** Summaries of previously completed tasks for context */
   previousTaskSummaries?: string[];
-  /** Optional per-slot workflow overrides */
   slotOverrides?: SlotOverrides;
-  /**
-   * ID of the workflow node this session belongs to (required to scope the
-   * "Your Role in This Workflow" section to the current node's peers and
-   * channels). Omit when running outside a workflow.
-   */
   nodeId?: string;
-  /**
-   * Agent slot name for the current node execution (`WorkflowNodeAgent.name`).
-   */
   agentSlotName?: string;
-  /** Space-scoped core memories selected by background consolidation. */
   coreMemories?: AgentMemoryCoreEntry[];
-  /** Relevant persistent memories to inject into the task prompt. */
   relevantMemories?: AgentMemorySearchResult[];
 }
 
-/**
- * Build the runtime system prompt text for a worker agent.
- *
- * The HyperNeo system contract (tool rules, completion semantics) is applied first by the
- * SDK preset; then the agent's `customPrompt` is appended, followed by any slot expansion.
- * User content always comes after the contract and cannot override it.
- */
 export function buildCustomAgentSystemPrompt(
   customAgent: SpaceWorkerAgent,
   slotOverrides?: SlotOverrides
@@ -191,8 +122,6 @@ export function resolveCustomAgentPrompt(
   let value: string;
   let source: PromptSource;
   if (replace) {
-    // The slot prompt replaces the agent's base prompt for this slot. The `claude_code`
-    // SDK preset is still applied first downstream — only the agent-prompt layer is replaced.
     value = slotPrompt;
     source = slotPrompt ? 'workflow_node_replaced_prompt' : 'empty';
   } else {
@@ -228,25 +157,6 @@ function hashPrompt(prompt: string): string {
   return createHash('sha256').update(prompt).digest('hex');
 }
 
-/**
- * Build the initial user message for a worker agent session.
- *
- * Contains factual task/workflow/space context only.
- * Behavioral prompt (persona, operating procedure) lives in the system prompt.
- *
- * Section order (top → bottom), action-first:
- *   1. `## Your Task` — title, description, priority
- *   2. `## Runtime Location` — worktree path
- *   3. `## Relevant Scope Lessons` — accepted lessons from task scope
- *   4. `## Your Role in This Workflow` — current node, peers, outbound channels
- *   5. `## Previous Work on This Goal` — bulleted summaries
- *   6. `## Project Context` — space.backgroundContext
- *   7. `## Standing Instructions` — space.instructions + workflow.instructions
- *
- * Node UUIDs are intentionally dropped — they are not useful to the LLM and add
- * noise. The previous "Workflow Context" + "Workflow Structure" sections are
- * replaced by the scoped "Your Role" section.
- */
 export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
   const {
     task,
@@ -265,20 +175,17 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 
   const sections: string[] = [];
 
-  // 1. Task — actionable content first, so it lands in the first 500 chars.
   sections.push(`## Your Task #${task.taskNumber}`);
   sections.push('');
   sections.push(`**Title:** ${task.title}`);
   sections.push(`**Description:** ${task.description}`);
   if (task.priority) sections.push(`**Priority:** ${task.priority}`);
 
-  // 2. Runtime Location — worktree is always known.
   sections.push('');
   sections.push('## Runtime Location');
   sections.push('');
   sections.push(`- Worktree: ${workspacePath}`);
 
-  // 3. Linked Goal — rolling state for long-horizon work.
   if (goal) {
     sections.push('');
     sections.push('## Linked Goal');
@@ -305,7 +212,6 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
     );
   }
 
-  // 4. Relevant scope lessons — accepted lessons from this task's evolution scope.
   if (relevantScopeLessons && relevantScopeLessons.length > 0) {
     sections.push('');
     sections.push('## Relevant Scope Lessons');
@@ -317,7 +223,6 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
     }
   }
 
-  // 5. Your Role in This Workflow — scoped to the current node when known.
   const roleLines = buildRoleSection(workflow, nodeId, agentSlotName);
   if (roleLines.length > 0) {
     sections.push('');
@@ -326,7 +231,6 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
     sections.push(...roleLines);
   }
 
-  // 6. Previous work summaries.
   const previousWorkLines = buildPreviousWorkLines(previousTaskSummaries);
   if (previousWorkLines.length > 0) {
     sections.push('');
@@ -335,7 +239,6 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
     sections.push(...previousWorkLines);
   }
 
-  // 7. Core memories are space-scoped and selected by background consolidation.
   const coreMemoryLines = buildCoreMemoryLines(coreMemories);
   if (coreMemoryLines.length > 0) {
     sections.push('');
@@ -344,7 +247,6 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
     sections.push(...coreMemoryLines);
   }
 
-  // 8. Relevant persistent memories.
   if (relevantMemories && relevantMemories.length > 0) {
     sections.push('');
     sections.push('## Relevant Memories');
@@ -357,7 +259,6 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
     }
   }
 
-  // 9. Project context from the Space.
   if (space.backgroundContext) {
     sections.push('');
     sections.push('## Project Context');
@@ -365,7 +266,6 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
     sections.push(space.backgroundContext);
   }
 
-  // 10. Standing instructions — space + workflow combined under one heading.
   const standingLines: string[] = [];
   if (space.instructions?.trim()) standingLines.push(space.instructions.trim());
   if (workflow?.instructions?.trim()) standingLines.push(workflow.instructions.trim());
@@ -378,10 +278,6 @@ export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
 
   const message = sections.join('\n');
 
-  // Soft budget: warn but never fail when the message exceeds the threshold.
-  // `workflowRun` is used to scope the warning to workflow sessions (avoids
-  // noise during short standalone tasks where large backgroundContext is
-  // typically the cause and not a regression).
   const byteLength = Buffer.byteLength(message, 'utf8');
   if (workflowRun && byteLength > USER_MESSAGE_SOFT_LIMIT_BYTES) {
     log.warn(
@@ -439,11 +335,6 @@ function buildCoreMemoryLines(coreMemories: AgentMemoryCoreEntry[] | undefined):
   return lines;
 }
 
-/**
- * Build the bulleted "Your Role in This Workflow" lines scoped to the current
- * node. Returns `[]` when the workflow or current node cannot be resolved so
- * the caller can cleanly omit the section.
- */
 function buildRoleSection(
   workflow: SpaceWorkflow | null | undefined,
   nodeId: string | undefined,
@@ -487,10 +378,6 @@ function buildHookValidatedHandoffLines(
   workflow: SpaceWorkflow,
   currentNode: WorkflowNode
 ): string[] {
-  // Built-in send_message validators that gate a handoff on the run's PR
-  // identity, which the agent must carry as data.pr_url (the hook resolves it
-  // from there). pr_ready gates the coder→reviewer handoff; review_posted gates
-  // the Review→Coding feedback handoff.
   const PR_URL_HANDOFF_HOOK_VALIDATORS = new Set(['pr_ready', 'review_posted']);
   const outboundHookValidatedChannels = (workflow.channels ?? []).filter(
     (channel) =>
@@ -531,15 +418,6 @@ function describeChannelTarget(channel: WorkflowChannel, target: string): string
   return channel.label ? `${target} (${channel.label})` : target;
 }
 
-/**
- * Create an `AgentSessionInit` for a Space agent session.
- *
- * Workflow execution is WYSIWYG:
- * - inside a workflow run, the workflow slot customPrompt is expanded on top of the agent's
- * - outside a workflow run, the agent's own `customPrompt` is used unchanged
- *
- * The HyperNeo system contract (preset) is always applied first; user content follows.
- */
 export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionInit {
   const { customAgent, task, space, sessionId, workspacePath, slotOverrides } = config;
 
@@ -597,34 +475,18 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 }
 
 export interface ResolveAgentInitConfig {
-  /** The task to execute */
   task: SpaceTask;
-  /** The Space this task belongs to */
   space: Space;
-  /** Agent manager for resolving agents */
   agentManager: SpaceAgentManager;
-  /** Session ID for the new session */
   sessionId: string;
-  /** Workspace path */
   workspacePath: string;
-  /** Workflow run context (null when outside a workflow) */
   workflowRun?: SpaceWorkflowRun | null;
-  /** Full workflow definition for factual runtime context */
   workflow?: SpaceWorkflow | null;
-  /** Summaries of previously completed tasks */
   previousTaskSummaries?: string[];
-  /** Optional per-slot workflow overrides */
   slotOverrides?: SlotOverrides;
-  /**
-   * Explicit agent ID to use for this session.
-   * Required since SpaceTask no longer stores customAgentId directly.
-   */
   agentId: string;
 }
 
-/**
- * Resolve the session init for a Space task by loading its assigned `SpaceWorkerAgent`.
- */
 export function resolveAgentInit(config: ResolveAgentInitConfig): AgentSessionInit {
   const {
     task,

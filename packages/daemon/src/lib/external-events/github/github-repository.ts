@@ -10,84 +10,18 @@ export interface PollCursor {
   recentPullRequestHeadShas?: Record<number, string>;
   recentPullRequestHeadRepos?: Record<number, string>;
   checkRunEtags?: Record<string, string>;
-  /**
-   * Maps a check-run identity (`{id}:{conclusion}`) to the PR number that owns
-   * the unscoped legacy dedupe key (`check_run:{id}:{conclusion}`). Used by
-   * polling to decide when the same check run later belongs to a different PR
-   * and must fall back to a PR-scoped key to avoid colliding with the prior
-   * owner's stored event.
-   */
   checkRunLegacyPrs?: Record<string, number>;
-  /**
-   * Stable wall-clock epoch when check-run polling was first enabled for this
-   * watched repo. Captured once when `pollingEnabled` flips on so the initial
-   * check-run cursor can be seeded from the enable time rather than from
-   * mutable `updatedAt` or scan-time clock.
-   */
   checkRunPollingEnabledAt?: number;
-  /**
-   * Per-head check-run high-water marks. Each key is a `headRef` and the value
-   * is the latest `completed_at` published for that head. Keeps heads isolated
-   * so a skipped/failed head does not lose events when other heads advance the
-   * repo-wide watermark.
-   */
   checkRunHeadLastSeenAt?: Record<string, number>;
-  /**
-   * Per-head pending high-water marks while that head is paginating or the
-   * overall scan ends before all heads are committed.
-   */
   checkRunHeadPendingLastSeenAt?: Record<string, number>;
   pullsSeedInProgress?: boolean;
   seenReactionIds?: Record<string, boolean>;
-  /**
-   * Per-PR reaction-list ETags. Sent as `If-None-Match` on the
-   * `/issues/{n}/reactions` request so unchanged reaction lists short-circuit
-   * with a 304 and cost nothing against the rate-limit budget. Cleared for a
-   * PR when it falls out of `recentPullRequestNumbers`.
-   */
   reactionEtags?: Record<number, string>;
-  /**
-   * Per-endpoint high-water mark for events already published. Used after a
-   * partial scan (e.g. low rate-limit remaining) so processed endpoints can
-   * resume from their own watermark while skipped endpoints still use the
-   * shared `lastSeenAt`.
-   */
   endpointLastSeenAt?: Record<string, number>;
-  /**
-   * Per-endpoint pending high-water marks while that endpoint is paginating.
-   * Committed into `endpointLastSeenAt` only once the endpoint backlog clears.
-   */
   endpointPendingLastSeenAt?: Record<string, number>;
-  /**
-   * Set when the most recent poll cycle could not access this repo (e.g. a
-   * valid-but-unauthorized PAT returning 403/404 on every endpoint), and cleared
-   * on a cycle that reached any accessible (200/304) endpoint. Used by the
-   * health rollup so a polling repo that cannot publish is not treated as a
-   * live delivery path. Null/absent before the first poll or after a rate-limit
-   * break with no access attempt.
-   */
   lastPollError?: string | null;
-  /**
-   * Set when the most recent cycle reached some endpoints but a later required
-   * one failed (partial access — e.g. a fine-grained PAT with issue-comment but
-   * no pull-request access). Cleared on a fully successful or fully failed
-   * cycle. Partial traffic still publishes, so this is a Degraded, not Down.
-   */
   lastPartialPollError?: string | null;
-  /**
-   * Wall-clock epoch of the most recent cycle that actually issued a reaction
-   * request (not merely a poll that advanced lastPollAt). Reactions are skipped
-   * when the rate-limit budget is tight, so lastPollAt would otherwise over-
-   * state reaction freshness.
-   */
   lastReactionPollAt?: number | null;
-  /**
-   * Durable credential fingerprint (hash of the token) that produced the last
-   * successful poll. Unlike the process-local generation counter, this survives
-   * daemon restarts: the same token produces the same fingerprint, a rotated
-   * token produces a different one. The rollup only counts lastPollAt as access
-   * evidence when this matches the current credential's fingerprint.
-   */
   lastPollCredentialFingerprint?: string;
 }
 
@@ -124,10 +58,6 @@ export class GitHubEventExtensionRepository {
 				updated_at INTEGER NOT NULL
 			)
 		`);
-    // Idempotent column add for the per-space polling-intent flag. The intent
-    // is the source of truth for the connection-card polling checkbox: a
-    // space with intent=on can host polling-only repos even when no other
-    // polling row currently exists to derive the state from.
     const columns = this.db
       .prepare('PRAGMA table_info(space_github_source_settings)')
       .all() as Array<{ name: string }>;
@@ -136,10 +66,6 @@ export class GitHubEventExtensionRepository {
         'ALTER TABLE space_github_source_settings ADD COLUMN polling_intent INTEGER NOT NULL DEFAULT 0'
       );
     }
-    // Backfill per-space polling intent from existing polling-enabled rows.
-    // This fixes upgrade: spaces that already had polling_enabled repos before
-    // the polling_intent column existed would otherwise render polling as off
-    // until the user toggled it again.
     const now = Date.now();
     this.db
       .prepare(
@@ -174,10 +100,6 @@ export class GitHubEventExtensionRepository {
   }): GitHubWatchedRepo {
     const now = Date.now();
     const existing = this.getWatchedRepo(params.spaceId, params.owner, params.repo);
-    // Detect transitions that (re)activate polling for this repo: either the
-    // `pollingEnabled` flag or the row-level `enabled` flag flipping true while
-    // the other is already true. Both require reseeding the check-run baseline
-    // so failures from the inactive period are not backfilled.
     const wasActive = existing?.enabled && existing?.pollingEnabled;
     const nextEnabled = params.enabled === undefined ? (existing?.enabled ?? true) : params.enabled;
     const nextPolling = params.pollingEnabled ?? existing?.pollingEnabled ?? false;
@@ -274,9 +196,6 @@ export class GitHubEventExtensionRepository {
     }
     const watched = this.getWatchedRepo(params.spaceId, params.owner, params.repo)!;
     if (pollingNewlyEnabled) {
-      // (Re)seed the check-run baseline on every false→true polling transition
-      // so failures from the disabled window are not backfilled as fresh events.
-      // Clearing the per-head cursors ensures the head scan starts clean.
       const cursor = watched.pollCursor ?? {};
       cursor.checkRunPollingEnabledAt = now;
       delete cursor.checkRunHeadLastSeenAt;
@@ -317,13 +236,6 @@ export class GitHubEventExtensionRepository {
       .run(enabled ? 1 : 0, now, spaceId).changes;
   }
 
-  /**
-   * Persist the per-space polling-intent flag. Distinct from the per-row
-   * polling_enabled flag: the intent survives transitions through "no
-   * polling repos yet" so the connection-card checkbox and the addRepo
-   * default don't strand the user in a state where they cannot create the
-   * first polling-only watch.
-   */
   setPollingIntent(spaceId: string, enabled: boolean): void {
     const now = Date.now();
     this.db
@@ -344,14 +256,6 @@ export class GitHubEventExtensionRepository {
     return row ? row.pollingIntent === 1 : false;
   }
 
-  /**
-   * Count of non-deleted spaces whose persisted polling-intent flag is on,
-   * regardless of whether they currently host any polling-configured repo.
-   * Used to keep the GLOBAL polling capability on while any real space still
-   * intends to use polling — e.g. after the last polling row is removed but
-   * before the user adds the next one. Joins `spaces` so deleted spaces do
-   * not keep the capability alive.
-   */
   countSpacesWithPollingIntent(): number {
     const row = this.db
       .prepare(
@@ -363,12 +267,6 @@ export class GitHubEventExtensionRepository {
     return row?.count ?? 0;
   }
 
-  /**
-   * Daemon-wide count of auto-registered webhook rows. Used by token-clear
-   * flows to warn the user when removing the PAT would strand auto-registered
-   * hooks in ANY space (not just the current one) since the cleanup path
-   * needs the token to delete the remote hook.
-   */
   countAllAutoRegisteredHookRefs(): number {
     const row = this.db
       .prepare(
@@ -433,14 +331,6 @@ export class GitHubEventExtensionRepository {
     return rows.map((r) => this.rowToRepo(r));
   }
 
-  /**
-   * Every watched row with `polling_enabled = 1`, regardless of the
-   * row-level `enabled` flag. Used to decide whether the GLOBAL polling
-   * capability should stay on: a disabled space may still hold
-   * polling-configured rows that need polling to resume when the space
-   * (or row) is re-enabled, so capability gating must NOT use the
-   * enabled-and-polling filter that `listPollingRepos` uses.
-   */
   listAllPollingConfiguredRepos(spaceId?: string): GitHubWatchedRepo[] {
     const rows = spaceId
       ? (this.db
@@ -557,15 +447,6 @@ export class GitHubEventExtensionRepository {
   }
 
   markWebhookReceived(id: string): void {
-    // A correctly signed delivery supersedes a prior TRANSIENT check error (e.g.
-    // a checkWebhook timeout/5xx on an otherwise-active hook) AND an "update
-    // uncertain" error: a PATCH that timed out left the secret uncertain (a GET
-    // cannot read GitHub's stored secret to reconcile), but a delivery whose
-    // signature verifies proves GitHub is still signing with this row's secret,
-    // resolving the uncertainty. Only a persistent configuration error (missing
-    // events / URL mismatch / non-JSON, which validateRemoteHook records
-    // alongside webhook_active = 0) is kept — one delivery doesn't prove the hook
-    // emits every event type.
     this.db
       .prepare(
         `UPDATE space_github_watched_repos
@@ -580,13 +461,6 @@ export class GitHubEventExtensionRepository {
       .run(Date.now(), Date.now(), id);
   }
 
-  /**
-   * Clear a repo's inbound delivery history (`last_webhook_at`) without touching
-   * its webhook registration. Used when a manually-configured webhook secret is
-   * rotated: deliveries signed with the previous secret will fail signature
-   * verification, so a stale `last_webhook_at` must not keep the webhook path
-   * live in the health rollup until a fresh delivery under the new secret lands.
-   */
   clearWebhookDeliveryHistory(id: string): void {
     this.db
       .prepare(
@@ -603,27 +477,12 @@ export class GitHubEventExtensionRepository {
       .run(Date.now(), JSON.stringify(cursor), Date.now(), id);
   }
 
-  /**
-   * Update only the `poll_cursor` JSON without advancing `last_poll_at`.
-   *
-   * Used for cursor seeding that must happen outside a poll cycle (e.g.
-   * capturing `checkRunPollingEnabledAt` at enable time). Setting
-   * `last_poll_at` here would poison the stale-reaction guard, which falls
-   * back to `watched.lastPollAt` as the committed watermark on the first
-   * real poll and would suppress historical reactions as already-seen.
-   */
   updatePollCursorJson(id: string, cursor: PollCursor): void {
     this.db
       .prepare(`UPDATE space_github_watched_repos SET poll_cursor = ?, updated_at = ? WHERE id = ?`)
       .run(JSON.stringify(cursor), Date.now(), id);
   }
 
-  /**
-   * Clear every repo's credential-scoped poll errors (lastPollError /
-   * lastPartialPollError). Called when the effective token changes — the old
-   * credential's access failures must not persist and badge a valid
-   * replacement token Down before its first successful poll.
-   */
   clearPollErrorsForAllRepos(): void {
     for (const repo of this.listWatchedRepos()) {
       if (!repo.pollCursor?.lastPollError && !repo.pollCursor?.lastPartialPollError) continue;
@@ -635,15 +494,6 @@ export class GitHubEventExtensionRepository {
     }
   }
 
-  /**
-   * Record a partial poll failure on a repo's cursor without disturbing the
-   * committed watermark/ETag state. Used when a poll cycle throws AFTER its
-   * fetches resolved (e.g. a malformed JSON body, a publish failure) — the
-   * end-of-cycle cursor commit is skipped, so without this `lastPollAt` never
-   * advances and no error is recorded, leaving a repeatedly-failing polling
-   * path badged Healthy. Surfacing the error drives the health rollup to
-   * Degraded. A later successful cycle recomputes and clears it.
-   */
   recordPollFailure(id: string, error: string, accessible = false): void {
     const existing = this.getWatchedRepoById(id);
     if (!existing) return;
@@ -651,15 +501,10 @@ export class GitHubEventExtensionRepository {
       ...existing.pollCursor,
       ...(accessible
         ? {
-            // Post-access throw (json decode/publish after a 200/304): partial
-            // failure. Clear the stale lastPollError (the cycle proved access).
             lastPartialPollError: error,
             lastPollError: null,
           }
         : {
-            // Pre-access throw (before any 200/304): full access failure, not
-            // partial. Record as lastPollError so the rollup counts the repo as
-            // inaccessible (Down, not Degraded).
             lastPollError: error,
             lastPartialPollError: null,
           }),

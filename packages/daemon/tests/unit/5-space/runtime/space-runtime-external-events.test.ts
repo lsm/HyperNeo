@@ -86,9 +86,7 @@ function makeEvent(overrides: Partial<ExternalEvent> = {}): ExternalEvent {
 
 class MockTaskAgentManager {
   alive = new Set<string>();
-  /** sessionId → processing-state status (unset = not interrupted). */
   processingStates = new Map<string, string>();
-  /** sessionIds with an interrupt actually in flight (vs stale persisted state). */
   interrupting = new Set<string>();
   spawned: string[] = [];
   activationCalls: Array<{
@@ -115,8 +113,6 @@ class MockTaskAgentManager {
     return {
       getProcessingState: () => ({ status }),
       isInterruptInProgress: () => this.interrupting.has(sessionId),
-      // Mirror AgentSession.normalizeStaleInterruptedState: flip a stale
-      // persisted 'interrupted' state to idle.
       normalizeStaleInterruptedState: async () => {
         if (status === 'interrupted' && !this.interrupting.has(sessionId)) {
           this.processingStates.set(sessionId, 'idle');
@@ -190,11 +186,6 @@ describe('SpaceRuntime external event subscriptions', () => {
   let eventStore: ExternalEventStore;
   let eventService: ExternalEventService;
   let injected: Array<{ sessionId: string; message: string; deliveryMode?: string }>;
-  /**
-   * When true, the registered `agent.message.inject` handler returns a
-   * recoverable (`ok: false`) failure so tests can exercise the delivery
-   * cool-down / retry paths. Reset to false in beforeEach.
-   */
   let injectShouldFail: boolean;
   let longHorizonMessages: Array<{ agentId: string; message: string; idempotencyKey?: string }>;
   let tam: MockTaskAgentManager;
@@ -229,10 +220,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
   }
 
-  /**
-   * Create a workflow, start a run, and register a subscription topic.
-   * Returns the workflow, run, and canonical task.
-   */
   async function startRunWithSubscription(
     topic = DEFAULT_TOPIC,
     nodeId = 'code',
@@ -254,12 +241,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     return { workflow, run, task };
   }
 
-  /**
-   * Stamp a run's reviewed PR URL the way the production `pr_ready` hook does
-   * — as a `link kind:'pr'` artifact, which `CodingArtifactProfile.resolvePrimaryLinkUrl`
-   * reads for external-event PR-to-run coupling. (Replaces the former gate-data
-   * `'pr'` row written by the removed approval gate.)
-   */
   function stampRunPr(runId: string, url: string): void {
     artifactRepo.upsert({
       id: `art-pr-${runId}`,
@@ -1035,8 +1016,6 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(injected).toHaveLength(1);
     expect(injected[0]!.sessionId).toBe('session-live');
-    // External events always defer to the next idle boundary — never injected
-    // mid-work, even when the live session is actively processing.
     expect(injected[0]!.deliveryMode).toBe('defer');
     expect(JSON.parse(injected[0]!.message).eventId).toBe(event.id);
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
@@ -1047,19 +1026,9 @@ describe('SpaceRuntime external event subscriptions', () => {
   });
 
   test('defers external events to the next idle boundary for both busy and idle live sessions (never mid-work)', async () => {
-    // Design intent (2026-08-13): an external event to a LIVE session must
-    // ALWAYS be handed to the inject layer in 'defer' mode — insert when idle,
-    // queue and replay at the next idle point when busy. The runtime never
-    // requests 'immediate' (which would inject mid-work and derail an
-    // actively-processing agent). The inject layer (injectMessageIntoSession)
-    // owns the idle→deliver-now vs busy→replay-at-idle decision; here we assert
-    // the runtime always asks for 'defer', for both a busy and an idle session.
-    // This test fails before the change (live-session deliveries defaulted to
-    // 'immediate') and passes after.
     const BUSY_TOPIC = 'github/lsm/neokai/pull_request/42.review_*';
     const IDLE_TOPIC = 'github/lsm/neokai/pull_request/43.review_*';
 
-    // Busy live session — actively processing.
     const { run: busyRun, task: busyTask } = await startRunWithSubscription(
       BUSY_TOPIC,
       'code-busy'
@@ -1072,7 +1041,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
     tam.alive.add('session-busy-defer');
 
-    // Idle live session — waiting, not processing.
     const { run: idleRun, task: idleTask } = await startRunWithSubscription(
       IDLE_TOPIC,
       'code-idle'
@@ -1098,14 +1066,9 @@ describe('SpaceRuntime external event subscriptions', () => {
     const busyInject = injected.find((i) => i.sessionId === 'session-busy-defer')!;
     const idleInject = injected.find((i) => i.sessionId === 'session-idle-defer')!;
 
-    // Both reach the inject layer in 'defer' mode — never 'immediate'. This is
-    // the assertion that flips from 'immediate' to 'defer' under this change.
     expect(busyInject.deliveryMode).toBe('defer');
     expect(idleInject.deliveryMode).toBe('defer');
 
-    // Both are accepted by the inject layer ('delivered' = handed off). For the
-    // busy session the inject layer persists a deferred row for replay at the
-    // next idle point; for the idle session it delivers now.
     expect(eventStore.getById(busyEvent.id)?.state).toBe('delivered');
     expect(eventStore.getById(idleEvent.id)?.state).toBe('delivered');
     expect(eventStore.listDeliveries(busyEvent.id)[0]!.taskId).toBe(busyTask.id);
@@ -1113,12 +1076,6 @@ describe('SpaceRuntime external event subscriptions', () => {
   });
 
   test('keeps an external event pending while the live session is mid-interrupt, delivering after the interrupt resolves', async () => {
-    // P2 regression guard: InterruptHandler completes via setIdle WITHOUT
-    // publishing query.trigger, so a deferred row handed to a mid-interrupt
-    // session is never replayed — the delivery would be marked delivered while
-    // the row sits unconsumed indefinitely. The runtime must park the delivery
-    // (queue + retry) instead of handing it off in 'defer' mode, then deliver
-    // at the true idle once the interrupt resolves.
     const { run } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
     nodeExecutionRepo.update(execution.id, {
@@ -1133,19 +1090,13 @@ describe('SpaceRuntime external event subscriptions', () => {
     const event = makeEvent();
     await eventService.publish(event);
 
-    // Not handed off while mid-interrupt: no injection, delivery still pending.
     expect(injected).toHaveLength(0);
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('pending');
-    // Parked with a defer-encoded reason (non-terminal): after a daemon
-    // restart, requeuePersistedPendingDeliveries reconstructs 'defer' from it
-    // — a null reason would recover as 'immediate'.
     expect(delivery.failureReason).toBe('deliveryMode:defer; target_session_interrupted');
 
-    // The interrupt resolves — the session reaches a true idle.
     tam.processingStates.set('session-interrupted', 'idle');
 
-    // The parked retry fires and delivers at the true idle boundary.
     await new Promise((resolve) => setTimeout(resolve, 1100));
     expect(injected).toHaveLength(1);
     expect(injected[0]!.sessionId).toBe('session-interrupted');
@@ -1156,11 +1107,6 @@ describe('SpaceRuntime external event subscriptions', () => {
   });
 
   test('does not park on a stale persisted interrupted state (no interrupt in flight)', async () => {
-    // A daemon crash between setInterrupted and setIdle leaves the persisted
-    // processing state 'interrupted' with no interrupt operation remaining to
-    // resolve it — parking on that state would hold the delivery until TTL.
-    // Only an interrupt actually in flight is a parking signal; a stale
-    // interrupted session takes the normal defer handoff.
     const { run } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
     nodeExecutionRepo.update(execution.id, {
@@ -1170,7 +1116,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
     tam.alive.add('session-stale-interrupted');
     tam.processingStates.set('session-stale-interrupted', 'interrupted');
-    // No tam.interrupting entry — the interrupt is not in flight.
 
     const event = makeEvent();
     await eventService.publish(event);
@@ -1182,14 +1127,6 @@ describe('SpaceRuntime external event subscriptions', () => {
   });
 
   test('a shared-PR synchronize (commit push) does NOT stamp any co-subscriber lastActivityAt', async () => {
-    // Regression guard for the commit-push attribution bug (review P1):
-    // pull_request.synchronize is a PR-LEVEL event that fans out to EVERY
-    // subscriber (e.g. a coder run AND a reviewer run watching the same PR).
-    // lastActivityAt must not advance for any of them — a node's OWN push is
-    // already captured by its tool calls (the sdk.toolUse source, which is
-    // node-scoped), and a PR-level event cannot be attributed to one node.
-    // Stamping here would mark an idle co-subscriber active and suppress its
-    // stall nag for a full threshold window.
     const PR_TOPIC = 'github/lsm/neokai/pull_request/42.*';
 
     const { run: coderRun } = await startRunWithSubscription(PR_TOPIC, 'code');
@@ -1217,12 +1154,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       })
     );
 
-    // Sanity: the fan-out reached at least the coder target, so the delivery
-    // path that USED to stamp ran (under the old code coderExec.lastActivityAt
-    // would now be non-null).
     expect(injected.some((i) => i.sessionId === 'session-shared-coder')).toBe(true);
-    // Neither the pushing node's run NOR the co-subscribed reviewer run is
-    // stamped as active by the PR-level event.
     expect(nodeExecutionRepo.getById(coderExec.id)!.lastActivityAt).toBeNull();
     expect(nodeExecutionRepo.getById(reviewerExec.id)!.lastActivityAt).toBeNull();
   });
@@ -1243,7 +1175,6 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(injected).toHaveLength(1);
     expect(injected[0]!.sessionId).toBe('session-idle');
-    // Still delivered promptly when idle — defer mode delivers now when idle.
     expect(injected[0]!.deliveryMode).toBe('defer');
     expect(JSON.parse(injected[0]!.message).eventId).toBe(event.id);
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
@@ -1377,9 +1308,6 @@ describe('SpaceRuntime external event subscriptions', () => {
       }
     ).lookupSubscriptionTargets(DEFAULT_TOPIC);
 
-    // Done tasks are terminal and cannot deliver events. Rebuilding their
-    // interests would fan every later matching event out across historical runs
-    // only to fail each delivery with target_task_terminal.
     expect(matches.some((match) => match.workflowRunId === run.id)).toBe(false);
   });
 
@@ -1451,10 +1379,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(injected).toHaveLength(1);
     expect(injected[0]!.sessionId).toBe('session-flush');
-    // Pre-activation queued events flush in 'defer' mode too: the stored mode
-    // is forwarded unchanged, and 'immediate' would steer an already-processing
-    // session mid-turn. Defer + idle at flush delivers now (no difference for
-    // a fresh session).
     expect(injected[0]!.deliveryMode).toBe('defer');
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
@@ -1491,9 +1415,6 @@ describe('SpaceRuntime external event subscriptions', () => {
   });
 
   test('persists the defer mode when a live session is skipped while its space is paused', async () => {
-    // The paused-live early return must not leave a null failureReason:
-    // onSpaceResumed reconstructs the mode from it, so the defer intent is
-    // recorded explicitly rather than relying on the recovery default.
     const { run } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
     nodeExecutionRepo.update(execution.id, {
@@ -1503,8 +1424,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
     tam.alive.add('session-paused-live');
     db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
-    // The paused check reads the synchronous delivery-hold cache (kept in
-    // sync by the space pause/stop registers), not the raw column.
     runtime.holdSpaceDeliveries(SPACE_ID);
 
     const event = makeEvent();
@@ -1805,7 +1724,6 @@ describe('SpaceRuntime external event subscriptions', () => {
 
   test('deduplicates dispatch attempts for overlapping interests', async () => {
     const { run, task } = await startRunWithSubscription('github/*/*/pull_request/*.*');
-    // Register a second overlapping topic
     runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
     nodeExecutionRepo.update(execution.id, {
@@ -1846,8 +1764,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
     await eventService.publish(blockedEvent);
     expect(eventStore.getById(blockedEvent.id)?.state).toBe('published');
-    // The blocked task is still active, so the event is accepted as a pending
-    // delivery (queued for the recovered slot) rather than ignored.
     expect(eventStore.listDeliveries(blockedEvent.id)).toHaveLength(1);
     expect(eventStore.listDeliveries(blockedEvent.id)[0]!.state).toBe('pending');
 
@@ -1867,9 +1783,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     const event = makeEvent();
     await eventService.publish(event);
 
-    // Both the retained blocked event and the new event deliver to the recovered
-    // slot — the subscription survived the block, and the queued event is no
-    // longer dropped when the run is blocked.
     expect(injected).toHaveLength(2);
     expect(injected.every((item) => item.sessionId === sessionId)).toBe(true);
     expect(eventStore.getById(blockedEvent.id)?.state).toBe('delivered');
@@ -1893,8 +1806,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     await eventService.publish(event);
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
 
-    // Task cancellation/archive triggers clearRunInterests at the service layer;
-    // run status no longer clears subscriptions on its own.
     runtime.clearRunInterests(run.id);
 
     const delivery = eventStore.listDeliveries(event.id)[0]!;
@@ -1962,9 +1873,6 @@ describe('SpaceRuntime external event subscriptions', () => {
       '(oldest: 2023-11-14T22:13:20.010Z, newest: 2023-11-14T22:13:20.014Z)'
     );
     expect(injected[10]!.message).toContain('Use get_external_event(eventId) for full details.');
-    // The digest must carry the coalesced event ids so the agent can fetch the
-    // full record via get_external_event(eventId) — otherwise the pointer is
-    // unusable. The 5 coalesced events are evt-rate-limit-10..14.
     for (const id of ['evt-rate-limit-10', 'evt-rate-limit-14']) {
       expect(injected[10]!.message).toContain(`Event IDs: `);
       expect(injected[10]!.message).toContain(id);
@@ -2159,7 +2067,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     const { run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
 
-    // Events queue while the worker is not yet active (no live session).
     const events = Array.from({ length: 11 }, (_, index) =>
       makeEvent({
         id: `evt-digest-superseded-${index}`,
@@ -2174,8 +2081,6 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
     }
 
-    // The worker activates — spawn assigns its agentSessionId before the
-    // activation flush drains the pending queue.
     nodeExecutionRepo.update(execution.id, {
       status: 'in_progress',
       agentSessionId: 'session-activation',
@@ -2191,14 +2096,9 @@ describe('SpaceRuntime external event subscriptions', () => {
       sessionId: 'session-activation',
     });
 
-    // The first ten events dispatch synchronously to the activation session
-    // (under the rate limit); the eleventh is deferred to the digest timer.
     expect(injected).toHaveLength(10);
     expect(injected.every((item) => item.sessionId === 'session-activation')).toBe(true);
 
-    // Before the digest timer fires the activation session is superseded: the
-    // worker crashed and its execution was reset to pending (agentSessionId
-    // cleared) with no live session remaining.
     tam.alive.delete('session-activation');
     nodeExecutionRepo.update(execution.id, {
       status: 'pending',
@@ -2209,8 +2109,6 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    // The digest must NOT inject into the superseded (dead) session — it is
-    // requeued as pending for the next activation instead.
     expect(injected).toHaveLength(10);
     const digestDelivery = eventStore.listDeliveries(events[10]!.id)[0]!;
     expect(digestDelivery.state).toBe('pending');
@@ -2226,8 +2124,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     await eventService.publish(event);
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
 
-    // The activation session has been superseded by a respawned worker before
-    // the flush runs: the node execution now points at a different live session.
     nodeExecutionRepo.update(execution.id, {
       status: 'in_progress',
       agentSessionId: 'session-current',
@@ -2236,9 +2132,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
     tam.alive.add('session-current');
 
-    // flushPendingNodeQueue is invoked with the stale activation session id;
-    // resolveSubscriptionTarget re-resolves onto the current worker so the
-    // event is never injected into the superseded session.
     runtime.flushPendingNodeQueue({
       workflowRunId: run.id,
       taskId: task.id,
@@ -2334,24 +2227,16 @@ describe('SpaceRuntime external event subscriptions', () => {
       startedAt: Date.now(),
     });
     tam.alive.add('session-cooldown-fail');
-    // Simulate a recoverable dispatch failure (the storm trigger: a session
-    // stuck in a provider-error loop where injection throws non-terminally).
     injectShouldFail = true;
 
     const event = makeEvent({ id: 'evt-cooldown', dedupeKey: 'dedupe-cooldown' });
     await eventService.publish(event);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    // First injection attempted and failed recoverably → delivery cool-down
-    // armed. The event stays `published` (delivery non-terminal) so the source
-    // can re-poll and the bounded retry path can still drive recovery.
     expect(injected).toHaveLength(1);
     expect(eventStore.getById(event.id)?.state).toBe('published');
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
 
-    // Re-publishing the SAME event while its delivery is in cool-down must NOT
-    // mint a fresh injection (no fresh `failed` row) — the gate skips and the
-    // event stays `published` to re-evaluate once the window lifts.
     await eventService.publish(event);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -2361,9 +2246,6 @@ describe('SpaceRuntime external event subscriptions', () => {
   });
 
   test('a distinct event still delivers while another delivery is in cool-down', async () => {
-    // Cool-down is per-delivery (event + target), not per-target: a fresh,
-    // distinct event must still flow (the burst rate-limit / digest coalesces
-    // distinct events); only re-dispatches of an already-failed delivery gate.
     const { run } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
     nodeExecutionRepo.update(execution.id, {
@@ -2379,10 +2261,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(injected).toHaveLength(1);
 
-    // A distinct event for the same (failing) target is NOT gated — it is a
-    // separate delivery and is attempted on its own. (Publishing B also flushes
-    // A's pending retry, so the exact injection count is not asserted; the
-    // guarantee under test is that B itself reaches the session and delivers.)
     injectShouldFail = false;
     const eventB = makeEvent({ id: 'evt-cooldown-distinct-b', dedupeKey: 'dedupe-distinct-b' });
     await eventService.publish(eventB);
@@ -2408,14 +2286,11 @@ describe('SpaceRuntime external event subscriptions', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(injected).toHaveLength(1);
 
-    // Within the cool-down window a re-poll of the same event is gated.
     await eventService.publish(event);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(injected).toHaveLength(1);
     expect(runtime.getQueueHealthSnapshot().counters.cooldownSkips).toBeGreaterThanOrEqual(1);
 
-    // Advance past the default 30s cool-down window and let the target accept.
-    // The same event's delivery now re-injects and delivers normally.
     injectShouldFail = false;
     const realNow = Date.now;
     Date.now = () => realNow.call(Date) + 35_000;
@@ -2431,10 +2306,6 @@ describe('SpaceRuntime external event subscriptions', () => {
   });
 
   test('bounds the delivery cool-down map — sweeps expired entries on arm', () => {
-    // A delivery that fails once and is never republished is only reaped lazily
-    // on re-query, so a long-running daemon could grow the map without bound.
-    // Once the map exceeds its cap, arming sweeps expired entries. White-box:
-    // the map + arm helper are private.
     const rt = runtime as unknown as {
       armDeliveryCooldown(key: string): void;
       externalEventDeliveryCooldowns: Map<string, number>;
@@ -2443,16 +2314,12 @@ describe('SpaceRuntime external event subscriptions', () => {
     };
     const cap = rt.deliveryCooldownMapCap;
     expect(cap).toBeGreaterThan(0);
-    // Arm cap+1 distinct LIVE entries — the sweep runs but finds none expired.
     for (let i = 0; i <= cap; i++) rt.armDeliveryCooldown(`dk-${i}`);
     expect(rt.externalEventDeliveryCooldowns.size).toBe(cap + 1);
-    // Backdate every entry so they are all past the window.
     const stale = Date.now() - rt.deliveryCooldownMs - 1;
     for (const key of rt.externalEventDeliveryCooldowns.keys()) {
       rt.externalEventDeliveryCooldowns.set(key, stale);
     }
-    // One more arm triggers the sweep → all expired entries drop, only the new
-    // live entry remains.
     rt.armDeliveryCooldown('dk-fresh');
     expect(rt.externalEventDeliveryCooldowns.size).toBe(1);
     expect(rt.externalEventDeliveryCooldowns.has('dk-fresh')).toBe(true);
@@ -3044,8 +2911,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(oldestDelivery.state).toBe('failed');
     expect(oldestDelivery.failureReason).toBe('pending_node_queue_overflow');
 
-    // The worker activates — spawn assigns its agentSessionId to the node
-    // execution before the activation flush drains the pending queue.
     nodeExecutionRepo.update(nodeExecutionRepo.listByNode(run.id, 'code')[0]!.id, {
       status: 'in_progress',
       agentSessionId: 'session-overflow',
@@ -3070,9 +2935,6 @@ describe('SpaceRuntime external event subscriptions', () => {
       '40 events received for topics: github/lsm/neokai/pull_request/42.review_submitted'
     );
     expect(injected.some((item) => item.message.includes(events[0]!.id))).toBe(false);
-    // The digest must list EVERY coalesced id (no cap/truncation) so every
-    // delivered event remains fetchable via get_external_event(eventId).
-    // events[1..40] are in the digest; verify an id well past the old 10-cap.
     expect(injected[10]!.message).toContain(events[30]!.id);
     expect(injected[10]!.message).toContain(events[40]!.id);
     expect(injected[10]!.message).not.toContain('more)`');
@@ -3191,9 +3053,6 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     const event = makeEvent();
     await eventService.publish(event);
-    // Defer-encoded prefix so a daemon restart before the retry succeeds
-    // reconstructs 'defer' (a bare activation_failed reason recovers as
-    // 'immediate').
     expect(eventStore.listDeliveries(event.id)[0]!.failureReason).toBe(
       'deliveryMode:defer; activation_failed; spawn failed'
     );
@@ -3295,8 +3154,6 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(injected).toHaveLength(1);
     expect(injected[0]!.sessionId).toBe('session-idle-stale');
-    // Delivered promptly (the inject layer delivers defer-mode input now when
-    // idle); the runtime still always requests 'defer' — never mid-work.
     expect(injected[0]!.deliveryMode).toBe('defer');
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('delivered');
@@ -3399,17 +3256,12 @@ describe('SpaceRuntime external event subscriptions', () => {
   test('concurrent flushPendingNodeQueue calls do not double-dispatch persisted deliveries', async () => {
     const { run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-    // Node idle with no live session → every event persists as a pending
-    // delivery in the DB (failureReason set) waiting for an activation flush.
     nodeExecutionRepo.update(execution.id, {
       status: 'idle',
       agentSessionId: null,
       completedAt: Date.now(),
     });
 
-    // Publish more events than the per-minute rate limit (default 10) so the
-    // flush dispatch overflows into the rate-limit digest path, where the
-    // concurrent-flush race lives (the digest timer defers the in-flight claim).
     const events = Array.from({ length: 12 }, (_, index) =>
       makeEvent({
         id: `evt-concurrent-flush-${index}`,
@@ -3435,25 +3287,18 @@ describe('SpaceRuntime external event subscriptions', () => {
       agentName: 'coder',
       sessionId: 'session-concurrent-flush',
     };
-    // Two back-to-back flush calls before the digest timer (setTimeout 0)
-    // fires. The second flush re-reads the same DB-persisted pending rows and
-    // must NOT re-select the deliveries already claimed by the first flush.
     runtime.flushPendingNodeQueue(flushTarget);
     runtime.flushPendingNodeQueue(flushTarget);
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    // 10 immediate injections + 1 digest injection.
     const immediateInjections = injected.filter(
       (item) => !item.message.includes('events received')
     );
     const digestInjections = injected.filter((item) => item.message.includes('events received'));
     expect(immediateInjections).toHaveLength(10);
     expect(digestInjections).toHaveLength(1);
-    // The digest must cover exactly the 2 overflowed events — not 4 (which
-    // would indicate the second flush re-dispatched the same deliveries).
     expect(digestInjections[0]!.message).toContain('2 events received');
-    // Every delivery is delivered exactly once.
     for (const event of events) {
       expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
     }
@@ -3463,8 +3308,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     const { run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
 
-    // Event A: arrives while node is idle → persisted as pending in DB only
-    // (not added to in-memory queue).
     nodeExecutionRepo.update(execution.id, {
       status: 'idle',
       agentSessionId: null,
@@ -3480,9 +3323,6 @@ describe('SpaceRuntime external event subscriptions', () => {
       'deliveryMode:defer; node_execution_not_active'
     );
 
-    // Simulate a separate in-memory queued delivery (from a transient failure
-    // while the node was active) by manually inserting one into the pending
-    // queue. This delivery has a DIFFERENT delivery key from the idle event.
     const liveEvent = makeEvent({
       id: 'evt-live-split',
       dedupeKey: 'dedupe-live-split',
@@ -3506,7 +3346,6 @@ describe('SpaceRuntime external event subscriptions', () => {
       ingestedAt: liveEvent.ingestedAt,
       spaceId: liveEvent.spaceId,
     };
-    // Directly inject into the in-memory pending queue.
     const runtimeInternal = runtime as unknown as {
       pendingExternalEventQueue: Map<
         string,
@@ -3534,8 +3373,6 @@ describe('SpaceRuntime external event subscriptions', () => {
       },
     ]);
 
-    // On activation flush, BOTH the in-memory item and the DB-persisted item
-    // should be delivered — the DB-persisted one must not be skipped.
     runtime.flushPendingNodeQueue({
       workflowRunId: run.id,
       taskId: task.id,
@@ -3554,7 +3391,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     const { run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
 
-    // Event A: older, persisted as pending while node is idle.
     nodeExecutionRepo.update(execution.id, {
       status: 'idle',
       agentSessionId: null,
@@ -3567,8 +3403,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     await eventService.publish(olderEvent);
     expect(eventStore.listDeliveries(olderEvent.id)[0]!.state).toBe('pending');
 
-    // Event B: newer, manually injected into the in-memory queue (simulates
-    // a transient delivery failure while the node was active).
     const newerEvent = makeEvent({
       id: 'evt-newer-cross-source',
       dedupeKey: 'dedupe-newer-cross',
@@ -3602,18 +3436,15 @@ describe('SpaceRuntime external event subscriptions', () => {
       nodeId: 'code',
       agentName: 'coder',
     });
-    // Set older createdAt for the in-memory item to verify it's NOT dispatched
-    // before the DB item — both have different createdAt values.
     runtimeInternal.pendingExternalEventQueue.set(queueKey, [
       {
         event: newerPayload,
         deliveryKey: newerKey,
         deliveryMode: 'defer',
-        createdAt: Date.now(), // newer than the DB-persisted event
+        createdAt: Date.now(),
       },
     ]);
 
-    // DB event has an older createdAt via event record.
     db.prepare(`UPDATE space_external_events SET created_at = ? WHERE id = ?`).run(
       Date.now() - 5000,
       olderEvent.id
@@ -3628,9 +3459,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
 
     await new Promise((resolve) => setTimeout(resolve, 0));
-    // The DB-persisted older event should be delivered before the newer
-    // in-memory event despite the in-memory queue being processed first
-    // in the code.
     expect(injected.map((item) => JSON.parse(item.message).eventId)).toEqual([
       olderEvent.id,
       newerEvent.id,
@@ -3641,7 +3469,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     const { run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
 
-    // Simulate a failing command bus for the activation dispatch.
     const failingCommandBus = createInternalCommandBus();
     failingCommandBus.register('agent.message.inject', async () => ({
       ok: false,
@@ -3662,7 +3489,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
     runtimeWithFailure.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
 
-    // Event arrives while node is idle → persisted as pending.
     nodeExecutionRepo.update(execution.id, {
       status: 'idle',
       agentSessionId: null,
@@ -3673,8 +3499,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       dedupeKey: 'dedupe-ttl-preserved',
     });
     await eventService.publish(event);
-    // Set the event's created_at to near the TTL boundary.
-    const oldCreatedAt = Date.now() - 299_000; // just under 5-minute TTL
+    const oldCreatedAt = Date.now() - 299_000;
     db.prepare(`UPDATE space_external_events SET created_at = ? WHERE id = ?`).run(
       oldCreatedAt,
       event.id
@@ -3689,11 +3514,9 @@ describe('SpaceRuntime external event subscriptions', () => {
       sessionId: 'session-ttl-test',
     });
 
-    // Wait for the async dispatch to fail and the retry to be queued.
     await new Promise((resolve) => setTimeout(resolve, 0));
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('pending');
-    // The retry queue should preserve the original createdAt, not reset to now.
     const retryQueued = runtimeWithFailure as unknown as {
       pendingExternalEventQueue: Map<string, Array<{ createdAt: number }>>;
     };
@@ -3702,17 +3525,8 @@ describe('SpaceRuntime external event subscriptions', () => {
   });
 
   test('drops persisted pending delivery whose event predates TTL even when the delivery row was just registered (event-age TTL anchor)', async () => {
-    // Regression guard for the TTL anchor decision (task #667): the TTL for a
-    // DB-persisted pending delivery is measured from the EVENT's
-    // creation/ingestion time, NOT the delivery row's registration time.
-    // A delivery registered "now" for an already-stale event must still
-    // expire — otherwise delayed registration (backlog replay, a subscription
-    // added late, or a daemon-restart requeue) would resurrect stale events.
-    // If the anchor were ever switched to registration age, this test would
-    // fail (the delivery would be delivered instead of expired).
     const { run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-    // Idle execution → delivery is persisted as pending (not in-memory queue).
     nodeExecutionRepo.update(execution.id, {
       status: 'idle',
       agentSessionId: null,
@@ -3726,19 +3540,13 @@ describe('SpaceRuntime external event subscriptions', () => {
     await eventService.publish(event);
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('pending');
-    // The delivery row was registered moments ago (updated_at ≈ now).
     expect(Date.now() - delivery.updatedAt).toBeLessThan(5_000);
 
-    // Backdate only the EVENT's created_at past the TTL window, leaving the
-    // delivery registration time recent. This is the discriminator: under
-    // event-age TTL this must expire; under registration-age TTL it would
-    // still be deliverable.
     db.prepare(`UPDATE space_external_events SET created_at = ? WHERE id = ?`).run(
-      Date.now() - 301_000, // just over the 5-minute EXTERNAL_EVENT_QUEUE_TTL_MS
+      Date.now() - 301_000,
       event.id
     );
 
-    // Reactivate the worker so the activation flush attempts delivery.
     nodeExecutionRepo.update(execution.id, {
       status: 'in_progress',
       agentSessionId: 'session-delayed-registration',
@@ -3760,25 +3568,10 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.getById(event.id)?.state).toBe('failed');
   });
 
-  // --- null-failureReason pending delivery invariant -----------------------
-  //
-  // A `pending` row whose `failureReason` is null is, by contract, still owned
-  // by its original in-process dispatch path (the in-memory pending queue, an
-  // in-flight dispatch, or a pending rate-limit digest). The activation flush
-  // intentionally skips such rows so it never duplicates a delivery. The
-  // counterpart to that skip is crash recovery: rows left `pending`+null by an
-  // interruption are re-queued by requeuePersistedPendingDeliveries on the next
-  // rehydrate, so the skip can never strand them permanently. These two tests
-  // pin both halves of that invariant.
-
   test('does not re-dispatch a pending delivery with null failureReason during activation flush', async () => {
     const { run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
 
-    // Persist a pending+null delivery row directly, simulating a row owned by
-    // an in-process dispatch path that tracks it in memory (in-flight or
-    // digest-pending) rather than via the failureReason column. The activation
-    // flush must leave it untouched so its owner path delivers it exactly once.
     const event = makeEvent({ id: 'evt-null-failure-skip', dedupeKey: 'dedupe-null-failure-skip' });
     eventStore.store(event);
     const deliveryKey = JSON.stringify([
@@ -3814,8 +3607,6 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    // Not dispatched by the flush, and the row is unchanged — the owner path
-    // remains responsible for it.
     expect(injected).toHaveLength(0);
     const delivery = eventStore.getDelivery(event.id, deliveryKey)!;
     expect(delivery.state).toBe('pending');
@@ -3827,9 +3618,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     const { run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
 
-    // Persist a pending+null delivery row, as would be left by an in-flight or
-    // digest-pending dispatch that was interrupted by a crash before stop()
-    // could stamp a failureReason.
     const event = makeEvent({
       id: 'evt-null-failure-requeue',
       dedupeKey: 'dedupe-null-failure-requeue',
@@ -3851,8 +3639,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
     expect(eventStore.getDelivery(event.id, deliveryKey)!.failureReason).toBeNull();
 
-    // Simulate a crash + restart: tear down the runtime and rebuild it over the
-    // same DB, then rehydrate (which runs requeuePersistedPendingDeliveries).
     await runtime.stop();
     const commandBus = createInternalCommandBus();
     commandBus.register('agent.message.inject', async (command) => {
@@ -3879,8 +3665,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
     await runtime.rehydrateExecutors();
 
-    // Activate the node — requeue re-queued the null-failure row into the
-    // in-memory pending queue, so the activation flush now drains and delivers it.
     nodeExecutionRepo.update(execution.id, {
       status: 'in_progress',
       agentSessionId: 'session-null-failure-requeue',
@@ -3950,7 +3734,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     const event = makeEvent({ topic: STATUS_PENDING_TOPIC });
     await eventService.publish(event);
 
-    // pending/success are not failures — they must not reopen a done task.
     expect(taskRepo.getTask(task.id)?.status).toBe('done');
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('failed');
@@ -3966,13 +3749,11 @@ describe('SpaceRuntime external event subscriptions', () => {
     const event = makeEvent({ topic: REVIEW_TOPIC });
     await eventService.publish(event);
 
-    // A non-reactivating event does not reopen the task...
     expect(taskRepo.getTask(task.id)?.status).toBe('done');
     expect(injected).toHaveLength(0);
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('failed');
     expect(delivery.failureReason).toBe('target_task_terminal');
-    // ...but the subscription survives so a later check_failed can reactivate.
     expect(
       (
         runtime as unknown as {
@@ -3987,12 +3768,10 @@ describe('SpaceRuntime external event subscriptions', () => {
   test('refuses a queued event flushed after the task goes done (no injection past the gate)', async () => {
     const { workflow, run, task } = await startRunWithSubscription();
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-    // Event queues as a pending delivery while there is no live session.
     const event = makeEvent();
     await eventService.publish(event);
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
 
-    // The task completes (and a live session appears) before the flush runs.
     taskRepo.updateTask(task.id, { status: 'done', completedAt: Date.now() });
     nodeExecutionRepo.update(execution.id, {
       status: 'in_progress',
@@ -4010,8 +3789,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    // The flush applies the task-lifecycle decision: a done task refuses a
-    // non-reactivating event instead of injecting it past the gate.
     expect(injected).toHaveLength(0);
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('failed');
@@ -4023,8 +3800,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     const { workflow, run, task } = await startRunWithSubscription(STATIC_TOPIC, 'code', {
       staticInterest: true,
     });
-    // startWorkflowRun caches the executor; register the workflow's static
-    // interests explicitly (as rehydrate would on a cold start).
     runtime.registerRunInterests(run.id, task.id, workflow.nodes);
     const lookup = (
       runtime as unknown as {
@@ -4033,25 +3808,19 @@ describe('SpaceRuntime external event subscriptions', () => {
     ).lookupSubscriptionTargets.bind(runtime);
     expect(lookup(STATIC_TOPIC).some((t) => t.workflowRunId === run.id)).toBe(true);
 
-    // A task cancellation clears all run interests (task-owned cleanup).
     runtime.clearRunInterests(run.id);
     expect(lookup(STATIC_TOPIC).some((t) => t.workflowRunId === run.id)).toBe(false);
 
-    // Recovering the task (e.g. a retry) must re-register static interests from
-    // the workflow definition even when the executor is already cached.
     await runtime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'in_progress');
     expect(lookup(STATIC_TOPIC).some((t) => t.workflowRunId === run.id)).toBe(true);
   });
 
   test('cancelWorkflowRun cancels a review task waiting at a gate', async () => {
     const { run, task } = await startRunWithSubscription();
-    // The canonical task is waiting at a human-approval gate.
     taskRepo.updateTask(task.id, { status: 'review' });
 
     await runtime.cancelWorkflowRun(SPACE_ID, run.id);
 
-    // The review task must be cancelled (not left live) so later events cannot
-    // reach the obsolete workflow after the run is switched/cancelled.
     expect(taskRepo.getTask(task.id)?.status).toBe('cancelled');
     expect(workflowRunRepo.getRun(run.id)?.status).toBe('cancelled');
   });
@@ -4206,12 +3975,9 @@ describe('SpaceRuntime external event subscriptions', () => {
     tam.alive.add('session-stop-start-sweep');
     await runtime.executeTick();
     await runtime.stop();
-    // Event arrives while stopped (subscriber detached, persisted only)
     eventStore.store(makeEvent({ id: 'evt-arrived-while-stopped' }));
 
-    // Restart the same runtime instance (rehydrated=true, interests intact)
     runtime.start();
-    // The sweep in start() fires async — wait for microtasks to settle
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(eventStore.listDeliveries('evt-arrived-while-stopped')).toHaveLength(1);
@@ -4399,9 +4165,6 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     const rehydratedDelivery = eventStore.listDeliveries(event.id)[0]!;
     expect(rehydratedDelivery.state).toBe('failed');
-    // The done task's subscription row is reconciled (purged) during rehydrate,
-    // so the requeued pending delivery finds no subscriber and terminalizes
-    // with subscription_no_longer_active rather than hanging.
     expect(rehydratedDelivery.failureReason).toBe('subscription_no_longer_active');
     expect(eventStore.listPendingDeliveries()).not.toContainEqual(rehydratedDelivery);
     expect(eventStore.getById(event.id)?.state).toBe('failed');
@@ -4410,18 +4173,12 @@ describe('SpaceRuntime external event subscriptions', () => {
   test('refuses delivery when a cancelled run reconciles its task to cancelled', async () => {
     const { run } = await startRunWithSubscription();
     workflowRunRepo.updateRun(run.id, { status: 'cancelled' });
-    // The tick reconciles the cancelled run's canonical task to `cancelled`,
-    // which is the task-owned tombstone that refuses delivery.
     await runtime.executeTick();
     expect(taskRepo.getTask(taskRepo.listByWorkflowRun(run.id)[0]!.id)?.status).toBe('cancelled');
 
     const event = makeEvent();
     await eventService.publish(event);
 
-    // The cancelled run's subscription row is purged during the rehydrate that
-    // executeTick triggers (cancelled-RUN teardown), so the event has no
-    // subscriber and no delivery is created — matching production, where
-    // cancelWorkflowRun's clearRunInterests would already have dropped the row.
     expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
     expect(eventStore.getById(event.id)?.state).not.toBe('delivered');
   });
@@ -4436,8 +4193,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
     tam.alive.add('session-updated-interests');
 
-    // Clear old dynamic interest and register new ones (simulates what a runtime
-    // caller would do after a workflow definition change)
     runtime.unregisterSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
     runtime.registerRunInterests(run.id, task.id, workflow.nodes);
     runtime.registerSubscription(
@@ -4472,8 +4227,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     const queuedDelivery = eventStore.listDeliveries(event.id)[0]!;
     expect(queuedDelivery.state).toBe('pending');
 
-    // Clear interests with queued delivery cleanup (simulates what a runtime
-    // caller would do after a workflow definition change removes interests)
     runtime.registerRunInterests(run.id, task.id, workflow.nodes, {
       clearQueuedDeliveries: true,
     });
@@ -4518,8 +4271,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(nodeExecutionRepo.listByWorkflowRun(run.id).map((item) => item.status)).toEqual([
       'idle',
     ]);
-    // The task is still active, so a matching event is accepted (no longer
-    // ignored) and dispatched to the resolved slot.
     expect(eventStore.listDeliveries(event.id)).toHaveLength(1);
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
   });
@@ -4559,14 +4310,12 @@ describe('SpaceRuntime external event subscriptions', () => {
     const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
     runtime.registerSubscription(run.id, tasks[0]!.id, 'review', 'reviewer', DEFAULT_TOPIC);
     runtime.registerSubscription(run.id, tasks[0]!.id, 'code', 'coder', DEFAULT_TOPIC);
-    // Make the review node execution in_progress (active)
     const reviewExecution = nodeExecutionRepo.listByNode(run.id, 'review')[0]!;
     nodeExecutionRepo.update(reviewExecution.id, {
       status: 'in_progress',
       agentSessionId: 'session-review-active',
       startedAt: Date.now(),
     });
-    // Create a cancelled execution for the code node (terminal for that target)
     const codeExecution = nodeExecutionRepo.createOrIgnore({
       workflowRunId: run.id,
       workflowNodeId: 'code',
@@ -4580,7 +4329,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     const event = makeEvent();
     await eventService.publish(event);
 
-    // The code node should be persisted as pending instead of terminalized.
     const deliveries = eventStore.listDeliveries(event.id);
     expect(deliveries).toHaveLength(2);
     const codeDelivery = deliveries.find((d) => d.nodeId === 'code')!;
@@ -4681,8 +4429,6 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('pending');
-    // Defer-encoded reason (non-terminal) so a daemon restart reconstructs
-    // 'defer' — a null reason would recover as 'immediate'.
     expect(delivery.failureReason).toBe('deliveryMode:defer; node_execution_pending');
 
     runtime.flushPendingNodeQueue({
@@ -4921,9 +4667,6 @@ describe('SpaceRuntime external event subscriptions', () => {
       commandBus,
       externalEventStore: eventStore,
       taskAgentManager: tam as never,
-      // This test exercises the retry-timer in-flight guard via an immediate
-      // duplicate publish; disable the per-delivery cool-down so the duplicate
-      // re-dispatches (the cool-down is covered by its own dedicated tests).
       externalEventDeliveryCooldownMs: 0,
     });
     runtime.registerSubscription(
@@ -5118,16 +4861,12 @@ describe('SpaceRuntime external event subscriptions', () => {
     runtime.start();
     await runtime.executeTick();
 
-    // Publish event → first dispatch attempt will fail transiently
     const event = makeEvent();
     await eventService.publish(event);
     expect(injectAttempts).toBe(1);
 
-    // Cancel the run before the retry timer fires. The task is still active, so
-    // run status no longer terminalizes the delivery — it stays pending.
     workflowRunRepo.updateRun(run.id, { status: 'cancelled' });
 
-    // Trigger the retry by waiting for the retry timer
     await new Promise((resolve) => setTimeout(resolve, 250));
 
     const delivery = eventStore.listDeliveries(event.id)[0]!;
@@ -5223,12 +4962,10 @@ describe('SpaceRuntime external event subscriptions', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     await runtime.executeTick();
 
-    // Publish event → first dispatch attempt will fail transiently
     const event = makeEvent();
     await eventService.publish(event);
     expect(injectAttempts).toBe(1);
 
-    // Now transition the run to blocked with no active execution
     workflowRunRepo.updateRun(run.id, { status: 'blocked' });
     nodeExecutionRepo.update(execution.id, {
       status: 'idle',
@@ -5238,17 +4975,12 @@ describe('SpaceRuntime external event subscriptions', () => {
       result: 'blocked for test',
     });
 
-    // Trigger the retry by waiting for the retry timer. CI runners can delay the
-    // timer slightly, so poll the persisted delivery state rather than assuming
-    // one sleep lands after the retry callback.
     let delivery = eventStore.listDeliveries(event.id)[0]!;
     for (let attempt = 0; attempt < 10 && delivery.state === 'pending'; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 150));
       delivery = eventStore.listDeliveries(event.id)[0]!;
     }
 
-    // The task is still active, so a blocked run no longer terminalizes the
-    // delivery — it stays pending for the next retry.
     expect(delivery.state).toBe('pending');
   });
 
@@ -5262,18 +4994,14 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
     tam.alive.add('session-pre-terminal');
 
-    // Simulate terminal cleanup — clear interests and mark run done
     runtime.clearRunInterests(run.id);
     workflowRunRepo.updateRun(run.id, { status: 'done' });
-    tam.alive.delete('session-pre-terminal'); // session dies at terminalization
+    tam.alive.delete('session-pre-terminal');
 
-    // Recover the terminal run back to active
     await runtime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'in_progress');
 
-    // Re-register subscription for the recovered run
     runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
 
-    // Set up a live session for the recovered execution
     const executions = nodeExecutionRepo.listByWorkflowRun(run.id);
     const pendingExec = executions.find((e) => e.status === 'pending');
     expect(pendingExec).toBeDefined();
@@ -5284,7 +5012,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
     tam.alive.add('session-recovered');
 
-    // Publish an event — interests should be re-registered after recovery
     const event = makeEvent();
     await eventService.publish(event);
 
@@ -5347,9 +5074,6 @@ describe('SpaceRuntime external event subscriptions', () => {
       Date.now = originalNow;
     }
 
-    // Let the rate-limit digest timer flush; the batched digest items are
-    // requeued as pending deliveries, and the oldest one is dropped with the
-    // overflow reason once the queue reaches its limit.
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     const droppedDelivery = events
@@ -5612,9 +5336,6 @@ describe('SpaceRuntime external event subscriptions', () => {
 
   test('activation flush delivers persisted pending deliveries regardless of run status', async () => {
     const { run, task } = await startRunWithSubscription();
-    // Make the node execution non-active so the published event is persisted as
-    // a retryable pending delivery (failureReason = node_execution_not_active),
-    // which is the only kind collectPersistedPendingDeliveries re-dispatches.
     const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
     nodeExecutionRepo.update(execution.id, { status: 'idle', completedAt: Date.now() });
 
@@ -5624,8 +5345,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(persisted.state).toBe('pending');
     expect(persisted.failureReason).toBe('deliveryMode:defer; node_execution_not_active');
 
-    // Run transitions to terminal, but the task is still active and the node
-    // reactivates with a live session — run status no longer gates delivery.
     workflowRunRepo.updateRun(run.id, { status: 'cancelled' });
 
     runtime.flushPendingNodeQueue({
@@ -5655,8 +5374,6 @@ describe('SpaceRuntime external event subscriptions', () => {
       'deliveryMode:defer; node_execution_not_active'
     );
 
-    // Run becomes blocked with no active execution, but the task is still
-    // active and the node reactivates with a live session.
     workflowRunRepo.updateRun(run.id, { status: 'blocked' });
 
     runtime.flushPendingNodeQueue({
@@ -5686,8 +5403,6 @@ describe('SpaceRuntime external event subscriptions', () => {
       'deliveryMode:defer; node_execution_not_active'
     );
 
-    // Reactivate the node execution, then leave the run blocked — a blocked run
-    // with an active execution is still externally deliverable.
     nodeExecutionRepo.update(execution.id, {
       status: 'in_progress',
       agentSessionId: 'session-activation-blocked-active',
@@ -5717,8 +5432,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     const event = makeEvent();
     await eventService.publish(event);
     await runtime.stop();
-    // Create fresh runtime WITHOUT registering a subscription — simulates
-    // the subscription being removed between runtime restarts
     runtime = new SpaceRuntime({
       db,
       spaceManager: new SpaceManager(db),
@@ -5734,10 +5447,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
 
     await runtime.rehydrateExecutors();
-    // Subscriptions are now durable: a restart rehydrates them from the table
-    // (see space-runtime-workflow-subscription-persistence.test.ts), so
-    // restarting alone no longer drops the interest. Explicitly unregister to
-    // exercise the removed-subscription path the rest of this test asserts on.
     runtime.unregisterSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
     runtime.flushPendingNodeQueue({
       workflowRunId: run.id,
@@ -5919,7 +5628,6 @@ describe('SpaceRuntime external event subscriptions', () => {
       agentSessionId: null,
       completedAt: Date.now(),
     });
-    // Empty result simulates activateTargetSessionsForMessage timing out.
     tam.activationResult = [];
 
     const event = makeEvent();
@@ -5962,7 +5670,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
     const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
     const task = tasks[0]!;
-    // Only the start node has an execution; subscribe to the future node.
     runtime.registerSubscription(run.id, task.id, 'future', 'reviewer', DEFAULT_TOPIC, {
       subscriptionKind: 'static',
     });
@@ -5984,8 +5691,6 @@ describe('SpaceRuntime external event subscriptions', () => {
       agentSessionId: null,
       completedAt: Date.now(),
     });
-    // Activation returns empty while the worker is idle, so older events persist
-    // as retryable pending deliveries.
     tam.activationResult = [];
 
     const older = makeEvent({
@@ -6003,9 +5708,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.listDeliveries(older.id)[0]!.state).toBe('pending');
     expect(eventStore.listDeliveries(newer.id)[0]!.state).toBe('pending');
 
-    // The third event arrives while the worker is activating: the execution is
-    // in_progress but has no sessionId yet, so activation kicks in and flushes
-    // the older persisted pending deliveries before delivering the current one.
     nodeExecutionRepo.update(execution.id, {
       status: 'in_progress',
       agentSessionId: null,
@@ -6054,7 +5756,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     await eventService.publish(older);
     expect(eventStore.listDeliveries(older.id)[0]!.state).toBe('pending');
 
-    // Rebuild runtime with an awaitable inject so we can observe ordering.
     await runtime.stop();
     let releaseFirstInject!: () => void;
     const firstInjectStarted = Promise.withResolvers<void>();
@@ -6088,9 +5789,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
     runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
 
-    // Activate the node: the next event triggers a flush of the older pending
-    // delivery, then delivers itself. The async flush must complete the older
-    // inject before the current event is injected.
     nodeExecutionRepo.update(execution.id, {
       status: 'in_progress',
       agentSessionId: null,
@@ -6143,8 +5841,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(pending.state).toBe('pending');
     expect(pending.failureReason).toBe('deliveryMode:defer; node_execution_not_active');
 
-    // Resume the space. The runtime's onSpaceResumed hook must schedule an
-    // activation retry for the sessionless pending delivery.
     db.prepare(`UPDATE spaces SET paused = 0 WHERE id = ?`).run(SPACE_ID);
     nodeExecutionRepo.update(execution.id, {
       status: 'in_progress',
@@ -6181,15 +5877,11 @@ describe('SpaceRuntime external event subscriptions', () => {
     tam.activationResult = [];
     const event = makeEvent({ id: 'evt-paused-resume-ttl' });
     await eventService.publish(event);
-    // Backdate the event past its TTL window while paused.
     db.prepare(`UPDATE space_external_events SET created_at = ? WHERE id = ?`).run(
       Date.now() - 301_000,
       event.id
     );
 
-    // Resume shortly after — the queued item must keep the original event-age
-    // anchor, so the delivery TTL-expires instead of getting a fresh window
-    // measured from resume time.
     db.prepare(`UPDATE spaces SET paused = 0 WHERE id = ?`).run(SPACE_ID);
     runtime.start();
     await spaceManager.resumeSpace(SPACE_ID);
@@ -6221,10 +5913,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(tam.activationCalls).toHaveLength(0);
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
 
-    // Resume with a LIVE session already attached to the execution so the
-    // deferred delivery resolves via resolveSubscriptionTarget. The resume path
-    // must schedule a delivery retry (scheduleExternalEventRetry) — not an
-    // activation retry — and the event must be delivered without activation.
     db.prepare(`UPDATE spaces SET paused = 0 WHERE id = ?`).run(SPACE_ID);
     nodeExecutionRepo.update(execution.id, {
       status: 'in_progress',
@@ -6258,10 +5946,6 @@ describe('SpaceRuntime external event subscriptions', () => {
       'deliveryMode:defer; node_execution_not_active'
     );
 
-    // Before the activation retry fires, make activation succeed. The retry
-    // calls flushPendingNodeQueueAsync with the current deliveryKey excluded;
-    // without that exclusion the DB-persisted pending row would be delivered
-    // twice (once by the flush and once by the post-flush enqueue).
     nodeExecutionRepo.update(execution.id, {
       status: 'in_progress',
       agentSessionId: null,
@@ -6322,7 +6006,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
     runtime.registerSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
 
-    // Activation should succeed when the rehydrated retry fires.
     tam.activationResult = [{ agentName: 'coder', sessionId: 'session-rehydrated-retry' }];
     tam.alive.add('session-rehydrated-retry');
     tam.onActivate = () => {
@@ -6331,7 +6014,6 @@ describe('SpaceRuntime external event subscriptions', () => {
       });
     };
 
-    // Reset call tracking so we only measure what happens after rehydrate.
     tam.activationCalls = [];
     injected = [];
 
@@ -6366,16 +6048,11 @@ describe('SpaceRuntime external event subscriptions', () => {
       occurredAt: 1_700_000_000_100,
     });
     await eventService.publish(older);
-    // Stagger ingestion so the DB `created_at` ordering matches the intended
-    // chronological order; without a gap both rows may share the same ms.
     await new Promise((resolve) => setTimeout(resolve, 10));
     await eventService.publish(newer);
     expect(eventStore.listDeliveries(older.id)[0]!.state).toBe('pending');
     expect(eventStore.listDeliveries(newer.id)[0]!.state).toBe('pending');
 
-    // The older event's retry fires first and activates the agent. The drain
-    // includes the older event in the sorted batch so it is delivered before
-    // the newer pending row, regardless of which retry timer fires first.
     nodeExecutionRepo.update(execution.id, {
       status: 'in_progress',
       agentSessionId: null,
@@ -6409,12 +6086,9 @@ describe('SpaceRuntime external event subscriptions', () => {
     await eventService.publish(event);
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
 
-    // Remove the subscription before the retry fires.
     runtime.unregisterSubscription(run.id, task.id, 'code', 'coder', DEFAULT_TOPIC);
 
     await new Promise((resolve) => setTimeout(resolve, 1_200));
-    // The retry targets the specific delivery and terminalizes it, instead of
-    // replaying the whole event and marking it ignored while the row stays pending.
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('failed');
     expect(delivery.failureReason).toBe('subscription_no_longer_active');
@@ -6495,7 +6169,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
     expect(tam.activationCalls).toHaveLength(0);
 
-    // Simulate the background spawn completing before the retry fires.
     nodeExecutionRepo.update(execution.id, {
       status: 'in_progress',
       agentSessionId: 'session-pending-spawn',
@@ -6536,9 +6209,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.listDeliveries(older.id)[0]!.state).toBe('pending');
     expect(eventStore.listDeliveries(newer.id)[0]!.state).toBe('pending');
 
-    // Make the session live; the older retry fires first and the drain must
-    // include the current (older) event in the sorted batch so A is delivered
-    // before B, even though B is already persisted as a pending row.
     nodeExecutionRepo.update(execution.id, {
       status: 'in_progress',
       agentSessionId: 'session-retry-drain-order',
@@ -6623,10 +6293,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     const event = makeEvent({ id: 'evt-blocked-exec' });
     await eventService.publish(event);
 
-    // Activation should not have been attempted for a blocked execution.
     expect(tam.activationCalls).toHaveLength(0);
-    // The delivery stays pending/queued for the recovery path rather than
-    // being terminally failed.
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('pending');
   });
@@ -6645,7 +6312,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     await eventService.publish(event);
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
 
-    // Backdate the event past the TTL window before the activation retry fires.
     db.prepare(`UPDATE space_external_events SET created_at = ? WHERE id = ?`).run(
       Date.now() - 301_000,
       event.id
@@ -6672,8 +6338,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     await eventService.publish(event);
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
 
-    // Run becomes cancelled before the activation retry fires. The task is
-    // still active, so run status no longer terminalizes the delivery.
     workflowRunRepo.updateRun(run.id, { status: 'cancelled' });
 
     await new Promise((resolve) => setTimeout(resolve, 1_200));
@@ -6697,7 +6361,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(eventStore.listDeliveries(earlier.id)[0]!.state).toBe('pending');
     expect(eventStore.listDeliveries(later.id)[0]!.state).toBe('pending');
 
-    // Activate the node so the flush will dispatch both queued items.
     nodeExecutionRepo.update(execution.id, {
       status: 'in_progress',
       agentSessionId: 'session-terminalized-dispatch',
@@ -6705,8 +6368,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
     tam.alive.add('session-terminalized-dispatch');
 
-    // Simulate a concurrent cleanup terminalizing the earlier delivery before
-    // the ordered dispatch loop reaches it.
     const earlierDelivery = eventStore.listDeliveries(earlier.id)[0]!;
     eventStore.markDeliveryFailed(earlier.id, earlierDelivery.deliveryKey, {
       terminal: true,
@@ -6740,9 +6401,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     await eventService.publish(event);
     expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
 
-    // Backdate the event past the TTL window. The pending-execution queueing
-    // must carry the original createdAt so the activation retry TTL check
-    // expires the stale event instead of redispatching it after spawn.
     db.prepare(`UPDATE space_external_events SET created_at = ? WHERE id = ?`).run(
       Date.now() - 301_000,
       event.id
@@ -6770,13 +6428,11 @@ describe('SpaceRuntime external event subscriptions', () => {
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('pending');
 
-    // Simulate a rehydrated/sessionless retry whose pending row encoded defer mode.
     eventStore.markDeliveryFailed(event.id, delivery.deliveryKey, {
       terminal: false,
       reason: 'deliveryMode:defer; digest pending during session loss',
     });
 
-    // Now make the session live and trigger the activation retry.
     nodeExecutionRepo.update(execution.id, {
       status: 'in_progress',
       agentSessionId: 'session-activation-defer',
@@ -6815,8 +6471,6 @@ describe('SpaceRuntime queue-health snapshot', () => {
     const commandBus = createInternalCommandBus();
     eventStore = new ExternalEventStore(db);
     queueHealthMetrics = new ExternalEventQueueMetrics();
-    // Mirror SpaceRuntimeService wiring: observe terminal transitions from a
-    // single point so delivered/failure counters stay accurate.
     eventStore.setDeliveryTerminalHook((event) => queueHealthMetrics.recordDeliveryTerminal(event));
     eventService = new ExternalEventService(eventStore, bus);
     injected = [];
@@ -6890,7 +6544,6 @@ describe('SpaceRuntime queue-health snapshot', () => {
 
   test('enqueues pending events and reports depth, source, target state, and age', async () => {
     const { runId } = await startRun();
-    // Node execution starts `pending` with no session, so the event is queued.
     expect(nodeExecutionRepo.listByNode(runId, 'code')[0]!.status).toBe('pending');
     await eventService.publish(makeEvent());
 
@@ -6908,8 +6561,6 @@ describe('SpaceRuntime queue-health snapshot', () => {
 
   test('counts cap-eviction terminal failures when a target queue overflows', async () => {
     await startRun();
-    // 50 items fill the per-target queue; the 51st evicts the oldest, which the
-    // store hook records as a terminal pending_node_queue_overflow failure.
     for (let i = 0; i < 51; i++) {
       await eventService.publish(makeEvent());
     }
@@ -6918,7 +6569,6 @@ describe('SpaceRuntime queue-health snapshot', () => {
     expect(snapshot.counters.enqueue).toBe(51);
     expect(snapshot.counters.finalFailuresByReason['pending_node_queue_overflow']).toBe(1);
     expect(snapshot.failuresByCategory.cap_eviction).toBe(1);
-    // Queue is capped at 50.
     expect(snapshot.gauges.queueDepth).toBe(50);
   });
 

@@ -1,19 +1,3 @@
-/**
- * Message Delivery Mode Queue Flow (Online)
- *
- * End-to-end validation for:
- * - immediate delivery
- * - defer delivery while busy (saved queue + auto-dispatch)
- * - defer fallback while idle
- *
- * MODES:
- * - Real API (default): Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
- * - Dev Proxy: Set HYPERNEO_USE_DEV_PROXY=1 for offline testing with mocked responses
- *
- * Run with Dev Proxy:
- *   cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test ./tests/online/features/message-delivery-mode-queue.test.ts
- */
-
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
@@ -26,7 +10,6 @@ import {
 
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
-// Detect mock mode for faster timeouts (Dev Proxy)
 const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 const MODEL = IS_MOCK ? 'haiku' : 'haiku-4.5';
 const IDLE_TIMEOUT = IS_MOCK ? 10000 : 90000;
@@ -87,24 +70,6 @@ describe('Message delivery mode queue flow', () => {
     return false;
   }
 
-  /**
-   * Wait until the busy turn's kickoff message has been consumed by the SDK,
-   * so an immediate steer feeds a live generator mid-turn. The kickoff flips
-   * to `consumed` at the generator's admission signal, which is the earliest
-   * proof a steer can be inserted; steering on any LATER observable is a race
-   * against the turn's own pacing — a dev-proxy mock response is
-   * non-streaming, so the assistant message and the final result persist
-   * within the same millisecond, and a steer sent after "some content" (or
-   * after a fixed sleep that outlasts the turn) is claimed only after the
-   * result: promoted to a fresh turn whose consumption timestamp lands after
-   * the original result, failing the ordering this suite asserts. Steering
-   * right after admission keeps the steered message's timestamp inside the
-   * live turn, ahead of its final result by the whole response latency.
-   * Returns false when the session goes idle (or the wait times out while
-   * busy) before the kickoff is consumed — the steer-while-busy premise no
-   * longer holds, so the caller should skip instead of asserting against a
-   * promoted turn.
-   */
   async function waitForTurnKickoffConsumed(
     sessionId: string,
     timeoutMs = IS_MOCK ? 10000 : 30000
@@ -112,8 +77,6 @@ describe('Message delivery mode queue flow', () => {
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
       if ((await getCountByStatus(sessionId, 'consumed')) >= 1) {
-        // Verify busyness as late as possible — the steer must feed the live
-        // turn, not one that settled since the kickoff's consumption.
         const state = await getProcessingState(daemon, sessionId);
         return state.status === 'queued' || state.status === 'processing';
       }
@@ -194,7 +157,6 @@ describe('Message delivery mode queue flow', () => {
         deliveryMode: 'defer',
       });
 
-      // defer while idle should not remain in saved queue
       await waitForCount(sessionId, 'deferred', (count) => count === 0, 10000);
       await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
       const queuedCleared = await waitForCount(sessionId, 'enqueued', (count) => count === 0, 20000)
@@ -224,7 +186,6 @@ describe('Message delivery mode queue flow', () => {
       daemon.trackSession(sessionId);
 
       try {
-        // Send a message that makes the agent work for a while
         const first = await sendMessage(
           daemon,
           sessionId,
@@ -238,17 +199,12 @@ describe('Message delivery mode queue flow', () => {
           return;
         }
 
-        // Steer only once the turn's kickoff has been admitted by the SDK —
-        // a fixed sleep can outlast a fast (dev-proxy mock) turn entirely,
-        // promoting the steer to a fresh turn that consumes after the
-        // original turn's final result. See waitForTurnKickoffConsumed.
         const kickoffConsumed = await waitForTurnKickoffConsumed(sessionId);
         if (!kickoffConsumed) {
           console.log('Skipping: turn ended before its kickoff message was consumed');
           return;
         }
 
-        // Send a steering message (immediate while busy)
         const steerResult = await sendMessage(
           daemon,
           sessionId,
@@ -257,41 +213,32 @@ describe('Message delivery mode queue flow', () => {
         );
         expect(steerResult.messageId).toBeString();
 
-        // The message should be queued initially
-        // Then transition to 'consumed' when the generator yields it
         await waitForCount(sessionId, 'enqueued', (count) => count === 0, 30000);
 
-        // Wait for the turn to complete
         await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-        // Get all SDK messages and verify ordering
         const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
-          minCount: 4, // system + user + assistant + (steered user) + result
+          minCount: 4,
           timeout: 10000,
         });
 
-        // Find the steered user message by UUID
         const steeredMsg = sdkMessages.find(
           (msg: Record<string, unknown>) =>
             msg.type === 'user' && msg.uuid === steerResult.messageId
         );
         expect(steeredMsg).toBeDefined();
 
-        // The steered message should have a timestamp
         const steeredTimestamp = (steeredMsg as Record<string, unknown>).timestamp as number;
         expect(steeredTimestamp).toBeGreaterThan(0);
 
-        // Find the first user message
         const firstUserMsg = sdkMessages.find(
           (msg: Record<string, unknown>) => msg.type === 'user' && msg.uuid === first.messageId
         );
         expect(firstUserMsg).toBeDefined();
         const firstUserTimestamp = (firstUserMsg as Record<string, unknown>).timestamp as number;
 
-        // The steered message timestamp should be AFTER the first user message
         expect(steeredTimestamp).toBeGreaterThan(firstUserTimestamp);
 
-        // Find the result message (should be last or second-to-last)
         const resultMessages = sdkMessages.filter(
           (msg: Record<string, unknown>) => msg.type === 'result'
         );
@@ -299,13 +246,10 @@ describe('Message delivery mode queue flow', () => {
         const lastResult = resultMessages[resultMessages.length - 1];
         const resultTimestamp = (lastResult as Record<string, unknown>).timestamp as number;
 
-        // CRITICAL: The steered message timestamp must be BEFORE the final result
-        // This proves it was positioned at SDK insertion time, not at turn end
         expect(steeredTimestamp).toBeLessThan(resultTimestamp);
 
-        // Verify the message status is now 'consumed'
         const sentCount = await getCountByStatus(sessionId, 'consumed');
-        expect(sentCount).toBeGreaterThanOrEqual(2); // At least first + steered
+        expect(sentCount).toBeGreaterThanOrEqual(2);
       } finally {
         try {
           await daemon.messageHub.request('client.interrupt', { sessionId });
@@ -330,7 +274,6 @@ describe('Message delivery mode queue flow', () => {
       daemon.trackSession(sessionId);
 
       try {
-        // Send initial message to make agent busy
         await sendMessage(
           daemon,
           sessionId,
@@ -343,10 +286,8 @@ describe('Message delivery mode queue flow', () => {
           return;
         }
 
-        // Wait for some assistant content to stream
         await new Promise((resolve) => setTimeout(resolve, 1500));
 
-        // Send TWO steering messages in quick succession
         const steer1 = await sendMessage(
           daemon,
           sessionId,
@@ -365,13 +306,10 @@ describe('Message delivery mode queue flow', () => {
         expect(steer1.messageId).toBeString();
         expect(steer2.messageId).toBeString();
 
-        // Wait for all queued messages to be consumed
         await waitForCount(sessionId, 'enqueued', (count) => count === 0, 60000);
 
-        // Wait for turns to complete
         await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-        // Both steering messages should now be 'consumed'
         const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
           minCount: 5,
           timeout: 10000,
@@ -384,26 +322,21 @@ describe('Message delivery mode queue flow', () => {
           (msg: Record<string, unknown>) => msg.type === 'user' && msg.uuid === steer2.messageId
         );
 
-        // Both messages should exist in the transcript
         expect(steered1).toBeDefined();
         expect(steered2).toBeDefined();
 
-        // Both should have timestamps
         const ts1 = (steered1 as Record<string, unknown>).timestamp as number;
         const ts2 = (steered2 as Record<string, unknown>).timestamp as number;
         expect(ts1).toBeGreaterThan(0);
         expect(ts2).toBeGreaterThan(0);
 
-        // Steer 2 should have a timestamp >= steer 1 (sent in order)
         expect(ts2).toBeGreaterThanOrEqual(ts1);
 
-        // No messages should remain in queued status
         const queuedCount = await getCountByStatus(sessionId, 'enqueued');
         expect(queuedCount).toBe(0);
 
-        // All user messages should be sent
         const sentCount = await getCountByStatus(sessionId, 'consumed');
-        expect(sentCount).toBeGreaterThanOrEqual(3); // initial + steer1 + steer2
+        expect(sentCount).toBeGreaterThanOrEqual(3);
       } finally {
         try {
           await daemon.messageHub.request('client.interrupt', { sessionId });

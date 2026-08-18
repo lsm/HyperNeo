@@ -1,9 +1,3 @@
-/**
- * AskUserQuestionHandler Tests
- *
- * Tests the handling of the AskUserQuestion tool via canUseTool callback.
- */
-
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import {
   AskUserQuestionHandler,
@@ -43,7 +37,6 @@ describe('AskUserQuestionHandler', () => {
   beforeEach(() => {
     currentState = { status: 'idle' };
 
-    // Create mock DaemonHub
     emitSpy = mock(async () => {});
     mockInternalEventBus = {
       publish: emitSpy,
@@ -54,7 +47,6 @@ describe('AskUserQuestionHandler', () => {
       emit: emitSpy,
     } as unknown as DaemonHub;
 
-    // Create mock ProcessingStateManager
     setWaitingForInputSpy = mock(async (pendingQuestion: PendingUserQuestion) => {
       currentState = { status: 'waiting_for_input', pendingQuestion };
     });
@@ -81,19 +73,16 @@ describe('AskUserQuestionHandler', () => {
       updateQuestionDraft: updateQuestionDraftSpy,
     } as unknown as ProcessingStateManager;
 
-    // Create mock Database
     updateSessionSpy = mock(() => {});
     mockDb = {
       updateSession: updateSessionSpy,
     } as unknown as Database;
 
-    // Create mock MessageQueue
     enqueueWithIdSpy = mock(async () => {});
     mockMessageQueue = {
       enqueueWithId: enqueueWithIdSpy,
     } as unknown as MessageQueue;
 
-    // Create mock session
     mockSession = {
       id: testSessionId,
       title: 'Test Session',
@@ -107,7 +96,6 @@ describe('AskUserQuestionHandler', () => {
 
     ensureQueryStartedSpy = mock(async () => {});
 
-    // Create context
     mockContext = {
       session: mockSession,
       db: mockDb,
@@ -157,20 +145,16 @@ describe('AskUserQuestionHandler', () => {
         ],
       };
 
-      // Start the callback but don't await - it will block waiting for user input
       const resultPromise = callback('AskUserQuestion', input, {
         signal: new AbortController().signal,
         toolUseID: 'tool-123',
       });
 
-      // Give the callback time to set up
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Should have transitioned to waiting_for_input
       expect(setWaitingForInputSpy).toHaveBeenCalled();
       expect(emitSpy).toHaveBeenCalledWith('question.asked', expect.any(Object));
 
-      // Simulate user response to unblock
       await handler.handleQuestionResponse('tool-123', [
         { questionIndex: 0, selectedLabels: ['Option A'] },
       ]);
@@ -204,14 +188,12 @@ describe('AskUserQuestionHandler', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Verify the pending question uses SDK's toolUseID
       expect(setWaitingForInputSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           toolUseId: toolUseID,
         })
       );
 
-      // Respond with matching toolUseId
       await handler.handleQuestionResponse(toolUseID, [
         { questionIndex: 0, selectedLabels: ['Yes'] },
       ]);
@@ -230,10 +212,6 @@ describe('AskUserQuestionHandler', () => {
     });
 
     it('releases the durable turn waiter if the injected_as_tool_result publication rejects (Codex P1)', async () => {
-      // The publish sits between the suppressed idle and the reinjection try; a
-      // rejecting subscriber would stop execution before the reinjection catch's
-      // terminal idle, leaving the suppressed waiter pending (the question is
-      // already resolved, so nothing retries it). The wrap releases the waiter.
       const pendingQuestion: PendingUserQuestion = {
         toolUseId: 'tool-123',
         questions: [
@@ -263,8 +241,6 @@ describe('AskUserQuestionHandler', () => {
     });
 
     it('should queue answer + inject tool_result when no pending resolver (post-restart)', async () => {
-      // Simulate persisted waiting_for_input state with no in-memory resolver
-      // (this is the post-restart scenario — task #138).
       const pendingQuestion: PendingUserQuestion = {
         toolUseId: 'tool-123',
         questions: [
@@ -286,22 +262,17 @@ describe('AskUserQuestionHandler', () => {
         { questionIndex: 0, selectedLabels: ['A'] },
       ]);
 
-      // Should mark resolved-question metadata (submitted)
       expect(updateSessionSpy).toHaveBeenCalled();
       const updateCall = updateSessionSpy.mock.calls[0];
       expect(updateCall[1].metadata.resolvedQuestions['tool-123'].state).toBe('submitted');
 
-      // Should drop waiting_for_input via setIdle (NOT setProcessing — let
-      // ensureQueryStarted resume cleanly).
       expect(setIdleSpy).toHaveBeenCalled();
       expect(setProcessingSpy).not.toHaveBeenCalled();
 
-      // Should queue the answer for canUseTool re-fire
       const queued = handler.getQueuedAnswersForTesting();
       expect(queued.has('tool-123')).toBe(true);
       expect(queued.get('tool-123')!.behavior).toBe('allow');
 
-      // Should inject tool_result into the message queue
       expect(enqueueWithIdSpy).toHaveBeenCalled();
       const enqueueCall = enqueueWithIdSpy.mock.calls[0];
       expect(enqueueCall[1]).toEqual([
@@ -312,10 +283,8 @@ describe('AskUserQuestionHandler', () => {
         }),
       ]);
 
-      // Should restart the query
       expect(ensureQueryStartedSpy).toHaveBeenCalled();
 
-      // Should emit injected_as_tool_result telemetry
       expect(emitSpy).toHaveBeenCalledWith(
         'question.injected_as_tool_result',
         expect.objectContaining({
@@ -328,11 +297,6 @@ describe('AskUserQuestionHandler', () => {
     });
 
     it('queues the answer but does NOT call enqueueWithId when ensureQueryStarted is missing', async () => {
-      // Some unit-test contexts (and a few legacy code paths) construct the
-      // handler without an `ensureQueryStarted` on the context. Verify the
-      // post-restart delivery path falls back to queue-only without calling
-      // MessageQueue.enqueueWithId — a future canUseTool fire can still
-      // consume the queued answer.
       const handlerNoStart = new AskUserQuestionHandler({
         ...mockContext,
         ensureQueryStarted: undefined,
@@ -356,16 +320,12 @@ describe('AskUserQuestionHandler', () => {
         { questionIndex: 0, selectedLabels: ['A'] },
       ]);
 
-      // Answer is queued for a future canUseTool fire
       const queued = handlerNoStart.getQueuedAnswersForTesting();
       expect(queued.has('tool-no-start')).toBe(true);
       expect(queued.get('tool-no-start')!.behavior).toBe('allow');
 
-      // State dropped from waiting_for_input
       expect(setIdleSpy).toHaveBeenCalled();
 
-      // But: no SDK injection — the warn path returns before
-      // enqueueWithId / ensureQueryStarted are touched.
       expect(enqueueWithIdSpy).not.toHaveBeenCalled();
       expect(ensureQueryStartedSpy).not.toHaveBeenCalled();
     });
@@ -394,12 +354,10 @@ describe('AskUserQuestionHandler', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Try to respond with wrong toolUseId
       await expect(
         handler.handleQuestionResponse('wrong-id', [{ questionIndex: 0, selectedLabels: ['A'] }])
       ).rejects.toThrow('Tool use ID mismatch');
 
-      // Cleanup - respond with correct ID
       await handler.handleQuestionResponse('correct-id', [
         { questionIndex: 0, selectedLabels: ['A'] },
       ]);
@@ -585,7 +543,6 @@ describe('AskUserQuestionHandler', () => {
 
       await resultPromise;
 
-      // Should have updated session with resolved question
       expect(updateSessionSpy).toHaveBeenCalled();
       const updateCall = updateSessionSpy.mock.calls[0];
       expect(updateCall[1].metadata.resolvedQuestions).toBeDefined();
@@ -616,13 +573,11 @@ describe('AskUserQuestionHandler', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Respond with invalid question index (out of bounds)
       await handler.handleQuestionResponse('skip-test', [
         { questionIndex: 99, selectedLabels: ['A'] },
       ]);
 
       const result = await resultPromise;
-      // Should still allow, but with empty answers since the index was invalid
       expect(result.behavior).toBe('allow');
     });
   });
@@ -637,8 +592,6 @@ describe('AskUserQuestionHandler', () => {
     });
 
     it('should queue deny + inject cancellation tool_result when no pending resolver', async () => {
-      // Same post-restart scenario as the response test, but for the cancel
-      // (Skip) path.
       const pendingQuestion: PendingUserQuestion = {
         toolUseId: 'tool-123',
         questions: [
@@ -703,12 +656,10 @@ describe('AskUserQuestionHandler', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Try to cancel with wrong toolUseId
       await expect(handler.handleQuestionCancel('wrong-id')).rejects.toThrow(
         'Tool use ID mismatch'
       );
 
-      // Cleanup - cancel with correct ID
       await handler.handleQuestionCancel('correct-id');
       await resultPromise;
     });
@@ -772,7 +723,6 @@ describe('AskUserQuestionHandler', () => {
 
       await resultPromise;
 
-      // Should have updated session with resolved question marked as cancelled
       expect(updateSessionSpy).toHaveBeenCalled();
       const updateCall = updateSessionSpy.mock.calls[0];
       expect(updateCall[1].metadata.resolvedQuestions).toBeDefined();
@@ -852,7 +802,6 @@ describe('AskUserQuestionHandler', () => {
     });
 
     it('should be safe to call cleanup when no pending resolver', () => {
-      // Should not throw
       expect(() => handler.cleanup()).not.toThrow();
     });
   });
@@ -883,7 +832,6 @@ describe('AskUserQuestionHandler', () => {
       const result = await handler.markQuestionOrphaned('agent_session_terminated');
       expect(result).toBe(true);
 
-      // Persisted as cancelled with the right reason
       expect(updateSessionSpy).toHaveBeenCalled();
       const updateCall = updateSessionSpy.mock.calls[0];
       expect(updateCall[1].metadata.resolvedQuestions['orphan-tool-1'].state).toBe('cancelled');
@@ -891,10 +839,8 @@ describe('AskUserQuestionHandler', () => {
         'agent_session_terminated'
       );
 
-      // Drops waiting_for_input
       expect(setIdleSpy).toHaveBeenCalled();
 
-      // Telemetry
       expect(emitSpy).toHaveBeenCalledWith(
         'question.orphaned',
         expect.objectContaining({
@@ -926,8 +872,6 @@ describe('AskUserQuestionHandler', () => {
       expect(updateCall[1].metadata.resolvedQuestions['orphan-tool-2'].cancelReason).toBe(
         'agent_session_terminated'
       );
-      // Note: persisted reason is always agent_session_terminated for the UI;
-      // the telemetry event carries the more granular reason.
       expect(emitSpy).toHaveBeenCalledWith(
         'question.orphaned',
         expect.objectContaining({ reason: 'rehydrate_failed' })
@@ -955,22 +899,16 @@ describe('AskUserQuestionHandler', () => {
       });
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Force-orphan while resolver is live
       await handler.markQuestionOrphaned('agent_session_terminated');
 
-      // Live SDK promise should reject
       await expect(resultPromise).rejects.toThrow(/orphaned/i);
 
-      // queuedAnswers map should be empty for that toolUseId
       expect(handler.getQueuedAnswersForTesting().has('orphan-with-resolver')).toBe(false);
     });
   });
 
   describe('createCanUseToolCallback queued-answer fast path', () => {
     it('consumes a queued allow without re-prompting and emits viaCanUseTool=true', async () => {
-      // Pre-populate the queued-answer map by simulating a post-restart
-      // handleQuestionResponse that ran before the SDK re-issued the
-      // AskUserQuestion call.
       const pendingQuestion: PendingUserQuestion = {
         toolUseId: 'replay-tool',
         questions: [
@@ -989,7 +927,6 @@ describe('AskUserQuestionHandler', () => {
         { questionIndex: 0, selectedLabels: ['A'] },
       ]);
 
-      // SDK now re-issues the canUseTool call (post-restart replay).
       currentState = { status: 'idle' };
       emitSpy.mockClear();
       setWaitingForInputSpy.mockClear();
@@ -1001,16 +938,13 @@ describe('AskUserQuestionHandler', () => {
         { signal: new AbortController().signal, toolUseID: 'replay-tool' }
       );
 
-      // Should not re-transition to waiting_for_input
       expect(setWaitingForInputSpy).not.toHaveBeenCalled();
 
-      // Should resolve immediately with the queued allow result
       expect(result.behavior).toBe('allow');
       expect(
         (result as { updatedInput: { answers: Record<string, string> } }).updatedInput.answers
       ).toEqual({ 'Pick?': 'A' });
 
-      // Telemetry should record viaCanUseTool=true on consume
       expect(emitSpy).toHaveBeenCalledWith(
         'question.injected_as_tool_result',
         expect.objectContaining({
@@ -1020,7 +954,6 @@ describe('AskUserQuestionHandler', () => {
         })
       );
 
-      // Queue should now be empty for that toolUseId
       expect(handler.getQueuedAnswersForTesting().has('replay-tool')).toBe(false);
     });
 

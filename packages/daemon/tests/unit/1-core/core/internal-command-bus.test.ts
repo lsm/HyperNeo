@@ -1,16 +1,3 @@
-/**
- * InternalCommandBus Unit Tests
- *
- * Covers:
- *   – handler registration and dispatch
- *   – structured success/failure results
- *   – duplicate handler rejection
- *   – missing handler error
- *   – unregister and clear
- *
- * See docs/plans/internal-event-command-query-architecture.md
- */
-
 import { beforeEach, describe, expect, it } from 'bun:test';
 import {
   createInternalCommandBus,
@@ -182,7 +169,6 @@ describe('InternalCommandBus', () => {
 
       bus.register('space.workflow.resume', async () => ({ ok: true, metadata: { version: 'B' } }));
 
-      // Calling the old unsubscribe should not delete the new handler
       unsubA();
       expect(bus.hasHandler('space.workflow.resume')).toBe(true);
 

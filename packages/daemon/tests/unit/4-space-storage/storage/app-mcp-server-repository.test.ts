@@ -1,20 +1,9 @@
-/**
- * AppMcpServerRepository Unit Tests
- *
- * Covers CRUD operations, listEnabled() filtering, notifyChange calls after
- * each write, duplicate-name error handling, and invalid sourceType rejection.
- */
-
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createTables } from '../../../../src/storage/schema';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
 import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
-
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
 
 describe('AppMcpServerRepository', () => {
   let bunDb: BunDatabase;
@@ -28,7 +17,6 @@ describe('AppMcpServerRepository', () => {
 
     reactiveDb = createReactiveDatabase({ getDatabase: () => bunDb } as never);
 
-    // Spy on notifyChange
     notifyChangeSpy = mock(() => {});
     reactiveDb.notifyChange = notifyChangeSpy;
 
@@ -38,10 +26,6 @@ describe('AppMcpServerRepository', () => {
   afterEach(() => {
     bunDb.close();
   });
-
-  // ---------------------------------------------------------------------------
-  // create
-  // ---------------------------------------------------------------------------
 
   describe('create', () => {
     test('creates a stdio server entry and returns it', () => {
@@ -132,10 +116,6 @@ describe('AppMcpServerRepository', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // isNameTaken
-  // ---------------------------------------------------------------------------
-
   describe('isNameTaken', () => {
     test('returns false when name is not in use', () => {
       expect(repo.isNameTaken('unused')).toBe(false);
@@ -158,10 +138,6 @@ describe('AppMcpServerRepository', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // get
-  // ---------------------------------------------------------------------------
-
   describe('get', () => {
     test('returns server by id', () => {
       const created = repo.create({ name: 'get-test', sourceType: 'stdio' });
@@ -175,10 +151,6 @@ describe('AppMcpServerRepository', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // getByName
-  // ---------------------------------------------------------------------------
-
   describe('getByName', () => {
     test('returns server by name', () => {
       repo.create({ name: 'named-server', sourceType: 'http', url: 'http://x' });
@@ -191,10 +163,6 @@ describe('AppMcpServerRepository', () => {
       expect(repo.getByName('no-such-server')).toBeNull();
     });
   });
-
-  // ---------------------------------------------------------------------------
-  // list
-  // ---------------------------------------------------------------------------
 
   describe('list', () => {
     test('returns all servers ordered by created_at', () => {
@@ -215,7 +183,6 @@ describe('AppMcpServerRepository', () => {
     });
 
     test('rows with null created_at sort after rows with a timestamp', () => {
-      // Insert a row directly with null created_at to simulate migrated data
       const nullId = 'null-created';
       bunDb.exec(
         `INSERT INTO app_mcp_servers (id, name, source_type, enabled) VALUES ('${nullId}', 'null-ts', 'stdio', 1)`
@@ -227,10 +194,6 @@ describe('AppMcpServerRepository', () => {
       expect(all[1].name).toBe('null-ts');
     });
   });
-
-  // ---------------------------------------------------------------------------
-  // listEnabled
-  // ---------------------------------------------------------------------------
 
   describe('listEnabled', () => {
     test('returns only enabled servers', () => {
@@ -252,10 +215,6 @@ describe('AppMcpServerRepository', () => {
       expect(repo.listEnabled()).toHaveLength(0);
     });
   });
-
-  // ---------------------------------------------------------------------------
-  // update
-  // ---------------------------------------------------------------------------
 
   describe('update', () => {
     test('updates name and description', () => {
@@ -326,10 +285,6 @@ describe('AppMcpServerRepository', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // delete
-  // ---------------------------------------------------------------------------
-
   describe('delete', () => {
     test('deletes an existing entry and returns true', () => {
       const server = repo.create({ name: 'to-delete', sourceType: 'stdio' });
@@ -357,10 +312,6 @@ describe('AppMcpServerRepository', () => {
       expect(notifyChangeSpy).not.toHaveBeenCalled();
     });
   });
-
-  // ---------------------------------------------------------------------------
-  // source + sourcePath (M2 — MCP config unification)
-  // ---------------------------------------------------------------------------
 
   describe('source + sourcePath', () => {
     test('defaults source to "user" when omitted', () => {
@@ -395,10 +346,6 @@ describe('AppMcpServerRepository', () => {
     });
 
     test('legacy rows with NULL source are exposed as "user"', () => {
-      // Simulates the pre-migration-100 schema shape where `source` was
-      // added as a nullable ALTER (the fresh CREATE TABLE in createTables()
-      // enforces NOT NULL). Drop the NOT NULL via table rebuild so the
-      // defensive branch in rowToServer can be exercised.
       bunDb.exec(`ALTER TABLE app_mcp_servers RENAME TO app_mcp_servers_strict`);
       bunDb.exec(`
 				CREATE TABLE app_mcp_servers (
@@ -435,9 +382,6 @@ describe('AppMcpServerRepository', () => {
         source: 'imported',
         sourcePath: '/abs/.mcp.json',
       });
-      // User "claims" the imported row — the import service will stop touching it.
-      // sourcePath is cleared by explicitly passing `undefined`: the repo uses
-      // the `'sourcePath' in updates` check so the field is written to NULL.
       const updated = repo.update(server.id, { source: 'user', sourcePath: undefined });
       expect(updated!.source).toBe('user');
       expect(updated!.sourcePath).toBeUndefined();
@@ -520,10 +464,6 @@ describe('AppMcpServerRepository', () => {
     });
 
     test('partial unique index on (source_path, name) WHERE source=imported is created', () => {
-      // The partial unique index backs the import service's dedupe contract.
-      // Verify it exists and targets the right columns/predicate so future
-      // schema refactors can't silently drop it. Ordering follows SQLite's
-      // `sqlite_master.sql` serialization.
       const idx = bunDb
         .prepare(
           `SELECT sql FROM sqlite_master

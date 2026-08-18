@@ -1,9 +1,3 @@
-/**
- * EnvManager Tests
- *
- * Tests environment variable access for authentication credentials.
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { EnvManager } from '../../../../src/lib/env-manager';
 
@@ -15,13 +9,11 @@ describe('EnvManager', () => {
   let originalGlmApiKey: string | undefined;
 
   beforeEach(() => {
-    // Save original env vars
     originalApiKey = process.env.ANTHROPIC_API_KEY;
     originalOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
     originalAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
     originalGlmApiKey = process.env.GLM_API_KEY;
 
-    // Clear env vars for clean test state
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
     delete process.env.ANTHROPIC_AUTH_TOKEN;
@@ -31,7 +23,6 @@ describe('EnvManager', () => {
   });
 
   afterEach(() => {
-    // Restore original env vars
     if (originalApiKey !== undefined) {
       process.env.ANTHROPIC_API_KEY = originalApiKey;
     } else {
@@ -150,7 +141,6 @@ describe('EnvManager', () => {
 
   describe('constructor', () => {
     it('should accept optional envPath parameter for backward compatibility', () => {
-      // Should not throw even with envPath parameter
       expect(() => new EnvManager('/some/path/.env')).not.toThrow();
     });
 

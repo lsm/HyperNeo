@@ -1,24 +1,8 @@
-/**
- * Migration 34 Tests
- *
- * Tests for Migration 34: Add 'archived' to status CHECK constraints on tasks and space_tasks.
- *
- * Covers:
- * - Fresh DB: tasks and space_tasks CHECK constraints include 'archived'
- * - Legacy DB: table-rebuild adds 'archived' to existing CHECK constraints
- * - Backfill: rows with archived_at IS NOT NULL are set to status = 'archived'
- * - Idempotency: running migration twice does not error or duplicate data
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { createTables, runMigrations } from '../../../../../src/storage/schema/index.ts';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function getTableSql(db: BunDatabase, table: string): string | null {
   const row = db
@@ -37,10 +21,6 @@ function getIndexNames(db: BunDatabase, table: string): string[] {
     .all(table) as { name: string }[];
   return rows.map((r) => r.name).filter((n) => !n.startsWith('sqlite_'));
 }
-
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
 
 describe('Migration 34: Add archived to status CHECK constraints', () => {
   let testDir: string;
@@ -68,10 +48,6 @@ describe('Migration 34: Add archived to status CHECK constraints', () => {
     }
   });
 
-  // -------------------------------------------------------------------------
-  // Fresh DB — full migration chain
-  // -------------------------------------------------------------------------
-
   test('fresh DB: tasks CHECK constraint includes archived', () => {
     createTables(db);
     runMigrations(db, () => {});
@@ -93,13 +69,11 @@ describe('Migration 34: Add archived to status CHECK constraints', () => {
     runMigrations(db, () => {});
 
     const now = Date.now();
-    // Create a room first (FK requirement)
     db.prepare(
       `INSERT INTO rooms (id, name, allowed_paths, status, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?)`
     ).run('room-1', 'Test Room', '[]', 'active', now, now);
 
-    // Insert a task with archived status
     expect(() => {
       db.prepare(
         `INSERT INTO tasks (id, room_id, title, description, status, created_at, updated_at)
@@ -118,7 +92,6 @@ describe('Migration 34: Add archived to status CHECK constraints', () => {
     runMigrations(db, () => {});
 
     const now = Date.now();
-    // Create a space first (FK requirement)
     db.prepare(
       `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?)`
@@ -137,12 +110,7 @@ describe('Migration 34: Add archived to status CHECK constraints', () => {
     expect(row.status).toBe('archived');
   });
 
-  // -------------------------------------------------------------------------
-  // Legacy DB — backfill
-  // -------------------------------------------------------------------------
-
   test('legacy DB: tasks with archived_at are backfilled to status = archived', () => {
-    // Create a minimal pre-migration-34 tasks table (without 'archived' in CHECK)
     db.exec(`
 			CREATE TABLE rooms (
 				id TEXT PRIMARY KEY,
@@ -191,30 +159,24 @@ describe('Migration 34: Add archived to status CHECK constraints', () => {
       `INSERT INTO rooms (id, name, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
     ).run('room-1', 'R', 'active', now, now);
 
-    // Insert a completed task with archived_at set
     db.prepare(
       `INSERT INTO tasks (id, room_id, title, description, status, archived_at, created_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`
     ).run('task-1', 'room-1', 'Old task', 'desc', 'completed', now - 1000, now);
 
-    // Insert a normal task without archived_at
     db.prepare(
       `INSERT INTO tasks (id, room_id, title, description, status, created_at)
 			 VALUES (?, ?, ?, ?, ?, ?)`
     ).run('task-2', 'room-1', 'Active task', 'desc', 'in_progress', now);
 
-    // Verify the CHECK constraint doesn't include 'archived' yet
     const sqlBefore = getTableSql(db, 'tasks')!;
     expect(sqlBefore).not.toContain("'archived'");
 
-    // Run migrations
     runMigrations(db, () => {});
 
-    // Check that the constraint now includes 'archived'
     const sqlAfter = getTableSql(db, 'tasks')!;
     expect(sqlAfter).toContain("'archived'");
 
-    // Check backfill: task-1 should be archived, task-2 should remain in_progress
     const task1 = db.prepare(`SELECT status FROM tasks WHERE id = 'task-1'`).get() as {
       status: string;
     };
@@ -227,7 +189,6 @@ describe('Migration 34: Add archived to status CHECK constraints', () => {
   });
 
   test('legacy DB: space_tasks with archived_at are backfilled to status = archived', () => {
-    // Create minimal pre-migration-34 space tables
     db.exec(`
 			CREATE TABLE spaces (
 				id TEXT PRIMARY KEY,
@@ -285,13 +246,11 @@ describe('Migration 34: Add archived to status CHECK constraints', () => {
       `INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
     ).run('space-1', '/workspace', 'S', now, now);
 
-    // Space task with archived_at set
     db.prepare(
       `INSERT INTO space_tasks (id, space_id, title, status, archived_at, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`
     ).run('st-1', 'space-1', 'Old task', 'completed', now - 1000, now, now);
 
-    // Space task without archived_at
     db.prepare(
       `INSERT INTO space_tasks (id, space_id, title, status, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?)`
@@ -310,16 +269,9 @@ describe('Migration 34: Add archived to status CHECK constraints', () => {
     expect(st2.status).toBe('in_progress');
   });
 
-  // -------------------------------------------------------------------------
-  // Index preservation after table rebuild
-  // -------------------------------------------------------------------------
-
   test('tasks indexes are recreated after table rebuild', () => {
-    // Use createTables to get the full schema, then downgrade the CHECK constraint
-    // to simulate a pre-migration-34 state that migration 34 will rebuild
     createTables(db);
 
-    // Downgrade tasks table: rebuild without 'archived' in CHECK
     db.exec('PRAGMA foreign_keys = OFF');
     const tasksSql = getTableSql(db, 'tasks')!;
     const downgradedSql = tasksSql.replace(", 'archived'", '');
@@ -330,10 +282,8 @@ describe('Migration 34: Add archived to status CHECK constraints', () => {
     db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_room_updated ON tasks(room_id, updated_at DESC)');
     db.exec('PRAGMA foreign_keys = ON');
 
-    // Verify CHECK doesn't include 'archived' yet
     expect(getTableSql(db, 'tasks')!).not.toContain("'archived'");
 
-    // Run migrations — migration 34 should rebuild and recreate all indexes
     runMigrations(db, () => {});
 
     const indexes = getIndexNames(db, 'tasks');
@@ -343,28 +293,21 @@ describe('Migration 34: Add archived to status CHECK constraints', () => {
   });
 
   test('space_tasks indexes are recreated after table rebuild', () => {
-    // createTables + runMigrations creates space_tasks via migration 27-29 (and M71).
-    // Then we downgrade it to trigger migration 34's rebuild.
     createTables(db);
     runMigrations(db, () => {});
 
     expect(tableExists(db, 'space_tasks')).toBe(true);
 
-    // Downgrade space_tasks: remove 'archived' from CHECK to trigger M34's rebuild.
-    // After M71, the table uses new status values — we still downgrade by removing 'archived'
-    // to simulate a pre-M34 state and verify M34's idempotency behavior.
     db.exec('PRAGMA foreign_keys = OFF');
     const spaceSql = getTableSql(db, 'space_tasks')!;
     const downgradedSql = spaceSql.replace(", 'archived'", '');
     db.exec(`DROP TABLE space_tasks`);
     db.exec(downgradedSql);
-    // Only create indexes for columns that actually exist in the post-M71 table
     db.exec('CREATE INDEX IF NOT EXISTS idx_space_tasks_space_id ON space_tasks(space_id)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_space_tasks_status ON space_tasks(status)');
     db.exec(
       'CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)'
     );
-    // Note: custom_agent_id and workflow_node_id were removed by M71, so no index on them.
     if (spaceSql.includes('task_agent_session_id')) {
       db.exec(
         'CREATE INDEX IF NOT EXISTS idx_space_tasks_task_agent_session_id ON space_tasks(task_agent_session_id)'
@@ -374,20 +317,14 @@ describe('Migration 34: Add archived to status CHECK constraints', () => {
 
     expect(getTableSql(db, 'space_tasks')!).not.toContain("'archived'");
 
-    // Run migrations again — migration 34 detects missing 'archived' and rebuilds
     runMigrations(db, () => {});
 
     const indexes = getIndexNames(db, 'space_tasks');
     expect(indexes).toContain('idx_space_tasks_space_id');
     expect(indexes).toContain('idx_space_tasks_workflow_run_id');
-    // Post-M71: custom_agent_id and workflow_node_id indexes no longer exist
     expect(indexes).not.toContain('idx_space_tasks_custom_agent_id');
     expect(indexes).not.toContain('idx_space_tasks_workflow_node_id');
   });
-
-  // -------------------------------------------------------------------------
-  // Idempotency
-  // -------------------------------------------------------------------------
 
   test('idempotency: running migration twice does not error', () => {
     createTables(db);
@@ -425,13 +362,11 @@ describe('Migration 34: Add archived to status CHECK constraints', () => {
       `INSERT INTO rooms (id, name, allowed_paths, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
     ).run('room-1', 'R', '[]', 'active', now, now);
 
-    // Insert a task already with status = 'archived' and archived_at
     db.prepare(
       `INSERT INTO tasks (id, room_id, title, description, status, archived_at, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run('task-1', 'room-1', 'T', 'd', 'archived', now - 5000, now, now);
 
-    // Run again — should not error
     runMigrations(db, () => {});
 
     const row = db.prepare(`SELECT status, archived_at FROM tasks WHERE id = 'task-1'`).get() as {

@@ -19,12 +19,10 @@ export default function MentionAutocomplete({
   const selectedItemRef = useRef<HTMLButtonElement>(null);
   const [isMobile, setIsMobile] = useState(false);
 
-  // Detect touch device on mount
   useEffect(() => {
     setIsMobile(window.matchMedia('(pointer: coarse)').matches);
   }, []);
 
-  // Scroll selected item into view
   useEffect(() => {
     if (selectedItemRef.current) {
       selectedItemRef.current.scrollIntoView({
@@ -34,7 +32,6 @@ export default function MentionAutocomplete({
     }
   }, [selectedIndex, isMobile]);
 
-  // Close on click or touch outside
   useEffect(() => {
     const handleOutside = (e: MouseEvent | TouchEvent) => {
       if (listRef.current && !listRef.current.contains(e.target as Node)) {
@@ -71,7 +68,6 @@ export default function MentionAutocomplete({
         maxWidth: isMobile ? '100%' : '320px',
       }}
     >
-      {/* Header */}
       <div class={`px-3 py-2 border-b ${borderColors.ui.default} bg-dark-850/50`}>
         <div class="flex items-center gap-2">
           <span class="text-blue-400 font-mono text-sm font-semibold">@</span>
@@ -79,7 +75,6 @@ export default function MentionAutocomplete({
         </div>
       </div>
 
-      {/* Agent List */}
       <div class="py-1">
         {agents.map((agent, index) => (
           <button
@@ -100,7 +95,6 @@ export default function MentionAutocomplete({
         ))}
       </div>
 
-      {/* Footer hint */}
       <div class={`px-3 py-2 border-t ${borderColors.ui.default} bg-dark-850/50`}>
         {isMobile ? (
           <p class="text-xs text-gray-400">Tap to select</p>

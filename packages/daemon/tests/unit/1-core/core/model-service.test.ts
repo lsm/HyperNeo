@@ -1,10 +1,3 @@
-/**
- * Model Service Tests
- *
- * Tests the unified model service that delegates to providers.
- * Tests mock provider responses rather than real SDK calls.
- */
-
 import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import {
   getAvailableModels,
@@ -27,8 +20,6 @@ import { resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 
 describe('Model Service', () => {
-  // Sample ModelInfo data for testing (as returned by providers)
-  // Note: Provider now returns 'sonnet' instead of 'default'
   const mockModels: ModelInfo[] = [
     {
       id: 'sonnet',
@@ -66,15 +57,12 @@ describe('Model Service', () => {
   ];
 
   beforeEach(() => {
-    // Clear cache and reset provider system before each test
-    // Both functions must be called to fully reset the provider state
     clearModelsCache();
     resetProviderRegistry();
     resetProviderFactory();
   });
 
   afterEach(() => {
-    // Clean up after tests
     clearModelsCache();
     resetProviderRegistry();
     resetProviderFactory();
@@ -90,8 +78,6 @@ describe('Model Service', () => {
     });
 
     it('clearModelsCache resets the tracking', () => {
-      // A re-connect clears the cache (provider-handlers), which must also reset
-      // the per-provider retry tracking so the provider gets a fresh attempt.
       markRefreshAttemptedFor(['glm']);
       expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
       clearModelsCache();
@@ -99,11 +85,6 @@ describe('Model Service', () => {
     });
 
     it('a session-scoped clear does NOT reset the tracking', () => {
-      // clearModelsCache(sessionId) only drops one session's cache entry
-      // (model switch / query lifecycle); it does not change global provider
-      // availability, so it must not wipe the global tried-set — otherwise a
-      // model switch in any session re-probes every missing provider on the
-      // next models.list and defeats the per-cache-lifetime storm guard.
       markRefreshAttemptedFor(['glm']);
       expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
       clearModelsCache('session-123');
@@ -183,7 +164,7 @@ describe('Model Service', () => {
     });
 
     it('should support different cache keys', () => {
-      const sessionModels = [mockModels[0]]; // Only default
+      const sessionModels = [mockModels[0]];
       const testCache = new Map<string, ModelInfo[]>();
       testCache.set('global', mockModels);
       testCache.set('session-123', sessionModels);
@@ -322,8 +303,6 @@ describe('Model Service', () => {
     });
 
     it('should handle legacy model IDs', async () => {
-      // Legacy full model IDs should map to SDK short IDs
-      // Note: 'claude-sonnet-4-5-20250929' maps to 'sonnet' via LEGACY_MODEL_MAPPINGS
       const model = await getModelInfo('claude-sonnet-4-5-20250929', 'global', 'anthropic');
       expect(model).not.toBeNull();
       expect(model?.id).toBe('sonnet');
@@ -342,7 +321,6 @@ describe('Model Service', () => {
     });
 
     it('should return null when provider does not match (no fallback)', async () => {
-      // 'sonnet' exists for 'anthropic' but not for 'glm'
       const model = await getModelInfo('sonnet', 'global', 'glm');
       expect(model).toBeNull();
     });
@@ -442,7 +420,6 @@ describe('Model Service', () => {
     });
 
     it('should resolve legacy model ID', async () => {
-      // LEGACY_MODEL_MAPPINGS maps 'claude-sonnet-4-5-20250929' to 'sonnet'
       const resolved = await resolveModelAlias('claude-sonnet-4-5-20250929', 'global', 'anthropic');
       expect(resolved).toBe('sonnet');
     });
@@ -472,7 +449,6 @@ describe('Model Service', () => {
 
       const models = await getSupportedModelsFromQuery(mockQuery as unknown, 'query-key');
 
-      // Should convert to ModelInfo format
       expect(models.length).toBe(1);
       expect(models[0].id).toBe('sonnet');
       expect(models[0].provider).toBe('anthropic');
@@ -487,7 +463,6 @@ describe('Model Service', () => {
 
       await getSupportedModelsFromQuery(mockQuery as unknown, 'cache-test-key');
 
-      // Should now be in cache
       const cache = getModelsCache();
       expect(cache.get('cache-test-key')).toBeDefined();
       expect(cache.get('cache-test-key')?.length).toBe(1);
@@ -544,15 +519,12 @@ describe('Model Service', () => {
 
   describe('initializeModels', () => {
     it('should skip initialization when already initialized', async () => {
-      // Pre-populate cache to simulate already initialized state
       const testCache = new Map<string, ModelInfo[]>();
       testCache.set('global', mockModels);
       setModelsCache(testCache);
 
-      // Should return immediately without throwing
       await expect(initializeModels()).resolves.toBeUndefined();
 
-      // Cache should still contain our models
       const cache = getModelsCache();
       expect(cache.get('global')).toEqual(mockModels);
     });
@@ -564,7 +536,6 @@ describe('Model Service', () => {
       testCache.set('global', mockModels);
       setModelsCache(testCache);
 
-      // Multiple calls should return cached data
       const models1 = getAvailableModels('global');
       const models2 = getAvailableModels('global');
 
@@ -575,23 +546,19 @@ describe('Model Service', () => {
 
   describe('provider loading', () => {
     it('should return empty array when no providers are available', () => {
-      // Ensure no providers are registered
       resetProviderRegistry();
       resetProviderFactory();
       clearModelsCache();
 
-      // With no providers and no cache, should return empty
       const models = getAvailableModels('no-providers-key');
       expect(models).toEqual([]);
     });
 
     it('should handle provider errors gracefully during model loading', async () => {
-      // Pre-populate cache so getAvailableModels doesn't return empty
       const testCache = new Map<string, ModelInfo[]>();
       testCache.set('global', mockModels);
       setModelsCache(testCache);
 
-      // Even if a provider fails, cached models should still be available
       const models = getAvailableModels('global');
       expect(models.length).toBeGreaterThan(0);
     });
@@ -600,7 +567,7 @@ describe('Model Service', () => {
   describe('cache key isolation', () => {
     it('should maintain separate caches for different keys', () => {
       const globalModels = mockModels;
-      const sessionModels = [mockModels[0]]; // Only default model
+      const sessionModels = [mockModels[0]];
 
       const testCache = new Map<string, ModelInfo[]>();
       testCache.set('global', globalModels);
@@ -630,7 +597,7 @@ describe('Model Service', () => {
 
   describe('setModelsCache with timestamp', () => {
     it('should accept custom timestamp', () => {
-      const customTimestamp = Date.now() - 10000; // 10 seconds ago
+      const customTimestamp = Date.now() - 10000;
       const testCache = new Map<string, ModelInfo[]>();
       testCache.set('global', mockModels);
 
@@ -648,8 +615,6 @@ describe('Model Service', () => {
       setModelsCache(testCache);
 
       const afterTime = Date.now();
-      // Timestamp should be between beforeTime and afterTime
-      // (This is implicitly tested by the cache working correctly)
       expect(getAvailableModels('global').length).toBe(3);
     });
   });
@@ -711,7 +676,6 @@ describe('Model Service', () => {
     });
 
     it('should resolve "default" alias to sonnet', async () => {
-      // LEGACY_MODEL_MAPPINGS maps 'default' to 'sonnet'
       const resolved = await resolveModelAlias('default', 'global', 'anthropic');
       expect(resolved).toBe('sonnet');
     });
@@ -784,16 +748,13 @@ describe('Model Service', () => {
       testCache.set('custom-cache', customModels);
       setModelsCache(testCache);
 
-      // Should find in global cache with correct provider
       const globalModel = await getModelInfo('sonnet', 'global', 'anthropic');
       expect(globalModel).not.toBeNull();
 
-      // Should find in custom cache with correct provider
       const customModel = await getModelInfo('custom-model', 'custom-cache', 'custom');
       expect(customModel).not.toBeNull();
       expect(customModel?.id).toBe('custom-model');
 
-      // Should not find custom model in global cache
       const notFound = await getModelInfo('custom-model', 'global', 'custom');
       expect(notFound).toBeNull();
     });
@@ -818,10 +779,8 @@ describe('Model Service', () => {
       testCache.set('custom-cache', customModels);
       setModelsCache(testCache);
 
-      // Custom model should be valid in custom cache with correct provider
       expect(await isValidModel('custom-only', 'custom-cache', 'custom')).toBe(true);
 
-      // Custom model should not be valid in global cache (not present there)
       expect(await isValidModel('custom-only', 'global', 'custom')).toBe(false);
     });
   });
@@ -845,18 +804,15 @@ describe('Model Service', () => {
       testCache.set('custom-cache', customModels);
       setModelsCache(testCache);
 
-      // Should resolve alias in custom cache with correct provider
       const resolved = await resolveModelAlias('my-custom-alias', 'custom-cache', 'custom');
       expect(resolved).toBe('custom-alias-model');
 
-      // Should return as-is when not found in global cache (wrong provider)
       const notResolved = await resolveModelAlias('my-custom-alias', 'global', 'anthropic');
       expect(notResolved).toBe('my-custom-alias');
     });
   });
 
   describe('provider-filtered model resolution', () => {
-    // Two providers exposing the same canonical model ID
     const sharedModels: ModelInfo[] = [
       {
         id: 'claude-sonnet-4.6',
@@ -910,7 +866,6 @@ describe('Model Service', () => {
     });
 
     it('should return null when provider does not have the model (no fallback)', async () => {
-      // 'glm' provider has no claude-sonnet-4.6 — no fallback, returns null
       const model = await getModelInfo('claude-sonnet-4.6', 'global', 'glm');
       expect(model).toBeNull();
     });
@@ -932,13 +887,11 @@ describe('Model Service', () => {
     });
 
     it('should return null for model unique to one provider when wrong provider is requested', async () => {
-      // 'haiku' only exists for 'anthropic', not 'anthropic-copilot'
       const model = await getModelInfo('haiku', 'global', 'anthropic-copilot');
       expect(model).toBeNull();
     });
 
     it('should resolve legacy model ID to provider-specific entry when providerId is set', async () => {
-      // Add a copilot variant of the legacy-mapped target 'sonnet'
       const modelsWithCopilotSonnet: ModelInfo[] = [
         ...sharedModels,
         {
@@ -964,8 +917,6 @@ describe('Model Service', () => {
       cache.set('global', modelsWithCopilotSonnet);
       setModelsCache(cache);
 
-      // LEGACY_MODEL_MAPPINGS maps 'claude-sonnet-4-5-20250929' → 'sonnet'
-      // With copilot provider, should find the copilot sonnet entry
       const model = await getModelInfo('claude-sonnet-4-5-20250929', 'global', 'anthropic-copilot');
       expect(model).not.toBeNull();
       expect(model?.id).toBe('sonnet');
@@ -1090,9 +1041,6 @@ describe('Model Service', () => {
 
   describe('refreshModels', () => {
     it('should preserve both provider entries for shared model IDs after refresh', async () => {
-      // Exercises the production mergeWithFallbackModels code path without calling
-      // initializeModels(), which registers built-in providers and can wait on slow
-      // external availability checks in unit-test environments.
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       const { refreshModels } = await import('../../../../src/lib/model-service');
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
@@ -1130,7 +1078,6 @@ describe('Model Service', () => {
 
       await refreshModels();
 
-      // Both entries must survive the merge — one per (provider, id) pair
       const entryA = await getModelInfo(sharedId, 'global', 'test-provider-a');
       const entryB = await getModelInfo(sharedId, 'global', 'test-provider-b');
 
@@ -1142,7 +1089,6 @@ describe('Model Service', () => {
     });
 
     it('should restore FALLBACK_MODELS when cache is empty and no providers are available', async () => {
-      // Ensure cache is empty (as if clearModelsCache() was called)
       clearModelsCache();
       expect(getAvailableModels('global')).toEqual([]);
 
@@ -1160,8 +1106,6 @@ describe('Model Service', () => {
         isAvailable: async () => true,
       } as ProviderLike);
 
-      // With no providers returning models, refreshModels should restore fallbacks
-      // for providers that are still registered.
       const { refreshModels } = await import('../../../../src/lib/model-service');
       await refreshModels();
 
@@ -1182,7 +1126,6 @@ describe('Model Service', () => {
         isAvailable: async () => true,
       } as ProviderLike);
 
-      // Seed cache with mock models
       const testCache = new Map<string, ModelInfo[]>();
       testCache.set('global', mockModels);
       setModelsCache(testCache);
@@ -1190,18 +1133,13 @@ describe('Model Service', () => {
       const { refreshModels } = await import('../../../../src/lib/model-service');
       await refreshModels();
 
-      // Existing cache should be preserved because it was non-empty
       const models = getAvailableModels('global');
       expect(models).toEqual(mockModels);
     });
 
     it('should cancel in-flight background refresh when clearModelsCache is called', async () => {
-      // Use a custom cache key to avoid cross-test contamination that can
-      // write to the 'global' key from unrelated async provider loading.
       const cacheKey = 'bg-cancel-test';
 
-      // Register a test provider so the background refresh actually returns
-      // models and reaches the generation-guard check.
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
       const registry = getProviderRegistry();
@@ -1219,35 +1157,23 @@ describe('Model Service', () => {
         isAvailable: async () => true,
       } as ProviderLike);
 
-      // Seed cache with an old timestamp so getAvailableModels triggers
-      // a background refresh.
       const testCache = new Map<string, ModelInfo[]>();
       testCache.set(cacheKey, mockModels);
-      setModelsCache(testCache, Date.now() - 5 * 60 * 60 * 1000); // 5 hours ago
+      setModelsCache(testCache, Date.now() - 5 * 60 * 60 * 1000);
 
-      // Trigger a background refresh by calling getAvailableModels
       getAvailableModels(cacheKey);
 
-      // Immediately clear the cache (simulating an OAuth account change)
       clearModelsCache();
       expect(getAvailableModels(cacheKey)).toEqual([]);
 
-      // Wait long enough for the background refresh to have completed
-      // if it were still running.
       await new Promise((resolve) => setTimeout(resolve, 500));
 
-      // The cache should still be empty because the generation counter
-      // caused the in-flight refresh to drop its stale result.
       expect(getAvailableModels(cacheKey)).toEqual([]);
     });
 
     it('should NOT cancel global background refresh on session-scoped clearModelsCache', async () => {
-      // Use a custom cache key to avoid cross-test contamination that can
-      // write to the 'global' key from unrelated async provider loading.
       const cacheKey = 'bg-session-test';
 
-      // Register a test provider so the background refresh actually returns
-      // models and reaches the generation-guard check.
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
       const registry = getProviderRegistry();
@@ -1265,32 +1191,23 @@ describe('Model Service', () => {
         isAvailable: async () => true,
       } as ProviderLike);
 
-      // Seed the cache with an old timestamp so getAvailableModels
-      // triggers a background refresh for this key.
       const testCache = new Map<string, ModelInfo[]>();
       testCache.set(cacheKey, mockModels);
-      setModelsCache(testCache, Date.now() - 5 * 60 * 60 * 1000); // 5 hours ago
+      setModelsCache(testCache, Date.now() - 5 * 60 * 60 * 1000);
 
-      // Trigger a background refresh for this key
       getAvailableModels(cacheKey);
 
-      // Clear a *different* cache key — this must not affect the refresh
       clearModelsCache('session-123');
       expect(getAvailableModels('session-123')).toEqual([]);
 
-      // Wait long enough for the background refresh to complete
       await new Promise((resolve) => setTimeout(resolve, 500));
 
-      // The cache should still have been populated because the
-      // session-scoped clear must not bump the generation for this key.
       const models = getAvailableModels(cacheKey);
       expect(models.length).toBeGreaterThan(0);
       expect(models.some((m) => m.id === 'bg-model-2')).toBe(true);
     });
 
     it('should drop stale result when clearModelsCache is called during foreground refresh', async () => {
-      // Register a deliberately slow provider so the refresh is in-flight
-      // long enough for us to clear the cache while it runs.
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
       const registry = getProviderRegistry();
@@ -1311,23 +1228,17 @@ describe('Model Service', () => {
         isAvailable: async () => true,
       } as ProviderLike);
 
-      // Ensure cache is empty
       clearModelsCache();
 
-      // Start a foreground refresh but do not await it yet
       const { refreshModels } = await import('../../../../src/lib/model-service');
       const refreshPromise = refreshModels();
 
-      // Allow the refresh to enter its async loading phase
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // Invalidate the cache while the refresh is still loading models
       clearModelsCache();
 
-      // Wait for the refresh to finish
       await refreshPromise;
 
-      // The generation guard should have caused the stale result to be dropped
       expect(getAvailableModels('global')).toEqual([]);
     });
   });

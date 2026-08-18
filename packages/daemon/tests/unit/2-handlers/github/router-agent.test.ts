@@ -1,18 +1,7 @@
-/**
- * Router Agent Unit Tests
- *
- * Tests for the router agent's decision logic:
- * - Test quick routing with no candidates -> inbox
- * - Test quick routing with single candidate -> route immediately
- * - Test AI routing with multiple candidates (mocked)
- * - Test security-failed events -> reject
- */
-
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { RouterAgent, type RoomCandidate } from '../../../../src/lib/github/router-agent';
 import type { GitHubEvent, SecurityCheckResult, RoutingResult } from '@hyperneo/shared';
 
-// Helper to create a basic GitHub event for testing
 function createTestEvent(overrides: Partial<GitHubEvent> = {}): GitHubEvent {
   return {
     id: 'test-event-id',
@@ -40,7 +29,6 @@ function createTestEvent(overrides: Partial<GitHubEvent> = {}): GitHubEvent {
   };
 }
 
-// Helper to create room candidates
 function createRoomCandidate(overrides: Partial<RoomCandidate> = {}): RoomCandidate {
   return {
     roomId: 'room-1',
@@ -51,7 +39,6 @@ function createRoomCandidate(overrides: Partial<RoomCandidate> = {}): RoomCandid
   };
 }
 
-// Helper to create security check result
 function createSecurityResult(overrides: Partial<SecurityCheckResult> = {}): SecurityCheckResult {
   return {
     passed: true,
@@ -159,7 +146,7 @@ describe('RouterAgent', () => {
       });
       const candidates = [
         createRoomCandidate({
-          repositories: ['testowner/testrepo'], // lowercase
+          repositories: ['testowner/testrepo'],
         }),
       ];
       const securityResult = createSecurityResult();
@@ -218,7 +205,7 @@ describe('RouterAgent', () => {
 
       const result = await agent.route(event, candidates, securityResult);
 
-      expect(result.roomId).toBe('room-c'); // Highest priority
+      expect(result.roomId).toBe('room-c');
     });
   });
 

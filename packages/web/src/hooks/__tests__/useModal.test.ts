@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for useModal Hook
- *
- * Tests modal open/close state management.
- */
 
 import { renderHook, act } from '@testing-library/preact';
 import { useModal } from '../useModal.ts';
@@ -184,28 +179,23 @@ describe('useModal', () => {
     it('should handle sequence of operations correctly', () => {
       const { result } = renderHook(() => useModal());
 
-      // Start closed
       expect(result.current.isOpen).toBe(false);
 
-      // Open
       act(() => {
         result.current.open();
       });
       expect(result.current.isOpen).toBe(true);
 
-      // Toggle to close
       act(() => {
         result.current.toggle();
       });
       expect(result.current.isOpen).toBe(false);
 
-      // Set directly to true
       act(() => {
         result.current.setIsOpen(true);
       });
       expect(result.current.isOpen).toBe(true);
 
-      // Close
       act(() => {
         result.current.close();
       });

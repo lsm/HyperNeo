@@ -1,14 +1,3 @@
-/**
- * Fixture-backed tests for the provider error taxonomy registry.
- *
- * The fixtures mirror real upstream payloads seen in production: GLM 1305
- * bodies (Chinese, localized), Anthropic 529 overloads, Kimi bare
- * prompt-too-long strings, body-embedded 200 errors, mid-stream error frames,
- * and auth/quota failures. Daemon-side normalizers derive their patterns from
- * this registry, so these tables are the contract that keeps the surfaces in
- * sync.
- */
-
 import { describe, expect, test } from 'bun:test';
 import {
   GLM_RATE_LIMIT_CODE,
@@ -35,10 +24,6 @@ import {
   providerErrorKindForHttpStatus,
 } from '../src/provider/error-taxonomy.ts';
 import type { AnthropicErrorType, ProviderErrorKind } from '../src/provider/error-taxonomy.ts';
-
-// ============================================================================
-// Registry integrity
-// ============================================================================
 
 describe('PROVIDER_ERROR_TAXONOMY integrity', () => {
   test('every entry has a description and a valid action', () => {
@@ -83,9 +68,6 @@ describe('PROVIDER_ERROR_TAXONOMY integrity', () => {
   });
 
   test('every entry httpStatus maps back to the entry anthropicType (drift guard)', () => {
-    // anthropicErrorTypeForHttpStatus is derived from the entries via
-    // providerErrorKindForHttpStatus — this pins the derivation so an entry's
-    // declared wire type can never diverge from what bridges actually emit.
     for (const entry of PROVIDER_ERROR_TAXONOMY) {
       for (const status of entry.httpStatuses ?? []) {
         expect(anthropicErrorTypeForHttpStatus(status)).toBe(entry.anthropicType);
@@ -101,10 +83,6 @@ describe('PROVIDER_ERROR_TAXONOMY integrity', () => {
     expect(compact).toEqual(['prompt_too_long']);
   });
 });
-
-// ============================================================================
-// HTTP status mappings
-// ============================================================================
 
 describe('anthropicErrorTypeForHttpStatus', () => {
   const cases: Array<[number, AnthropicErrorType]> = [
@@ -131,13 +109,9 @@ describe('anthropicErrorTypeForHttpStatus', () => {
 });
 
 describe('httpStatusForSymbolicErrorType', () => {
-  // Each recognized symbol resolves to a status whose
-  // anthropicErrorTypeForHttpStatus round-trips back to a NON-invalid-request
-  // type — so a 200 JSON error carrying only that symbol never defaults to 400
-  // invalid_request_error (which would trip the fatal invalid-request breaker).
   const cases: Array<[string, number]> = [
     ['authentication_error', 401],
-    ['AUTHENTICATION_ERROR', 401], // case-insensitive
+    ['AUTHENTICATION_ERROR', 401],
     ['permission_error', 403],
     ['not_found_error', 404],
     ['request_too_large', 413],
@@ -150,14 +124,10 @@ describe('httpStatusForSymbolicErrorType', () => {
   for (const [symbol, expected] of cases) {
     test(`${symbol} → ${expected}`, () => {
       expect(httpStatusForSymbolicErrorType(symbol)).toBe(expected);
-      // Round-trips to a distinct (non-invalid-request) Anthropic type.
       expect(anthropicErrorTypeForHttpStatus(expected)).not.toBe('invalid_request_error');
     });
   }
   test('invalid_request_error resolves to 400 (its real type, not the retryable default)', () => {
-    // invalid_request_error is the one symbol that round-trips to itself; it is
-    // listed so a terminal bad-request payload surfaces as invalid_request_error
-    // rather than the retryable api_error default.
     expect(httpStatusForSymbolicErrorType('invalid_request_error')).toBe(400);
     expect(anthropicErrorTypeForHttpStatus(400)).toBe('invalid_request_error');
   });
@@ -170,17 +140,13 @@ describe('httpStatusForSymbolicErrorType', () => {
 
 describe('isOpenAiErrorTypeName', () => {
   test('admits recognized transient and terminal error type names', () => {
-    // Transient.
     expect(isOpenAiErrorTypeName('server_error')).toBe(true);
     expect(isOpenAiErrorTypeName('rate_limit_exceeded')).toBe(true);
     expect(isOpenAiErrorTypeName('overloaded_error')).toBe(true);
-    // Terminal.
     expect(isOpenAiErrorTypeName('invalid_request_error')).toBe(true);
     expect(isOpenAiErrorTypeName('authentication_error')).toBe(true);
     expect(isOpenAiErrorTypeName('not_found_error')).toBe(true);
-    // HTTP-status codes some gateways put in type/code.
     expect(isOpenAiErrorTypeName('429')).toBe(true);
-    // Case-insensitive.
     expect(isOpenAiErrorTypeName('INVALID_REQUEST_ERROR')).toBe(true);
   });
   test('rejects non-error frame types (heartbeat/metadata/event discriminators)', () => {
@@ -194,30 +160,23 @@ describe('isOpenAiErrorTypeName', () => {
 
 describe('isProviderErrorCodeOrType', () => {
   test('admits symbolic names, terminal provider codes, and numeric statuses', () => {
-    // Symbolic type/code names (transient or terminal).
     expect(isProviderErrorCodeOrType('invalid_request_error')).toBe(true);
     expect(isProviderErrorCodeOrType('authentication_error')).toBe(true);
     expect(isProviderErrorCodeOrType('server_error')).toBe(true);
-    // Terminal provider codes carried only as loose-text signals.
     expect(isProviderErrorCodeOrType('model_not_found')).toBe(true);
     expect(isProviderErrorCodeOrType('insufficient_quota')).toBe(true);
-    // Numeric codes/statuses (number or 3-digit string), 4xx and 5xx.
     expect(isProviderErrorCodeOrType(401)).toBe(true);
     expect(isProviderErrorCodeOrType('429')).toBe(true);
     expect(isProviderErrorCodeOrType(503)).toBe(true);
     expect(isProviderErrorCodeOrType('502')).toBe(true);
-    // Case-insensitive symbolic names.
     expect(isProviderErrorCodeOrType('AUTHENTICATION_ERROR')).toBe(true);
   });
   test('rejects non-error values and out-of-range / embedded numbers', () => {
-    // Non-error frame types / lifecycle statuses.
     expect(isProviderErrorCodeOrType('ping')).toBe(false);
     expect(isProviderErrorCodeOrType('completed')).toBe(false);
     expect(isProviderErrorCodeOrType('incomplete')).toBe(false);
-    // Out-of-range numeric statuses.
     expect(isProviderErrorCodeOrType(200)).toBe(false);
     expect(isProviderErrorCodeOrType(302)).toBe(false);
-    // Word boundaries: "4010 tokens" must not match a 4xx, nor 600+ as 5xx.
     expect(isProviderErrorCodeOrType('4010')).toBe(false);
     expect(isProviderErrorCodeOrType('')).toBe(false);
     expect(isProviderErrorCodeOrType(undefined)).toBe(false);
@@ -246,10 +205,6 @@ describe('providerErrorKindForHttpStatus', () => {
     });
   }
 });
-
-// ============================================================================
-// Prompt-too-long variants
-// ============================================================================
 
 describe('matchPromptTooLong', () => {
   test('Anthropic token-count form captures both counts', () => {
@@ -281,16 +236,11 @@ describe('matchPromptTooLong', () => {
   });
 
   test('PROMPT_TOO_LONG_RE stays match-equivalent to the lenient phrase', () => {
-    // Every string the old lenient /prompt is too long/i matched must still match.
     for (const text of ['prompt is too long', 'Prompt is too long', 'x PROMPT IS TOO LONG y']) {
       expect(PROMPT_TOO_LONG_RE.test(text)).toBe(true);
     }
   });
 });
-
-// ============================================================================
-// GLM provider-code and localized-string signals
-// ============================================================================
 
 describe('GLM signals', () => {
   test('rate-limit code 1305 is registered for glm', () => {
@@ -309,16 +259,10 @@ describe('GLM signals', () => {
   test('localized overload strings are body-context, generic retry advice is body-only', () => {
     expect(GLM_TRANSIENT_BODY_SUBSTRINGS).toContain('访问量过大');
     expect(GLM_TRANSIENT_BODY_SUBSTRINGS).toContain('稍后再试');
-    // Loose text must NOT trust "稍后再试" (try again later) — it also appears
-    // on terminal validation errors.
     expect(RETRYABLE_PROVIDER_ERROR_TEXT).toContain('访问量过大');
     expect(RETRYABLE_PROVIDER_ERROR_TEXT).not.toContain('稍后再试');
   });
 });
-
-// ============================================================================
-// Derived retry/terminal text tables
-// ============================================================================
 
 describe('derived loose-text tables', () => {
   test('RETRYABLE_PROVIDER_ERROR_TEXT has no bare numeric codes or terminal terms', () => {
@@ -365,7 +309,6 @@ describe('derived loose-text tables', () => {
     for (const code of ['server_error', 'overloaded_error', '500', '502', '503', '504', '529']) {
       expect(TRANSIENT_OVERLOAD_CODES.has(code)).toBe(true);
     }
-    // GLM 1305 stays provider-scoped — not part of the generic OpenAI sets.
     expect(TRANSIENT_RATE_LIMIT_CODES.has('1305')).toBe(false);
   });
 
@@ -375,10 +318,6 @@ describe('derived loose-text tables', () => {
     expect(OVERLOAD_MESSAGE_PATTERN.test('503 Service Unavailable')).toBe(true);
   });
 });
-
-// ============================================================================
-// isRetryableProviderError (loose-text retry guard)
-// ============================================================================
 
 describe('isRetryableProviderError', () => {
   const retryable = [
@@ -392,7 +331,6 @@ describe('isRetryableProviderError', () => {
     'gateway timeout',
     'temporarily unavailable',
     'API Error: 500 {"error":{"type":"api_error"}}',
-    // GLM 529 payload ("model traffic too high, try again later")
     '[1305][该模型当前访问量过大，请您稍后再试]',
     '[1305]',
     '访问量过大',
@@ -418,13 +356,11 @@ describe('isRetryableProviderError', () => {
     '501 Not Implemented',
     'not implemented',
     'Some generic error with no status code',
-    // GLM false positives: bare code and generic retry advice
     'prompt is too long: 1305 tokens > 1000 maximum',
     'request id: req_1305abc',
     'ECONNREFUSED 127.0.0.1:1305',
     '参数错误，请稍后再试',
     '请稍后再试',
-    // word-boundary guards
     'Request timed out after 5000ms',
     'EADDRINUSE: port 5500 already in use',
     'prompt too long: 15003 tokens',
@@ -442,10 +378,6 @@ describe('isRetryableProviderError', () => {
     expect(isRetryableProviderError('503 due to quota limits')).toBe(false);
   });
 });
-
-// ============================================================================
-// HTTP status regexes
-// ============================================================================
 
 describe('HTTP status regexes', () => {
   test('HTTP_5XX_STATUS_RE matches standalone 5xx only', () => {

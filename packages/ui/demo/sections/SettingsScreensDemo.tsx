@@ -19,9 +19,6 @@ import {
   X,
 } from 'lucide-preact';
 
-// ==========================
-// Example 1: Sidebar Layout (Settings)
-// ==========================
 function SettingsScreensSidebar() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [automaticTimezone, setAutomaticTimezone] = useState(true);
@@ -373,9 +370,6 @@ function SettingsScreensSidebar() {
   );
 }
 
-// ==========================
-// Example 2: Stacked Layout (Account Settings)
-// ==========================
 function SettingsScreensStacked() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -533,7 +527,6 @@ function SettingsScreensStacked() {
         </div>
       </Dialog>
 
-      {/* Static sidebar for desktop */}
       <div class="hidden xl:fixed xl:inset-y-0 xl:z-50 xl:flex xl:w-72 xl:flex-col dark:bg-gray-900">
         <div class="flex grow flex-col gap-y-5 overflow-y-auto bg-gray-50 px-6 ring-1 ring-gray-200 dark:bg-black/10 dark:ring-white/5">
           <div class="flex h-16 shrink-0 items-center">
@@ -630,7 +623,6 @@ function SettingsScreensStacked() {
       </div>
 
       <div class="xl:pl-72">
-        {/* Sticky search header */}
         <div class="sticky top-0 z-40 flex h-16 shrink-0 items-center gap-x-6 border-b border-gray-200 bg-white px-4 shadow-xs sm:px-6 lg:px-8 dark:border-white/5 dark:bg-gray-900 dark:shadow-none">
           <button
             type="button"
@@ -661,7 +653,6 @@ function SettingsScreensStacked() {
           <h1 class="sr-only">Account Settings</h1>
 
           <header class="border-b border-gray-200 dark:border-white/5">
-            {/* Secondary navigation */}
             <nav class="flex overflow-x-auto py-4">
               <ul
                 role="list"
@@ -681,7 +672,6 @@ function SettingsScreensStacked() {
             </nav>
           </header>
 
-          {/* Settings forms */}
           <div class="divide-y divide-gray-200 dark:divide-white/10">
             <div class="grid max-w-7xl grid-cols-1 gap-x-8 gap-y-10 px-4 py-16 sm:px-6 md:grid-cols-3 lg:px-8">
               <div>

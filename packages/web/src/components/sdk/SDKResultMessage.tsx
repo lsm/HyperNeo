@@ -1,16 +1,3 @@
-/**
- * SDKResultMessage Renderer
- *
- * Displays query completion with full statistics:
- * - Success/error status
- * - Token usage (input, output, cache)
- * - Cost breakdown (total + per model)
- * - Duration (total + API time)
- * - Model usage breakdown
- * - Permission denials
- * - Structured output (if present)
- */
-
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import { isSDKResultSuccess, isSDKResultError } from '@hyperneo/shared/sdk/type-guards';
 import { useState } from 'preact/hooks';
@@ -26,8 +13,6 @@ export function SDKResultMessage({ message }: Props) {
   const isSuccess = isSDKResultSuccess(message);
   const isError = isSDKResultError(message);
 
-  // Defense in depth: bridge providers (Copilot / Codex) may omit usage at runtime
-  // despite TypeScript declaring it as NonNullableUsage. Guard all accesses.
   const usage = (message as unknown as { usage?: Record<string, number | undefined> }).usage ?? {};
   const inputTokens = (usage.input_tokens as number | undefined) ?? 0;
   const outputTokens = (usage.output_tokens as number | undefined) ?? 0;
@@ -42,7 +27,6 @@ export function SDKResultMessage({ message }: Props) {
           : 'bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800'
       }`}
     >
-      {/* Compact Summary - Always Visible */}
       <button
         onClick={() => setShowDetails(!showDetails)}
         class="w-full px-3 py-2 flex items-center justify-between hover:bg-green-100 dark:hover:bg-green-900/20 transition-colors"
@@ -99,10 +83,8 @@ export function SDKResultMessage({ message }: Props) {
         </svg>
       </button>
 
-      {/* Expanded Details */}
       {showDetails && (
         <div class="p-3 border-t border-green-200 dark:border-green-800 bg-white dark:bg-gray-900 space-y-3">
-          {/* Full Stats Grid */}
           <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
             <StatCard
               label="Input Tokens"
@@ -163,7 +145,6 @@ export function SDKResultMessage({ message }: Props) {
             />
           </div>
 
-          {/* Cache Stats (if any) */}
           {(cacheReadTokens > 0 || cacheCreationTokens > 0) && (
             <div class="pt-2 border-t border-green-200 dark:border-green-800">
               <div class="flex items-center gap-4 text-xs text-green-700 dark:text-green-300">
@@ -195,7 +176,6 @@ export function SDKResultMessage({ message }: Props) {
             </div>
           )}
 
-          {/* Turns and API Time */}
           <div class="text-xs text-gray-600 dark:text-gray-400">
             Completed in {message.num_turns} turn
             {message.num_turns !== 1 ? 's' : ''}
@@ -203,7 +183,6 @@ export function SDKResultMessage({ message }: Props) {
             API time: {(message.duration_api_ms / 1000).toFixed(2)}s
           </div>
 
-          {/* Model Usage Breakdown */}
           {Object.keys(message.modelUsage).length > 0 && (
             <div>
               <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
@@ -249,7 +228,6 @@ export function SDKResultMessage({ message }: Props) {
             </div>
           )}
 
-          {/* Permission Denials */}
           {message.permission_denials && message.permission_denials.length > 0 && (
             <div>
               <h4 class="text-sm font-semibold text-yellow-700 dark:text-yellow-300 mb-2 flex items-center gap-2">
@@ -283,7 +261,6 @@ export function SDKResultMessage({ message }: Props) {
             </div>
           )}
 
-          {/* Structured Output */}
           {isSuccess && message.structured_output && (
             <div>
               <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-2">
@@ -303,7 +280,6 @@ export function SDKResultMessage({ message }: Props) {
             </div>
           )}
 
-          {/* Errors */}
           {isError && 'errors' in message && message.errors && (
             <div>
               <h4 class="text-sm font-semibold text-red-700 dark:text-red-300 mb-2">Errors</h4>
@@ -320,7 +296,6 @@ export function SDKResultMessage({ message }: Props) {
             </div>
           )}
 
-          {/* Result (for success) */}
           {isSuccess && 'result' in message && (
             <div>
               <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Result</h4>
@@ -335,9 +310,6 @@ export function SDKResultMessage({ message }: Props) {
   );
 }
 
-/**
- * Stat Card Component
- */
 function StatCard({
   label,
   value,

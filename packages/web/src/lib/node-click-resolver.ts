@@ -1,42 +1,17 @@
-/**
- * Identity-safe resolution for workflow-graph node clicks.
- *
- * A canvas node click supplies the persisted workflow node ID, the node name,
- * and the declared agent slot names for that node. This module resolves that
- * click to a concrete UI action WITHOUT ever falling back to another node's
- * session — the root cause of the bug where clicking an unstarted downstream
- * node opened a previously-active node's chat.
- *
- * Identity is resolved strictly from the clicked node ID + declared agent slot,
- * cross-checked against two independent runtime sources (the nodeExecutions
- * store and the reactive activity members), plus the task-level post-approval
- * session for spawned merger nodes.
- *
- * The function is pure (no signal/store access) so the branching logic is
- * unit-testable in isolation; SpaceTaskPane wires it to live data.
- */
-
 import type { NodeExecution, SpaceTaskActivityMember } from '@hyperneo/shared';
 
-/** A live, resolvable agent session belonging to the clicked node. */
 export interface NodeLiveSession {
   kind: 'live';
   sessionId: string;
-  /** Agent slot name (`WorkflowNodeAgent.name`). */
   agentName: string;
-  /** node_execution id for routing sends, when known. */
   nodeExecutionId?: string;
-  /** Human-readable label for the choice/overlay header. */
   label: string;
 }
 
-/** A declared agent slot that has not spawned a session yet. */
 export interface NodePendingSlot {
   kind: 'pending';
   agentName: string;
   label: string;
-  /** Persisted workflow node ID — carried into activation so the backend
-   * targets this exact node when multiple nodes reuse the slot name. */
   nodeId: string;
 }
 
@@ -48,7 +23,6 @@ export type NodeClickOutcome =
       type: 'activate_slot';
       taskId: string;
       agentName: string;
-      /** Persisted workflow node ID for the unstarted slot (see NodePendingSlot). */
       nodeId: string;
     }
   | { type: 'choose'; choices: NodeChoice[] }
@@ -58,42 +32,17 @@ export interface ResolveNodeClickArgs {
   taskId: string;
   nodeId: string;
   nodeName: string;
-  /** Declared agent slot names for the clicked node (`WorkflowNodeAgent.name`). */
   agentSlotNames: string[];
-  /** Run the task belongs to — scopes the nodeExecutions lookup. */
   workflowRunId: string | null | undefined;
   nodeExecutions: NodeExecution[];
   activityMembers: SpaceTaskActivityMember[];
-  /**
-   * `task.postApprovalSessionId` — the spawned merger/post-approval session.
-   * Merger sessions carry no node_execution row, so their identity lives here.
-   */
   postApprovalSessionId?: string | null;
-  /**
-   * Agent name the workflow's post-approval route targets (e.g. 'merger').
-   * Only when the clicked node declares this slot do we open the merger session,
-   * tying the persisted session to the correct node.
-   */
   postApprovalTargetAgent?: string | null;
-  /**
-   * Persisted node ID that declares the post-approval target slot — i.e. the
-   * node the merger session was spawned for. When provided, the merger session
-   * is bound ONLY to this node, so multiple nodes reusing the target slot name
-   * can't each open the singular postApprovalSessionId. Falls back to the
-   * clicked-node-declares-the-slot check when unknown (older callers).
-   */
   postApprovalNodeId?: string | null;
-  /** Resolve a human label for an agent slot name. */
   resolveLabel: (agentName: string) => string;
-  /** Normalize slot names for comparison. */
   normalizeSlotName?: (name: string) => string;
 }
 
-/**
- * Normalize an agent slot name for case/separator-insensitive comparison.
- * Mirrors SpaceTaskPane.normalizeTargetName so canvas-declared slot names and
- * runtime member roles match even when they differ in casing or spacing.
- */
 export function normalizeSlotName(name: string): string {
   return (name ?? '')
     .toLowerCase()
@@ -101,28 +50,6 @@ export function normalizeSlotName(name: string): string {
     .replace(/[\s_-]+/g, '');
 }
 
-/**
- * Resolve a clicked workflow node to a concrete action.
- *
- * Decision table:
- *   live sessions (node ID + slot match)
- *     ┌──────────┬──────────────────────────────┐
- *     │ exactly 1│ open_session                 │
- *     │   > 1    │ choose (multi-agent node)    │
- *     │   0      │ see unstarted branch below   │
- *     └──────────┴──────────────────────────────┘
- *   unstarted (0 live)
- *     ┌──────────────────┬────────────────────────────┐
- *     │ 0 declared slots │ empty (zero-agent node)    │
- *     │ 1 declared slot  │ activate_slot (own pending)│
- *     │ > 1 declared slot│ choose (which slot to start)│
- *     └──────────────────┴────────────────────────────┘
- *
- * A session qualifies only when BOTH its node ID and its slot name match the
- * clicked node. Members with an unknown node ID are skipped rather than
- * guessed, so rollout-era nullable identity can never fall back to another
- * node's session.
- */
 export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
   const {
     taskId,
@@ -139,47 +66,22 @@ export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
   } = args;
   const normalize = args.normalizeSlotName ?? normalizeSlotName;
 
-  // Declared slots for this node, in declaration order — used both as a match
-  // set and to order the resulting choices deterministically.
   const slotOrder = new Map<string, number>();
   agentSlotNames.forEach((name, index) => {
     const key = normalize(name);
     if (!slotOrder.has(key)) slotOrder.set(key, index);
   });
   const isDeclaredSlot = (name: string) => slotOrder.has(normalize(name));
-  // Exact-name set for AUTHORITATIVE execution slots (source 1). A mid-run
-  // rename (qa-one → qa_one) leaves the persisted execution on the old exact
-  // name; normalized admission would treat it as the renamed slot and offer
-  // both the stale live session and the renamed pending slot. Exact-match keeps
-  // them distinct; normalization stays only for non-authoritative display labels.
   const declaredSlotNamesExact = new Set(agentSlotNames);
 
-  // ---- Collect live sessions for THIS node, deduped by sessionId ----------
   const liveBySession = new Map<string, NodeLiveSession>();
-  // Authoritative nodeExecutionId → session map from the executions store, used
-  // to drop stale activity members (whose session lags a replacement).
-  // Maps nodeExecutionId → its authoritative live session, or null for a
-  // tombstone (detached/cancelled execution) so a lagging activity member can't
-  // resurrect the dead session.
   const sessionByExecId = new Map<string, string | null>();
 
-  // Source 1: nodeExecutions store — the authoritative node→session map for
-  // the run. One row per (run, nodeId, agentName).
   if (workflowRunId) {
     for (const exec of nodeExecutions) {
       if (exec.workflowRunId !== workflowRunId) continue;
       if (exec.workflowNodeId !== nodeId) continue;
       if (!declaredSlotNamesExact.has(exec.agentName)) continue;
-      // A cancelled execution retains its stale agentSessionId (channel-router's
-      // validation-cancel sets status:'cancelled' without clearing it); a
-      // detached execution has no session at all. Both must be excluded from
-      // live, but their execution id still maps authoritatively to NO live
-      // session — record a tombstone so a lagging activity member (whose status
-      // snapshot hasn't caught up) can't re-add the dead session via source 2.
-      // Tombstone: detached (no session), cancelled, or pending-with-retained
-      // session (resetWorkflowNodeExecutionForSpawnRetry keeps the dead pointer
-      // on a pending row). A pending execution with a session id is NOT live —
-      // it's awaiting a fresh spawn.
       if (!exec.agentSessionId || exec.status === 'cancelled' || exec.status === 'pending') {
         if (exec.id) sessionByExecId.set(exec.id, null);
         continue;
@@ -195,42 +97,24 @@ export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
     }
   }
 
-  // Source 2: reactive activity members. These enrich labels and catch a
-  // session that is live in memory but not yet reflected in the nodeExecutions
-  // store. The node ID must match exactly; a member with no nodeExecution
-  // identity cannot be tied to this node and is skipped (no guesswork).
   for (const member of activityMembers) {
     if (member.kind !== 'node_agent' || !member.sessionId) continue;
-    // Exclude cancelled / pending-with-retained-session executions (stale
-    // session retained in the activity feed / spawn-retry pending row).
     if (member.nodeExecution?.status === 'cancelled' || member.nodeExecution?.status === 'pending')
       continue;
     const execNodeId = member.nodeExecution?.nodeId;
     if (!execNodeId || execNodeId !== nodeId) continue;
     const slotName = member.nodeExecution?.agentName ?? member.role;
-    // Exact-match the authoritative execution agent name (mirrors source 1);
-    // fall back to normalized only for role-only members (no execution
-    // agentName — the role is a display label that may differ in casing).
     const slotDeclared = member.nodeExecution?.agentName
       ? declaredSlotNamesExact.has(member.nodeExecution.agentName)
       : isDeclaredSlot(slotName);
     if (!slotDeclared) continue;
-    // Reconciliation: if this member's node_execution is already mapped (by
-    // source 1) to a DIFFERENT session, the member is stale — the execution
-    // advanced to a replacement session before the activity feed caught up.
-    // Skip it so we don't offer a second choice that shows the old chat while
-    // routing via the shared nodeExecutionId to the new session.
     const memberExecId = member.nodeExecution?.nodeExecutionId;
     if (memberExecId) {
       const authoritative = sessionByExecId.get(memberExecId);
-      // Reject when the execution authoritatively maps to a DIFFERENT session
-      // OR to a tombstone (null = detached/cancelled) — a lagging activity
-      // member must not resurrect the dead session as live.
       if (authoritative !== undefined && authoritative !== member.sessionId) continue;
     }
     const existing = liveBySession.get(member.sessionId);
     if (existing) {
-      // Prefer the activity member's user-facing label when available.
       if (member.label) existing.label = member.label;
       if (member.nodeExecution?.nodeExecutionId && !existing.nodeExecutionId) {
         existing.nodeExecutionId = member.nodeExecution.nodeExecutionId;
@@ -246,30 +130,13 @@ export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
     }
   }
 
-  // Source 3: spawned post-approval (merger) session. Merger sessions have no
-  // node_execution row, so they never appear in the sources above. The backend
-  // stamps their id on task.postApprovalSessionId; we open it only when the
-  // clicked node IS the post-approval node. When postApprovalNodeId is known
-  // (the node declaring the target slot), require an exact node-ID match so
-  // multiple nodes reusing the target slot name can't each open the singular
-  // merger session. Fall back to the clicked-node-declares-the-slot check only
-  // when the target node ID is unknown.
   if (
     postApprovalSessionId &&
     postApprovalTargetAgent &&
     (postApprovalNodeId ? nodeId === postApprovalNodeId : isDeclaredSlot(postApprovalTargetAgent))
   ) {
-    // The singular post-approval session shadows any stale execution sessions
-    // collected above for the same target agent (e.g. the agent previously ran
-    // as an ordinary node agent, the daemon restarted before approval, and an
-    // idle node_execution with a stale agentSessionId lingers). Without this,
-    // the click would resolve to two identically-labeled live choices and could
-    // open the stale ordinary session instead of the active post-approval one.
     for (const [sid, entry] of liveBySession) {
       if (sid === postApprovalSessionId) continue;
-      // Exact-match the target agent (the spawn path) — normalizing would
-      // collapse separator-distinct legal slots (qa-one / qa_one) and could
-      // delete a live sibling session that only shares the normalized form.
       if (entry.agentName === postApprovalTargetAgent) {
         liveBySession.delete(sid);
       }
@@ -289,20 +156,12 @@ export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
       (slotOrder.get(normalize(a.agentName)) ?? 0) - (slotOrder.get(normalize(b.agentName)) ?? 0)
   );
 
-  // Declared slots that have no live session yet — offered as pending choices
-  // so a multi-agent node with mixed live+unstarted slots lets the user
-  // activate the unstarted agent instead of silently opening the live one.
-  // Compared by EXACT slot name: normalization is only for reconciling external
-  // exec/activity labels (sources 1/2), and over-normalizing here would collapse
-  // distinct declared slots like `qa-one` / `qa_one` into one.
   const liveSlotNames = new Set(live.map((s) => s.agentName));
   const unstartedSlots = agentSlotNames.filter((n) => !liveSlotNames.has(n));
 
   if (live.length === 1 && unstartedSlots.length === 0) {
     return { type: 'open_session', session: live[0], taskId };
   }
-  // Mixed (live + unstarted) or multiple live → let the user pick. Include the
-  // unstarted slots as pending choices so they can be activated from here.
   if (live.length > 0) {
     const pendingChoices: NodePendingSlot[] = unstartedSlots.map((name) => ({
       kind: 'pending',
@@ -313,7 +172,6 @@ export function resolveNodeClick(args: ResolveNodeClickArgs): NodeClickOutcome {
     return { type: 'choose', choices: [...live, ...pendingChoices] };
   }
 
-  // ---- Unstarted node (no live sessions) ---------------------------------
   if (agentSlotNames.length === 0) {
     return { type: 'empty', nodeName };
   }

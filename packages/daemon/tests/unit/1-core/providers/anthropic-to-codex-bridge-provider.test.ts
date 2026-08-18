@@ -1,13 +1,3 @@
-/**
- * Unit tests for AnthropicToCodexBridgeProvider
- *
- * Covers:
- *  - getAuthStatus(): HyperNeo OAuth only (env vars → unauthenticated), file-based auth, missing credentials, missing binary
- *  - getApiKey(): full discovery chain (env → ~/.hyperneo/auth.json → ~/.codex/auth.json)
- *  - importFromCodexAuth(): one-time migration scenarios (API key, OAuth with/without refresh)
- *  - buildSdkConfig(): Responses bridge server reuse and auth refresh
- */
-
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { vi } from 'vitest';
 import * as fs from 'fs/promises';
@@ -25,14 +15,8 @@ import * as os from 'os';
 import type { ProviderCredentials } from '@hyperneo/shared/provider';
 import { AnthropicToCodexBridgeProvider } from '../../../../src/lib/providers/anthropic-to-codex-bridge-provider';
 
-// GATED (Vitest/Node): tests that start a real Responses bridge server depend on
-// `Bun.serve` in the production bridge code. They are skipped under Vitest/Node and
-// re-enable once the bridges are ported to Deno.serve/node.
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
 
-// 'fs/promises' namespace exports are not configurable in ESM, so
-// `spyOn(fs, ...)` cannot work under Vitest. Mock the module with vi.fn()
-// indirection instead.
 const fsPromiseMocks = vi.hoisted(() => ({
   readFile: vi.fn(),
   writeFile: vi.fn(),
@@ -51,11 +35,6 @@ vi.mock('fs/promises', async (importOriginal) => {
   };
 });
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Create a provider instance pointing at isolated temp auth dirs. */
 function makeProvider(
   env: Record<string, string | undefined> = {},
   authDir?: string,
@@ -67,13 +46,6 @@ function makeProvider(
   return new AnthropicToCodexBridgeProvider(env, authDir, codexAuthDir, fetchImpl);
 }
 
-/**
- * Write a HyperNeo auth.json with an openai entry to a temp dir.
- *
- * Uses synchronous I/O to ensure the file is fully written before the
- * provider reads it — Bun 1.3.10 on Linux may resolve async writes before
- * data is durable, causing immediate subsequent reads to fail.
- */
 function writeHyperNeoAuth(dir: string, credentials: Record<string, unknown>): void {
   mkdirSync(dir, { recursive: true });
   writeFileSync(path.join(dir, 'auth.json'), JSON.stringify({ openai: credentials }), {
@@ -81,11 +53,6 @@ function writeHyperNeoAuth(dir: string, credentials: Record<string, unknown>): v
   });
 }
 
-/**
- * Write a ~/.codex/auth.json format file to a temp dir.
- *
- * Uses synchronous I/O for the same reason as writeHyperNeoAuth.
- */
 function writeCodexAuth(
   dir: string,
   data: {
@@ -108,10 +75,6 @@ function makeJwt(payload: Record<string, unknown>): string {
   return `${header}.${body}.`;
 }
 
-// ---------------------------------------------------------------------------
-// getAuthStatus() — auth gate
-// ---------------------------------------------------------------------------
-
 describe('AnthropicToCodexBridgeProvider', () => {
   let provider: AnthropicToCodexBridgeProvider;
   const fsSpies = [
@@ -121,13 +84,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
     fsPromiseMocks.unlink,
   ];
 
-  /**
-   * Workaround for Bun 1.3.11 on Linux CI: `fs/promises.readFile` may not
-   * see files written by `node:fs.writeFileSync` in rapid succession (likely a
-   * kernel page-cache race on ext4).  Bridge all async fs operations through
-   * their sync counterparts so that test fixtures are reliably visible to the
-   * provider's internal `loadCredentials()` / `importFromCodexAuth()` methods.
-   */
   beforeEach(() => {
     fsPromiseMocks.readFile.mockImplementation(
       (
@@ -150,7 +106,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
         options?: Parameters<typeof fs.writeFile>[2]
       ) => {
         const mode = typeof options === 'object' ? (options as { mode?: number }).mode : undefined;
-        // Node (unlike Bun) rejects a bare numeric `options` arg — pass { mode }.
         writeFileSync(
           filePath as Parameters<typeof writeFileSync>[0],
           data as Parameters<typeof writeFileSync>[1],
@@ -169,8 +124,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }
     );
     fsPromiseMocks.unlink.mockImplementation((filePath: Parameters<typeof fs.unlink>[0]) => {
-      // Reject asynchronously (like real fs.promises.unlink) instead of throwing
-      // synchronously, so callers' `.catch(() => {})` handlers still work.
       try {
         unlinkSync(filePath as Parameters<typeof unlinkSync>[0]);
         return Promise.resolve();
@@ -204,7 +157,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
     let emptyDir: string;
 
     beforeEach(() => {
-      // Use isolated empty dirs so file-based auth doesn't interfere
       emptyDir = mkdtempSync(path.join(os.tmpdir(), 'hyperneo-auth-test-'));
     });
 
@@ -279,7 +231,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
         type: 'oauth',
         access: 'oauth-access-token',
         refresh: 'oauth-refresh-token',
-        // expires 1 minute ago (past the 5-min buffer)
         expires: Date.now() - 60_000,
       });
       provider = makeProvider({}, hyperneoDir, codexDir);
@@ -288,10 +239,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(result.needsRefresh).toBe(true);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // getApiKey() — credential discovery chain
-  // -------------------------------------------------------------------------
 
   describe('getApiKey() credential discovery chain', () => {
     let tmpDir: string;
@@ -343,7 +290,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
     });
 
     it('imports ~/.codex/auth.json into provider-owned credentials when no hyperneo auth exists', async () => {
-      const hyperneoDir = path.join(tmpDir, 'hyperneo'); // no file written
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const codexDir = path.join(tmpDir, 'codex');
       writeCodexAuth(codexDir, { OPENAI_API_KEY: 'codex-imported-key' });
 
@@ -353,7 +300,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
     });
 
     it('Priority 4a: returns OPENAI_API_KEY from ~/.codex/auth.json when no higher source', async () => {
-      const hyperneoDir = path.join(tmpDir, 'hyperneo'); // no file written
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const codexDir = path.join(tmpDir, 'codex');
       writeCodexAuth(codexDir, { OPENAI_API_KEY: 'codex-file-api-key' });
 
@@ -362,7 +309,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
     });
 
     it('Priority 4b: returns access_token from ~/.codex/auth.json when OPENAI_API_KEY is null', async () => {
-      const hyperneoDir = path.join(tmpDir, 'hyperneo'); // no file written
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const codexDir = path.join(tmpDir, 'codex');
       writeCodexAuth(codexDir, {
         OPENAI_API_KEY: null,
@@ -374,8 +321,8 @@ describe('AnthropicToCodexBridgeProvider', () => {
     });
 
     it('returns undefined when all sources are absent', async () => {
-      const hyperneoDir = path.join(tmpDir, 'hyperneo'); // no file
-      const codexDir = path.join(tmpDir, 'codex'); // no file
+      const hyperneoDir = path.join(tmpDir, 'hyperneo');
+      const codexDir = path.join(tmpDir, 'codex');
 
       provider = makeProvider({}, hyperneoDir, codexDir);
       expect(await provider.getApiKey()).toBeUndefined();
@@ -386,7 +333,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const codexDir = path.join(tmpDir, 'codex');
       writeHyperNeoAuth(hyperneoDir, { type: 'oauth', access: 'hyperneo-fallback-token' });
 
-      // OPENAI_API_KEY='' is falsy — should not block file-based lookup
       provider = makeProvider({ OPENAI_API_KEY: '' }, hyperneoDir, codexDir);
       expect(await provider.getApiKey()).toBe('hyperneo-fallback-token');
     });
@@ -405,12 +351,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // buildSdkConfig() — workspace isolation
-  // -------------------------------------------------------------------------
-
-  // GATED (Vitest/Node): buildSdkConfig() eagerly starts a Responses bridge server
-  // via Bun.serve (production code) — see isBun note above.
   describe.skipIf(!isBun)('buildSdkConfig() bridge server routing', () => {
     beforeEach(() => {
       provider = makeProvider({ OPENAI_API_KEY: 'sk-placeholder' }, undefined, undefined);
@@ -462,11 +402,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
     });
 
     it('caps GPT-5.6 at 272K on the ChatGPT Codex (OAuth) backend', async () => {
-      // The 272K input cap is specific to the chatgpt.com Codex backend; the
-      // api.openai.com API used by OPENAI_API_KEY honors the published 1.05M
-      // (covered by the api-key tests above). buildSdkConfig must apply the cap
-      // only on the OAuth path — both in CLAUDE_CODE_AUTO_COMPACT_WINDOW and the
-      // bridge /v1/models metadata the SDK reads.
       const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'hyperneo-codex-oauth-window-'));
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       writeHyperNeoAuth(hyperneoDir, {
@@ -478,15 +413,13 @@ describe('AnthropicToCodexBridgeProvider', () => {
       });
       const p = makeProvider({}, hyperneoDir, path.join(tmpDir, 'codex'));
       try {
-        await p.getApiKey(); // populates cachedBridgeAuth (chatgpt_oauth via accountId)
+        await p.getApiKey();
         const cfg = p.buildSdkConfig('gpt-5.6-sol', { workspacePath: '/tmp/ws-oauth-window' });
         expect(cfg.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('272000');
-        // …and the bridge's /v1/models metadata (what the SDK reads).
         const resp = await fetch(`${cfg.envVars.ANTHROPIC_BASE_URL}/v1/models`);
         const body = (await resp.json()) as { data: Array<{ id: string; context_window: number }> };
         const byId = new Map(body.data.map((m) => [m.id, m.context_window]));
         expect(byId.get('gpt-5.6-sol')).toBe(272000);
-        // A non-GPT-5.6 model is unaffected (its published window is already 272K).
         expect(byId.get('gpt-5.5')).toBe(272000);
       } finally {
         p.stopAllBridgeServers();
@@ -513,7 +446,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
         const cfg1 = p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/ws-refresh' });
         const port1 = new URL(cfg1.envVars.ANTHROPIC_BASE_URL as string).port;
 
-        // Simulate token rotation while preserving account identity.
         const accessToken2 = makeJwt({
           'https://api.openai.com/auth': { chatgpt_account_id: 'acct_refresh' },
           jti: 'token-2',
@@ -531,7 +463,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
         expect(port2).toBe(port1);
 
-        // The original port must still be reachable: the bridge was not killed.
         const resp = await fetch(`${cfg1.envVars.ANTHROPIC_BASE_URL}/v1/models`);
         expect(resp.status).toBe(200);
 
@@ -660,15 +591,12 @@ describe('AnthropicToCodexBridgeProvider', () => {
     });
 
     it('buildSdkConfig() uses cached API key resolved by prior getApiKey() call', async () => {
-      // Set up a provider with only file-based auth (no env var)
       const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'hyperneo-build-cfg-test-'));
       try {
         const hyperneoDir = path.join(tmpDir, 'hyperneo');
         writeHyperNeoAuth(hyperneoDir, { type: 'oauth', access: 'file-based-token' });
         const p = makeProvider({}, hyperneoDir, path.join(tmpDir, 'codex'));
-        // Warm the cache as isAvailable() / getAuthStatus() would in QueryRunner
         await p.getApiKey();
-        // buildSdkConfig() is synchronous but should use the cached key
         const cfg = p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/file-auth-ws' });
         expect(cfg.isAnthropicCompatible).toBe(true);
         expect(cfg.envVars.ANTHROPIC_BASE_URL).toMatch(
@@ -681,13 +609,12 @@ describe('AnthropicToCodexBridgeProvider', () => {
     });
 
     it('buildSdkConfig() uses cached key even when OPENAI_API_KEY is empty string', async () => {
-      // Empty-string env var must not block the cached file-based key
       const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'hyperneo-build-cfg-empty-'));
       try {
         const hyperneoDir = path.join(tmpDir, 'hyperneo');
         writeHyperNeoAuth(hyperneoDir, { type: 'oauth', access: 'file-token-not-empty' });
         const p = makeProvider({ OPENAI_API_KEY: '' }, hyperneoDir, path.join(tmpDir, 'codex'));
-        await p.getApiKey(); // populates cachedApiKey
+        await p.getApiKey();
         const cfg = p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/empty-env-ws' });
         expect(cfg.isAnthropicCompatible).toBe(true);
         expect(cfg.envVars.ANTHROPIC_BASE_URL).toMatch(
@@ -759,9 +686,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
     });
 
     it('sets ANTHROPIC_DEFAULT_*_MODEL env vars to real Codex model IDs', () => {
-      // Following the GLM/Kimi pattern, we use real Codex model IDs directly.
-      // The SDK reads context window from /v1/models metadata (preferContextWindowMetadata: true)
-      // instead of its hardcoded database, avoiding token counting mismatch.
       const cfg = provider.buildSdkConfig('gpt-5.6-terra', { workspacePath: '/tmp/ws-model' });
       expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.6-terra');
       expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('gpt-5.6-luna');
@@ -783,7 +707,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
     it('resolves model alias to real Codex ID in ANTHROPIC_DEFAULT_SONNET_MODEL', () => {
       const cfg = provider.buildSdkConfig('codex', { workspacePath: '/tmp/ws-alias' });
-      // 'codex' is an alias for 'gpt-5.3-codex', now uses real Codex ID
       expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.3-codex');
     });
 
@@ -853,7 +776,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
     it('resolves codex-latest alias to real Codex ID', () => {
       const cfg = provider.buildSdkConfig('codex-latest', { workspacePath: '/tmp/ws-latest' });
-      // 'codex-latest' is an alias for 'gpt-5.6-sol', now uses real Codex ID
       expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.6-sol');
     });
 
@@ -869,7 +791,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
     });
 
     it('uses real Codex model IDs in ANTHROPIC_DEFAULT_*_MODEL env vars', () => {
-      // Following GLM/Kimi pattern: use real Codex IDs, context window from metadata
       const cfg = provider.buildSdkConfig('gpt-5.3-codex', {
         workspacePath: '/tmp/ws-no-leak',
       });
@@ -889,21 +810,15 @@ describe('AnthropicToCodexBridgeProvider', () => {
         data: Array<{ id: string; context_window: number }>;
       };
       const byId = new Map(body.data.map((m) => [m.id, m.context_window]));
-      // Real Codex models advertise their actual context windows.
       expect(byId.get('gpt-5.6-sol')).toBe(1_050_000);
       expect(byId.get('gpt-5.6-terra')).toBe(1_050_000);
       expect(byId.get('gpt-5.6-luna')).toBe(1_050_000);
       expect(byId.get('gpt-5.5')).toBe(272_000);
       expect(byId.get('gpt-5.4-mini')).toBe(128_000);
-      // No Anthropic alias models should be present.
       expect(byId.has('claude-opus-4-7')).toBe(false);
       expect(byId.has('claude-sonnet-4-20250514')).toBe(false);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // ownsModel()
-  // -------------------------------------------------------------------------
 
   describe('ownsModel()', () => {
     beforeEach(() => {
@@ -918,7 +833,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(provider.ownsModel('gpt-5.4')).toBe(true);
       expect(provider.ownsModel('gpt-5.5')).toBe(true);
       expect(provider.ownsModel('gpt-5.4-mini')).toBe(true);
-      // Aliases also owned
       expect(provider.ownsModel('codex')).toBe(true);
       expect(provider.ownsModel('codex-5.4')).toBe(true);
       expect(provider.ownsModel('codex-5.5')).toBe(true);
@@ -930,7 +844,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
     });
 
     it('does not own models not in the catalogue', () => {
-      // Old models removed from catalogue
       expect(provider.ownsModel('codex-1')).toBe(false);
       expect(provider.ownsModel('o4-mini')).toBe(false);
       expect(provider.ownsModel('o1-preview')).toBe(false);
@@ -939,15 +852,12 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(provider.ownsModel('gpt-5.1-codex-mini')).toBe(false);
       expect(provider.ownsModel('gpt-5.1-mini')).toBe(false);
       expect(provider.ownsModel('codex-5.1-mini')).toBe(false);
-      // GPT-4 models the bridge cannot serve
       expect(provider.ownsModel('gpt-4o')).toBe(false);
       expect(provider.ownsModel('gpt-4')).toBe(false);
       expect(provider.ownsModel('gpt-3.5-turbo')).toBe(false);
     });
 
     it('translates all model IDs to "default" following GLM/Kimi pattern', () => {
-      // Following GLM/Kimi pattern: return 'default' and let SDK use ANTHROPIC_DEFAULT_*_MODEL
-      // env vars to route to real Codex model IDs. Context window comes from /v1/models metadata.
       expect(provider.translateModelIdForSdk('codex-latest')).toBe('default');
       expect(provider.translateModelIdForSdk('codex-mini')).toBe('default');
       expect(provider.translateModelIdForSdk('codex-5.6-terra')).toBe('default');
@@ -964,10 +874,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // getModels() — availability check uses isAvailable() not getAuthStatus()
-  // -------------------------------------------------------------------------
-
   describe('getModels()', () => {
     let tmpDir: string;
 
@@ -980,8 +886,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
     });
 
     it('returns models when OPENAI_API_KEY env var is set (env vars still power API calls)', async () => {
-      // getModels() uses isAvailable() which includes env-var credentials.
-      // This ensures models appear in the picker even when the user has not done HyperNeo OAuth.
       provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir);
       const models = await provider.getModels();
       expect(models.length).toBeGreaterThan(0);
@@ -1056,8 +960,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(init?.method).toBe('POST');
       const headers = init?.headers as Record<string, string>;
       expect(headers['authorization']).toBe('Bearer sk-env-key');
-      // API-key mode accepts max_output_tokens — keep the field so the
-      // probe costs ~1 token instead of a full completion.
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
       expect(body['max_output_tokens']).toBe(1);
     });
@@ -1086,13 +988,8 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(url).toBe('https://chatgpt.com/backend-api/codex/responses');
       const headers = init?.headers as Record<string, string>;
       expect(headers['authorization']).toBe(`Bearer ${jwt}`);
-      // Capital `ID` — matches buildOpenAIHeaders at openai-responses-bridge/server.ts:648.
-      // The gateway is case-sensitive on this header.
       expect(headers['ChatGPT-Account-ID']).toBe('acct-1');
-      // No speculative OpenAI-Beta header — the bridge's own traffic does
-      // not send it, so the probe must not either.
       expect(headers['OpenAI-Beta']).toBeUndefined();
-      // ChatGPT Codex backend requires streaming probe shape matching normal bridge traffic.
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
       expect(body['max_output_tokens']).toBeUndefined();
       expect(body['instructions']).toBe('You are a concise assistant.');
@@ -1131,18 +1028,12 @@ describe('AnthropicToCodexBridgeProvider', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // importFromCodexAuth() — one-time migration from ~/.codex/auth.json
-  // -------------------------------------------------------------------------
-
   describe('importFromCodexAuth() — one-time migration', () => {
     let tmpDir: string;
     let fetchSpy: ReturnType<typeof spyOn>;
 
     beforeEach(() => {
       tmpDir = mkdtempSync(path.join(os.tmpdir(), 'hyperneo-import-test-'));
-      // Spy on global fetch to intercept token refresh calls.
-      // Default: simulate a network error so tests that don't set up a mock fail clearly.
       fetchSpy = spyOn(globalThis, 'fetch').mockRejectedValue(
         new Error('fetch not mocked for this test')
       );
@@ -1163,7 +1054,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
       expect(key).toBe('sk-codex-api-key');
 
-      // Credentials should now be written to ~/.hyperneo/auth.json
       const hyperneoAuth = JSON.parse(
         readFileSync(path.join(hyperneoDir, 'auth.json'), 'utf-8')
       ) as {
@@ -1172,7 +1062,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(hyperneoAuth.openai.type).toBe('api_key');
       expect(hyperneoAuth.openai.access).toBe('sk-codex-api-key');
 
-      // fetch should NOT have been called (API key import needs no refresh)
       expect(fetchSpy).not.toHaveBeenCalled();
       p.stopAllBridgeServers();
     });
@@ -1184,7 +1073,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
         tokens: { access_token: 'old-expired-token', refresh_token: 'valid-refresh-token' },
       });
 
-      // Mock a successful token refresh response
       fetchSpy.mockResolvedValueOnce(
         new Response(
           JSON.stringify({
@@ -1203,7 +1091,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
       expect(key).toBe('new-fresh-token');
       expect(fetchSpy).toHaveBeenCalledTimes(1);
 
-      // Verify the refreshed token was written to ~/.hyperneo/auth.json
       const hyperneoAuth = JSON.parse(
         readFileSync(path.join(hyperneoDir, 'auth.json'), 'utf-8')
       ) as {
@@ -1222,7 +1109,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
         tokens: { access_token: 'expired-token', refresh_token: 'invalid-refresh' },
       });
 
-      // Mock a failed token refresh response (401)
       fetchSpy.mockResolvedValueOnce(
         new Response('{"error":"invalid_grant"}', {
           status: 401,
@@ -1233,7 +1119,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const p = makeProvider({}, hyperneoDir, codexDir);
       const key = await p.getApiKey();
 
-      // Refresh failure should still import existing codex token into ~/.hyperneo/auth.json
       expect(key).toBe('expired-token');
       expect(fetchSpy).toHaveBeenCalledTimes(1);
 
@@ -1252,32 +1137,22 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const hyperneoDir = path.join(tmpDir, 'hyperneo');
       const codexDir = path.join(tmpDir, 'codex');
 
-      // Pre-populate ~/.hyperneo/auth.json (simulates already-imported state)
       writeHyperNeoAuth(hyperneoDir, { type: 'oauth', access: 'already-imported-token' });
 
       const p = makeProvider({}, hyperneoDir, codexDir);
 
-      // First call — reads from ~/.hyperneo/auth.json and populates cachedApiKey
       const key1 = await p.getApiKey();
       expect(key1).toBe('already-imported-token');
 
-      // Delete the hyperneo auth file; no codex file exists either.
-      // Any further disk read would find nothing and return undefined.
       await fs.unlink(path.join(hyperneoDir, 'auth.json'));
 
-      // Second call — must return the key from in-memory cache, not from disk.
       const key2 = await p.getApiKey();
       expect(key2).toBe('already-imported-token');
 
-      // fetch should NOT have been called at any point (no migration attempt)
       expect(fetchSpy).not.toHaveBeenCalled();
       p.stopAllBridgeServers();
     });
   });
-
-  // -------------------------------------------------------------------------
-  // refreshToken() — stale credential clearing
-  // -------------------------------------------------------------------------
 
   describe('refreshToken() stale credential clearing', () => {
     let tmpDir: string;
@@ -1315,7 +1190,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const refreshed = await p.refreshToken();
 
       expect(refreshed).toBe(false);
-      // Credentials should be cleared so the user is prompted to re-authenticate
       const authStatus = await p.getAuthStatus();
       expect(authStatus.isAuthenticated).toBe(false);
       expect(await p.getApiKey()).toBeUndefined();
@@ -1361,7 +1235,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
       const refreshed = await p.refreshToken();
 
       expect(refreshed).toBe(false);
-      // Credentials should NOT be cleared on transient failures
       const authStatus = await p.getAuthStatus();
       expect(authStatus.isAuthenticated).toBe(true);
       expect(await p.getApiKey()).toBe('valid-access-token');
@@ -1419,8 +1292,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
     });
   });
 
-  // GATED (Vitest/Node): these tests POST through a live Bun.serve bridge server —
-  // see isBun note above. The no-op case is kept in a separate describe below.
   describe.skipIf(!isBun)('setSessionThinkingConfig', () => {
     function mockUpstreamFetch(capturedRef: { body?: Record<string, unknown> }) {
       const originalFetch = globalThis.fetch.bind(globalThis);

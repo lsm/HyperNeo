@@ -1,32 +1,12 @@
-/**
- * Unit tests for CompletionDetector
- *
- * The detector inspects the canonical `SpaceTask` linked to a workflow run.
- * Node-execution statuses (idle/cancelled/etc.) are NOT completion signals —
- * they are per-execution lifecycle. Workflow completion is signalled by:
- *   1. `task.status` being terminal (`done` | `cancelled`), OR
- *   2. `task.reportedStatus` being non-null (set directly by the end-node
- *      agent — runtime will resolve final status on next tick via
- *      completion-actions).
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { CompletionDetector } from '../../../../src/lib/space/runtime/completion-detector.ts';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function makeDb(): BunDatabase {
-  // Use in-memory SQLite — faster than file-based DB and avoids filesystem
-  // I/O contention that caused beforeEach hook timeouts in CI.
   const db = new BunDatabase(':memory:');
   runMigrations(db, () => {});
-  // Disable FK so we can insert tasks with synthetic workflow_run_id values
-  // without seeding a parent row.
   db.exec('PRAGMA foreign_keys = OFF');
   return db;
 }
@@ -44,10 +24,6 @@ beforeEach(() => {
 afterEach(() => {
   db.close();
 });
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe('CompletionDetector', () => {
   const RUN = 'run-1';

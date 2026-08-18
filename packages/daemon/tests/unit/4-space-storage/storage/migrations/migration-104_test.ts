@@ -1,34 +1,3 @@
-/**
- * Migration 104 Tests — PR 5/5 of the task-agent-as-post-approval-executor refactor.
- *
- * Migration 104 finishes burying the completion-action pipeline:
- *   1. Defensively rewrites any live `space_tasks` row paused at
- *      `pending_checkpoint_type='completion_action'` to `'task_completion'`,
- *      and clears `pending_action_index` so the dropped column does not
- *      survive in the rebuilt table.
- *   2. Rebuilds `space_tasks` to drop `pending_action_index` and tighten
- *      `pending_checkpoint_type IN ('gate', 'task_completion')` (the legacy
- *      `'completion_action'` value is no longer accepted).
- *   3. Drops `space_workflow_runs.completion_actions_fired_at` via
- *      `ALTER TABLE … DROP COLUMN`.
- *
- * See `docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md`
- * §4.4 (steps 5–8) for the schema contract.
- *
- * Covers:
- *   - Fresh, fully-migrated DB — the dropped columns are gone, the CHECK
- *     constraint rejects `'completion_action'`, and the kept `'gate'` /
- *     `'task_completion'` values still round-trip.
- *   - Pre-M104 schema with stuck rows — `'completion_action'` is rewritten to
- *     `'task_completion'`, `pending_action_index` is cleared, and other rows
- *     pass through untouched.
- *   - Pre-existing indexes on `space_tasks` survive the rebuild.
- *   - `space_workflow_runs.completion_actions_fired_at` is dropped after the
- *     migration runs.
- *   - Re-running the migration is a no-op (idempotent).
- *   - Empty DB / partial-table cases are guarded.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -54,14 +23,6 @@ function tableSql(db: BunDatabase, table: string): string {
   return row?.sql ?? '';
 }
 
-/**
- * Builds the post-M103 / pre-M104 shape of `space_tasks`, `space_workflow_runs`,
- * and the supporting tables. This mirrors what a DB that has run every
- * migration up to and including M103 would look like — i.e. the
- * `'completion_action'` checkpoint value is still legal, `pending_action_index`
- * still exists, and `space_workflow_runs.completion_actions_fired_at` still
- * exists.
- */
 function seedPreM104Schema(db: BunDatabase): void {
   db.exec('PRAGMA foreign_keys = OFF');
   db.exec(`
@@ -241,8 +202,6 @@ describe('Migration 104: drop completionActions schema (PR 5/5)', () => {
         `INSERT INTO space_workflow_runs (id, space_id, created_at, updated_at, completion_actions_fired_at)
 				 VALUES (?, ?, ?, ?, ?)`
       ).run('run-1', 'sp-1', now, now, now);
-      // Stuck row paused at the legacy 'completion_action' checkpoint with a
-      // non-null pending_action_index — what M104 must rewrite.
       db.prepare(
         `INSERT INTO space_tasks (
 					id, space_id, task_number, title, description, status, priority,
@@ -250,7 +209,6 @@ describe('Migration 104: drop completionActions schema (PR 5/5)', () => {
 					pending_checkpoint_type, pending_action_index
 				) VALUES (?, ?, ?, ?, 'desc', 'review', 'normal', '[]', '[]', ?, ?, 'completion_action', 2)`
       ).run('t-stuck', 'sp-1', 1, 'Stuck Task', now, now);
-      // Healthy row with 'task_completion' — must pass through unchanged.
       db.prepare(
         `INSERT INTO space_tasks (
 					id, space_id, task_number, title, description, status, priority,
@@ -258,7 +216,6 @@ describe('Migration 104: drop completionActions schema (PR 5/5)', () => {
 					pending_checkpoint_type, pending_action_index
 				) VALUES (?, ?, ?, ?, 'desc', 'review', 'normal', '[]', '[]', ?, ?, 'task_completion', NULL)`
       ).run('t-healthy', 'sp-1', 2, 'Healthy Task', now, now);
-      // Gate-paused row — must pass through unchanged.
       db.prepare(
         `INSERT INTO space_tasks (
 					id, space_id, task_number, title, description, status, priority,
@@ -266,7 +223,6 @@ describe('Migration 104: drop completionActions schema (PR 5/5)', () => {
 					pending_checkpoint_type, pending_action_index
 				) VALUES (?, ?, ?, ?, 'desc', 'review', 'normal', '[]', '[]', ?, ?, 'gate', NULL)`
       ).run('t-gate', 'sp-1', 3, 'Gate Task', now, now);
-      // Plain row with no checkpoint — must pass through unchanged.
       db.prepare(
         `INSERT INTO space_tasks (
 					id, space_id, task_number, title, description, status, priority,
@@ -281,8 +237,6 @@ describe('Migration 104: drop completionActions schema (PR 5/5)', () => {
         .prepare(`SELECT pending_checkpoint_type FROM space_tasks WHERE id = ?`)
         .get('t-stuck') as { pending_checkpoint_type: string };
       expect(stuck.pending_checkpoint_type).toBe('task_completion');
-      // pending_action_index is dropped entirely after rebuild — verify both
-      // the column is gone and the row exists.
       expect(columnNames(db, 'space_tasks')).not.toContain('pending_action_index');
       const stuckExists = db.prepare(`SELECT id FROM space_tasks WHERE id = ?`).get('t-stuck') as
         | { id: string }
@@ -345,8 +299,6 @@ describe('Migration 104: drop completionActions schema (PR 5/5)', () => {
       expect(columnNames(db, 'space_workflow_runs')).toContain('completion_actions_fired_at');
       runMigration104(db);
       expect(columnNames(db, 'space_workflow_runs')).not.toContain('completion_actions_fired_at');
-      // Pre-existing rows should still be there — the column drop should not
-      // destroy data.
       const run = db.prepare(`SELECT id FROM space_workflow_runs WHERE id = ?`).get('run-1') as
         | { id: string }
         | undefined;

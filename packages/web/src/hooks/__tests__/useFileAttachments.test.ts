@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for useFileAttachments Hook
- *
- * Tests file attachment state management and API surface.
- */
 
 import { renderHook, act } from '@testing-library/preact';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -15,7 +10,6 @@ import {
   extractImagesFromClipboard,
 } from '../../lib/file-utils.ts';
 
-// Mock the dependencies
 vi.mock('../../lib/toast.ts', () => ({
   toast: {
     error: vi.fn(),
@@ -28,12 +22,10 @@ vi.mock('../../lib/file-utils.ts', () => ({
   extractImagesFromClipboard: vi.fn(),
 }));
 
-// Helper to create mock file
 function createMockFile(name: string, type: string, content: string = 'test content'): File {
   return new File([content], name, { type });
 }
 
-// Helper to create mock FileList
 function createMockFileList(files: File[]): FileList {
   const fileList = {
     length: files.length,
@@ -55,11 +47,8 @@ function createMockFileList(files: File[]): FileList {
 describe('useFileAttachments', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Default: validation passes
     vi.mocked(validateImageFile).mockReturnValue(null);
-    // Default: file conversion succeeds
     vi.mocked(fileToBase64).mockResolvedValue('base64data');
-    // Default: extractImagesFromClipboard returns the files from mock
     vi.mocked(extractImagesFromClipboard).mockImplementation((items: DataTransferItemList) => {
       const files: File[] = [];
       for (let i = 0; i < items.length; i++) {
@@ -146,7 +135,6 @@ describe('useFileAttachments', () => {
       });
       expect(result.current.attachments).toEqual(snapshot);
 
-      // Snapshot what the composer would save before optimistic clear
       const saved = result.current.attachments;
 
       act(() => {
@@ -154,7 +142,6 @@ describe('useFileAttachments', () => {
       });
       expect(result.current.attachments).toEqual([]);
 
-      // Failed send → restore
       act(() => {
         result.current.restore(saved);
       });
@@ -209,7 +196,6 @@ describe('useFileAttachments', () => {
       const event = { target: input } as unknown as Event;
 
       await act(async () => {
-        // This may fail to add files due to FileReader, but should still reset input
         try {
           await result.current.handleFileSelect(event);
         } catch {
@@ -225,7 +211,6 @@ describe('useFileAttachments', () => {
     it('should work when already empty', () => {
       const { result } = renderHook(() => useFileAttachments());
 
-      // Should not throw
       act(() => {
         result.current.clear();
       });
@@ -241,7 +226,6 @@ describe('useFileAttachments', () => {
       const clickMock = vi.fn(() => {});
       const mockInput = { click: clickMock } as unknown as HTMLInputElement;
 
-      // Set the ref manually
       Object.defineProperty(result.current.fileInputRef, 'current', {
         value: mockInput,
         writable: true,
@@ -257,7 +241,6 @@ describe('useFileAttachments', () => {
     it('should handle null fileInputRef', () => {
       const { result } = renderHook(() => useFileAttachments());
 
-      // Should not throw
       act(() => {
         result.current.openFilePicker();
       });
@@ -298,7 +281,6 @@ describe('useFileAttachments', () => {
     it('should be callable without throwing when no attachments', () => {
       const { result } = renderHook(() => useFileAttachments());
 
-      // Should not throw even with no attachments
       act(() => {
         result.current.handleRemove(0);
       });
@@ -473,7 +455,6 @@ describe('useFileAttachments', () => {
         data: 'base64data',
         media_type: 'image/png',
       });
-      // Should not contain name or size
       expect(images?.[0]).not.toHaveProperty('name');
       expect(images?.[0]).not.toHaveProperty('size');
     });
@@ -530,7 +511,6 @@ describe('useFileAttachments', () => {
   });
 
   describe('handlePaste', () => {
-    // Helper to create mock ClipboardEvent
     function createMockPasteEvent(
       items: Array<{ kind: string; type: string; file?: File | null }>
     ): ClipboardEvent {
@@ -606,7 +586,6 @@ describe('useFileAttachments', () => {
         await result.current.handlePaste(event);
       });
 
-      // Critical: preventDefault should NOT be called
       expect(event.preventDefault).not.toHaveBeenCalled();
     });
 

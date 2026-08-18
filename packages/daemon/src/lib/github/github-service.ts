@@ -1,15 +1,3 @@
-/**
- * GitHub Service Orchestrator
- *
- * The main orchestrator that ties all GitHub integration components together:
- * - Webhook handler for receiving events
- * - Polling service for checking repositories
- * - Event filter for applying rules
- * - Security agent for prompt injection detection
- * - Router agent for routing decisions
- * - Inbox manager for pending items
- */
-
 import type { Database } from '../../storage/database';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import { MAX_GITHUB_POLLING_INTERVAL_SECONDS } from '@hyperneo/shared';
@@ -42,42 +30,18 @@ import { Logger } from '../logger';
 const log = new Logger('github-service');
 const DEFAULT_GITHUB_POLLING_INTERVAL_SECONDS = 120;
 
-/**
- * Configuration options for the GitHub service
- */
 export interface GitHubServiceOptions {
-  /** Database instance for persistence */
   db: Database;
-  /** InternalEventBus<DaemonInternalEventMap> for emitting events */
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
-  /** Application configuration */
   config: Config;
-  /** API key for AI agents (security + routing) */
   apiKey: string;
-  /** Credential type so agents set the correct SDK env var */
   apiKeyType?: 'api_key' | 'oauth';
-  /** Optional GitHub token for polling and permission checks */
   githubToken?: string;
-  /** Job queue repository — required to enqueue the initial github.poll job */
   jobQueue?: JobQueueRepository;
-  /** Job queue processor — required to register the github.poll handler */
   jobProcessor?: JobQueueProcessor;
-  /** Live global setting getter for GitHub polling interval in seconds */
   getPollingIntervalSeconds?: () => number | undefined;
 }
 
-/**
- * GitHub Service Orchestrator
- *
- * Coordinates the full pipeline for GitHub event processing:
- * 1. Receive event (webhook or polling)
- * 2. Filter event (repository, author, labels, event type)
- * 3. Security check (sandboxed AI)
- * 4. Find candidate rooms (database lookup)
- * 5. Route event (rule-based or AI)
- * 6. Deliver to room OR add to inbox
- * 7. Emit InternalEventBus<DaemonInternalEventMap> events at each step
- */
 export class GitHubService {
   private db: Database;
   private internalEventBus: InternalEventBus<DaemonInternalEventMap>;
@@ -109,29 +73,24 @@ export class GitHubService {
     this.jobProcessor = options.jobProcessor;
     this.getPollingIntervalSeconds = options.getPollingIntervalSeconds;
 
-    // Initialize filter config manager
     this.filterConfigManager = createFilterConfigManager(this.db.getDatabase());
 
-    // Initialize event filter with manager for dynamic configs
     const filterOptions: GitHubEventFilterOptions = {
       githubToken: this.githubToken,
       configManager: this.filterConfigManager,
     };
     this.eventFilter = createEventFilter(this.filterConfigManager.getGlobalFilter(), filterOptions);
 
-    // Initialize security agent
     this.securityAgent = createSecurityAgent({
       apiKey: this.apiKey,
       apiKeyType: this.apiKeyType,
     });
 
-    // Initialize router agent
     this.routerAgent = createRouterAgent({
       apiKey: this.apiKey,
       apiKeyType: this.apiKeyType,
     });
 
-    // Initialize inbox manager
     this.inboxManager = new InboxManager(this.db);
 
     log.info('GitHubService initialized', {
@@ -141,15 +100,7 @@ export class GitHubService {
     });
   }
 
-  /**
-   * Start the GitHub service.
-   * - Creates webhook handler if secret is configured.
-   * - Creates and starts the polling service if polling is configured.
-   * - Registers the github.poll job handler and enqueues the initial job when
-   *   both jobProcessor/jobQueue and polling are configured.
-   */
   start(): void {
-    // Initialize webhook handler if secret is configured
     if (this.config.githubWebhookSecret) {
       this.webhookHandler = createWebhookHandler(this.config.githubWebhookSecret, async (event) => {
         await this.processEvent(event);
@@ -238,9 +189,6 @@ export class GitHubService {
     }
   }
 
-  /**
-   * Stop the GitHub service
-   */
   stop(): void {
     if (this.pollingService) {
       this.pollingService.stop();
@@ -252,9 +200,6 @@ export class GitHubService {
     log.info('GitHub service stopped');
   }
 
-  /**
-   * Handle incoming webhook request
-   */
   async handleWebhook(req: Request): Promise<Response> {
     if (!this.webhookHandler) {
       return new Response(JSON.stringify({ error: 'Webhook handler not configured' }), {
@@ -266,9 +211,6 @@ export class GitHubService {
     return this.webhookHandler(req);
   }
 
-  /**
-   * Main event processing pipeline
-   */
   async processEvent(event: GitHubEvent): Promise<RoutingResult> {
     log.debug('Processing GitHub event', {
       eventId: event.id,
@@ -277,14 +219,12 @@ export class GitHubService {
       repository: event.repository.fullName,
     });
 
-    // Emit event received
     this.emitEvent('github.eventReceived', {
       sessionId: 'global',
       event,
     });
 
     try {
-      // Step 1: Filter event
       const filterResult = await this.filterEvent(event);
       if (!filterResult.passed) {
         log.debug('Event filtered out', {
@@ -309,7 +249,6 @@ export class GitHubService {
         };
       }
 
-      // Step 2: Security check
       const securityResult = await this.checkSecurity(event);
       if (!securityResult.passed) {
         log.warn('Event failed security check', {
@@ -324,7 +263,6 @@ export class GitHubService {
           securityResult,
         });
 
-        // Add to inbox as blocked item
         const item = this.addToInbox(event, securityResult, 'Security check failed');
         this.emitEvent('github.inboxItemAdded', {
           sessionId: 'global',
@@ -340,17 +278,14 @@ export class GitHubService {
         };
       }
 
-      // Step 3: Find candidate rooms
       const candidates = this.findCandidates(event);
       log.debug('Found candidate rooms', {
         eventId: event.id,
         candidateCount: candidates.length,
       });
 
-      // Step 4: Route event
       const routingResult = await this.routeEvent(event, candidates, securityResult);
 
-      // Step 5: Execute routing decision
       if (routingResult.decision === 'route' && routingResult.roomId) {
         this.deliverToRoom(event, routingResult.roomId);
         log.info('Event routed to room', {
@@ -388,7 +323,6 @@ export class GitHubService {
         error: error instanceof Error ? error.message : error,
       });
 
-      // Add to inbox on error for manual triage
       const item = this.addToInbox(
         event,
         { passed: true, injectionRisk: 'low' },
@@ -414,16 +348,10 @@ export class GitHubService {
     }
   }
 
-  /**
-   * Filter event based on configuration rules
-   */
   private async filterEvent(event: GitHubEvent): Promise<FilterResult> {
     return this.eventFilter.filter(event);
   }
 
-  /**
-   * Check event content for security risks
-   */
   private async checkSecurity(event: GitHubEvent): Promise<SecurityCheckResult> {
     const content = event.comment?.body ?? event.issue?.body ?? '';
     const title = event.issue?.title;
@@ -434,9 +362,6 @@ export class GitHubService {
     });
   }
 
-  /**
-   * Find candidate rooms for an event based on repository mappings
-   */
   private findCandidates(event: GitHubEvent): RoomCandidate[] {
     const mappings = this.db.listGitHubMappingsForRepository(
       event.repository.owner,
@@ -446,29 +371,23 @@ export class GitHubService {
     const candidates: RoomCandidate[] = [];
 
     for (const mapping of mappings) {
-      // Check if this mapping matches the event
       if (this.mappingMatchesEvent(mapping, event)) {
         candidates.push({
           roomId: mapping.roomId,
-          roomName: mapping.roomId, // Room name would come from room store
+          roomName: mapping.roomId,
           repositories: mapping.repositories.map((r) => `${r.owner}/${r.repo}`),
           priority: mapping.priority,
         });
       }
     }
 
-    // Sort by priority (highest first)
     candidates.sort((a, b) => b.priority - a.priority);
 
     return candidates;
   }
 
-  /**
-   * Check if a mapping matches an event
-   */
   private mappingMatchesEvent(mapping: RoomGitHubMapping, event: GitHubEvent): boolean {
     for (const repoMapping of mapping.repositories) {
-      // Check repository match
       if (
         repoMapping.owner !== event.repository.owner ||
         repoMapping.repo !== event.repository.repo
@@ -476,14 +395,12 @@ export class GitHubService {
         continue;
       }
 
-      // Check issue number filter if specified
       if (repoMapping.issueNumbers && repoMapping.issueNumbers.length > 0) {
         if (!event.issue || !repoMapping.issueNumbers.includes(event.issue.number)) {
           continue;
         }
       }
 
-      // Check label filter if specified
       if (repoMapping.labels && repoMapping.labels.length > 0) {
         const eventLabels = event.issue?.labels ?? [];
         if (!repoMapping.labels.some((label) => eventLabels.includes(label))) {
@@ -491,16 +408,12 @@ export class GitHubService {
         }
       }
 
-      // All checks passed
       return true;
     }
 
     return false;
   }
 
-  /**
-   * Route an event using rule-based or AI routing
-   */
   private async routeEvent(
     event: GitHubEvent,
     candidates: RoomCandidate[],
@@ -509,11 +422,7 @@ export class GitHubService {
     return this.routerAgent.route(event, candidates, securityResult);
   }
 
-  /**
-   * Deliver an event to a room
-   */
   private deliverToRoom(event: GitHubEvent, roomId: string): void {
-    // Emit a room message event for the room to handle
     this.emitEvent('room.message', {
       sessionId: `room:${roomId}`,
       roomId,
@@ -532,16 +441,10 @@ export class GitHubService {
     });
   }
 
-  /**
-   * Add an event to the inbox
-   */
   private addToInbox(event: GitHubEvent, security: SecurityCheckResult, reason: string): InboxItem {
     return this.inboxManager.addToInbox(event, security, reason);
   }
 
-  /**
-   * Format event content for room message
-   */
   private formatEventContent(event: GitHubEvent): string {
     const parts: string[] = [];
 
@@ -569,9 +472,6 @@ export class GitHubService {
     return parts.join('\n');
   }
 
-  /**
-   * Emit an event to InternalEventBus<DaemonInternalEventMap>
-   */
   private emitEvent<K extends keyof DaemonInternalEventMap & string>(
     event: K,
     data: DaemonInternalEventMap[K]
@@ -587,41 +487,26 @@ export class GitHubService {
     }
   }
 
-  // ============================================================================
-  // Repository Management
-  // ============================================================================
-
-  /**
-   * Add a repository to polling
-   */
   addRepository(owner: string, repo: string): void {
     if (this.pollingService) {
       this.pollingService.addRepository(owner, repo);
     }
 
-    // Also add to filter config
     this.filterConfigManager.addRepositories([`${owner}/${repo}`]);
 
     log.info('Repository added', { owner, repo });
   }
 
-  /**
-   * Remove a repository from polling
-   */
   removeRepository(owner: string, repo: string): void {
     if (this.pollingService) {
       this.pollingService.removeRepository(owner, repo);
     }
 
-    // Also remove from filter config
     this.filterConfigManager.removeRepositories([`${owner}/${repo}`]);
 
     log.info('Repository removed', { owner, repo });
   }
 
-  /**
-   * Get list of repositories being polled
-   */
   getPolledRepositories(): Array<{ owner: string; repo: string }> {
     if (!this.pollingService) {
       return [];
@@ -629,67 +514,35 @@ export class GitHubService {
     return this.pollingService.getRepositories();
   }
 
-  // ============================================================================
-  // Inbox Access
-  // ============================================================================
-
-  /**
-   * Get the inbox manager
-   */
   getInboxManager(): InboxManager {
     return this.inboxManager;
   }
 
-  /**
-   * Get pending inbox count
-   */
   getPendingInboxCount(): number {
     return this.inboxManager.countByStatus().pending;
   }
 
-  // ============================================================================
-  // Filter Configuration
-  // ============================================================================
-
-  /**
-   * Get the filter config manager
-   */
   getFilterConfigManager(): FilterConfigManager {
     return this.filterConfigManager;
   }
 
-  /**
-   * Check if the service is running
-   */
   isRunning(): boolean {
     return this.pollingService?.isRunning() ?? !!this.webhookHandler;
   }
 
-  /**
-   * Check if webhook handling is available
-   */
   hasWebhookHandler(): boolean {
     return !!this.webhookHandler;
   }
 
-  /**
-   * Check if polling is active
-   */
   isPolling(): boolean {
     return this.pollingService?.isRunning() ?? false;
   }
 
-  /**
-   * Return the underlying polling service instance, or undefined if not configured.
-   */
   getPollingService(): GitHubPollingService | undefined {
     return this.pollingService;
   }
 }
 
-/**
- * Create a GitHub service instance
- */
 export function createGitHubService(options: GitHubServiceOptions): GitHubService {
   return new GitHubService(options);
 }

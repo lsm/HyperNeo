@@ -16,8 +16,6 @@ import { useEvent } from '../../internal/use-event.ts';
 import { useIsoMorphicEffect } from '../../internal/use-iso-morphic-effect.ts';
 import { stackMachines } from '../../internal/stack-machine.ts';
 
-// --- Context ---
-
 interface DialogState {
   open: boolean;
   onClose: (value: boolean) => void;
@@ -39,8 +37,6 @@ function useDialogContext(component: string): DialogState {
   }
   return ctx;
 }
-
-// --- Transition attributes helper ---
 
 function useTransitionAttrs(open: boolean, transition: boolean) {
   const [transitionAttrs, setTransitionAttrs] = useState<Record<string, ''>>({});
@@ -82,8 +78,6 @@ function useTransitionAttrs(open: boolean, transition: boolean) {
 
   return transitionAttrs;
 }
-
-// --- Dialog (root) ---
 
 interface DialogProps {
   open: boolean;
@@ -129,10 +123,8 @@ function DialogFn({
     [onClose]
   );
 
-  // Stack machine integration for proper nested dialog handling
   const stackMachine = stackMachines.get(null);
 
-  // Register/unregister with stack machine when dialog opens/closes
   useIsoMorphicEffect(() => {
     if (!open) return;
 
@@ -140,31 +132,23 @@ function DialogFn({
     return () => stackMachine.actions.pop(id);
   }, [stackMachine, id, open]);
 
-  // Check if this dialog is the top layer
-  // Read directly from stack machine state for synchronous check
   const isTopLayerRef = useRef(true);
   useIsoMorphicEffect(() => {
     isTopLayerRef.current = stackMachine.selectors.isTop(stackMachine.state, id);
   });
 
-  // Determine if we should handle escape/outside-click events
-  // For single dialogs (not yet in stack), we should handle events
   const shouldHandleEvents =
     open && (isTopLayerRef.current || !stackMachine.selectors.inStack(stackMachine.state, id));
 
-  // Focus trap with initialFocus support
   useFocusTrap(panelRef, open && autoFocus && !__demoMode, {
     initialFocus,
     restoreFocus: !__demoMode,
   });
 
-  // Scroll lock (disabled in demo mode)
   useScrollLock(open && !__demoMode);
 
-  // Inert handling for accessibility
   useInert(dialogRef, open);
 
-  // Escape key handler - only when we should handle events
   useEscape(
     useCallback(() => {
       if (!shouldHandleEvents) return;
@@ -173,7 +157,6 @@ function DialogFn({
     open
   );
 
-  // Outside click handler - only when we should handle events
   useOutsideClick(
     [panelRef],
     useCallback(() => {
@@ -234,8 +217,6 @@ function DialogFn({
 DialogFn.displayName = 'Dialog';
 export const Dialog = DialogFn;
 
-// --- DialogPanel ---
-
 interface DialogPanelProps {
   as?: ElementType;
   transition?: boolean;
@@ -257,7 +238,6 @@ function DialogPanelFn({
 
   const slot = { open };
 
-  // Prevent click events from bubbling through to parent elements
   const handleClick = useEvent((event: MouseEvent) => {
     event.stopPropagation();
   });
@@ -280,8 +260,6 @@ function DialogPanelFn({
 
 DialogPanelFn.displayName = 'DialogPanel';
 export const DialogPanel = DialogPanelFn;
-
-// --- DialogTitle ---
 
 interface DialogTitleProps {
   as?: ElementType;
@@ -317,8 +295,6 @@ function DialogTitleFn({ as: Tag = 'h2', children, ...rest }: DialogTitleProps) 
 DialogTitleFn.displayName = 'DialogTitle';
 export const DialogTitle = DialogTitleFn;
 
-// --- DialogDescription ---
-
 interface DialogDescriptionProps {
   as?: ElementType;
   children?: unknown;
@@ -352,8 +328,6 @@ function DialogDescriptionFn({ as: Tag = 'p', children, ...rest }: DialogDescrip
 
 DialogDescriptionFn.displayName = 'DialogDescription';
 export const DialogDescription = DialogDescriptionFn;
-
-// --- DialogBackdrop ---
 
 interface DialogBackdropProps {
   as?: ElementType;
@@ -394,8 +368,6 @@ function DialogBackdropFn({
 
 DialogBackdropFn.displayName = 'DialogBackdrop';
 export const DialogBackdrop = DialogBackdropFn;
-
-// --- CloseButton ---
 
 interface CloseButtonProps {
   as?: ElementType;

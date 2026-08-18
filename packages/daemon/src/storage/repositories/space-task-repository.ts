@@ -1,9 +1,3 @@
-/**
- * Space Task Repository
- *
- * Repository for SpaceTask CRUD operations.
- */
-
 import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID, isRateOrUsageLimited } from '@hyperneo/shared';
 import type {
@@ -80,11 +74,6 @@ export class SpaceTaskRepository {
       .run(taskId);
   }
 
-  /**
-   * Remove both the task-kind row and any message-kind projection rows linked
-   * to this task. Hard-deleting a task FK-cascades its `sdk_messages` rows, so
-   * the message search projection must be cleaned up to avoid orphaned hits.
-   */
   private deleteTaskMessageSearchRows(taskId: string): void {
     if (!this.hasMessageSearchIndex()) return;
     this.db.prepare(`DELETE FROM message_search_content WHERE task_id = ?`).run(taskId);
@@ -154,9 +143,6 @@ export class SpaceTaskRepository {
       .run(taskId);
   }
 
-  /**
-   * Create a new space task
-   */
   createTask(params: InternalCreateSpaceTaskParams): SpaceTask {
     return this.createTaskWithId(generateUUID(), params);
   }
@@ -164,10 +150,6 @@ export class SpaceTaskRepository {
   createTaskWithId(id: string, params: InternalCreateSpaceTaskParams): SpaceTask {
     const now = Date.now();
 
-    // Wrap SELECT MAX + INSERT in an explicit transaction to prevent concurrent
-    // requests from computing the same task_number. SQLite serialises write
-    // transactions, so the UNIQUE index is the safety net, but the transaction
-    // ensures correctness without relying on constraint errors.
     const insertTx = this.db.transaction(() => {
       const nextNumber = (
         this.db
@@ -213,9 +195,6 @@ export class SpaceTaskRepository {
     return this.getTask(id)!;
   }
 
-  /**
-   * Get a task by ID
-   */
   getTask(id: string): SpaceTask | null {
     const stmt = this.db.prepare(`SELECT * FROM space_tasks WHERE id = ?`);
     const row = stmt.get(id) as Record<string, unknown> | undefined;
@@ -224,11 +203,6 @@ export class SpaceTaskRepository {
     return this.rowToSpaceTask(row);
   }
 
-  /**
-   * Batch-fetch tasks by id in a single round-trip. Missing ids are omitted
-   * (callers should not assume a 1:1 correspondence with the input). Used to
-   * collapse N+1 lookups in EvolutionScopeService.buildPreflightContext.
-   */
   getTasksByIds(ids: string[]): SpaceTask[] {
     if (ids.length === 0) return [];
     const placeholders = ids.map(() => '?').join(', ');
@@ -238,10 +212,6 @@ export class SpaceTaskRepository {
     return rows.map((row) => this.rowToSpaceTask(row));
   }
 
-  /**
-   * List tasks for a space, with optional status filter and pagination.
-   * When limit is not provided (or 0), returns all matching tasks (unbounded).
-   */
   listBySpace(spaceId: string, includeArchived = false, limit?: number, offset = 0): SpaceTask[] {
     let query = `SELECT * FROM space_tasks WHERE space_id = ?`;
     if (!includeArchived) {
@@ -272,9 +242,6 @@ export class SpaceTaskRepository {
     return row !== undefined && row !== null;
   }
 
-  /**
-   * List tasks for a workflow run
-   */
   listByWorkflowRun(workflowRunId: string): SpaceTask[] {
     const stmt = this.db.prepare(
       `SELECT * FROM space_tasks WHERE workflow_run_id = ? AND status != 'archived' ORDER BY created_at ASC`
@@ -283,15 +250,6 @@ export class SpaceTaskRepository {
     return rows.map((r) => this.rowToSpaceTask(r));
   }
 
-  /**
-   * List tasks for a workflow run, INCLUDING archived tasks.
-   *
-   * Archive is the authoritative tombstone for a task: once archived, no
-   * further inter-agent messages or node activations are permitted for the
-   * run. Callers that enforce that tombstone (e.g. `ChannelRouter`) must be
-   * able to see the archived task to throw the correct error — they cannot
-   * rely on `listByWorkflowRun()`, which filters archived tasks out.
-   */
   listByWorkflowRunIncludingArchived(workflowRunId: string): SpaceTask[] {
     const stmt = this.db.prepare(
       `SELECT * FROM space_tasks WHERE workflow_run_id = ? ORDER BY created_at ASC`
@@ -300,12 +258,6 @@ export class SpaceTaskRepository {
     return rows.map((r) => this.rowToSpaceTask(r));
   }
 
-  /**
-   * Batch equivalent of listByWorkflowRunIncludingArchived across many runs in
-   * one round-trip. Tasks are ordered by created_at ASC globally, so grouping
-   * by workflow_run_id preserves each run's within-run ordering. Missing run
-   * ids simply contribute no rows.
-   */
   listByWorkflowRunIdsIncludingArchived(workflowRunIds: string[]): SpaceTask[] {
     if (workflowRunIds.length === 0) return [];
     const placeholders = workflowRunIds.map(() => '?').join(', ');
@@ -317,10 +269,6 @@ export class SpaceTaskRepository {
     return rows.map((row) => this.rowToSpaceTask(row));
   }
 
-  /**
-   * List standalone tasks for a space (tasks with no workflowRunId).
-   * The SQL-level filter avoids fetching workflow tasks that would be discarded by the caller.
-   */
   listStandaloneBySpace(spaceId: string, includeArchived = false): SpaceTask[] {
     let query = `SELECT * FROM space_tasks WHERE space_id = ? AND workflow_run_id IS NULL`;
     if (!includeArchived) {
@@ -333,10 +281,6 @@ export class SpaceTaskRepository {
     return rows.map((r) => this.rowToSpaceTask(r));
   }
 
-  /**
-   * List tasks by status within a space, with optional pagination.
-   * When limit is not provided (or 0), returns all matching tasks (unbounded).
-   */
   listByStatus(spaceId: string, status: SpaceTaskStatus, limit?: number, offset = 0): SpaceTask[] {
     let query = `SELECT * FROM space_tasks WHERE space_id = ? AND status = ? ORDER BY updated_at DESC, id DESC`;
     if (limit && limit > 0) {
@@ -350,12 +294,6 @@ export class SpaceTaskRepository {
     return rows.map((r) => this.rowToSpaceTask(r));
   }
 
-  /**
-   * List tasks paused on a rate/usage limit (`rate_limited` / `usage_limited`)
-   * within a space. Used by the runtime tick loop to auto-resume tasks whose
-   * reset time has passed — including across daemon restarts (the resume is
-   * driven off the persisted `restrictions.resetAt`, not an in-memory timer).
-   */
   listRateLimitedBySpace(spaceId: string): SpaceTask[] {
     const stmt = this.db.prepare(
       `SELECT * FROM space_tasks WHERE space_id = ? AND status IN ('rate_limited', 'usage_limited') ORDER BY updated_at DESC, id DESC`
@@ -364,30 +302,6 @@ export class SpaceTaskRepository {
     return rows.map((r) => this.rowToSpaceTask(r));
   }
 
-  /**
-   * List tasks by status within a space, optionally filtered by block reason,
-   * paginated, returning both the page of tasks and the total count.
-   *
-   * Used by the UI Tasks view to render a single status group (e.g.
-   * "In Progress") with Prev/Next pagination buttons. The total is computed
-   * with a separate `COUNT(*)` so the caller can render "Showing X–Y of Z" and
-   * disable Next when the offset reaches the end of the page list.
-   *
-   * @param spaceId         Space scope.
-   * @param status          Status to filter on (required — pagination is per-group).
-   * @param blockReason     Optional block_reason filter — used by the Action tab to
-   *                        match the "Needs Input" / "Gate Pending" buckets.
-   *                        Tri-state: `undefined` ignores the column, `null`
-   *                        matches rows with no reason set, a value matches
-   *                        exactly. Mutually exclusive with `blockReasonNotIn`.
-   * @param blockReasonNotIn Optional negative block_reason filter — used by the
-   *                        Action tab's generic "Blocked" bucket to include
-   *                        every blocked row whose reason is NOT one of the
-   *                        attention-required values, mirroring the original
-   *                        client-side filter.
-   * @param limit           Page size (defaults to all matching when 0/undefined).
-   * @param offset          Page offset.
-   */
   listBySpaceAndStatus(
     spaceId: string,
     status: SpaceTaskStatus,
@@ -404,17 +318,12 @@ export class SpaceTaskRepository {
     let where = `WHERE space_id = ? AND status = ?`;
     if (blockReason !== undefined) {
       if (blockReason === null) {
-        // Explicit null filter: no block reason. Used to render the generic
-        // "Blocked" bucket distinctly from the attention-required ones.
         where += ` AND block_reason IS NULL`;
       } else {
         where += ` AND block_reason = ?`;
         filterParams.push(blockReason);
       }
     } else if (blockReasonNotIn && blockReasonNotIn.length > 0) {
-      // IS NULL union with NOT IN — without it SQLite would discard rows
-      // where block_reason is NULL because `NULL NOT IN (...)` yields NULL,
-      // and we want unset-reason blocked rows to land in the generic bucket.
       const placeholders = blockReasonNotIn.map(() => '?').join(', ');
       where += ` AND (block_reason IS NULL OR block_reason NOT IN (${placeholders}))`;
       for (const reason of blockReasonNotIn) filterParams.push(reason);
@@ -436,15 +345,9 @@ export class SpaceTaskRepository {
     return { tasks: rows.map((r) => this.rowToSpaceTask(r)), total };
   }
 
-  /**
-   * Count tasks for a space, optionally filtered by status.
-   * Excludes archived by default, unless status is explicitly 'archived'.
-   */
   countBySpace(spaceId: string, status?: SpaceTaskStatus, includeArchived = false): number {
     let query = `SELECT COUNT(*) as count FROM space_tasks WHERE space_id = ?`;
     const params: SQLiteValue[] = [spaceId];
-    // When the caller explicitly filters by 'archived', include archived rows
-    // even if includeArchived is false — the status filter is the intent.
     if (!includeArchived && status !== 'archived') {
       query += ` AND status != 'archived'`;
     }
@@ -457,9 +360,6 @@ export class SpaceTaskRepository {
     return row?.count ?? 0;
   }
 
-  /**
-   * Update a task with partial updates
-   */
   updateTask(id: string, params: InternalUpdateSpaceTaskParams): SpaceTask | null {
     const fields: string[] = [];
     const values: SQLiteValue[] = [];
@@ -477,9 +377,6 @@ export class SpaceTaskRepository {
       values.push(params.status);
 
       if (params.status === 'in_progress') {
-        // Always stamp started_at on entry to in_progress, including re-entries from
-        // blocked or cancelled. This records when the most recent work began,
-        // not when the task was originally created.
         fields.push('started_at = ?');
         values.push(Date.now());
         if (params.completedAt === undefined) {
@@ -549,7 +446,6 @@ export class SpaceTaskRepository {
       fields.push('active_session = ?');
       values.push(params.activeSession ?? null);
     }
-    // Auto-clear active_session when task reaches a terminal status
     if (
       params.activeSession === undefined &&
       (params.status === 'done' ||
@@ -560,11 +456,6 @@ export class SpaceTaskRepository {
       fields.push('active_session = ?');
       values.push(null);
     }
-    // Auto-clear a stale rate/usage-limit restriction when the task leaves the
-    // paused statuses via any path that doesn't set `restrictions` explicitly
-    // (e.g. a manual setTaskStatus to in_progress/cancelled/done). The runtime
-    // resume path sets restrictions:null itself; this is the backstop so a
-    // paused task can't keep a stale resume-at blob after manual intervention.
     if (
       params.restrictions === undefined &&
       params.status !== undefined &&
@@ -629,8 +520,6 @@ export class SpaceTaskRepository {
       fields.push('reported_summary = ?');
       values.push(params.reportedSummary ?? null);
     }
-    // Post-approval columns (PR 1/5 of the post-approval refactor — no
-    // runtime consumer yet; PR 2 wires them up).
     if (params.postApprovalSessionId !== undefined) {
       fields.push('post_approval_session_id = ?');
       values.push(params.postApprovalSessionId ?? null);
@@ -678,10 +567,6 @@ export class SpaceTaskRepository {
     return this.getTask(id);
   }
 
-  /**
-   * Archive a task by setting status to 'archived' and archived_at timestamp.
-   * status = 'archived' is the canonical source of truth; archived_at is a derived timestamp.
-   */
   archiveTask(id: string): SpaceTask | null {
     const now = Date.now();
     const stmt = this.db.prepare(
@@ -695,9 +580,6 @@ export class SpaceTaskRepository {
     return this.getTask(id);
   }
 
-  /**
-   * Delete a task by ID
-   */
   deleteTask(id: string): boolean {
     const stmt = this.db.prepare(`DELETE FROM space_tasks WHERE id = ?`);
     const result = stmt.run(id);
@@ -708,9 +590,6 @@ export class SpaceTaskRepository {
     return result.changes > 0;
   }
 
-  /**
-   * Delete all tasks for a space
-   */
   deleteTasksForSpace(spaceId: string): void {
     const rows = this.db
       .prepare(`SELECT id FROM space_tasks WHERE space_id = ?`)
@@ -722,9 +601,6 @@ export class SpaceTaskRepository {
     this.reactiveDb?.notifyChange('space_tasks');
   }
 
-  /**
-   * Promote draft tasks created by a planning task (legacy method, kept for API compatibility)
-   */
   promoteDraftTasksByCreator(createdByTaskId: string): number {
     const rows = this.db
       .prepare(`SELECT id FROM space_tasks WHERE created_by_task_id = ? AND status = 'draft'`)
@@ -741,37 +617,6 @@ export class SpaceTaskRepository {
     return result.changes;
   }
 
-  /**
-   * List all tasks that have an active Task Agent session.
-   *
-   * Returns tasks with status `in_progress`, `review`, `blocked`, or `approved`
-   * that have a non-null `task_agent_session_id`. Used by
-   * `TaskAgentManager.rehydrate()` on daemon restart to find Task Agent
-   * sessions that need to be restarted.
-   *
-   * Status inclusions:
-   * - `'in_progress'` — actively being worked on; obvious rehydrate target.
-   * - `'review'` — workflow agents finished but a human/auto reviewer must
-   *   approve. The Task Agent session is still live: it owns the sub-session
-   *   map (coder/reviewer/etc.) and is the only path that can re-attach the
-   *   in-process `node-agent` / `space-agent-tools` MCP servers to those
-   *   sub-sessions after a daemon restart. Excluding `'review'` here was the
-   *   root cause of task #126: a coder/reviewer sub-session waiting for review
-   *   while the parent task waited in `'review'` lost both MCP servers across
-   *   a daemon restart, so `send_message` silently failed with
-   *   "No such tool available".
-   * - `'blocked'` — task awaits human input but the Task Agent session must
-   *   stay live so unblocking messages reach it.
-   * - `'approved'` — the Task Agent can still be live while the post-approval
-   *   sub-session runs; `mark_complete` may transition the task back to
-   *   `in_progress` or to `done`, and the UI's `spaceTaskActivity.byTask`
-   *   LiveQuery depends on the session being rehydrated in-memory.
-   *
-   * Tasks in `'done'`/`'cancelled'`/`'archived'`/`'open'` are excluded:
-   * terminal states have their sessions torn down, and `'open'` tasks have
-   * no Task Agent yet.
-   */
-  /** List all tasks with non-terminal statuses (in_progress, review, blocked, approved). */
   listActive(): SpaceTask[] {
     const stmt = this.db.prepare(
       `SELECT * FROM space_tasks WHERE status IN ('in_progress', 'review', 'blocked', 'approved')`
@@ -788,9 +633,6 @@ export class SpaceTaskRepository {
     return rows.map((r) => this.rowToSpaceTask(r));
   }
 
-  /**
-   * Get a task by its Task Agent session ID
-   */
   getTaskBySessionId(sessionId: string): SpaceTask | null {
     const stmt = this.db.prepare(
       `SELECT * FROM space_tasks WHERE task_agent_session_id = ? LIMIT 1`
@@ -800,9 +642,6 @@ export class SpaceTaskRepository {
     return this.rowToSpaceTask(row);
   }
 
-  /**
-   * Get a task by its space-scoped numeric ID
-   */
   getTaskByNumber(spaceId: string, taskNumber: number): SpaceTask | null {
     const row = this.db
       .prepare(`SELECT * FROM space_tasks WHERE space_id = ? AND task_number = ?`)
@@ -811,9 +650,6 @@ export class SpaceTaskRepository {
     return this.rowToSpaceTask(row);
   }
 
-  /**
-   * Get open tasks created by a specific planning task
-   */
   getDraftTasksByCreator(createdByTaskId: string): SpaceTask[] {
     const rows = this.db
       .prepare(
@@ -823,9 +659,6 @@ export class SpaceTaskRepository {
     return rows.map((r) => this.rowToSpaceTask(r));
   }
 
-  /**
-   * Convert a database row to a SpaceTask object
-   */
   private rowToSpaceTask(row: Record<string, unknown>): SpaceTask {
     const rawWorkflowModelOverrides = row.workflow_model_overrides as string | null | undefined;
     let workflowModelOverrides: Record<string, string> | undefined;
@@ -876,7 +709,6 @@ export class SpaceTaskRepository {
       pendingCompletionReason: (row.pending_completion_reason as string | null) ?? null,
       reportedStatus: (row.reported_status as SpaceTask['reportedStatus']) ?? null,
       reportedSummary: (row.reported_summary as string | null) ?? null,
-      // Post-approval columns (PR 1/5 — schema only).
       postApprovalSessionId: (row.post_approval_session_id as string | null) ?? null,
       postApprovalStartedAt: (row.post_approval_started_at as number | null) ?? null,
       postApprovalBlockedReason: (row.post_approval_blocked_reason as string | null) ?? null,
@@ -890,10 +722,6 @@ export class SpaceTaskRepository {
   }
 }
 
-/**
- * Parse a `restrictions` JSON blob into a `TaskRestriction`, or null when the
- * task is not paused. Defensive against malformed/missing JSON.
- */
 function parseRestrictions(raw: unknown): TaskRestriction | null {
   if (typeof raw !== 'string' || raw.length === 0) return null;
   try {

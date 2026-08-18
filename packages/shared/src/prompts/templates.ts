@@ -1,19 +1,9 @@
-/**
- * Built-in Prompt Templates
- *
- * Central repository of all prompt templates used by HyperNeo.
- * Stored in packages/shared so both daemon and web can access them.
- */
-
 import type { PromptTemplate } from './types.ts';
 import { BUILTIN_TEMPLATE_IDS } from './types.ts';
 
 const now = Date.now();
 
 export const BUILTIN_TEMPLATES: PromptTemplate[] = [
-  // ============================================================================
-  // Worker Agent Prompts
-  // ============================================================================
   {
     id: BUILTIN_TEMPLATE_IDS.WORKER_AGENT_SYSTEM,
     category: 'worker_agent',
@@ -56,9 +46,6 @@ Current Date: {{currentDate}}`,
     updatedAt: now,
   },
 
-  // ============================================================================
-  // Lobby Agent Prompts (External Message Processing)
-  // ============================================================================
   {
     id: BUILTIN_TEMPLATE_IDS.LOBBY_AGENT_ROUTER,
     category: 'lobby_agent',

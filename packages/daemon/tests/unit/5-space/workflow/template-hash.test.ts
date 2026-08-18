@@ -1,14 +1,3 @@
-/**
- * Unit tests for template-hash utility.
- *
- * Verifies that:
- * - buildWorkflowFingerprint produces deterministic, order-independent output
- * - computeWorkflowHash returns a stable hex string for identical workflows
- * - workflowsMatchFingerprint returns true/false correctly
- * - Layout coordinates and agent UUIDs do NOT affect the hash
- * - Channel maxCycles is included in the fingerprint
- */
-
 import { describe, it, expect } from 'bun:test';
 import {
   buildWorkflowFingerprint,
@@ -16,8 +5,6 @@ import {
   workflowsMatchFingerprint,
 } from '../../../../src/lib/space/workflows/template-hash';
 import type { SpaceWorkflow } from '@hyperneo/shared';
-
-// ── helpers ──────────────────────────────────────────────────────────────────
 
 function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
   return {
@@ -51,8 +38,6 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
   };
 }
 
-// ── tests ─────────────────────────────────────────────────────────────────────
-
 describe('buildWorkflowFingerprint', () => {
   it('returns sorted node names', () => {
     const wf = makeWorkflow({
@@ -74,7 +59,6 @@ describe('buildWorkflowFingerprint', () => {
     });
     const fp = buildWorkflowFingerprint(wf);
     expect(fp.channels).toHaveLength(2);
-    // Sorted alphabetically: Coder->... comes before Reviewer->...
     const parsed0 = JSON.parse(fp.channels[0]);
     const parsed1 = JSON.parse(fp.channels[1]);
     expect(parsed0.from).toBe('Coder');
@@ -91,7 +75,6 @@ describe('buildWorkflowFingerprint', () => {
     });
     const fp2 = buildWorkflowFingerprint(wf2);
     expect(fp.channels).toEqual(fp2.channels);
-    // Verify the "to" array is sorted
     const parsed = JSON.parse(fp.channels[0]);
     expect(parsed.to).toEqual(['QA', 'Reviewer']);
   });
@@ -132,7 +115,6 @@ describe('buildWorkflowFingerprint', () => {
       channels: [{ id: 'ch1', from: 'Coder', to: ['Reviewer'] }],
     });
     expect(computeWorkflowHash(wf1)).toBe(computeWorkflowHash(wf2));
-    // Verify the normalized form is a string, not an array
     const fp = buildWorkflowFingerprint(wf1);
     const parsed = JSON.parse(fp.channels[0]);
     expect(parsed.to).toBe('Reviewer');
@@ -144,7 +126,7 @@ describe('buildWorkflowFingerprint', () => {
     });
     const fp = buildWorkflowFingerprint(wf);
     const parsed = JSON.parse(fp.channels[0]);
-    expect(parsed.to).toEqual(['QA', 'Reviewer']); // sorted
+    expect(parsed.to).toEqual(['QA', 'Reviewer']);
   });
 
   it('uses empty string for missing description/instructions', () => {
@@ -238,10 +220,6 @@ describe('buildWorkflowFingerprint', () => {
   });
 
   it('includes per-agent resetContextPerTurn in fingerprint (drift detection)', () => {
-    // A template toggling resetContextPerTurn must change the hash so installed
-    // spaces are re-stamped and receive the flag. The field is OMITTED (not [])
-    // when no slot has the flag, so templates without it keep a stable hash and
-    // don't get mass-restamped on upgrade.
     const base = makeWorkflow();
     const withFlag: SpaceWorkflow = {
       ...base,
@@ -257,13 +235,8 @@ describe('buildWorkflowFingerprint', () => {
   });
 
   it('keeps a stable hash for templates with no reset-enabled slot (no mass restamp)', () => {
-    // Two templates that both lack the flag must hash identically whether or not
-    // the fingerprint function knows about resetContextPerTurn — i.e. adding the
-    // field must not drift unrelated built-ins on upgrade.
     const noFlag = makeWorkflow();
     const alsoNoFlag = makeWorkflow({ description: 'different description' });
-    // Sanity: differing description changes the hash, but the reset field is
-    // absent from both fingerprints.
     expect(buildWorkflowFingerprint(noFlag).nodeAgentResetContext).toBeUndefined();
     expect(buildWorkflowFingerprint(alsoNoFlag).nodeAgentResetContext).toBeUndefined();
   });
@@ -406,8 +379,6 @@ describe('computeWorkflowHash', () => {
   });
 
   it('DOES change when a slot toggles replaceAgentPrompt with the same prompt text', () => {
-    // A pure append→replace mode change must alter the fingerprint so drift
-    // detection catches it even when the prompt text is unchanged.
     const wf1 = makeWorkflow({
       nodes: [
         {
@@ -496,9 +467,6 @@ describe('workflowsMatchFingerprint', () => {
   });
 
   it('returns false when an agent slot toolGuards set changes (task #866)', () => {
-    // A change to a slot's structural toolGuards (e.g. adding the merger
-    // raw-merge block) must be detected as drift so it re-stamps into
-    // installed spaces — otherwise the guard would never reach existing flows.
     const guard = {
       matcher: 'Bash',
       pattern: 'gh pr merge',
@@ -519,7 +487,6 @@ describe('workflowsMatchFingerprint', () => {
     });
     expect(workflowsMatchFingerprint(wf1, wf2)).toBe(false);
     expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
-    // A workflow whose slots have no toolGuards omits the key entirely.
     expect(
       (buildWorkflowFingerprint(wf1) as Record<string, unknown>).nodeAgentToolGuards
     ).toBeUndefined();
@@ -529,10 +496,6 @@ describe('workflowsMatchFingerprint', () => {
   });
 
   it('returns false when an agent slot eventInterests set changes (task #907)', () => {
-    // Declaring a static event interest on an implementer slot (e.g. the
-    // primaryLink PR-event interest) must change the fingerprint so existing
-    // seeded spaces are detected as drifted and re-stamped — otherwise the
-    // interest would never reach installed flows.
     const interest = {
       topicFrom: {
         source: 'primaryLink',
@@ -554,7 +517,6 @@ describe('workflowsMatchFingerprint', () => {
     });
     expect(workflowsMatchFingerprint(wf1, wf2)).toBe(false);
     expect(computeWorkflowHash(wf1)).not.toBe(computeWorkflowHash(wf2));
-    // A workflow whose slots have no eventInterests omits the key entirely.
     expect(
       (buildWorkflowFingerprint(wf1) as Record<string, unknown>).nodeAgentEventInterests
     ).toBeUndefined();
@@ -581,8 +543,6 @@ describe('buildWorkflowFingerprint — handoff transitions', () => {
         { id: 'n2', name: 'Reviewer', agents: [{ agentId: 'agent-uuid-2', name: 'Reviewer' }] },
       ],
     });
-    // Canonical shape: fixed key order, optionals defaulted to null, sorted by id.
-    // 'to-qa' sorts before 'to-reviewer', so the order differs from the input.
     const canonical = JSON.stringify([
       {
         id: 'to-qa',

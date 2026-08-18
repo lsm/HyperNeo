@@ -1,16 +1,3 @@
-/**
- * Model Switch — Session Continuity Tests
- *
- * Verifies that sdkSessionId is preserved across model switches so that
- * conversation continuity is maintained.  The model-switch-handler must NOT
- * clear sdkSessionId; only the QueryLifecycleManager should clear it (and
- * only when the underlying SDK session file no longer exists on disk).
- *
- * Six test cases:
- *  1-4  ModelSwitchHandler directly (mock lifecycleManager)
- *  5-6  QueryLifecycleManager restart() sdkSessionId behaviour
- */
-
 import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import {
   ModelSwitchHandler,
@@ -45,10 +32,6 @@ import { setModelsCache, clearModelsCache } from '../../../../src/lib/model-serv
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
-// ---------------------------------------------------------------------------
-// Shared model fixture (same as model-switch-handler.test.ts)
-// ---------------------------------------------------------------------------
 
 const TEST_MODELS: ModelInfo[] = [
   {
@@ -108,10 +91,6 @@ const TEST_MODELS: ModelInfo[] = [
   },
 ];
 
-// ===========================================================================
-// Part 1 — ModelSwitchHandler sdkSessionId preservation
-// ===========================================================================
-
 describe('ModelSwitchHandler — session continuity (sdkSessionId)', () => {
   let handler: ModelSwitchHandler;
   let mockSession: Session;
@@ -138,8 +117,6 @@ describe('ModelSwitchHandler — session continuity (sdkSessionId)', () => {
     resetProviderFactory();
     clearModelsCache();
     const registry = initializeProviders();
-    // Anthropic Copilot is registered lazily; wait for it so copilot model
-    // switches are deterministic.
     await waitForOptionalProviderRegistration(registry);
 
     const cache = new Map<string, ModelInfo[]>();
@@ -256,8 +233,6 @@ describe('ModelSwitchHandler — session continuity (sdkSessionId)', () => {
     clearModelsCache();
   });
 
-  // ---- Test 1 ----
-
   it('switchModel preserves sdkSessionId (query running)', async () => {
     const sdkId = 'test-sdk-session-abc';
     mockSession.sdkSessionId = sdkId;
@@ -268,8 +243,6 @@ describe('ModelSwitchHandler — session continuity (sdkSessionId)', () => {
     expect(result.success).toBe(true);
     expect(mockSession.sdkSessionId).toBe(sdkId);
   });
-
-  // ---- Test 2 ----
 
   it('switchModel does NOT pass sdkSessionId: undefined in DB update', async () => {
     const sdkId = 'test-sdk-session-abc';
@@ -283,8 +256,6 @@ describe('ModelSwitchHandler — session continuity (sdkSessionId)', () => {
     expect(updateArg).not.toHaveProperty('sdkSessionId');
   });
 
-  // ---- Test 3 ----
-
   it('switchModel preserves sdkSessionId when query not started', async () => {
     const sdkId = 'test-sdk-session-abc';
     mockSession.sdkSessionId = sdkId;
@@ -296,23 +267,18 @@ describe('ModelSwitchHandler — session continuity (sdkSessionId)', () => {
     expect(mockSession.sdkSessionId).toBe(sdkId);
   });
 
-  // ---- Test 4 ----
-
   it('sdkSessionId remains stable across multiple rapid switches', async () => {
     const sdkId = 'test-sdk-session-abc';
     mockSession.sdkSessionId = sdkId;
 
     handler = createHandler();
 
-    // Switch 1: default -> opus
     await handler.switchModel('opus', 'anthropic');
     expect(mockSession.sdkSessionId).toBe(sdkId);
 
-    // Switch 2: opus -> haiku
     await handler.switchModel('haiku', 'anthropic');
     expect(mockSession.sdkSessionId).toBe(sdkId);
 
-    // Switch 3: haiku -> glm-5 (cross-provider)
     await handler.switchModel('glm-5', 'glm');
     expect(mockSession.sdkSessionId).toBe(sdkId);
   });
@@ -350,10 +316,6 @@ describe('ModelSwitchHandler — session continuity (sdkSessionId)', () => {
   });
 });
 
-// ===========================================================================
-// Part 2 — QueryLifecycleManager restart() sdkSessionId behaviour
-// ===========================================================================
-
 describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)', () => {
   let manager: QueryLifecycleManager;
   let messageQueue: MessageQueue;
@@ -373,10 +335,6 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
 
   let tmpDir: string;
 
-  /**
-   * Create a valid (empty) JSONL fixture at the given path.
-   * An empty file passes validateAndRepairSDKSession (no orphaned tool_results).
-   */
   function createSdkFile(basePath: string, sdkSessionId: string): void {
     const projectKey = basePath.replace(/[/.]/g, '-');
     const sessionDir = join(tmpDir, 'projects', projectKey);
@@ -478,8 +436,6 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  // ---- Test 5 ----
-
   it(
     'restart() preserves sdkSessionId when session file exists',
     async () => {
@@ -492,7 +448,6 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
       await manager.restart();
 
       expect(mockContext.session.sdkSessionId).toBe(sdkId);
-      // updateSession should NOT have been called with sdkSessionId clearing
       const calls = updateSessionSpy.mock.calls;
       for (const call of calls) {
         const arg = call[1] as Record<string, unknown>;
@@ -502,13 +457,10 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
     { timeout: 5000 }
   );
 
-  // ---- Test 6 ----
-
   it(
     'restart() emits sdkResumeChoice when session file is missing — user decides',
     async () => {
       const sdkId = 'sdk-continuity-missing';
-      // Do NOT create the session file — simulate a stale/missing file
 
       mockContext.session.sdkSessionId = sdkId;
       mockContext.session.sdkOriginPath = '/some/path';
@@ -516,9 +468,7 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
 
       await manager.restart();
 
-      // sdkSessionId is preserved — user chooses via sdkResumeChoice prompt
       expect(mockContext.session.sdkSessionId).toBe(sdkId);
-      // A hyperneo_action message with sdk_resume_choice should be emitted
       expect(publishSpy).toHaveBeenCalledWith(
         'state.sdkMessages.delta',
         expect.objectContaining({

@@ -1,17 +1,7 @@
-/**
- * Task LiveQuery Archived Filter Tests
- *
- * Verifies that the TASKS_BY_ROOM_SQL query used by the LiveQuery engine
- * includes archived tasks so the frontend Archived tab can display them.
- * Archived tasks are included in the query results; the frontend filters
- * them into the "Archived" tab via client-side status filtering.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createTables } from '../../../../src/storage/schema';
 
-// Mirrors TASKS_BY_ROOM_SQL from live-query-handlers.ts — keep in sync.
 const TASKS_BY_ROOM_SQL = `
 SELECT
   id,

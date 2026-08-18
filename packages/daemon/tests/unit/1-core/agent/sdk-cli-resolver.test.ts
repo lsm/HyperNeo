@@ -1,7 +1,3 @@
-/**
- * SDK CLI Path Resolver Tests
- */
-
 import { describe, expect, it, beforeEach, afterEach, spyOn } from 'bun:test';
 import { vi } from 'vitest';
 import type * as fs from 'node:fs';
@@ -17,11 +13,6 @@ import {
   _resetForTesting,
 } from '../../../../src/lib/agent/sdk-cli-resolver';
 
-// node:fs / node:child_process namespace exports are not configurable in ESM,
-// so `spyOn(fs, ...)` cannot work under Vitest. Mock both modules with
-// vi.fn() indirection instead: each mock passes through to the real
-// implementation until a test installs its own via
-// mockImplementation/mockReturnValue.
 const mocks = vi.hoisted(() => ({
   actualFs: null as unknown as typeof import('node:fs'),
   actualCp: null as unknown as typeof import('node:child_process'),
@@ -68,7 +59,6 @@ vi.mock('node:child_process', async (importOriginal) => {
   };
 });
 
-/** Clear all per-test implementations so mocks pass through to real fs/cp. */
 function resetModuleMocks(): void {
   for (const mockFn of [
     mocks.existsSync,
@@ -175,11 +165,8 @@ describe('sdk-cli-resolver', () => {
 
       mocks.existsSync.mockImplementation((path: fs.PathLike) => {
         const p = String(path);
-        // Block node_modules resolution
         if (p.includes('node_modules')) return false;
-        // Block system rg paths
         if (p.endsWith('/rg')) return false;
-        // Simulate cached binary exists
         if (p.includes('.hyperneo/sdk') && p.endsWith(binaryName)) return true;
         return originalExistsSync(p);
       });
@@ -260,7 +247,6 @@ describe('sdk-cli-resolver', () => {
 
     beforeEach(() => {
       _resetForTesting();
-      // Capture original before any mocking
       originalReadFileSync = mocks.actualFs.readFileSync;
       mocks.chmodSync.mockImplementation(() => {});
       mocks.renameSync.mockImplementation(() => {});
@@ -291,7 +277,6 @@ describe('sdk-cli-resolver', () => {
             registryCalled = true;
             throw new Error('network error simulating registry failure');
           }
-          // Pass through for non-registry curl calls
           return originalExecFileSync(file, args);
         }
         throw new Error(`unexpected execFileSync: ${file}`);
@@ -306,7 +291,6 @@ describe('sdk-cli-resolver', () => {
     it('verifies integrity hash before extracting', () => {
       const originalExistsSync = mocks.actualFs.existsSync;
 
-      // Create a tarball that won't match the expected integrity
       const tarData = createTarGzWithFile(`package/${getCliBinaryName()}`, Buffer.from('fake'));
       const expectedIntegrity = `sha512-${createHash('sha512').update(tarData).digest('base64')}`;
 
@@ -318,13 +302,11 @@ describe('sdk-cli-resolver', () => {
         return originalExistsSync(p);
       });
 
-      // readFileSync: return fake data for tarball (different from tarData → integrity mismatch)
       mocks.readFileSync.mockImplementation((path: fs.PathLike) => {
         const p = String(path);
         if (p.endsWith('.tgz')) {
           return Buffer.from('different-tarball-data');
         }
-        // Pass through to original for other files
         return originalReadFileSync(p);
       });
 
@@ -349,7 +331,6 @@ describe('sdk-cli-resolver', () => {
       const result = resolveSDKCliPath();
 
       expect(registryFetched).toBe(true);
-      // Integrity mismatch should cause failure
       expect(result).toBeUndefined();
     });
 
@@ -357,7 +338,6 @@ describe('sdk-cli-resolver', () => {
       const originalExistsSync = mocks.actualFs.existsSync;
       const binaryName = getCliBinaryName();
 
-      // Create a valid tar.gz in memory with the binary
       const binaryContent = Buffer.from('#!/bin/bash\necho claude');
       const tarData = createTarGzWithFile(`package/${binaryName}`, binaryContent);
       const expectedIntegrity = `sha512-${createHash('sha512').update(tarData).digest('base64')}`;
@@ -374,7 +354,6 @@ describe('sdk-cli-resolver', () => {
       mocks.readFileSync.mockImplementation((path: fs.PathLike) => {
         const p = String(path);
         if (p.endsWith('.tgz')) return tarData;
-        // Pass through to original for other files
         return originalReadFileSync(p);
       });
 
@@ -410,7 +389,6 @@ describe('sdk-cli-resolver', () => {
     it('fails when binary is missing from tarball', () => {
       const originalExistsSync = mocks.actualFs.existsSync;
 
-      // Create a tar.gz without the expected binary
       const tarData = createTarGzWithFile('package/other-file.txt', Buffer.from('hello'));
       const expectedIntegrity = `sha512-${createHash('sha512').update(tarData).digest('base64')}`;
 
@@ -471,42 +449,26 @@ describe('sdk-cli-resolver', () => {
   });
 });
 
-// ─── Test helpers ─────────────────────────────────────────────────────────
-
-/**
- * Create a valid gzip-compressed tar archive containing a single file.
- * Used to test the pure-JS tar extraction without external dependencies.
- */
 function createTarGzWithFile(fileName: string, content: Buffer): Buffer {
-  // Build tar header (512 bytes)
   const header = Buffer.alloc(512, 0);
 
-  // File name (100 bytes)
   header.write(fileName, 0, 'utf-8');
 
-  // File mode (8 bytes, octal)
   header.write('0000644\0', 100, 'utf-8');
 
-  // UID (8 bytes, octal)
   header.write('0000000\0', 108, 'utf-8');
 
-  // GID (8 bytes, octal)
   header.write('0000000\0', 116, 'utf-8');
 
-  // File size (12 bytes, octal)
   const sizeOctal = content.length.toString(8).padStart(11, '0') + '\0';
   header.write(sizeOctal, 124, 'utf-8');
 
-  // Modification time (12 bytes, octal)
   header.write('00000000000\0', 136, 'utf-8');
 
-  // Checksum placeholder (8 bytes of spaces)
   header.write('        ', 148, 'utf-8');
 
-  // Type flag (1 byte) — regular file
   header.write('0', 156, 'utf-8');
 
-  // Compute checksum (sum of all header bytes, with checksum field as spaces)
   let checksum = 0;
   for (let i = 0; i < 512; i++) {
     checksum += header[i];
@@ -514,17 +476,13 @@ function createTarGzWithFile(fileName: string, content: Buffer): Buffer {
   const checksumOctal = checksum.toString(8).padStart(6, '0') + '\0 ';
   header.write(checksumOctal, 148, 'utf-8');
 
-  // Pad content to 512-byte boundary
   const contentPadded = Buffer.alloc(Math.ceil(content.length / 512) * 512, 0);
   content.copy(contentPadded);
 
-  // End-of-archive marker (two zero blocks)
   const endMarker = Buffer.alloc(1024, 0);
 
-  // Concatenate: header + content + end marker
   const tarData = Buffer.concat([header, contentPadded, endMarker]);
 
-  // Gzip compress
   return zlib.gzipSync(tarData);
 }
 
@@ -604,7 +562,6 @@ describe('warmupSDKCliBinary', () => {
     const originalReadFileSync = mocks.actualFs.readFileSync;
     const binaryName = getCliBinaryName();
 
-    // Create valid tar.gz with the binary
     const binaryContent = Buffer.from('#!/bin/bash\necho claude');
     const tarData = createTarGzWithFile(`package/${binaryName}`, binaryContent);
     const expectedIntegrity = `sha512-${createHash('sha512').update(tarData).digest('base64')}`;
@@ -647,12 +604,10 @@ describe('warmupSDKCliBinary', () => {
   });
 
   it('logs startup messages regardless of HYPERNEO_VERBOSE', () => {
-    // Ensure HYPERNEO_VERBOSE is NOT set
     delete process.env.HYPERNEO_VERBOSE;
 
     warmupSDKCliBinary();
 
-    // Should have logged at least one [SDK] message
     const calls = logSpy.mock.calls.map((c: unknown[]) => String(c[0]));
     const sdkLogs = calls.filter((c: string) => c.includes('[SDK]'));
     expect(sdkLogs.length).toBeGreaterThan(0);
@@ -662,7 +617,6 @@ describe('warmupSDKCliBinary', () => {
     const first = warmupSDKCliBinary();
     expect(first.status).toBe('ready');
 
-    // Reset log spy to count second call
     logSpy.mockClear();
 
     const second = warmupSDKCliBinary();
@@ -689,20 +643,13 @@ describe('warmupSDKCliBinary', () => {
     const result = warmupSDKCliBinary();
     expect(result.status).toBe('failed');
 
-    // Restore mocks so resolveSDKCliPath can try node_modules
     resetModuleMocks();
 
-    // resolveSDKCliPath should still be able to resolve (not negative-cached)
     const resolved = resolveSDKCliPath();
     expect(resolved).toBeDefined();
   });
 
   it('returns failed for unsupported platform', () => {
-    // Mock getPlatformPackageName to return undefined via module spy.
-    // Internal calls bypass the export, so we patch the resolver module.
-    // Since process.platform/arch are read-only in Bun, we test the
-    // unsupported platform path by verifying the error shape when
-    // all resolution strategies fail.
     mocks.existsSync.mockReturnValue(false);
     mocks.execSync.mockImplementation(() => {
       throw new Error('not found');
@@ -722,7 +669,6 @@ describe('warmupSDKCliBinary', () => {
     const first = warmupSDKCliBinary();
     expect(first.status).toBe('ready');
 
-    // Mutex released after first call — second succeeds immediately.
     const second = warmupSDKCliBinary();
     expect(second.status).toBe('ready');
     expect(second.path).toBe(first.path);

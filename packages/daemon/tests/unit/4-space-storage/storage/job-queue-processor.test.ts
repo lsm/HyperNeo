@@ -207,7 +207,6 @@ describe('JobQueueProcessor', () => {
         throw new Error('transient error');
       });
 
-      // maxRetries defaults to 3, retry_count starts at 0 so retries are available
       const job = repo.enqueue({ queue: 'test-queue', payload: {}, maxRetries: 3 });
       await processor.tick();
       await flush();
@@ -244,10 +243,6 @@ describe('JobQueueProcessor', () => {
     });
 
     it('force-dead-letters on DeadLetterImmediatelyError without burning retries', async () => {
-      // A handler throws DeadLetterImmediatelyError for a non-recoverable failure
-      // (e.g. a delivery turn that ended in an auth/permission/quota error). The
-      // processor must send the job straight to `dead` — NOT back it off through
-      // the retry budget — and fire onDead so the lane terminalizes the message.
       let deadJobId: string | null = null;
       processor.register(
         'test-queue',
@@ -261,16 +256,15 @@ describe('JobQueueProcessor', () => {
         }
       );
 
-      // maxRetries > 0 so a plain Error would retry; DeadLetterImmediatelyError bypasses.
       const job = repo.enqueue({ queue: 'test-queue', payload: {}, maxRetries: 3 });
       await processor.tick();
       await flush();
 
       const updated = repo.getJob(job.id);
       expect(updated?.status).toBe('dead');
-      expect(updated?.retryCount).toBe(0); // no retry budget consumed
+      expect(updated?.retryCount).toBe(0);
       expect(updated?.error).toBe('non-recoverable turn error');
-      expect(deadJobId).toBe(job.id); // onDead fired through the standard path
+      expect(deadJobId).toBe(job.id);
     });
   });
 
@@ -291,10 +285,8 @@ describe('JobQueueProcessor', () => {
       expect(repo.getParkCount(claimed!.id)).toBe(1);
       let updated = repo.getJob(claimed!.id);
       expect(updated?.status).toBe('pending');
-      expect(updated?.retryCount).toBe(0); // parking is a wait, not a retry
+      expect(updated?.retryCount).toBe(0);
 
-      // Re-claim and park again → count is 2. (requeueParked set run_at into the
-      // future; reset it so dequeue re-claims the same row.)
       db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(claimed!.id);
       const [r2] = repo.dequeue('steer-q', 1);
       repo.requeueParked(r2!.id, Date.now() + 5000, r2!.claimToken);
@@ -306,7 +298,6 @@ describe('JobQueueProcessor', () => {
 
   describe('maxConcurrent', () => {
     it('respects concurrency limit on first tick', async () => {
-      // Use a processor with maxConcurrent=2 and a blocking handler
       const blockingProcessor = new JobQueueProcessor(repo, { maxConcurrent: 2 });
       const resolvers: Array<() => void> = [];
 
@@ -324,11 +315,9 @@ describe('JobQueueProcessor', () => {
 
       expect(claimed).toBe(2);
 
-      // Unblock in-flight jobs so afterEach stop() resolves
       for (const r of resolvers) r();
       await blockingProcessor.stop();
       db.close();
-      // Prevent double-close in afterEach
       (db as any).close = () => {};
       await processor.stop();
     });
@@ -342,7 +331,6 @@ describe('JobQueueProcessor', () => {
       batchProcessor.register('test-queue', async (job) => {
         const currentWave = wave;
         if (currentWave === 0) {
-          // First batch: block until released
           await new Promise<void>((resolve) => {
             resolvers.push(resolve);
           });
@@ -354,16 +342,13 @@ describe('JobQueueProcessor', () => {
         repo.enqueue({ queue: 'test-queue', payload: { i } });
       }
 
-      // First tick claims 2
       const firstClaimed = await batchProcessor.tick();
       expect(firstClaimed).toBe(2);
 
-      // Release first batch
       wave = 1;
       for (const r of resolvers) r();
       await flush();
 
-      // Second tick should claim the remaining 2
       const secondClaimed = await batchProcessor.tick();
       expect(secondClaimed).toBe(2);
       await flush();
@@ -406,7 +391,6 @@ describe('JobQueueProcessor', () => {
       shortProcessor.start();
       await shortProcessor.stop();
 
-      // Enqueue after stop — should not be processed
       repo.enqueue({ queue: 'stop-queue', payload: {} });
       await new Promise((r) => setTimeout(r, 60));
 
@@ -428,19 +412,14 @@ describe('JobQueueProcessor', () => {
       repo.enqueue({ queue: 'slow-queue', payload: {} });
       slowProcessor.start();
 
-      // Wait for the job to be picked up
       await flush();
 
-      // Begin stopping while job is in flight
       const stopPromise = slowProcessor.stop();
 
-      // Job is still running
       expect(jobFinished).toBe(false);
 
-      // Complete the job
       resolveJob();
 
-      // stop() should now resolve
       await stopPromise;
       expect(jobFinished).toBe(true);
     });
@@ -448,30 +427,24 @@ describe('JobQueueProcessor', () => {
 
   describe('stale job reclaim', () => {
     it('reclaims stale processing jobs during tick', async () => {
-      // Create processor with short stale threshold
       const staleProcessor = new JobQueueProcessor(repo, { staleThresholdMs: 100 });
       staleProcessor.register('stale-queue', async () => {});
 
-      // Enqueue and dequeue to mark as processing
       const job = repo.enqueue({ queue: 'stale-queue', payload: {} });
       repo.dequeue('stale-queue', 1);
 
-      // Confirm it's processing
       const processing = repo.getJob(job.id);
       expect(processing?.status).toBe('processing');
 
-      // Manually set started_at far in the past so it's considered stale
       db.prepare(`UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?`).run(
         Date.now() - 10_000,
         Date.now() - 10_000,
         job.id
       );
 
-      // tick() will run checkStaleJobs on first call (lastStaleCheck=0)
       await staleProcessor.tick();
       await flush();
 
-      // The stale job should have been reclaimed to 'pending' and then processed
       const after = repo.getJob(job.id);
       expect(after?.status).toBe('completed');
     });
@@ -585,41 +558,32 @@ describe('JobQueueProcessor', () => {
       const job = repo.enqueue({ queue: 'fresh-queue', payload: {} });
       repo.dequeue('fresh-queue', 1);
 
-      // started_at is recent (just now), so stale threshold of 60s won't reclaim it
-      // tick() runs stale check (lastStaleCheck=0) but staleBefore = now - 60000
-      // started_at is ~now, which is > staleBefore, so not reclaimed
       await staleProcessor.tick();
       await flush();
 
       const after = repo.getJob(job.id);
-      // Should still be processing (not reclaimed and re-processed)
       expect(after?.status).toBe('processing');
     });
 
     it('does not run stale check again within STALE_CHECK_INTERVAL', async () => {
-      // Use a fresh processor with short stale threshold
       const throttledProcessor = new JobQueueProcessor(repo, { staleThresholdMs: 100 });
       throttledProcessor.register('throttle-queue', async () => {});
 
-      // Enqueue and dequeue to create a processing job
       const job = repo.enqueue({ queue: 'throttle-queue', payload: {} });
       repo.dequeue('throttle-queue', 1);
 
-      // Make it stale
       db.prepare(`UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?`).run(
         Date.now() - 10_000,
         Date.now() - 10_000,
         job.id
       );
 
-      // First tick: runs stale check (lastStaleCheck=0), reclaims and processes
       await throttledProcessor.tick();
       await flush();
 
       const afterFirst = repo.getJob(job.id);
       expect(afterFirst?.status).toBe('completed');
 
-      // Create another stale job
       const job2 = repo.enqueue({ queue: 'throttle-queue', payload: {} });
       repo.dequeue('throttle-queue', 1);
       db.prepare(`UPDATE job_queue SET started_at = ?, heartbeat_at = ? WHERE id = ?`).run(
@@ -628,14 +592,10 @@ describe('JobQueueProcessor', () => {
         job2.id
       );
 
-      // Second tick: within 60s window, stale check is SKIPPED
-      // The stale job should NOT be reclaimed, so it stays processing
-      // But tick still tries to dequeue pending jobs — there are none
       await throttledProcessor.tick();
       await flush();
 
       const afterSecond = repo.getJob(job2.id);
-      // Still processing — stale check was throttled
       expect(afterSecond?.status).toBe('processing');
 
       await throttledProcessor.stop();
@@ -686,7 +646,6 @@ describe('JobQueueProcessor', () => {
       processor.setChangeNotifier((table) => notified.push(table));
       processor.register('test-queue', async () => {});
 
-      // No jobs enqueued
       await processor.tick();
       await flush();
 
@@ -694,9 +653,6 @@ describe('JobQueueProcessor', () => {
     });
 
     it('passes a session-scoped change for jobs whose payload carries a sessionId', async () => {
-      // Task #862 (review P2): the message_delivery notifier must be
-      // session-scoped so a delivery job only re-evaluates that session's
-      // transcript feed, not every open one.
       const scopes: Array<Record<string, string> | undefined> = [];
       processor.setChangeNotifier((_table, scope) => scopes.push(scope));
       processor.register('message_delivery', async () => {});

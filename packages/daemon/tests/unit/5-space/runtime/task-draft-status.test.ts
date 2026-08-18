@@ -1,16 +1,3 @@
-/**
- * Unit tests for native `draft` task status.
- *
- * Covers:
- *   - `draft` is a valid SpaceTaskStatus value
- *   - Draft tasks can only transition to `open` or `archived`
- *   - Draft tasks are never auto-started by the orchestrator (status check)
- *   - `publishTask` transitions draft → open
- *   - Invalid transitions out of `draft` are rejected
- *   - Draft task created via `createTask` with `status: 'draft'`
- *   - Dependency on a draft task is treated as permanently blocked
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -212,15 +199,12 @@ describe('SpaceTaskManager — draft task lifecycle', () => {
       status: 'draft',
     });
 
-    // Publish
     task = await taskManager.publishTask(task.id);
     expect(task.status).toBe('open');
 
-    // Start
     task = await taskManager.setTaskStatus(task.id, 'in_progress');
     expect(task.status).toBe('in_progress');
 
-    // Complete
     task = await taskManager.setTaskStatus(task.id, 'done');
     expect(task.status).toBe('done');
   });
@@ -261,14 +245,11 @@ describe('SpaceTaskManager — draft task lifecycle', () => {
       dependsOn: [draft.id],
     });
 
-    // Dependencies not met while draft
     expect(await taskManager.areDependenciesMet(dependent)).toBe(false);
 
-    // Publish the draft
     await taskManager.publishTask(draft.id);
-    expect(await taskManager.areDependenciesMet(dependent)).toBe(false); // still not done
+    expect(await taskManager.areDependenciesMet(dependent)).toBe(false);
 
-    // Start and complete the dependency
     await taskManager.setTaskStatus(draft.id, 'in_progress');
     await taskManager.setTaskStatus(draft.id, 'done');
     expect(await taskManager.areDependenciesMet(dependent)).toBe(true);

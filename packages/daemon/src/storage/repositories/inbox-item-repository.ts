@@ -1,17 +1,8 @@
-/**
- * Inbox Item Repository
- *
- * Repository for GitHub inbox item CRUD operations.
- */
-
 import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
 import type { InboxItem, InboxItemStatus, SecurityCheckResult } from '@hyperneo/shared';
 import type { SQLiteValue } from '../types';
 
-/**
- * Parameters for creating a new inbox item
- */
 export interface CreateInboxItemParams {
   source: 'github_issue' | 'github_comment' | 'github_pr';
   repository: string;
@@ -26,9 +17,6 @@ export interface CreateInboxItemParams {
   rawEvent: unknown;
 }
 
-/**
- * Filter options for querying inbox items
- */
 export interface InboxItemFilter {
   status?: InboxItemStatus;
   repository?: string;
@@ -40,9 +28,6 @@ export interface InboxItemFilter {
 export class InboxItemRepository {
   constructor(private db: BunDatabase) {}
 
-  /**
-   * Create a new inbox item
-   */
   createItem(params: CreateInboxItemParams): InboxItem {
     const id = generateUUID();
     const now = Date.now();
@@ -78,9 +63,6 @@ export class InboxItemRepository {
     return this.getItem(id)!;
   }
 
-  /**
-   * Get an item by ID
-   */
   getItem(id: string): InboxItem | null {
     const stmt = this.db.prepare(`SELECT * FROM inbox_items WHERE id = ?`);
     const row = stmt.get(id) as Record<string, unknown> | undefined;
@@ -89,9 +71,6 @@ export class InboxItemRepository {
     return this.rowToItem(row);
   }
 
-  /**
-   * List items with optional filtering
-   */
   listItems(filter?: InboxItemFilter): InboxItem[] {
     let query = `SELECT * FROM inbox_items`;
     const conditions: string[] = [];
@@ -130,16 +109,10 @@ export class InboxItemRepository {
     return rows.map((r) => this.rowToItem(r));
   }
 
-  /**
-   * List pending items
-   */
   listPendingItems(limit = 50): InboxItem[] {
     return this.listItems({ status: 'pending', limit });
   }
 
-  /**
-   * Update item status
-   */
   updateItemStatus(id: string, status: InboxItemStatus, routedToRoomId?: string): InboxItem | null {
     const fields: string[] = ['status = ?', 'updated_at = ?'];
     const values: SQLiteValue[] = [status, Date.now()];
@@ -158,56 +131,35 @@ export class InboxItemRepository {
     return this.getItem(id);
   }
 
-  /**
-   * Dismiss an item
-   */
   dismissItem(id: string): InboxItem | null {
     return this.updateItemStatus(id, 'dismissed');
   }
 
-  /**
-   * Mark item as routed to a room
-   */
   routeItem(id: string, roomId: string): InboxItem | null {
     return this.updateItemStatus(id, 'routed', roomId);
   }
 
-  /**
-   * Mark item as blocked
-   */
   blockItem(id: string): InboxItem | null {
     return this.updateItemStatus(id, 'blocked');
   }
 
-  /**
-   * Delete an item by ID
-   */
   deleteItem(id: string): void {
     const stmt = this.db.prepare(`DELETE FROM inbox_items WHERE id = ?`);
     stmt.run(id);
   }
 
-  /**
-   * Delete all items for a specific repository
-   */
   deleteItemsForRepository(repository: string): number {
     const stmt = this.db.prepare(`DELETE FROM inbox_items WHERE repository = ?`);
     const result = stmt.run(repository);
     return result.changes;
   }
 
-  /**
-   * Count items by status
-   */
   countByStatus(status: InboxItemStatus): number {
     const stmt = this.db.prepare(`SELECT COUNT(*) as count FROM inbox_items WHERE status = ?`);
     const row = stmt.get(status) as { count: number } | undefined;
     return row?.count ?? 0;
   }
 
-  /**
-   * Convert a database row to an InboxItem object
-   */
   private rowToItem(row: Record<string, unknown>): InboxItem {
     return {
       id: row.id as string,

@@ -1,11 +1,6 @@
-/**
- * Tests for outbound action queue
- */
-
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { signal } from '@preact/signals';
 
-// Mock connectionState before importing the module
 const mockConnectionState = signal<'connected' | 'disconnected' | 'reconnecting'>('disconnected');
 
 vi.mock('../state', () => ({
@@ -143,29 +138,23 @@ describe('OutboundQueue', () => {
     });
 
     it('should mark successful actions as sent', async () => {
-      // Queue while disconnected
       await enqueueAction('Action', async () => {});
-      // Connect and flush
       mockConnectionState.value = 'connected';
       await flushQueue();
 
-      // Actions are cleaned up after 2s, but status is set immediately
       const actions = getQueuedActions();
       expect(actions[0].status).toBe('sent');
     });
 
     it('should mark failed actions with error', async () => {
-      // Queue while disconnected
       await enqueueAction('Failing', async () => {
         throw new Error('Network error');
       });
-      // Connect and flush
       mockConnectionState.value = 'connected';
       await flushQueue();
 
       const actions = getQueuedActions();
       expect(actions[0].status).toBe('failed');
-      // sanitizeUserError passes through user-friendly messages
       expect(actions[0].error).toBe('Network error');
     });
 
@@ -194,7 +183,6 @@ describe('OutboundQueue', () => {
       await flushQueue();
 
       expect(executed).not.toHaveBeenCalled();
-      // Action stays pending for next flush
       expect(getQueuedActions()[0].status).toBe('pending');
     });
 
@@ -206,7 +194,6 @@ describe('OutboundQueue', () => {
         callCount++;
       });
       await enqueueAction('Action 2', async () => {
-        // Simulate connection dropping during this action
         mockConnectionState.value = 'disconnected';
         callCount++;
       });
@@ -216,7 +203,6 @@ describe('OutboundQueue', () => {
 
       await flushQueue();
 
-      // First two actions attempted, third left pending
       expect(callCount).toBe(2);
       const actions = getQueuedActions();
       expect(actions.find((a) => a.label === 'Action 3')?.status).toBe('pending');

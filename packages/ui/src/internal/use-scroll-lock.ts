@@ -11,7 +11,6 @@ export function useScrollLock(
     const originalOverflow = body.style.overflow;
     const originalPaddingRight = body.style.paddingRight;
 
-    // Calculate scrollbar width
     const scrollbarWidth = window.innerWidth - ownerDocument.documentElement.clientWidth;
 
     body.style.overflow = 'hidden';

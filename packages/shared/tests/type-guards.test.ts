@@ -1,9 +1,3 @@
-/**
- * Type Guards Tests
- *
- * Tests for SDK message type guard functions
- */
-
 import { describe, test, expect } from 'bun:test';
 import {
   flattenSDKSlashCommands,
@@ -33,7 +27,6 @@ import {
 } from '../src/sdk/type-guards';
 import type { SDKMessage } from '../src/sdk/sdk';
 
-// Helper to create base message properties
 const baseProps = {
   uuid: 'test-uuid',
   session_id: 'test-session',
@@ -460,10 +453,6 @@ describe('Content Block Type Guards', () => {
     });
 
     test('should return true even when thinking payload is empty (Opus 4.7 case)', () => {
-      // Opus 4.7 with `thinking.display = 'omitted'` returns a
-      // structurally-valid thinking block whose `thinking` field is
-      // empty. The type guard stays structural; callers use
-      // `hasRenderableThinking` to decide whether to display.
       const block: ContentBlock = {
         type: 'thinking',
         thinking: '',
@@ -473,8 +462,6 @@ describe('Content Block Type Guards', () => {
     });
 
     test('should return false for redacted_thinking block', () => {
-      // redacted_thinking is its own variant — callers that want
-      // "is it a thinking block?" shouldn't match redacted blocks.
       const block: ContentBlock = {
         type: 'redacted_thinking',
         data: 'opaque',
@@ -642,7 +629,6 @@ describe('getMessageTypeDescription', () => {
   });
 
   test('should return Unknown Message for unrecognized type', () => {
-    // Create a message with an unknown type
     const msg = {
       ...baseProps,
       type: 'unknown_type',

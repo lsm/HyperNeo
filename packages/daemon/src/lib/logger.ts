@@ -1,15 +1,3 @@
-/**
- * Logger utility for daemon package
- *
- * This is a re-export of the shared logger with daemon-specific defaults.
- * Modules should use this Logger class for consistent logging across the daemon.
- *
- * The shared logger provides:
- * - Log levels: SILENT, ERROR, WARN, INFO, DEBUG, TRACE
- * - Environment-based defaults (test=SILENT, prod=WARN, dev=INFO)
- * - Namespace filtering via LOG_FILTER environment variable
- */
-
 import {
   Logger as SharedLogger,
   createLogger,
@@ -23,18 +11,10 @@ import {
   withConsoleLogCaptureSuppressed,
 } from '@hyperneo/shared';
 
-/**
- * Logger class - wraps the shared logger for daemon compatibility
- *
- * Usage:
- *   const logger = new Logger('SessionManager');
- *   logger.info('Session created');
- */
 export class Logger {
   private sharedLogger: SharedLogger;
 
   constructor(prefix: string) {
-    // Create a shared logger with the daemon namespace prefix
     this.sharedLogger = createLogger(`hyperneo:daemon:${prefix.toLowerCase()}`);
   }
 
@@ -63,7 +43,6 @@ export class Logger {
   }
 }
 
-// Re-export shared logger utilities for direct usage
 export {
   LogLevel,
   configureLogger,

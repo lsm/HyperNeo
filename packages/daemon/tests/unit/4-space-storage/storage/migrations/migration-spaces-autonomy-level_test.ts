@@ -1,24 +1,8 @@
-/**
- * Migration 33 Tests — autonomy_level column on spaces
- *
- * Tests for Migration 33: Add autonomy_level column to the spaces table.
- *
- * Covers:
- * - Fresh DB (full migration chain): column exists with correct default
- * - Legacy DB path: column is added to an existing table that lacks it
- * - Idempotency: running migration twice on a table that already has the column is a no-op
- * - Default value: existing rows get 'supervised' as autonomy_level after column add
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigrations, runMigration86 } from '../../../../../src/storage/schema/index.ts';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function columnExists(db: BunDatabase, table: string, column: string): boolean {
   const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
@@ -32,10 +16,6 @@ function getColumnDefault(db: BunDatabase, table: string, column: string): strin
   }>;
   return rows.find((r) => r.name === column)?.dflt_value ?? null;
 }
-
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
 
 describe('Migration 33: Add autonomy_level to spaces', () => {
   let testDir: string;
@@ -62,10 +42,6 @@ describe('Migration 33: Add autonomy_level to spaces', () => {
       // ignore
     }
   });
-
-  // -------------------------------------------------------------------------
-  // Fresh DB — full migration chain
-  // -------------------------------------------------------------------------
 
   test('fresh DB: autonomy_level column exists after full migration', () => {
     runMigrations(db, () => {});
@@ -105,12 +81,7 @@ describe('Migration 33: Add autonomy_level to spaces', () => {
     expect(row.autonomy_level).toBe(3);
   });
 
-  // -------------------------------------------------------------------------
-  // Legacy DB path — simulate pre-migration-33 state without the column
-  // -------------------------------------------------------------------------
-
   test('legacy DB: column is added to existing spaces table that lacks it', () => {
-    // Create the spaces table as it existed before migration 33
     db.exec(`
 			CREATE TABLE spaces (
 				id TEXT PRIMARY KEY,
@@ -129,13 +100,10 @@ describe('Migration 33: Add autonomy_level to spaces', () => {
 			)
 		`);
 
-    // Confirm column is absent before migration
     expect(columnExists(db, 'spaces', 'autonomy_level')).toBe(false);
 
-    // Run migrations
     runMigrations(db, () => {});
 
-    // Column should now exist
     expect(columnExists(db, 'spaces', 'autonomy_level')).toBe(true);
   });
 
@@ -176,22 +144,13 @@ describe('Migration 33: Add autonomy_level to spaces', () => {
     expect(rows[1]).toMatchObject({ id: 'space-2', name: 'Space B', autonomy_level: 1 });
   });
 
-  // -------------------------------------------------------------------------
-  // Idempotency — column already exists
-  // -------------------------------------------------------------------------
-
   test('idempotency: running migration twice does not error', () => {
     runMigrations(db, () => {});
     expect(() => runMigrations(db, () => {})).not.toThrow();
     expect(columnExists(db, 'spaces', 'autonomy_level')).toBe(true);
   });
 
-  // -------------------------------------------------------------------------
-  // Migration 86: TEXT → INTEGER autonomy_level conversion
-  // -------------------------------------------------------------------------
-
   test('migration 86: supervised text value converts to 1', () => {
-    // Create pre-M86 spaces table with TEXT autonomy_level
     db.exec(`
 			CREATE TABLE spaces (
 				id TEXT PRIMARY KEY,
@@ -284,14 +243,7 @@ describe('Migration 33: Add autonomy_level to spaces', () => {
     }).toThrow();
   });
 
-  // -------------------------------------------------------------------------
-  // Migration 86: approval_source collapse
-  // -------------------------------------------------------------------------
-
   test('migration 86: old approval_source values are converted', () => {
-    // Run full migration chain first to get the correct schema, then simulate
-    // pre-M86 data by writing old approval_source values and verifying the
-    // M86 UPDATE statements convert them correctly.
     runMigrations(db, () => {});
 
     const now = Date.now();
@@ -303,7 +255,6 @@ describe('Migration 33: Add autonomy_level to spaces', () => {
 			INSERT INTO space_tasks (id, space_id, task_number, title, approval_source, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?)
 		`);
-    // Simulate pre-M86 data by writing old values directly
     insertTask.run('t1', 'space-1', 1, 'T1', 'neo_agent', now, now);
     insertTask.run('t2', 'space-1', 2, 'T2', 'space_agent', now, now);
     insertTask.run('t3', 'space-1', 3, 'T3', 'task_agent', now, now);
@@ -312,7 +263,6 @@ describe('Migration 33: Add autonomy_level to spaces', () => {
     insertTask.run('t6', 'space-1', 6, 'T6', 'human', now, now);
     insertTask.run('t7', 'space-1', 7, 'T7', null, now, now);
 
-    // Apply the same UPDATE statements that M86 uses
     db.exec(`
 			UPDATE space_tasks SET approval_source = 'agent'
 			WHERE approval_source IN ('neo_agent', 'space_agent', 'task_agent', 'node_agent')
@@ -339,16 +289,9 @@ describe('Migration 33: Add autonomy_level to spaces', () => {
 
   test('migration 86: pending_checkpoint_type column exists after full migrate', () => {
     runMigrations(db, () => {});
-    // `pending_action_index` was added by M86 but later dropped by M104 (PR
-    // 5/5 of the task-agent-as-post-approval-executor refactor). Only
-    // `pending_checkpoint_type` survives the full pipeline.
     expect(columnExists(db, 'space_tasks', 'pending_action_index')).toBe(false);
     expect(columnExists(db, 'space_tasks', 'pending_checkpoint_type')).toBe(true);
   });
-
-  // -------------------------------------------------------------------------
-  // Idempotency
-  // -------------------------------------------------------------------------
 
   test('idempotency: data is not duplicated on second migration run', () => {
     runMigrations(db, () => {});
@@ -364,16 +307,6 @@ describe('Migration 33: Add autonomy_level to spaces', () => {
     expect(rows).toHaveLength(1);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Regression: M86 partial-migration — spaces already numeric, tasks missing column
-// ---------------------------------------------------------------------------
-// This tests the specific bug where an older version of migration 86 only rebuilt
-// the `spaces` table (converting autonomy_level TEXT → INTEGER) but did NOT yet add
-// `pending_checkpoint_type` to `space_tasks`. On subsequent daemon startups the
-// early-return check (`autonomy_level` is already integer) would fire and skip the
-// column addition, leaving `space_tasks` without `pending_checkpoint_type`.
-// After the fix, Parts 2+3 of M86 run unconditionally so the column is always added.
 
 describe('Migration 86 regression: partial migration (spaces numeric, tasks column missing)', () => {
   let testDir: string;
@@ -405,9 +338,6 @@ describe('Migration 86 regression: partial migration (spaces numeric, tasks colu
   });
 
   test('adds pending_checkpoint_type when spaces.autonomy_level is already INTEGER but column is missing', () => {
-    // Simulate a database that was partially upgraded by an old version of M86:
-    // `spaces.autonomy_level` is already INTEGER (Part 1 done) but
-    // `space_tasks.pending_checkpoint_type` was never added (Parts 2+3 not done).
     db.exec(`
 			CREATE TABLE spaces (
 				id TEXT PRIMARY KEY,
@@ -449,15 +379,12 @@ describe('Migration 86 regression: partial migration (spaces numeric, tasks colu
 			)
 		`);
 
-    // Seed a space so the `typeof(autonomy_level)` check returns 'integer',
-    // which is the exact condition that triggered the premature early-return.
     const now = Date.now();
     db.prepare(
       `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?)`
     ).run('sp-1', 'sp-1', '/ws/1', 'Space 1', now, now);
 
-    // Before the fix: runMigration86 would early-return here and skip the column.
     runMigration86(db);
 
     expect(columnExists(db, 'space_tasks', 'pending_checkpoint_type')).toBe(true);
@@ -465,7 +392,6 @@ describe('Migration 86 regression: partial migration (spaces numeric, tasks colu
   });
 
   test('pending_checkpoint_type column is writable after M86 fixes it up', () => {
-    // Same partial-migration setup as above.
     db.exec(`
 			CREATE TABLE spaces (
 				id TEXT PRIMARY KEY,
@@ -508,9 +434,6 @@ describe('Migration 86 regression: partial migration (spaces numeric, tasks colu
 
     runMigration86(db);
 
-    // Verify the column can be written — the root production error was
-    // "no such column: pending_checkpoint_type" on an UPDATE that set this field.
-    // M86's CHECK constraint allows 'gate'; 'task_completion' is widened by M98.
     expect(() => {
       db.prepare(`UPDATE space_tasks SET pending_checkpoint_type = 'gate' WHERE id = ?`).run('t-1');
     }).not.toThrow();

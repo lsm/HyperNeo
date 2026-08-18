@@ -11,7 +11,6 @@ const _server = serve({
   async fetch(req: Request, _server: unknown) {
     const url = new URL(req.url);
 
-    // API proxy to daemon - forward all /api requests
     if (url.pathname.startsWith('/api/')) {
       const daemonUrl = `${DAEMON_URL}${url.pathname}${url.search}`;
 
@@ -21,7 +20,6 @@ const _server = serve({
           headers: req.headers,
         };
 
-        // Only include body for non-GET/HEAD requests
         if (req.method !== 'GET' && req.method !== 'HEAD') {
           fetchOptions.body = req.body;
         }
@@ -38,18 +36,15 @@ const _server = serve({
       }
     }
 
-    // Let Bun's development server handle static files (JS, CSS, etc.)
-    // This is important for proper MIME types and module serving
     return null as unknown as Response;
   },
 
   routes: {
-    // SPA - serve index.html for all routes (client-side handling)
     '/*': index,
   },
 
   development: isDev && {
-    hmr: true, // Hot module replacement
-    console: true, // Stream browser console to terminal
+    hmr: true,
+    console: true,
   },
 });

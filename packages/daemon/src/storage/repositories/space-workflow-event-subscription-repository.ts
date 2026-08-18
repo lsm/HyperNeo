@@ -1,25 +1,7 @@
-/**
- * Durable CRUD for runtime-registered workflow external-event subscriptions.
- *
- * The `SpaceRuntime` in-memory `TopicTrie` is a *derived index* over this
- * table — runtime registration/removal is write-through (table + trie), and
- * the trie is rebuilt from these rows on rehydrate. This is what lets an
- * agent-registered `dynamic` subscription (e.g. a coder subscribing to its own
- * PR via `subscribe_pr_events`) survive a daemon restart.
- *
- * See `space_workflow_event_subscriptions` (migration 185) for the schema and
- * the dedup keying rationale.
- */
-
 import { generateUUID } from '@hyperneo/shared';
 import { createWorkflowEventSubscriptionTables } from '../schema/workflow-event-subscriptions';
 import type { Database as BunDatabase } from '../sqlite-compat';
 
-/**
- * The persisted kind. Only `dynamic` subscriptions are stored — static template
- * interests are re-materialized from the workflow definition, so the table's
- * CHECK constrains this to `'dynamic'`.
- */
 export type WorkflowSubscriptionKind = 'dynamic';
 
 export interface SpaceWorkflowEventSubscription {
@@ -29,9 +11,7 @@ export interface SpaceWorkflowEventSubscription {
   taskId: string;
   nodeId: string;
   agentName: string;
-  /** Original (preserved-casing) topic pattern. */
   topic: string;
-  /** Lowercased topic — the dedup/conflict key, matches trie matching. */
   topicNormalized: string;
   subscriptionKind: WorkflowSubscriptionKind;
   createdAt: number;
@@ -55,22 +35,10 @@ function normalizeTopic(topic: string): string {
 export class SpaceWorkflowEventSubscriptionRepository {
   constructor(private readonly db: BunDatabase) {}
 
-  /**
-   * Create the table if missing. Called by `SpaceRuntime` on construction so a
-   * runtime built against a DB that has not yet run migrations still has the
-   * table — mirrors `ToolContinuationRecoveryRepository.ensureSchema`.
-   */
   ensureSchema(): void {
     createWorkflowEventSubscriptionTables(this.db);
   }
 
-  /**
-   * Insert or update a subscription keyed by (slot, topic_normalized, kind).
-   * Idempotent — re-registering the same topic for the same slot touches
-   * `updated_at` rather than creating a duplicate row, matching the trie's
-   * remove-then-insert dedup. Returns void; callers that need the row read it
-   * back via the list methods.
-   */
   upsert(params: UpsertWorkflowEventSubscriptionParams): void {
     const now = Date.now();
     this.db
@@ -97,10 +65,6 @@ export class SpaceWorkflowEventSubscriptionRepository {
       );
   }
 
-  /**
-   * Remove a single subscription identified by its slot + topic + kind.
-   * `topic` is matched case-insensitively. Used by `unregisterSubscription`.
-   */
   deleteBySlotTopic(
     workflowRunId: string,
     taskId: string,
@@ -118,7 +82,6 @@ export class SpaceWorkflowEventSubscriptionRepository {
       .run(workflowRunId, taskId, nodeId, agentName, normalizeTopic(topic), subscriptionKind);
   }
 
-  /** Remove every subscription for an agent slot (run + task + node + agent). */
   deleteBySlot(workflowRunId: string, taskId: string, nodeId: string, agentName: string): void {
     this.db
       .prepare(
@@ -128,23 +91,16 @@ export class SpaceWorkflowEventSubscriptionRepository {
       .run(workflowRunId, taskId, nodeId, agentName);
   }
 
-  /** Remove every subscription for a run (full teardown). */
   deleteByRun(workflowRunId: string): void {
     this.db
       .prepare(`DELETE FROM space_workflow_event_subscriptions WHERE workflow_run_id = ?`)
       .run(workflowRunId);
   }
 
-  /** Remove every subscription for a task (noncanonical duplicate cleanup). */
   deleteByTask(taskId: string): void {
     this.db.prepare(`DELETE FROM space_workflow_event_subscriptions WHERE task_id = ?`).run(taskId);
   }
 
-  /**
-   * All dynamic subscriptions for a single run. Backs the `list_subscriptions`
-   * diagnostic tool's durable layer (the per-space rebuild uses
-   * {@link listBySpace}). Ordered by `created_at` for stable output.
-   */
   listByRun(workflowRunId: string): SpaceWorkflowEventSubscription[] {
     const rows = this.db
       .prepare(
@@ -155,7 +111,6 @@ export class SpaceWorkflowEventSubscriptionRepository {
     return rows.map(rowToSubscription);
   }
 
-  /** All subscriptions for a space — drives the per-space trie rebuild. */
   listBySpace(spaceId: string): SpaceWorkflowEventSubscription[] {
     const rows = this.db
       .prepare(

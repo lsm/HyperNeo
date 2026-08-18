@@ -1,23 +1,7 @@
-/**
- * Unit tests for selectWorkflow()
- *
- * Per M7 spec: selection has two modes only:
- *   1. Explicit workflowId provided → return that workflow (or null if not found)
- *   2. No workflowId → return null (LLM agent must call list_workflows and pick explicitly)
- *
- * There are no heuristics (no tag matching, no keyword matching, no fallback selection).
- *
- * selectWorkflow() is a pure function: no DB, no managers.
- */
-
 import { describe, test, expect } from 'bun:test';
 import { selectWorkflow } from '../../../../src/lib/space/runtime/workflow-selector.ts';
 import type { WorkflowSelectionContext } from '../../../../src/lib/space/runtime/workflow-selector.ts';
 import type { SpaceWorkflow } from '@hyperneo/shared';
-
-// ---------------------------------------------------------------------------
-// Fixture builders
-// ---------------------------------------------------------------------------
 
 let idCounter = 0;
 function makeId(): string {
@@ -49,10 +33,6 @@ function makeContext(overrides: Partial<WorkflowSelectionContext> = {}): Workflo
     ...overrides,
   };
 }
-
-// ---------------------------------------------------------------------------
-// Explicit workflowId provided
-// ---------------------------------------------------------------------------
 
 describe('selectWorkflow — explicit workflowId', () => {
   test('returns the workflow with the matching id', () => {
@@ -101,10 +81,6 @@ describe('selectWorkflow — explicit workflowId', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// No workflowId — always returns null (LLM must pick)
-// ---------------------------------------------------------------------------
-
 describe('selectWorkflow — no workflowId (LLM must pick)', () => {
   test('returns null when no workflowId and no workflows', () => {
     const ctx = makeContext({ availableWorkflows: [] });
@@ -114,7 +90,6 @@ describe('selectWorkflow — no workflowId (LLM must pick)', () => {
   test('returns null when no workflowId even if workflows are available', () => {
     const wf = makeWorkflow({ id: 'wf-noworkflowid', tags: ['coding'] });
     const ctx = makeContext({ availableWorkflows: [wf] });
-    // No workflowId → always null (no server-side heuristics)
     expect(selectWorkflow(ctx)).toBeNull();
   });
 
@@ -122,7 +97,6 @@ describe('selectWorkflow — no workflowId (LLM must pick)', () => {
     const wf1 = makeWorkflow({ id: 'wf-nm1', name: 'Coding Workflow' });
     const wf2 = makeWorkflow({ id: 'wf-nm2', name: 'Research Workflow' });
     const ctx = makeContext({ availableWorkflows: [wf1, wf2] });
-    // Still null — LLM must choose
     expect(selectWorkflow(ctx)).toBeNull();
   });
 });

@@ -130,8 +130,6 @@ describe('SpaceMemories', () => {
   });
 
   it('does not flash the empty state before the first load returns', () => {
-    // loaded=false with isLoading still false is the brief window before attach
-    // flips the loading flag — the spinner must win, not the empty state.
     mockLoading.value = false;
     mockLoaded.value = false;
 
@@ -221,7 +219,6 @@ describe('SpaceMemories', () => {
   });
 
   it('surfaces an atomic create conflict as an error', async () => {
-    // Key passes the local preflight but the backend rejects the insert.
     mockCreate.mockRejectedValue(new Error('A memory with the key "sneaky" already exists.'));
 
     render(<SpaceMemories spaceId="space-1" />);
@@ -239,7 +236,6 @@ describe('SpaceMemories', () => {
   it('does not close a newly-opened editor when a stale save resolves after a space switch', async () => {
     const { rerender } = render(<SpaceMemories spaceId="space-1" />);
 
-    // Start a create save in space-1 with a deferred RPC.
     let resolveStaleSave!: (entry: AgentMemoryEntry) => void;
     mockCreate.mockImplementation(
       () =>
@@ -253,17 +249,14 @@ describe('SpaceMemories', () => {
     fireEvent.input(screen.getByTestId('memory-content-input'), { target: { value: 'A body.' } });
     fireEvent.click(screen.getByTestId('memory-save-button'));
 
-    // Switch to space-2; the [spaceId] effect unmounts editor A.
     mockCreate.mockResolvedValue(makeMemory('whatever'));
     rerender(<SpaceMemories spaceId="space-2" />);
     await waitFor(() => expect(screen.queryByTestId('memory-key-input')).toBeNull());
 
-    // Open a fresh editor in space-2 and type.
     fireEvent.click(screen.getByTestId('memory-create-button'));
     const keyInputB = await screen.findByTestId('memory-key-input');
     fireEvent.input(keyInputB, { target: { value: 'b-key' } });
 
-    // The stale space-1 save resolves — must NOT close editor B or clobber input.
     resolveStaleSave(makeMemory('a-key'));
     await waitFor(() =>
       expect((screen.getByTestId('memory-key-input') as HTMLInputElement).value).toBe('b-key')
@@ -287,7 +280,6 @@ describe('SpaceMemories', () => {
   });
 
   it('flags a duplicate found via the authoritative (read-only) check', async () => {
-    // Key is not in the loaded set, but exists on the backend.
     mockExists.mockResolvedValue(true);
 
     render(<SpaceMemories spaceId="space-1" />);
@@ -338,8 +330,6 @@ describe('SpaceMemories', () => {
   });
 
   it('edits an existing memory with a locked key, preserving unchanged tags', async () => {
-    // Tag 'x,y' contains a comma and can't round-trip through the comma-split
-    // input; an unrelated content edit must NOT resend (and mangle) it.
     mockMemories.value = [makeMemory('alpha', { content: 'old body', tags: ['x,y'] })];
 
     render(<SpaceMemories spaceId="space-1" />);
@@ -356,7 +346,6 @@ describe('SpaceMemories', () => {
       expect(mockWrite).toHaveBeenCalledWith({
         key: 'alpha',
         content: 'updated body',
-        // tags omitted (unchanged) so the daemon preserves 'x,y'.
         tags: undefined,
       })
     );
@@ -400,7 +389,6 @@ describe('SpaceMemories', () => {
     mockMemories.value = [makeMemory('x')];
     const { rerender } = render(<SpaceMemories spaceId="space-A" />);
 
-    // Start a delete for X with a deferred RPC.
     let resolveStaleDelete!: (result: { deleted: boolean }) => void;
     mockDeleteMemory.mockImplementation(
       () =>
@@ -409,19 +397,16 @@ describe('SpaceMemories', () => {
         })
     );
     fireEvent.click(screen.getByTestId('memory-delete-x'));
-    fireEvent.click(screen.getByText('Delete')); // confirm → RPC in flight
+    fireEvent.click(screen.getByText('Delete'));
 
-    // Switch to space-B (loads Y); the [spaceId] effect closes X's modal.
     mockMemories.value = [makeMemory('y')];
     mockDeleteMemory.mockResolvedValue(true);
     rerender(<SpaceMemories spaceId="space-B" />);
     await waitFor(() => expect(screen.queryByText('Delete Memory')).toBeNull());
 
-    // Open Y's delete modal in space-B.
     fireEvent.click(screen.getByTestId('memory-delete-y'));
     expect(screen.getByText('Delete Memory')).toBeTruthy();
 
-    // X's stale delete resolves — must NOT close Y's modal.
     resolveStaleDelete({ deleted: true });
     await waitFor(() => expect(screen.getByText('Delete Memory')).toBeTruthy());
   });

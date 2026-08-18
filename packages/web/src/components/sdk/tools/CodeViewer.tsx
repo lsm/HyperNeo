@@ -1,14 +1,6 @@
-/**
- * CodeViewer - Component for displaying syntax-highlighted code
- *
- * Uses highlight.js for automatic language detection and syntax highlighting.
- * Particularly useful for Read and Write tool outputs.
- */
-
 import { useEffect, useRef } from 'preact/hooks';
 import { cn } from '../../../lib/utils.ts';
 
-// Lazy-loaded highlight.js — cached after first import
 let hljsModule: typeof import('highlight.js') | null = null;
 
 async function getHljs() {
@@ -19,25 +11,15 @@ async function getHljs() {
 }
 
 export interface CodeViewerProps {
-  /** The code content to display */
   code: string;
-  /** Optional language hint for syntax highlighting */
   language?: string;
-  /** File path (used to infer language if not specified) */
   filePath?: string;
-  /** Show line numbers */
   showLineNumbers?: boolean;
-  /** Maximum height before scrolling */
   maxHeight?: string;
-  /** Custom class names */
   className?: string;
-  /** Show file header */
   showHeader?: boolean;
 }
 
-/**
- * Detect language from file extension
- */
 function detectLanguageFromPath(filePath: string): string | undefined {
   const ext = filePath.split('.').pop()?.toLowerCase();
 
@@ -95,10 +77,8 @@ export function CodeViewer({
     getHljs().then((hljs) => {
       if (cancelled || !el) return;
 
-      // Clear previous highlighting
       el.removeAttribute('data-highlighted');
 
-      // Apply syntax highlighting
       let highlightedCode: string;
       if (detectedLanguage) {
         try {
@@ -107,17 +87,14 @@ export function CodeViewer({
           });
           highlightedCode = highlighted.value;
         } catch {
-          // If language detection fails, try auto-detect
           const highlighted = hljs.highlightAuto(code);
           highlightedCode = highlighted.value;
         }
       } else {
-        // Auto-detect language
         const highlighted = hljs.highlightAuto(code);
         highlightedCode = highlighted.value;
       }
 
-      // Wrap lines for line numbering if enabled
       if (showLineNumbers) {
         const lines = highlightedCode.split('\n');
         const wrappedLines = lines
@@ -146,7 +123,6 @@ export function CodeViewer({
         className
       )}
     >
-      {/* Header */}
       {showHeader && filePath && (
         <div class="bg-gray-100 dark:bg-gray-800 px-3 py-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
           <div class="text-xs font-mono text-gray-700 dark:text-gray-300">{filePath}</div>
@@ -161,14 +137,12 @@ export function CodeViewer({
         </div>
       )}
 
-      {/* Code content */}
       <div class="relative bg-gray-50 dark:bg-gray-900" style={{ maxHeight }}>
         <pre class="!m-0 !p-0 overflow-auto">
           <code ref={codeRef} class="block text-xs font-mono" style={{ whiteSpace: 'pre' }} />
         </pre>
       </div>
 
-      {/* Footer with line count */}
       {showLineNumbers && (
         <div class="bg-gray-100 dark:bg-gray-800 px-3 py-1.5 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-600 dark:text-gray-400">
           {lineCount} {lineCount === 1 ? 'line' : 'lines'}

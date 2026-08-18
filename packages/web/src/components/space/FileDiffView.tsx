@@ -1,30 +1,12 @@
-/**
- * FileDiffView — syntax-highlighted unified diff viewer
- *
- * Fetches the diff for a single file from the worktree via
- * `spaceWorkflowRun.getFileDiff` and renders it line-by-line with:
- *   - Green rows for additions (+)
- *   - Red rows for removals (-)
- *   - Blue rows for hunk headers (@@)
- *   - Dual line-number columns (old / new)
- */
-
 import { useState, useEffect } from 'preact/hooks';
 import { connectionManager } from '../../lib/connection-manager';
 import { cn } from '../../lib/utils';
 
-// ============================================================================
-// Types
-// ============================================================================
-
 export interface FileDiffViewProps {
   runId: string;
-  /** Task ID — when provided, diffs this task's worktree specifically */
   taskId?: string;
   filePath: string;
-  /** When set, shows the diff for this file within the specific commit (git show) */
   commitSha?: string;
-  /** When set, skips the RPC fetch and renders this diff directly (non-git fallback) */
   precomputedDiff?: { diff: string; additions: number; deletions: number };
   onBack: () => void;
   class?: string;
@@ -39,22 +21,6 @@ interface ParsedLine {
   newLineNum: number | null;
 }
 
-// ============================================================================
-// Diff parser
-// ============================================================================
-
-/**
- * Parse a unified diff string into typed, line-numbered rows.
- *
- * Handles:
- *   diff --git  → header
- *   index ...   → index
- *   --- / +++   → file-header
- *   @@ ...      → hunk (resets line counters)
- *   -           → removed (increments old counter)
- *   +           → added   (increments new counter)
- *   (space)     → context (increments both)
- */
 export function parseDiff(diff: string): ParsedLine[] {
   if (!diff) return [];
 
@@ -99,12 +65,10 @@ export function parseDiff(diff: string): ParsedLine[] {
         newLineNum: null,
       });
     } else if (raw.startsWith('\\')) {
-      // "\ No newline at end of file" — informational; no line number increment
       result.push({ type: 'index', content: raw, oldLineNum: null, newLineNum: null });
     } else if (!raw) {
       // trailing newline produces an empty string — skip it
     } else {
-      // context line (starts with space)
       oldLine++;
       newLine++;
       result.push({
@@ -118,10 +82,6 @@ export function parseDiff(diff: string): ParsedLine[] {
 
   return result;
 }
-
-// ============================================================================
-// Component
-// ============================================================================
 
 export function FileDiffView({
   runId,
@@ -139,7 +99,6 @@ export function FileDiffView({
   const [deletions, setDeletions] = useState(precomputedDiff?.deletions ?? 0);
 
   useEffect(() => {
-    // When a pre-computed diff is supplied, skip the RPC entirely.
     if (precomputedDiff) {
       setDiffText(precomputedDiff.diff);
       setAdditions(precomputedDiff.additions);
@@ -186,7 +145,6 @@ export function FileDiffView({
 
   return (
     <div class={cn('flex flex-col h-full overflow-hidden', className)} data-testid="file-diff-view">
-      {/* Header bar */}
       <div class="flex items-center gap-3 px-4 py-3 border-b border-dark-700 flex-shrink-0 bg-dark-850">
         <button
           onClick={onBack}
@@ -218,7 +176,6 @@ export function FileDiffView({
         )}
       </div>
 
-      {/* Content area */}
       <div class="flex-1 overflow-auto">
         {loading && (
           <div class="flex items-center justify-center h-32" data-testid="diff-loading">

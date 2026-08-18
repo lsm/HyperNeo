@@ -1,7 +1,3 @@
-/**
- * Tests for github.poll job handler
- */
-
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
 import { handleGitHubPoll } from '../../../../src/lib/job-handlers/github-poll.handler';
 import { GITHUB_POLL } from '../../../../src/lib/job-queue-constants';
@@ -95,17 +91,11 @@ describe('handleGitHubPoll', () => {
   });
 
   it('does NOT check processing status in dedup — only pending — so self-scheduling always works', async () => {
-    // The handler must NOT include 'processing' in its dedup query, because the
-    // current job is itself in 'processing' state while executing. Verifying
-    // that listJobs is called with 'pending' (not ['pending','processing']) is
-    // the only way to confirm self-scheduling is not blocked by the handler's own
-    // processing status.
     await handleGitHubPoll(makeDeps());
 
     const listArg = (
       listJobsMock.mock.calls[0] as [{ queue: string; status: string; limit: number }]
     )[0];
-    // Must be a string (single status), not an array that includes 'processing'.
     expect(typeof listArg.status).toBe('string');
     expect(listArg.status).toBe('pending');
     expect(listArg.status).not.toContain('processing');
@@ -122,7 +112,6 @@ describe('handleGitHubPoll', () => {
     deps.jobQueue.listJobs = listJobsMock as never;
     deps.jobQueue.enqueue = enqueueMock as never;
 
-    // Error is caught internally — handler resolves successfully
     const result = await handleGitHubPoll(deps);
     expect(result.polled).toBe(false);
     expect(enqueueMock).toHaveBeenCalledTimes(1);
@@ -136,9 +125,6 @@ describe('handleGitHubPoll', () => {
       listJobsMock.mock.calls[0] as [{ queue: string; status: string; limit: number }]
     )[0];
     expect(listArg.queue).toBe(GITHUB_POLL);
-    // Only 'pending' — not 'processing' — because the current job is itself
-    // in 'processing' state while the handler runs; checking 'processing'
-    // would always find itself and prevent self-scheduling.
     expect(listArg.status).toBe('pending');
     expect(listArg.limit).toBe(1);
   });
@@ -148,7 +134,6 @@ describe('handleGitHubPoll', () => {
     const result = await handleGitHubPoll(deps);
     expect(result.polled).toBe(false);
     expect(triggerPollMock).not.toHaveBeenCalled();
-    // Still enqueues next job
     expect(enqueueMock).toHaveBeenCalledTimes(1);
   });
 
@@ -158,7 +143,6 @@ describe('handleGitHubPoll', () => {
 
     expect(triggerPollMock).not.toHaveBeenCalled();
     expect(result.polled).toBe(false);
-    // Self-schedule still happens so the chain resumes when service is restarted
     expect(enqueueMock).toHaveBeenCalledTimes(1);
   });
 });

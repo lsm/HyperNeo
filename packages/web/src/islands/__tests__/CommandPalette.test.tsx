@@ -1,10 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for CommandPalette island.
- *
- * Covers render, open/close via signal, fuzzy search filter, command selection,
- * empty state, and Escape close behavior.
- */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, cleanup, fireEvent, screen } from '@testing-library/preact';
@@ -85,14 +79,11 @@ describe('CommandPalette', () => {
     render(<CommandPalette />);
     expect(await screen.findByTestId('command-palette-input')).toBeTruthy();
     commandPaletteOpenSignal.value = false;
-    // Give Preact + Combobox a tick to unmount the panel.
     await new Promise((r) => setTimeout(r, 0));
     expect(screen.queryByTestId('command-palette-input')).toBeNull();
   });
 
   it('swallows async rejections from a command run handler', async () => {
-    // Validates the rejection boundary in handleSelect — a throwing
-    // async command must not become an unhandled rejection.
     const unhandled = vi.fn();
     process.on('unhandledRejection', unhandled);
 

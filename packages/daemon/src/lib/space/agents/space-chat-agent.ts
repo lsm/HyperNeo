@@ -1,58 +1,15 @@
-/**
- * Space Chat Agent — System prompt builder for the Space's conversational coordinator.
- *
- * The Space chat agent is the interactive session where the human user talks to an
- * AI coordinator that manages work within the Space. It is workflow-aware: it knows
- * which workflows are available, what agents exist, and can recommend workflows or
- * kick off standalone tasks.
- *
- * This file is in the Space namespace — it does NOT modify Room agent prompts.
- *
- * ## Tool contract
- * The prompt references the following tools by name. They must be registered in the
- * MCP server(s) composed with this agent's session at runtime:
- *
- *   All tools are provided by createSpaceAgentMcpServer in space-agent-tools.ts:
- *     Workflow tools:
- *       - list_workflows
- *       - get_workflow_run
- *       - change_plan
- *       - get_workflow_detail
- *       - suggest_workflow
- *     Task tools:
- *       - list_tasks
- *       - create_standalone_task
- *       - get_task_detail
- *       - retry_task
- *       - cancel_task
- *       - reassign_task
- *     Task agent communication tools:
- *       - send_message_to_task
- *       - list_task_members
- *
- * See: docs/plans/multi-agent-v2-customizable-agents-workflows/07-workflow-selection-intelligence.md
- */
-
-// ---------------------------------------------------------------------------
-// Context types
-// ---------------------------------------------------------------------------
-
 import type { SpaceAutonomyLevel } from '@hyperneo/shared/types/space';
 import { LONG_HORIZON_SCHEDULING_GUARDRAIL } from './long-horizon-agent-tools';
 
-/** Minimal workflow summary for prompt embedding (avoids exposing full node graph). */
 export interface WorkflowSummary {
   id: string;
-  /** Human-readable slug usable as an alternative identifier in tool calls. */
   handle?: string;
   name: string;
   description?: string;
   tags: string[];
-  /** Number of nodes in the workflow — gives the agent a complexity signal. */
   nodeCount: number;
 }
 
-/** Minimal agent summary for prompt embedding. */
 export interface AgentSummary {
   id: string;
   name: string;
@@ -60,35 +17,13 @@ export interface AgentSummary {
 }
 
 export interface SpaceChatAgentContext {
-  /** Optional Space background context (operator-supplied). */
   background?: string;
-  /** Optional Space instructions (operator-supplied). */
   instructions?: string;
-  /** Workflows available in this Space. */
   workflows?: WorkflowSummary[];
-  /** Agents configured in this Space. */
   agents?: AgentSummary[];
-  /** Autonomy level for this Space — controls how much the agent can decide without human approval. */
   autonomyLevel?: SpaceAutonomyLevel;
 }
 
-// ---------------------------------------------------------------------------
-// Prompt builder
-// ---------------------------------------------------------------------------
-
-/**
- * Build the system prompt for the Space chat agent.
- *
- * The prompt includes:
- *   1. Role and purpose statement
- *   2. Available workflows (names, descriptions, tags, node count)
- *   3. Available agents (names, descriptions)
- *   4. Task-first guidance for workflow-aware execution
- *   5. Operator-supplied background and instructions
- *
- * Background and instructions are interpolated directly — they are
- * operator-controlled fields on a self-hosted tool so no sanitization is needed.
- */
 export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}): string {
   const sections: string[] = [];
 
@@ -145,11 +80,6 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
   const level = context.autonomyLevel ?? 1;
   sections.push(`\n## Autonomy Level\n`);
   sections.push(`This Space is configured at autonomy level **${level}** (scale 1-5).`);
-  // Decision-style guidance graduates with the level. Autonomy level is fundamentally a
-  // risk-tolerance threshold for checkpoints (space.autonomyLevel >= requiredLevel auto-passes
-  // a gate); the text below derives *decision style* (act vs. ask) from it, gated on
-  // reversibility rather than "uncertainty" — a coordinator is always somewhat uncertain, so
-  // treating uncertainty as an escalation trigger caused over-escalation at L4.
   if (level === 5) {
     sections.push(
       `Act broadly, then report. Make the best decision even when unsure and carry out routine ` +
@@ -174,7 +104,6 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
         `an action is irreversible and needs sign-off. Never bypass gates above the current level.`
     );
   } else {
-    // Levels 1–2: recommend and wait for explicit human instruction.
     sections.push(
       `Do not retry, reassign, or cancel without explicit human instruction. Provide recommendation ` +
         `and wait.`
@@ -203,9 +132,6 @@ export function buildSpaceChatSystemPrompt(context: SpaceChatAgentContext = {}):
       `message you; verify sender task/workflow context before acting.`
   );
 
-  // The coordinator has both the space-agent-tools MCP scheduler and the SDK
-  // cron/wakeup tools. Pin the layering so the two are picked by horizon, not
-  // guess (the long-horizon-agent standing guardrail).
   sections.push(`\n${LONG_HORIZON_SCHEDULING_GUARDRAIL}`);
 
   if (context.background) {

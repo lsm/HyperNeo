@@ -1,6 +1,3 @@
-// IMPORTANT: Import config first to ensure credential discovery runs
-// before any other modules (like provider-service) that depend on it.
-
 import { getConfig } from './src/config';
 import { createDaemonApp } from './src/app';
 import { emitStructuredLogEvent, withConsoleLogCaptureSuppressed } from './src/lib/logger';
@@ -49,18 +46,12 @@ process.on('unhandledRejection', async (reason) => {
 
 const config = getConfig();
 
-// Create daemon app in standalone mode. The sink-ready callback wires the real
-// flush as soon as the log sink exists — before the factory's long-running init
-// completes — so a fatal during startup still persists to the file. A top-level
-// await rejection does NOT emit `unhandledRejection`, so catch it explicitly,
-// emit + flush the fatal record, then exit (mirroring the CLI server entry
-// points). (Codex P2, PR #2499.)
 let app: Awaited<ReturnType<typeof createDaemonApp>>;
 try {
   app = await createDaemonApp({
     config,
     verbose: true,
-    standalone: true, // Show root info route in standalone mode
+    standalone: true,
     onStructuredLogSinkReady: (flush) => {
       flushStructuredLogs = flush;
     },
@@ -79,7 +70,6 @@ try {
 }
 const { server, cleanup } = app;
 
-// Server is already listening
 console.log(`\n🚀 HyperNeo Daemon started!`);
 console.log(`   Host: ${server.hostname}`);
 console.log(`   Port: ${server.port}`);
@@ -88,12 +78,10 @@ console.log(`\n📡 WebSocket: ws://${server.hostname}:${server.port}/ws`);
 console.log(`\n✨ MessageHub mode! Unified RPC + Pub/Sub over WebSocket.`);
 console.log(`   Session routing via message.sessionId field.\n`);
 
-// Graceful shutdown - second Ctrl+C exits immediately
 let isShuttingDown = false;
 
 async function gracefulShutdown(signal: string): Promise<void> {
   if (isShuttingDown) {
-    // Second Ctrl+C - force exit immediately
     console.warn('⚠️  Forcing exit...');
     process.exit(1);
   }
@@ -113,6 +101,5 @@ async function gracefulShutdown(signal: string): Promise<void> {
   }
 }
 
-// Register shutdown handlers
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));

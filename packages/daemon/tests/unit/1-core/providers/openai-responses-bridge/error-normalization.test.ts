@@ -6,11 +6,6 @@ import {
 
 const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
 
-/**
- * Task #676: the OpenAI responses bridge (Codex / OpenRouter) normalizes
- * body-embedded and mid-stream provider errors to retryable Anthropic types.
- */
-
 function makeServer(upstream: typeof fetch): OpenAIResponsesBridgeServer {
   return createOpenAIResponsesBridgeServer({
     auth: { apiKey: 'test-key', source: 'api_key' },
@@ -104,8 +99,6 @@ describe.skipIf(!isBun)(
     });
 
     it('classifies a mid-stream error event to overloaded_error SSE (not api_error)', async () => {
-      // Upstream returns a valid SSE stream that emits an `error` event mid-stream
-      // with a server_error body.
       const sse =
         'event: error\n' +
         'data: {"type":"error","error":{"type":"server_error","message":"overloaded"}}\n\n';
@@ -138,8 +131,6 @@ describe.skipIf(!isBun)(
     });
 
     it('classifies a response.failed event whose error is under response.error', async () => {
-      // response.failed carries the failure under event.response.error (not
-      // event.error). The bridge must read that shape to classify the transient.
       const sse =
         'event: response.failed\n' +
         'data: {"type":"response.failed","response":{"error":{"type":"server_error","message":"overloaded"}}}\n\n';
@@ -157,9 +148,6 @@ describe.skipIf(!isBun)(
     });
 
     it('classifies a flat error event with top-level code/message', async () => {
-      // Some upstreams emit an `error` event with code/message at the top level
-      // (not nested under event.error). The bridge must read those fields too,
-      // classify the transient, and preserve the provider message.
       const sse =
         'event: error\n' +
         'data: {"type":"error","code":"server_error","message":"the engine is overloaded"}\n\n';
@@ -182,9 +170,6 @@ describe.skipIf(!isBun)(
     });
 
     it('classifies a flat RFC 7807 problem-detail error frame (status/detail)', async () => {
-      // A flat `event: error` frame whose data is {"status":429,"detail":"Too Many
-      // Requests"} — status→code and detail→message must be mapped before
-      // normalization so the retryable 429 classification is recovered.
       const sse = 'event: error\n' + 'data: {"status":429,"detail":"Too Many Requests"}\n\n';
       server = makeServer(
         async () =>
@@ -200,10 +185,6 @@ describe.skipIf(!isBun)(
     });
 
     it('classifies a flat error frame whose data type differs from the SSE event name', async () => {
-      // parseSSEBlock lets the payload `type` overwrite the SSE `event:` name, so
-      // a flat `event: error` block like data: {"type":"server_error",...} has
-      // event.type = "server_error" (not "error"). The bridge must still detect
-      // it as an error frame via the preserved SSE event name.
       const sse =
         'event: error\n' + 'data: {"type":"server_error","message":"the engine is overloaded"}\n\n';
       server = makeServer(
@@ -235,8 +216,6 @@ describe.skipIf(!isBun)(
     });
 
     it('detects a data-only transient frame (no event line, known error type)', async () => {
-      // A frame with no `event:` line but a known transient payload type must be
-      // detected as an error frame via the payload type itself.
       const sse = 'data: {"type":"server_error","message":"the engine is overloaded"}\n\n';
       server = makeServer(
         async () =>
@@ -252,9 +231,6 @@ describe.skipIf(!isBun)(
     });
 
     it('normalizes a 200-with-body rate-limit error before streaming', async () => {
-      // A Responses-compatible proxy returns 200 with a JSON error body instead
-      // of an SSE stream. Without normalization the streamer would emit a
-      // successful empty end_turn.
       server = makeServer(
         async () =>
           new Response(
@@ -273,16 +249,10 @@ describe.skipIf(!isBun)(
     });
 
     it('normalizes a transient body on a tool-continuation 400 before falling back', async () => {
-      // Continuation requests hit a dedicated 400 branch that returns immediately
-      // unless the body mentions previous_response_id. A structured transient 400
-      // (e.g. rate_limit_exceeded) must still be normalized before the
-      // invalid_request fallback so the SDK retries.
       let call = 0;
       server = makeServer(async () => {
         call += 1;
         if (call === 1) {
-          // First turn: emit a function call + response.completed so the bridge
-          // stores a continuation (call_abc -> resp_tool).
           return new Response(
             [
               'event: response.function_call_arguments.done',
@@ -296,15 +266,12 @@ describe.skipIf(!isBun)(
             { status: 200, headers: { 'Content-Type': 'text/event-stream' } }
           );
         }
-        // Continuation turn: upstream returns 400 with a transient body (no
-        // previous_response_id mention).
         return new Response(
           JSON.stringify({ error: { type: 'rate_limit_exceeded', message: 'slow down' } }),
           { status: 400, headers: { 'Content-Type': 'application/json' } }
         );
       });
 
-      // First request: primes the continuation.
       const first = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -317,7 +284,6 @@ describe.skipIf(!isBun)(
       });
       await readSSEEvents(first.body);
 
-      // Continuation request: assistant tool_use + user tool_result for call_abc.
       const res = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -348,15 +314,10 @@ describe.skipIf(!isBun)(
     });
 
     it('normalizes a transient 400 on a replayed-reasoning request before self-healing', async () => {
-      // A 400 with replayed reasoning present must be inspected for a transient
-      // body BEFORE the bridge self-heals by stripping reasoning — otherwise a
-      // rate-limit 400 is masked by a reasoning-stripped retry and the SDK never
-      // sees the retryable signal.
       let call = 0;
       server = makeServer(async () => {
         call += 1;
         if (call === 1) {
-          // First turn: emit reasoning so the bridge caches it for the session.
           return new Response(
             [
               'event: response.completed',
@@ -367,19 +328,15 @@ describe.skipIf(!isBun)(
             { status: 200, headers: { 'Content-Type': 'text/event-stream' } }
           );
         }
-        // Second turn: the bridge replays the cached reasoning item; upstream
-        // returns a rate-limit 400. Must be normalized, not reasoning-stripped.
         return new Response(
           JSON.stringify({ error: { type: 'rate_limit_exceeded', message: 'slow down' } }),
           { status: 400, headers: { 'Content-Type': 'application/json' } }
         );
       });
 
-      // Turn 1: primes the per-session reasoning cache.
       const first = await postMessages(server.port);
       await readSSEEvents(first.body);
 
-      // Turn 2: replayed reasoning + rate-limit 400 -> normalized to 429.
       const res = await postMessages(server.port);
       expect(res.status).toBe(429);
       expect(res.headers.get('x-should-retry')).toBe('true');

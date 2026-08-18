@@ -1,12 +1,3 @@
-/**
- * MCP Import Scanner Unit Tests
- *
- * Covers:
- *   - scanMcpImports: idempotent updates, inserts, removals, name-collision with
- *     non-imported rows, unknown-shape notes, missing and malformed files.
- *   - buildMcpJsonPaths: dedupe, home/.claude injection, additional paths.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -43,10 +34,6 @@ describe('import-scanner', () => {
     writeFileSync(fullPath, JSON.stringify(body, null, 2), 'utf-8');
     return fullPath;
   }
-
-  // ---------------------------------------------------------------------------
-  // scanMcpImports
-  // ---------------------------------------------------------------------------
 
   describe('scanMcpImports', () => {
     test('inserts imported rows for stdio entries', async () => {
@@ -133,7 +120,6 @@ describe('import-scanner', () => {
       expect(repo.getByName('alpha')).toBeTruthy();
       expect(repo.getByName('beta')).toBeTruthy();
 
-      // Rewrite the file without `alpha`.
       writeFileSync(p, JSON.stringify({ mcpServers: { beta: { command: 'b' } } }));
       const result = await scanMcpImports(repo, { mcpJsonPaths: [p] });
 
@@ -143,7 +129,6 @@ describe('import-scanner', () => {
     });
 
     test('does not remove imported rows whose sourcePath was NOT scanned', async () => {
-      // Seed: two imported rows from different sourcePaths.
       const p1 = writeMcpJson('repo1/.mcp.json', {
         mcpServers: { one: { command: 'x' } },
       });
@@ -152,7 +137,6 @@ describe('import-scanner', () => {
       });
       await scanMcpImports(repo, { mcpJsonPaths: [p1, p2] });
 
-      // Scan only p1 this time, with no entries — should only touch p1's row.
       writeFileSync(p1, JSON.stringify({ mcpServers: {} }));
       const result = await scanMcpImports(repo, { mcpJsonPaths: [p1] });
 
@@ -191,7 +175,6 @@ describe('import-scanner', () => {
       });
       const result = await scanMcpImports(repo, { mcpJsonPaths: [p] });
 
-      // The user row is preserved.
       expect(repo.getByName('shared-name')?.source).toBe('user');
       expect(repo.getByName('shared-name')?.command).toBe('user-cmd');
       expect(result.imported).toBe(0);
@@ -231,10 +214,6 @@ describe('import-scanner', () => {
       expect(result.removed).toBe(0);
     });
   });
-
-  // ---------------------------------------------------------------------------
-  // buildMcpJsonPaths
-  // ---------------------------------------------------------------------------
 
   describe('buildMcpJsonPaths', () => {
     test('includes ~/.claude/.mcp.json when homeDir is set', () => {

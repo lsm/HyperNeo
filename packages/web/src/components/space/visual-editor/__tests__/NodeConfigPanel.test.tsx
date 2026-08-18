@@ -1,25 +1,3 @@
-/**
- * Unit tests for NodeConfigPanel
- *
- * Tests:
- * - Renders all primary fields (step name, agent dropdown, model override, instructions)
- * - Header shows step name and close button
- * - Step name in header updates when step changes
- * - "Set as Start" button visible for non-start nodes, hidden for start node
- * - "Set as End" button visible for non-end nodes, "Unset End Node" for end node
- * - "Set as Start" calls onSetAsStart with the step localId
- * - "Set as End" calls onSetAsEnd with the step localId
- * - onClose fires when close button clicked
- * - onUpdate fires with updated step when fields change
- * - Delete button is disabled for start node with tooltip hint
- * - Delete button shows confirmation dialog when clicked
- * - Confirming delete calls onDelete; cancelling dismisses dialog
- * - Start node badge shown in header when isStartNode=true
- * - End node badge shown in header when isEndNode=true
- * - System prompt field with OverrideModeSelector for single-agent mode
- * - Per-slot instructions and system prompt fields with OverrideModeSelector for multi-agent mode
- */
-
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, act, waitFor } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
@@ -96,10 +74,6 @@ afterEach(() => {
   mockModelsResponse.models = mockModels.map((model) => ({ ...model }));
 });
 
-// ============================================================================
-// Fixtures
-// ============================================================================
-
 function makeAgent(id: string, name: string, _role = 'coder'): SpaceWorkerAgent {
   return {
     id,
@@ -140,10 +114,6 @@ function makeProps(overrides: Partial<NodeConfigPanelProps> = {}): NodeConfigPan
     ...overrides,
   };
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 describe('NodeConfigPanel', () => {
   describe('rendering', () => {
@@ -560,13 +530,10 @@ describe('NodeConfigPanel', () => {
     });
 
     it('guard in handleDeleteClick suppresses dialog when isStartNode=true (defence-in-depth)', () => {
-      // The button is disabled, so a normal click won't fire. Dispatch a direct click event
-      // bypassing the disabled attribute to verify the handler guard still blocks the dialog.
       const { getByTestId, queryByTestId } = render(
         <NodeConfigPanel {...makeProps({ isStartNode: true })} />
       );
       const btn = getByTestId('delete-step-button') as HTMLButtonElement;
-      // Programmatically invoke the onClick handler via a non-trusted event
       fireEvent.click(btn);
       expect(queryByTestId('delete-confirm-button')).toBeNull();
     });
@@ -577,29 +544,21 @@ describe('NodeConfigPanel', () => {
       const props = makeProps({ step: stepA });
       const { getByTestId, queryByTestId, rerender } = render(<NodeConfigPanel {...props} />);
 
-      // Open confirmation on step A
       fireEvent.click(getByTestId('delete-step-button'));
       expect(getByTestId('delete-confirm-button')).toBeTruthy();
 
-      // Swap to step B (simulates user selecting a different node)
       await act(async () => {
         rerender(<NodeConfigPanel {...{ ...props, step: stepB }} />);
       });
 
-      // Confirmation dialog should be gone
       expect(queryByTestId('delete-confirm-button')).toBeNull();
       expect(getByTestId('delete-step-button')).toBeTruthy();
     });
   });
 
-  // ============================================================================
-  // Multi-agent: AgentsSection
-  // ============================================================================
-
   describe('multi-agent mode', () => {
     it('shows single agent dropdown in single-agent mode', () => {
       const { getByTestId } = render(<NodeConfigPanel {...makeProps()} />);
-      // Single agent mode shows the agent-select dropdown
       expect(getByTestId('agent-select')).toBeTruthy();
     });
 
@@ -615,7 +574,7 @@ describe('NodeConfigPanel', () => {
       expect(onUpdate).toHaveBeenCalledOnce();
       const updatedStep = onUpdate.mock.calls[0][0];
       expect(updatedStep.agents).toHaveLength(2);
-      expect(updatedStep.agents[0].agentId).toBe('agent-1'); // existing agentId preserved
+      expect(updatedStep.agents[0].agentId).toBe('agent-1');
       expect(updatedStep.agentId).toBe('');
     });
 
@@ -632,7 +591,6 @@ describe('NodeConfigPanel', () => {
       fireEvent.click(getByTestId('add-agent-button'));
       const updatedStep = onUpdate.mock.calls[0][0];
       expect(updatedStep.agents[0].replaceAgentPrompt).toBe(true);
-      // Shorthand value is cleared once it has been carried onto the slot.
       expect(updatedStep.replaceAgentPrompt).toBeUndefined();
     });
 
@@ -681,7 +639,6 @@ describe('NodeConfigPanel', () => {
       });
       const { getByTestId, queryByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
       expect(getByTestId('agents-list')).toBeTruthy();
-      // Single agent dropdown should not be present
       expect(queryByTestId('agent-select')).toBeNull();
     });
 
@@ -707,10 +664,8 @@ describe('NodeConfigPanel', () => {
       });
       const { getByTestId, getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
       const entry = getByTestId('agents-list');
-      // Agent name appears as text in a <p> element
       expect(entry.textContent).toContain('Planner');
       expect(entry.textContent).toContain('Coder');
-      // Role appears as the value of the role input field
       const roleInputs = getAllByTestId('agent-role-input') as HTMLInputElement[];
       expect(roleInputs[0].value).toBe('planner');
       expect(roleInputs[1].value).toBe('coder');
@@ -758,7 +713,6 @@ describe('NodeConfigPanel', () => {
         ],
       });
       const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-      // Remove the coder slot — planner survives as the single agent.
       fireEvent.click(getAllByTestId('remove-agent-button')[1]);
       const updatedStep = onUpdate.mock.calls[0][0];
       expect(updatedStep.agents).toBeUndefined();
@@ -792,7 +746,6 @@ describe('NodeConfigPanel', () => {
         ],
       });
       const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
-      // All agents appear in the dropdown regardless of whether they are already in the step
       const select = getByTestId('add-agent-select');
       expect(select.textContent).toContain('Coder');
     });
@@ -809,15 +762,12 @@ describe('NodeConfigPanel', () => {
       const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
       fireEvent.change(getByTestId('add-agent-select'), { target: { value: 'agent-2' } });
       const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
-      // 3 agents added, but no auto-created channels (channels are workflow-level now)
       expect(updatedStep.agents).toHaveLength(3);
       expect(updatedStep.channels).toBeUndefined();
     });
 
     it('adding the same agent twice generates a unique slot role with numeric suffix', () => {
       const onUpdate = vi.fn();
-      // Use the agent's actual name 'Coder' as the initial role so baseRole matches
-      // and the suffix logic activates (case-sensitive comparison in addAgent).
       const step = makeStep({
         agentId: '',
         agents: [
@@ -826,12 +776,10 @@ describe('NodeConfigPanel', () => {
         ],
       });
       const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-      // Add agent-2 (Coder) a second time
       fireEvent.change(getByTestId('add-agent-select'), { target: { value: 'agent-2' } });
       const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
       expect(updatedStep.agents).toHaveLength(3);
       expect(updatedStep.agents[0].name).toBe('Coder');
-      // Second slot must get a unique suffix to avoid duplicate-role validation error
       expect(updatedStep.agents[2].name).toBe('Coder-2');
     });
 
@@ -851,10 +799,6 @@ describe('NodeConfigPanel', () => {
       expect(updatedStep.agents[2].name).toBe('Coder-3');
     });
   });
-
-  // ============================================================================
-  // Per-slot fields: role and model
-  // ============================================================================
 
   describe('per-slot fields', () => {
     it('renders a role input for each agent slot in multi-agent mode', () => {
@@ -942,12 +886,10 @@ describe('NodeConfigPanel', () => {
       const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
       const toggles = getAllByTestId('agent-slot-reset-context-toggle');
       expect(toggles).toHaveLength(2);
-      // Both start unchecked (flag absent).
       expect((toggles[0] as HTMLInputElement).checked).toBe(false);
       fireEvent.click(toggles[0]);
       const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
       expect(updatedStep.agents[0].resetContextPerTurn).toBe(true);
-      // The other slot is untouched.
       expect(updatedStep.agents[1].resetContextPerTurn).toBeUndefined();
     });
 
@@ -1042,8 +984,6 @@ describe('NodeConfigPanel', () => {
     });
 
     it('slot prompts editor stays addressable after a slot role rename', async () => {
-      // Use a controlled wrapper so onUpdate actually updates the step prop,
-      // matching how the real parent (VisualWorkflowEditor) behaves.
       function Wrapper() {
         const [step, setStep] = useState(
           makeStep({
@@ -1071,15 +1011,7 @@ describe('NodeConfigPanel', () => {
     });
   });
 
-  // ============================================================================
-  // Prompt mode toggle (append vs replace agent prompt)
-  // ============================================================================
-
   describe('prompt mode toggle', () => {
-    // Controlled wrapper: records every onUpdate and feeds it back as the step
-    // prop so re-rendered state is observable. Note: NodeConfigPanel resets its
-    // sub-view to `main` whenever `step` changes, so sub-view rendered state
-    // must be observed by re-entering the sub-view after an edit.
     function renderControlled(initialStep: NodeDraft) {
       const updates: NodeDraft[] = [];
       function Wrapper() {
@@ -1127,7 +1059,6 @@ describe('NodeConfigPanel', () => {
         <NodeConfigPanel {...makeProps({ step: withReplace(multiAgentStep()) })} />
       );
       fireEvent.click(getAllByTestId('edit-slot-prompts-button')[0]);
-      // The replace button is the active one and the warning is shown.
       expect(getByTestId('replace-prompt-warning')).toBeTruthy();
       const replaceBtn = getByTestId('prompt-mode-replace') as HTMLButtonElement;
       expect(replaceBtn.className).toContain('bg-amber-600');
@@ -1162,8 +1093,6 @@ describe('NodeConfigPanel', () => {
       const { getAllByTestId, getByTestId } = renderControlled(multiAgentStep());
       fireEvent.click(getAllByTestId('edit-slot-prompts-button')[0]);
       fireEvent.click(getByTestId('prompt-mode-replace'));
-      // Editing the step resets the panel to main — re-enter the slot view to
-      // observe the now-persisted replace state.
       fireEvent.click(getAllByTestId('edit-slot-prompts-button')[0]);
       expect(getByTestId('replace-prompt-warning')).toBeTruthy();
     });
@@ -1179,7 +1108,6 @@ describe('NodeConfigPanel', () => {
     });
 
     it('clears the shorthand flag when a skill toggle materializes a slot, so Append then shows Append', () => {
-      // Seed one enabled skill so SlotSkillsToggle renders a checkbox.
       const skill: AppSkill = {
         id: 'skill-1',
         name: 's1',
@@ -1213,16 +1141,11 @@ describe('NodeConfigPanel', () => {
         }
         const { container, getByTestId, queryByTestId } = render(<Wrapper />);
 
-        // 1. Materialize the slot via the skill toggle. The slot inherits Replace, and
-        //    the shorthand flag must be cleared so it cannot mask a later Append.
         fireEvent.click(container.querySelector('input[type="checkbox"]')!);
         const materialized = handleUpdate.mock.calls[handleUpdate.mock.calls.length - 1][0];
         expect(materialized.agents[0].replaceAgentPrompt).toBe(true);
         expect(materialized.replaceAgentPrompt).toBeUndefined();
 
-        // 2. Switch the materialized slot to Append, then re-enter the prompts view to
-        //    observe the rendered state. Without the shorthand clear this would still
-        //    show Replace (warning present) due to the stale fallback.
         fireEvent.click(getByTestId('edit-single-prompts-button'));
         fireEvent.click(getByTestId('prompt-mode-append'));
         fireEvent.click(getByTestId('edit-single-prompts-button'));
@@ -1235,10 +1158,6 @@ describe('NodeConfigPanel', () => {
       }
     });
   });
-
-  // ============================================================================
-  // Single-agent prompts slide
-  // ============================================================================
 
   describe('hooks section', () => {
     it('adds a backend-valid script hook with an authorized caller for the node', () => {
@@ -1341,10 +1260,6 @@ describe('NodeConfigPanel', () => {
       );
     });
   });
-
-  // ============================================================================
-  // Multi-agent mode: per-slot custom prompt in slot prompts panel
-  // ============================================================================
 
   describe('multi-agent slot prompts', () => {
     it('shows per-slot custom prompt field in slot prompts panel', () => {

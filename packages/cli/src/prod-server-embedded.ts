@@ -1,8 +1,3 @@
-/**
- * Production server for compiled binary distribution.
- * Serves web assets from Bun-embedded files instead of the filesystem.
- */
-
 import { getDataDir } from '@hyperneo/daemon/lib/data-dir';
 import { createDaemonApp } from '@hyperneo/daemon/app';
 import { warmupSDKCliBinary } from '@hyperneo/daemon/lib/agent/sdk-cli-resolver';
@@ -24,8 +19,6 @@ const log = createLogger('hyperneo:cli:prod-server');
 export async function startProdServer(config: Config) {
   log.info('Starting production server...');
 
-  // Register signal handlers FIRST, before any async operations
-  // This ensures Ctrl+C works even if startup hangs
   let isShuttingDown = false;
   let daemonContext: Awaited<ReturnType<typeof createDaemonApp>> | null = null;
   let server: ReturnType<typeof Bun.serve> | null = null;
@@ -38,7 +31,6 @@ export async function startProdServer(config: Config) {
     }
     isShuttingDown = true;
 
-    // Cancel pending SDK warmup if shutting down early
     if (typeof sdkWarmupTimer !== 'undefined') clearTimeout(sdkWarmupTimer);
 
     log.info(
@@ -75,9 +67,6 @@ export async function startProdServer(config: Config) {
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-  // Extract embedded built-in skill files to ~/.hyperneo/skills/.
-  // Each key is a relative path like "playwright/SKILL.md"; the full directory
-  // structure is preserved. Existing user-customized files are not overwritten.
   if (embeddedBuiltinSkills.size > 0) {
     const neoSkillsDir = join(getDataDir(), 'skills');
     for (const [relativePath, filePath] of embeddedBuiltinSkills) {
@@ -94,9 +83,6 @@ export async function startProdServer(config: Config) {
     log.info(`Extracted ${embeddedBuiltinSkills.size} built-in skill files to ${neoSkillsDir}`);
   }
 
-  // Create daemon app (returns Bun server). The sink-ready callback wires the
-  // real flush before the factory's long-running init so a startup failure is
-  // still persisted to the structured log file. (Codex P2, PR #2499.)
   let flushStructuredLogs: () => Promise<void> = () => Promise.resolve();
   try {
     daemonContext = await createDaemonApp({
@@ -110,8 +96,6 @@ export async function startProdServer(config: Config) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     log.error(`[Server] Fatal: Failed to initialize daemon: ${message}`, error);
-    // Persist the startup failure and drain the sink before this process
-    // exits — nothing else will flush it on this path.
     emitStructuredLogEvent({
       level: 'fatal',
       args: ['[cli] Daemon startup failed:', error],
@@ -126,16 +110,13 @@ export async function startProdServer(config: Config) {
     throw error;
   }
 
-  // Stop the daemon's internal server (we'll create a unified one)
   daemonContext.server.stop();
 
   log.info('Room orchestration is handled by RoomAgentService');
 
-  // Get WebSocket handlers from daemon
   const { createWebSocketHandlers } = await import('@hyperneo/daemon/routes/setup-websocket');
   const wsHandlers = createWebSocketHandlers(daemonContext.transport, daemonContext.sessionManager);
 
-  // Pre-load index.html for SPA fallback
   const indexAsset = embeddedAssets.get('/index.html');
   let indexHtmlContent: string | null = null;
   if (indexAsset) {
@@ -144,7 +125,6 @@ export async function startProdServer(config: Config) {
 
   log.info(`Serving ${embeddedAssets.size} embedded web assets`);
 
-  // Create unified server serving embedded assets + daemon WebSocket
   server = Bun.serve({
     hostname: config.host,
     port: config.port,
@@ -152,12 +132,10 @@ export async function startProdServer(config: Config) {
     async fetch(req, server) {
       const url = new URL(req.url);
 
-      // CORS preflight
       if (req.method === 'OPTIONS') {
         return createCorsPreflightResponse();
       }
 
-      // WebSocket upgrade at /ws (daemon WebSocket)
       if (isWebSocketPath(url.pathname)) {
         const upgraded = server.upgrade(req, {
           data: {
@@ -172,7 +150,6 @@ export async function startProdServer(config: Config) {
         return new Response('WebSocket upgrade failed', { status: 500 });
       }
 
-      // Serve embedded static assets
       const asset = embeddedAssets.get(url.pathname);
       if (asset) {
         const headers: Record<string, string> = {
@@ -188,7 +165,6 @@ export async function startProdServer(config: Config) {
         return new Response(Bun.file(asset.filePath), { headers });
       }
 
-      // SPA fallback: serve index.html for unmatched routes
       if (indexHtmlContent) {
         return new Response(indexHtmlContent, {
           headers: {
@@ -209,8 +185,6 @@ export async function startProdServer(config: Config) {
     },
   });
 
-  // Warm up SDK CLI binary after unified server is bound.
-  // Non-fatal: download failure only means first query retries resolution.
   sdkWarmupTimer = setTimeout(warmupSDKCliBinary, 0);
 
   log.info(`\nProduction server running!`);

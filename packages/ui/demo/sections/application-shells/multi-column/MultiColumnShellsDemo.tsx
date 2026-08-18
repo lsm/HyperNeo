@@ -33,7 +33,6 @@ const navigation = [
   { name: 'Reports', href: '#', icon: PieChart, current: false },
 ];
 
-// Demo 1: Full-width three column layout
 function Demo1() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -92,7 +91,6 @@ function Demo1() {
           </div>
         </Dialog>
 
-        {/* Static sidebar for desktop */}
         <div class="hidden lg:fixed lg:inset-y-0 lg:left-0 lg:z-50 lg:block lg:w-20 lg:overflow-y-auto lg:bg-surface-inverted lg:pb-4 dark:before:pointer-events-none dark:before:absolute dark:before:inset-0 dark:before:border-r dark:before:border-white/10 dark:before:bg-black/10">
           <div class="relative flex h-16 shrink-0 items-center justify-center">
             <img
@@ -155,7 +153,6 @@ function Demo1() {
   );
 }
 
-// Demo 2: Full-width with secondary column on right (includes header with search and profile)
 const userNavigation = [
   { name: 'Your profile', href: '#' },
   { name: 'Sign out', href: '#' },
@@ -221,7 +218,6 @@ function Demo2() {
           </div>
         </Dialog>
 
-        {/* Static sidebar for desktop */}
         <div class="hidden lg:fixed lg:inset-y-0 lg:left-0 lg:z-50 lg:block lg:w-20 lg:overflow-y-auto lg:bg-surface-inverted lg:pb-4 dark:before:pointer-events-none dark:before:absolute dark:before:inset-0 dark:before:border-r dark:before:border-white/10 dark:before:bg-black/10">
           <div class="relative flex h-16 shrink-0 items-center justify-center">
             <img
@@ -367,7 +363,6 @@ function Demo2() {
   );
 }
 
-// Demo 3: Full-width with narrow sidebar
 const teams = [
   { id: 1, name: 'Heroicons', href: '#', initial: 'H', current: false },
   { id: 2, name: 'Tailwind Labs', href: '#', initial: 'T', current: false },
@@ -474,7 +469,6 @@ function Demo3() {
           </div>
         </Dialog>
 
-        {/* Static sidebar for desktop */}
         <div class="hidden lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-72 lg:flex-col">
           <div class="relative flex grow flex-col gap-y-5 overflow-y-auto border-r border-surface-border bg-surface-primary px-6 dark:border-white/10 dark:bg-surface-inverted dark:before:pointer-events-none dark:before:absolute dark:before:inset-0 dark:before:bg-black/10">
             <div class="relative flex h-16 shrink-0 items-center">
@@ -603,7 +597,6 @@ function Demo3() {
   );
 }
 
-// Demo 4: Full-width with narrow sidebar and header
 function Demo4() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -706,7 +699,6 @@ function Demo4() {
           </div>
         </Dialog>
 
-        {/* Static sidebar for desktop */}
         <div class="hidden lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-72 lg:flex-col">
           <div class="relative flex grow flex-col gap-y-5 overflow-y-auto border-r border-surface-border bg-surface-primary px-6 dark:border-white/10 dark:bg-surface-inverted dark:before:pointer-events-none dark:before:absolute dark:before:inset-0 dark:before:bg-black/10">
             <div class="relative flex h-16 shrink-0 items-center">

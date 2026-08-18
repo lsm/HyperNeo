@@ -292,8 +292,6 @@ async function analyzeConversationWithModel(
       string,
       string | undefined
     >;
-    // Use the provider's resolved upstream model ID (e.g. canonical Kimi ID)
-    // so prefix aliases don't get passed to the SDK as the raw configured string.
     const sdkModelId = provider === 'glm' ? 'haiku' : (providerEnvVars.ANTHROPIC_MODEL ?? modelId);
     const agentQuery = query({
       prompt: buildConversationFrictionPrompt(input),
@@ -309,9 +307,6 @@ async function analyzeConversationWithModel(
         executable: isRunningUnderBun() ? 'bun' : undefined,
         settings: withSdkTranscriptRetention(),
         env: mergeProviderEnvVars(providerEnvVars),
-        // Kimi K3 rejects `thinking.type` and K2.7 requires enabled thinking.
-        // Only apply the Kimi-specific override for the Kimi provider; other
-        // providers keep the safe disabled-thinking default.
         thinking:
           provider === 'kimi'
             ? KimiProvider.resolveKimiTitleThinkingConfig(sdkModelId)

@@ -1,14 +1,3 @@
-/**
- * ACP (Agent Client Protocol) type definitions
- *
- * JSON-RPC 2.0 over stdio protocol for editor-to-agent communication.
- * Foundation layer for ACP provider support in HyperNeo.
- */
-
-// ============================================================================
-// JSON-RPC 2.0 Base Types
-// ============================================================================
-
 export interface AcpJsonRpcRequest<T = unknown> {
   jsonrpc: '2.0';
   id: number | string | null;
@@ -36,10 +25,6 @@ export interface AcpJsonRpcError {
   message: string;
   data?: unknown;
 }
-
-// ============================================================================
-// Initialization
-// ============================================================================
 
 export interface AcpInitializeParams {
   protocolVersion: number;
@@ -83,10 +68,6 @@ export interface AcpAgentCapabilities {
   experimental?: Record<string, unknown>;
 }
 
-// ============================================================================
-// Authentication
-// ============================================================================
-
 export interface AcpAuthMethod {
   id: string;
   name: string;
@@ -101,10 +82,6 @@ export interface AcpAuthenticateParams {
 export interface AcpAuthenticateResult {
   _meta?: object | null;
 }
-
-// ============================================================================
-// Session
-// ============================================================================
 
 export interface AcpSessionNewParams {
   cwd: string;
@@ -232,10 +209,6 @@ export interface AcpSessionSetConfigOptionResult {
   _meta?: object | null;
 }
 
-// ============================================================================
-// Content Blocks
-// ============================================================================
-
 export type AcpContentBlock =
   | AcpTextContentBlock
   | AcpImageContentBlock
@@ -306,10 +279,6 @@ export interface AcpResourceLinkContentBlock {
   annotations?: unknown;
   _meta?: object | null;
 }
-
-// ============================================================================
-// Session Update Notifications
-// ============================================================================
 
 export interface AcpSessionUpdateNotification {
   sessionId: string;
@@ -421,10 +390,6 @@ export interface AcpAvailableCommand {
   } | null;
 }
 
-// ============================================================================
-// Tool Calls
-// ============================================================================
-
 export interface AcpToolCall {
   toolCallId: string;
   kind?: AcpToolKind;
@@ -488,10 +453,6 @@ export type AcpToolKind =
 
 export type AcpToolCallStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
 
-// ============================================================================
-// Permissions
-// ============================================================================
-
 export interface AcpPermissionRequest {
   sessionId: string;
   toolCall: AcpToolCallUpdate;
@@ -508,10 +469,6 @@ export interface AcpPermissionOption {
 export type AcpPermissionResponseResult = {
   outcome: { outcome: 'selected'; optionId: string } | { outcome: 'cancelled' };
 };
-
-// ============================================================================
-// File System
-// ============================================================================
 
 export interface AcpFsReadParams {
   sessionId: string;
@@ -536,10 +493,6 @@ export interface AcpFsWriteParams {
 export interface AcpFsWriteResult {
   _meta?: object | null;
 }
-
-// ============================================================================
-// Terminal
-// ============================================================================
 
 export interface AcpTerminalCreateParams {
   sessionId: string;
@@ -601,10 +554,6 @@ export interface AcpTerminalReleaseResult {
   _meta?: object | null;
 }
 
-// ============================================================================
-// Config Options
-// ============================================================================
-
 export interface AcpConfigOption {
   id: string;
   name: string;
@@ -627,10 +576,6 @@ export interface AcpConfigOptionGroup {
   name: string;
   options: AcpConfigOptionChoice[];
 }
-
-// ============================================================================
-// MCP Server Config
-// ============================================================================
 
 export type AcpMcpServerConfig =
   | AcpMcpStdioServerConfig
@@ -669,19 +614,11 @@ export interface AcpMcpSseServerConfig {
   headers: AcpHeader[];
 }
 
-// ============================================================================
-// Modes
-// ============================================================================
-
 export interface AcpSessionMode {
   id: string;
   name: string;
   description?: string;
 }
-
-// ============================================================================
-// Logout
-// ============================================================================
 
 export interface AcpLogoutParams {
   _meta?: object | null;

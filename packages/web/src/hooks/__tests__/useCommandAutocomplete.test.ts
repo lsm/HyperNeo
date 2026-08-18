@@ -1,10 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for useCommandAutocomplete Hook
- *
- * Tests slash command detection, filtering, and keyboard navigation.
- * Note: Slash commands signal must be populated for filtering to work.
- */
 
 import { renderHook, act } from '@testing-library/preact';
 import { useCommandAutocomplete } from '../useCommandAutocomplete.ts';
@@ -21,7 +15,6 @@ vi.mock('../../lib/session-store.ts', () => ({
 
 describe('useCommandAutocomplete', () => {
   beforeEach(() => {
-    // Set up commands for tests
     mockCommandsData.value = ['/help', '/clear', '/model', '/context', '/commit'];
   });
 
@@ -287,7 +280,6 @@ describe('useCommandAutocomplete', () => {
         })
       );
 
-      // First set index to 2
       act(() => {
         result.current.setSelectedIndex(2);
       });
@@ -312,7 +304,6 @@ describe('useCommandAutocomplete', () => {
         })
       );
 
-      // Set to last item (index 4)
       act(() => {
         result.current.setSelectedIndex(4);
       });
@@ -490,7 +481,6 @@ describe('useCommandAutocomplete', () => {
 
       expect(result.current.selectedIndex).toBe(2);
 
-      // Change content
       rerender({ content: '/h' });
 
       expect(result.current.selectedIndex).toBe(0);

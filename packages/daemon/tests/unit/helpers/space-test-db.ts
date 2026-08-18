@@ -1,16 +1,3 @@
-/**
- * Space test database helper
- *
- * Creates the minimal set of tables needed for Space system tests
- * without requiring a full migration run.
- *
- * Keep in sync with the fully-migrated production schema (after all migrations).
- *
- * IMPORTANT: The schema defined here must exactly match the fully-migrated production
- * schema (i.e. after all migrations have run). Never add columns or constraints here
- * that do not yet exist in a production migration — that masks schema divergence.
- */
-
 import type { Database as BunDatabase } from '../../../src/storage/sqlite-compat';
 import { createEvolutionTables } from '../../../src/storage/schema/evolution';
 import { createLongHorizonAgentTables } from '../../../src/storage/schema/long-horizon-agents';
@@ -211,8 +198,6 @@ export function createSpaceTables(db: BunDatabase): void {
       `ON workflow_hook_result_artifacts(run_id, hook_id, created_at)`
   );
 
-  // Per-channel cycle counters (migration 69). Tracks how many times each
-  // backward (cyclic) channel has been traversed in a workflow run.
   db.exec(`
 		CREATE TABLE IF NOT EXISTS channel_cycles (
 			run_id TEXT NOT NULL,
@@ -225,8 +210,6 @@ export function createSpaceTables(db: BunDatabase): void {
 		)
 	`);
 
-  // One timestamped row per cyclic-channel traversal, used for rate-based
-  // dead-loop detection (rolling window count). See migration 192.
   db.exec(`
 		CREATE TABLE IF NOT EXISTS channel_cycle_events (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -496,9 +479,6 @@ export function createSpaceTables(db: BunDatabase): void {
   createLongHorizonAgentTables(db);
   createWorkflowEventSubscriptionTables(db);
 
-  // Minimal `sessions` table — used by tests that need to seed
-  // `session_context.taskId` so the SDKMessageRepository can derive the
-  // `sdk_messages.task_id` column at INSERT time.
   db.exec(`
 		CREATE TABLE IF NOT EXISTS sessions (
 			id TEXT PRIMARY KEY,
@@ -530,9 +510,6 @@ export function createSpaceTables(db: BunDatabase): void {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_space_agent_provenance
 		ON sessions(json_extract(session_context, '$.spaceId'), json_extract(metadata, '$.promptProvenance.agentId'))`);
 
-  // `sdk_messages` is the canonical message store. Tests that exercise
-  // task-scoped feeds rely on the `task_id` column being present and
-  // indexed exactly the way migration 122 produces it in production.
   db.exec(`
 		CREATE TABLE IF NOT EXISTS sdk_messages (
 			id TEXT PRIMARY KEY,
@@ -566,8 +543,6 @@ export function createSpaceTables(db: BunDatabase): void {
 			FOREIGN KEY (source_message_id) REFERENCES sdk_messages(id) ON DELETE CASCADE
 		)
 	`);
-  // Monotonic consumption-watermark counter (saveSDKMessage stamps terminal
-  // results from it). See schema/index.ts + Codex (PR #2463, P2).
   db.exec(`
 		CREATE TABLE IF NOT EXISTS delivery_consumed_seq (
 			singleton INTEGER PRIMARY KEY DEFAULT 1,
@@ -608,7 +583,6 @@ export function createSpaceTables(db: BunDatabase): void {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_message_replacements_task_target
 		ON sdk_message_replacements(task_id, target_uuid)`);
 
-  // Workflow run artifacts
   db.exec(`
 		CREATE TABLE IF NOT EXISTS workflow_run_artifacts (
 			id TEXT PRIMARY KEY NOT NULL,
@@ -626,9 +600,6 @@ export function createSpaceTables(db: BunDatabase): void {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_wra_run_id ON workflow_run_artifacts(run_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_wra_run_node ON workflow_run_artifacts(run_id, node_id)`);
 
-  // Workflow run artifact cache (migration 98). Stores JSON-serialised results
-  // of the expensive git subprocess calls backing the TaskArtifactsPanel so the
-  // panel serves from SQLite instead of running git inline on every open.
   db.exec(`
 		CREATE TABLE IF NOT EXISTS workflow_run_artifact_cache (
 			id TEXT PRIMARY KEY NOT NULL,
@@ -653,8 +624,6 @@ export function createSpaceTables(db: BunDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_wrac_run_task_key ON workflow_run_artifact_cache(run_id, task_id, cache_key)`
   );
 
-  // Pending agent messages (Task Agent → peer agent persistent queue).
-  // See migration 90.
   db.exec(`
 		CREATE TABLE IF NOT EXISTS pending_agent_messages (
 			id TEXT PRIMARY KEY,
@@ -700,7 +669,6 @@ export function createSpaceTables(db: BunDatabase): void {
       `WHERE idempotency_key IS NOT NULL AND status = 'pending'`
   );
 
-  // Durable inbox for long-term Space agents. See migration 137.
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_agent_inbox_messages (
 			id TEXT PRIMARY KEY,
@@ -735,7 +703,6 @@ export function createSpaceTables(db: BunDatabase): void {
       `WHERE idempotency_key IS NOT NULL AND status = 'pending'`
   );
 
-  // External Event Bus extension configuration tables.
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_external_event_source_configs (
 			space_id TEXT NOT NULL,
@@ -749,7 +716,6 @@ export function createSpaceTables(db: BunDatabase): void {
 		)
 	`);
 
-  // External Event Bus tables (migration 124 — simplified schema)
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_external_events (
 			id TEXT PRIMARY KEY,
@@ -818,14 +784,12 @@ export function createSpaceTables(db: BunDatabase): void {
 		ON space_external_event_deliveries(delivery_key)
 	`);
 
-  // Migration 164: partial index for pending-delivery scans (queue-health snapshot).
   db.exec(`
 		CREATE INDEX IF NOT EXISTS idx_space_external_event_deliveries_pending
 		ON space_external_event_deliveries(updated_at)
 		WHERE state = 'pending'
 	`);
 
-  // MCP audit log (migration 121)
   db.exec(`
 		CREATE TABLE IF NOT EXISTS mcp_audit_log (
 			id TEXT PRIMARY KEY,
@@ -849,7 +813,6 @@ export function createSpaceTables(db: BunDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_mcp_audit_log_session ON mcp_audit_log (session_id, timestamp)`
   );
 
-  // Task schedules (migration 124)
   db.exec(`
 		CREATE TABLE IF NOT EXISTS task_schedules (
 			id TEXT PRIMARY KEY,

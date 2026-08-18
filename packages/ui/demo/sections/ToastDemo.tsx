@@ -100,7 +100,6 @@ function ToastStack() {
         </button>
       </div>
 
-      {/* Inline toast stack */}
       <div class="space-y-2 max-w-sm">
         {toasts.map((t) => (
           <Toast
@@ -270,7 +269,6 @@ function ToasterSection() {
         Toasts render via the <code class="text-accent-400 font-mono">Toaster</code> portal at
         bottom-right of the viewport.
       </p>
-      {/* Toaster renders managed toasts from the global store into a fixed portal */}
       <Toaster
         position="bottom-right"
         class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 w-72"

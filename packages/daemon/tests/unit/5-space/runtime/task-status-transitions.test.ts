@@ -1,16 +1,3 @@
-/**
- * Unit tests for SpaceTask status-transition rules added in PR 2/5:
- *   - `in_progress → approved`  (end-node `approve_task` path)
- *   - `review → approved`       (human approves via approvePendingCompletion)
- *   - `approved → done`         (mark_complete)
- *   - `approved → in_progress`  (revive for revision)
- *   - `approved → blocked` is intentionally NOT a valid transition
- *
- * The tests drive `SpaceTaskManager.setTaskStatus` so the centralised
- * transition validator runs, and assert both the edge-level behaviour
- * (accept/reject) and the stamping side-effects (approvalSource, approvedAt).
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -79,9 +66,6 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
       description: '',
       status: 'in_progress',
     });
-    // Prime the pending-completion fields exactly as the agent `approve_task`
-    // path does (end-node-handlers stamps them before dispatch transitions the
-    // task), so we can assert the atomic clear fires on this path too.
     taskRepo.updateTask(task.id, {
       pendingCheckpointType: 'task_completion',
       pendingCompletionSubmittedByNodeId: 'end-node',
@@ -96,13 +80,10 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
     expect(updated.status).toBe('approved');
     expect(updated.approvalSource).toBe('agent');
     expect(updated.approvedAt).toBeGreaterThanOrEqual(before);
-    // Same atomic clear as review → approved: the four pending fields are
-    // nulled in the UPDATE that commits `approved` (task #851).
     expect(updated.pendingCheckpointType).toBeNull();
     expect(updated.pendingCompletionSubmittedByNodeId).toBeNull();
     expect(updated.pendingCompletionSubmittedAt).toBeNull();
     expect(updated.pendingCompletionReason).toBeNull();
-    // The durable source survives (the router reads it while the task is approved).
     expect(updated.postApprovalSourceNodeId).toBe('end-node');
   });
 
@@ -113,10 +94,7 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
       description: '',
       status: 'in_progress',
     });
-    // in_progress → review
     await taskManager.setTaskStatus(task.id, 'review');
-    // Prime the pending-completion fields AND the durable source field exactly
-    // as `submitTaskForReview` does (it stamps both in one UPDATE).
     taskRepo.updateTask(task.id, {
       pendingCheckpointType: 'task_completion',
       pendingCompletionSubmittedByNodeId: 'validation-node',
@@ -124,7 +102,6 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
       pendingCompletionReason: 'needs human approval',
       postApprovalSourceNodeId: 'validation-node',
     });
-    // review → approved
     const updated = await taskManager.setTaskStatus(task.id, 'approved', {
       approvalSource: 'human',
       approvalReason: 'LGTM',
@@ -132,15 +109,10 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
     expect(updated.status).toBe('approved');
     expect(updated.approvalSource).toBe('human');
     expect(updated.approvalReason).toBe('LGTM');
-    // The four pending-completion fields are cleared in the SAME UPDATE that
-    // commits `approved` — a task can never be observed in `approved` with any
-    // of them set (task #851 crash-window fix).
     expect(updated.pendingCheckpointType).toBeNull();
     expect(updated.pendingCompletionSubmittedByNodeId).toBeNull();
     expect(updated.pendingCompletionSubmittedAt).toBeNull();
     expect(updated.pendingCompletionReason).toBeNull();
-    // The durable source node survives so the post-approval router/dispatch can
-    // still resolve it without depending on the cleared pending fields.
     expect(updated.postApprovalSourceNodeId).toBe('validation-node');
   });
 
@@ -179,8 +151,6 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
       expect(onlyCall.params.pendingCompletionSubmittedByNodeId).toBeNull();
       expect(onlyCall.params.pendingCompletionSubmittedAt).toBeNull();
       expect(onlyCall.params.pendingCompletionReason).toBeNull();
-      // postApprovalSourceNodeId is NOT cleared on entering approved (it is the
-      // router's durable source) — confirm the transition did not null it.
       expect(onlyCall.params.postApprovalSourceNodeId).toBeUndefined();
       expect(updated.postApprovalSourceNodeId).toBe('validation-node');
     } finally {
@@ -199,12 +169,10 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
       approvalSource: 'human',
       approvalReason: 'approved by alice',
     });
-    // Now transition approved → done, passing approvalSource explicitly (as mark_complete does).
     const done = await taskManager.setTaskStatus(task.id, 'done', {
       approvalSource: 'human',
     });
     expect(done.status).toBe('done');
-    // approvalReason preserved (setTaskStatus does not clear it on approved→done).
     expect(done.approvalSource).toBe('human');
     expect(done.approvalReason).toBe('approved by alice');
   });
@@ -260,27 +228,16 @@ describe('SpaceTaskManager.setTaskStatus — approval-path transitions', () => {
       description: '',
       status: 'in_progress',
     });
-    // in_progress → review → approved
     await taskManager.setTaskStatus(task.id, 'review');
     await taskManager.setTaskStatus(task.id, 'approved', {
       approvalSource: 'human',
       approvalReason: 'ok',
     });
-    // approved → in_progress — revive path
     const back = await taskManager.setTaskStatus(task.id, 'in_progress');
     expect(back.status).toBe('in_progress');
   });
 });
 
-/**
- * Matrix gap closures (task #849):
- *   - G1 `open → archived`     — shelve a queued task without cancel/reopen
- *   - G2 `blocked → done`      — mark a parked-but-complete task done
- *   - G3 `approved → cancelled`— drop an approved-but-unwanted task directly
- *
- * Each gap has both an edge-level matrix assertion and a `setTaskStatus`
- * behaviour test covering the stamping/cleanup side-effects.
- */
 describe('VALID_SPACE_TASK_TRANSITIONS — matrix gap closures (task #849)', () => {
   test('G1: open can go to archived', () => {
     expect(VALID_SPACE_TASK_TRANSITIONS.open).toContain('archived');
@@ -303,8 +260,6 @@ describe('VALID_SPACE_TASK_TRANSITIONS — matrix gap closures (task #849)', () 
   });
 
   test('full matrix snapshot — every (from → to) edge matches the documented table', () => {
-    // Source of truth: VALID_SPACE_TASK_TRANSITIONS in space-task-manager.ts.
-    // Updating any row here without intent will fail this snapshot.
     const EXPECTED = {
       draft: ['open', 'archived'],
       open: ['in_progress', 'blocked', 'review', 'done', 'cancelled', 'archived'],
@@ -356,24 +311,14 @@ describe('SpaceTaskManager.setTaskStatus — matrix gap closures (task #849)', (
       description: '',
       status: 'in_progress',
     });
-    // in_progress → blocked (stamp a failure classification), then blocked → done
     await taskManager.setTaskStatus(task.id, 'blocked', { blockReason: 'dependency_failed' });
     const done = await taskManager.setTaskStatus(task.id, 'done');
     expect(done.status).toBe('done');
-    // Only review → done stamps approvalSource; a blocked task was never
-    // approved, so approvalSource stays null (not 'human').
     expect(done.approvalSource).toBeNull();
-    // Leaving `blocked` clears the failure classification so a done task never
-    // carries stale blocker metadata (task #849, G2).
     expect(done.blockReason).toBeNull();
   });
 
   test('leaving blocked clears blockReason on every exit edge (task #849)', async () => {
-    // blocked → cancelled/archived/open must all clear blockReason via
-    // setTaskStatus — pre-existing edges that leaked stale `dependency_failed`
-    // before the fix. (blocked → review is covered separately via
-    // submitTaskForReview, the production path the RPC rejects a bare
-    // setTaskStatus('review').)
     for (const target of ['cancelled', 'archived', 'open'] as const) {
       const task = taskRepo.createTask({
         spaceId: SPACE_ID,
@@ -389,9 +334,6 @@ describe('SpaceTaskManager.setTaskStatus — matrix gap closures (task #849)', (
   });
 
   test('submitTaskForReview clears stale blockReason on blocked → review (task #849)', async () => {
-    // The canonical review-submission path does its own atomic updateTask and
-    // bypasses setTaskStatus, so the exit-from-blocked blockReason clear must
-    // be applied there too — otherwise `dependency_failed` leaks into review.
     const task = taskRepo.createTask({
       spaceId: SPACE_ID,
       title: 'T',
@@ -408,11 +350,6 @@ describe('SpaceTaskManager.setTaskStatus — matrix gap closures (task #849)', (
   });
 
   test('blocked → done clears a stale failure result (task #849)', async () => {
-    // A blocked task carries its failure message in `result` (failTask / runtime
-    // execution failures). Marking it done without a fresh completion result
-    // must not leave that failure as the done task's result — otherwise it
-    // displays as the outcome and captureCompletedTaskEvidence records the error
-    // as success.
     const task = taskRepo.createTask({
       spaceId: SPACE_ID,
       title: 'T',
@@ -439,9 +376,6 @@ describe('SpaceTaskManager.setTaskStatus — matrix gap closures (task #849)', (
   });
 
   test('blocked → done respects an explicit reportedSummary: null (task #849)', async () => {
-    // An explicit `reportedSummary: null` means "no summary" — the stale stored
-    // summary must NOT be copied into `result`. Only fall back to the stored
-    // summary when the option is undefined.
     const task = taskRepo.createTask({
       spaceId: SPACE_ID,
       title: 'T',
@@ -452,7 +386,6 @@ describe('SpaceTaskManager.setTaskStatus — matrix gap closures (task #849)', (
       result: 'execution failed: OOM',
       blockReason: 'execution_failed',
     });
-    // Stamp a stored reportedSummary (e.g. from a prior agent report).
     taskRepo.updateTask(task.id, { reportedSummary: 'old stored summary' });
     const done = await taskManager.setTaskStatus(task.id, 'done', { reportedSummary: null });
     expect(done.status).toBe('done');
@@ -467,16 +400,12 @@ describe('SpaceTaskManager.setTaskStatus — matrix gap closures (task #849)', (
       description: '',
       status: 'in_progress',
     });
-    // in_progress → approved, then stamp post-approval tracking fields as the
-    // PostApprovalRouter would.
     await taskManager.setTaskStatus(task.id, 'approved', { approvalSource: 'agent' });
     taskRepo.updateTask(task.id, {
       postApprovalSessionId: 'session-123',
       postApprovalStartedAt: Date.now(),
       postApprovalBlockedReason: 'sub-session crashed',
     });
-    // approved → cancelled — the "exit approved" cleanup must null every
-    // post-approval field atomically in the same UPDATE.
     const cancelled = await taskManager.setTaskStatus(task.id, 'cancelled');
     expect(cancelled.status).toBe('cancelled');
     expect(cancelled.postApprovalSessionId).toBeNull();

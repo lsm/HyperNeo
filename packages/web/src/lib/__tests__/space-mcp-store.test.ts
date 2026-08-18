@@ -1,15 +1,3 @@
-/**
- * Tests for SpaceMcpStore
- *
- * Covers:
- * - subscribe/unsubscribe wiring and idempotency
- * - snapshot populates entries signal
- * - delta applies added/updated/removed to the signal
- * - stale-event guard discards events after unsubscribe
- * - WebSocket reconnect re-subscribes automatically
- * - swapping spaceId tears down the old subscription
- */
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { LiveQuerySnapshotEvent, LiveQueryDeltaEvent, SpaceMcpEntry } from '@hyperneo/shared';
 
@@ -105,10 +93,6 @@ describe('SpaceMcpStore', () => {
     spaceMcpStore.unsubscribe();
   });
 
-  // ---------------------------------------------------------------------------
-  // subscribe()
-  // ---------------------------------------------------------------------------
-
   describe('subscribe()', () => {
     it('sends liveQuery.subscribe with mcpEnablement.bySpace', async () => {
       await spaceMcpStore.subscribe(SPACE_ID);
@@ -165,10 +149,6 @@ describe('SpaceMcpStore', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // delta handling
-  // ---------------------------------------------------------------------------
-
   describe('delta handling', () => {
     beforeEach(async () => {
       await spaceMcpStore.subscribe(SPACE_ID);
@@ -219,10 +199,6 @@ describe('SpaceMcpStore', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // Stale-event guard
-  // ---------------------------------------------------------------------------
-
   describe('stale-event guard', () => {
     it('discards snapshot events fired after unsubscribe', async () => {
       await spaceMcpStore.subscribe(SPACE_ID);
@@ -261,10 +237,6 @@ describe('SpaceMcpStore', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // Reconnect
-  // ---------------------------------------------------------------------------
-
   describe('WebSocket reconnect', () => {
     it('re-subscribes when the socket reconnects', async () => {
       await spaceMcpStore.subscribe(SPACE_ID);
@@ -289,10 +261,6 @@ describe('SpaceMcpStore', () => {
       unsub();
     });
   });
-
-  // ---------------------------------------------------------------------------
-  // unsubscribe()
-  // ---------------------------------------------------------------------------
 
   describe('unsubscribe()', () => {
     it('calls liveQuery.unsubscribe and clears entries', async () => {

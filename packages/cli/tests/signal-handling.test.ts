@@ -1,14 +1,3 @@
-/**
- * Signal Handling Tests
- *
- * Tests that verify signal handlers (SIGINT/SIGTERM) are registered
- * BEFORE async operations, ensuring Ctrl+C works even during startup.
- *
- * The fix addressed a bug where signal handlers were registered at the END
- * of startDevServer/startProdServer, after all async initialization.
- * If initialization hung (e.g., model loading), Ctrl+C would have no effect.
- */
-
 import { describe, test, expect, beforeEach } from 'bun:test';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -61,21 +50,18 @@ describe('Signal Handler Registration', () => {
     });
 
     test('shutdown function checks if components are initialized', () => {
-      // Verify shutdown checks for null before cleanup
       expect(sourceCode).toContain('if (server)');
       expect(sourceCode).toContain('if (vite)');
       expect(sourceCode).toContain('if (daemonContext)');
     });
 
     test('uses nullable variables for components', () => {
-      // Verify variables are declared as nullable (assigned null initially or with | null type)
       expect(sourceCode).toMatch(/let daemonContext.*\| null/);
       expect(sourceCode).toMatch(/let vite.*\| null/);
       expect(sourceCode).toMatch(/let server.*\| null/);
     });
 
     test('second Ctrl+C forces immediate exit', () => {
-      // Verify the force exit pattern exists
       expect(sourceCode).toContain('if (isShuttingDown)');
       expect(sourceCode).toContain('process.exit(1)');
     });
@@ -116,25 +102,21 @@ describe('Signal Handler Registration', () => {
     });
 
     test('shutdown function checks if components are initialized', () => {
-      // Verify shutdown checks for null before cleanup
       expect(sourceCode).toContain('if (server)');
       expect(sourceCode).toContain('if (daemonContext)');
     });
 
     test('uses nullable variables for components', () => {
-      // Verify variables are declared as nullable
       expect(sourceCode).toMatch(/let daemonContext.*\| null/);
       expect(sourceCode).toMatch(/let server.*\| null/);
     });
 
     test('second Ctrl+C forces immediate exit', () => {
-      // Verify the force exit pattern exists
       expect(sourceCode).toContain('if (isShuttingDown)');
       expect(sourceCode).toContain('process.exit(1)');
     });
 
     test('has timeout for daemon cleanup', () => {
-      // Verify daemon cleanup has timeout protection
       expect(sourceCode).toContain('Promise.race');
       expect(sourceCode).toContain('Daemon cleanup timed out');
     });
@@ -149,7 +131,6 @@ describe('Signal Handler Pattern Consistency', () => {
     const devSource = fs.readFileSync(devServerPath, 'utf-8');
     const prodSource = fs.readFileSync(prodServerPath, 'utf-8');
 
-    // Both should register handlers before async operations
     const devSigintBeforeAsync =
       devSource.indexOf("process.on('SIGINT'") < devSource.indexOf('createDaemonApp({');
     const prodSigintBeforeAsync =
@@ -163,7 +144,6 @@ describe('Signal Handler Pattern Consistency', () => {
     const devSource = fs.readFileSync(devServerPath, 'utf-8');
     const prodSource = fs.readFileSync(prodServerPath, 'utf-8');
 
-    // Both should show the graceful shutdown message
     expect(devSource).toContain('shutting down gracefully');
     expect(prodSource).toContain('shutting down gracefully');
   });
@@ -172,7 +152,6 @@ describe('Signal Handler Pattern Consistency', () => {
     const devSource = fs.readFileSync(devServerPath, 'utf-8');
     const prodSource = fs.readFileSync(prodServerPath, 'utf-8');
 
-    // Both should support force exit
     expect(devSource).toContain('Forcing exit');
     expect(prodSource).toContain('Forcing exit');
   });

@@ -1,13 +1,5 @@
-/**
- * Sandbox Default Configuration Tests
- *
- * Unit tests to verify that sandbox is enabled by default
- * and properly configured for new sessions.
- */
-
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 
-// Mock SDK type-guards at the top level
 mock.module('@hyperneo/shared/sdk/type-guards', () => ({
   isSDKAssistantMessage: (msg: { type: string }) => msg.type === 'assistant',
   isSDKUserMessage: (msg: { type: string; isReplay?: boolean }) =>
@@ -34,8 +26,6 @@ mock.module('@hyperneo/shared/sdk/type-guards', () => ({
     msg.type === 'system' && msg.subtype === 'commands_changed',
   isSDKThinkingTokensMessage: (msg: { type: string; subtype?: string }) =>
     msg.type === 'system' && msg.subtype === 'thinking_tokens',
-  // Mirrors packages/shared/src/sdk/type-guards.ts flattenSDKSlashCommands so a
-  // leaked mock keeps sdk-message-handler's commands_changed path working.
   flattenSDKSlashCommands: (commands: Array<{ name?: string; aliases?: string[] }>) => {
     const names = new Set<string>();
     const normalize = (n: string) => (n.startsWith('/') ? n.slice(1) : n);
@@ -89,7 +79,6 @@ describe('Sandbox Default Configuration', () => {
   let config: SessionLifecycleConfig;
 
   beforeEach(() => {
-    // Database mocks
     const createSessionSpy = mock(() => {});
     mockDb = {
       createSession: createSessionSpy,
@@ -111,7 +100,6 @@ describe('Sandbox Default Configuration', () => {
       })),
     } as unknown as Database;
 
-    // Worktree manager mocks
     mockWorktreeManager = {
       detectGitSupport: mock(async () => ({ isGitRepo: false, isBare: false })),
       createWorktree: mock(async () => null),
@@ -120,7 +108,6 @@ describe('Sandbox Default Configuration', () => {
       renameBranch: mock(async () => true),
     } as unknown as WorktreeManager;
 
-    // Session cache mocks
     const mockAgentSession = {
       cleanup: mock(async () => {}),
       updateMetadata: mock(() => {}),
@@ -140,14 +127,12 @@ describe('Sandbox Default Configuration', () => {
       clear: mock(() => {}),
     } as unknown as SessionCache;
 
-    // Event bus mocks
     mockInternalEventBus = {
       publish: mock(async () => {}),
       publishAsync: mock(() => {}),
       subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
     } as unknown as InternalEventBus<any>;
 
-    // Message hub mocks
     mockMessageHub = {
       event: mock(async () => {}),
       onRequest: mock((_method: string, _handler: Function) => () => {}),
@@ -155,20 +140,16 @@ describe('Sandbox Default Configuration', () => {
       command: mock(async () => {}),
     } as unknown as MessageHub;
 
-    // Tools config manager mocks (no methods are called by SessionLifecycle
-    // post-M5; an empty stub is sufficient for type compatibility).
     mockToolsConfigManager = {} as unknown as ToolsConfigManager;
 
-    // Agent session factory
     mockAgentSessionFactory = mock(() => mockAgentSession);
 
-    // Config
     config = {
       defaultModel: 'default',
       maxTokens: 8192,
       temperature: 1.0,
       workspaceRoot: '/default/workspace',
-      disableWorktrees: true, // Disable worktrees for simpler tests
+      disableWorktrees: true,
     };
 
     lifecycle = new SessionLifecycle(

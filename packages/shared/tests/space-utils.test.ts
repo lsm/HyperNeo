@@ -20,10 +20,6 @@ import {
   isWorkflowRecoveryTransition,
 } from '../src/types/space-utils.ts';
 
-// ============================================================================
-// Test fixtures
-// ============================================================================
-
 function makeAgent(id: string, name: string): SpaceWorkerAgent {
   return {
     id,
@@ -74,10 +70,6 @@ const agentReviewer = makeAgent('agent-reviewer-id', 'reviewer agent');
 const agentSecurity = makeAgent('agent-security-id', 'security agent');
 const allAgents: SpaceWorkerAgent[] = [agentCoder, agentReviewer, agentSecurity];
 
-// ============================================================================
-// Workflow-run execution status helpers
-// ============================================================================
-
 describe('workflow-run execution status helpers', () => {
   test('labels persisted workflow-run statuses as execution attempts', () => {
     expect(getWorkflowRunExecutionStatusLabel('pending')).toBe('Queued');
@@ -103,10 +95,6 @@ describe('workflow-run execution status helpers', () => {
     expect(isWorkflowRunTerminal('in_progress')).toBe(false);
   });
 });
-
-// ============================================================================
-// resolveNodeAgents
-// ============================================================================
 
 describe('resolveNodeAgents', () => {
   test('returns agents array when agents is set (non-empty)', () => {
@@ -163,10 +151,6 @@ describe('resolveNodeAgents', () => {
     expect(result[0].customPrompt).toEqual({ value: 'Be concise.' });
   });
 });
-
-// ============================================================================
-// validateChannels — node uniqueness and channel addressing
-// ============================================================================
 
 describe('validateChannels', () => {
   test('returns no errors for a valid workflow with unique node names', () => {
@@ -269,10 +253,6 @@ describe('validateChannels', () => {
   });
 });
 
-// ============================================================================
-// findChannel / getChannelsFromNode / getChannelsToNode
-// ============================================================================
-
 describe('findChannel', () => {
   const channels: WorkflowChannel[] = [
     { id: 'ch-1', from: 'Code', to: 'Review' },
@@ -309,7 +289,7 @@ describe('getChannelsFromNode', () => {
   });
 
   test('returns empty when no channels from node', () => {
-    expect(getChannelsFromNode(channels, 'QA')).toHaveLength(1); // wildcard
+    expect(getChannelsFromNode(channels, 'QA')).toHaveLength(1);
   });
 });
 
@@ -331,10 +311,6 @@ describe('getChannelsToNode', () => {
   });
 });
 
-// ============================================================================
-// isRateOrUsageLimited — single source of truth for paused-on-cap statuses
-// ============================================================================
-
 describe('isRateOrUsageLimited — single source of truth for paused-on-cap statuses', () => {
   const ALL_SPACE_TASK_STATUSES = [
     'draft',
@@ -350,10 +326,6 @@ describe('isRateOrUsageLimited — single source of truth for paused-on-cap stat
     'usage_limited',
   ] as const satisfies readonly SpaceTaskStatus[];
 
-  // Compile-time exhaustiveness: typecheck error if any SpaceTaskStatus is
-  // absent from the array above. A newly-added status that isn't listed here
-  // makes `true` unassignable to `never`, turning a silent coverage hole into a
-  // build failure — which is the guarantee this test exists to provide.
   type _ExhaustiveSpaceTaskStatuses =
     SpaceTaskStatus extends (typeof ALL_SPACE_TASK_STATUSES)[number] ? true : never;
   const _assertExhaustive: _ExhaustiveSpaceTaskStatuses = true;
@@ -364,13 +336,6 @@ describe('isRateOrUsageLimited — single source of truth for paused-on-cap stat
   });
 
   test('isWorkflowRecoveryTransition derives its paused arm from the predicate', () => {
-    // Every consumer of the paused set routes through isRateOrUsageLimited, so
-    // the recovery transition's rate/usage arm must agree with the predicate
-    // across the full status set. If a status is added to the predicate, this
-    // consumer (and every other) picks it up automatically — no per-site
-    // literal to update. The web consumer (isActionRequired) is covered
-    // exhaustively in task-filters.test.ts; the daemon consumers by the
-    // rate-limit integration tests.
     for (const status of ALL_SPACE_TASK_STATUSES) {
       expect(isWorkflowRecoveryTransition(status, 'in_progress')).toBe(
         isRateOrUsageLimited(status) ||
@@ -381,10 +346,6 @@ describe('isRateOrUsageLimited — single source of truth for paused-on-cap stat
     }
   });
 });
-
-// ============================================================================
-// isWorkflowRecoveryTransition — paused-task manual resume/cancel routing
-// ============================================================================
 
 describe('isWorkflowRecoveryTransition', () => {
   test('blocked/cancelled/done → active is a recovery transition', () => {

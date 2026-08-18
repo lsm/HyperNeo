@@ -1,11 +1,3 @@
-/**
- * WorkflowExecutor Unit Tests
- *
- * Covers:
- * - Graph navigation (getCurrentStep, isComplete)
- * - evaluateCondition: always, human, condition, task_result types
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -18,13 +10,7 @@ import type {
 } from '../../../../src/lib/space/runtime/workflow-executor.ts';
 import type { SpaceWorkflow, SpaceWorkflowRun, WorkflowCondition } from '@hyperneo/shared';
 
-// ---------------------------------------------------------------------------
-// Test DB helpers
-// ---------------------------------------------------------------------------
-
 function makeDb(): BunDatabase {
-  // Use in-memory SQLite — faster than file-based DB and avoids filesystem
-  // I/O contention that caused beforeEach hook timeouts in CI.
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
@@ -46,10 +32,6 @@ function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: stri
   ).run(agentId, spaceId, name, Date.now(), Date.now());
 }
 
-// ---------------------------------------------------------------------------
-// Mock command runners
-// ---------------------------------------------------------------------------
-
 function makeOkRunner(): CommandRunner {
   return async () => ({ exitCode: 0 });
 }
@@ -62,10 +44,6 @@ function makeTimeoutRunner(): CommandRunner {
   return async () => ({ exitCode: null, timedOut: true });
 }
 
-// ---------------------------------------------------------------------------
-// Test suite setup
-// ---------------------------------------------------------------------------
-
 describe('WorkflowExecutor', () => {
   let db: BunDatabase;
   let workflowRepo: SpaceWorkflowRepository;
@@ -76,7 +54,6 @@ describe('WorkflowExecutor', () => {
   const AGENT_A = 'agent-a';
   const AGENT_B = 'agent-b';
 
-  // Step ID constants used to wire up transitions
   const STEP_A = 'step-a';
   const STEP_B = 'step-b';
 
@@ -98,10 +75,6 @@ describe('WorkflowExecutor', () => {
     }
   });
 
-  // -------------------------------------------------------------------------
-  // Helpers
-  // -------------------------------------------------------------------------
-
   function makeExecutor(
     workflow: SpaceWorkflow,
     run: SpaceWorkflowRun,
@@ -110,16 +83,12 @@ describe('WorkflowExecutor', () => {
     return new WorkflowExecutor(workflow, run, runner);
   }
 
-  /**
-   * Creates a linear A→B workflow and a run starting at the first step.
-   */
   function createLinearWorkflow(
     stepsSpec: Array<{
       id: string;
       name: string;
       agentId: string;
       instructions?: string;
-      // condition on the transition FROM the previous step TO this step
       incomingCondition?: WorkflowCondition;
     }>
   ): { workflow: SpaceWorkflow; run: SpaceWorkflowRun } {
@@ -155,10 +124,6 @@ describe('WorkflowExecutor', () => {
     return { workflow, run };
   }
 
-  // =========================================================================
-  // Navigation
-  // =========================================================================
-
   describe('isComplete', () => {
     test('isComplete returns false at start of workflow', () => {
       const { workflow, run } = createLinearWorkflow([
@@ -186,10 +151,6 @@ describe('WorkflowExecutor', () => {
     });
   });
 
-  // =========================================================================
-  // evaluateCondition: always
-  // =========================================================================
-
   describe('evaluateCondition: always', () => {
     test('always always passes', async () => {
       const { workflow, run } = createLinearWorkflow([
@@ -201,10 +162,6 @@ describe('WorkflowExecutor', () => {
       expect(result.passed).toBe(true);
     });
   });
-
-  // =========================================================================
-  // evaluateCondition: human
-  // =========================================================================
 
   describe('evaluateCondition: human', () => {
     test('passes when humanApproved is true', async () => {
@@ -238,10 +195,6 @@ describe('WorkflowExecutor', () => {
       expect(result.passed).toBe(false);
     });
   });
-
-  // =========================================================================
-  // evaluateCondition: condition (user-supplied expression)
-  // =========================================================================
 
   describe('evaluateCondition: condition', () => {
     test('passes when expression exits 0', async () => {
@@ -296,10 +249,6 @@ describe('WorkflowExecutor', () => {
       expect(result.reason).toContain('timed out');
     });
   });
-
-  // =========================================================================
-  // evaluateCondition: task_result
-  // =========================================================================
 
   describe('evaluateCondition: task_result', () => {
     test('passes when taskResult starts with expression', async () => {

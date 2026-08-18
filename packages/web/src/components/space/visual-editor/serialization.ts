@@ -1,26 +1,3 @@
-/**
- * Serialization helpers for converting between the visual editor's internal
- * state and the SpaceWorkflow / CreateSpaceWorkflowParams / UpdateSpaceWorkflowParams
- * data model used by the backend.
- *
- * Key design decisions:
- * - `startNodeId` is passed through from the editor state (explicitly set by the
- *   user via "Set as Start"), never auto-detected from graph topology.
- * - Edge `order` is computed from the left-to-right x-position of the
- *   target node among all outgoing edges of a given source node.
- * - When `workflow.layout` is present, stored positions are restored exactly.
- *   When absent (or only partially populated), `autoLayout` fills in missing positions.
- * - `WorkflowCondition` is stored verbatim on `VisualEdge` (including `description`,
- *   `maxRetries`, `timeoutMs`). Fields that the visual editor UI does not expose are
- *   preserved through load/save so they are not silently stripped.
- * - `VisualEdge` represents a canvas-only directed edge for the visual editor.
- *   Transitions have been removed from the backend; edges are visual-only.
- * - New steps (no `step.id`) receive a generated UUID inside `buildWorkflowFields`.
- *   This UUID is stable within a single call but differs across calls — callers must
- *   not invoke `visualStateToCreateParams` / `visualStateToUpdateParams` twice on the
- *   same state and expect the generated IDs to match.
- */
-
 import { generateUUID, normalizeThinkingLevel } from '@hyperneo/shared';
 import type {
   SpaceWorkflow,
@@ -35,88 +12,33 @@ import type { NodeDraft } from '../WorkflowNodeCard';
 import type { Point, WorkflowCondition } from './types';
 import { autoLayout } from './layout';
 
-// ============================================================================
-// Visual Editor State types
-// ============================================================================
-
-/**
- * A single workflow node in the visual editor.
- * `step.id` is the stable persisted step ID (present for existing steps).
- * `step.localId` is used for React keying.
- */
 export interface VisualNode {
   step: NodeDraft;
   position: Point;
 }
 
-/**
- * A directed edge between two nodes in the visual editor.
- *
- * `fromStepKey` and `toStepKey` are the stable step identifiers used
- * for serialization: `step.id` when the step already exists in the backend,
- * or `step.localId` for brand-new steps.
- *
- * `condition` stores the full `WorkflowCondition` from the backend (including
- * `description`, `maxRetries`, `timeoutMs`), or undefined for unconditional
- * (always-fire) transitions. This avoids silent data loss when the UI edits a
- * transition that already has backend-only fields set.
- */
 export interface VisualEdge {
   fromStepKey: string;
   toStepKey: string;
-  /** Full backend condition — undefined means unconditional ("always"). */
   condition: WorkflowCondition | undefined;
 }
 
-/**
- * Complete state of the visual workflow editor.
- */
 export interface VisualEditorState {
   nodes: VisualNode[];
   edges: VisualEdge[];
-  /**
-   * The step key (step.id for existing, step.localId for new) of the
-   * start node. Managed explicitly by the user.
-   */
   startNodeId: string;
-  /**
-   * The step key (step.id for existing, step.localId for new) of the
-   * end node. Managed explicitly by the user. When set, the workflow
-   * run auto-completes when the end node's execution sets `task.reportedStatus`.
-   */
   endNodeId?: string;
   tags: string[];
-  /** Directed messaging channels at the workflow level. */
   channels: WorkflowChannel[];
-  /** Workflow hooks for MCP action validation and side effects. */
   hooks: WorkflowHook[];
-  /**
-   * Minimum space autonomy level required to run this workflow without
-   * human approval at each task completion. Defaults to 3 when not set.
-   */
   completionAutonomyLevel?: SpaceAutonomyLevel;
-  /** When true, the workflow is disabled and cannot be selected for new tasks. */
   disabled?: boolean;
 }
 
-// ============================================================================
-// workflowToVisualState
-// ============================================================================
-
-/**
- * Convert a SpaceWorkflow to a VisualEditorState.
- *
- * - If `workflow.layout` is present and covers all steps, positions are restored
- *   exactly from the stored layout. Steps missing from a partial layout fall back
- *   to `autoLayout` positions (autoLayout is only invoked when needed).
- * - All `WorkflowCondition` fields are preserved verbatim on the edges.
- */
 export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorState {
-  // Determine whether auto-layout is needed (any step missing from layout)
   const layoutMap = workflow.layout;
   const needsAutoLayout = !layoutMap || workflow.nodes.some((s) => !layoutMap[s.id]);
 
-  // Lazily compute auto-layout only when at least one step lacks a stored position
   const layoutFallback = needsAutoLayout
     ? autoLayout(workflow.nodes, [], workflow.startNodeId, workflow.channels ?? [])
     : new Map<string, Point>();
@@ -141,29 +63,21 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
       })),
       postApproval:
         s.postApproval ?? (s.id === workflow.endNodeId ? workflow.postApproval : undefined),
-      // Sticky seed so the post-approval toggle cannot drop the hidden merge gate.
       requirePrMerge:
         (s.postApproval ?? (s.id === workflow.endNodeId ? workflow.postApproval : undefined))
           ?.requirePrMerge === true
           ? true
           : undefined,
-      // Carry declared handoff transitions verbatim so a visual-editor save
-      // round-trips them instead of dropping them to undefined.
       handoffTransitions: s.transitions,
     };
     return { step, position };
   });
 
-  // Transitions have been removed from SpaceWorkflow; edges start empty.
   const edges: VisualEdge[] = [];
 
-  // startNodeId: use the step.id directly (matches the edge keys).
-  // Fall back to the first step's id if the workflow's startNodeId is missing.
   const startKey =
     workflow.nodes.find((s) => s.id === workflow.startNodeId)?.id ?? workflow.nodes[0]?.id ?? '';
 
-  // endNodeId: use the step.id directly (matches the edge keys).
-  // Undefined when the workflow has no endNodeId set.
   const endKey = workflow.endNodeId
     ? (workflow.nodes.find((s) => s.id === workflow.endNodeId)?.id ?? undefined)
     : undefined;
@@ -185,13 +99,6 @@ export function workflowToVisualState(workflow: SpaceWorkflow): VisualEditorStat
   };
 }
 
-// ============================================================================
-// visualStateToWorkflowParams
-// ============================================================================
-
-/**
- * Shared structure returned by both create and update serialisation.
- */
 interface BuiltWorkflowFields {
   nodes: Array<{
     id: string;
@@ -207,11 +114,6 @@ interface BuiltWorkflowFields {
   hooks?: WorkflowHook[];
 }
 
-/**
- * Resolve the stable persisted step ID for a given node.
- * If the node has a persisted `step.id`, that is used directly.
- * Otherwise a new UUID is generated once and cached in `generatedIds`.
- */
 function resolveStepId(node: VisualNode, generatedIds: Map<string, string>): string {
   if (node.step.id) return node.step.id;
   const key = node.step.localId;
@@ -270,12 +172,6 @@ function serializeHook(hook: WorkflowHook, nodeNames: Map<string, string>): Work
   if (hook.humanOnly && (!hook.authorizedCallers || hook.authorizedCallers.length === 0)) {
     return null;
   }
-  // pr_ready always polls unbounded. codex_review_approved omits the default
-  // 3-attempt cap (codex reviews take 20–30 min; capping at 3 stops after ~15s
-  // and clears the queued handoff before approval arrives) but supplies a 60s
-  // default delay (no cap) so the polling cadence matches the documented
-  // CODEX_RETRY_INTERVAL_MS without the engine's 30s default — and HONORS an
-  // explicitly-configured hook.retry so an operator can still bound/pace it.
   const isPrReady = hook.validator.kind === 'built_in' && hook.validator.id === 'pr_ready';
   const isCodexApproval =
     hook.validator.kind === 'built_in' && hook.validator.id === 'codex_review_approved';
@@ -296,11 +192,6 @@ function serializeHook(hook: WorkflowHook, nodeNames: Map<string, string>): Work
   };
 }
 
-/**
- * Build the serialized workflow fields from a VisualEditorState.
- * Shared between create and update serialisation.
- *
- */
 function buildWorkflowFields(state: VisualEditorState): {
   fields: BuiltWorkflowFields;
   keyToPersistedId: Map<string, string>;
@@ -309,7 +200,6 @@ function buildWorkflowFields(state: VisualEditorState): {
 
   const persistableNodes = state.nodes;
 
-  // Assign persisted IDs to all nodes
   const nodeMap = new Map<string, { node: VisualNode; persistedId: string }>();
   for (const node of persistableNodes) {
     const key = node.step.id ?? node.step.localId;
@@ -317,29 +207,19 @@ function buildWorkflowFields(state: VisualEditorState): {
     nodeMap.set(key, { node, persistedId });
   }
 
-  // Also build a lookup by localId so startNodeId can reference either key style
-  // (e.g. when startNodeId was set to step.localId rather than step.id).
   const localIdMap = new Map<string, { node: VisualNode; persistedId: string }>();
   for (const [, entry] of nodeMap) {
     localIdMap.set(entry.node.step.localId, entry);
   }
 
-  // Build key -> persisted ID map for channel endpoint remapping
   const keyToPersistedId = new Map<string, string>();
   for (const [key, { persistedId }] of nodeMap) {
     keyToPersistedId.set(key, persistedId);
   }
-  // Also map localId -> persistedId (covers startNodeId and appliesTo references)
   for (const [, entry] of nodeMap) {
     keyToPersistedId.set(entry.node.step.localId, entry.persistedId);
   }
 
-  // Distinct destinations a handoff target name can address in the CURRENT
-  // graph (node-name destinations and slot-name destinations counted separately,
-  // mirroring the daemon). The editor does not expose handoff transitions for
-  // editing, so a rename/delete can leave a carried transition pointing at a
-  // stale OR newly-ambiguous target — drop those so an unrelated visual-editor
-  // save is not rejected by validateTransitions.
   const handoffTargetDestinations = new Map<string, Set<string>>();
   const countDestination = (name: string, key: string) => {
     if (!name) return;
@@ -351,16 +231,12 @@ function buildWorkflowFields(state: VisualEditorState): {
     countDestination(n.step.name, `node:${n.step.localId}`);
     for (const a of n.step.agents ?? []) countDestination(a.name, `slot:${n.step.localId}`);
   }
-  // Current hook ids — a carried transition whose hookId was removed (e.g. the
-  // hook's source/target node was deleted) must be dropped, not emitted with a
-  // dangling reference that validateTransitions rejects.
   const currentHookIds = new Set(state.hooks.map((h) => h.id));
 
   const nodes = persistableNodes.map((node, i) => {
     const key = node.step.id ?? node.step.localId;
     const persistedId = nodeMap.get(key)!.persistedId;
     const hasMultiAgent = Array.isArray(node.step.agents) && node.step.agents.length > 0;
-    // Build agents array — if no multi-agent configured, fall back to single agentId as a slot
     const agents: WorkflowNodeAgent[] = hasMultiAgent
       ? node.step.agents!.map((agent) => ({
           ...agent,
@@ -388,11 +264,6 @@ function buildWorkflowFields(state: VisualEditorState): {
       ? {
           targetAgent: derivePostApprovalTargetAgent(agents, i),
           instructions: node.step.postApproval.instructions,
-          // Restore the PR-merged gate flag. Prefer the sticky step-level field
-          // (survives the post-approval toggle); fall back to the nested route
-          // flag for node drafts that didn't seed the sticky field (e.g. the
-          // template-picker path via buildTemplateNodes). Without this, a saved
-          // clone of a coder-owned workflow loses the mark_complete merge gate.
           ...(node.step.requirePrMerge || node.step.postApproval?.requirePrMerge
             ? { requirePrMerge: true }
             : {}),
@@ -403,19 +274,12 @@ function buildWorkflowFields(state: VisualEditorState): {
       name: node.step.name || `Step ${i + 1}`,
       agents,
       ...(postApproval ? { postApproval } : {}),
-      // Re-emit carried handoff transitions (mapped back to the backend field),
-      // dropping any whose target no longer resolves to exactly one destination
-      // — a renamed/deleted target (zero destinations) OR a renamed-slot
-      // collision (more than one) — so the save is not rejected by
-      // validateTransitions.
       ...(() => {
         const valid = (node.step.handoffTransitions ?? []).filter((t) => {
           if (t.target !== '*') {
             const dests = handoffTargetDestinations.get(t.target);
             if (!dests || dests.size !== 1) return false;
           }
-          // Drop transitions whose referenced hook was removed from the
-          // current graph (e.g. by a node deletion).
           if (t.hookId !== undefined && !currentHookIds.has(t.hookId)) return false;
           return true;
         });
@@ -424,7 +288,6 @@ function buildWorkflowFields(state: VisualEditorState): {
     };
   });
 
-  // Build layout
   const layout: Record<string, { x: number; y: number }> = {};
   for (const node of persistableNodes) {
     const key = node.step.id ?? node.step.localId;
@@ -432,7 +295,6 @@ function buildWorkflowFields(state: VisualEditorState): {
     layout[persistedId] = { x: node.position.x, y: node.position.y };
   }
 
-  // Resolve startNodeId — prefer exact key match, then localId match, then first persistable node
   const startEntry =
     nodeMap.get(state.startNodeId) ??
     localIdMap.get(state.startNodeId) ??
@@ -444,7 +306,6 @@ function buildWorkflowFields(state: VisualEditorState): {
       : null);
   const startNodeId = startEntry?.persistedId ?? '';
 
-  // Resolve endNodeId — prefer exact key match, then localId match. Undefined when not set.
   let endNodeId: string | undefined;
   if (state.endNodeId) {
     const endEntry = nodeMap.get(state.endNodeId) ?? localIdMap.get(state.endNodeId);
@@ -470,14 +331,6 @@ function buildWorkflowFields(state: VisualEditorState): {
   };
 }
 
-/**
- * Convert a VisualEditorState to CreateSpaceWorkflowParams.
- *
- * @param state - Current visual editor state
- * @param spaceId - The space to create the workflow in
- * @param name - Workflow name
- * @param description - Optional workflow description
- */
 export function visualStateToCreateParams(
   state: VisualEditorState,
   spaceId: string,
@@ -502,12 +355,6 @@ export function visualStateToCreateParams(
   };
 }
 
-/**
- * Convert a VisualEditorState to UpdateSpaceWorkflowParams.
- *
- * @param state - Current visual editor state
- * @param overrides - Optional field overrides (name, description)
- */
 export function visualStateToUpdateParams(
   state: VisualEditorState,
   overrides?: { name?: string; description?: string | null }

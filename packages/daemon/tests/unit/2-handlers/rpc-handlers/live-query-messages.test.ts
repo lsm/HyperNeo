@@ -1,16 +1,3 @@
-/**
- * Unit tests for the `messages.bySession` named query in NAMED_QUERY_REGISTRY.
- *
- * Covers:
- *  - Registry entry exists with the expected paramCount.
- *  - Ordering (timestamp ASC, id ASC).
- *  - LIMIT applied to top-level rows only, with subagent rows included
- *    regardless of whether their parent was inside the limit.
- *  - Filtering of user messages by send_status (deferred/enqueued excluded).
- *  - `mapMessageRow` parses the JSON blob, injects id / timestamp / origin,
- *    and forwards `sendStatus` only when the DB row is 'failed'.
- */
-
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import type { MessageHub } from '@hyperneo/shared';
@@ -22,10 +9,6 @@ import {
   NAMED_QUERY_REGISTRY,
   setupLiveQueryHandlers,
 } from '../../../../src/lib/rpc-handlers/live-query-handlers';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -61,7 +44,6 @@ interface InsertSdkMessageArgs {
   messageType: string;
   messageSubtype?: string | null;
   sdkMessage: Record<string, unknown>;
-  /** ISO timestamp (stored TEXT). Default is a fixed known value. */
   timestamp?: string;
   sendStatus?: 'deferred' | 'enqueued' | 'submitted' | 'consumed' | 'failed';
   origin?: 'human' | 'system' | null;
@@ -93,7 +75,6 @@ function insertSdkMessage(db: BunDatabase, args: InsertSdkMessageArgs): void {
   );
 }
 
-/** Insert a message_delivery job_queue row (task #862 retry-signal tests). */
 function insertDeliveryJob(
   db: BunDatabase,
   args: {
@@ -159,7 +140,6 @@ function createMockHub() {
         });
         return { ok: true } as const;
       }),
-      // Ingress fan-out guardrail stubs (task #899): no cap in this suite.
       checkSubscriptionCapacity: mock(() => ({ ok: true })),
       addClientSubscription: mock(() => {}),
       releaseClientSubscription: mock(() => {}),
@@ -197,10 +177,6 @@ function subscribeMessagesBySession(db: BunDatabase, sessionId: string, limit = 
   return snapshot;
 }
 
-// ---------------------------------------------------------------------------
-// Registry metadata
-// ---------------------------------------------------------------------------
-
 describe('messages.bySession — registry metadata', () => {
   test('registry contains messages.bySession entry', () => {
     expect(NAMED_QUERY_REGISTRY.has('messages.bySession')).toBe(true);
@@ -214,10 +190,6 @@ describe('messages.bySession — registry metadata', () => {
     expect(typeof NAMED_QUERY_REGISTRY.get('messages.bySession')!.mapRow).toBe('function');
   });
 });
-
-// ---------------------------------------------------------------------------
-// SQL behavior
-// ---------------------------------------------------------------------------
 
 describe('messages.bySession — SQL behavior', () => {
   let db: BunDatabase;
@@ -301,8 +273,6 @@ describe('messages.bySession — SQL behavior', () => {
 
     const rows = query(db, 's1', 100);
     const byUuid = new Map(rows.map((r) => [r.uuid as string, r]));
-    // Task #862: all user rows are now visible (no longer filtered to
-    // consumed/failed) and each carries its mapped delivery lifecycle.
     expect([...byUuid.keys()].sort()).toEqual(['u1', 'u2', 'u3', 'u4', 'u5']);
     expect(byUuid.get('u1')!.deliveryStatus).toBe('delivered');
     expect(byUuid.get('u2')!.deliveryStatus).toBe('queued');
@@ -331,18 +301,15 @@ describe('messages.bySession — SQL behavior', () => {
       sessionId: 's1',
       messageType: 'assistant',
       sdkMessage: { type: 'assistant', uuid: 'u-c', message: { content: [] } },
-      timestamp: '2024-01-01 00:00:02', // same timestamp as 'b'
+      timestamp: '2024-01-01 00:00:02',
     });
 
     const rows = query(db, 's1', 100);
     const ids = rows.map((r) => r.id);
-    // 'a' comes first (earliest timestamp); 'b' and 'c' share a timestamp
-    // and must order by id ASC.
     expect(ids).toEqual(['a', 'b', 'c']);
   });
 
   test('limit applies to top-level rows only; keeps most recent N', () => {
-    // Insert 5 top-level assistant messages; set limit to 3.
     for (let i = 1; i <= 5; i++) {
       insertSdkMessage(db, {
         id: `t${i}`,
@@ -355,8 +322,6 @@ describe('messages.bySession — SQL behavior', () => {
 
     const rows = query(db, 's1', 3);
     const ids = rows.map((r) => r.id);
-    // With LIMIT=3, only the 3 most recent top-level rows should be included,
-    // and returned in ascending order (t3, t4, t5).
     expect(ids).toEqual(['t3', 't4', 't5']);
   });
 
@@ -835,10 +800,6 @@ describe('messages.bySession — SQL behavior', () => {
 
   test('uses the session timestamp index for the top-level window', () => {
     const plan = queryPlan(db, 's1', 200);
-    // The top-level window is session-scoped, so it must use a session index
-    // (idx_sdk_messages_session_timestamp_id) and never a full table scan. The
-    // cap orders by (timestamp, rowid) for correct same-ms hook-phase ordering;
-    // rowid isn't in the composite index, so the planner does a bounded temp sort.
     expect(plan).toMatch(/idx_sdk_messages_session(_timestamp_id)?\b/);
     expect(plan).not.toContain('SCAN sdk_messages USING');
   });
@@ -849,11 +810,6 @@ describe('messages.bySession — SQL behavior', () => {
   });
 
   test('background-task sidecar subtype filter is sargable via message_subtype_norm', () => {
-    // See issue #2330: 78% of rows have message_subtype NULL, so a
-    // COALESCE(message_subtype,'') filter is non-sargable and forced the
-    // (session_id, parent_tool_use_id) index to seek every top-level row. The
-    // message_subtype_norm generated column + composite index must turn the
-    // sidecar's subtype IN filter into an index seek instead.
     for (const subtype of ['task_started', 'task_updated', 'task_notification']) {
       insertSdkMessage(db, {
         id: `bg-${subtype}`,
@@ -877,10 +833,8 @@ describe('messages.bySession — SQL behavior', () => {
       .prepare(`EXPLAIN QUERY PLAN ${BACKGROUND_TASK_METADATA_SQL}`)
       .all('s1', 's1', 's1', 's1', 's1') as Array<{ detail: string }>;
     const plan = planRows.map((row) => row.detail).join('\n');
-    // The load-bearing assertion: the new index drives the subtype predicate.
     expect(plan).toContain('idx_sdk_messages_session_subtype_parent');
     expect(plan).toContain('message_subtype_norm');
-    // ...and it resolves to a seek (SEARCH), not a scan of sdk_messages.
     expect(plan).toContain('SEARCH');
   });
 
@@ -910,7 +864,6 @@ describe('messages.bySession — SQL behavior', () => {
   });
 
   test('includes subagent messages whose parent_tool_use_id matches a top-level tool_use', () => {
-    // Top-level assistant row with a tool_use in its content.
     insertSdkMessage(db, {
       id: 'parent',
       sessionId: 's1',
@@ -928,7 +881,6 @@ describe('messages.bySession — SQL behavior', () => {
       timestamp: '2024-01-01 00:00:01',
     });
 
-    // Subagent row keyed by parent_tool_use_id matching that tool_use.id.
     insertSdkMessage(db, {
       id: 'child',
       sessionId: 's1',
@@ -942,7 +894,6 @@ describe('messages.bySession — SQL behavior', () => {
       timestamp: '2024-01-01 00:00:02',
     });
 
-    // Unrelated subagent row whose parent_tool_use_id does NOT match.
     insertSdkMessage(db, {
       id: 'stranger',
       sessionId: 's1',
@@ -961,10 +912,6 @@ describe('messages.bySession — SQL behavior', () => {
     expect(uuids).toEqual(['u-child', 'u-parent']);
   });
 });
-
-// ---------------------------------------------------------------------------
-// mapRow — inflation + field extraction
-// ---------------------------------------------------------------------------
 
 describe('messages.bySession — mapRow', () => {
   let db: BunDatabase;
@@ -1002,7 +949,7 @@ describe('messages.bySession — mapRow', () => {
       id: 'stable-id-42',
       sessionId: 's1',
       messageType: 'assistant',
-      sdkMessage: { type: 'assistant', message: { content: [] } }, // no uuid
+      sdkMessage: { type: 'assistant', message: { content: [] } },
       timestamp: '2024-01-01 00:00:01',
     });
 
@@ -1021,7 +968,6 @@ describe('messages.bySession — mapRow', () => {
 
     const [row] = query(db, 's1', 10);
     expect(typeof row.timestamp).toBe('number');
-    // `2024-01-01 00:00:00` UTC → epoch ms
     expect(row.timestamp).toBe(new Date('2024-01-01T00:00:00Z').getTime());
   });
 
@@ -1084,8 +1030,6 @@ describe('messages.bySession — mapRow', () => {
     const rows = query(db, 's1', 10);
     const okRow = rows.find((r) => r.uuid === 'u-ok')!;
     const failRow = rows.find((r) => r.uuid === 'u-fail')!;
-    // Task #862: consumed → delivered, failed → failed. Non-user rows would
-    // carry no deliveryStatus; user rows always carry their mapped state.
     expect(okRow.deliveryStatus).toBe('delivered');
     expect(failRow.deliveryStatus).toBe('failed');
   });
@@ -1108,12 +1052,10 @@ describe('messages.bySession — mapRow', () => {
       sendStatus: 'submitted',
     });
 
-    // No active retry jobs yet → plain queued / processing.
     let byUuid = new Map(query(db, 's1', 10).map((r) => [r.uuid as string, r]));
     expect(byUuid.get('u-enq')!.deliveryStatus).toBe('queued');
     expect(byUuid.get('u-sub')!.deliveryStatus).toBe('processing');
 
-    // A reclaim re-drove both (active job, retry_count > 0) → retrying.
     insertDeliveryJob(db, {
       id: 'job-enq',
       sessionId: 's1',

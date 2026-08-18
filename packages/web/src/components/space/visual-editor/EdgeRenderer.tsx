@@ -1,56 +1,16 @@
-/**
- * EdgeRenderer
- *
- * Renders VisualTransition (canvas edge) entries as SVG cubic bezier paths.
- *
- * Each edge connects the output port (bottom-center) of the source node to the
- * input port (top-center) of the target node. Control points are offset vertically
- * by CONTROL_OFFSET px for a smooth curve.
- *
- * Edge color reflects the condition type:
- *   always    -> blue  (#3b82f6)
- *   human     -> yellow (#facc15)
- *   condition -> purple (#c084fc)
- *
- * A wider invisible hitbox path (stroke-width 12px) is rendered behind each
- * visible edge to make clicking easier. An arrowhead marker indicates direction.
- *
- * Delete/Backspace while an edge is selected calls onEdgeDelete.
- *
- * Marker IDs are prefixed with a stable per-instance ID (via useId) to prevent
- * collisions when multiple EdgeRenderer instances are mounted simultaneously.
- *
- * Channel edges are also rendered (via the channels prop). Channel edges connect
- * between routed semantic node anchors with a distinct teal style.
- * Direction is encoded by the line style:
- *   one-way       -> dashed
- *   bidirectional -> solid + double arrowheads
- * Cyclic (loop-back) channels render a Loop badge at the midpoint.
- * Channels are selectable by clicking; the selected channel highlights in white.
- */
-
 import { useEffect, useRef } from 'preact/hooks';
 import type { NodePosition, VisualTransition, WorkflowConditionType } from './types';
 import type { AnchorSide } from './semanticWorkflowGraph';
 
-// Module-level counter -- increments on each EdgeRenderer mount, giving every
-// instance a unique marker ID prefix even when multiple instances are on the
-// same page (e.g. split-view or comparison mode).
 let _instanceCounter = 0;
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/** Control point vertical offset for bezier curves (px, canvas space). */
 export const CONTROL_OFFSET = 60;
 
-/** Stroke colors matching GATE_COLORS from WorkflowList.tsx */
 export const EDGE_COLORS: Record<WorkflowConditionType, string> = {
-  always: '#3b82f6', // blue-500
-  human: '#facc15', // yellow-400
-  condition: '#c084fc', // purple-400
-  task_result: '#f97316', // orange-500
+  always: '#3b82f6',
+  human: '#facc15',
+  condition: '#c084fc',
+  task_result: '#f97316',
 };
 
 export const NORMAL_STROKE_WIDTH = 1.5;
@@ -59,33 +19,19 @@ export const CHANNEL_STROKE_WIDTH = 2.4;
 export const CHANNEL_SELECTED_STROKE_WIDTH = 3.6;
 const HITBOX_STROKE_WIDTH = 12;
 
-// ---------------------------------------------------------------------------
-// Channel edge types and constants
-// ---------------------------------------------------------------------------
-
-/**
- * A messaging channel between two nodes with resolved node IDs.
- * This is the rendered form of a WorkflowChannel where slot name strings
- * have been resolved to actual node/step IDs.
- */
 export interface ResolvedWorkflowChannel {
   fromStepId: string;
   toStepId: string;
-  /** Visual direction derived from channel topology: 'bidirectional' means arrows in both directions. */
   direction: 'one-way' | 'bidirectional';
   isCyclic?: boolean;
-  /** Stable ID for selection -- typically the workflow-level channel array index as a string. */
   id?: string;
-  /** Optional display label from WorkflowChannel.label */
   label?: string;
   sourceSide?: AnchorSide;
   targetSide?: AnchorSide;
 }
 
-/** Channel edge color -- teal, distinct from transition edge colors */
-export const CHANNEL_EDGE_COLOR = '#14b8a6'; // teal-500
+export const CHANNEL_EDGE_COLOR = '#14b8a6';
 
-/** Channel edge stroke dash pattern for one-way channels */
 export const CHANNEL_EDGE_DASH_ARRAY = '6 4';
 const CHANNEL_DOCK_RADIUS = 7;
 const CHANNEL_MARKER_SIZE = 7;
@@ -95,9 +41,6 @@ const CHANNEL_GATE_BADGE_CHAR_WIDTH = 7;
 const CHANNEL_GATE_BADGE_BG = '#0f1115';
 const CHANNEL_GATE_BADGE_BORDER = '#232733';
 const CHANNEL_LOOP_BADGE_COLOR = '#f59e0b';
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 export interface EdgeRendererProps {
   transitions: VisualTransition[];
@@ -105,19 +48,11 @@ export interface EdgeRendererProps {
   selectedEdgeId?: string | null;
   onEdgeSelect?: (transitionId: string) => void;
   onEdgeDelete?: (transitionId: string) => void;
-  /** Channel edges to render between nodes (with resolved source/target node IDs). */
   channels?: ResolvedWorkflowChannel[];
-  /** Selected channel ID -- highlights the matching channel edge. */
   selectedChannelId?: string | null;
-  /** Called when the user clicks a channel edge. Receives the channel's `id` field. */
   onChannelSelect?: (channelId: string) => void;
-  /** When true, the Delete/Backspace keydown listener is not registered. */
   readOnly?: boolean;
 }
-
-// ---------------------------------------------------------------------------
-// Helper: compute bezier path string
-// ---------------------------------------------------------------------------
 
 export interface EdgePoints {
   sx: number;
@@ -135,10 +70,6 @@ interface Point2D {
   y: number;
 }
 
-/**
- * Compute the bezier path data and control points for a transition.
- * Returns null when either node position is missing.
- */
 export function computeEdgePoints(
   transition: VisualTransition,
   nodePositions: NodePosition
@@ -147,15 +78,12 @@ export function computeEdgePoints(
   const toPos = nodePositions[transition.to];
   if (!fromPos || !toPos) return null;
 
-  // Source: bottom-center of from-node (output port center)
   const sx = fromPos.x + fromPos.width / 2;
   const sy = fromPos.y + fromPos.height;
 
-  // Target: top-center of to-node (input port center)
   const tx = toPos.x + toPos.width / 2;
   const ty = toPos.y;
 
-  // Bezier control points offset vertically
   const cp1x = sx;
   const cp1y = sy + CONTROL_OFFSET;
   const cp2x = tx;
@@ -164,14 +92,9 @@ export function computeEdgePoints(
   return { sx, sy, tx, ty, cp1x, cp1y, cp2x, cp2y };
 }
 
-/** Build the SVG path `d` attribute string from computed edge points. */
 export function buildPathD(pts: EdgePoints): string {
   return `M ${pts.sx} ${pts.sy} C ${pts.cp1x} ${pts.cp1y}, ${pts.cp2x} ${pts.cp2y}, ${pts.tx} ${pts.ty}`;
 }
-
-// ---------------------------------------------------------------------------
-// Channel edge helpers
-// ---------------------------------------------------------------------------
 
 function getNodeAnchorPoint(
   nodePos: NodePosition[string],
@@ -289,16 +212,9 @@ function trimOrthogonalPathPoints(
 }
 
 export interface OrthogonalMidpointWithAngle extends Point2D {
-  /** Direction angle in degrees: 0 = right, 90 = down, 180 = left, 270 = up */
   angle: number;
 }
 
-/**
- * Returns the midpoint of an orthogonal path together with the direction angle
- * (in degrees, clockwise) of the segment the midpoint falls on.
- * Because orthogonal paths are always axis-aligned the angle is always one of
- * 0, 90, 180, or 270.
- */
 export function getOrthogonalPathMidpointWithAngle(points: Point2D[]): OrthogonalMidpointWithAngle {
   const normalized = normalizeOrthogonalPoints(points);
   if (normalized.length === 0) return { x: 0, y: 0, angle: 0 };
@@ -325,7 +241,6 @@ export function getOrthogonalPathMidpointWithAngle(points: Point2D[]): Orthogona
 
     const distanceIntoSegment = midpointDistance - traversed;
     if (start.x === end.x) {
-      // Vertical segment
       const angle = end.y > start.y ? 90 : 270;
       return {
         x: start.x,
@@ -334,7 +249,6 @@ export function getOrthogonalPathMidpointWithAngle(points: Point2D[]): Orthogona
       };
     }
 
-    // Horizontal segment
     const angle = end.x > start.x ? 0 : 180;
     return {
       x: start.x + Math.sign(end.x - start.x) * distanceIntoSegment,
@@ -346,7 +260,6 @@ export function getOrthogonalPathMidpointWithAngle(points: Point2D[]): Orthogona
   return { ...normalized[normalized.length - 1], angle: 0 };
 }
 
-/** Returns the midpoint of an orthogonal path. Delegates to `getOrthogonalPathMidpointWithAngle`. */
 function getOrthogonalPathMidpoint(points: Point2D[]): Point2D {
   return getOrthogonalPathMidpointWithAngle(points);
 }
@@ -451,7 +364,6 @@ function getVisibleChannelPathPoints(channel: ResolvedWorkflowChannel, pts: Edge
   );
 }
 
-/** Compute the bezier path for a channel edge connecting node ports. */
 export function computeChannelEdgePoints(
   channel: ResolvedWorkflowChannel,
   nodePositions: NodePosition
@@ -480,10 +392,6 @@ export function computeChannelEdgePoints(
   return { sx, sy, tx, ty, cp1x, cp1y, cp2x, cp2y };
 }
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
-
 export function EdgeRenderer({
   transitions,
   nodePositions,
@@ -495,22 +403,18 @@ export function EdgeRenderer({
   onChannelSelect,
   readOnly = false,
 }: EdgeRendererProps) {
-  // Stable per-instance prefix to prevent marker ID collisions across instances
   const markerPrefixRef = useRef<string | null>(null);
   if (markerPrefixRef.current === null) {
     markerPrefixRef.current = `edge-arrow-${_instanceCounter++}`;
   }
   const markerPrefix = markerPrefixRef.current;
 
-  // Keep refs so the keyboard handler always sees the latest values
   const selectedEdgeIdRef = useRef(selectedEdgeId);
   selectedEdgeIdRef.current = selectedEdgeId;
 
   const onEdgeDeleteRef = useRef(onEdgeDelete);
   onEdgeDeleteRef.current = onEdgeDelete;
 
-  // ---- Keyboard: Delete / Backspace deletes the selected edge ----
-  // Skipped in readOnly mode — no destructive editing affordances.
   useEffect(() => {
     if (readOnly) return;
 
@@ -533,8 +437,6 @@ export function EdgeRenderer({
 
   return (
     <>
-      {/* Arrowhead marker definitions -- one per condition type + one for selected state.
-			    IDs are prefixed with instanceId to prevent collisions between multiple instances. */}
       <defs>
         {(Object.entries(EDGE_COLORS) as [WorkflowConditionType, string][]).map(([type, color]) => (
           <marker
@@ -561,7 +463,6 @@ export function EdgeRenderer({
         >
           <path d="M 0 0 L 10 5 L 0 10 z" fill="white" />
         </marker>
-        {/* Channel edge arrowhead markers -- rendered when channels are present */}
         {channels.length > 0 && (
           <>
             <marker
@@ -575,7 +476,6 @@ export function EdgeRenderer({
             >
               <path d="M 0 0 L 10 5 L 0 10 z" fill={CHANNEL_EDGE_COLOR} />
             </marker>
-            {/* White markers for selected channel state */}
             <marker
               id={`${markerPrefix}-channel-selected`}
               viewBox="0 0 10 10"
@@ -614,7 +514,6 @@ export function EdgeRenderer({
             data-condition-type={conditionType}
             style={{ pointerEvents: 'auto' }}
           >
-            {/* Invisible wider hitbox for easier click selection */}
             <path
               d={d}
               stroke="transparent"
@@ -626,7 +525,6 @@ export function EdgeRenderer({
                 onEdgeSelect?.(transition.id);
               }}
             />
-            {/* Visible edge path */}
             <path
               d={d}
               stroke={strokeColor}
@@ -642,9 +540,6 @@ export function EdgeRenderer({
         );
       })}
 
-      {/* Channel edges -- teal edges connecting semantic node relationships.
-		    One-way channels render dashed. Bidirectional channels render solid.
-		    Cyclic (loop-back) channels render a Loop badge at the midpoint. */}
       {channels.map((channel, idx) => {
         const pts = computeChannelEdgePoints(channel, nodePositions);
         if (!pts) return null;
@@ -664,8 +559,6 @@ export function EdgeRenderer({
         const loopBadgeWidth =
           'Loop'.length * CHANNEL_GATE_BADGE_CHAR_WIDTH + CHANNEL_GATE_BADGE_HORIZONTAL_PADDING * 2;
 
-        // Use the same marker geometry on both ends. `auto-start-reverse`
-        // handles the start-end orientation flip for markerStart.
         const markerEndId = isSelected
           ? `${markerPrefix}-channel-selected`
           : `${markerPrefix}-channel-end`;
@@ -684,7 +577,6 @@ export function EdgeRenderer({
             data-selected={isSelected ? 'true' : 'false'}
             style={{ pointerEvents: 'auto' }}
           >
-            {/* Invisible wider hitbox for easier click selection */}
             <path
               d={d}
               stroke="transparent"
@@ -703,7 +595,6 @@ export function EdgeRenderer({
                   : undefined
               }
             />
-            {/* Visible channel edge path */}
             <path
               d={visibleD}
               stroke={strokeColor}

@@ -6,8 +6,6 @@ import type { ElementType } from '../../internal/types.ts';
 import { useId } from '../../internal/use-id.ts';
 import { Transition } from '../transition/transition.tsx';
 
-// --- Toast store (module-level) ---
-
 export type ToastVariant = 'info' | 'success' | 'warning' | 'error';
 
 export interface ToastOptions {
@@ -58,8 +56,6 @@ function subscribe(listener: ToastListener): () => void {
   return () => listeners.delete(listener);
 }
 
-// --- useToast hook ---
-
 export function useToast(): {
   toast: (options: ToastOptions) => string;
   dismiss: (id: string) => void;
@@ -76,8 +72,6 @@ export function useToast(): {
 
   return { toast, dismiss, toasts };
 }
-
-// --- Toast context ---
 
 interface ToastState {
   id: string;
@@ -101,8 +95,6 @@ function useToastContext(component: string): ToastState {
   }
   return ctx;
 }
-
-// --- Toast (individual notification) ---
 
 interface ToastProps {
   show: boolean;
@@ -133,12 +125,10 @@ function ToastFn({
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startTimeRef = useRef<number | null>(null);
 
-  // Sync open state with show prop
   useEffect(() => {
     setOpen(show);
   }, [show]);
 
-  // Auto-dismiss timer
   useEffect(() => {
     if (!open || duration === 0) return;
 
@@ -153,7 +143,6 @@ function ToastFn({
       setProgress(remaining);
     };
 
-    // Update progress every intervalMs
     const progressInterval = setInterval(updateProgress, intervalMs);
 
     timerRef.current = setTimeout(() => {
@@ -230,8 +219,6 @@ function ToastFn({
 ToastFn.displayName = 'Toast';
 export const Toast = ToastFn;
 
-// --- ToastTitle ---
-
 interface ToastTitleProps {
   as?: ElementType;
   children?: unknown;
@@ -264,8 +251,6 @@ function ToastTitleFn({ as: Tag = 'p', children, ...rest }: ToastTitleProps) {
 
 ToastTitleFn.displayName = 'ToastTitle';
 export const ToastTitle = ToastTitleFn;
-
-// --- ToastDescription ---
 
 interface ToastDescriptionProps {
   as?: ElementType;
@@ -300,8 +285,6 @@ function ToastDescriptionFn({ as: Tag = 'p', children, ...rest }: ToastDescripti
 ToastDescriptionFn.displayName = 'ToastDescription';
 export const ToastDescription = ToastDescriptionFn;
 
-// --- ToastProgress ---
-
 interface ToastProgressProps {
   as?: ElementType;
   children?: unknown;
@@ -311,7 +294,6 @@ interface ToastProgressProps {
 function ToastProgressFn({ as: Tag = 'div', ...rest }: ToastProgressProps) {
   const { open, progress } = useToastContext('ToastProgress');
 
-  // Don't render if progress is not available (showProgress was false)
   if (progress === undefined) {
     return null;
   }
@@ -334,8 +316,6 @@ function ToastProgressFn({ as: Tag = 'div', ...rest }: ToastProgressProps) {
 
 ToastProgressFn.displayName = 'ToastProgress';
 export const ToastProgress = ToastProgressFn;
-
-// --- ToastAction ---
 
 interface ToastActionProps {
   as?: ElementType;
@@ -374,8 +354,6 @@ function ToastActionFn({ as: Tag = 'button', children, ...rest }: ToastActionPro
 ToastActionFn.displayName = 'ToastAction';
 export const ToastAction = ToastActionFn;
 
-// --- Toaster (container) ---
-
 type ToasterPosition =
   | 'top-right'
   | 'top-left'
@@ -408,7 +386,6 @@ function ToasterFn({
     'data-position': position,
   };
 
-  // Render user-provided children if any, otherwise render managed toasts
   const content =
     children ??
     toasts.map((item) =>

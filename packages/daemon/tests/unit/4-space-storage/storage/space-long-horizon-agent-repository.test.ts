@@ -299,7 +299,6 @@ describe('SpaceLongHorizonAgentRepository', () => {
       runAt: now - 1000,
       nextRunAt: now - 1000,
     });
-    // Future next_run_at -> not due.
     repo.createReminder({
       spaceId: 'space-1',
       agentId: activeAgent.id,
@@ -308,7 +307,6 @@ describe('SpaceLongHorizonAgentRepository', () => {
       runAt: now + 60_000,
       nextRunAt: now + 60_000,
     });
-    // Reminder status paused -> excluded.
     repo.createReminder({
       spaceId: 'space-1',
       agentId: activeAgent.id,
@@ -318,7 +316,6 @@ describe('SpaceLongHorizonAgentRepository', () => {
       nextRunAt: now - 1000,
       status: 'paused',
     });
-    // Due but owner paused -> excluded by the agent-status join.
     repo.createReminder({
       spaceId: 'space-1',
       agentId: pausedAgent.id,
@@ -327,7 +324,6 @@ describe('SpaceLongHorizonAgentRepository', () => {
       runAt: now - 1000,
       nextRunAt: now - 1000,
     });
-    // Null next_run_at -> not schedulable, excluded.
     repo.createReminder({
       spaceId: 'space-1',
       agentId: activeAgent.id,
@@ -342,7 +338,6 @@ describe('SpaceLongHorizonAgentRepository', () => {
 
   test('listDueReminders excludes reminders for paused or stopped spaces', () => {
     const now = 30_000_000;
-    // A second space, paused; and a third, stopped.
     db.prepare(
       `INSERT INTO spaces (
 				id, slug, workspace_path, name, description, background_context, instructions,
@@ -415,15 +410,12 @@ describe('SpaceLongHorizonAgentRepository', () => {
       ids.push(r.id);
     }
 
-    // First page returns the two earliest.
     const page1 = repo.listDueReminders(now, 2);
     expect(page1.map((r) => r.id)).toEqual([ids[2], ids[1]]);
 
-    // Second page excludes the first page's ids and returns the remaining one.
     const page2 = repo.listDueReminders(now, 2, [ids[2], ids[1]]);
     expect(page2.map((r) => r.id)).toEqual([ids[0]]);
 
-    // Once all are excluded, nothing remains.
     const page3 = repo.listDueReminders(now, 2, ids);
     expect(page3).toEqual([]);
   });
@@ -432,7 +424,6 @@ describe('SpaceLongHorizonAgentRepository', () => {
     const now = 20_000_000;
     const agent = repo.ensureCoordinator('space-1');
 
-    // cron -> caller-supplied next run, status stays active
     const cron = repo.createReminder({
       spaceId: 'space-1',
       agentId: agent.id,
@@ -454,7 +445,6 @@ describe('SpaceLongHorizonAgentRepository', () => {
     expect(cronAfter.nextRunAt).toBe(futureNext);
     expect(cronAfter.lastFiredAt).toBe(now);
 
-    // one-shot 'at' -> terminal fired, no future run
     const oneShot = repo.createReminder({
       spaceId: 'space-1',
       agentId: agent.id,
@@ -474,7 +464,6 @@ describe('SpaceLongHorizonAgentRepository', () => {
     expect(atAfter.status).toBe('fired');
     expect(atAfter.nextRunAt).toBeNull();
 
-    // CAS miss: expected next_run_at wrong -> no change
     const live = repo.createReminder({
       spaceId: 'space-1',
       agentId: agent.id,
@@ -492,7 +481,6 @@ describe('SpaceLongHorizonAgentRepository', () => {
     ).toBe(false);
     expect(repo.getReminder(live.id)!.nextRunAt).toBe(now - 500);
 
-    // CAS miss: reminder no longer active -> status guard rejects
     const fired = repo.createReminder({
       spaceId: 'space-1',
       agentId: agent.id,

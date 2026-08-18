@@ -1,39 +1,9 @@
-/**
- * Hidden-subtype idle detection + SessionInfoPanel data-loading regression tests.
- *
- * Pins the contracts restored by #2140 ("narrow hidden subtype SQL filters"),
- * which was an urgent post-merge fix: a single render-hidden exclusion list had
- * been applied everywhere, which silently broke two unrelated consumers —
- *
- *   1. Space runtime idle detection. The runtime reads each idle session's last
- *      SDK message via `getLastSDKMessage()` and feeds it to
- *      `classifyLastMessageForIdleAgent()`. Dropping the task progress subtypes
- *      (task_started / task_progress / task_updated) from that query hid active
- *      work, so the classifier saw a stale terminal message and flipped a live
- *      agent into the wrong idle state.
- *
- *   2. SessionInfoPanel background-task state. The panel renders
- *      background-task metadata that is render-hidden in the chat transcript.
- *      Once those rows were excluded from the paginated transcript read they
- *      vanished from the panel too, so a dedicated `getBackgroundTaskMessages()`
- *      query was added to surface them independently.
- *
- * The two SQL filters now deliberately differ:
- *   - EXCLUDED_FROM_PAGINATION_SQL_LIST drops ALL render-hidden subtypes
- *     (plus thinking_tokens).
- *   - EXCLUDED_FROM_LAST_MESSAGE_SQL_LIST keeps the progress subtypes so idle
- *     detection still observes them, and additionally drops
- *     model_refusal_fallback.
- *
- * Future query changes to either filter must keep these behaviors intact.
- */
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { classifyLastMessageForIdleAgent } from '../../../../src/lib/space/runtime/last-message-classifier';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 
-// Every render-hidden subtype (mirrors HIDDEN_SYSTEM_SUBTYPES in shared).
 const HIDDEN_SUBTYPES = [
   'session_state_changed',
   'commands_changed',
@@ -44,8 +14,6 @@ const HIDDEN_SUBTYPES = [
   'elicitation_complete',
 ] as const;
 
-// The progress-bearing subset that idle detection must still observe even
-// though they are render-hidden (mirrors LAST_MESSAGE_PROGRESS_SUBTYPES).
 const PROGRESS_SUBTYPES = ['task_started', 'task_progress', 'task_updated'] as const;
 
 describe('hidden-subtype SQL filters — idle detection + SessionInfoPanel', () => {
@@ -93,7 +61,6 @@ describe('hidden-subtype SQL filters — idle detection + SessionInfoPanel', () 
     } as unknown as SDKMessage;
   }
 
-  /** A render-hidden system message with no progress signal (state-only). */
   function hiddenState(subtype: string): SDKMessage {
     return { type: 'system', subtype, uuid: crypto.randomUUID() } as unknown as SDKMessage;
   }
@@ -117,7 +84,6 @@ describe('hidden-subtype SQL filters — idle detection + SessionInfoPanel', () 
     } as unknown as SDKMessage;
   }
 
-  /** A progress-bearing hidden system row (task_started/progress/updated). */
   function progress(subtype: string, taskId: string, toolUseId?: string): SDKMessage {
     return {
       type: 'system',
@@ -183,33 +149,24 @@ describe('hidden-subtype SQL filters — idle detection + SessionInfoPanel', () 
 
   describe('idle detection — getLastSDKMessage retains task progress signals', () => {
     it('returns a task_progress row as the last message (progress subtypes are not filtered out)', () => {
-      // Chronology oldest -> newest. A terminal result is buried under a
-      // session-state row, a model-fallback notice, and finally an active
-      // task_progress signal.
       repository.saveSDKMessage('session-1', result());
       repository.saveSDKMessage('session-1', hiddenState('session_state_changed'));
       repository.saveSDKMessage('session-1', modelRefusalFallback());
-      repository.saveSDKMessage('session-1', progress('task_progress', 'task-1')); // newest
+      repository.saveSDKMessage('session-1', progress('task_progress', 'task-1'));
 
       const last = repository.getLastSDKMessage('session-1');
 
-      // The progress signal is retained as the last message even though it is
-      // render-hidden. A regression to the pagination filter would skip it and
-      // fall through to the terminal result below.
       expect(last?.type).toBe('system');
       expect(subtypeOf(last)).toBe('task_progress');
 
-      // The runtime classifies a system progress signal as non-terminal: the
-      // agent is actively working, not at a safe idle stop.
       expect(classifyLastMessageForIdleAgent(last)).toEqual(
         expect.objectContaining({ terminal: false })
       );
     });
 
     it('returns the newest retained row regardless of subtype ordering', () => {
-      // Progress older than a terminal result: the result is genuinely last.
       repository.saveSDKMessage('session-1', progress('task_progress', 'task-1'));
-      repository.saveSDKMessage('session-1', result()); // newest
+      repository.saveSDKMessage('session-1', result());
 
       const last = repository.getLastSDKMessage('session-1');
       expect(last?.type).toBe('result');
@@ -220,8 +177,6 @@ describe('hidden-subtype SQL filters — idle detection + SessionInfoPanel', () 
 
     it('skips state-only hidden subtypes and model_refusal_fallback when finding the last message', () => {
       repository.saveSDKMessage('session-1', result());
-      // Every hidden subtype that carries NO progress signal, plus the fallback
-      // notice, must be skipped so idle detection falls through to the result.
       for (const subtype of [
         'session_state_changed',
         'commands_changed',
@@ -237,9 +192,6 @@ describe('hidden-subtype SQL filters — idle detection + SessionInfoPanel', () 
     });
 
     it('keeps every progress subtype visible to idle detection across a mixed history', () => {
-      // For each progress subtype, ensure it wins as the last message over an
-      // older terminal result. (Insertion order = rowid order = DESC winner on
-      // timestamp ties, so the progress row inserted last is newest.)
       for (const subtype of PROGRESS_SUBTYPES) {
         db.exec('DELETE FROM sdk_messages');
         repository.saveSDKMessage('session-1', result());
@@ -263,15 +215,12 @@ describe('hidden-subtype SQL filters — idle detection + SessionInfoPanel', () 
       repository.saveSDKMessage('session-1', progress('task_progress', 'task-1', 'toolu_1'));
       repository.saveSDKMessage('session-1', taskNotification('task-1', 'completed'));
 
-      // The paginated transcript hides all render-hidden subtypes, including the
-      // task_* progress rows the panel needs.
       const page = repository.getSDKMessages('session-1', 100);
       const pageSubtypes = page.messages.map(subtypeOf).filter((s): s is string => !!s);
       for (const subtype of ['task_started', 'task_updated', 'task_progress']) {
         expect(pageSubtypes).not.toContain(subtype);
       }
 
-      // The dedicated panel query re-surfaces that metadata.
       const meta = repository.getBackgroundTaskMessages('session-1');
       const metaSubtypes = meta.map(subtypeOf).filter((s): s is string => !!s);
       expect(metaSubtypes).toContain('task_started');
@@ -290,18 +239,15 @@ describe('hidden-subtype SQL filters — idle detection + SessionInfoPanel', () 
       const started = meta.filter((m) => subtypeOf(m) === 'task_started');
       const progressRows = meta.filter((m) => subtypeOf(m) === 'task_progress');
       expect(started).toHaveLength(1);
-      // Only the single latest progress row is surfaced for the panel.
       expect(progressRows).toHaveLength(1);
     });
   });
 
   describe('visible transcript integrity — pagination excludes every hidden subtype', () => {
     it('counts only visible rows and excludes all hidden subtypes + thinking_tokens', () => {
-      // Three visible top-level rows.
       repository.saveSDKMessage('session-1', user('u1'));
       repository.saveSDKMessage('session-1', assistantEndTurn('a1'));
       repository.saveSDKMessage('session-1', result());
-      // Every render-hidden subtype plus thinking_tokens must be excluded.
       for (const subtype of HIDDEN_SUBTYPES) {
         repository.saveSDKMessage('session-1', hiddenState(subtype));
       }

@@ -18,8 +18,6 @@ interface VoiceTranscribeResponse {
 }
 
 const TRANSCRIPTION_TIMEOUT_MS = 120_000;
-// Mirrors the web recorder's capture cap (shared constant) so the client and
-// daemon limits cannot drift apart.
 const MAX_AUDIO_BYTES = VOICE_MAX_AUDIO_BYTES;
 const MAX_BASE64_LENGTH = Math.ceil(MAX_AUDIO_BYTES / 3) * 4;
 const MAX_CONCURRENT_TRANSCRIPTIONS_PER_CLIENT = 1;
@@ -82,16 +80,11 @@ async function withVoiceTranscriptionLimits<TResult>(
   if (data.audioBase64.length > MAX_BASE64_LENGTH) {
     throw new Error('Audio data exceeds the 10 MB voice input limit');
   }
-  // Validate base64 format BEFORE charging the admission quota so malformed
-  // payloads don't consume the daemon-wide/per-client rate allowance.
   if (!/^[A-Za-z0-9+/]*={0,2}$/.test(data.audioBase64) || data.audioBase64.length % 4 !== 0) {
     throw new Error('Audio data must be valid base64');
   }
 
   const clientKey = context?.clientId ?? context?.sessionId ?? 'global';
-  // Run every admission check WITHOUT committing the rate counters, then commit
-  // only after all pass — otherwise one client's rejected calls could exhaust
-  // the daemon-wide quota and starve every other client.
   if (transcriptionRateWindowsByClient.size > RATE_LIMIT_MAP_PRUNE_THRESHOLD) {
     pruneExpiredRateWindows(Date.now());
   }
@@ -112,7 +105,6 @@ async function withVoiceTranscriptionLimits<TResult>(
     throw new Error('Voice transcription is already in progress for this client');
   }
 
-  // All admission checks passed — commit the rate/concurrency counters.
   commitDaemonRateLimit();
   commitClientRateLimit(perClientWindow, clientKey);
   activeTranscriptionsByClient.set(clientKey, activeCount + 1);
@@ -138,8 +130,6 @@ function pruneExpiredRateWindows(now: number): void {
   }
 }
 
-// Check-only helpers: return whether a request is admissible WITHOUT mutating
-// the counters, so a later admission failure does not charge the quota.
 function withinDaemonRateLimit(): boolean {
   const now = Date.now();
   if (now - daemonRateWindow.windowStartedAt >= TRANSCRIPTION_RATE_WINDOW_MS) return true;
@@ -188,13 +178,9 @@ async function resolveTranscriptionEndpoint(
     throwPrivateEndpointError();
   }
 
-  // `URL.hostname` keeps brackets around IPv6 literals; strip them for IP
-  // classification and lookup so a public IPv6 endpoint is not misclassified.
   const ipHost = stripBrackets(host);
   if (isIP(ipHost)) return [stripUserInfo(endpoint)];
 
-  // Bound DNS resolution so a stalled resolver cannot hold the request's
-  // active-transcription slots beyond the deadline.
   const addresses = await withTimeout(
     lookup(ipHost, { all: true, verbatim: true }),
     RESOLUTION_TIMEOUT_MS,
@@ -206,29 +192,16 @@ async function resolveTranscriptionEndpoint(
     .filter((address) => !isPrivateNetworkHost(address));
   if (publicAddresses.length === 0) throwPrivateEndpointError();
 
-  // For HTTPS with certificate verification enabled, fetch the logical hostname
-  // so TLS validates the certificate against it (pinning a raw IP would make a
-  // standard hostname certificate invalid). Rebinding to an internal host is
-  // blocked because an internal service cannot present a valid certificate for
-  // the public hostname. When verification is disabled (allowInsecureTls), that
-  // anchor is gone, so pin the validated address to close DNS rebinding.
   if (endpoint.protocol === 'https:' && !allowInsecureTls) {
     return [stripUserInfo(endpoint)];
   }
 
-  // For plaintext HTTP there is no certificate to anchor the hostname, so pin
-  // the first validated public address to close DNS rebinding. Only one address
-  // is used (no multi-address fallback) because the multipart POST is
-  // non-idempotent — retrying to a second IP after the first received and
-  // processed the audio would duplicate work and charges.
   const firstAddress = publicAddresses[0]!;
   const pinnedEndpoint = stripUserInfo(endpoint);
   pinnedEndpoint.hostname = firstAddress.includes(':') ? `[${firstAddress}]` : firstAddress;
   return [pinnedEndpoint];
 }
 
-// Drop embedded userinfo so the runtime cannot derive an implicit Basic
-// Authorization header that would bypass the HTTPS-only credential guard.
 function stripUserInfo(endpoint: URL): URL {
   if (!endpoint.username && !endpoint.password) return new URL(endpoint);
   const sanitized = new URL(endpoint);
@@ -243,8 +216,6 @@ async function withTimeout<T>(
   message: string,
   signal?: AbortSignal
 ): Promise<T> {
-  // If the overall request deadline already elapsed, fail fast rather than
-  // starting another bounded lookup that would outlive the deadline.
   if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<never>((_resolve, reject) => {
@@ -283,8 +254,6 @@ function isPrivateNetworkHost(host: string): boolean {
   if (host === 'localhost') return true;
 
   const normalized = host.toLowerCase();
-  // IPv6-specific ranges only apply to IPv6 literals — never to DNS names,
-  // so a public hostname beginning with "fc"/"fd" is not falsely rejected.
   if (normalized.includes(':')) {
     if (normalized.startsWith('::ffff:')) {
       const mappedAddress = normalized.slice('::ffff:'.length);
@@ -299,8 +268,6 @@ function isPrivateNetworkHost(host: string): boolean {
       }
     }
 
-    // Link-local is fe80::/10 (fe80 through febf), not just the fe80: prefix.
-    // fec0::/10 is the deprecated site-local range (still routed on some nets).
     const firstHextet = Number.parseInt(normalized.split(':')[0] ?? '', 16);
     return (
       normalized === '::' ||
@@ -364,9 +331,6 @@ async function transcribeAudio(
   const timeout = setTimeout(() => controller.abort(), TRANSCRIPTION_TIMEOUT_MS);
   try {
     let audio: Uint8Array;
-    // Buffer.from(base64) silently ignores invalid characters, so validate the
-    // alphabet/padding explicitly before decoding to keep malformed payloads
-    // off the transcription backend.
     if (!/^[A-Za-z0-9+/]*={0,2}$/.test(data.audioBase64) || data.audioBase64.length % 4 !== 0) {
       throw new Error('Audio data must be valid base64');
     }
@@ -381,9 +345,6 @@ async function transcribeAudio(
     }
 
     const headers: Record<string, string> = {};
-    // Snapshot the live endpoint, model, transport flags AND the stored key
-    // together under the voice-credential lock, so an endpoint/key/model change
-    // mid-request cannot mix stale values with the new configuration.
     const credentialSnapshot = await withVoiceCredentialLock(async () => {
       const liveVoice = settingsManager.getGlobalSettings().voice;
       let liveModel = voice.model.trim();
@@ -410,12 +371,10 @@ async function transcribeAudio(
     }, controller.signal);
     const apiKey = credentialSnapshot.key;
 
-    // Build the form AFTER the lock so the model comes from the live snapshot.
     const form = new FormData();
     form.append('model', credentialSnapshot.model);
     form.append('file', new Blob([audio], { type: data.mimeType }), 'audio.wav');
     if (apiKey) {
-      // Never transmit the stored bearer credential over plaintext HTTP.
       if (endpoint.protocol !== 'https:') {
         throw new Error(
           'Voice transcription API keys are only sent over HTTPS. Use an HTTPS endpoint or remove the API key.'
@@ -424,10 +383,6 @@ async function transcribeAudio(
       headers.Authorization = `Bearer ${apiKey}`;
     }
 
-    // Follow redirects manually so each Location target is re-validated and
-    // pinned through resolveTranscriptionEndpoint — a public endpoint cannot
-    // 3xx the daemon onto a private/internal host. DNS is resolved up front so
-    // the deadline (controller) covers endpoint resolution too.
     let logicalEndpoint = endpoint;
     let candidates = await resolveTranscriptionEndpoint(
       endpoint,
@@ -440,12 +395,7 @@ async function transcribeAudio(
     let requestBody: FormData | undefined = form;
     let response: Response | undefined;
     for (let hop = 0; hop <= MAX_TRANSCRIPTION_REDIRECTS; hop++) {
-      // Only accept a response obtained on this hop, so a redirect whose
-      // destination fails at the network layer surfaces fetchError instead of
-      // reprocessing the previous 3xx.
       response = undefined;
-      // Try each validated pinned address; fall back to the next on a network
-      // error so dual-stack/round-robin resolutions survive a dead record.
       let fetchError: unknown;
       for (const candidate of candidates) {
         try {
@@ -456,8 +406,6 @@ async function transcribeAudio(
             redirect: 'manual',
             signal: controller.signal,
             tls: {
-              // Insecure TLS is only for the trusted configured host; restore
-              // certificate verification after any cross-host redirect.
               rejectUnauthorized: !(allowInsecureTls && logicalEndpoint.host === endpoint.host),
               serverName: stripBrackets(logicalEndpoint.hostname),
             },
@@ -494,13 +442,9 @@ async function transcribeAudio(
       if (redirectTarget.protocol !== 'http:' && redirectTarget.protocol !== 'https:') {
         throw new Error('Voice transcription redirect must use http:// or https://');
       }
-      // Never follow an HTTPS-to-HTTP downgrade: a 307/308 would replay the
-      // recorded audio (and any retained body) over plaintext.
       if (logicalEndpoint.protocol === 'https:' && redirectTarget.protocol === 'http:') {
         throw new Error('Voice transcription cannot follow an HTTPS-to-HTTP redirect');
       }
-      // 303 (and legacy 301/302) switch to a bodyless GET; 307/308 preserve the
-      // method and body.
       if (response.status !== 307 && response.status !== 308) {
         requestMethod = 'GET';
         requestBody = undefined;
@@ -509,13 +453,9 @@ async function transcribeAudio(
       candidates = await resolveTranscriptionEndpoint(
         redirectTarget,
         allowPrivateNetwork,
-        // Insecure TLS is only trusted for the configured host; a cross-host
-        // redirect is verified, so it must be fetched by hostname (cert against
-        // the hostname) rather than pinned to a raw IP.
         allowInsecureTls && redirectTarget.host === endpoint.host,
         controller.signal
       );
-      // Never forward the stored API key over plaintext HTTP or to a different host.
       if (
         requestHeaders.Authorization &&
         (redirectTarget.protocol !== 'https:' || redirectTarget.host !== endpoint.host)
@@ -551,7 +491,6 @@ async function transcribeAudio(
 async function readLimitedResponseText(response: Response): Promise<string> {
   const contentLength = response.headers.get('content-length');
   if (contentLength && Number(contentLength) > MAX_TRANSCRIPTION_RESPONSE_BYTES) {
-    // Cancel the transfer so a misbehaving backend cannot keep it alive.
     await response.body?.cancel().catch(() => {});
     throw new Error('Voice transcription response exceeds the 256 KB limit');
   }

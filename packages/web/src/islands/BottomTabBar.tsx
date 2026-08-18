@@ -151,8 +151,6 @@ const GLOBAL_BOTTOM_TABS: TabItem[] = [
 const BOTTOM_BAR_HEIGHT = 53;
 
 export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
-  // Set CSS variable for other components to account for tab bar height
-  // Only set non-zero height when viewport is mobile (< md breakpoint)
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 767px)');
 

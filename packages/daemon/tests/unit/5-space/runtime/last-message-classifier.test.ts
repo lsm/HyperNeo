@@ -1,17 +1,3 @@
-/**
- * Unit tests for classifyLastMessageForIdleAgent — the pure-function core of
- * Space runtime idle detection.
- *
- * The hidden-subtype SQL filter in SDKMessageRepository.getLastSDKMessage()
- * deliberately RETAINS the task progress subtypes (task_started /
- * task_progress / task_updated) precisely so this classifier can observe them.
- * A system progress signal as the last message means the agent is actively
- * working and must NOT be treated as a safe idle stop.
- *
- * These tests pin the decision table the runtime depends on so future changes
- * to the classifier (or to the message shapes feeding it) keep idle-state
- * behavior stable.
- */
 import { describe, expect, it } from 'bun:test';
 import { classifyLastMessageForIdleAgent } from '../../../../src/lib/space/runtime/last-message-classifier';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
@@ -39,9 +25,6 @@ describe('classifyLastMessageForIdleAgent', () => {
   });
 
   it('classifies a system task-progress signal as non-terminal (active work)', () => {
-    // This is the contract the hidden-subtype SQL filter exists to preserve:
-    // task_started / task_progress / task_updated are render-hidden but must
-    // remain observable as the last message, and they read as non-terminal.
     for (const subtype of ['task_started', 'task_progress', 'task_updated']) {
       const message = {
         type: 'system',

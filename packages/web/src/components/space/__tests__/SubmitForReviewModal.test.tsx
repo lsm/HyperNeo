@@ -1,18 +1,3 @@
-/**
- * Unit tests for SubmitForReviewModal — the UI counterpart to the agent
- * `submit_for_approval` tool. The modal owns the optional reason input, the
- * confirm/cancel buttons, the busy state, and the inline error.
- *
- * These tests pin the contract that:
- *   - it only renders when `isOpen` is true
- *   - confirm forwards the trimmed reason (or null for empty/whitespace)
- *   - cancel fires `onCancel` and respects `busy`
- *   - `busy` disables both buttons and the textarea
- *   - the reason field resets between opens (no stale text leak)
- *   - the `error` prop renders inline so RPC failures are visible even when
- *     the inline composer (which owns `threadSendError`) isn't mounted
- */
-
 import { cleanup, fireEvent, render } from '@testing-library/preact';
 // @ts-nocheck
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -68,12 +53,9 @@ describe('SubmitForReviewModal', () => {
 
   it('confirm passes null when the reason is empty or whitespace-only', () => {
     const { getByTestId, onConfirm } = renderModal();
-    // Empty.
     fireEvent.click(getByTestId('submit-for-review-confirm'));
     expect(onConfirm).toHaveBeenLastCalledWith(null);
 
-    // Whitespace-only — must still normalize to null so the daemon's
-    // `pendingCompletionReason` field stays null rather than holding "   ".
     fireEvent.input(getByTestId('submit-for-review-reason'), {
       target: { value: '     ' },
     });
@@ -95,8 +77,6 @@ describe('SubmitForReviewModal', () => {
     expect(confirm.disabled).toBe(true);
     expect(cancel.disabled).toBe(true);
     expect(reason.disabled).toBe(true);
-    // Confirm label flips to a busy indicator so the user knows the click
-    // registered.
     expect(confirm.textContent).toContain('Submitting');
   });
 
@@ -116,12 +96,9 @@ describe('SubmitForReviewModal', () => {
       target: { value: 'leftover text' },
     });
 
-    // Close — modal unmounts, but the `reason` state in the closed-modal
-    // instance must reset so the next open starts blank.
     rerender(
       <SubmitForReviewModal isOpen={false} busy={false} onCancel={onCancel} onConfirm={onConfirm} />
     );
-    // Reopen.
     rerender(
       <SubmitForReviewModal isOpen={true} busy={false} onCancel={onCancel} onConfirm={onConfirm} />
     );
@@ -133,8 +110,6 @@ describe('SubmitForReviewModal', () => {
     const { getByTestId } = renderModal({ error: 'Network down — please retry' });
     const errEl = getByTestId('submit-for-review-error');
     expect(errEl.textContent).toContain('Network down — please retry');
-    // Uses role="alert" so screen readers announce the failure when it
-    // appears mid-flow.
     expect(errEl.getAttribute('role')).toBe('alert');
   });
 

@@ -7,15 +7,11 @@ import {
 
 describe('layout-metrics', () => {
   it('clamps to the floor when the footer is shorter than the baseline clearance', () => {
-    // Padding must always be at least MIN so the last message clears a
-    // normally-sized composer even before the live measurement has landed.
     expect(getMessagesBottomPaddingPx(48)).toBe(MIN_MESSAGES_BOTTOM_PADDING_PX);
     expect(getMessagesBottomPaddingPx(110)).toBe(MIN_MESSAGES_BOTTOM_PADDING_PX);
   });
 
   it('keeps the last message fully above the composer when it grows', () => {
-    // Padding tracks the live footer height plus a small clearance buffer so
-    // no part of the newest message can sit behind the composer.
     expect(getMessagesBottomPaddingPx(134)).toBe(150);
     expect(getMessagesBottomPaddingPx(158)).toBe(174);
   });

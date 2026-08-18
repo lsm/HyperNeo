@@ -1,27 +1,3 @@
-/**
- * InProcessTransport - In-process MessageHub transport for component communication
- *
- * Allows MessageHub to be used for in-process communication between components.
- * All operations are async (even if immediate) for consistency with network transports.
- *
- * DESIGN PRINCIPLES:
- * 1. Same API as network transports (WebSocket, stdio)
- * 2. Async everywhere - enables future distribution to cluster
- * 3. No serialization overhead for in-process (pass by reference)
- * 4. Supports multiple paired transports (bidirectional pipes)
- *
- * USAGE:
- * ```typescript
- * // Create a paired transport (like a bidirectional pipe)
- * const [clientTransport, serverTransport] = InProcessTransport.createPair();
- *
- * // Or create a bus for multiple participants
- * const bus = new InProcessTransportBus();
- * const transport1 = bus.createTransport('component-1');
- * const transport2 = bus.createTransport('component-2');
- * ```
- */
-
 import type {
   IMessageTransport,
   ConnectionState,
@@ -31,38 +7,16 @@ import type {
 import type { HubMessage } from './protocol.ts';
 import { generateUUID } from '../utils.ts';
 
-// Define UnsubscribeFn locally (removed from types.ts)
 type UnsubscribeFn = () => void;
 
-/**
- * Options for InProcessTransport
- */
 export interface InProcessTransportOptions {
-  /**
-   * Transport name for debugging
-   */
   name?: string;
 
-  /**
-   * Simulate network latency (ms) - useful for testing
-   * @default 0
-   */
   simulatedLatency?: number;
 
-  /**
-   * Whether to deep clone messages (simulates serialization)
-   * Set to true to catch serialization issues early
-   * @default false
-   */
   cloneMessages?: boolean;
 }
 
-/**
- * InProcessTransport - Connects two MessageHub instances in-process
- *
- * Messages are delivered asynchronously via microtask queue (queueMicrotask)
- * to maintain consistent async behavior with network transports.
- */
 export class InProcessTransport implements IMessageTransport {
   readonly name: string;
 
@@ -75,7 +29,6 @@ export class InProcessTransport implements IMessageTransport {
   private readonly simulatedLatency: number;
   private readonly cloneMessages: boolean;
 
-  // For server-side: track connected clients
   private connectedClients = new Map<string, InProcessTransport>();
   private clientId: string;
 
@@ -86,10 +39,6 @@ export class InProcessTransport implements IMessageTransport {
     this.clientId = generateUUID();
   }
 
-  /**
-   * Create a paired transport (bidirectional pipe)
-   * Returns [clientSide, serverSide]
-   */
   static createPair(
     options: InProcessTransportOptions = {}
   ): [InProcessTransport, InProcessTransport] {
@@ -105,15 +54,11 @@ export class InProcessTransport implements IMessageTransport {
     client.peer = server;
     server.peer = client;
 
-    // Register client with server
     server.connectedClients.set(client.clientId, client);
 
     return [client, server];
   }
 
-  /**
-   * Initialize transport (connect)
-   */
   async initialize(): Promise<void> {
     if (!this.peer) {
       throw new Error('InProcessTransport not paired. Use createPair() or InProcessTransportBus.');
@@ -121,15 +66,11 @@ export class InProcessTransport implements IMessageTransport {
 
     this.setState('connected');
 
-    // Also set peer as connected if not already
     if (this.peer.state !== 'connected') {
       this.peer.setState('connected');
     }
   }
 
-  /**
-   * Send a message to peer
-   */
   async send(message: HubMessage): Promise<void> {
     if (!this.isReady()) {
       throw new Error('InProcessTransport not connected');
@@ -137,15 +78,11 @@ export class InProcessTransport implements IMessageTransport {
 
     const msgToSend = this.cloneMessages ? structuredClone(message) : message;
 
-    // Deliver asynchronously to maintain consistent behavior
     await this.deliverAsync(() => {
       this.peer!.receiveMessage(msgToSend);
     });
   }
 
-  /**
-   * Send message to specific client (server-side)
-   */
   async sendToClient(clientId: string, message: HubMessage): Promise<boolean> {
     const client = this.connectedClients.get(clientId);
     if (!client || !client.isReady()) {
@@ -161,9 +98,6 @@ export class InProcessTransport implements IMessageTransport {
     return true;
   }
 
-  /**
-   * Broadcast to multiple clients (server-side)
-   */
   async broadcastToClients(clientIds: string[], message: HubMessage): Promise<BroadcastResult> {
     let sent = 0;
     let failed = 0;
@@ -186,16 +120,11 @@ export class InProcessTransport implements IMessageTransport {
     };
   }
 
-  /**
-   * Close transport
-   */
   async close(): Promise<void> {
     if (this.peer) {
-      // Notify peer of disconnect
       const peerId = this.clientId;
       this.peer.connectedClients.delete(peerId);
 
-      // Notify peer's disconnect handlers
       for (const handler of this.peer.clientDisconnectHandlers) {
         try {
           handler(peerId);
@@ -210,23 +139,14 @@ export class InProcessTransport implements IMessageTransport {
     this.connectedClients.clear();
   }
 
-  /**
-   * Check if transport is ready
-   */
   isReady(): boolean {
     return this.state === 'connected' && this.peer !== null;
   }
 
-  /**
-   * Get connection state
-   */
   getState(): ConnectionState {
     return this.state;
   }
 
-  /**
-   * Register handler for incoming messages
-   */
   onMessage(handler: (message: HubMessage) => void): UnsubscribeFn {
     this.messageHandlers.add(handler);
     return () => {
@@ -234,9 +154,6 @@ export class InProcessTransport implements IMessageTransport {
     };
   }
 
-  /**
-   * Register handler for connection state changes
-   */
   onConnectionChange(handler: ConnectionStateHandler): UnsubscribeFn {
     this.connectionHandlers.add(handler);
     return () => {
@@ -244,9 +161,6 @@ export class InProcessTransport implements IMessageTransport {
     };
   }
 
-  /**
-   * Register handler for client disconnect (server-side)
-   */
   onClientDisconnect(handler: (clientId: string) => void): UnsubscribeFn {
     this.clientDisconnectHandlers.add(handler);
     return () => {
@@ -254,23 +168,14 @@ export class InProcessTransport implements IMessageTransport {
     };
   }
 
-  /**
-   * Get client ID (for server-side tracking)
-   */
   getClientId(): string {
     return this.clientId;
   }
 
-  /**
-   * Get connected client count (server-side)
-   */
   getClientCount(): number {
     return this.connectedClients.size;
   }
 
-  /**
-   * Receive message from peer (internal)
-   */
   private receiveMessage(message: HubMessage): void {
     for (const handler of this.messageHandlers) {
       try {
@@ -281,9 +186,6 @@ export class InProcessTransport implements IMessageTransport {
     }
   }
 
-  /**
-   * Set connection state and notify handlers
-   */
   private setState(state: ConnectionState, error?: Error): void {
     if (this.state === state) {
       return;
@@ -300,16 +202,11 @@ export class InProcessTransport implements IMessageTransport {
     }
   }
 
-  /**
-   * Deliver message asynchronously
-   * Uses queueMicrotask for minimal latency while maintaining async semantics
-   */
   private async deliverAsync(fn: () => void): Promise<void> {
     if (this.simulatedLatency > 0) {
       await new Promise((resolve) => setTimeout(resolve, this.simulatedLatency));
       fn();
     } else {
-      // Use microtask for minimal latency but still async
       await new Promise<void>((resolve) => {
         queueMicrotask(() => {
           fn();
@@ -320,25 +217,6 @@ export class InProcessTransport implements IMessageTransport {
   }
 }
 
-/**
- * InProcessTransportBus - Multi-party in-process communication
- *
- * Allows multiple components to communicate via MessageHub using
- * a shared bus. Each component gets its own transport that can
- * send to any other component.
- *
- * USAGE:
- * ```typescript
- * const bus = new InProcessTransportBus();
- *
- * // Create transports for each component
- * const stateManager = bus.createTransport('state-manager');
- * const sessionManager = bus.createTransport('session-manager');
- * const agentSession = bus.createTransport('agent-session');
- *
- * // Messages can now be routed between any components
- * ```
- */
 export class InProcessTransportBus {
   private transports = new Map<string, InProcessTransport>();
   private options: InProcessTransportOptions;
@@ -347,9 +225,6 @@ export class InProcessTransportBus {
     this.options = options;
   }
 
-  /**
-   * Create a transport for a component
-   */
   createTransport(name: string): InProcessTransport {
     if (this.transports.has(name)) {
       throw new Error(`Transport '${name}' already exists`);
@@ -365,16 +240,10 @@ export class InProcessTransportBus {
     return transport;
   }
 
-  /**
-   * Get a transport by name
-   */
   getTransport(name: string): InProcessTransport | undefined {
     return this.transports.get(name);
   }
 
-  /**
-   * Remove a transport
-   */
   removeTransport(name: string): void {
     const transport = this.transports.get(name);
     if (transport) {
@@ -383,9 +252,6 @@ export class InProcessTransportBus {
     }
   }
 
-  /**
-   * Broadcast to all transports
-   */
   broadcast(message: HubMessage, excludeName?: string): void {
     for (const [name, transport] of this.transports) {
       if (name !== excludeName && transport.isReady()) {
@@ -394,16 +260,10 @@ export class InProcessTransportBus {
     }
   }
 
-  /**
-   * Get all transport names
-   */
   getTransportNames(): string[] {
     return Array.from(this.transports.keys());
   }
 
-  /**
-   * Close all transports
-   */
   async close(): Promise<void> {
     for (const transport of this.transports.values()) {
       await transport.close();
@@ -412,9 +272,6 @@ export class InProcessTransportBus {
   }
 }
 
-/**
- * Transport connected to a bus (internal class)
- */
 class BusConnectedTransport extends InProcessTransport {
   private bus: InProcessTransportBus;
 
@@ -424,7 +281,6 @@ class BusConnectedTransport extends InProcessTransport {
   }
 
   async initialize(): Promise<void> {
-    // Bus transports are always ready
     this['setState']('connected');
   }
 
@@ -433,7 +289,6 @@ class BusConnectedTransport extends InProcessTransport {
       throw new Error('Transport not connected');
     }
 
-    // Broadcast to all other transports on the bus
     this.bus.broadcast(message, this.name);
   }
 

@@ -1,18 +1,3 @@
-/**
- * L3 predicate language + evaluator (epic #2299; promoted from the #2300 spike
- * in P2 #2302).
- *
- * A small, DOMAIN-AGNOSTIC expression language the `external_state` validator
- * uses to decide allow/pending/block from a connector op's result. There are
- * no PR/codex/github terms here — those live in the connector (L2) and the
- * preset configs (which compose predicates). That is the epic's honesty test:
- * the rule mechanism is generic.
- *
- * Predicates evaluate against a "scope" — initially the op result, or an array
- * element when inside `exists`. Paths are dot-notation into the scope.
- */
-
-/** Dot-notation path into a scope, e.g. `"state"`, `"reactions"`, `"user.login"`. */
 export type Path = string;
 
 export type LeafPredicate =
@@ -20,12 +5,8 @@ export type LeafPredicate =
   | { neq: [Path, unknown] }
   | { in: [Path, unknown[]] }
   | { nin: [Path, unknown[]] }
-  /** Case-insensitive substring test on the stringified field value. */
   | { contains: [Path, string] }
-  /** Case-sensitive suffix test on the stringified field value. */
   | { endswith: [Path, string] }
-  /** `>=`: numeric when both sides are numbers, otherwise lexicographic
-   *  (ISO-8601 date strings compare correctly lexicographically). */
   | { gte: [Path, unknown] }
   | { lt: [Path, unknown] }
   | { present: Path }
@@ -37,11 +18,8 @@ export type Predicate =
   | { all: Predicate[] }
   | { any: Predicate[] }
   | { not: Predicate }
-  /** True iff `scope[select]` is a non-empty array with at least one element
-   *  satisfying `where` (evaluated against that element as the scope). */
   | { exists: { select: Path; where: Predicate } };
 
-/** Resolve a dot path against a scope. Returns undefined when missing. */
 export function getPath(scope: unknown, path: Path): unknown {
   if (scope === null || scope === undefined) return undefined;
   if (path === '') return scope;
@@ -49,13 +27,10 @@ export function getPath(scope: unknown, path: Path): unknown {
   for (const part of path.split('.')) {
     if (current === null || current === undefined) return undefined;
     if (Array.isArray(current)) {
-      // Numeric index into an array; otherwise bail.
       const idx = Number(part);
       if (!Number.isInteger(idx)) return undefined;
       current = current[idx];
     } else if (typeof current === 'object') {
-      // Read OWN properties only — without this guard, `present: '__proto__'`
-      // is a tautology and `present: 'constructor'` etc. leak prototype values.
       if (!Object.prototype.hasOwnProperty.call(current, part)) return undefined;
       current = (current as Record<string, unknown>)[part];
     } else {
@@ -78,10 +53,6 @@ function compare(a: unknown, b: unknown): number {
   return 0;
 }
 
-/**
- * Evaluate a predicate against a scope. Throws on a malformed predicate so
- * bugs surface in tests rather than silently passing gates.
- */
 export function evaluatePredicate(predicate: Predicate, scope: unknown): boolean {
   if (predicate === null || typeof predicate !== 'object') {
     throw new Error(`predicate: expected object, got ${typeof predicate}`);

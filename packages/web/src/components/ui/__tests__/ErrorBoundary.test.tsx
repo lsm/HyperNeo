@@ -3,7 +3,6 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/preact';
 import { h } from 'preact';
 import { ErrorBoundary } from '../ErrorBoundary';
 
-// Component that throws on render
 function ThrowOnRender({ error }: { error: Error }): never {
   throw error;
 }
@@ -24,7 +23,6 @@ describe('ErrorBoundary', () => {
   });
 
   it('renders default fallback UI when a child throws', () => {
-    // Suppress the console.error that Preact logs for uncaught errors
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     render(
@@ -79,15 +77,10 @@ describe('ErrorBoundary', () => {
       </ErrorBoundary>
     );
 
-    // Error state is showing
     expect(screen.getByText('Failed to load component')).toBeTruthy();
 
-    // Click retry — resets error state, which re-renders children
-    // The child throws again, so the error UI will reappear,
-    // but this confirms the state reset mechanism works.
     fireEvent.click(screen.getByText('Retry'));
 
-    // Error boundary caught the re-thrown error and shows fallback again
     expect(screen.getByText('Failed to load component')).toBeTruthy();
 
     spy.mockRestore();

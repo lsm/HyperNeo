@@ -1,19 +1,3 @@
-/**
- * Tests for Space RPC Handlers
- *
- * Covers:
- * - space.create: happy path, missing workspacePath, missing name, invalid path, duplicate path
- * - space.list: happy path, includeArchived flag
- * - space.get: happy path, missing id, not found
- * - space.update: happy path, missing id, not found
- * - space.archive: happy path (publishes space.archived with full space), missing id
- * - space.stop: stops active work via runtime service, marks stopped, publishes space.updated; missing id; graceful degradation without runtime service
- * - space.start: clears stopped flag, publishes space.updated; missing id
- * - space.delete: happy path, missing id, not found
- * - space.overview: happy path, missing id, not found
- * - InternalEventBus events published on mutations
- */
-
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import type { Space, SpaceCreateResult, SpaceTask, SpaceWorkflowRun } from '@hyperneo/shared';
@@ -31,8 +15,6 @@ import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
-
-// ─── Fixtures ───────────────────────────────────────────────────────────────
 
 const NOW = Date.now();
 
@@ -76,8 +58,6 @@ const mockRun: SpaceWorkflowRun = {
   createdAt: NOW,
   updatedAt: NOW,
 };
-
-// ─── Mock helpers ────────────────────────────────────────────────────────────
 
 function createMockMessageHub(): {
   hub: MessageHub;
@@ -194,8 +174,6 @@ function createMockSpaceRuntimeService(): SpaceRuntimeService {
   } as unknown as SpaceRuntimeService;
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
-
 describe('space-handlers', () => {
   let hub: MessageHub;
   let handlers: Map<string, RequestHandler>;
@@ -236,8 +214,6 @@ describe('space-handlers', () => {
     if (!handler) throw new Error(`No handler registered for ${method}`);
     return handler(data);
   };
-
-  // ─── space.create ──────────────────────────────────────────────────────────
 
   describe('space.create', () => {
     beforeEach(() => setup());
@@ -352,11 +328,10 @@ describe('space-handlers', () => {
     });
 
     it('does not create a session when sessionManager is omitted', async () => {
-      setup(mockSpace); // no sessionManager
+      setup(mockSpace);
 
       await call('space.create', { workspacePath: '/tmp/x', name: 'X' });
 
-      // No sessionManager means no session creation — just verify the space was created
       expect(spaceManager.createSpace).toHaveBeenCalledTimes(1);
     });
 
@@ -393,9 +368,7 @@ describe('space-handlers', () => {
         name: 'X',
       })) as SpaceCreateResult;
 
-      // Space is still created successfully
       expect(result.id).toBe(mockSpace.id);
-      // seedWarnings present with the failed agent names
       expect(result.seedWarnings).toBeDefined();
       expect(result.seedWarnings!.length).toBeGreaterThan(0);
       expect(result.seedWarnings!.some((w) => w.includes('Coder'))).toBe(true);
@@ -410,7 +383,6 @@ describe('space-handlers', () => {
         name: 'X',
       });
 
-      // No seedWarnings property when everything succeeds
       expect((result as Record<string, unknown>).seedWarnings).toBeUndefined();
     });
 
@@ -426,16 +398,13 @@ describe('space-handlers', () => {
         name: 'X',
       })) as SpaceCreateResult;
 
-      // Space is still created
       expect(result.id).toBe(mockSpace.id);
-      // seedWarnings present
       expect(result.seedWarnings).toBeDefined();
       expect(result.seedWarnings!.some((w) => w.includes('preset agents'))).toBe(true);
     });
 
     it('returns seedWarnings when workflow seeding fails', async () => {
       const agentMgr = createMockSpaceAgentManager();
-      // Return empty agent list so workflow seeding cannot resolve agent names
       (agentMgr.listBySpaceId as ReturnType<typeof mock>).mockReturnValue([]);
       setup(mockSpace, undefined, undefined, agentMgr);
 
@@ -451,9 +420,9 @@ describe('space-handlers', () => {
 
     it('space creation succeeds even when both agents and workflows fail', async () => {
       const agentMgr = createMockSpaceAgentManager({
-        createFail: () => true, // all agents fail
+        createFail: () => true,
       });
-      (agentMgr.listBySpaceId as ReturnType<typeof mock>).mockReturnValue([]); // no agents for workflows
+      (agentMgr.listBySpaceId as ReturnType<typeof mock>).mockReturnValue([]);
       setup(mockSpace, undefined, undefined, agentMgr);
 
       const result = (await call('space.create', {
@@ -461,12 +430,9 @@ describe('space-handlers', () => {
         name: 'X',
       })) as SpaceCreateResult;
 
-      // Space is still created and returned
       expect(result.id).toBe(mockSpace.id);
-      // Both agent and workflow warnings present
       expect(result.seedWarnings).toBeDefined();
       expect(result.seedWarnings!.length).toBe(2);
-      // Event still published
       expect(internalEventBus.publish).toHaveBeenCalledWith(
         'space.created',
         expect.objectContaining({ spaceId: mockSpace.id })
@@ -480,7 +446,6 @@ describe('space-handlers', () => {
       });
       setup(mockSpace, sessionManager);
 
-      // Should not throw — session creation failure is non-fatal
       const result = await call('space.create', { workspacePath: '/tmp/x', name: 'X' });
       expect(result).toEqual(mockSpace);
       expect(internalEventBus.publish).toHaveBeenCalledWith('space.created', {
@@ -490,8 +455,6 @@ describe('space-handlers', () => {
       });
     });
   });
-
-  // ─── space.list ────────────────────────────────────────────────────────────
 
   describe('space.list', () => {
     beforeEach(() => setup());
@@ -513,8 +476,6 @@ describe('space-handlers', () => {
     });
   });
 
-  // ─── space.get ─────────────────────────────────────────────────────────────
-
   describe('space.get', () => {
     beforeEach(() => setup());
 
@@ -532,8 +493,6 @@ describe('space-handlers', () => {
       await expect(call('space.get', { id: 'nope' })).rejects.toThrow('Space not found: nope');
     });
   });
-
-  // ─── space.update ──────────────────────────────────────────────────────────
 
   describe('space.update', () => {
     beforeEach(() => setup());
@@ -596,8 +555,6 @@ describe('space-handlers', () => {
     });
   });
 
-  // ─── space.setConcurrentLimit ────────────────────────────────────────────────
-
   describe('space.setConcurrentLimit', () => {
     beforeEach(() => setup());
 
@@ -657,8 +614,6 @@ describe('space-handlers', () => {
     });
   });
 
-  // ─── space.archive ─────────────────────────────────────────────────────────
-
   describe('space.archive', () => {
     beforeEach(() => setup());
 
@@ -670,7 +625,6 @@ describe('space-handlers', () => {
 
       expect((result as Space).status).toBe('archived');
       expect(spaceManager.archiveSpace).toHaveBeenCalledWith('space-1');
-      // Must emit space.archived (not space.updated) with the full space object
       expect(internalEventBus.publish).toHaveBeenCalledWith('space.archived', {
         sessionId: 'global',
         spaceId: 'space-1',
@@ -699,8 +653,6 @@ describe('space-handlers', () => {
     });
   });
 
-  // ─── space.stop ────────────────────────────────────────────────────────────
-
   describe('space.stop', () => {
     let mockRuntimeService: SpaceRuntimeService;
 
@@ -718,11 +670,9 @@ describe('space-handlers', () => {
 
       const result = await call('space.stop', { id: 'space-1' });
 
-      // Must call stopActiveWork before marking stopped
       expect(mockRuntimeService.stopActiveWork).toHaveBeenCalledWith('space-1');
       expect(spaceManager.stopSpace).toHaveBeenCalledWith('space-1');
       expect((result as Space).stopped).toBe(true);
-      // Space is NOT archived — status stays 'active'
       expect((result as Space).status).toBe('active');
       expect(internalEventBus.publish).toHaveBeenCalledWith('space.updated', {
         sessionId: 'global',
@@ -732,7 +682,6 @@ describe('space-handlers', () => {
     });
 
     it('works without runtime service (graceful degradation)', async () => {
-      // Re-setup without runtime service
       setup(mockSpace, undefined, undefined);
       const stoppedSpace = { ...mockSpace, stopped: true };
       (spaceManager.stopSpace as ReturnType<typeof mock>).mockResolvedValue(stoppedSpace);
@@ -751,8 +700,6 @@ describe('space-handlers', () => {
       await expect(call('space.stop', {})).rejects.toThrow('id is required');
     });
   });
-
-  // ─── space.start ───────────────────────────────────────────────────────────
 
   describe('space.start', () => {
     beforeEach(() => setup());
@@ -776,8 +723,6 @@ describe('space-handlers', () => {
       await expect(call('space.start', {})).rejects.toThrow('id is required');
     });
   });
-
-  // ─── space.delete ──────────────────────────────────────────────────────────
 
   describe('space.delete', () => {
     beforeEach(() => setup());
@@ -803,8 +748,6 @@ describe('space-handlers', () => {
       await expect(call('space.delete', { id: 'ghost' })).rejects.toThrow('Space not found: ghost');
     });
   });
-
-  // ─── space.overview ────────────────────────────────────────────────────────
 
   describe('space.overview', () => {
     beforeEach(() => setup());
@@ -835,7 +778,6 @@ describe('space-handlers', () => {
     });
   });
 
-  // ─── space.pause ──────────────────────────────────────────────────────────
   describe('space.pause', () => {
     beforeEach(() => setup());
 
@@ -856,7 +798,6 @@ describe('space-handlers', () => {
     });
   });
 
-  // ─── space.resume ─────────────────────────────────────────────────────────
   describe('space.resume', () => {
     beforeEach(() => setup());
 

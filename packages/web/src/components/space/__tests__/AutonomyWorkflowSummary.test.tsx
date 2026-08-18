@@ -1,18 +1,4 @@
 // @ts-nocheck
-/**
- * Unit tests for AutonomyWorkflowSummary.
- *
- * Verifies:
- * - Renders "Level N: X of Y workflows auto-close without review" at the current level
- * - Hides itself when there are no workflows loaded
- * - Expands to reveal blocking workflows when the toggle is clicked
- * - Uses the runtime fallback (level 5) for workflows with no `completionAutonomyLevel`
- *
- * Note: per-node action arrays on workflow nodes were removed in PR 4/5 (and
- * the shared types deleted in PR 5/5) — gating is now expressed by a single
- * `completionAutonomyLevel` field on the workflow itself (defaulting to 5
- * when absent).
- */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
@@ -86,7 +72,6 @@ describe('AutonomyWorkflowSummary', () => {
     const wf = makeWorkflow({
       id: 'wf-review',
       name: 'Review Only',
-      // `completionAutonomyLevel` omitted → defaults to 5 at runtime
     });
 
     const { getByTestId } = render(<AutonomyWorkflowSummary level={1} workflows={[wf]} />);

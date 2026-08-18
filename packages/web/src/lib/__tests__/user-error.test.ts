@@ -1,7 +1,3 @@
-/**
- * Tests for user-facing error sanitization
- */
-
 import { describe, it, expect } from 'vitest';
 import { sanitizeUserError, isAuthError, isTransientError } from '../user-error';
 
@@ -71,8 +67,6 @@ describe('sanitizeUserError', () => {
     it('should never surface stack traces', () => {
       const err = new Error('something');
       err.stack = 'Error: something\n    at Object.<anonymous> (file.js:1:1)';
-      // The .message property is "something" which is fine,
-      // but if someone passes err.stack directly:
       const result = sanitizeUserError(err.stack);
       expect(result).not.toContain('at Object');
     });

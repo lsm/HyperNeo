@@ -1,7 +1,3 @@
-/**
- * Tests for UnreadBadge component.
- */
-
 import { cleanup, render } from '@testing-library/preact';
 import { afterEach, describe, expect, it } from 'vitest';
 import { UnreadBadge } from '../UnreadBadge';
@@ -13,7 +9,6 @@ describe('UnreadBadge', () => {
 
   it('renders the count', () => {
     const { container } = render(<UnreadBadge count={3} />);
-    // textContent includes the visually-hidden "unread" context.
     expect(container.textContent).toBe('3 unread');
   });
 

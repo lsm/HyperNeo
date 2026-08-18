@@ -54,25 +54,21 @@ const peopleWithAvatar = [
 export function ComboboxesDemo() {
   return (
     <div class="space-y-12">
-      {/* Simple combobox */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">Simple combobox</h3>
         <SimpleCombobox />
       </div>
 
-      {/* Combobox with status indicator */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">With status indicator</h3>
         <StatusIndicatorCombobox />
       </div>
 
-      {/* Combobox with avatar */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">With avatar</h3>
         <AvatarCombobox />
       </div>
 
-      {/* Combobox with secondary text */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">With secondary text</h3>
         <SecondaryTextCombobox />

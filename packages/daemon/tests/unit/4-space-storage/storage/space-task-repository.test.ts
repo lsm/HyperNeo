@@ -1,7 +1,3 @@
-/**
- * SpaceTaskRepository Tests
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
@@ -29,7 +25,6 @@ describe('SpaceTaskRepository', () => {
     });
     spaceId = space.id;
 
-    // Set up workflow records for FK-constrained fields
     const now = Date.now();
     workflowId = 'wf-1';
     workflowRunId = 'run-1';
@@ -191,7 +186,6 @@ describe('SpaceTaskRepository', () => {
         sessionRole: 'worker',
       });
 
-      // Re-read from DB (exercises the row mapper, not just the update return).
       const reread = repo.getTask(task.id);
       expect(reread?.status).toBe('usage_limited');
       expect(reread?.restrictions).toEqual({
@@ -234,7 +228,6 @@ describe('SpaceTaskRepository', () => {
           sessionRole: 'worker',
         },
       });
-      // Manual cancel without explicitly clearing restrictions.
       const cancelled = repo.updateTask(task.id, { status: 'cancelled' });
       expect(cancelled?.status).toBe('cancelled');
       expect(cancelled?.restrictions).toBeNull();
@@ -247,7 +240,7 @@ describe('SpaceTaskRepository', () => {
       repo.updateTask(t1.id, { status: 'usage_limited' });
       const t2 = repo.createTask({ spaceId, title: 'paused-2', description: '' });
       repo.updateTask(t2.id, { status: 'rate_limited' });
-      repo.createTask({ spaceId, title: 'active', description: '' }); // in_progress
+      repo.createTask({ spaceId, title: 'active', description: '' });
 
       const paused = repo.listRateLimitedBySpace(spaceId);
       expect(paused.map((t) => t.id).sort()).toEqual([t1.id, t2.id].sort());
@@ -345,8 +338,6 @@ describe('SpaceTaskRepository', () => {
   });
 
   describe('listBySpaceAndStatus (paginated)', () => {
-    // Helper to seed N tasks at the same status; spaces them out by 1ms so
-    // updated_at ordering is stable. Returns tasks in creation order.
     const seedTasks = (
       n: number,
       status: 'open' | 'in_progress' | 'blocked' = 'in_progress',
@@ -365,7 +356,6 @@ describe('SpaceTaskRepository', () => {
             .prepare('UPDATE space_tasks SET block_reason = ? WHERE id = ?')
             .run(blockReason, t.id);
         }
-        // Force monotonic updated_at so ordering is deterministic.
         (db as any)
           .prepare('UPDATE space_tasks SET updated_at = ? WHERE id = ?')
           .run(Date.now() + i, t.id);
@@ -385,7 +375,6 @@ describe('SpaceTaskRepository', () => {
       expect(page2.tasks).toHaveLength(5);
       expect(page2.total).toBe(15);
 
-      // No overlap between pages.
       const page1Ids = new Set(page1.tasks.map((t) => t.id));
       for (const t of page2.tasks) expect(page1Ids.has(t.id)).toBe(false);
     });
@@ -451,7 +440,6 @@ describe('SpaceTaskRepository', () => {
         'human_input_requested' as any,
         'gate_rejected' as any,
       ]);
-      // Should include 2 agent_crashed + 1 null = 3, excluding the 3 attention rows.
       expect(generic.total).toBe(3);
       for (const t of generic.tasks) {
         expect(t.blockReason === null || t.blockReason === 'agent_crashed').toBe(true);
@@ -564,12 +552,10 @@ describe('SpaceTaskRepository', () => {
 
     it('round-trips pendingCompletion* fields (set then clear)', () => {
       const task = repo.createTask({ spaceId, title: 'T', description: '' });
-      // On create, all three fields should be null.
       expect(task.pendingCompletionSubmittedByNodeId).toBeNull();
       expect(task.pendingCompletionSubmittedAt).toBeNull();
       expect(task.pendingCompletionReason).toBeNull();
 
-      // Set via update.
       const ts = Date.now();
       const updated = repo.updateTask(task.id, {
         pendingCheckpointType: 'task_completion',
@@ -582,7 +568,6 @@ describe('SpaceTaskRepository', () => {
       expect(updated!.pendingCompletionSubmittedAt).toBe(ts);
       expect(updated!.pendingCompletionReason).toBe('ready for review');
 
-      // Clear via update with nulls.
       const cleared = repo.updateTask(task.id, {
         pendingCheckpointType: null,
         pendingCompletionSubmittedByNodeId: null,
@@ -712,7 +697,6 @@ describe('SpaceTaskRepository', () => {
 
   describe('promoteDraftTasksByCreator', () => {
     it('promotes draft tasks to open and leaves in_progress tasks unchanged', () => {
-      // promoteDraftTasksByCreator targets draft tasks created by the planner
       repo.createTask({
         spaceId,
         title: 'D',
@@ -959,7 +943,6 @@ describe('SpaceTaskRepository', () => {
       repo.createTask({ spaceId, title: 'C', description: '' });
       repo.deleteTask(t2.id);
 
-      // After deleting #2, next task gets MAX(1,3)+1 = 4, leaving a gap at #2
       const t4 = repo.createTask({ spaceId, title: 'D', description: '' });
       expect(t4.taskNumber).toBe(4);
     });
@@ -972,7 +955,6 @@ describe('SpaceTaskRepository', () => {
 
     it('enforces UNIQUE(space_id, task_number) constraint', () => {
       repo.createTask({ spaceId, title: 'A', description: '' });
-      // Manually inserting a duplicate task_number should throw
       expect(() => {
         (db as any)
           .prepare(
@@ -1029,9 +1011,6 @@ describe('SpaceTaskRepository', () => {
 
   describe('bulk task creation', () => {
     it('assigns unique monotonically increasing taskNumbers for many tasks', () => {
-      // Repo-level createTask is synchronous (bun:sqlite), so this tests
-      // sequential bulk creation. Concurrent (Promise.all) tests live in
-      // space-task-manager.test.ts where createTask is async.
       const tasks = Array.from({ length: 20 }, (_, i) =>
         repo.createTask({ spaceId, title: `Task ${i}`, description: '' })
       );
@@ -1045,12 +1024,6 @@ describe('SpaceTaskRepository', () => {
   });
 
   describe('listActiveWithTaskAgentSession', () => {
-    /**
-     * Seed a task at the given status, with an optional task-agent session id.
-     * Statuses outside the default state-machine are applied directly via UPDATE
-     * to avoid running the transition validator (the helper here is purely a
-     * storage-layer fixture).
-     */
     function seed(status: string, sessionId: string | null): string {
       const task = repo.createTask({
         spaceId,
@@ -1065,12 +1038,6 @@ describe('SpaceTaskRepository', () => {
     }
 
     it("includes 'in_progress', 'review', 'blocked', and 'approved' tasks with a non-null session id", () => {
-      // 'review' was added to the active set as part of the Task #126 fix:
-      // a coder/reviewer sub-session sitting at a code-ready-gate while the
-      // parent task waited in 'review' was previously excluded from rehydration,
-      // so the task agent's in-process MCP servers were never restored after a
-      // daemon restart. See `listActiveWithTaskAgentSession` docstring for the
-      // per-status justification.
       const inProgress = seed('in_progress', 'sess-in-progress');
       const review = seed('review', 'sess-review');
       const blocked = seed('blocked', 'sess-blocked');
@@ -1096,11 +1063,6 @@ describe('SpaceTaskRepository', () => {
     });
 
     it('excludes terminal and open statuses even when a session id is present', () => {
-      // 'review' is intentionally NOT in this exclusion list — it is an
-      // active state where the Task Agent (and any sub-sessions sitting at
-      // the review gate) must come back after a daemon restart so their
-      // in-process MCP servers (`node-agent`, `space-agent-tools`) are
-      // re-attached. See the inclusion test above for the rationale.
       seed('open', 'sess-open');
       seed('done', 'sess-done');
       seed('cancelled', 'sess-cancelled');

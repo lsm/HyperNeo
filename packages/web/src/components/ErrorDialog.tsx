@@ -67,7 +67,6 @@ export function ErrorDialog({ isOpen, onClose, error, isDev: _isDev = false }: E
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Error Details" size="lg">
       <div class="space-y-4">
-        {/* Error Category Badge */}
         <div class="flex items-center gap-3">
           <span class="text-2xl">{categoryIcon}</span>
           <div class="flex-1">
@@ -88,12 +87,10 @@ export function ErrorDialog({ isOpen, onClose, error, isDev: _isDev = false }: E
           </span>
         </div>
 
-        {/* User Message */}
         <div class={`p-4 rounded-lg bg-dark-800 border ${borderColors.ui.default}`}>
           <p class="text-gray-100">{error.userMessage}</p>
         </div>
 
-        {/* Recovery Suggestions */}
         {error.recoverySuggestions && error.recoverySuggestions.length > 0 && (
           <div class={`p-4 rounded-lg bg-blue-500/5 border border-blue-500/20`}>
             <h3 class="text-sm font-semibold text-blue-400 mb-2">💡 What you can try:</h3>
@@ -108,7 +105,6 @@ export function ErrorDialog({ isOpen, onClose, error, isDev: _isDev = false }: E
           </div>
         )}
 
-        {/* Technical Details (Collapsible) */}
         <Collapsible
           trigger={
             <div class="flex items-center gap-2 py-2 text-gray-400 hover:text-gray-300">
@@ -170,7 +166,6 @@ export function ErrorDialog({ isOpen, onClose, error, isDev: _isDev = false }: E
               </dd>
             </div>
 
-            {/* Stack Trace - Always show in Technical Details if available */}
             {error.stack && (
               <div>
                 <dt class="font-medium text-gray-400 mb-1">Stack Trace:</dt>
@@ -184,7 +179,6 @@ export function ErrorDialog({ isOpen, onClose, error, isDev: _isDev = false }: E
           </div>
         </Collapsible>
 
-        {/* Actions */}
         <div class="flex items-center justify-between pt-2">
           <Button
             variant="secondary"
@@ -228,9 +222,6 @@ export function ErrorDialog({ isOpen, onClose, error, isDev: _isDev = false }: E
   );
 }
 
-/**
- * Format error details for copying/reporting
- */
 function formatErrorReport(error: StructuredError): string {
   const lines = [
     '=== ERROR REPORT ===',

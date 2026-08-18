@@ -16,12 +16,10 @@ import { useServerHandoffComplete } from '../../internal/use-server-handoff-comp
 import { useSyncRefs } from '../../internal/use-sync-refs.ts';
 import { useFlags } from '../../internal/use-flags.ts';
 
-// Polyfill for test environments
 if (
   typeof process !== 'undefined' &&
   typeof globalThis !== 'undefined' &&
   typeof Element !== 'undefined' &&
-  // Check for test environment safely
   process?.env?.['NODE' + '_' + 'ENV'] === 'test'
 ) {
   if (typeof Element?.prototype?.getAnimations === 'undefined') {
@@ -34,24 +32,6 @@ if (
 type ContainerElement = { current: HTMLElement | null };
 type TransitionDirection = 'enter' | 'leave';
 
-/**
- * ```
- * ┌──────┐                │        ┌──────────────┐
- * │Closed│                │        │Closed        │
- * └──────┘                │        └──────────────┘
- * ┌──────┐┌──────┐┌──────┐│┌──────┐┌──────┐┌──────┐
- * │Frame ││Frame ││Frame │││Frame ││Frame ││Frame │
- * └──────┘└──────┘└──────┘│└──────┘└──────┘└──────┘
- * ┌──────────────────────┐│┌──────────────────────┐
- * │Enter                 │││Leave                 │
- * └──────────────────────┘│└──────────────────────┘
- * ┌──────────────────────┐│┌──────────────────────┐
- * │Transition            │││Transition            │
- * ├──────────────────────┘│└──────────────────────┘
- * │
- * └─ Applied when `Enter` or `Leave` is applied.
- * ```
- */
 enum TransitionState {
   None = 0,
   Closed = 1 << 0,
@@ -76,14 +56,10 @@ function transitionDataAttributes(data: TransitionData): Record<string, string> 
   return attributes;
 }
 
-/**
- * Check if we should forward the ref to the child element or not.
- */
 function shouldForwardRef<TTag extends ElementType = typeof Fragment>(
   props: TransitionRootProps<TTag>
 ): boolean {
   return (
-    // If we have any of the enter/leave classes
     Boolean(
       props.enter ||
         props.enterFrom ||
@@ -92,14 +68,10 @@ function shouldForwardRef<TTag extends ElementType = typeof Fragment>(
         props.leaveFrom ||
         props.leaveTo
     ) ||
-    // If the `as` prop is not a Fragment
     (props.as ?? Fragment) !== Fragment ||
-    // Single child - we'll check this at runtime for now
     false
   );
 }
-
-// --- Context ---
 
 interface TransitionContextValues {
   show: boolean;
@@ -121,8 +93,6 @@ function useTransitionContext(): TransitionContextValues {
 
   return context;
 }
-
-// --- Nesting ---
 
 enum TreeStates {
   Visible = 'visible',
@@ -212,17 +182,14 @@ function useNesting(done?: () => void, parent?: NestingContextValues): NestingCo
       direction: TransitionDirection,
       cb: (direction: TransitionDirection) => void
     ) => {
-      // Clear out all existing todos
       todos.current.splice(0);
 
-      // Remove all existing promises for the current container from the parent
       if (parent) {
         parent.chains.current[direction] = parent.chains.current[direction].filter(
           ([containerInParent]) => containerInParent !== container
         );
       }
 
-      // Wait until our own transition is done
       if (parent) {
         parent.chains.current[direction].push([
           container,
@@ -232,7 +199,6 @@ function useNesting(done?: () => void, parent?: NestingContextValues): NestingCo
         ]);
       }
 
-      // Wait until our children are done
       if (parent) {
         parent.chains.current[direction].push([
           container,
@@ -279,8 +245,6 @@ function useNesting(done?: () => void, parent?: NestingContextValues): NestingCo
     [register, unregister, transitionableChildren, onStart, onStop, chains, wait]
   );
 }
-
-// --- useTransition hook ---
 
 function useTransition(
   enabled: boolean,
@@ -439,7 +403,6 @@ function waitForTransition(node: HTMLElement | null, done: () => void): () => vo
     cancelled = true;
   });
 
-  // Use getAnimations API if available
   const getAnimations = (node as HTMLElement & { getAnimations?: () => Animation[] }).getAnimations;
   const transitions =
     getAnimations?.call(node)?.filter((animation) => animation instanceof CSSTransition) ?? [];
@@ -473,7 +436,6 @@ function prepareTransition(
 
   prepare();
 
-  // Force reflow to flush the CSS changes
   void node.offsetHeight;
 
   node.style.transition = previous;
@@ -488,15 +450,10 @@ function hasPendingTransitions(node: HTMLElement): boolean {
   });
 }
 
-// --- Props Types ---
-
 export interface TransitionClasses {
   enter?: string;
   enterFrom?: string;
   enterTo?: string;
-  /**
-   * @deprecated The `enterTo` and `leaveTo` classes stay applied after the transition has finished.
-   */
   entered?: string;
   leave?: string;
   leaveFrom?: string;
@@ -529,8 +486,6 @@ export type TransitionRootProps<TTag extends ElementType = ElementType> = Transi
 
 export type TransitionChildProps<TTag extends ElementType = ElementType> = TransitionProps<TTag>;
 
-// --- TransitionChild Component ---
-
 const DEFAULT_TRANSITION_CHILD_TAG = Fragment;
 type TransitionChildRenderPropArg = { current: HTMLElement | null };
 
@@ -562,7 +517,6 @@ function TransitionChildFn<TTag extends ElementType = typeof DEFAULT_TRANSITION_
   const container = useRef<HTMLElement | null>(null);
   const requiresRef = shouldForwardRef(props as TransitionRootProps<TTag>);
 
-  // Build refs array conditionally - the spread is safe because useSyncRefs handles null/undefined
   const refs = requiresRef ? [container, ref, setLocalContainerElement] : ref === null ? [] : [ref];
   const transitionRef = useSyncRefs(...refs);
 
@@ -676,7 +630,6 @@ function TransitionChildFn<TTag extends ElementType = typeof DEFAULT_TRANSITION_
     ...transitionDataAttributes(transitionData),
   };
 
-  // Add data-headlessui-state with "open" when visible
   if (treeState === TreeStates.Visible) {
     ourProps['data-headlessui-state'] = 'open';
     ourProps['data-open'] = '';
@@ -707,8 +660,6 @@ function TransitionChildFn<TTag extends ElementType = typeof DEFAULT_TRANSITION_
 
 TransitionChildFn.displayName = 'Transition.Child';
 
-// --- TransitionRoot Component ---
-
 function TransitionRootFn<TTag extends ElementType = typeof DEFAULT_TRANSITION_CHILD_TAG>(
   props: TransitionRootProps<TTag>,
   ref: Ref<HTMLElement>
@@ -724,7 +675,6 @@ function TransitionRootFn<TTag extends ElementType = typeof DEFAULT_TRANSITION_C
   const internalTransitionRef = useRef<HTMLElement | null>(null);
   const requiresRef = shouldForwardRef(props);
 
-  // Build refs array conditionally - the spread is safe because useSyncRefs handles null/undefined
   const refs = requiresRef ? [internalTransitionRef, ref] : ref === null ? [] : [ref];
   const transitionRef = useSyncRefs(...refs);
 
@@ -818,8 +768,6 @@ function TransitionRootFn<TTag extends ElementType = typeof DEFAULT_TRANSITION_C
 
 TransitionRootFn.displayName = 'Transition';
 
-// --- Child Component (auto-detects context) ---
-
 function ChildFn<TTag extends ElementType = typeof DEFAULT_TRANSITION_CHILD_TAG>(
   props: TransitionChildProps<TTag>,
   ref: Ref<HTMLElement>
@@ -836,12 +784,9 @@ function ChildFn<TTag extends ElementType = typeof DEFAULT_TRANSITION_CHILD_TAG>
 
 ChildFn.displayName = 'TransitionChild';
 
-// --- Exports ---
-
 function InternalTransitionChild(
   props: TransitionChildProps<ElementType> & { ref?: Ref<HTMLElement> }
 ): VNode | null {
-  // This is a wrapper that calls TransitionChildFn with forwarded ref
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (TransitionChildFn as any)(props, props.ref);
 }
@@ -860,10 +805,7 @@ export function TransitionRoot<TTag extends ElementType = typeof DEFAULT_TRANSIT
   return (TransitionRootFn as any)(props, props.ref);
 }
 
-// Main export with Child attached
 export const Transition = Object.assign(TransitionRoot, {
-  /** @deprecated use `<TransitionChild>` instead of `<Transition.Child>` */
   Child: TransitionChild,
-  /** @deprecated use `<Transition>` instead of `<Transition.Root>` */
   Root: TransitionRoot,
 });

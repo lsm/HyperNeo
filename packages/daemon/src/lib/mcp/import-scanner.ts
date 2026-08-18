@@ -1,23 +1,3 @@
-/**
- * MCP Import Scanner
- *
- * Scans on-disk `.mcp.json` files and upserts/removes rows in the
- * `app_mcp_servers` registry tagged with `source = 'imported'`. This is
- * the minimum implementation for M2 — it gives the M4 space settings UI
- * a "Refresh imports" button that keeps the imported registry set in
- * sync with whatever Claude Code picked up from the project.
- *
- * A successful scan is idempotent:
- *   - Existing imported rows with a matching `(name, sourcePath)` are
- *     updated in place (command/args/env/url/headers).
- *   - New imported entries are inserted with `enabled=true` so they
- *     show up immediately in the space settings UI.
- *   - Imported rows whose `sourcePath` was scanned but no longer appears
- *     in any scanned file are deleted.
- *
- * Non-imported rows (builtin/user) are never touched.
- */
-
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type {
@@ -30,10 +10,6 @@ import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-
 import { Logger } from '../logger';
 
 const log = new Logger('mcp-import-scanner');
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 interface McpJsonStdioEntry {
   command: string;
@@ -57,22 +33,14 @@ interface McpJsonFile {
 }
 
 export interface ImportScanResult {
-  /** Number of imported rows inserted or updated. */
   imported: number;
-  /** Number of imported rows removed because the scanned source no longer lists them. */
   removed: number;
-  /** Human-readable notes (e.g. files not found, parse errors). */
   notes: string[];
 }
 
 export interface ImportScanOptions {
-  /** Paths of `.mcp.json` files to scan. Missing files are quietly skipped. */
   mcpJsonPaths: string[];
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function inferSourceType(entry: McpJsonEntry): AppMcpServerSourceType | null {
   if ('type' in entry && entry.type) {
@@ -108,7 +76,6 @@ async function readMcpJsonSafe(
   try {
     await stat(path);
   } catch {
-    // File missing — quietly skip; not every workspace has a .mcp.json.
     return null;
   }
   try {
@@ -123,18 +90,6 @@ async function readMcpJsonSafe(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Scanner
-// ---------------------------------------------------------------------------
-
-/**
- * Scan each `.mcp.json` path and reconcile imported rows in the registry.
- * Returns a summary of how many rows were inserted/updated vs. removed.
- *
- * Only imported rows are touched: user-authored or builtin rows are
- * preserved untouched, and any `source='imported'` row whose sourcePath
- * was scanned but whose name is missing from the file gets deleted.
- */
 export async function scanMcpImports(
   repo: AppMcpServerRepository,
   options: ImportScanOptions
@@ -143,7 +98,6 @@ export async function scanMcpImports(
   let imported = 0;
   let removed = 0;
 
-  // Map by (sourcePath, name) for quick lookup of existing rows.
   const existingImported = repo.listImported();
   const existingByKey = new Map<string, AppMcpServer>();
   for (const row of existingImported) {
@@ -152,10 +106,6 @@ export async function scanMcpImports(
     }
   }
 
-  // Track which (sourcePath, name) keys appear in the scanned files so we
-  // can delete imported rows whose source file was scanned but no longer
-  // lists them. Files that fail to read (parse errors, missing) are NOT
-  // marked scanned — rows tied to them are left alone.
   const scannedPaths = new Set<string>();
   const seenKeys = new Set<string>();
 
@@ -204,9 +154,6 @@ export async function scanMcpImports(
         continue;
       }
 
-      // Insert if no row exists. Check for a name collision with a non-imported
-      // entry — if one exists, skip with a note so user/builtin rows aren't
-      // clobbered.
       const collision = repo.getByName(name);
       if (collision) {
         notes.push(
@@ -219,8 +166,6 @@ export async function scanMcpImports(
     }
   }
 
-  // Delete imported rows whose source file was scanned but which no longer
-  // appears in that file.
   for (const row of existingImported) {
     if (!row.sourcePath) continue;
     if (!scannedPaths.has(row.sourcePath)) continue;
@@ -234,12 +179,6 @@ export async function scanMcpImports(
   return { imported, removed, notes };
 }
 
-/**
- * Build a de-duplicated list of `.mcp.json` paths to scan:
- *   - The user-level `~/.claude/.mcp.json` (if HOME is set).
- *   - Every unique `workspacePath` provided, with `.mcp.json` joined.
- *   - Optional additional explicit paths (e.g. from a test harness).
- */
 export function buildMcpJsonPaths(opts: {
   workspacePaths: string[];
   homeDir?: string;

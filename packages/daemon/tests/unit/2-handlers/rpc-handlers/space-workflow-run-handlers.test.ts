@@ -1,15 +1,3 @@
-/**
- * Tests for Space Workflow Run RPC Handlers
- *
- * Covers:
- * - spaceWorkflowRun.start: throws if spaceId missing, title missing, space not found,
- *   workflowId not found, no workflows exist; creates run and emits event
- * - spaceWorkflowRun.list: throws if spaceId missing, space not found; returns runs filtered by status
- * - spaceWorkflowRun.get: throws if id missing, not found; returns run; ownership check
- * - spaceWorkflowRun.cancel: throws if id missing, not found; no-op if already cancelled;
- *   throws if completed; cancels pending/in_progress tasks; emits event
- */
-
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import type { Space, SpaceWorkflow, SpaceWorkflowRun, SpaceTask } from '@hyperneo/shared';
@@ -35,8 +23,6 @@ import type {
 } from '../../../../src/lib/internal-event-bus.ts';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
-
-// ─── Fixtures ────────────────────────────────────────────────────────────────
 
 const NOW = Date.now();
 
@@ -92,8 +78,6 @@ const mockTask: SpaceTask = {
   createdAt: NOW,
   updatedAt: NOW,
 };
-
-// ─── Mock helpers ─────────────────────────────────────────────────────────────
 
 function createMockMessageHub(): {
   hub: MessageHub;
@@ -288,8 +272,6 @@ function createMockJobQueue(): JobQueueRepository {
   } as unknown as JobQueueRepository;
 }
 
-// ─── Test Suite ───────────────────────────────────────────────────────────────
-
 describe('space-workflow-run-handlers', () => {
   let hub: MessageHub;
   let handlers: Map<string, RequestHandler>;
@@ -319,7 +301,6 @@ describe('space-workflow-run-handlers', () => {
     hub = mh.hub;
     handlers = mh.handlers;
     internalEventBus = createMockInternalEventBus();
-    // Use undefined check (not nullish coalescing) so null is preserved
     const resolvedSpace = 'space' in opts ? opts.space : mockSpace;
     spaceManager = createMockSpaceManager(resolvedSpace ?? null);
     workflowManager = createMockWorkflowManager(
@@ -359,8 +340,6 @@ describe('space-workflow-run-handlers', () => {
   };
 
   beforeEach(() => setup());
-
-  // ─── spaceWorkflowRun.start ──────────────────────────────────────────────
 
   describe('spaceWorkflowRun.start', () => {
     it('throws if spaceId is missing', async () => {
@@ -491,10 +470,6 @@ describe('space-workflow-run-handlers', () => {
     });
 
     it('auto-select prefers a default-tagged workflow over the first by created_at', async () => {
-      // Upgraded-space shape: the renamed legacy coding row (oldest, no longer
-      // `default`) sorts first, and the newly seeded stable Coding template
-      // (`default`) sorts last. Auto-select must honor the `default` tag, not
-      // workflows[0], so upgraded spaces switch to the stable workflow.
       const legacyRow = {
         ...mockWorkflow,
         id: 'wf-legacy',
@@ -531,7 +506,6 @@ describe('space-workflow-run-handlers', () => {
         title: 'Goal Run',
         goalId: 'goal-rpc-123',
       });
-      // goalId is no longer forwarded — handler calls with 4 args
       expect(runtime.startWorkflowRun).toHaveBeenCalledWith(
         'space-1',
         'workflow-1',
@@ -540,8 +514,6 @@ describe('space-workflow-run-handlers', () => {
       );
     });
   });
-
-  // ─── spaceWorkflowRun.list ───────────────────────────────────────────────
 
   describe('spaceWorkflowRun.list', () => {
     it('throws if spaceId is missing', async () => {
@@ -583,8 +555,6 @@ describe('space-workflow-run-handlers', () => {
     });
   });
 
-  // ─── spaceWorkflowRun.get ────────────────────────────────────────────────
-
   describe('spaceWorkflowRun.get', () => {
     it('throws if id is missing', async () => {
       await expect(call('spaceWorkflowRun.get', {})).rejects.toThrow('id is required');
@@ -619,8 +589,6 @@ describe('space-workflow-run-handlers', () => {
     });
   });
 
-  // ─── spaceWorkflowRun.cancel ─────────────────────────────────────────────
-
   describe('spaceWorkflowRun.cancel', () => {
     it('throws if id is missing', async () => {
       await expect(call('spaceWorkflowRun.cancel', {})).rejects.toThrow('id is required');
@@ -639,7 +607,6 @@ describe('space-workflow-run-handlers', () => {
 
       const result = await call('spaceWorkflowRun.cancel', { id: 'run-1' });
       expect(result).toEqual({ success: true });
-      // Should not attempt to update status or cancel tasks
       expect(runRepo.updateStatus).not.toHaveBeenCalled();
     });
 
@@ -679,11 +646,6 @@ describe('space-workflow-run-handlers', () => {
       expect(runRepo.transitionStatus).not.toHaveBeenCalled();
     });
   });
-
-  // Note: the spaceWorkflowRun.listGateData / approveGate / writeGateData RPCs
-  // and the GateDataRepository were removed with the legacy gate subsystem.
-
-  // ─── spaceWorkflowRun.getGateArtifacts — worktree path resolution ─────────
 
   describe('spaceWorkflowRun.getGateArtifacts — worktree resolution', () => {
     it('throws if runId is missing', async () => {
@@ -738,15 +700,11 @@ describe('space-workflow-run-handlers', () => {
         taskId: 'task-1',
       }).catch(() => {});
 
-      // When taskId is provided, listByWorkflowRun should NOT be called
       expect(mockTaskRepo.listByWorkflowRun).not.toHaveBeenCalled();
-      // Worktree manager should be called directly with the provided taskId
       expect(mockWorktreeManager.getTaskWorktreePath).toHaveBeenCalledWith('space-1', 'task-1');
     });
 
     it('uses task worktree path when available (not root workspace)', async () => {
-      // The task has a worktree at /tmp/task-worktree, not the root /tmp/test-workspace.
-      // We verify the worktree manager is called with the task's ID.
       const mockWorktreeManager = createMockSpaceWorktreeManager('/tmp/task-worktree');
       const mockTaskRepo = createMockSpaceTaskRepo([mockTask]);
 
@@ -771,9 +729,6 @@ describe('space-workflow-run-handlers', () => {
         createMockHookStateRepo()
       );
 
-      // The handler will run git diff in /tmp/task-worktree but that path doesn't exist,
-      // so git will fail. The handler catches the error and returns empty files.
-      // The important check is that getTaskWorktreePath was called with the task's ID.
       await call('spaceWorkflowRun.getGateArtifacts', { runId: 'run-1' }).catch(() => {});
 
       expect(mockTaskRepo.listByWorkflowRun).toHaveBeenCalledWith('run-1');
@@ -781,7 +736,6 @@ describe('space-workflow-run-handlers', () => {
     });
 
     it('falls back to root workspace path when no task worktree exists', async () => {
-      // No task worktree → worktree manager returns null → falls back to space.workspacePath
       const mockWorktreeManager = createMockSpaceWorktreeManager(null);
       const mockTaskRepo = createMockSpaceTaskRepo([mockTask]);
       const mockSpaceMgr = createMockSpaceManager(mockSpace);
@@ -807,17 +761,13 @@ describe('space-workflow-run-handlers', () => {
         createMockHookStateRepo()
       );
 
-      // The handler will try to run git diff in /tmp/test-workspace (fallback),
-      // which will fail since the path is fake. We just verify the fallback was used.
       await call('spaceWorkflowRun.getGateArtifacts', { runId: 'run-1' }).catch(() => {});
 
       expect(mockWorktreeManager.getTaskWorktreePath).toHaveBeenCalledWith('space-1', 'task-1');
-      // spaceManager.getSpace should have been called to get the fallback path
       expect(mockSpaceMgr.getSpace).toHaveBeenCalled();
     });
 
     it('falls back to root workspace when run has no tasks', async () => {
-      // No tasks for this run → skip task lookup → fall back to space.workspacePath
       const mockWorktreeManager = createMockSpaceWorktreeManager(null);
       const mockTaskRepo = createMockSpaceTaskRepo([]);
       const mockSpaceMgr = createMockSpaceManager(mockSpace);
@@ -845,14 +795,10 @@ describe('space-workflow-run-handlers', () => {
 
       await call('spaceWorkflowRun.getGateArtifacts', { runId: 'run-1' }).catch(() => {});
 
-      // No tasks → worktree manager should NOT have been called
       expect(mockWorktreeManager.getTaskWorktreePath).not.toHaveBeenCalled();
-      // Space manager should have been called for the fallback
       expect(mockSpaceMgr.getSpace).toHaveBeenCalled();
     });
   });
-
-  // ─── spaceWorkflowRun.getFileDiff — worktree path resolution ─────────────
 
   describe('spaceWorkflowRun.getFileDiff — worktree resolution', () => {
     it('throws if runId is missing', async () => {
@@ -921,9 +867,7 @@ describe('space-workflow-run-handlers', () => {
         filePath: 'src/foo.ts',
       }).catch(() => {});
 
-      // When taskId is provided, listByWorkflowRun should NOT be called
       expect(mockTaskRepo.listByWorkflowRun).not.toHaveBeenCalled();
-      // Worktree manager should be called with the provided taskId
       expect(mockWorktreeManager.getTaskWorktreePath).toHaveBeenCalledWith('space-1', 'task-1');
     });
 
@@ -993,8 +937,6 @@ describe('space-workflow-run-handlers', () => {
     });
   });
 
-  // ─── spaceWorkflowRun.getGateArtifacts — cache-first behaviour ───────────
-
   describe('spaceWorkflowRun.getGateArtifacts — cache-first', () => {
     function setupWithRepos(opts: {
       cachedRow?: {
@@ -1060,7 +1002,7 @@ describe('space-workflow-run-handlers', () => {
         cachedRow: {
           data: { files: [{ path: 'a.ts', additions: 1, deletions: 0 }] },
           status: 'ok',
-          syncedAt: Date.now(), // fresh — within 30s window
+          syncedAt: Date.now(),
         },
       });
 
@@ -1084,7 +1026,7 @@ describe('space-workflow-run-handlers', () => {
         cachedRow: {
           data: { files: [] },
           status: 'ok',
-          syncedAt: Date.now() - 120_000, // 2 minutes old — stale
+          syncedAt: Date.now() - 120_000,
         },
       });
 
@@ -1118,8 +1060,6 @@ describe('space-workflow-run-handlers', () => {
     it('enqueues a sync job when no cache row exists (falls through to sync probe)', async () => {
       const { jobQueueRepo } = setupWithRepos({ cachedRow: null });
 
-      // The sync probe will attempt git in /tmp/fake-worktree and return empty
-      // stats. We only care that the enqueue happened.
       await call('spaceWorkflowRun.getGateArtifacts', { runId: 'run-1' }).catch(() => {});
 
       expect(jobQueueRepo.enqueue).toHaveBeenCalledWith(
@@ -1136,7 +1076,6 @@ describe('space-workflow-run-handlers', () => {
         deleteByRunTask: mock(() => 0),
       } as unknown as WorkflowRunArtifactCacheRepository;
 
-      // listJobs returns an existing pending job with matching payload.
       const jobQueueRepo = {
         enqueue: mock(() => ({ id: 'should-not-be-called' })),
         listJobs: mock(() => [
@@ -1175,8 +1114,6 @@ describe('space-workflow-run-handlers', () => {
       expect(jobQueueRepo.enqueue).not.toHaveBeenCalled();
     });
   });
-
-  // ─── spaceWorkflowRun.getFileDiff — truncation metadata ──────────────────
 
   describe('spaceWorkflowRun.getFileDiff — cache truncation', () => {
     it('returns truncated:true when cached diff exceeds size limit', async () => {

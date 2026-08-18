@@ -2,30 +2,25 @@ import { useEffect } from 'preact/hooks';
 import { memo } from 'preact/compat';
 import type { ComponentType } from 'preact';
 
-// ─── Application Shells ───────────────────────────────────────────────────────
 import { MultiColumnDemo } from '../sections/MultiColumnDemo.tsx';
 import { MultiColumnShellsDemo } from '../sections/application-shells/multi-column/MultiColumnShellsDemo.tsx';
 import { SidebarShellsDemo } from '../sections/application-shells/sidebar/SidebarShellsDemo.tsx';
 import { StackedShellsDemo } from '../sections/application-shells/stacked/StackedShellsDemo.tsx';
 
-// ─── Data Display ─────────────────────────────────────────────────────────────
 import { StatsDemo } from '../sections/StatsDemo.tsx';
 import { CalendarsDemo } from '../sections/CalendarsDemo.tsx';
 import { CalendarsHeadlessDemo } from '../sections/data-display/calendars/CalendarsHeadlessDemo.tsx';
 import { DescriptionListsDemo } from '../sections/DescriptionListsDemo.tsx';
 
-// ─── Elements ─────────────────────────────────────────────────────────────────
 import { AvatarsDemo } from '../sections/elements/avatars/AvatarsDemo.tsx';
 import { BadgesDemo } from '../sections/elements/badges/BadgesDemo.tsx';
 import { ButtonsDemo } from '../sections/elements/buttons/ButtonsDemo.tsx';
 import { ButtonGroupsDemo } from '../sections/elements/button-groups/ButtonGroupsDemo.tsx';
 import { DropdownsDemo } from '../sections/elements/dropdowns/DropdownsDemo.tsx';
 
-// ─── Feedback ─────────────────────────────────────────────────────────────────
 import { AlertsDemo } from '../sections/feedback/alerts/AlertsDemo.tsx';
 import { EmptyStatesDemo } from '../sections/EmptyStatesDemo.tsx';
 
-// ─── Forms ────────────────────────────────────────────────────────────────────
 import { FormLayoutsDemo } from '../sections/forms/form-layouts/FormLayoutsDemo.tsx';
 import { InputGroupsDemo } from '../sections/forms/input-groups/InputGroupsDemo.tsx';
 import { RadioGroupsDemo } from '../sections/forms/radio-groups/RadioGroupsDemo.tsx';
@@ -38,25 +33,21 @@ import { SignInFormsDemo } from '../sections/SignInFormsDemo.tsx';
 import { TextareasDemo } from '../sections/TextareasDemo.tsx';
 import { TogglesDemo } from '../sections/TogglesDemo.tsx';
 
-// ─── Headings ─────────────────────────────────────────────────────────────────
 import { CardHeadingsDemo } from '../sections/headings/card-headings/CardHeadingsDemo.tsx';
 import { PageHeadingsDemo } from '../sections/headings/page-headings/PageHeadingsDemo.tsx';
 import { SectionHeadingsDemo } from '../sections/headings/section-headings/SectionHeadingsDemo.tsx';
 
-// ─── Layout ───────────────────────────────────────────────────────────────────
 import { CardsDemo } from '../sections/layout/cards/CardsDemo.tsx';
 import { ContainersDemo } from '../sections/layout/containers/ContainersDemo.tsx';
 import { DividersDemo } from '../sections/layout/dividers/DividersDemo.tsx';
 import { ListContainersDemo } from '../sections/layout/list-containers/ListContainersDemo.tsx';
 import { MediaObjectsDemo } from '../sections/layout/media-objects/MediaObjectsDemo.tsx';
 
-// ─── Lists ────────────────────────────────────────────────────────────────────
 import { FeedsDemo } from '../sections/FeedsDemo.tsx';
 import { GridListsDemo } from '../sections/GridListsDemo.tsx';
 import { StackedListsDemo } from '../sections/StackedListsDemo.tsx';
 import { TablesDemo } from '../sections/TablesDemo.tsx';
 
-// ─── Navigation ───────────────────────────────────────────────────────────────
 import { BreadcrumbsDemo } from '../sections/BreadcrumbsDemo.tsx';
 import { CommandPalettesDemo } from '../sections/navigation/CommandPalettesDemo.tsx';
 import { NavbarsDemo } from '../sections/navigation/NavbarsDemo.tsx';
@@ -65,12 +56,10 @@ import { ProgressBarsDemo } from '../sections/ProgressBarsDemo.tsx';
 import { SidebarNavigationDemo } from '../sections/SidebarNavigationDemo.tsx';
 import { VerticalNavigationDemo } from '../sections/VerticalNavigationDemo.tsx';
 
-// ─── Overlays ─────────────────────────────────────────────────────────────────
 import { DrawersDemo } from '../sections/overlays/DrawersDemo.tsx';
 import { ModalDialogsDemo } from '../sections/overlays/ModalDialogsDemo.tsx';
 import { NotificationDemo } from '../sections/NotificationDemo.tsx';
 
-// ─── Page Examples ────────────────────────────────────────────────────────────
 import { DetailScreensDemo } from '../sections/DetailScreensDemo.tsx';
 import { HomeScreensDemo } from '../sections/HomeScreensDemo.tsx';
 import { SettingsScreensDemo } from '../sections/SettingsScreensDemo.tsx';
@@ -197,12 +186,10 @@ interface AppUiPageProps {
 function AppUiPageInner({ categoryId, setActiveSection }: AppUiPageProps) {
   const sections = categoryMap[categoryId];
 
-  // Scroll to top on mount
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [categoryId]);
 
-  // Scroll-spy: track which section is most visible
   useEffect(() => {
     if (!sections) return;
 
@@ -235,7 +222,6 @@ function AppUiPageInner({ categoryId, setActiveSection }: AppUiPageProps) {
     for (const el of sectionEls) observer.observe(el);
 
     return () => observer.disconnect();
-    // setActiveSection is a stable useState setter — intentionally omitted from deps
   }, [categoryId, sections]);
 
   if (!sections) {

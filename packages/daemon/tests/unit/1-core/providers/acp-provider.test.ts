@@ -1,7 +1,3 @@
-/**
- * Unit tests for ACP Provider
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
 
@@ -9,11 +5,6 @@ describe('AcpProvider', () => {
   let provider: AcpProvider;
   let originalEnv: NodeJS.ProcessEnv;
 
-  /**
-   * No-op command probe so unit tests don't actually spawn the configured
-   * binary. Real reachability is exercised via the default spawn-based
-   * probe in acp-provider.ts.
-   */
   const noopProbe = async (): Promise<void> => {};
 
   beforeEach(() => {

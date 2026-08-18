@@ -64,9 +64,6 @@ function lastActivityLabel(goal: SpaceGoal, lastTask: SpaceTask | null): string 
 }
 
 function GoalStatusBadge({ status }: { status: SpaceGoalStatus }) {
-  // Tone + label come from the unified goal-status map so the list and detail
-  // views share one source of truth (active=green, paused=amber,
-  // completed=blue, archived=gray).
   return (
     <span
       class={cn(
@@ -239,7 +236,6 @@ export function GoalDetail({
   return (
     <div class="flex h-full flex-col overflow-hidden">
       <div class="relative flex h-[88px] flex-col justify-center bg-dark-900/30 px-5">
-        {/* pr-12 keeps the header clear of the floating right-panel toggle. */}
         <div class="pr-12">
           <h2 class="truncate text-base font-semibold leading-6 text-gray-100">{goal.title}</h2>
           <div class="mt-2 flex flex-wrap items-center gap-2">
@@ -485,7 +481,6 @@ export function SpaceGoals({ spaceId, navigationSpaceId: _navigationSpaceId }: S
     };
   }, [spaceId, showArchived]);
 
-  // Clear selection + any open goal panel when leaving this space's Goals view.
   useEffect(() => {
     return () => {
       currentSpaceGoalIdSignal.value = null;
@@ -502,8 +497,6 @@ export function SpaceGoals({ spaceId, navigationSpaceId: _navigationSpaceId }: S
     });
   }, [goals, showArchived]);
 
-  // Keep a valid default selection so the right-panel toggle always has a
-  // target; re-pick the first goal if the current one is filtered out.
   useEffect(() => {
     if (selectedGoalId && visibleGoals.some((goal) => goal.id === selectedGoalId)) return;
     currentSpaceGoalIdSignal.value = visibleGoals[0]?.id ?? null;

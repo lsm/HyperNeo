@@ -1,14 +1,3 @@
-/**
- * Workspace History RPC Handlers
- *
- * Provides backend-persisted workspace path history for the session creation flow.
- * The frontend calls these instead of (or in addition to) localStorage.
- *
- * As of the MCP config unification M2 milestone, `workspace.add` also triggers
- * a `.mcp.json` scan for the newly-added path so that imported registry rows
- * (source='imported') appear without waiting for the next daemon restart.
- */
-
 import { join } from 'path';
 import type { MessageHub } from '@hyperneo/shared';
 import type { McpImportService } from '../mcp';
@@ -25,7 +14,6 @@ export function setupWorkspaceHandlers(
   mcpImportService?: McpImportService,
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>
 ): void {
-  // Get workspace history
   messageHub.onRequest('workspace.history', async (_data) => {
     const rows = workspaceHistoryRepo.list(20);
     return {
@@ -37,7 +25,6 @@ export function setupWorkspaceHandlers(
     };
   });
 
-  // Add/update workspace in history
   messageHub.onRequest('workspace.add', async (data) => {
     const { path } = data as { path: string };
     if (!path || typeof path !== 'string') {
@@ -46,17 +33,9 @@ export function setupWorkspaceHandlers(
     const workspacePath = await validateWorkspaceDirectory(path);
     const row = workspaceHistoryRepo.upsert(workspacePath);
 
-    // Trigger a `.mcp.json` import for the newly-added workspace.
-    // Errors are logged but never thrown — a malformed `.mcp.json` must not
-    // cause the workspace addition itself to fail. The import service also
-    // swallows per-file failures internally; this outer catch is defensive.
     if (mcpImportService) {
       try {
         const result = mcpImportService.refreshFromFile(join(workspacePath, '.mcp.json'));
-        // Mirror settings.mcp.refreshImports: if the scan added/updated/removed
-        // imported rows, fan out mcp.registry.changed so active sessions
-        // reconcile the change live (otherwise they keep a stale imported
-        // command/url or a removed server until their query is recreated). #853.
         if (internalEventBus && (result.added > 0 || result.updated > 0 || result.removed > 0)) {
           internalEventBus.publishAsync('mcp.registry.changed', { sessionId: 'global' });
         }
@@ -74,7 +53,6 @@ export function setupWorkspaceHandlers(
     };
   });
 
-  // Remove workspace from history
   messageHub.onRequest('workspace.remove', async (data) => {
     const { path } = data as { path: string };
     if (!path || typeof path !== 'string') {

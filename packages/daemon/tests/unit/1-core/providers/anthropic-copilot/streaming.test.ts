@@ -1,11 +1,3 @@
-/**
- * Unit tests for anthropic-copilot/streaming.ts
- *
- * Exercises runSessionStreaming / resumeSessionStreaming without a real HTTP
- * server by using minimal mock objects for CopilotSession, IncomingMessage,
- * and ServerResponse.
- */
-
 import { afterEach, beforeEach, describe, expect, it, jest } from 'bun:test';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { EventEmitter } from 'node:events';
@@ -18,10 +10,6 @@ import {
 import { estimateTokens } from '../../../../../src/lib/providers/anthropic-copilot/sse';
 import { ContextUsageStore } from '../../../../../src/lib/providers/anthropic-copilot/context-usage';
 import { ToolBridgeRegistry } from '../../../../../src/lib/providers/anthropic-copilot/tool-bridge';
-
-// ---------------------------------------------------------------------------
-// Mock helpers
-// ---------------------------------------------------------------------------
 
 type SessionHandler = (event: SessionEvent) => void;
 
@@ -87,10 +75,6 @@ function makeMockReq(): { emitter: EventEmitter; req: IncomingMessage } {
   return { emitter, req };
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe('runSessionStreaming', () => {
   it('resolves completed on session.idle', async () => {
     const session = new MockSession();
@@ -104,7 +88,6 @@ describe('runSessionStreaming', () => {
       req,
       res
     );
-    // Fire session events on next tick
     await Promise.resolve();
     session.emit('assistant.message_delta', { deltaContent: 'hi' });
     session.emit('session.idle');
@@ -175,7 +158,6 @@ describe('runSessionStreaming', () => {
       req,
       res
     );
-    // Simulate client disconnect before session.idle
     emitter.emit('close');
 
     const outcome = await p;
@@ -198,11 +180,10 @@ describe('runSessionStreaming', () => {
     );
     await Promise.resolve();
     session.emit('session.idle');
-    emitter.emit('close'); // second finish — should be a no-op
+    emitter.emit('close');
 
     const outcome = await p;
     expect(outcome.kind).toBe('completed');
-    // disconnect called exactly once (by finishCompleted, not by the close handler)
     expect(session.disconnectCalled).toBe(true);
   });
 
@@ -221,8 +202,6 @@ describe('runSessionStreaming', () => {
       registry
     );
     await Promise.resolve();
-    // streamSession calls registry.setOnToolUseEmitted(finishToolUse).
-    // Trigger finishToolUse directly via the stored callback.
     const onToolUseEmitted = (
       registry as unknown as { onToolUseEmitted: ((ids: string[]) => void) | null }
     ).onToolUseEmitted;
@@ -232,7 +211,6 @@ describe('runSessionStreaming', () => {
     const outcome = await p;
     expect(outcome.kind).toBe('tool_use');
     expect((outcome as { kind: 'tool_use'; toolCallIds: string[] }).toolCallIds).toEqual(['tc_1']);
-    // Session must NOT be disconnected for tool_use outcome
     expect(session.disconnectCalled).toBe(false);
   });
 
@@ -247,12 +225,10 @@ describe('runSessionStreaming', () => {
 
       const p = runSessionStreaming(session as unknown as CopilotSession, 'x', 'model', req, res);
 
-      // Advance the clock past the 5-minute timeout — the timeout handler fires.
       jest.advanceTimersByTime(STREAMING_TIMEOUT_MS + 1);
 
       const outcome = await p;
       expect(outcome.kind).toBe('completed');
-      // Timeout path must abort and disconnect the session.
       expect(session.abortCalled).toBe(true);
       expect(session.disconnectCalled).toBe(true);
       expect(state.statusCode).toBe(500);
@@ -264,10 +240,6 @@ describe('runSessionStreaming', () => {
     }
   });
 });
-
-// ---------------------------------------------------------------------------
-// SSE parse helper (shared with token accounting assertions below)
-// ---------------------------------------------------------------------------
 
 function parseEvents(written: string[]): Array<{ type: string; data: unknown }> {
   const events: Array<{ type: string; data: unknown }> = [];
@@ -285,25 +257,13 @@ function parseEvents(written: string[]): Array<{ type: string; data: unknown }> 
   return events;
 }
 
-// ---------------------------------------------------------------------------
-// Token accounting via inputText parameter
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// output_tokens — assistant.message fallback
-// ---------------------------------------------------------------------------
-
 describe('runSessionStreaming — output_tokens via assistant.message fallback', () => {
   it('counts output chars from assistant.message.content when no message_delta events arrived', async () => {
-    // Simulate the Copilot SDK sending assistant.message (complete response)
-    // WITHOUT any preceding assistant.message_delta events.  This is valid
-    // Copilot SDK behaviour observed in CI: the SDK delivers the full text
-    // in a single assistant.message event instead of streaming deltas.
     const session = new MockSession();
     const { written, res } = makeMockRes();
     const { req } = makeMockReq();
 
-    const responseText = 'Hello! How can I help you today?'; // 32 chars → ceil(32/4) = 8
+    const responseText = 'Hello! How can I help you today?';
 
     const p = runSessionStreaming(
       session as unknown as CopilotSession,
@@ -313,7 +273,6 @@ describe('runSessionStreaming — output_tokens via assistant.message fallback',
       res
     );
     await Promise.resolve();
-    // Emit assistant.message with full content (NO assistant.message_delta)
     session.emit('assistant.message', { content: responseText });
     session.emit('session.idle');
     await p;
@@ -323,20 +282,17 @@ describe('runSessionStreaming — output_tokens via assistant.message fallback',
     const outputTokens = (
       (delta!.data as Record<string, unknown>)['usage'] as Record<string, unknown>
     )['output_tokens'];
-    expect(outputTokens).toBe(estimateTokens(responseText.length)); // = 8
+    expect(outputTokens).toBe(estimateTokens(responseText.length));
     expect(outputTokens).toBeGreaterThan(0);
   });
 
   it('does not double-count when both assistant.message_delta and assistant.message arrive', async () => {
-    // Normal streaming path: deltas arrive first, then assistant.message fires.
-    // The fallback must NOT add assistant.message.content on top of the deltas.
     const session = new MockSession();
     const { written, res } = makeMockRes();
     const { req } = makeMockReq();
 
     const delta1 = 'Hello ';
     const delta2 = 'world!';
-    // assistant.message.content is the combined text — should NOT be counted again.
     const fullContent = delta1 + delta2;
 
     const p = runSessionStreaming(
@@ -349,7 +305,6 @@ describe('runSessionStreaming — output_tokens via assistant.message fallback',
     await Promise.resolve();
     session.emit('assistant.message_delta', { deltaContent: delta1 });
     session.emit('assistant.message_delta', { deltaContent: delta2 });
-    // Now assistant.message fires — pendingDeltas is non-empty, so fallback skips.
     session.emit('assistant.message', { content: fullContent });
     session.emit('session.idle');
     await p;
@@ -359,8 +314,7 @@ describe('runSessionStreaming — output_tokens via assistant.message fallback',
     const outputTokens = (
       (delta!.data as Record<string, unknown>)['usage'] as Record<string, unknown>
     )['output_tokens'];
-    // Should count delta1+delta2 only (12 chars → 3), NOT fullContent twice (24 chars → 6).
-    expect(outputTokens).toBe(estimateTokens(fullContent.length)); // = ceil(12/4) = 3
+    expect(outputTokens).toBe(estimateTokens(fullContent.length));
   });
 });
 
@@ -370,7 +324,7 @@ describe('runSessionStreaming — inputText / input_tokens', () => {
     const { written, res } = makeMockRes();
     const { req } = makeMockReq();
 
-    const inputText = 'hello world'; // 11 chars → ceil(11/4) = 3
+    const inputText = 'hello world';
     const p = runSessionStreaming(
       session as unknown as CopilotSession,
       'prompt',
@@ -469,8 +423,6 @@ describe('resumeSessionStreaming', () => {
     const { req } = makeMockReq();
     const registry = new ToolBridgeRegistry();
 
-    // Plant a real pending entry using the correct internal property name ('pending').
-    // This exercises the actual resolveToolResult() code path.
     let resolvedWith: { text: string; isError: boolean } | undefined;
     const fakeTimer = setTimeout(() => {}, 100_000);
     (registry as unknown as Record<string, unknown>)['pending'] = new Map([
@@ -495,10 +447,8 @@ describe('resumeSessionStreaming', () => {
       [{ toolUseId: 'tc_1', result: 'result-value' }]
     );
     await Promise.resolve();
-    // resolveToolResult should have been called immediately by resumeSessionStreaming
     expect(resolvedWith).toEqual({ text: 'result-value', isError: false });
 
-    // After tool results are delivered, session should eventually idle
     session.emit('session.idle');
 
     const outcome = await p;
@@ -525,7 +475,7 @@ describe('resumeSessionStreaming', () => {
       ],
     ]);
 
-    const inputText = 'system context\nuser: run the tool'; // 34 chars → ceil(34/4) = 9
+    const inputText = 'system context\nuser: run the tool';
     const p = resumeSessionStreaming(
       session as unknown as CopilotSession,
       'model',

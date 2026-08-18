@@ -1,13 +1,3 @@
-/**
- * Unit tests for `resolvePostApprovalTargetAgentName` — the shared helper that
- * identifies which agent slot a live post-approval worker session represents.
- *
- * Used by both the node-agent channel router (`findPostApprovalTargetAgentName`)
- * and the human-reply RPC (`getPostApprovalWorkerSession`) so they agree on the
- * mapping. Mirrors PostApprovalRouter's selection: node-level routes first
- * (declaration order), then the legacy workflow-level route, skipping the
- * unsupported legacy `task-agent` executor target.
- */
 import { describe, expect, it } from 'bun:test';
 import type { SpaceWorkflow } from '@hyperneo/shared';
 import { resolvePostApprovalTargetAgentName } from '../../../../src/lib/space/runtime/task-agent-manager';
@@ -73,7 +63,6 @@ describe('resolvePostApprovalTargetAgentName', () => {
       ],
       postApproval: { targetAgent: 'merger' },
     } as never);
-    // node-level is the unsupported task-agent target → skipped; legacy wins.
     expect(resolvePostApprovalTargetAgentName(wf)).toBe('merger');
   });
 

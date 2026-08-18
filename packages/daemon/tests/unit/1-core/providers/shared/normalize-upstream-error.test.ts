@@ -54,7 +54,6 @@ describe('normalizeGlmUpstreamError', () => {
     });
 
     it('detects 访问量过大 via raw-body substring fallback', () => {
-      // Body where the GLM message is embedded but JSON.parse fails / is nested.
       const body = 'upstream said: 访问量过大 oh no';
       const result = normalizeGlmUpstreamError(body, 500);
       expect(result?.type).toBe('overloaded_error');
@@ -96,9 +95,6 @@ describe('normalizeGlmUpstreamError', () => {
     });
 
     it('does NOT scan a JSON success body for GLM overload phrases', () => {
-      // A valid Anthropic-shaped message whose assistant content mentions
-      // "稍后再试" must not be misclassified as overloaded — only the extracted
-      // error.message / top-level message is matched for JSON bodies.
       const body = JSON.stringify({
         type: 'message',
         role: 'assistant',
@@ -152,8 +148,6 @@ describe('normalizeOpenAiUpstreamError', () => {
   });
 
   it('does NOT reclassify a hard 4xx on weak message evidence', () => {
-    // A 401 whose message happens to mention "rate limit" must stay
-    // non-retryable — only a structured signal overrides a hard 4xx.
     const body = JSON.stringify({
       error: { type: 'invalid_request_error', message: 'rate limit header missing' },
     });
@@ -170,8 +164,6 @@ describe('normalizeOpenAiUpstreamError', () => {
   });
 
   it('inspects error.code even when error.type is a non-transient category', () => {
-    // OpenAI-compatible payloads can set type to a broad category while the
-    // transient value lives in code. A `type ?? code` short-circuit would miss it.
     const body = JSON.stringify({
       error: { type: 'requests', code: 'rate_limit_exceeded', message: 'slow down' },
     });
@@ -189,9 +181,6 @@ describe('normalizeOpenAiUpstreamError', () => {
   });
 
   it('recognizes Anthropic rate_limit_error as a structured transient type', () => {
-    // The generic detector also serves the Anthropic pass-through bridge; an
-    // Anthropic-shaped body is an explicit, unambiguous signal that must pass
-    // the hard-4xx guard (a 400 carrying rate_limit_error should still retry).
     const body = JSON.stringify({
       type: 'error',
       error: { type: 'rate_limit_error', message: 'rate limit exceeded' },
@@ -212,9 +201,6 @@ describe('normalizeOpenAiUpstreamError', () => {
   });
 
   it('reads flat top-level code/type fields (no error wrapper) on a hard 4xx', () => {
-    // A flat body like {"code":"rate_limit_exceeded","message":"slow down"} has
-    // no nested `error` object; the top-level code is structured evidence that
-    // must pass the hard-4xx guard (message-only evidence is rejected there).
     const body = JSON.stringify({ code: 'rate_limit_exceeded', message: 'slow down' });
     const result = normalizeOpenAiUpstreamError(body, 400);
     expect(result?.type).toBe('rate_limit_error');
@@ -228,8 +214,6 @@ describe('normalizeOpenAiUpstreamError', () => {
   });
 
   it('prefers the structured rate-limit type over overload retry text', () => {
-    // The message also matches the overload regex ("try again in"), but the
-    // structured type rate_limit_exceeded must win → rate_limit_error (429).
     const body = JSON.stringify({
       error: {
         type: 'rate_limit_exceeded',
@@ -242,16 +226,11 @@ describe('normalizeOpenAiUpstreamError', () => {
   });
 
   it('does not let weak "try again" text override an explicit HTTP 429', () => {
-    // A 429 is already a rate limit; a loose "Please try again later" message
-    // (which matches the overload regex) must NOT reclassify it as
-    // overloaded_error. Defer to the status-based mapping (rate_limit_error).
     const body = JSON.stringify({ error: { message: 'Please try again later' } });
     expect(normalizeOpenAiUpstreamError(body, 429)).toBeNull();
   });
 
   it('recognizes a numeric HTTP status code in error.code (429 on a 400)', () => {
-    // Some gateways put the rate-limit status in the body as a numeric code
-    // while returning HTTP 400. readStringField coerces it to "429".
     const body = JSON.stringify({ error: { code: 429, message: 'Too Many Requests' } });
     const result = normalizeOpenAiUpstreamError(body, 400);
     expect(result?.type).toBe('rate_limit_error');
@@ -283,8 +262,6 @@ describe('normalizeOpenAiUpstreamError', () => {
   });
 
   it('treats a string error value as message evidence', () => {
-    // {"error":"Too Many Requests"} — the error value is a plain string, not
-    // an object. It must be read as the message so the rate-limit pattern matches.
     const body = JSON.stringify({ error: 'Too Many Requests' });
     const result = normalizeOpenAiUpstreamError(body, 200);
     expect(result?.type).toBe('rate_limit_error');
@@ -292,8 +269,6 @@ describe('normalizeOpenAiUpstreamError', () => {
   });
 
   it('treats a string error value that is a known type as code evidence', () => {
-    // {"error":"rate_limit_exceeded"} — the string is a recognized transient
-    // type, so it must count as structured evidence (passes the hard-4xx guard).
     const body = JSON.stringify({ error: 'rate_limit_exceeded' });
     const result = normalizeOpenAiUpstreamError(body, 400);
     expect(result?.type).toBe('rate_limit_error');
@@ -308,9 +283,6 @@ describe('normalizeOpenAiUpstreamError', () => {
   });
 
   it('does NOT scan the whole body for retry words (success body false positive)', () => {
-    // A valid non-streaming JSON completion whose content mentions "rate limit"
-    // must NOT be classified as retryable — only the extracted error.message is
-    // matched, never the raw body.
     const body = JSON.stringify({
       id: 'chatcmpl-1',
       object: 'chat.completion',

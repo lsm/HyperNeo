@@ -17,8 +17,6 @@ const base: AppRoutingState = {
 
 describe('deriveAppExpectedPath', () => {
   it('derives the memories path (regression: used to fall through to Overview)', () => {
-    // Before the fix this returned /space/s1 (Overview), which made the App
-    // URL-sync effect bounce Memories back to Overview.
     expect(deriveAppExpectedPath({ ...base, spaceViewMode: 'memories' })).toBe(
       '/space/s1/memories'
     );

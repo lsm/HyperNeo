@@ -1,17 +1,3 @@
-/**
- * SpaceWorkflowManager
- *
- * Business logic layer for SpaceWorkflow operations within a Space.
- *
- * Responsibilities:
- * - Validate workflow integrity (unique name, node agent refs, channel graph validity)
- * - Protect worker agents that are referenced by nodes
- *
- * Workflow selection: either explicit workflowId provided by the caller, or
- * AI auto-select at runtime via list_workflows + start_workflow_run. There is
- * no default workflow concept.
- */
-
 import type {
   SpaceWorkflow,
   SpaceWorkflowSummary,
@@ -33,8 +19,6 @@ import {
   validatePostApprovalRoutes,
 } from '../workflows/post-approval-validator';
 import { KNOWN_TOPIC_FROM_SOURCES } from '../runtime/parse-pr-url';
-// Side-effect: seed the connector registry before workflow validation runs, so
-// externalLookups are admitted via the registry (see connectors/production.ts).
 import '../runtime/connectors/production';
 import { slugify, validateSlug } from '../slug';
 
@@ -49,22 +33,9 @@ export function isReservedWorkflowAgentName(name: string): boolean {
   return RESERVED_WORKFLOW_AGENT_NAMES.has(normalizeWorkflowAgentName(name));
 }
 
-// ---------------------------------------------------------------------------
-// Dependency interfaces
-// ---------------------------------------------------------------------------
-
-/**
- * Minimal interface the manager needs from SpaceAgentManager to validate
- * worker agent references in workflow nodes.
- */
 export interface SpaceAgentLookup {
-  /** Returns the SpaceWorkerAgent with the given UUID in the given space, or null if not found. */
   getAgentById(spaceId: string, id: string): { id: string; name: string } | null;
 }
-
-// ---------------------------------------------------------------------------
-// Error types
-// ---------------------------------------------------------------------------
 
 export class WorkflowValidationError extends Error {
   constructor(message: string) {
@@ -73,15 +44,6 @@ export class WorkflowValidationError extends Error {
   }
 }
 
-/**
- * Raised when deleting (or replacing) a workflow that still has a run whose
- * canonical task is not archived. Such a run is still executable — `done`/
- * `cancelled` reopen, and only `SpaceTask.archivedAt` is the non-reopenable
- * tombstone — so deleting the definition would orphan its pinned version and
- * strand the run. RFC §4 #3. Callers that want to ignore this for a specific
- * path (resync, import-replacement) catch it and skip-with-warn instead of
- * surfacing a hard failure.
- */
 export class WorkflowDeletionBlockedError extends WorkflowValidationError {
   constructor(
     message: string,
@@ -92,29 +54,17 @@ export class WorkflowDeletionBlockedError extends WorkflowValidationError {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Manager
-// ---------------------------------------------------------------------------
-
 export class SpaceWorkflowManager {
   constructor(
     private repo: SpaceWorkflowRepository,
     private agentLookup: SpaceAgentLookup | null = null
   ) {}
 
-  // -------------------------------------------------------------------------
-  // Create
-  // -------------------------------------------------------------------------
-
   createWorkflow(params: CreateSpaceWorkflowParams): SpaceWorkflow {
     const trimmedName = params.name.trim();
     this.validateName(params.spaceId, trimmedName, null);
     const nodes = (params.nodes ?? []).map((node) => ({
       ...node,
-      // Generate an id only when the caller omitted one. Do NOT trim a supplied
-      // id here — trimming would re-key it away from params.layout entries
-      // (which are keyed by the original id) and silently discard saved
-      // positions. Empty/whitespace ids are rejected by validateNodes instead.
       id: node.id ?? generateUUID(),
     }));
     this.validateNodes(params.spaceId, nodes);
@@ -138,9 +88,6 @@ export class SpaceWorkflowManager {
 
     this.validateTransitions(nodes, params.hooks ?? []);
 
-    // Hard-reject invalid post-approval routes at create time. Stale routes
-    // (target no longer exists) must be caught before the row lands in the DB,
-    // where they would otherwise trip the load-time warning path below.
     const postApprovalResult = validatePostApprovalRoutes({
       workflowPostApproval: params.postApproval,
       nodes,
@@ -149,8 +96,6 @@ export class SpaceWorkflowManager {
       throw new WorkflowValidationError(postApprovalResult.error);
     }
 
-    // Auto-generate handle from name if not provided, with collision resolution.
-    // Validate explicit handles for format and uniqueness.
     let handle: string;
     if (params.handle !== undefined && params.handle !== null) {
       if (typeof params.handle !== 'string') {
@@ -173,16 +118,11 @@ export class SpaceWorkflowManager {
     });
   }
 
-  // -------------------------------------------------------------------------
-  // Read
-  // -------------------------------------------------------------------------
-
   getWorkflow(id: string): SpaceWorkflow | null {
     const result = this.getWorkflowForRunStart(id);
     return result?.workflow ?? null;
   }
 
-  /** Load the raw persisted definition and its sanitized runtime view from one read. */
   getWorkflowForRunStart(
     id: string
   ): { rawWorkflow: SpaceWorkflow; workflow: SpaceWorkflow } | null {
@@ -194,50 +134,14 @@ export class SpaceWorkflowManager {
     };
   }
 
-  /**
-   * Resolve the definition an in-flight run executes (RFC §4 Phase 1 read cutover).
-   *
-   * A pinned run reads the IMMUTABLE version it was created with — not the mutable
-   * `space_workflows` head — so a later edit to the definition cannot change what an
-   * in-flight run executes. The pinned payload is the raw persisted definition captured at
-   * run creation; we rehydrate it through the SAME sanitization (`sanitizePostApprovalForLoad`)
-   * the live path applies, so "this run reads version V" is well-defined regardless of read
-   * site (manager or raw repo) — the sanitize-at-rehydrate model (see `definition-version.ts`).
-   *
-   * Stable timestamps: the pinned payload strips `createdAt`/`updatedAt` (volatile). The
-   * rehydrated `updatedAt` is derived from the immutable version hash
-   * (`stableVersionTimestamp`), so the gate-open cache fingerprint is version-stable — it
-   * does not churn on unrelated head edits, and is identical on first activation and
-   * recovery (independent of when the version row was appended; INSERT OR IGNORE can leave a
-   * reused hash's `created_at` stale). The startup backfill RE-KEYS a backfilled run's
-   * existing persisted gate-open entries to this basis, so the cache survives the cutover
-   * without re-evaluating gates. (`createdAt` is the row's append time, not a staleness
-   * signal.)
-   *
-   * Fallback: a null pin (legacy run pre-backfill, or an archived orphan whose version row
-   * is absent) — or any rehydration failure — resolves to the live head, preserving exact
-   * pre-cutover behavior. This is why the cutover is content-neutral: every pre-existing
-   * run is backfilled to a pin equal to its current head, so resolving through the pin
-   * changes nothing at cutover time; only a later edit diverges, which is the invariant.
-   *
-   * The pinned payload captures user-authored content (nodes, channels, hooks,
-   * agents, post-approval) and built-in definitions as authored.
-   */
   getWorkflowForRun(run: {
     workflowId: string;
     definitionVersion: string | null;
   }): SpaceWorkflow | null {
-    // Delegate pin-resolution to the repository (raw rehydration + stable timestamps +
-    // head fallback — see SpaceWorkflowRepository.getWorkflowForRun), then apply the same
-    // load-time sanitization the live path uses (sanitize-at-rehydrate). One pin-resolution
-    // implementation shared by the sanitized (manager) and raw (repo) callers.
     const raw = this.repo.getWorkflowForRun(run);
     return raw ? this.sanitizePostApprovalForLoad(raw) : null;
   }
 
-  /**
-   * Get a workflow by its handle within a specific space.
-   */
   getWorkflowByHandle(spaceId: string, handle: string): SpaceWorkflow | null {
     const wf = this.repo.getWorkflowByHandle(spaceId, handle);
     if (!wf) return null;
@@ -252,19 +156,6 @@ export class SpaceWorkflowManager {
     return this.repo.listWorkflowSummaries(spaceId);
   }
 
-  /**
-   * Load-time sanitiser for optional post-approval routes.
-   *
-   * If a persisted route no longer resolves to a valid target (e.g. the
-   * targeted node/agent was removed since the workflow was saved), we do NOT
-   * fail the load — instead we strip the route from the returned object and
-   * log a warning. Workflow loading is in the hot path (every run start, every
-   * RPC list), so a stale route cannot be allowed to break the space.
-   *
-   * The DB row is untouched — re-saving the workflow via `updateWorkflow`
-   * with `postApproval: null` clears a stale legacy workflow-level route.
-   * Re-saving `nodes` clears stale node-level routes.
-   */
   private sanitizePostApprovalForLoad(wf: SpaceWorkflow): SpaceWorkflow {
     let sanitized: SpaceWorkflow | null = null;
 
@@ -298,11 +189,6 @@ export class SpaceWorkflowManager {
     return withSanitizedNodes;
   }
 
-  // -------------------------------------------------------------------------
-  // Update
-  // -------------------------------------------------------------------------
-
-  /** Update built-in identity metadata without rewriting workflow structure. */
   updateBuiltInIdentity(
     id: string,
     identity: Pick<UpdateSpaceWorkflowParams, 'name' | 'handle' | 'templateName'>
@@ -324,28 +210,12 @@ export class SpaceWorkflowManager {
     });
   }
 
-  /**
-   * Stamp only the `templateName` on a built-in workflow row — no name/handle
-   * validation and no structural migration. Used by the legacy identity
-   * migration to point older duplicate rows at the canonical template so they
-   * group for duplicate cleanup even when their name/handle cannot be renamed
-   * (collision). Unlike {@link updateWorkflow}, this writes a single column and
-   * skips gate→hook migration, so it cannot mangle the row's structure.
-   */
   stampBuiltInTemplateName(id: string, templateName: string): SpaceWorkflow | null {
     const existing = this.repo.getWorkflow(id);
     if (!existing) return null;
     return this.repo.updateWorkflow(id, { templateName });
   }
 
-  /**
-   * Stamp only the `tags` on a built-in workflow row — no validation and no
-   * structural migration. Used by the legacy identity migration to drop a stale
-   * `default` tag from merger-variant rows (the stable `Coding` workflow is the
-   * default now), so the deterministic workflow fallback does not pick the
-   * legacy merger flow over the stable one. Like {@link stampBuiltInTemplateName},
-   * this writes a single column and cannot mangle the row's structure.
-   */
   stampBuiltInTags(id: string, tags: string[]): SpaceWorkflow | null {
     const existing = this.repo.getWorkflow(id);
     if (!existing) return null;
@@ -360,11 +230,6 @@ export class SpaceWorkflowManager {
       const trimmedName = params.name.trim();
       this.validateName(existing.spaceId, trimmedName, id);
       params = { ...params, name: trimmedName };
-      // Auto-regenerate handle only when the name actually changes, the
-      // caller did not supply an explicit handle, AND the existing handle
-      // is a non-empty string. A missing/null handle means the user
-      // deliberately cleared it (via updateWorkflow({ handle: null }));
-      // regenerating on a rename would silently undo that intentional clearing.
       if (
         trimmedName !== existing.name &&
         params.handle === undefined &&
@@ -448,10 +313,6 @@ export class SpaceWorkflowManager {
     this.validateHooks(effectiveHooks, effectiveNodes);
     this.validateTransitions(effectiveNodes, effectiveHooks);
 
-    // Validate node-level postApproval plus the legacy workflow-level route
-    // against the effective node set so a rename submitted in the same update
-    // does not spuriously invalidate the route. `null` clears the legacy
-    // workflow-level route.
     const workflowPostApproval =
       params.postApproval === undefined
         ? existing.postApproval
@@ -467,12 +328,6 @@ export class SpaceWorkflowManager {
     return this.repo.updateWorkflow(id, params);
   }
 
-  /**
-   * Built-in workflow re-stamping may update structural enforcement metadata on
-   * existing node-agent slots, but it must never replace node rows. Workflow
-   * runs and node executions reference node IDs directly, so a template drift
-   * pass that changes the node ID set would strand in-flight executions.
-   */
   updateWorkflowNodeToolGuards(id: string, nodes: SpaceWorkflow['nodes']): void {
     const existing = this.repo.getWorkflow(id);
     if (!existing) {
@@ -482,18 +337,6 @@ export class SpaceWorkflowManager {
     this.repo.updateWorkflowNodeToolGuards(id, nodes);
   }
 
-  // -------------------------------------------------------------------------
-  // Delete
-  // -------------------------------------------------------------------------
-
-  /**
-   * Deletion-safety predicate (RFC §4 #3): does this workflow have any
-   * EXECUTABLE run that must not be orphaned? True ⇒ deleting the definition
-   * would orphan the run's pinned version. A run is executable when it is
-   * non-terminal (`pending`/`in_progress`/`blocked`) OR terminal with a
-   * non-archived task (`done`/`cancelled` reopen). Used by import-replacement
-   * to pre-check before freeing a name/handle slot.
-   */
   hasExecutableRuns(id: string): boolean {
     return this.repo.hasExecutableRuns(id);
   }
@@ -501,12 +344,6 @@ export class SpaceWorkflowManager {
   deleteWorkflow(id: string): boolean {
     const existing = this.repo.getWorkflow(id);
     if (!existing) return false;
-    // RFC §4 #3: refuse to delete a definition that still has an executable
-    // run — deleting it orphans the run's pinned version. A run is executable
-    // when non-terminal (incl. the startWorkflowRun window before its task is
-    // attached) or terminal with a non-archived task (done/cancelled reopen).
-    // Callers that must tolerate a blocked delete (resync, import-replacement)
-    // catch WorkflowDeletionBlockedError.
     if (this.repo.hasExecutableRuns(id)) {
       throw new WorkflowDeletionBlockedError(
         `Cannot delete workflow "${existing.name}" (${id}): it has run(s) that ` +
@@ -518,21 +355,9 @@ export class SpaceWorkflowManager {
     return this.repo.deleteWorkflow(id);
   }
 
-  // -------------------------------------------------------------------------
-  // Agent reference protection
-  // -------------------------------------------------------------------------
-
-  /**
-   * Returns all workflows whose nodes reference the given worker agent.
-   * Used by SpaceAgentManager to block deletion of in-use agents.
-   */
   getWorkflowsReferencingAgent(agentId: string): SpaceWorkflow[] {
     return this.repo.getWorkflowsReferencingAgent(agentId);
   }
-
-  // -------------------------------------------------------------------------
-  // Validation
-  // -------------------------------------------------------------------------
 
   private validateName(spaceId: string, name: string, excludeId: string | null): void {
     if (!name) {
@@ -559,7 +384,6 @@ export class SpaceWorkflowManager {
     const existingHandles = this.repo.getHandlesForSpace(spaceId);
     for (const existing of existingHandles) {
       if (existing === handle) {
-        // Exclude the workflow being updated (if any)
         const wf = this.repo.getWorkflowByHandle(spaceId, handle);
         if (wf && wf.id !== excludeId) {
           throw new WorkflowValidationError(
@@ -579,25 +403,13 @@ export class SpaceWorkflowManager {
         })
       : existingHandles;
     const handle = slugify(name, filteredHandles);
-    // Collision suffixing can push the handle over the max length; validate
-    // and truncate with a fallback if necessary, then loop until valid.
     return this.ensureValidHandle(handle, filteredHandles);
   }
 
-  /**
-   * Ensure a handle (or its fallback) passes validateSlug. If the initial
-   * handle is invalid (e.g. over-length after collision suffixing),
-   * progressively shorten the base and re-run collision resolution until
-   * the result is valid.
-   */
   private ensureValidHandle(handle: string, existingHandles: string[]): string {
     const maxLen = 60;
-    // If the initial slugify result is already valid, we're done.
     if (validateSlug(handle) === null) return handle;
 
-    // Collision suffixing pushed the handle over the max length.
-    // Progressively shorten the base and re-run collision resolution
-    // until a valid handle is produced.
     for (let len = maxLen; len > 0; len--) {
       const truncated = handle.slice(0, len);
       const cleaned = truncated.replace(/-+$/, '');
@@ -607,7 +419,6 @@ export class SpaceWorkflowManager {
         return candidate;
       }
     }
-    // Absolute fallback — should never reach here in practice
     return 'workflow';
   }
 
@@ -616,19 +427,9 @@ export class SpaceWorkflowManager {
       throw new WorkflowValidationError('A workflow must have at least one node');
     }
 
-    // Reject node ids that collide with another node's name (or a duplicate id).
-    // Channel authorization is by node NAME, while queued-handoff resolution can
-    // resolve a name-authorized worker ref to a node by ID — so a node id equal
-    // to another node's name makes the ref ambiguous and can route a message
-    // into a node the topology never authorized. ids are generated before this
-    // check (createWorkflow/updateWorkflow), so every node has one here.
     const seenIds = new Set<string>();
     for (let i = 0; i < nodes.length; i++) {
       const id = nodes[i].id;
-      // Reject an explicit empty id (breaks workflowNodeId pinning downstream)
-      // and surrounding-whitespace ids (trimming would re-key them away from
-      // params.layout and silently discard saved positions). Undefined/null are
-      // generated by createWorkflow before this runs.
       if (id !== undefined && id !== null) {
         if (id.length === 0) {
           throw new WorkflowValidationError(`node[${i}]: id must be a non-empty string`);
@@ -700,16 +501,11 @@ export class SpaceWorkflowManager {
       }
       for (let k = 0; k < interests.length; k++) {
         const interestLoc = `${loc}[${k}]`;
-        // Network JSON isn't protected by the TypeScript interface, so read the
-        // interest defensively. Exactly one of `topic` / `topicFrom` must be set.
         const rawInterest = interests[k] as {
           topic?: unknown;
           topicFrom?: { source?: unknown; pattern?: unknown } | undefined;
           label?: unknown;
         };
-        // Presence is independent of type: a malformed `{ topic: 123 }` is still
-        // "topic set" and must trip the exactly-one-of check (or a type error),
-        // not silently fall through to the `topicFrom` branch.
         const hasTopic = rawInterest.topic !== undefined && rawInterest.topic !== null;
         const hasTopicFrom = rawInterest.topicFrom !== undefined && rawInterest.topicFrom !== null;
         if (hasTopic === hasTopicFrom) {
@@ -754,8 +550,6 @@ export class SpaceWorkflowManager {
   }
 
   private validateNodeAgentRef(spaceId: string, node: WorkflowNodeInput, index: number): void {
-    // Backward compat: if `agents` is absent/empty but legacy `agentId` is set on the object,
-    // synthesize a single-agent array from it before validating.
     const legacyAgentId = (node as unknown as Record<string, unknown>)['agentId'] as
       | string
       | undefined;
@@ -769,7 +563,6 @@ export class SpaceWorkflowManager {
       throw new WorkflowValidationError(`node[${index}]: agents must be a non-empty array`);
     }
 
-    // Format-level validation: always run regardless of agentLookup
     const seenNames = new Set<string>();
     for (let j = 0; j < node.agents.length; j++) {
       const entry = node.agents[j];
@@ -794,9 +587,6 @@ export class SpaceWorkflowManager {
       }
       seenNames.add(entry.name);
 
-      // Non-blocking warning: a slot that replaces the agent prompt with empty text
-      // runs only the SDK base contract (no role guidance). Allowed, but almost always
-      // a misconfiguration — surface it without blocking the save.
       if (entry.replaceAgentPrompt === true && !entry.customPrompt?.value?.trim()) {
         logger.warn(
           `${loc}: replaceAgentPrompt is true but customPrompt is empty — ` +
@@ -808,16 +598,10 @@ export class SpaceWorkflowManager {
         entry.resetContextPerTurn !== undefined &&
         typeof entry.resetContextPerTurn !== 'boolean'
       ) {
-        // Network JSON isn't protected by the TypeScript interface — reject
-        // non-boolean values (e.g. "true" or null) so persisted config, the
-        // editor, and the runtime (strict ===) cannot disagree. null is rejected
-        // to match the import schema (z.boolean().optional() accepts only
-        // undefined, not null).
         throw new WorkflowValidationError(`${loc}: resetContextPerTurn must be a boolean`);
       }
     }
 
-    // Existence validation: only when agentLookup is available.
     if (this.agentLookup) {
       for (let j = 0; j < node.agents.length; j++) {
         const entry = node.agents[j];
@@ -836,12 +620,10 @@ export class SpaceWorkflowManager {
       const ch = channels[ci];
       const loc = `channels[${ci}]`;
 
-      // Validate from
       if (!ch.from || !ch.from.trim()) {
         throw new WorkflowValidationError(`${loc}: 'from' must be a non-empty node name string`);
       }
 
-      // Validate to
       if (Array.isArray(ch.to)) {
         if (ch.to.length === 0) {
           throw new WorkflowValidationError(
@@ -863,31 +645,8 @@ export class SpaceWorkflowManager {
     }
   }
 
-  /**
-   * Validate declared outbound handoff transitions on every node.
-   *
-   * Enforces the workflow handoff CONTRACT (see HandoffTransition /
-   * HandoffOperation):
-   * - `id` is a non-empty string, unique within its node.
-   * - `target` is a known node name, agent slot name, or the broadcast wildcard
-   *   `'*'`. A handoff target must resolve to a declared node/agent.
-   * - `target` is unique within the node (at most one transition per concrete
-   *   name, at most one `'*'`) so `handoff({ target })` resolves unambiguously.
-   * - `hookId`, when set, references a known hook id.
-   * - `maxCycles`, when set, is a positive integer.
-   *
-   * Runtime transition EXECUTION is out of scope here; this only enforces the
-   * declarative shape and referential integrity.
-   */
   private validateTransitions(nodes: WorkflowNodeInput[], hooks: WorkflowHook[]): void {
     const hookIds = new Set(hooks.map((h) => h.id));
-    // Valid target names: every node name + every agent slot name (matches
-    // channel addressing). The broadcast wildcard is always valid. A name is
-    // AMBIGUOUS when a name can address more than one destination — two nodes
-    // share a name, a slot name appears in multiple nodes, OR a node name
-    // collides with a slot name (even within the same node). Count distinct
-    // addressable destinations per name (a node-name destination and a slot-name
-    // destination are distinct), and reject names addressing more than one.
     const targetNameDestinations = new Map<string, Set<string>>();
     const addDestination = (name: string, destinationKey: string) => {
       const set = targetNameDestinations.get(name) ?? new Set<string>();
@@ -895,8 +654,6 @@ export class SpaceWorkflowManager {
       targetNameDestinations.set(name, set);
     };
     for (const node of nodes) {
-      // node.id is optional on WorkflowNodeInput; names are unique within a
-      // workflow, so fall back to the name when id is absent.
       const nodeId = node.id ?? node.name;
       addDestination(node.name, `node:${nodeId}`);
       for (const agent of node.agents ?? []) {
@@ -908,9 +665,6 @@ export class SpaceWorkflowManager {
       const node = nodes[ni];
       const transitions = node.transitions;
       if (transitions === undefined) continue;
-      // RPC JSON is untyped — a non-array (e.g. `{}`) is truthy with no .length
-      // and would otherwise slip past the guards below and be silently dropped by
-      // the repository. Fail loudly instead.
       if (!Array.isArray(transitions)) {
         throw new WorkflowValidationError(
           `node[${ni}] "${node.name}": transitions must be an array`
@@ -929,8 +683,6 @@ export class SpaceWorkflowManager {
         const t = transitions[ti];
         const loc = `node[${ni}] "${node.name}".transitions[${ti}]`;
 
-        // RPC JSON is untyped — a non-object element (e.g. null) would throw a
-        // TypeError on the field reads below; reject it cleanly first.
         if (!t || typeof t !== 'object') {
           throw new WorkflowValidationError(`${loc}: transition must be an object`);
         }
@@ -943,8 +695,6 @@ export class SpaceWorkflowManager {
         if (t.id.length > 100) {
           throw new WorkflowValidationError(`${loc}: 'id' must be at most 100 characters`);
         }
-        // RPC JSON is untyped — reject a non-string label before the length
-        // check (a numeric label has no .length and would otherwise slip through).
         if (t.label !== undefined && typeof t.label !== 'string') {
           throw new WorkflowValidationError(`${loc}: 'label' must be a string`);
         }
@@ -1061,10 +811,6 @@ export class SpaceWorkflowManager {
         `endNodeId "${endNodeId}" does not match any node in this workflow`
       );
     }
-    // End nodes own the workflow's completion signal via `task.reportedStatus`.
-    // Multi-agent end nodes create ambiguity: who declares the workflow done?
-    // Restrict to exactly one agent so there's a single unambiguous owner of
-    // the workflow's commitment.
     const agentCount = endNode.agents?.length ?? 0;
     if (agentCount !== 1) {
       throw new WorkflowValidationError(

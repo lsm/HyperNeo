@@ -1,42 +1,3 @@
-/**
- * ClientEventBridge — declarative mapping from InternalEventBus internal events to client-safe events.
- *
- * Today, StateProjectionService (formerly StateManager) contains ~30 repetitive
- * daemon-to-client forwarding handlers that do nothing but call
- * `messageHub.event(method, data, { channel })`.  This module extracts those
- * into a single bridge that:
- *
- *   1. Subscribes to selected InternalEventBus events.
- *   2. Forwards the payload verbatim (or via a lightweight transform) through
- *      ClientEventGateway using typed Channels.
- *
- * Scope
- * -----
- * This module now contains ALL pure forwarding paths that were formerly in
- * StateManager:
- * - Space events (16 mappings) — first slice
- * - Session events (session.created, session.deleted, context.updated)
- * - Connection/auth events (api.connection, auth.changed)
- * - Config events (commands.updated)
- * - Error events (session.error, session.errorClear)
- *
- * StateProjectionService retains:
- * - State cache updates (sessionCache, processingStateCache, commandsCache, errorCache)
- * - Versioned broadcast methods (broadcastSystemChange, broadcastSettingsChange,
- *   broadcastSessionStateChange, broadcastSDKMessagesChange, broadcastSDKMessagesDelta)
- * - RPC handlers for state snapshots
- * - channelVersions lifecycle management
- *
- * Design notes
- * ------------
- * - The bridge intentionally does NOT own channelVersions; that stays in
- *   StateProjectionService.
- * - Each bridge mapping is a plain object so the registry is auditable in one
- *   place.
- * - The bridge is constructed in DaemonApp and wired before handlers start
- *   emitting events.
- */
-
 import type { IClientEventGateway, EventChannel } from '@hyperneo/shared';
 import { Channels } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus';
@@ -52,22 +13,12 @@ interface BridgeMapping {
   transform?: (payload: ClientBridgePayload) => unknown;
 }
 
-/**
- * Narrow interface for the broadcast methods StateProjectionService exposes to
- * the bridge. Keeping this minimal prevents the bridge from depending on the
- * full StateProjectionService surface and makes testing straightforward.
- */
 export interface StateBroadcasts {
   broadcastSystemChange(): Promise<void>;
   broadcastSessionStateChange(sessionId: string): Promise<void>;
 }
 
-// ---------------------------------------------------------------------------
-// Space bridge mappings
-// ---------------------------------------------------------------------------
-
 const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
-  // Broad space events → global
   {
     event: 'space.created',
     clientEvent: 'space.created',
@@ -88,7 +39,6 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
     clientEvent: 'space.deleted',
     channel: () => Channels.global(),
   },
-  // Space task events → global
   {
     event: 'space.task.created',
     clientEvent: 'space.task.created',
@@ -99,13 +49,11 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
     clientEvent: 'space.task.updated',
     channel: () => Channels.global(),
   },
-  // Space schedule events → global
   {
     event: 'space.schedule.updated',
     clientEvent: 'space.schedule.updated',
     channel: () => Channels.global(),
   },
-  // Space workflow run events → global
   {
     event: 'space.workflowRun.created',
     clientEvent: 'space.workflowRun.created',
@@ -116,7 +64,6 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
     clientEvent: 'space.workflowRun.updated',
     channel: () => Channels.global(),
   },
-  // Misc client-visible space events → global
   {
     event: 'space.hookState.updated',
     clientEvent: 'space.hookState.updated',
@@ -147,7 +94,6 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
     clientEvent: 'space.workflowRun.deadLoop',
     channel: () => Channels.global(),
   },
-  // Space agent events → space-scoped
   {
     event: 'spaceAgent.created',
     clientEvent: 'spaceAgent.created',
@@ -181,7 +127,6 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
     channel: (p) =>
       Channels.space((p as DaemonInternalEventMap['spaceLongHorizonAgent.deleted']).spaceId),
   },
-  // Space workflow definition events → global
   {
     event: 'spaceWorkflow.created',
     clientEvent: 'spaceWorkflow.created',
@@ -198,10 +143,6 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
     channel: () => Channels.global(),
   },
 ];
-
-// ---------------------------------------------------------------------------
-// Session bridge mappings (pure gateway forwarding)
-// ---------------------------------------------------------------------------
 
 const SESSION_BRIDGE_MAPPINGS: BridgeMapping[] = [
   {
@@ -241,11 +182,6 @@ const SESSION_BRIDGE_MAPPINGS: BridgeMapping[] = [
   },
 ];
 
-/**
- * ClientEventBridge wires InternalEventBus event subscriptions to ClientEventGateway
- * deliveries. Each mapping in the registry becomes one `internalEventBus.subscribe(...)`
- * subscriber that forwards through the gateway.
- */
 export class ClientEventBridge {
   private unsubscribers: (() => void)[] = [];
   private logger = new Logger('ClientEventBridge');
@@ -256,21 +192,15 @@ export class ClientEventBridge {
     private broadcasts?: StateBroadcasts
   ) {}
 
-  /**
-   * Subscribe to all registered events and start forwarding.
-   * Idempotent: calling start() on an already-started bridge is a no-op.
-   */
   start(): void {
     if (this.unsubscribers.length > 0) {
       return;
     }
 
-    // Space events
     for (const mapping of SPACE_BRIDGE_MAPPINGS) {
       this.subscribeMapping(mapping);
     }
 
-    // Session events (pure forwarding + broadcast triggers)
     for (const mapping of SESSION_BRIDGE_MAPPINGS) {
       this.subscribeMapping(mapping);
     }
@@ -278,16 +208,13 @@ export class ClientEventBridge {
       this.broadcasts?.broadcastSessionStateChange(data.sessionId)
     );
 
-    // Connection/auth events (trigger broadcasts via StateManager)
     this.subscribeBroadcast('api.connection', () => this.broadcasts?.broadcastSystemChange());
     this.subscribeBroadcast('auth.changed', () => this.broadcasts?.broadcastSystemChange());
 
-    // Config events (trigger broadcast via StateManager)
     this.subscribeBroadcast('commands.updated', (data) =>
       this.broadcasts?.broadcastSessionStateChange(data.sessionId)
     );
 
-    // Error events (trigger broadcast via StateManager)
     this.subscribeBroadcast('session.error', (data) =>
       this.broadcasts?.broadcastSessionStateChange(data.sessionId)
     );
@@ -296,9 +223,6 @@ export class ClientEventBridge {
     );
   }
 
-  /**
-   * Unsubscribe from all events.  After stop(), start() may be called again.
-   */
   stop(): void {
     for (const unsub of this.unsubscribers) {
       unsub();
@@ -328,9 +252,6 @@ export class ClientEventBridge {
         const promise = broadcast(data);
         if (promise) {
           return promise.catch((err) => {
-            // Return the promise so InternalEventBus awaits it, preserving publish
-            // completion semantics. Log here so failures are visible even
-            // when StateManager's own logging is insufficient.
             this.logger.warn(`Broadcast failed for ${event}:`, err);
           });
         }
@@ -341,9 +262,6 @@ export class ClientEventBridge {
   }
 }
 
-/**
- * Convenience factory.
- */
 export function createClientEventBridge(
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
   gateway: IClientEventGateway,

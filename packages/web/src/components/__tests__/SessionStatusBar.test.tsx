@@ -1,21 +1,10 @@
 // @ts-nocheck
-/**
- * Tests for SessionStatusBar Component
- *
- * Tests the session status bar with connection status, model switcher,
- * thinking level, auto-scroll toggle, and context usage display.
- *
- * Note: Tests without mock.module to avoid polluting other tests.
- */
 
 import type { ContextInfo, ModelInfo } from '@hyperneo/shared';
 import { act, cleanup, fireEvent, render } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import SessionStatusBar from '../SessionStatusBar';
 
-// Configurable hub mock — defaults to null (no connection) so existing tests are unaffected.
-// Individual tests can call mockGetHubIfConnected.mockReturnValue({ request: ... }) to
-// simulate an authenticated connection.
 const mockGetHubIfConnected = vi.fn(() => null);
 
 vi.mock('../../lib/connection-manager', () => ({
@@ -93,7 +82,6 @@ describe('SessionStatusBar', () => {
     cleanup();
     mockOnModelSwitch.mockClear();
     mockOnAutoScrollChange.mockClear();
-    // Reset hub to null (no connection) between tests — individual tests can override
     mockGetHubIfConnected.mockReturnValue(null);
   });
 
@@ -105,7 +93,6 @@ describe('SessionStatusBar', () => {
     it('should render status bar container', () => {
       const { container } = render(<SessionStatusBar {...defaultProps} />);
 
-      // Should have the main container with flex layout
       const content = container.firstElementChild;
       expect(content?.className).toContain('flex');
     });
@@ -113,7 +100,6 @@ describe('SessionStatusBar', () => {
     it('should render model switcher button', () => {
       const { container } = render(<SessionStatusBar {...defaultProps} />);
 
-      // Should have the model icon button
       const modelButton = container.querySelector('.control-btn');
       expect(modelButton).toBeTruthy();
     });
@@ -121,7 +107,6 @@ describe('SessionStatusBar', () => {
     it('should render auto-scroll toggle', () => {
       const { container } = render(<SessionStatusBar {...defaultProps} />);
 
-      // Should have the auto-scroll button
       const buttons = container.querySelectorAll('.control-btn');
       expect(buttons.length).toBeGreaterThan(0);
     });
@@ -131,7 +116,6 @@ describe('SessionStatusBar', () => {
         <SessionStatusBar {...defaultProps} contextUsage={mockContextUsage} />
       );
 
-      // Should show circle with percentage number
       const svgText = container.querySelector('svg text');
       expect(svgText?.textContent).toBe('25');
     });
@@ -141,16 +125,13 @@ describe('SessionStatusBar', () => {
     it('should render connection status section', () => {
       const { container } = render(<SessionStatusBar {...defaultProps} />);
 
-      // Should have a connection status display somewhere in the container
       const text = container.textContent || '';
-      // The component should render some status text
       expect(text.length).toBeGreaterThan(0);
     });
 
     it('should have status indicator styling', () => {
       const { container } = render(<SessionStatusBar {...defaultProps} />);
 
-      // Should have dot indicators for status
       const dots = container.querySelectorAll('.w-2.h-2.rounded-full');
       expect(dots.length).toBeGreaterThan(0);
     });
@@ -224,7 +205,6 @@ describe('SessionStatusBar', () => {
 
       const pill = container.querySelector('[data-testid="model-pill"]');
       expect(pill).toBeTruthy();
-      // provider logo (svg) + tier label are both present
       expect(pill?.querySelector('svg')).toBeTruthy();
       expect(pill?.textContent).toContain('Sonnet 4.5');
     });
@@ -261,7 +241,6 @@ describe('SessionStatusBar', () => {
     it('should show spinner when switching models', () => {
       const { container } = render(<SessionStatusBar {...defaultProps} modelSwitching={true} />);
 
-      // Should have a spinner component
       const spinner = container.querySelector('[class*="animate-spin"]');
       expect(spinner).toBeTruthy();
     });
@@ -271,7 +250,6 @@ describe('SessionStatusBar', () => {
     it('should show enabled state when autoScroll is true', () => {
       const { container } = render(<SessionStatusBar {...defaultProps} autoScroll={true} />);
 
-      // Should have emerald border when enabled
       const buttons = Array.from(container.querySelectorAll('.control-btn'));
       const autoScrollButton = buttons.find(
         (btn) => btn.getAttribute('title')?.includes('Auto-scroll') || false
@@ -282,7 +260,6 @@ describe('SessionStatusBar', () => {
     it('should show disabled state when autoScroll is false', () => {
       const { container } = render(<SessionStatusBar {...defaultProps} autoScroll={false} />);
 
-      // Should have neutral border when disabled
       const buttons = Array.from(container.querySelectorAll('.control-btn'));
       const autoScrollButton = buttons.find(
         (btn) => btn.getAttribute('title')?.includes('Auto-scroll') || false
@@ -319,7 +296,6 @@ describe('SessionStatusBar', () => {
     it('should show off thinking level by default', () => {
       const { container } = render(<SessionStatusBar {...defaultProps} />);
 
-      // Should have thinking level button with title
       const buttons = Array.from(container.querySelectorAll('.control-btn'));
       const thinkingButton = buttons.find(
         (btn) => btn.getAttribute('title')?.includes('Thinking:') || false
@@ -353,7 +329,6 @@ describe('SessionStatusBar', () => {
         <SessionStatusBar {...defaultProps} contextUsage={mockContextUsage} />
       );
 
-      // Should have an SVG circle indicator
       const svg = container.querySelector('svg circle');
       expect(svg).toBeTruthy();
     });
@@ -363,7 +338,6 @@ describe('SessionStatusBar', () => {
         <SessionStatusBar {...defaultProps} contextUsage={mockContextUsage} />
       );
 
-      // Should render without error
       const svgText = container.querySelector('svg text');
       expect(svgText?.textContent).toBe('25');
     });
@@ -377,7 +351,6 @@ describe('SessionStatusBar', () => {
         />
       );
 
-      // Should render with the context percentage
       const svgText = container.querySelector('svg text');
       expect(svgText?.textContent).toBe('25');
     });
@@ -387,7 +360,6 @@ describe('SessionStatusBar', () => {
     it('should have separator between controls and context', () => {
       const { container } = render(<SessionStatusBar {...defaultProps} />);
 
-      // Should have a vertical separator
       const separator = container.querySelector('.bg-gray-600');
       expect(separator).toBeTruthy();
     });
@@ -395,7 +367,6 @@ describe('SessionStatusBar', () => {
     it('should have proper flex layout', () => {
       const { container } = render(<SessionStatusBar {...defaultProps} />);
 
-      // Container should have flex layout
       const content = container.firstElementChild;
       expect(content?.className).toContain('flex');
       expect(content?.className).toContain('items-center');
@@ -411,7 +382,6 @@ describe('SessionStatusBar', () => {
       ) as HTMLButtonElement;
       fireEvent.click(modelButton);
 
-      // Should show the dropdown with model options
       expect(container.textContent).toContain('Select Model');
     });
 
@@ -439,8 +409,6 @@ describe('SessionStatusBar', () => {
       const searchInput = container.querySelector('input[aria-label="Search models"]')!;
       fireEvent.input(searchInput, { target: { value: 'opus' } });
 
-      // Scope to the dropdown: the composer pill always shows the active model
-      // name, so the whole-container text would always include it.
       const dropdown = container.querySelector('[data-testid="model-dropdown"]')!;
       expect(dropdown.textContent).toContain('Opus 4.5');
       expect(dropdown.textContent).not.toContain('Sonnet 4.5');
@@ -466,7 +434,6 @@ describe('SessionStatusBar', () => {
       ) as HTMLButtonElement;
       fireEvent.click(modelButton);
 
-      // Find and click the Opus model button
       const buttons = Array.from(container.querySelectorAll('button'));
       const opusButton = buttons.find((btn) => btn.textContent?.includes('Opus 4.5'));
       fireEvent.click(opusButton!);
@@ -483,11 +450,9 @@ describe('SessionStatusBar', () => {
         '.control-btn[title*="Switch Model"]'
       ) as HTMLButtonElement;
 
-      // Open
       fireEvent.click(modelButton);
       expect(container.textContent).toContain('Select Model');
 
-      // Close
       fireEvent.click(modelButton);
       expect(container.textContent).not.toContain('Select Model');
     });
@@ -495,7 +460,6 @@ describe('SessionStatusBar', () => {
     it('should close thinking dropdown when opening model dropdown', () => {
       const { container } = render(<SessionStatusBar {...defaultProps} />);
 
-      // Open thinking dropdown first
       const buttons = Array.from(container.querySelectorAll('.control-btn'));
       const thinkingButton = buttons.find(
         (btn) => btn.getAttribute('title')?.includes('Thinking:') || false
@@ -503,13 +467,11 @@ describe('SessionStatusBar', () => {
       fireEvent.click(thinkingButton);
       expect(container.textContent).toContain('Thinking Level');
 
-      // Open model dropdown
       const modelButton = container.querySelector(
         '.control-btn[title*="Switch Model"]'
       ) as HTMLButtonElement;
       fireEvent.click(modelButton);
 
-      // Model dropdown should be open, thinking dropdown should be closed
       expect(container.textContent).toContain('Select Model');
       expect(container.textContent).not.toContain('Thinking Level');
     });
@@ -586,11 +548,9 @@ describe('SessionStatusBar', () => {
         (btn) => btn.getAttribute('title')?.includes('Thinking:') || false
       )!;
 
-      // Open
       fireEvent.click(thinkingButton);
       expect(container.textContent).toContain('Thinking Level');
 
-      // Close
       fireEvent.click(thinkingButton);
       expect(container.textContent).not.toContain('Thinking Level');
     });
@@ -598,21 +558,18 @@ describe('SessionStatusBar', () => {
     it('should close model dropdown when opening thinking dropdown', () => {
       const { container } = render(<SessionStatusBar {...defaultProps} />);
 
-      // Open model dropdown first
       const modelButton = container.querySelector(
         '.control-btn[title*="Switch Model"]'
       ) as HTMLButtonElement;
       fireEvent.click(modelButton);
       expect(container.textContent).toContain('Select Model');
 
-      // Open thinking dropdown
       const buttons = Array.from(container.querySelectorAll('.control-btn'));
       const thinkingButton = buttons.find(
         (btn) => btn.getAttribute('title')?.includes('Thinking:') || false
       )!;
       fireEvent.click(thinkingButton);
 
-      // Thinking dropdown should be open, model dropdown should be closed
       expect(container.textContent).toContain('Thinking Level');
       expect(container.textContent).not.toContain('Select Model');
     });
@@ -626,15 +583,12 @@ describe('SessionStatusBar', () => {
       )!;
       fireEvent.click(thinkingButton);
 
-      // Find and click Think 16k option
       const allButtons = Array.from(container.querySelectorAll('button'));
       const think16kButton = allButtons.find((btn) => btn.textContent?.includes('Think 16k'));
       fireEvent.click(think16kButton!);
 
-      // Re-render with new thinking level
       rerender(<SessionStatusBar {...defaultProps} thinkingLevel="think16k" />);
 
-      // Check title updated
       const updatedButtons = Array.from(container.querySelectorAll('.control-btn'));
       const updatedThinkingButton = updatedButtons.find(
         (btn) => btn.getAttribute('title')?.includes('Thinking:') || false
@@ -644,13 +598,11 @@ describe('SessionStatusBar', () => {
   });
 
   describe('ThinkingLevelIcon Brightness', () => {
-    // Helper to get the icon SVG (not the border ring which has class "absolute")
     const getThinkingIcon = (container: Element) => {
       const buttons = Array.from(container.querySelectorAll('.control-btn'));
       const thinkingButton = buttons.find(
         (btn) => btn.getAttribute('title')?.includes('Thinking:') || false
       );
-      // Get all SVGs and find the one that's not the absolute positioned border ring
       const svgs = thinkingButton?.querySelectorAll('svg');
       if (!svgs) return null;
       for (const svg of Array.from(svgs)) {
@@ -699,7 +651,6 @@ describe('SessionStatusBar', () => {
       const thinkingButton = buttons.find(
         (btn) => btn.getAttribute('title')?.includes('Thinking:') || false
       );
-      // Off level should have neutral border, not amber ring
       expect(thinkingButton?.className).toContain('border-dark-600/80');
     });
 
@@ -710,7 +661,6 @@ describe('SessionStatusBar', () => {
       const thinkingButton = buttons.find(
         (btn) => btn.getAttribute('title')?.includes('Thinking:') || false
       );
-      // Should have the SVG ring
       const ring = thinkingButton?.querySelector('svg.absolute');
       expect(ring).toBeTruthy();
     });
@@ -752,7 +702,6 @@ describe('SessionStatusBar', () => {
       );
 
       const pill = container.querySelector('[data-testid="model-pill"]');
-      // "Claude " prefix is dropped — the logo already conveys Anthropic
       expect(pill?.textContent).toContain('Opus 4');
       expect(pill?.querySelector('svg')).toBeTruthy();
     });
@@ -782,9 +731,6 @@ describe('SessionStatusBar', () => {
   });
 
   describe('Model Pill — provider identity', () => {
-    // jsdom drops `color-mix(...)` from inline styles, so the tint can't be
-    // asserted via style here. The pill stamps its provider on data-provider;
-    // the brand-color mapping itself is covered by provider-brand.test.ts.
     const pillProvider = (container: { querySelector: (sel: string) => Element | null }) =>
       container.querySelector('[data-testid="model-pill"]')?.getAttribute('data-provider');
 
@@ -847,7 +793,6 @@ describe('SessionStatusBar', () => {
       ) as HTMLButtonElement;
       fireEvent.click(modelButton);
 
-      // All mock models belong to 'anthropic' → label "Anthropic" should appear
       expect(container.textContent).toContain('Anthropic');
     });
 
@@ -884,8 +829,6 @@ describe('SessionStatusBar', () => {
       ) as HTMLButtonElement;
       fireEvent.click(modelButton);
 
-      // Availability dots are StatusDots inside the dropdown. Scope to the
-      // dropdown so the connection status dot (also a StatusDot) is excluded.
       const dropdown = container.querySelector('[data-testid="model-dropdown"]')!;
       const providerDots = Array.from(
         dropdown.querySelectorAll('.w-2.h-2.rounded-full.flex-shrink-0')
@@ -894,7 +837,6 @@ describe('SessionStatusBar', () => {
     });
 
     it('should show gray availability dot when provider is not authenticated', () => {
-      // No hub → auth.providers returns null → isAuthenticated defaults to false → gray dot
       const { container } = render(<SessionStatusBar {...defaultProps} />);
 
       const modelButton = container.querySelector(
@@ -902,13 +844,11 @@ describe('SessionStatusBar', () => {
       ) as HTMLButtonElement;
       fireEvent.click(modelButton);
 
-      // Unknown/unauthenticated provider -> neutral tone (bg-gray-500).
       const dropdown = container.querySelector('[data-testid="model-dropdown"]')!;
       expect(dropdown.querySelector('.bg-gray-500')).toBeTruthy();
     });
 
     it('should show green availability dot when provider is authenticated', async () => {
-      // Configure hub to return authenticated status for 'anthropic'
       mockGetHubIfConnected.mockReturnValue({
         request: vi.fn().mockImplementation((method: string) => {
           if (method === 'auth.providers') {
@@ -925,7 +865,6 @@ describe('SessionStatusBar', () => {
 
       const { container } = render(<SessionStatusBar {...defaultProps} />);
 
-      // Wait for the auth.providers effect to resolve
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
       });
@@ -935,7 +874,6 @@ describe('SessionStatusBar', () => {
       ) as HTMLButtonElement;
       fireEvent.click(modelButton);
 
-      // Authenticated provider -> success tone (bg-green-500).
       const dropdown = container.querySelector('[data-testid="model-dropdown"]')!;
       expect(dropdown.querySelector('.bg-green-500')).toBeTruthy();
     });

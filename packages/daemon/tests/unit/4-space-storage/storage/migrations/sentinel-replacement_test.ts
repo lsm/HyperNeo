@@ -1,21 +1,3 @@
-/**
- * Sentinel Replacement Startup Hook Tests
- *
- * Tests the logic that replaces '__NEEDS_WORKSPACE_PATH__' sentinels left by migration 70
- * with the real workspaceRoot at daemon startup (app.ts startup hook).
- *
- * Since the hook is embedded in createDaemonApp() which requires a full daemon server,
- * we test the underlying SQL logic directly against a real SQLite DB. The SQL is identical
- * to what runs in the startup hook.
- *
- * Covers:
- * - Sentinel is replaced with workspaceRoot when workspaceRoot is available
- * - Multiple rooms with sentinel are all replaced in one UPDATE
- * - Rooms already having a real default_path are not affected
- * - When workspaceRoot is undefined, affected room IDs are identified (error path)
- * - No-op when no rooms have the sentinel value
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -43,7 +25,6 @@ function insertRoom(db: BunDatabase, id: string, defaultPath: string | null): vo
   ).run(id, `Room ${id}`, '[]', defaultPath, now, now);
 }
 
-/** Simulates the startup hook logic from app.ts */
 function runSentinelReplacementHook(
   db: BunDatabase,
   workspaceRoot: string | undefined
@@ -65,7 +46,6 @@ function runSentinelReplacementHook(
     );
     return { replacedCount: sentinelRows.length, affectedIds: ids };
   } else {
-    // workspaceRoot undefined — error path, return affected IDs for logging
     return { replacedCount: 0, affectedIds: ids };
   }
 }
@@ -148,7 +128,6 @@ describe('Sentinel replacement startup hook', () => {
     expect(result.affectedIds).toContain('room-orphan-1');
     expect(result.affectedIds).toContain('room-orphan-2');
 
-    // Sentinel values remain unchanged
     for (const id of ['room-orphan-1', 'room-orphan-2']) {
       const row = db.prepare(`SELECT default_path FROM rooms WHERE id = ?`).get(id) as {
         default_path: string;
@@ -165,7 +144,6 @@ describe('Sentinel replacement startup hook', () => {
     expect(result.replacedCount).toBe(0);
     expect(result.affectedIds).toHaveLength(0);
 
-    // Existing room unchanged
     const row = db.prepare(`SELECT default_path FROM rooms WHERE id = 'room-good'`).get() as {
       default_path: string;
     };
@@ -176,7 +154,6 @@ describe('Sentinel replacement startup hook', () => {
     insertRoom(db, 'room-s', SENTINEL);
 
     runSentinelReplacementHook(db, '/workspace/root');
-    // Second run: no sentinels remain, should be a no-op
     const result2 = runSentinelReplacementHook(db, '/workspace/root');
     expect(result2.replacedCount).toBe(0);
 

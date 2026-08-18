@@ -1,9 +1,3 @@
-/**
- * KeychainCredentialStore tests with mocked `node:child_process`.
- *
- * Uses dynamic import AFTER `mock.module` registration so the source module
- * picks up the mocked `execFile` / `spawn`.
- */
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { EventEmitter } from 'node:events';
 
@@ -53,8 +47,6 @@ function makeExecFileError(code: number, stderr: string): Error {
   return err;
 }
 
-// Module-scope mock helpers so multiple `describe` blocks can drive the
-// locked / success paths without redefining them per scope.
 function makeLockedSpawn(): void {
   spawnImpl = () => {
     const proc = new EventEmitter() as MockSpawnProcess;
@@ -227,7 +219,6 @@ describe('KeychainCredentialStore — security argv sanity', () => {
     const store = new KeychainCredentialStore();
     await store.set('neokai.provider.test', 'default', 'secret');
     expect(lastSpawnArgs?.[0]).toBe('add-generic-password');
-    // No trailing positional path arg — default login.keychain-db.
     expect(lastSpawnArgs?.[lastSpawnArgs.length - 1]).toBe('secret');
   });
 
@@ -238,11 +229,6 @@ describe('KeychainCredentialStore — security argv sanity', () => {
     expect(lastExecFileArgs?.[lastExecFileArgs!.length - 1]).toBe('-w');
   });
 });
-
-// ---------------------------------------------------------------------------
-// Integration: real KeychainCredentialStore + KeychainStatusCredentialStore,
-// with `node:child_process` mocked to drive locked-Keychain paths.
-// ---------------------------------------------------------------------------
 
 describe('KeychainStatusCredentialStore integration (real KeychainCredentialStore)', () => {
   beforeEach(() => {
@@ -304,11 +290,9 @@ describe('KeychainStatusCredentialStore integration (real KeychainCredentialStor
       proc.stdin = { write: () => undefined, end: () => undefined };
       queueMicrotask(() => {
         if (attempt === 1) {
-          // First attempt: keychain locked.
           proc.stderr.emit('data', Buffer.from('User interaction is not allowed.'));
           proc.emit('close', 36);
         } else {
-          // Retry after unlock succeeds.
           proc.emit('close', 0);
         }
       });
@@ -339,16 +323,10 @@ describe('KeychainStatusCredentialStore integration (real KeychainCredentialStor
     await store.set('neokai.provider.test', 'default', 'recovered');
     expect(unlockCalled).toBe(true);
     expect(store.getStatus().backend).toBe('keychain');
-    // Deliberately NOT calling fallback.delete on primary success: a
-    // concurrent writer (oauth-refresh-scheduler, daemon startup) could
-    // have routed a write to the fallback between our primary success and
-    // a cleanup delete. Reads prefer the keychain whenever it's reachable,
-    // so a stale fallback copy is harmless.
     expect(fallbackDeleteCalls).toEqual([]);
   });
 
   it('set() re-attempts unlock after recovery (unlockAttempted resets on markKeychainAvailable)', async () => {
-    // First set: keychain locked, unlock fails, fallback used.
     makeLockedSpawn();
     let unlockCalls = 0;
     const fallback = {
@@ -360,7 +338,7 @@ describe('KeychainStatusCredentialStore integration (real KeychainCredentialStor
     const unlockers = [
       async () => {
         unlockCalls += 1;
-        return false; // Always fails — won't actually unlock.
+        return false;
       },
     ];
     const store = new KeychainStatusCredentialStore(
@@ -373,9 +351,6 @@ describe('KeychainStatusCredentialStore integration (real KeychainCredentialStor
     expect(unlockCalls).toBe(1);
     expect(store.getStatus().backend).toBe('keychain-fallback');
 
-    // Simulate external `security unlock-keychain` succeeding: next read
-    // hits the keychain successfully and flips status back to available,
-    // which should reset unlockAttempted so subsequent writes retry.
     execFileImpl = (
       _c: unknown,
       _a: unknown,
@@ -388,15 +363,12 @@ describe('KeychainStatusCredentialStore integration (real KeychainCredentialStor
     await store.get('neokai.provider.test', 'default');
     expect(store.getStatus().backend).toBe('keychain');
 
-    // Now next set should retry unlocker since latch reset.
     makeLockedSpawn();
     await store.set('neokai.provider.test', 'default', 'second');
     expect(unlockCalls).toBe(2);
   });
 
   it('get() prefers keychain over fallback when keychain is reachable (authoritative)', async () => {
-    // Keychain returns a value; fallback has a stale different value.
-    // Without preferring keychain, we'd surface stale fallback data.
     execFileImpl = (
       _c: unknown,
       _a: unknown,
@@ -412,21 +384,17 @@ describe('KeychainStatusCredentialStore integration (real KeychainCredentialStor
       listServices: async () => [] as string[],
     };
     const store = new KeychainStatusCredentialStore(new KeychainCredentialStore(), fallback);
-    // Mark as previously fallen back to exercise the "always keychain first" path.
     store.setStatusChangeCallback(() => {});
-    expect(store.getStatus().backend).toBe('keychain'); // sanity
+    expect(store.getStatus().backend).toBe('keychain');
 
     const result = await store.get('neokai.provider.test', 'default');
     expect(result).toBe('{"fresh":"keychain"}');
   });
 
   it('get() falls through to fallback when keychain is reachable but item missing', async () => {
-    // Value was previously written to fallback while keychain was locked;
-    // keychain has since been unlocked but never had this item. Get should
-    // return fallback copy, not null.
     execFileImpl = (_c: unknown, _a: unknown, cb: (err: unknown) => void) => {
       const err = new Error('not found') as Error & { code: number; stderr: string };
-      err.code = 44; // errSecItemNotFound
+      err.code = 44;
       err.stderr = 'could not be found';
       cb(err);
       return undefined as unknown;
@@ -444,8 +412,6 @@ describe('KeychainStatusCredentialStore integration (real KeychainCredentialStor
   });
 
   it('set() falls back when unlock succeeds but keychain write still fails', async () => {
-    // Spawn always fails with 36 — simulates a keychain that can't be unlocked
-    // interactively (e.g., CI sandbox).
     makeLockedSpawn();
     let fallbackSetCalled = false;
     const fallback = {
@@ -498,15 +464,10 @@ describe('KeychainStatusCredentialStore integration (real KeychainCredentialStor
 
     await store.set('neokai.provider.test', 'default', 'first');
     await store.set('neokai.provider.test', 'default', 'second');
-    expect(unlockCalls).toBe(1); // Only the first failure triggers unlock attempt.
+    expect(unlockCalls).toBe(1);
   });
 
   it('delete() throws when keychain is locked — no fallback for irreversible op', async () => {
-    // Delete is an irreversible op against the authoritative store.
-    // Deleting only from the fallback would leave the keychain copy
-    // behind, and the next time the keychain becomes reachable `get()`
-    // would prefer it — provider appears re-authenticated after the
-    // user explicitly logged out. Surface the failure instead.
     makeLockedExecFile();
     let fallbackDeleteCalled = false;
     const fallback = {
@@ -522,16 +483,11 @@ describe('KeychainStatusCredentialStore integration (real KeychainCredentialStor
     await expect(store.delete('neokai.provider.test', 'default')).rejects.toThrow(
       /\(blocked: delete\(neokai\.provider\.test:default\)\)$/
     );
-    // Fallback must NOT be touched: partial delete would mislead callers
-    // (UI shows "logged out" but keychain copy survives).
     expect(fallbackDeleteCalled).toBe(false);
     expect(store.getStatus().backend).toBe('keychain-unavailable');
   });
 
   it('set() refreshes an existing fallback copy on keychain-success (no stale rotation)', async () => {
-    // API key was written to fallback while keychain was locked.
-    // Keychain later unlocks; user rotates key. Without write-through,
-    // fallback has stale key, surfaces on next keychain lock.
     let fallbackValue: string | null = 'old-rotated-away-value';
     let fallbackSetCalls = 0;
     const fallback = {
@@ -545,7 +501,6 @@ describe('KeychainStatusCredentialStore integration (real KeychainCredentialStor
       },
       listServices: async () => [] as string[],
     };
-    // Keychain set succeeds (keychain reachable).
     makeSuccessSpawn();
     const store = new KeychainStatusCredentialStore(new KeychainCredentialStore(), fallback);
 
@@ -555,9 +510,6 @@ describe('KeychainStatusCredentialStore integration (real KeychainCredentialStor
   });
 
   it('set() does NOT create a new fallback entry on keychain-success (keeps weaker-isolation surface minimal)', async () => {
-    // Entry was never in fallback (user wrote it while keychain was
-    // reachable). Don't broaden the weaker-isolation surface by writing
-    // a copy now.
     let fallbackValue: string | null = null;
     let fallbackSetCalls = 0;
     const fallback = {
@@ -576,10 +528,6 @@ describe('KeychainStatusCredentialStore integration (real KeychainCredentialStor
   });
 
   it('statusChangeCallback fires AFTER fallback write completes (no re-entrant race)', async () => {
-    // Reproduces the round 4 re-entrancy concern: callback fires inline
-    // during state transition while the fallback write is still pending.
-    // Reorder guarantees the write is durable before subscribers observe
-    // the keychain-fallback transition.
     makeLockedSpawn();
     let callbackFiredBeforeFallbackSet = false;
     let fallbackSetDone = false;
@@ -587,7 +535,6 @@ describe('KeychainStatusCredentialStore integration (real KeychainCredentialStor
     const fallback = {
       get: async () => null as string | null,
       set: async () => {
-        // Defer slightly so we can observe ordering.
         await new Promise((r) => setTimeout(r, 5));
         fallbackSetDone = true;
       },
@@ -678,7 +625,7 @@ describe('KeychainStatusCredentialStore — statusChangeCallback on transitions'
     store.setStatusChangeCallback(() => {
       calls += 1;
     });
-    expect(attempt).toBe(0); // satisfy unused-var lint pattern.
+    expect(attempt).toBe(0);
 
     await store.set('neokai.provider.test', 'default', 'first');
     expect(store.getStatus().backend).toBe('keychain-fallback');
@@ -686,12 +633,6 @@ describe('KeychainStatusCredentialStore — statusChangeCallback on transitions'
   });
 
   it('fires statusChangeCallback on unavailable → fallback transition (not just from available)', async () => {
-    // Reproduces the round 6 codex finding: a locked-Keychain READ first
-    // flips status to keychain-unavailable (callback fires). A later
-    // successful fallback write flips to keychain-fallback — but the
-    // previous markUsingFallback only fired the callback when transitioning
-    // from fully-available, so the UI stayed stuck on the yellow
-    // unavailable banner even though writes now succeed via fallback.
     const calls: string[] = [];
     const fallback = {
       get: async () => null as string | null,
@@ -704,15 +645,10 @@ describe('KeychainStatusCredentialStore — statusChangeCallback on transitions'
       calls.push(store.getStatus().backend);
     });
 
-    // Step 1: locked read flips to keychain-unavailable.
     makeLockedExecFile();
     await store.get('neokai.provider.test', 'default');
     expect(store.getStatus().backend).toBe('keychain-unavailable');
 
-    // Step 2: successful fallback write flips to keychain-fallback.
-    // The buggy version skipped the callback here because wasAvailable
-    // was false (we were already unavailable). The fixed version
-    // compares backend labels before/after and fires on any real change.
     makeLockedSpawn();
     await store.set('neokai.provider.test', 'default', 'data');
     expect(store.getStatus().backend).toBe('keychain-fallback');
@@ -731,11 +667,6 @@ describe('KeychainStatusCredentialStore — ttyCheck gate on default unlocker', 
   });
 
   it('buildDefaultUnlockers: ttyCheck=false short-circuits before spawn (pins production gate)', async () => {
-    // Exercises the REAL buildDefaultUnlockers factory — not a stub. If a
-    // future refactor drops the ttyCheck gate inside the factory, the
-    // unlocker would fall through to tryUnlockKeychainViaGUI → spawnImpl
-    // would be invoked → spawnObserved becomes true → test fails. That's
-    // the regression the round 2 review asked us to pin.
     let spawnObserved = false;
     let execFileObserved = false;
     spawnImpl = () => {
@@ -766,11 +697,6 @@ describe('KeychainStatusCredentialStore — ttyCheck gate on default unlocker', 
   });
 
   it('buildDefaultUnlockers: ttyCheck=true falls through to tryUnlockKeychainViaGUI (spawn observed)', async () => {
-    // Positive control — verifies the gate is the ONLY thing preventing
-    // the spawn. With ttyCheck=true, the unlocker reaches the GUI spawn
-    // path. tryUnlockKeychainViaGUI now uses spawn+kill (not execFile) so
-    // that the 30s timeout can actually cancel the child process; assert
-    // against spawnImpl.
     let spawnObserved = false;
     spawnImpl = () => {
       spawnObserved = true;
@@ -789,17 +715,6 @@ describe('KeychainStatusCredentialStore — ttyCheck gate on default unlocker', 
   });
 
   it('buildDefaultUnlockers: hung child is killed on timeout (pins safety path)', async () => {
-    // Reproduces the round 8 review finding: the setTimeout + child.kill
-    // safety path is load-bearing for the narrow case where ttyCheck
-    // returns true (interactive launch) but the user can't interact with
-    // the dialog (detached screen / SSH with Aqua session attached). If a
-    // future refactor dropped the setTimeout, removed child.kill, or
-    // changed stdio handling, this test fails.
-    //
-    // Mock child never emits 'exit' (simulates hung dialog). Inject
-    // timeoutMs=10 so the test doesn't wait the full 30s. Assert:
-    //   1. child.kill was called with SIGKILL
-    //   2. unlocker resolved to false
     let killSignal: string | null = null;
     spawnImpl = () => {
       const proc = new EventEmitter() as MockSpawnProcess;
@@ -809,7 +724,6 @@ describe('KeychainStatusCredentialStore — ttyCheck gate on default unlocker', 
       proc.kill = (sig: string) => {
         killSignal = sig;
       };
-      // Deliberately do NOT emit 'exit' — child stays "running".
       return proc;
     };
 
@@ -831,9 +745,6 @@ describe('KeychainStatusCredentialStore — error message shape', () => {
   });
 
   it('set() appends (blocked: label) suffix when no fallback is configured', async () => {
-    // Pins the suffix format consumed by callers / log scrapers. The base
-    // message lives in KEYCHAIN_UNAVAILABLE_MESSAGE; the suffix identifies
-    // which operation was blocked so operators can correlate.
     makeLockedSpawn();
     const store = new KeychainStatusCredentialStore(new KeychainCredentialStore());
 

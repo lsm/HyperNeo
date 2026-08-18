@@ -1,11 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for InputActionsMenu Component
- *
- * Tests without mock.module to avoid polluting other tests.
- * Note: useClickOutside is tested separately in its own test file.
-import { describe, it, expect, vi } from 'vitest';
- */
 
 import { render } from '@testing-library/preact';
 import { InputActionsMenu } from '../InputActionsMenu';
@@ -44,9 +37,8 @@ describe('InputActionsMenu', () => {
 
     it('should render menu when open', () => {
       const { container } = render(<InputActionsMenu {...defaultProps} isOpen={true} />);
-      // Check for menu items when open
       const menuItems = container.querySelectorAll('button');
-      expect(menuItems.length).toBeGreaterThan(1); // Plus button + menu items
+      expect(menuItems.length).toBeGreaterThan(1);
     });
   });
 

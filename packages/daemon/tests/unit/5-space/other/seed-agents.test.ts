@@ -1,11 +1,3 @@
-/**
- * seedPresetAgents Unit Tests
- *
- * Verifies that the six preset SpaceWorkerAgent records are created with correct
- * defaults (role, tools, description) and that seeding is idempotent (errors
- * on name collision are captured but do not abort remaining seeds).
- */
-
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { KNOWN_TOOLS, type SpaceWorkerAgent } from '@hyperneo/shared';
@@ -36,7 +28,7 @@ describe('seedPresetAgents', () => {
     insertSpace(db);
     const repo = new SpaceAgentRepository(db as any);
     manager = new SpaceAgentManager(repo);
-    setModelsCache(new Map()); // skip model validation
+    setModelsCache(new Map());
   });
 
   afterEach(() => {
@@ -78,9 +70,6 @@ describe('seedPresetAgents', () => {
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
     expect(reviewer).toBeDefined();
-    // The Reviewer keeps Bash (for GitHub read-only inspection and posting
-    // reviews via the gh CLI) and Cron tools for scheduled follow-ups, but
-    // it is restrained: no Write/Edit so it cannot modify code under review.
     expect(reviewer?.tools).toContain('Bash');
     expect(reviewer?.tools).toContain('Read');
     expect(reviewer?.tools).toContain('CronCreate');
@@ -88,8 +77,6 @@ describe('seedPresetAgents', () => {
     expect(reviewer?.tools).toContain('CronList');
     expect(reviewer?.tools).not.toContain('Write');
     expect(reviewer?.tools).not.toContain('Edit');
-    // The reviewer's restraint is taught by its custom prompt (Reviewer System
-    // Contract): it must not run the code under review and must not merge.
     expect(reviewer?.customPrompt).toContain('Reviewer System Contract');
     expect(reviewer?.customPrompt).toContain('addPullRequestReview');
   });
@@ -100,8 +87,6 @@ describe('seedPresetAgents', () => {
 
     expect(reviewer).toBeDefined();
     expect(reviewer?.handle).toBe('reviewer');
-    // The Reviewer holds Bash for read-only GitHub inspection and review
-    // posting; there is no separate merger agent anymore.
     expect(reviewer?.tools).toContain('Bash');
     expect(reviewer?.tools).toContain('Read');
     expect(reviewer?.tools).not.toContain('Write');
@@ -114,9 +99,6 @@ describe('seedPresetAgents', () => {
     const coder = seeded.find((a) => a.name === 'Coder');
 
     expect(coder?.tools).toEqual([]);
-    // The coder implements first and opens a PR; it must not merge during
-    // implementation, but (unlike the old preset) it may merge in the
-    // post-approval phase when the workflow sends the merge procedure.
     expect(coder?.customPrompt).toMatch(/[Dd]uring implementation, do not merge your own PR/);
     expect(coder?.customPrompt).toContain('post-approval merge is a separate phase');
     expect(coder?.customPrompt).toContain('open pull requests for review');
@@ -148,10 +130,8 @@ describe('seedPresetAgents', () => {
   });
 
   it('is idempotent — records errors but seeds remaining agents on name collision', async () => {
-    // Seed once
     await seedPresetAgents('space-1', manager);
 
-    // Seed again — all six names are now taken
     const second = await seedPresetAgents('space-1', manager);
 
     expect(second.seeded).toHaveLength(0);
@@ -172,18 +152,15 @@ describe('seedPresetAgents', () => {
     expect(r1.errors).toHaveLength(0);
     expect(r2.errors).toHaveLength(0);
 
-    // Each space has its own independent set
     for (const a of r1.seeded) expect(a.spaceId).toBe('space-1');
     for (const a of r2.seeded) expect(a.spaceId).toBe('space-2');
   });
 
   it('partial collision — seeds succeed for non-conflicting names', async () => {
-    // Pre-create just the 'Coder' agent
     await manager.create({ spaceId: 'space-1', name: 'Coder' });
 
     const result = await seedPresetAgents('space-1', manager);
 
-    // Coder fails, others succeed
     expect(result.seeded).toHaveLength(5);
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0].name).toBe('Coder');
@@ -249,14 +226,7 @@ describe('seedPresetAgents', () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
-    // Space reviewer agents now carry Task/TaskOutput/TaskStop and are
-    // expected to delegate exploration to the built-in `general-purpose`
-    // sub-agent that ships with the `claude_code` preset. Custom reviewer
-    // sub-agents (e.g. reviewer-explorer / reviewer-fact-checker) are a
-    // planned follow-up and must NOT be referenced yet.
     expect(reviewer?.customPrompt).toContain('multiple Task general-purpose sub-agents');
-    // We deliberately do not reference custom reviewer sub-agents that are
-    // not yet defined as workflow-template/data.
     expect(reviewer?.customPrompt).not.toContain('reviewer-explorer');
     expect(reviewer?.customPrompt).not.toContain('reviewer-fact-checker');
   });
@@ -265,7 +235,6 @@ describe('seedPresetAgents', () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
-    // Identity must appear in every posted PR comment.
     expect(reviewer?.customPrompt).toContain('Review by <your model>');
     expect(reviewer?.customPrompt).toContain('Client:** HyperNeo');
     expect(reviewer?.customPrompt).toMatch(/Model:/);
@@ -282,10 +251,8 @@ describe('seedPresetAgents', () => {
     expect(reviewer?.customPrompt).toContain('P3');
     expect(reviewer?.customPrompt).toContain('REQUEST_CHANGES');
     expect(reviewer?.customPrompt).toContain('APPROVE');
-    // Decision rule: request changes when any P0-P3 finding exists.
     expect(reviewer?.customPrompt).toContain('P0-P3');
     expect(reviewer?.customPrompt).toContain('Request changes for any P0-P3 finding');
-    // No P2/P3 approval leak: every severity blocks, verdict is count-derived.
     expect(reviewer?.customPrompt).toContain('All four severities block approval');
     expect(reviewer?.customPrompt).toContain('no optional severity');
     expect(reviewer?.customPrompt).toContain('pure function of your finding counts');
@@ -336,9 +303,6 @@ describe('seedPresetAgents', () => {
 
     expect(reviewer?.customPrompt).toContain('GitHub review procedure');
     expect(reviewer?.customPrompt).toContain('html_url returned by GitHub');
-    // The reviewer uses Bash to post a visible review via the gh CLI — there is
-    // no post_review MCP tool anymore. The mutation returns the review URL, so
-    // the contract never queries the PR-wide latest review (a race).
     expect(reviewer?.customPrompt).toContain('addPullRequestReview');
     expect(reviewer?.customPrompt).not.toContain('REVIEW_BODY_TERMINATOR');
     expect(reviewer?.customPrompt).toContain('REVIEW_POSTED');
@@ -349,8 +313,6 @@ describe('seedPresetAgents', () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
-    // The Reviewer reads PR diffs via Bash (gh pr diff / gh pr view / gh api
-    // graphql reviewThreads) rather than a post_review MCP tool.
     expect(reviewer?.customPrompt).toContain('gh pr diff');
     expect(reviewer?.customPrompt?.toLowerCase()).toContain('private repos');
     expect(reviewer?.customPrompt).not.toContain('get_pr_diff');
@@ -381,10 +343,6 @@ describe('seedPresetAgents', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Exact tool sets, system prompts, instructions, and exports
-// ---------------------------------------------------------------------------
-
 describe('preset agent exact definitions', () => {
   let db: Database;
   let manager: SpaceAgentManager;
@@ -403,9 +361,6 @@ describe('preset agent exact definitions', () => {
     setModelsCache(new Map());
   });
 
-  // --- Exact tool sets ---
-
-  /** Permissive presets inherit all SDK built-ins; the seeded profile is empty. */
   const EXPECTED_CODER_TOOLS: string[] = [];
 
   const EXPECTED_QA_TOOLS = [
@@ -418,10 +373,6 @@ describe('preset agent exact definitions', () => {
     'Skill',
     'ToolSearch',
   ];
-  // Reviewer has the read-only toolset PLUS Bash (for read-only GitHub
-  // inspection and posting reviews via the gh CLI), PLUS Task/* for
-  // `general-purpose` sub-agent delegation, PLUS Cron* for scheduled follow-ups.
-  // It still has NO Write/Edit — the reviewer cannot modify the code under review.
   const EXPECTED_REVIEWER_TOOLS = [
     'Read',
     'Bash',
@@ -481,8 +432,6 @@ describe('preset agent exact definitions', () => {
     expect(qa.tools).toEqual(EXPECTED_QA_TOOLS);
   });
 
-  // --- Exact custom prompts ---
-
   it('Coder has exact custom prompt', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const coder = seeded.find((a) => a.name === 'Coder')!;
@@ -528,9 +477,6 @@ describe('preset agent exact definitions', () => {
   });
 
   it('Reviewer custom prompt matches the template exported from seed-agents', async () => {
-    // The source-of-truth for the reviewer prompt lives in seed-agents.ts.
-    // This test pins "what seeds into a Space" to "what the template says"
-    // without hard-coding the full body (which would churn on prose edits).
     const templates = getPresetAgentTemplates();
     const reviewerTemplate = templates.find((t) => t.name === 'Reviewer')!;
 
@@ -545,31 +491,20 @@ describe('preset agent exact definitions', () => {
     expect(reviewer.customPrompt).toContain('GitHub review procedure');
     expect(reviewer.customPrompt).toContain('html_url returned by GitHub');
     expect(reviewer.customPrompt).toContain('REVIEW_POSTED');
-    // The posting mechanism is the `addPullRequestReview` mutation via Bash,
-    // which returns the exact review URL (no latest-review query race). The
-    // own-PR fallback (APPROVE/REQUEST_CHANGES → COMMENT) is described in the
-    // contract.
     expect(reviewer.customPrompt).toContain('addPullRequestReview');
     expect(reviewer.customPrompt).toContain('pullRequestReview.url');
     expect(reviewer.customPrompt).toContain('own-PR fallback');
     expect(reviewer.customPrompt).toContain('COMMENT');
     expect(reviewer.customPrompt).toContain('match your verdict');
-    // The post_review MCP tool no longer exists.
     expect(reviewer.customPrompt).not.toContain('post_review');
   });
 
-  // The Reviewer writes review prose to a temp file with a QUOTED heredoc that
-  // uses a per-invocation delimiter (never a fixed public terminator), then
-  // posts via the `addPullRequestReview` GraphQL mutation with the body loaded
-  // through jq --rawfile. The old `-f body="$(heredoc)"` shell trap and the
-  // `post_review` MCP tool are gone.
   it('Reviewer custom prompt writes body files with a per-invocation heredoc and posts via the mutation', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer')!;
     const prompt = reviewer.customPrompt!;
     expect(prompt).toContain('addPullRequestReview');
     expect(prompt).toContain('per-invocation');
-    // The old shell-based posting primitives must be gone.
     expect(prompt).not.toContain('-f body=@-');
     expect(prompt).not.toContain("-f body=\"$(cat <<'EOF'");
     expect(prompt).not.toContain('gh api repos/{owner}/{repo}/pulls/{n}/reviews');
@@ -582,8 +517,6 @@ describe('preset agent exact definitions', () => {
     expect(qa.customPrompt).toContain('QA System Contract');
     expect(qa.customPrompt).toContain('trusted project QA instructions');
   });
-
-  // --- Exact descriptions ---
 
   it('each agent has the exact description from PRESET_AGENTS', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
@@ -610,12 +543,7 @@ describe('preset agent exact definitions', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// PRESET_AGENT_TOOLS export
-// ---------------------------------------------------------------------------
-
 describe('PRESET_AGENT_TOOLS export', () => {
-  /** Permissive presets have an empty visible profile; they inherit all SDK built-ins. */
   const EXPECTED_CODER_TOOLS: string[] = [];
 
   const EXPECTED_QA_TOOLS = [
@@ -628,10 +556,6 @@ describe('PRESET_AGENT_TOOLS export', () => {
     'Skill',
     'ToolSearch',
   ];
-  // Reviewer carries Bash (for read-only GitHub inspection and gh-CLI review
-  // posting) + Task/* for built-in `general-purpose` sub-agent delegation +
-  // Cron* for scheduled follow-ups. It has NO Write/Edit — it cannot modify the
-  // code under review.
   const EXPECTED_REVIEWER_TOOLS = [
     'Read',
     'Bash',
@@ -695,8 +619,6 @@ describe('PRESET_AGENT_TOOLS export', () => {
     const { seeded } = await seedPresetAgents('space-1', mgr);
 
     for (const agent of seeded) {
-      // PRESET_AGENT_TOOLS is keyed by handle; every preset handle is a
-      // single-word key (coder, reviewer, qa, …), so lookups succeed.
       const roleKey = agent.handle;
       expect(PRESET_AGENT_TOOLS[roleKey]).toBeDefined();
       expect(agent.tools).toEqual(PRESET_AGENT_TOOLS[roleKey]);
@@ -706,10 +628,6 @@ describe('PRESET_AGENT_TOOLS export', () => {
     setModelsCache(new Map());
   });
 });
-
-// ---------------------------------------------------------------------------
-// SUB_SESSION_FEATURES export
-// ---------------------------------------------------------------------------
 
 describe('SUB_SESSION_FEATURES export', () => {
   it('has exactly the expected feature flags', () => {
@@ -728,10 +646,6 @@ describe('SUB_SESSION_FEATURES export', () => {
     }
   });
 });
-
-// ---------------------------------------------------------------------------
-// getPresetAgentTemplates export
-// ---------------------------------------------------------------------------
 
 describe('getPresetAgentTemplates', () => {
   it('returns exactly 6 templates', () => {
@@ -771,16 +685,11 @@ describe('getPresetAgentTemplates', () => {
   it('template tools match PRESET_AGENT_TOOLS', () => {
     const templates = getPresetAgentTemplates();
     for (const t of templates) {
-      // PRESET_AGENT_TOOLS is keyed by handle, not display name.
       const roleKey = t.handle;
       expect(t.tools).toEqual(PRESET_AGENT_TOOLS[roleKey]);
     }
   });
 });
-
-// ===========================================================================
-// Retired preset cleanup (round-11 P2)
-// ===========================================================================
 
 describe('retireRemovedPresetAgents', () => {
   let db: Database;

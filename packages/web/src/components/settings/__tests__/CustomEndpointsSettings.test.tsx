@@ -1,11 +1,3 @@
-/**
- * Tests for CustomEndpointsSettings + presets.
- *
- * Covers pure helpers (validateEditor, parseHeaders, editorToConfig,
- * resolveCapabilities, presetToEditor) and a thin render path to verify
- * the load → list pipeline and the preset → editor flow.
- */
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, screen, waitFor, fireEvent } from '@testing-library/preact';
 
@@ -56,10 +48,8 @@ describe('CustomEndpointsSettings — helpers', () => {
   it('resolveCapabilities applies type + global defaults', () => {
     const caps = __test__.resolveCapabilities('ollama-native');
     expect(caps.streaming).toBe(true);
-    // ollama-native disables thinking + caching
     expect(caps.thinking).toBe(false);
     expect(caps.caching).toBe(false);
-    // anthropic-messages enables thinking
     expect(__test__.resolveCapabilities('anthropic-messages').thinking).toBe(true);
   });
 
@@ -112,14 +102,10 @@ describe('CustomEndpointsSettings — helpers', () => {
     m.resolved = { ...m.resolved, thinking: true };
     editor.models = [m];
     const cfg = __test__.editorToConfig(editor);
-    // Only `thinking` should be persisted as a delta since the rest match defaults.
     expect(cfg.models[0]?.capabilities).toEqual({ thinking: true });
   });
 
   it('editorToConfig preserves chatTemplateKwargs through existingToEditor round-trip', () => {
-    // A user sets chatTemplateKwargs via JSON/import. When they open the
-    // endpoint in the Providers UI and click Save (even with no edits),
-    // existingToEditor → editorToConfig must NOT drop the field.
     const original: CustomEndpointConfig = {
       id: 'qwen3',
       type: 'openai-chat',
@@ -158,8 +144,6 @@ describe('CustomEndpointsSettings — helpers', () => {
 
   it('presetToEditor carries defaultModelCapabilities onto the editor state', () => {
     const editor = __test__.presetToEditor(findPreset('openrouter')!);
-    // OpenRouter preset opts into streamUsage. Newly-added models in the
-    // editor must inherit it, not just the seeded ones.
     expect(editor.presetCapabilities?.streamUsage).toBe(true);
     const fresh = __test__.makeModelDraft(editor.type, {
       capabilities: editor.presetCapabilities,
@@ -168,36 +152,26 @@ describe('CustomEndpointsSettings — helpers', () => {
   });
 
   it('capability edits survive an endpoint type switch', () => {
-    // Simulate the editor flow: user enables `thinking` on an openai-chat
-    // model, then switches the endpoint type to ollama-native. The override
-    // must remain visible (resolved=true) instead of resetting to the
-    // type-default (false).
     const base = __test__.presetToEditor(findPreset('blank')!);
     base.id = 'x';
     base.name = 'X';
     base.baseUrl = 'http://localhost:9999';
 
-    // Initial model with no overrides
     const initial = __test__.makeModelDraft('openai-chat', { id: 'm1' });
     expect(initial.resolved.thinking).toBe(false);
 
-    // User toggles `thinking` on — simulate ModelEditor.updateCap behaviour:
-    // both `capabilities` and `resolved` must be patched.
     const edited = {
       ...initial,
       capabilities: { ...initial.capabilities, thinking: true as const },
       resolved: { ...initial.resolved, thinking: true },
     };
 
-    // Parent flips endpoint type to ollama-native — recomputes resolved from
-    // capabilities. The override must survive.
     const afterTypeChange = {
       ...edited,
       resolved: __test__.resolveCapabilities('ollama-native', edited.capabilities),
     };
     expect(afterTypeChange.resolved.thinking).toBe(true);
 
-    // Verify it persists through editorToConfig as well.
     base.type = 'ollama-native';
     base.models = [afterTypeChange];
     const cfg = __test__.editorToConfig(base);

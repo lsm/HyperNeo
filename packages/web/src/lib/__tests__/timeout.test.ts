@@ -1,11 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for Timeout Utility
- *
- * Tests only the public API: createDeferred.
- * Internal helpers (TimeoutError, withTimeout, delay, timeout, raceWithTimeout)
- * are implementation details.
- */
 
 import { createDeferred } from '../timeout';
 

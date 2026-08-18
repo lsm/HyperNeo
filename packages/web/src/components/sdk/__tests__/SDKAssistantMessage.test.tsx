@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * SDKAssistantMessage Component Tests
- *
- * Tests assistant message rendering with text, tools, and thinking blocks
- */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 import { render, cleanup, fireEvent, waitFor } from '@testing-library/preact';
@@ -12,7 +7,6 @@ import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
 import type { PendingUserQuestion, ResolvedQuestion } from '@hyperneo/shared';
 
-// Mock the utils module for copyToClipboard
 vi.mock('../../../lib/utils.ts', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../../lib/utils.ts')>();
   return {
@@ -21,7 +15,6 @@ vi.mock('../../../lib/utils.ts', async (importOriginal) => {
   };
 });
 
-// Mock the toast module
 vi.mock('../../../lib/toast.ts', () => ({
   toast: {
     success: vi.fn(),
@@ -41,10 +34,8 @@ afterEach(() => {
   cleanup();
 });
 
-// Helper to create a valid UUID
 const createUUID = (): UUID => crypto.randomUUID() as UUID;
 
-// Factory functions for test messages
 function createTextOnlyMessage(text: string): Extract<SDKMessage, { type: 'assistant' }> {
   return {
     type: 'assistant',
@@ -229,9 +220,6 @@ describe('SDKAssistantMessage', () => {
       expect(container.querySelector('[data-testid="assistant-message"]')).toBeTruthy();
     });
 
-    // Note: data-message-uuid is now set by parent SDKMessageRenderer wrapper
-    // This test is removed as the child component no longer sets this attribute
-
     it('should include message role in data attribute', () => {
       const message = createTextOnlyMessage('Hello world');
       const { container } = render(<SDKAssistantMessage message={message} />);
@@ -268,7 +256,6 @@ describe('SDKAssistantMessage', () => {
         <SDKAssistantMessage message={messageWithTimestamp as typeof message} />
       );
 
-      // Timestamp should be visible (format like "10:30")
       const timeRegex = /\d{1,2}:\d{2}/;
       expect(container.textContent).toMatch(timeRegex);
     });
@@ -279,7 +266,6 @@ describe('SDKAssistantMessage', () => {
       const message = createToolUseMessage();
       const { container } = render(<SDKAssistantMessage message={message} />);
 
-      // Tool card should be rendered
       expect(container.textContent).toContain('Read');
     });
 
@@ -298,7 +284,6 @@ describe('SDKAssistantMessage', () => {
       const message = createTaskToolMessage();
       const { container } = render(<SDKAssistantMessage message={message} />);
 
-      // SubagentBlock should show the subagent type
       expect(container.textContent).toContain('Explore');
     });
 
@@ -306,7 +291,6 @@ describe('SDKAssistantMessage', () => {
       const message = createAgentToolMessage();
       const { container } = render(<SDKAssistantMessage message={message} />);
 
-      // SubagentBlock should show the subagent type and description
       expect(container.textContent).toContain('Plan');
       expect(container.textContent).toContain('Plan the implementation');
     });
@@ -317,7 +301,6 @@ describe('SDKAssistantMessage', () => {
       const message = createThinkingMessage();
       const { container } = render(<SDKAssistantMessage message={message} />);
 
-      // ThinkingBlock should be rendered
       expect(container.querySelector('[data-testid="thinking-block"]')).toBeTruthy();
       expect(container.textContent).toContain('Thinking');
     });
@@ -329,13 +312,6 @@ describe('SDKAssistantMessage', () => {
       expect(container.textContent).toContain('Let me think about this carefully');
     });
 
-    /**
-     * Opus 4.7 (and other models running with `thinking.display = 'omitted'`)
-     * emits a thinking block with an empty `thinking` string but a
-     * signature for multi-turn continuity. The UI should treat that as
-     * "no thinking to show" and NOT render the amber card — otherwise
-     * the user sees "Thinking · 0 characters" in the transcript.
-     */
     it('should NOT render a thinking card when thinking payload is empty (Opus 4.7 case)', async () => {
       const message = {
         type: 'assistant',
@@ -359,10 +335,8 @@ describe('SDKAssistantMessage', () => {
 
       const { container } = render(<SDKAssistantMessage message={message} />);
 
-      // No thinking card at all
       expect(container.querySelector('[data-testid="thinking-block"]')).toBeNull();
       expect(container.textContent).not.toContain('0 characters');
-      // Text block still renders (async via MarkdownRenderer)
       await waitFor(() => {
         expect(container.textContent).toContain('Here is my response');
       });
@@ -398,8 +372,6 @@ describe('SDKAssistantMessage', () => {
     });
 
     it('should still render valid thinking on same-model messages (no regression)', () => {
-      // A thinking block that *has* content must still render — we only
-      // skip when the payload is empty/whitespace.
       const message = {
         type: 'assistant',
         message: {
@@ -427,8 +399,6 @@ describe('SDKAssistantMessage', () => {
     });
 
     it('should filter empty thinking blocks alongside non-empty ones', () => {
-      // Mixed: one empty thinking, one populated — only the populated
-      // one should render.
       const message = {
         type: 'assistant',
         message: {
@@ -458,8 +428,6 @@ describe('SDKAssistantMessage', () => {
     });
 
     it('should NOT render estimate-only card when no thinking blocks exist', () => {
-      // When daemon stamps estimated_thinking_tokens but SDK returns no thinking blocks,
-      // we should NOT render a "ghost" thinking card — estimates only augment existing blocks.
       const message: Extract<SDKMessage, { type: 'assistant' }> = {
         type: 'assistant',
         message: {
@@ -475,12 +443,11 @@ describe('SDKAssistantMessage', () => {
         parent_tool_use_id: null,
         uuid: 'estimate-only-uuid',
         session_id: 'test-session',
-        estimated_thinking_tokens: 5000, // Stamped by daemon
+        estimated_thinking_tokens: 5000,
       } as unknown as Extract<SDKMessage, { type: 'assistant' }>;
 
       const { container } = render(<SDKAssistantMessage message={message} />);
 
-      // No thinking card should be rendered
       expect(container.querySelector('[data-testid="thinking-block"]')).toBeNull();
     });
   });
@@ -490,7 +457,6 @@ describe('SDKAssistantMessage', () => {
       const message = createErrorMessage();
       const { container } = render(<SDKAssistantMessage message={message} />);
 
-      // Should have error styling (red background)
       expect(container.querySelector('.bg-red-50, .dark\\:bg-red-900\\/20')).toBeTruthy();
     });
 
@@ -534,10 +500,8 @@ describe('SDKAssistantMessage', () => {
       const copyButton = container.querySelector('button[title="Copy message"]');
       fireEvent.click(copyButton!);
 
-      // Wait for the async handler to complete
       await vi.waitFor(() => {
         expect(copyToClipboard).toHaveBeenCalledWith('Hello world');
-        // Button should now show "Copied!" title and green color
         const copiedButton = container.querySelector('button[title="Copied!"]');
         expect(copiedButton).toBeTruthy();
         expect(copiedButton?.className).toContain('text-green-400');
@@ -553,12 +517,9 @@ describe('SDKAssistantMessage', () => {
       const copyButton = container.querySelector('button[title="Copy message"]');
       fireEvent.click(copyButton!);
 
-      // Wait for the async handler to complete
       await vi.waitFor(() => {
         expect(copyToClipboard).toHaveBeenCalledWith('Hello world');
-        // Button should remain showing "Copy message" (not switched to Copied!)
         expect(container.querySelector('button[title="Copy message"]')).toBeTruthy();
-        // Error toast should be shown
         expect(toast.error).toHaveBeenCalledWith('Failed to copy message');
       });
     });
@@ -566,20 +527,16 @@ describe('SDKAssistantMessage', () => {
     it('should only copy text content from mixed content message', async () => {
       vi.mocked(copyToClipboard).mockResolvedValue(true);
 
-      // Message with text and tool_use blocks - only text should be copied
       const message = createMixedContentMessage();
       const { container } = render(<SDKAssistantMessage message={message} />);
 
       const copyButton = container.querySelector('button[title="Copy message"]');
       fireEvent.click(copyButton!);
 
-      // Wait for the async handler to complete
       await vi.waitFor(() => {
-        // Should only copy text blocks, filtering out tool_use blocks
         expect(copyToClipboard).toHaveBeenCalledWith(
           'I will read the file.\nThe file has been read.'
         );
-        // Button should switch to "Copied!" state
         expect(container.querySelector('button[title="Copied!"]')).toBeTruthy();
       });
     });
@@ -602,15 +559,12 @@ describe('SDKAssistantMessage', () => {
         const copyButton = container.querySelector('button[title="Copy message"]');
         fireEvent.click(copyButton!);
 
-        // Should show Copied! state
         await vi.waitFor(() => {
           expect(container.querySelector('button[title="Copied!"]')).toBeTruthy();
         });
 
-        // Advance timer past 1500ms
         vi.advanceTimersByTime(1500);
 
-        // Should revert to copy state
         await vi.waitFor(() => {
           expect(container.querySelector('button[title="Copy message"]')).toBeTruthy();
         });
@@ -660,12 +614,10 @@ describe('SDKAssistantMessage', () => {
         <SDKAssistantMessage message={message} sessionId="test-session" />
       );
 
-      // AskUserQuestion tool should be rendered
       expect(container.textContent).toContain('AskUserQuestion');
     });
 
     it('should render fallback ToolResultCard when AskUserQuestion has invalid input (no questions array)', () => {
-      // Create AskUserQuestion with missing questions array
       const message = {
         type: 'assistant',
         message: {
@@ -678,7 +630,6 @@ describe('SDKAssistantMessage', () => {
               id: 'toolu_invalid123',
               name: 'AskUserQuestion',
               input: {
-                // Missing questions array - should trigger fallback
                 invalidField: 'some value',
               },
             },
@@ -701,15 +652,12 @@ describe('SDKAssistantMessage', () => {
         />
       );
 
-      // Should render ToolResultCard without QuestionPrompt
       expect(container.textContent).toContain('AskUserQuestion');
-      // Should NOT contain QuestionPrompt elements
       expect(container.textContent).not.toContain('Claude needs your input');
       expect(container.textContent).not.toContain('Question skipped');
     });
 
     it('should render fallback ToolResultCard when AskUserQuestion has non-array questions', () => {
-      // Create AskUserQuestion with questions as non-array
       const message = {
         type: 'assistant',
         message: {
@@ -722,7 +670,6 @@ describe('SDKAssistantMessage', () => {
               id: 'toolu_nonarray123',
               name: 'AskUserQuestion',
               input: {
-                // questions is not an array - should trigger fallback
                 questions: 'not an array',
               },
             },
@@ -745,9 +692,7 @@ describe('SDKAssistantMessage', () => {
         />
       );
 
-      // Should render ToolResultCard without QuestionPrompt
       expect(container.textContent).toContain('AskUserQuestion');
-      // Should NOT contain QuestionPrompt elements
       expect(container.textContent).not.toContain('Claude needs your input');
       expect(container.textContent).not.toContain('Question skipped');
     });
@@ -761,10 +706,8 @@ describe('SDKAssistantMessage', () => {
     beforeEach(() => {
       onQuestionResolved = vi.fn();
 
-      // Setup mock resolved questions
       mockResolvedQuestions = new Map();
 
-      // Setup mock pending question
       mockPendingQuestion = {
         toolUseId: 'toolu_pending123',
         questions: [
@@ -848,7 +791,6 @@ describe('SDKAssistantMessage', () => {
           />
         );
 
-        // Question form should be visible (header is always visible)
         expect(container.textContent).toContain('Response submitted');
       });
 
@@ -864,7 +806,6 @@ describe('SDKAssistantMessage', () => {
           />
         );
 
-        // Question form should be visible
         expect(container.textContent).toContain('What should we do?');
         expect(container.textContent).toContain('Claude needs your input');
       });
@@ -881,8 +822,6 @@ describe('SDKAssistantMessage', () => {
           />
         );
 
-        // Question form should STILL be visible (header is always visible)
-        // Should show as cancelled/skipped state
         expect(container.textContent).toContain('Question skipped');
       });
 
@@ -898,8 +837,6 @@ describe('SDKAssistantMessage', () => {
           />
         );
 
-        // The question form must always be present for AskUserQuestion tools
-        // (header is always visible even when collapsed)
         expect(container.textContent).toContain('Question skipped');
       });
     });
@@ -929,7 +866,6 @@ describe('SDKAssistantMessage', () => {
           />
         );
 
-        // Header text is always visible
         expect(container.textContent).toContain('Response submitted');
       });
 
@@ -978,7 +914,6 @@ describe('SDKAssistantMessage', () => {
           />
         );
 
-        // Submit button should not be visible in resolved state
         expect(container.textContent).not.toContain('Submit Response');
       });
     });
@@ -1013,23 +948,17 @@ describe('SDKAssistantMessage', () => {
           />
         );
 
-        // Find and click submit button
         const submitButton = Array.from(container.querySelectorAll('button')).find(
           (b) => b.textContent === 'Submit Response'
         );
 
         if (submitButton) {
-          // First need to select an option
           const options = container.querySelectorAll('button');
           const createOption = Array.from(options).find((o) => o.textContent?.includes('Create'));
           createOption?.click();
 
-          // Now submit should be enabled
           submitButton.click();
         }
-
-        // Note: This tests the flow, but actual submission requires async RPC
-        // The component itself calls onQuestionResolved when submission succeeds
       });
     });
 
@@ -1047,8 +976,6 @@ describe('SDKAssistantMessage', () => {
           />
         );
 
-        // Should extract question from tool input and render QuestionPrompt
-        // (header is always visible even when collapsed)
         expect(container.textContent).toContain('Question skipped');
       });
 
@@ -1099,7 +1026,6 @@ describe('SDKAssistantMessage', () => {
           />
         );
 
-        // Should extract and render QuestionPrompt (header is always visible)
         expect(container.textContent).toContain('Question skipped');
       });
 
@@ -1152,8 +1078,6 @@ describe('SDKAssistantMessage', () => {
           />
         );
 
-        // Should extract and render QuestionPrompt with multiple questions
-        // (header is always visible even when collapsed)
         expect(container.textContent).toContain('Question skipped');
       });
     });

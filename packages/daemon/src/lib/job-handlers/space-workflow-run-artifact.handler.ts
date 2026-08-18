@@ -1,21 +1,3 @@
-/**
- * Job handlers for the `spaceWorkflowRun.sync*` queues.
- *
- * A single factory is exported that returns a `JobHandler` per queue:
- *
- *   - `spaceWorkflowRun.syncGateArtifacts`  → `git diff HEAD --numstat`
- *   - `spaceWorkflowRun.syncCommits`        → `git log <base>..HEAD --numstat`
- *   - `spaceWorkflowRun.syncFileDiff`       → `git diff HEAD -- <file>`
- *
- * Each handler resolves the worktree path for the (runId, taskId) pair, runs
- * the git command, parses the output, and upserts a cache row in
- * `workflow_run_artifact_cache`. Failures upsert an `'error'` row so the
- * frontend can render the failure instead of spinning forever.
- *
- * Once the cache is written, the handler emits a `space.artifactCache.updated`
- * event on the InternalEventBus<DaemonInternalEventMap> so the TaskArtifactsPanel can refetch from the cache.
- */
-
 import type { Job } from '../../storage/repositories/job-queue-repository';
 import type { WorkflowRunArtifactCacheRepository } from '../../storage/repositories/workflow-run-artifact-cache-repository';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
@@ -54,14 +36,9 @@ export interface SyncArtifactHandlerDeps {
 interface SyncPayload {
   runId: string;
   taskId?: string;
-  /** Required for `syncFileDiff` — relative worktree path. */
   filePath?: string;
 }
 
-/**
- * Emit a `space.artifactCache.updated` event so listeners (TaskArtifactsPanel)
- * know a cache row changed. Best-effort — emit failures do not fail the job.
- */
 function emitCacheUpdated(
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
   params: {
@@ -392,7 +369,6 @@ async function handleSyncFileDiff(
   return { ok: true, additions, deletions, truncated };
 }
 
-/** Factory returning one JobHandler per supported sync queue. */
 export function createSyncArtifactHandlers(deps: SyncArtifactHandlerDeps): {
   gateArtifacts: (job: Job) => Promise<Record<string, unknown>>;
   commits: (job: Job) => Promise<Record<string, unknown>>;
@@ -406,5 +382,4 @@ export function createSyncArtifactHandlers(deps: SyncArtifactHandlerDeps): {
   };
 }
 
-// Exported for unit tests.
 export { handleSyncGateArtifacts, handleSyncCommits, handleSyncFileDiff };

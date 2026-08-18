@@ -294,18 +294,6 @@ export class SpaceLongHorizonAgentRepository {
     return rows.map(rowToReminder);
   }
 
-  /**
-   * Active reminders that are due (`next_run_at <= now`) for agents whose
-   * status is 'active' AND whose owning space is active and not paused/stopped.
-   * Powers the reminder-fire scanner job — the partial index
-   * `idx_space_lh_agent_reminders_due` (status='active') serves the reminder-
-   * side predicate; the agent/space joins skip reminders whose owner or space
-   * is not in a deliverable lifecycle state.
-   *
-   * `excludeIds` lets a single scan page past reminders it has already
-   * attempted this tick, so a batch of poison (always-failing) reminders
-   * cannot indefinitely block later, healthy ones.
-   */
   listDueReminders(
     now: number,
     limit = 100,
@@ -329,14 +317,6 @@ export class SpaceLongHorizonAgentRepository {
     return rows.map(rowToReminder);
   }
 
-  /**
-   * Compare-and-swap advance of a reminder after it has fired. Only applies if
-   * the reminder is still 'active' and its `next_run_at` still matches the
-   * value the scanner read — a concurrent pause/reschedule/cancel wins and the
-   * caller sees `applied=false`. For cron reminders `nextRunAt` is recomputed
-   * from the expression (status stays 'active'); for one-shot 'at' reminders
-   * the caller passes `status='fired'` and a null `nextRunAt`.
-   */
   advanceReminderAfterFire(
     id: string,
     expectedNextRunAt: number,
@@ -363,14 +343,6 @@ export class SpaceLongHorizonAgentRepository {
     return result.changes > 0;
   }
 
-  /**
-   * Active reminders with a NULL `next_run_at` — rows created before the
-   * scanner existed (the create paths now seed it). Used by the startup
-   * backfill so pre-existing reminders become schedulable. Intentionally does
-   * NOT filter on agent status: a paused/disabled agent's reminder still needs
-   * its `next_run_at` seeded so it fires when the agent returns to active; the
-   * due-query gates firing on agent/space state at fire time.
-   */
   listActiveRemindersWithNullNextRunAt(): SpaceLongHorizonAgentReminder[] {
     const rows = this.db
       .prepare(
@@ -381,11 +353,6 @@ export class SpaceLongHorizonAgentRepository {
     return rows.map(rowToReminder);
   }
 
-  /**
-   * Set `next_run_at` unconditionally (backfill path). Distinct from
-   * `advanceReminderAfterFire` (a CAS) because these rows have a NULL
-   * `next_run_at` the CAS cannot match.
-   */
   setReminderNextRunAt(id: string, nextRunAt: number): void {
     this.db
       .prepare(

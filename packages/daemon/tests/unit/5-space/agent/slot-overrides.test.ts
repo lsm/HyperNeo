@@ -33,7 +33,6 @@ describe('buildSlotOverrides', () => {
       makeSlot({ customPrompt: { value: 'Slot prompt' }, replaceAgentPrompt: false })
     );
 
-    // Passthrough — the resolution layer treats only `=== true` as replace.
     expect(overrides.replaceAgentPrompt).toBe(false);
   });
 
@@ -71,10 +70,6 @@ describe('buildSlotOverrides', () => {
   });
 
   it('ignores legacy systemPrompt/instructions in replace mode (empty replace = bare contract)', () => {
-    // A pre-migration slot may carry hidden systemPrompt/instructions that the editor
-    // does not surface. In replace mode those must NOT be folded into the replacement
-    // text — otherwise the agent prompt is replaced with text the user never opted into
-    // instead of the bare SDK contract the UI warns about.
     const legacySlot = makeSlot({
       customPrompt: undefined,
       replaceAgentPrompt: true,

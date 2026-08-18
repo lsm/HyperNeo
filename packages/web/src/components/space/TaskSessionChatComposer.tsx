@@ -18,12 +18,10 @@ interface TaskSessionChatComposerProps {
   selectedTargetId: string | null;
   canSend: boolean;
   isSending: boolean;
-  /** @deprecated isProcessing is now computed from the targeted agent's activity */
   isProcessing?: boolean;
   autoScroll: boolean;
   errorMessage?: string | null;
   activityMembers: SpaceTaskActivityMember[];
-  /** Workflow-defined default model per agent name (agentName -> modelId) */
   defaultAgentModels?: Map<string, string>;
   taskId: string;
   onAutoScrollChange: (enabled: boolean) => void;
@@ -36,7 +34,6 @@ interface TaskSessionChatComposerProps {
     images?: MessageImage[],
     deliveryMode?: MessageDeliveryMode
   ) => Promise<boolean>;
-  /** Forwarded to ChatComposer/MessageInput so the thread column can own the drop zone. */
   registerDropTarget?: RegisterFileDropTarget;
 }
 
@@ -127,7 +124,6 @@ export function TaskSessionChatComposer({
     defaultAgentModels,
   });
 
-  // Return the boolean so MessageInput can restore the draft when sending fails
   const handleSend = async (
     content: string,
     images?: MessageImage[],
@@ -230,9 +226,6 @@ export function TaskSessionChatComposer({
         sessionId={targetSessionId ?? ''}
         readonly={false}
         isProcessing={targetIsProcessing}
-        // The task thread now honors deferred (Queue) delivery through
-        // sendThreadMessage → space.task.sendMessage, so Queue controls are
-        // available alongside the Steer button.
         supportsQueueDelivery
         thinkingLevel={thinkingLevel}
         features={{

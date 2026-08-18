@@ -1,11 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for the global "recording elsewhere" indicator: renders only while a
- * live recording is not visible on the rendering surface (its owning composer
- * mounted there, or orphaned for the displayed session), hides behind an open
- * overlay (which renders its own in-panel instance), and navigates back to
- * the recording's session through its OWNING surface on click.
- */
 import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -96,9 +89,7 @@ import {
   navigateToSpaceTask,
 } from '../../../lib/router.ts';
 
-/** Render the base (MainContent) instance. */
 const renderBase = () => render(<VoiceRecordingIndicator />);
-/** Render the in-overlay instance inside the overlay's surface context. */
 const renderInOverlay = () =>
   render(
     <VoiceSurfaceContext.Provider value={{ surfaceId: 'agent-overlay', spaceId: 'space-9' }}>
@@ -131,7 +122,6 @@ describe('VoiceRecordingIndicator', () => {
 
   afterEach(() => {
     cleanup();
-    // Leave the composer registry pristine for the next test.
     voiceRecorderStore.recordingOwnerId.value = null;
     unregisterVoiceComposer('owner-base');
     unregisterVoiceComposer('owner-overlay');
@@ -145,7 +135,6 @@ describe('VoiceRecordingIndicator', () => {
   it('renders nothing when the displayed session shows an orphaned recording (it adopts)', () => {
     voiceRecorderStore.isRecording.value = true;
     voiceRecorderStore.recordingSessionId.value = 'session-current';
-    // The displayed composer displays the recording's session and may adopt.
     registerVoiceComposer('owner-base', {
       surfaceId: 'primary',
       sessionId: 'session-current',
@@ -158,9 +147,6 @@ describe('VoiceRecordingIndicator', () => {
   it('keeps the chip when the only same-session composer refuses adoption (mid-transcription)', () => {
     voiceRecorderStore.isRecording.value = true;
     voiceRecorderStore.recordingSessionId.value = 'session-current';
-    // The displayed composer is mid-transcription: adoption is deliberately
-    // disabled, so the orphaned recording is NOT visible here — the chip is
-    // the only Return affordance while the capture continues.
     registerVoiceComposer('owner-base', {
       surfaceId: 'primary',
       sessionId: 'session-current',
@@ -214,7 +200,6 @@ describe('VoiceRecordingIndicator', () => {
   it('treats a Space session view as the displayed session (no chip, space-aware return)', () => {
     voiceRecorderStore.isRecording.value = true;
     voiceRecorderStore.recordingSessionId.value = 'space-session-1';
-    // A Space session view leaves the primary signal null and keys by space id.
     routerState.currentSessionId = null;
     routerState.spaceSessionId = 'space-session-1';
     routerState.spaceId = 'space-9';
@@ -230,8 +215,6 @@ describe('VoiceRecordingIndicator', () => {
   it('returns through the recording Space when a recording is elsewhere while a Space view is open', () => {
     voiceRecorderStore.isRecording.value = true;
     voiceRecorderStore.recordingSessionId.value = 'space-session-2';
-    // Stamp captured at recording start in space-9 — routing follows the
-    // recording's OWNING surface, not the displayed one.
     voiceRecorderStore.recordingSpaceId.value = 'space-9';
     routerState.currentSessionId = null;
     routerState.spaceSessionId = 'space-session-1';
@@ -255,15 +238,12 @@ describe('VoiceRecordingIndicator', () => {
     expect(navigateToSpaceTask).toHaveBeenCalledWith('space-9', 'task-42', 'thread', false);
     expect(navigateToSpaceSession).not.toHaveBeenCalled();
     expect(navigateToSession).not.toHaveBeenCalled();
-    // The task thread must restore this target as recipient, or a non-default
-    // agent's recording could never be adopted.
     expect(voiceReturnTaskTargetSessionSignal.value).toBe('task-agent-session');
   });
 
   it('routes a primary-chat recording through the chat route even while a Space is displayed', () => {
     voiceRecorderStore.isRecording.value = true;
     voiceRecorderStore.recordingSessionId.value = 'session-other';
-    // No owning space (primary-chat recording); user is viewing space-9.
     routerState.currentSessionId = null;
     routerState.spaceSessionId = 'space-session-1';
     routerState.spaceId = 'space-9';
@@ -292,15 +272,10 @@ describe('VoiceRecordingIndicator', () => {
     routerState.spaceId = 'space-9';
     routerState.overlaySessionId = 'overlay-session-7';
     renderInOverlay();
-    // The overlay displays a DIFFERENT session — the base recording is
-    // elsewhere and the chip must offer a return.
     expect(screen.getByTestId('voice-recording-elsewhere')).toBeTruthy();
   });
 
   it('shows the in-overlay chip when the overlay displays a recording owned by the base composer', () => {
-    // The finding-4 case: a Space task composer owns a recording for agent
-    // session S; the overlay opens S. The overlay composer cannot adopt (the
-    // base still owns), so the recording would be invisible without the chip.
     voiceRecorderStore.isRecording.value = true;
     voiceRecorderStore.recordingSessionId.value = 'overlay-session-7';
     voiceRecorderStore.recordingOwnerId.value = 'owner-base';
@@ -316,8 +291,6 @@ describe('VoiceRecordingIndicator', () => {
     renderInOverlay();
     const chip = screen.getByTestId('voice-recording-elsewhere');
     expect(chip).toBeTruthy();
-    // The accessible name must match the visible "in this session" wording —
-    // a fixed "another session" label would mislead screen-reader users.
     expect(chip.getAttribute('aria-label')).toContain('in this session');
   });
 
@@ -380,18 +353,12 @@ describe('VoiceRecordingIndicator', () => {
     routerState.overlaySessionId = 'overlay-session-7';
     renderInOverlay();
     fireEvent.click(screen.getByTestId('voice-recording-elsewhere'));
-    // Synchronous signal clear (no async history.back()) + replace=true so
-    // the overlay's still-top history entry is consumed, not stacked under.
     expect(clearOverlaySignals).toHaveBeenCalledTimes(1);
     expect(closeOverlayHistory).not.toHaveBeenCalled();
     expect(navigateToSpaceSession).toHaveBeenCalledWith('space-9', 'space-session-2', true);
   });
 
   it('pops the duplicate overlay entry when the destination URL already matches', () => {
-    // Recording belongs to the base Space session UNDER a different overlay:
-    // overlays keep the base URL, so the target path equals the current one
-    // and the navigate fast-path would perform no history write — the chip
-    // must pop the overlay's duplicate entry instead of relying on replace.
     voiceRecorderStore.isRecording.value = true;
     voiceRecorderStore.recordingSessionId.value = 'space-session-1';
     voiceRecorderStore.recordingSpaceId.value = 'space-9';
@@ -404,15 +371,10 @@ describe('VoiceRecordingIndicator', () => {
     fireEvent.click(screen.getByTestId('voice-recording-elsewhere'));
     expect(closeOverlayHistory).toHaveBeenCalledTimes(1);
     expect(clearOverlaySignals).not.toHaveBeenCalled();
-    // Navigation still runs (its same-path branch sets route signals without
-    // a history write) with replace requested for the consumed entry.
     expect(navigateToSpaceSession).toHaveBeenCalledWith('space-9', 'space-session-1', true);
   });
 
   it('pops a task same-path overlay entry (thread view matches the navigation)', () => {
-    // The task thread's URL already matches (overlay keeps the base /thread
-    // URL); the comparison path must use the 'thread' view or this entry is
-    // missed and never popped, leaving a ghost Back entry.
     voiceRecorderStore.isRecording.value = true;
     voiceRecorderStore.recordingSessionId.value = 'task-agent-session';
     voiceRecorderStore.recordingSpaceId.value = 'space-9';
@@ -434,7 +396,7 @@ describe('VoiceRecordingIndicator', () => {
     voiceRecorderStore.recordingSessionId.value = 'space-session-2';
     voiceRecorderStore.recordingSpaceId.value = 'space-9';
     routerState.currentSessionId = null;
-    routerState.spaceSessionId = null; // cleared on overview/task pages
+    routerState.spaceSessionId = null;
     routerState.spaceId = 'space-9';
     renderBase();
     fireEvent.click(screen.getByTestId('voice-recording-elsewhere'));

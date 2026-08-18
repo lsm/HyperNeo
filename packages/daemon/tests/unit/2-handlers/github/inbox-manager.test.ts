@@ -4,10 +4,6 @@ import type { Database } from '../../../../src/storage/database';
 import type { GitHubEvent, InboxItem, SecurityCheckResult } from '@hyperneo/shared';
 import { mock } from 'bun:test';
 
-// ============================================================================
-// Test Data Factories
-// ============================================================================
-
 function createGitHubEvent(overrides: Partial<GitHubEvent> = {}): GitHubEvent {
   return {
     id: 'event-123',
@@ -75,10 +71,6 @@ function createMockDatabase(): Database {
     countInboxItemsByStatus: mock(() => 1),
   } as unknown as Database;
 }
-
-// ============================================================================
-// InboxManager Tests
-// ============================================================================
 
 describe('InboxManager', () => {
   let mockDb: Database;

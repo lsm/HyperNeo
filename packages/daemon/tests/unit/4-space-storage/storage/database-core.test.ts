@@ -1,10 +1,3 @@
-/**
- * DatabaseCore Unit Tests
- *
- * Unit tests for the core database infrastructure.
- * Tests initialization, configuration, backup, and close operations.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -17,14 +10,12 @@ describe('DatabaseCore', () => {
   let dbCore: DatabaseCore;
 
   beforeEach(() => {
-    // Create unique test directory for each test
     testDir = join(tmpdir(), `db-core-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     mkdirSync(testDir, { recursive: true });
     dbPath = join(testDir, 'test.db');
   });
 
   afterEach(() => {
-    // Cleanup test directory
     try {
       if (dbCore) {
         try {
@@ -47,7 +38,6 @@ describe('DatabaseCore', () => {
 
     it('should not open database until initialize() is called', () => {
       dbCore = new DatabaseCore(dbPath);
-      // Database file should not exist yet
       expect(existsSync(dbPath)).toBe(false);
     });
   });
@@ -83,7 +73,7 @@ describe('DatabaseCore', () => {
 
       const db = dbCore.getDb();
       const result = db.prepare('PRAGMA synchronous').get() as { synchronous: number };
-      expect(result.synchronous).toBe(1); // NORMAL = 1
+      expect(result.synchronous).toBe(1);
     });
 
     it('should set busy timeout to reduce SQLITE_BUSY write failures', async () => {
@@ -110,7 +100,6 @@ describe('DatabaseCore', () => {
 
       const db = dbCore.getDb();
 
-      // Check that sessions table exists
       const tables = db
         .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'")
         .all();
@@ -121,7 +110,6 @@ describe('DatabaseCore', () => {
       dbCore = new DatabaseCore(dbPath);
       await dbCore.initialize();
 
-      // Should not throw
       await dbCore.initialize();
     });
   });
@@ -134,7 +122,6 @@ describe('DatabaseCore', () => {
       const db = dbCore.getDb();
       expect(db).toBeDefined();
 
-      // Should be able to execute queries
       const result = db.prepare('SELECT 1 as value').get() as { value: number };
       expect(result.value).toBe(1);
     });
@@ -162,7 +149,6 @@ describe('DatabaseCore', () => {
 
       dbCore.close();
 
-      // After close, operations should fail
       expect(() => db.prepare('SELECT 1').get()).toThrow();
     });
 
@@ -171,22 +157,19 @@ describe('DatabaseCore', () => {
       await dbCore.initialize();
 
       const db = dbCore.getDb();
-      // Write data to ensure WAL frames are created
       db.exec(`
 				INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata)
 				VALUES ('wal-close-test', 'WAL Close Test', '/test', datetime('now'), datetime('now'), 'active', '{}', '{}')
 			`);
 
       dbCore.close();
-      dbCore = null as unknown as typeof dbCore; // prevent double-close in afterEach
+      dbCore = null as unknown as typeof dbCore;
 
-      // After a TRUNCATE checkpoint, the WAL file should be zero bytes or absent
       const walPath = dbPath + '-wal';
       if (existsSync(walPath)) {
         const { size } = statSync(walPath);
         expect(size).toBe(0);
       }
-      // Lock file should be released
       expect(existsSync(dbPath + '.lock')).toBe(false);
     });
 
@@ -197,7 +180,7 @@ describe('DatabaseCore', () => {
       expect(existsSync(dbPath + '.lock')).toBe(true);
 
       dbCore.close();
-      dbCore = null as unknown as typeof dbCore; // prevent double-close in afterEach
+      dbCore = null as unknown as typeof dbCore;
 
       expect(existsSync(dbPath + '.lock')).toBe(false);
     });
@@ -205,25 +188,20 @@ describe('DatabaseCore', () => {
 
   describe('backup creation', () => {
     it('should create backup directory during initialization with existing db', async () => {
-      // First, create a database
       dbCore = new DatabaseCore(dbPath);
       await dbCore.initialize();
 
-      // Insert some data (using the correct schema)
       const db = dbCore.getDb();
       db.exec(`
 				INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata)
 				VALUES ('test-id', 'Test Session', '/test', datetime('now'), datetime('now'), 'active', '{}', '{}')
 			`);
 
-      // Close and reopen - this should trigger backup during migrations
       dbCore.close();
 
-      // Reopen with same path - migrations will check for backup
       dbCore = new DatabaseCore(dbPath);
       await dbCore.initialize();
 
-      // Backup directory should exist
       const backupDir = join(testDir, 'backups');
       expect(existsSync(backupDir)).toBe(true);
     });
@@ -239,16 +217,13 @@ describe('DatabaseCore', () => {
 			`);
       dbCore.close();
 
-      // Reopen multiple times to create multiple backups
       for (let i = 0; i < 5; i++) {
-        // Wait a bit to ensure different timestamps
         await new Promise((resolve) => setTimeout(resolve, 10));
         dbCore = new DatabaseCore(dbPath);
         await dbCore.initialize();
         dbCore.close();
       }
 
-      // Check backup count
       const backupDir = join(testDir, 'backups');
       if (existsSync(backupDir)) {
         const backups = readdirSync(backupDir).filter(
@@ -267,7 +242,6 @@ describe('DatabaseCore', () => {
       const db = dbCore.getDb();
       expect(db).toBeDefined();
 
-      // Should be able to execute queries
       const result = db.prepare('SELECT 1 as value').get() as { value: number };
       expect(result.value).toBe(1);
     });
@@ -278,7 +252,6 @@ describe('DatabaseCore', () => {
 
       const db = dbCore.getDb();
 
-      // Check that sessions table exists
       const tables = db
         .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'")
         .all();
@@ -288,13 +261,8 @@ describe('DatabaseCore', () => {
 
   describe('error handling', () => {
     it('should handle invalid path gracefully', async () => {
-      // This should work - the directory will be created
-      // Use process.env.TMPDIR to support custom temp directory setups
       const tmpBase = (process.env.TMPDIR || '/tmp').replace(/\/$/, '');
       const invalidPath = `${tmpBase}/test-db-core-invalid`;
-      // The test doesn't use the `testDir` helper so ensure leftover state
-      // from a previous run can't poison a fresh initialize (the migration
-      // pipeline assumes tables match current schema).
       rmSync(invalidPath, { recursive: true, force: true });
       dbCore = new DatabaseCore(`${invalidPath}/test.db`);
       await dbCore.initialize();
@@ -351,19 +319,15 @@ describe('DatabaseCore', () => {
       dbCore = new DatabaseCore(dbPath);
       await dbCore.initialize();
 
-      // Write some data to trigger WAL
       const db = dbCore.getDb();
       db.exec(`
 				INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata)
 				VALUES ('wal-test', 'WAL Test', '/test', datetime('now'), datetime('now'), 'active', '{}', '{}')
 			`);
 
-      // WAL file should exist (or be created on write)
       const walPath = dbPath + '-wal';
       const shmPath = dbPath + '-shm';
 
-      // Note: WAL files may not exist immediately after write
-      // This test just verifies WAL mode is enabled (tested separately)
       expect(existsSync(dbPath)).toBe(true);
     });
   });
@@ -379,9 +343,6 @@ describe('DatabaseCore', () => {
 				VALUES ('concurrent-1', 'Concurrent Test', '/test', datetime('now'), datetime('now'), 'active', '{}', '{}')
 			`);
 
-      // Lock file is held by dbCore. A second DatabaseCore in the same process
-      // can open the file (same-process bypass), but in production only one
-      // DatabaseCore exists — cross-process attempts are blocked by the lock file.
       const dbCore2 = new DatabaseCore(dbPath);
       await dbCore2.initialize();
       const db2 = dbCore2.getDb();
@@ -403,14 +364,12 @@ describe('DatabaseCore', () => {
 
       const db = dbCore.getDb();
 
-      // Check that expected tables exist
       const tables = db
         .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
         .all() as { name: string }[];
 
       const tableNames = tables.map((t) => t.name);
 
-      // Core tables should exist
       expect(tableNames).toContain('sessions');
       expect(tableNames).toContain('sdk_messages');
       expect(tableNames).toContain('auth_config');

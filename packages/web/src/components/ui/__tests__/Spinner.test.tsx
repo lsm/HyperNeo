@@ -1,7 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for Spinner Component
- */
 
 import { render } from '@testing-library/preact';
 import { describe, it, expect } from 'vitest';

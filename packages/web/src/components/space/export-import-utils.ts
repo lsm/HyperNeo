@@ -1,19 +1,11 @@
-/**
- * Shared utilities for Space export/import UI actions.
- */
-
 import type { SpaceExportBundle } from '@hyperneo/shared';
 
-/**
- * Triggers a browser file download for a JSON bundle.
- * Filename pattern: `{spaceName}-{type}-{date}.hyperneo.json`
- */
 export function downloadBundle(
   bundle: SpaceExportBundle,
   spaceName: string,
   type: 'agents' | 'workflows' | 'bundle'
 ): void {
-  const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const date = new Date().toISOString().slice(0, 10);
   const safeName = spaceName.replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
   const filename = `${safeName}-${type}-${date}.hyperneo.json`;
 
@@ -30,10 +22,6 @@ export function downloadBundle(
   URL.revokeObjectURL(url);
 }
 
-/**
- * Opens a file picker and resolves with the parsed JSON, or null if cancelled
- * or the file is invalid.
- */
 export function pickImportFile(): Promise<SpaceExportBundle | null> {
   return new Promise((resolve) => {
     let resolved = false;
@@ -67,12 +55,9 @@ export function pickImportFile(): Promise<SpaceExportBundle | null> {
       reader.readAsText(file);
     };
 
-    // Cancelled without picking
     input.oncancel = () => done(null);
 
-    // Some browsers don't fire oncancel; detect via focus returning to window
     const handleFocus = () => {
-      // Small delay so the onchange fires first if a file was selected
       setTimeout(() => {
         if (!input.files?.length) done(null);
       }, 300);

@@ -1,9 +1,3 @@
-/**
- * Tests for refreshGlmDisplayName — backfills the persisted GLM provider
- * display_name to "Z.ai" for existing installs whose seeded row still carries a
- * prior default label. Display-name-only and idempotent.
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { unlinkSync } from 'node:fs';
 import { Database } from '../../../../src/storage';
@@ -31,7 +25,6 @@ describe('refreshGlmDisplayName', () => {
     }
   });
 
-  /** Seed a built-in glm provider row with the given display name. */
   function seedGlm(displayName: string): void {
     db.providers.createProvider({
       providerId: 'glm',

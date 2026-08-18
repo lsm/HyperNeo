@@ -1,14 +1,3 @@
-/**
- * Migration 71 Tests
- *
- * Migration 71: Fix corrupted schedule values in the goals table.
- * - Wraps bare cron strings (e.g. "@daily") into {"expression":"@daily","timezone":"UTC"}
- * - Leaves already-valid JSON schedule objects unchanged
- * - Handles null schedule correctly (no-op)
- * - Is idempotent (running twice doesn't change anything)
- * - Handles JSON-quoted strings (valid JSON but wrong shape) by wrapping them
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigration71 } from '../../../../../src/storage/schema/migrations';
@@ -126,7 +115,6 @@ describe('Migration 71: Fix corrupted schedule values in goals table', () => {
 
   test('handles a JSON-quoted string like "@daily" by wrapping it', () => {
     createGoalsTable(db);
-    // This is valid JSON (a string), but not the expected object shape
     insertGoal(db, 'goal-6', '"@daily"');
 
     runMigration71(db);

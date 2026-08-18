@@ -1,15 +1,8 @@
 // @ts-nocheck
-/**
- * Tests for StateChannel and DeltaMergers
- *
- * Tests the StateChannel class for client-side state synchronization
- * and the DeltaMergers helper utilities.
- */
 
 import { StateChannel, DeltaMergers } from '../state-channel';
 import type { MessageHub } from '@hyperneo/shared';
 
-// Create mock MessageHub
 function createMockHub() {
   return {
     request: vi.fn(() => Promise.resolve(null)),
@@ -92,11 +85,10 @@ describe('StateChannel', () => {
     });
 
     it('should return true when sync time exceeds maxAge', async () => {
-      // Manually set lastSync via reflection
       const privateChannel = channel as unknown as {
         lastSync: { value: number };
       };
-      privateChannel.lastSync.value = Date.now() - 120000; // 2 minutes ago
+      privateChannel.lastSync.value = Date.now() - 120000;
 
       expect(channel.isStale(60000)).toBe(true);
     });
@@ -105,7 +97,7 @@ describe('StateChannel', () => {
       const privateChannel = channel as unknown as {
         lastSync: { value: number };
       };
-      privateChannel.lastSync.value = Date.now() - 30000; // 30 seconds ago
+      privateChannel.lastSync.value = Date.now() - 30000;
 
       expect(channel.isStale(60000)).toBe(false);
     });
@@ -246,7 +238,6 @@ describe('StateChannel', () => {
         data: 'optimistic',
       }));
 
-      // Wait for timeout
       await new Promise((resolve) => setTimeout(resolve, 150));
 
       expect(channel.value).toEqual({ data: 'initial' });
@@ -261,7 +252,6 @@ describe('StateChannel', () => {
       );
 
       await confirmed;
-      // Small delay for microtask
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(channel.value).toEqual({ data: 'optimistic' });
@@ -272,23 +262,17 @@ describe('StateChannel', () => {
       channel.updateOptimistic(
         'update-1',
         (current) => ({ ...current, data: 'optimistic' }),
-        confirmed.catch(() => {}) // Prevent unhandled rejection
+        confirmed.catch(() => {})
       );
 
-      // Small delay for microtask
       await new Promise((resolve) => setTimeout(resolve, 10));
-
-      // Should revert (or still be optimistic if not yet processed)
-      // The actual revert happens in catch handler
     });
 
     it('should no-op when state is null', () => {
       channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel');
 
-      // Should not throw when state is null
       channel.updateOptimistic('update-1', (current) => current);
 
-      // Value should remain null
       expect(channel.value).toBeNull();
     });
   });
@@ -325,7 +309,6 @@ describe('StateChannel - Optimistic Subscriptions', () => {
     });
     await channel.start();
 
-    // Should have subscribed to both main channel and delta channel
     expect(mockHub.onEvent).toHaveBeenCalledTimes(2);
     expect(mockHub.onEvent).toHaveBeenCalledWith('test.channel', expect.any(Function));
     expect(mockHub.onEvent).toHaveBeenCalledWith('test.channel.delta', expect.any(Function));
@@ -336,7 +319,6 @@ describe('StateChannel - Optimistic Subscriptions', () => {
   it('should handle delta updates by calling mergeDelta', async () => {
     mockHub.request.mockImplementation(() => Promise.resolve({ count: 0 }));
 
-    // Capture the delta handler
     let deltaHandler: ((delta: unknown) => void) | null = null;
     mockHub.onEvent.mockImplementation((channel, handler) => {
       if (channel.includes('.delta')) {
@@ -355,7 +337,6 @@ describe('StateChannel - Optimistic Subscriptions', () => {
     });
     await channel.start();
 
-    // Simulate receiving a delta update
     expect(deltaHandler).not.toBeNull();
     if (deltaHandler) {
       deltaHandler({ increment: 5 });
@@ -386,12 +367,10 @@ describe('StateChannel - Optimistic Subscriptions', () => {
     });
     await channel.start();
 
-    // Simulate receiving a delta update when state is null - should not throw
     if (deltaHandler) {
       deltaHandler({ increment: 5 });
     }
 
-    // mergeFn should NOT have been called since state is null
     expect(mergeFn).not.toHaveBeenCalled();
 
     await channel.stop();
@@ -408,15 +387,12 @@ describe('StateChannel - Non-Blocking Mode', () => {
   it('should setup subscriptions in background when nonBlocking is true', async () => {
     mockHub.request.mockImplementation(() => Promise.resolve({ data: 'test' }));
 
-    // onEvent is synchronous, so this test just verifies it doesn't throw
     const channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel', {
       nonBlocking: true,
     });
 
-    // Start should return successfully
     await channel.start();
 
-    // The key is that start() returns without waiting
     expect(channel.value).toEqual({ data: 'test' });
 
     await channel.stop();
@@ -444,7 +420,6 @@ describe('StateChannel - Reconnection Handling', () => {
   it('should refresh state on reconnection', async () => {
     mockHub.request.mockImplementation(() => Promise.resolve({ data: 'initial' }));
 
-    // Capture the onConnection handler
     let connectionHandler: ((state: string) => void) | null = null;
     mockHub.onConnection.mockImplementation((handler) => {
       connectionHandler = handler;
@@ -456,14 +431,12 @@ describe('StateChannel - Reconnection Handling', () => {
 
     expect(channel.value).toEqual({ data: 'initial' });
 
-    // Simulate reconnection with new data
     mockHub.request.mockImplementation(() => Promise.resolve({ data: 'reconnected' }));
 
     if (connectionHandler) {
       connectionHandler('connected');
     }
 
-    // Wait for async refresh
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     expect(channel.value).toEqual({ data: 'reconnected' });
@@ -531,7 +504,6 @@ describe('StateChannel - Auto Refresh', () => {
     });
     await channel.start();
 
-    // Only initial call
     expect(mockHub.request).toHaveBeenCalledTimes(1);
 
     await channel.stop();
@@ -550,7 +522,6 @@ describe('StateChannel - Auto Refresh', () => {
 
     const callCountAfterStop = mockHub.request.mock.calls.length;
 
-    // Advance time - should NOT trigger more calls
     vi.advanceTimersByTime(5000);
 
     expect(mockHub.request).toHaveBeenCalledTimes(callCountAfterStop);
@@ -563,7 +534,6 @@ describe('StateChannel - Auto Refresh', () => {
     const channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel');
     await channel.start();
 
-    // Immediately after start, should not be stale
     expect(channel.isStale(60000)).toBe(false);
 
     await channel.stop();
@@ -575,7 +545,6 @@ describe('StateChannel - Auto Refresh', () => {
     const channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel');
     await channel.start();
 
-    // With a very small maxAge, should be stale
     expect(channel.isStale(0)).toBe(true);
 
     await channel.stop();
@@ -590,7 +559,6 @@ describe('StateChannel - Reconnection Replaces State', () => {
   });
 
   it('should replace state with new snapshot on reconnection', async () => {
-    // Initial state with SDK messages
     const initialMessages = [
       { uuid: '1', timestamp: 100, content: 'msg1' },
       { uuid: '2', timestamp: 200, content: 'msg2' },
@@ -607,11 +575,9 @@ describe('StateChannel - Reconnection Replaces State', () => {
     const channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel');
     await channel.start();
 
-    // Verify initial state
     const initialResult = channel.value as { sdkMessages: Array<Record<string, unknown>> };
     expect(initialResult.sdkMessages).toHaveLength(2);
 
-    // Simulate reconnection with new messages
     const reconnectMessages = [
       { uuid: '2', timestamp: 200, content: 'msg2-updated' },
       { uuid: '3', timestamp: 300, content: 'msg3' },
@@ -623,10 +589,8 @@ describe('StateChannel - Reconnection Replaces State', () => {
       connectionHandler('connected');
     }
 
-    // Wait for async refresh
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    // hybridRefresh does a full replace, not merge
     const result = channel.value as { sdkMessages: Array<Record<string, unknown>> };
     expect(result.sdkMessages).toHaveLength(2);
     expect(result.sdkMessages.map((m) => m.uuid)).toEqual(['2', '3']);
@@ -650,7 +614,6 @@ describe('StateChannel - Session-scoped Channels', () => {
     });
     await channel.start();
 
-    // Should include sessionId in call data (2nd parameter)
     expect(mockHub.request).toHaveBeenCalledWith('test.channel', { sessionId: 'session-123' });
 
     await channel.stop();
@@ -664,7 +627,6 @@ describe('StateChannel - Session-scoped Channels', () => {
     });
     await channel.start();
 
-    // Should not include sessionId in call data for global channels
     expect(mockHub.request).toHaveBeenCalledWith('test.channel', {});
 
     await channel.stop();
@@ -687,7 +649,6 @@ describe('StateChannel - Non-Blocking Subscription Errors', () => {
 
     await channel.start();
 
-    // onEvent is synchronous, so no error handling needed
     await channel.stop();
   });
 });
@@ -700,7 +661,6 @@ describe('StateChannel - Incremental Sync', () => {
   });
 
   it('should merge SDK messages when fetching with since parameter', async () => {
-    // First fetch returns initial messages
     mockHub.request.mockImplementationOnce(() =>
       Promise.resolve({
         sdkMessages: [
@@ -716,7 +676,6 @@ describe('StateChannel - Incremental Sync', () => {
 
     await channel.start();
 
-    // Manually call fetchSnapshot with since parameter to trigger merge
     mockHub.request.mockImplementationOnce(() =>
       Promise.resolve({
         sdkMessages: [
@@ -726,13 +685,11 @@ describe('StateChannel - Incremental Sync', () => {
       })
     );
 
-    // Access private method to test incremental sync
     const privateChannel = channel as unknown as {
       fetchSnapshot: (since?: number) => Promise<void>;
     };
     await privateChannel.fetchSnapshot(100);
 
-    // Should have merged messages
     const result = channel.value?.sdkMessages;
     expect(result).toHaveLength(3);
     expect(result?.[0].uuid).toBe('msg-1');
@@ -766,7 +723,6 @@ describe('StateChannel - Incremental Sync', () => {
     };
     await privateChannel.fetchSnapshot(100);
 
-    // Messages without UUID should not be deduplicated
     await channel.stop();
   });
 });
@@ -793,7 +749,6 @@ describe('StateChannel - Full Subscription Callbacks', () => {
 
     expect(fullUpdateCallback).not.toBeNull();
 
-    // Simulate full update
     fullUpdateCallback?.({ data: 'updated' });
 
     expect(channel.value).toEqual({ data: 'updated' });
@@ -825,7 +780,6 @@ describe('StateChannel - Full Subscription Callbacks', () => {
 
     expect(deltaCallback).not.toBeNull();
 
-    // Simulate delta update
     deltaCallback?.({ increment: 5 });
 
     expect(mergeFn).toHaveBeenCalledWith({ count: 0 }, { increment: 5 });
@@ -852,10 +806,8 @@ describe('StateChannel - Full Subscription Callbacks', () => {
     });
     await channel.start();
 
-    // Simulate delta update when state is null - should not throw
     deltaCallback?.({ increment: 5 });
 
-    // mergeFn should NOT have been called since state is null
     expect(mergeFn).not.toHaveBeenCalled();
 
     await channel.stop();
@@ -886,7 +838,6 @@ describe('StateChannel - Optimistic Subscription Full Update', () => {
 
     expect(fullUpdateCallback).not.toBeNull();
 
-    // Simulate full update
     fullUpdateCallback?.({ data: 'optimistic-updated' });
 
     expect(channel.value).toEqual({ data: 'optimistic-updated' });
@@ -919,7 +870,6 @@ describe('StateChannel - Optimistic Subscription Full Update', () => {
 
     expect(deltaCallback).not.toBeNull();
 
-    // Simulate delta update
     deltaCallback?.({ increment: 3 });
 
     expect(mergeFn).toHaveBeenCalledWith({ count: 10 }, { increment: 3 });
@@ -947,10 +897,8 @@ describe('StateChannel - Optimistic Subscription Full Update', () => {
     });
     await channel.start();
 
-    // Simulate delta update when state is null - should not throw
     deltaCallback?.({ increment: 5 });
 
-    // mergeFn should NOT have been called since state is null
     expect(mergeFn).not.toHaveBeenCalled();
 
     await channel.stop();
@@ -974,13 +922,10 @@ describe('StateChannel - Auto-Refresh Trigger', () => {
     });
     await channel.start();
 
-    // Initial call
     expect(mockHub.request).toHaveBeenCalledTimes(1);
 
-    // Make the state stale by advancing time
     vi.advanceTimersByTime(2000);
 
-    // Should have auto-refreshed
     expect(mockHub.request.mock.calls.length).toBeGreaterThan(1);
 
     await channel.stop();
@@ -1002,7 +947,7 @@ describe('DeltaMergers', () => {
       const result = DeltaMergers.array(current, delta);
 
       expect(result).toHaveLength(2);
-      expect(result[0].id).toBe('2'); // Added at start
+      expect(result[0].id).toBe('2');
       expect(result[1].id).toBe('1');
     });
 
@@ -1046,7 +991,6 @@ describe('DeltaMergers', () => {
 
       const result = DeltaMergers.array(current, delta);
 
-      // Order: remove -> update -> add (prepend)
       expect(result).toHaveLength(2);
       expect(result[0].id).toBe('3');
       expect(result[1].name).toBe('Updated One');
@@ -1097,7 +1041,6 @@ describe('DeltaMergers', () => {
 
       const result = DeltaMergers.object(current, delta);
 
-      // Shallow merge - nested object is replaced, not merged
       expect(result).toEqual({ nested: { c: 3 }, other: 'value' });
     });
   });
@@ -1125,10 +1068,8 @@ describe('DeltaMergers', () => {
       const current = [1, 2, 3];
       const delta = { added: [] };
 
-      // When added is empty array, it's still truthy so a new array is created
       const result = DeltaMergers.append(current, delta);
 
-      // Implementation returns new array with empty spread
       expect(result).toEqual([1, 2, 3]);
     });
 

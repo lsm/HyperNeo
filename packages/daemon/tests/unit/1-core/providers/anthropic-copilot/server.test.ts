@@ -1,14 +1,3 @@
-/**
- * Integration tests for the embedded Anthropic HTTP server.
- *
- * Tests cover:
- *  - Basic HTTP routing (health, 404, 400/413 errors)
- *  - SSE streaming (event sequence, text deltas, system message)
- *  - Session lifecycle (disconnect after success/error/send-rejection)
- *  - Client disconnect (req.on close path via runSessionStreaming mock)
- *  - Tool-use bridge (tool_use SSE block emitted, tool_result routed back)
- */
-
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
@@ -31,12 +20,7 @@ import {
 } from '../../../../../src/lib/providers/registry';
 import { Logger } from '../../../../../src/lib/logger';
 
-// Bun exposes `import.meta.dir`; under Node/Vitest derive it from the URL.
 const testDir = dirname(fileURLToPath(import.meta.url));
-
-// ---------------------------------------------------------------------------
-// Mock CopilotSession
-// ---------------------------------------------------------------------------
 
 type AnyHandler = (event: { type: string; data: Record<string, unknown> }) => void;
 
@@ -51,7 +35,6 @@ class MockCopilotSession {
   disconnectCalled = false;
   abortCalled = false;
 
-  /** Tool handler registered via SessionConfig.tools (for tool-use tests). */
   registeredTools: Array<{ name: string; handler: (...a: unknown[]) => unknown }> = [];
 
   on(handler: AnyHandler): () => void {
@@ -98,10 +81,6 @@ class MockCopilotSession {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Mock CopilotClient
-// ---------------------------------------------------------------------------
-
 function makeMockClient(
   factory?: () => MockCopilotSession
 ): CopilotClient & { lastSession?: MockCopilotSession } {
@@ -110,7 +89,6 @@ function makeMockClient(
     async createSession(cfg: unknown): Promise<CopilotSession> {
       const s = factory ? factory() : new MockCopilotSession();
       s.capturedConfig = cfg;
-      // Register tools from config
       const tools = (cfg as Record<string, unknown>)?.['tools'] as
         | Array<{ name: string; handler: (...a: unknown[]) => unknown }>
         | undefined;
@@ -133,10 +111,6 @@ function makeMockClient(
   };
   return mock as unknown as CopilotClient & { lastSession?: MockCopilotSession };
 }
-
-// ---------------------------------------------------------------------------
-// HTTP helper
-// ---------------------------------------------------------------------------
 
 async function postMessages(
   url: string,
@@ -183,10 +157,6 @@ async function postCountTokens(
   return { status: resp.status, body: (await resp.json()) as Record<string, unknown> };
 }
 
-// ---------------------------------------------------------------------------
-// startEmbeddedServer — integration tests
-// ---------------------------------------------------------------------------
-
 describe('startEmbeddedServer', () => {
   let session: MockCopilotSession;
   let client: CopilotClient & { lastSession?: MockCopilotSession };
@@ -204,10 +174,6 @@ describe('startEmbeddedServer', () => {
   afterEach(async () => {
     await stopServer();
   });
-
-  // -------------------------------------------------------------------------
-  // Routing
-  // -------------------------------------------------------------------------
 
   it('binds to a real port (> 0)', () => {
     expect(Number(new URL(serverUrl).port)).toBeGreaterThan(0);
@@ -295,9 +261,6 @@ describe('startEmbeddedServer', () => {
 
     for (const file of files) {
       const source = readFileSync(file, 'utf8');
-      // Provider IDs like 'anthropic-copilot' are allowed in generic provider
-      // infrastructure (e.g. capacity-resolution allowlists). Only Copilot-specific
-      // context fields should stay out of these generic paths.
       expect(source).not.toContain('conversationTokens');
       expect(source).not.toContain('freeSpaceTokens');
       expect(source).not.toContain('bufferTokens');
@@ -375,7 +338,6 @@ describe('startEmbeddedServer', () => {
     const body = JSON.parse(text) as Record<string, unknown>;
     expect(body['type']).toBe('error');
     const err = body['error'] as Record<string, unknown>;
-    // Anthropic API uses 'request_too_large' (not 'invalid_request_error') for 413
     expect(err['type']).toBe('request_too_large');
   });
 
@@ -430,10 +392,6 @@ describe('startEmbeddedServer', () => {
     expect(err['message']).toContain('image content blocks');
     expect(client.lastSession).toBeUndefined();
   });
-
-  // -------------------------------------------------------------------------
-  // SSE streaming
-  // -------------------------------------------------------------------------
 
   it('streams complete SSE event sequence', async () => {
     const r = await postMessages(serverUrl, {
@@ -635,21 +593,13 @@ describe('startEmbeddedServer', () => {
         max_tokens: 100,
         messages: [{ role: 'user', content: 'hi' }],
       });
-      // Plain sessions (no tools in request) must set availableTools: [] to
-      // prevent the Copilot model from autonomously using built-in bash/file
-      // tools, which can cause hangs or empty text output.
       expect((captured as Record<string, unknown>)['availableTools']).toEqual([]);
     } finally {
       await s2.stop();
     }
   });
 
-  // -------------------------------------------------------------------------
-  // Error paths
-  // -------------------------------------------------------------------------
-
   it('returns 500 with model name when createSession throws (unknown/rejected model)', async () => {
-    // Simulate a backend rejection (e.g. unknown model ID) by making createSession throw.
     const rejectClient = makeMockClient(() => {
       throw new Error('model not found');
     });
@@ -663,7 +613,6 @@ describe('startEmbeddedServer', () => {
       expect(r.status).toBe(500);
       const body = JSON.parse(r.rawBody ?? '{}') as Record<string, unknown>;
       const errMsg = ((body['error'] as Record<string, unknown>)['message'] as string) ?? '';
-      // Error message must include the model name so failures aren't opaque.
       expect(errMsg).toContain('copilot-unknown-model-xyz');
     } finally {
       await rs.stop();
@@ -724,10 +673,6 @@ describe('startEmbeddedServer', () => {
     expect(err['message']).toBe('Internal streaming error');
   });
 
-  // -------------------------------------------------------------------------
-  // Session lifecycle
-  // -------------------------------------------------------------------------
-
   it('calls session.disconnect() after successful request', async () => {
     await postMessages(serverUrl, {
       model: 'x',
@@ -759,10 +704,6 @@ describe('startEmbeddedServer', () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(session.disconnectCalled).toBe(true);
   });
-
-  // -------------------------------------------------------------------------
-  // Client disconnect (req.on close path — tested directly via mock)
-  // -------------------------------------------------------------------------
 
   it('calls session.disconnect() when req emits close mid-stream', async () => {
     const hangSession = new MockCopilotSession();
@@ -796,10 +737,6 @@ describe('startEmbeddedServer', () => {
     expect(hangSession.disconnectCalled).toBe(true);
   });
 
-  // -------------------------------------------------------------------------
-  // Concurrent requests
-  // -------------------------------------------------------------------------
-
   it('handles concurrent requests independently', async () => {
     const sessions: MockCopilotSession[] = [];
     const cc = makeMockClient(() => {
@@ -832,11 +769,6 @@ describe('startEmbeddedServer', () => {
     }
   });
 
-  // -------------------------------------------------------------------------
-  // Tool-use: SSE emits tool_use block when request has tools
-  // -------------------------------------------------------------------------
-
-  // Helper: wait until session has at least one registered tool
   async function waitForTools(s: MockCopilotSession): Promise<void> {
     await new Promise<void>((resolve) => {
       const id = setInterval(() => {
@@ -849,15 +781,12 @@ describe('startEmbeddedServer', () => {
   }
 
   it('emits tool_use SSE block when model calls a registered tool', async () => {
-    // Create a session that simulates a tool call via external_tool.requested
-    // when tools are registered in SessionConfig.
     let toolHandler: ((args: unknown, inv: unknown) => unknown) | undefined;
     const toolSession = new MockCopilotSession();
 
     const toolClient = makeMockClient(() => toolSession);
     spyOn(toolClient, 'createSession').mockImplementation(async (cfg: unknown) => {
       toolSession.capturedConfig = cfg;
-      // Capture the tool handler
       const tools = (cfg as Record<string, unknown>)?.['tools'] as
         | Array<{ name: string; handler: (args: unknown, inv: unknown) => unknown }>
         | undefined;
@@ -865,15 +794,11 @@ describe('startEmbeddedServer', () => {
       return toolSession as unknown as CopilotSession;
     });
 
-    // Override send() to simulate the model calling our registered tool
     const originalSend = toolSession.send.bind(toolSession);
     toolSession.send = async function (opts) {
       this.capturedPrompt = opts.prompt;
       Promise.resolve().then(async () => {
-        // Simulate external_tool.requested: call the tool handler
         if (toolHandler) {
-          // The handler suspends waiting for tool_result.
-          // Suppress rejection (e.g. when server shuts down without a result).
           toolHandler(
             { command: 'ls' },
             {
@@ -897,13 +822,11 @@ describe('startEmbeddedServer', () => {
         tools: [{ name: 'bash', description: 'Run bash', input_schema: { type: 'object' } }],
       };
 
-      // The response should contain a tool_use SSE block.
       const r = await postMessages(ts.url, requestBody);
       expect(r.status).toBe(200);
 
       const types = r.events.map((e) => e.type);
       expect(types).toContain('message_start');
-      // Must end with tool_use stop reason
       const msgDelta = r.events.find((e) => e.type === 'message_delta');
       expect(msgDelta).toBeDefined();
       const stopReason = (
@@ -911,7 +834,6 @@ describe('startEmbeddedServer', () => {
       )['stop_reason'];
       expect(stopReason).toBe('tool_use');
 
-      // tool_use content block
       const toolUseStart = r.events.find(
         (e) =>
           e.type === 'content_block_start' &&
@@ -945,14 +867,10 @@ describe('startEmbeddedServer', () => {
       return toolSession as unknown as CopilotSession;
     });
 
-    // send() simulates the model calling the tool then hanging (no session.idle).
     toolSession.send = async function (opts) {
       this.capturedPrompt = opts.prompt;
       Promise.resolve().then(async () => {
         if (toolHandler) {
-          // Kick off the tool handler.  It suspends until resolveToolResult is
-          // called.  After it resolves, emit session.idle to complete the turn.
-          // Suppress rejection for the case where server shuts down first.
           toolHandler(
             { command: 'ls' },
             {
@@ -979,7 +897,6 @@ describe('startEmbeddedServer', () => {
         { name: 'bash', description: 'Run bash', input_schema: { type: 'object' } },
       ];
 
-      // --- Request 1: model calls tool → tool_use response ---
       const r1 = await postMessages(ts.url, {
         model: 'x',
         max_tokens: 100,
@@ -1001,7 +918,6 @@ describe('startEmbeddedServer', () => {
       )['id'] as string;
       expect(toolCallId).toBe('tc_round');
 
-      // stop_reason must be tool_use
       const msgDelta1 = r1.events.find((e) => e.type === 'message_delta');
       expect(
         ((msgDelta1!.data as Record<string, unknown>)['delta'] as Record<string, unknown>)[
@@ -1009,11 +925,9 @@ describe('startEmbeddedServer', () => {
         ]
       ).toBe('tool_use');
 
-      // --- Request 2: tool_result continuation → end_turn response ---
       const r2 = await postMessages(ts.url, {
         model: 'x',
         max_tokens: 100,
-        // Note: tools omitted to verify routing works without re-sending tools array.
         messages: [
           { role: 'user', content: 'run ls' },
           {
@@ -1028,7 +942,6 @@ describe('startEmbeddedServer', () => {
       });
 
       expect(r2.status).toBe(200);
-      // Second response should have end_turn (continuation resumed and completed)
       const msgDelta2 = r2.events.find((e) => e.type === 'message_delta');
       expect(msgDelta2).toBeDefined();
       expect(
@@ -1129,7 +1042,6 @@ describe('startEmbeddedServer', () => {
   });
 
   it('routes tool_result continuation even when tools array is omitted from follow-up', async () => {
-    // Verifies P1/3 fix: hasToolResults check must not require hasTools=true.
     let toolHandler: ((args: unknown, inv: unknown) => Promise<unknown>) | undefined;
     const ts2Session = new MockCopilotSession();
     const ts2Client = makeMockClient(() => ts2Session);
@@ -1167,7 +1079,6 @@ describe('startEmbeddedServer', () => {
 
     const ts2 = await startEmbeddedServer(ts2Client, '/tmp');
     try {
-      // First request with tools
       const r1 = await postMessages(ts2.url, {
         model: 'x',
         max_tokens: 100,
@@ -1182,11 +1093,9 @@ describe('startEmbeddedServer', () => {
         ]
       ).toBe('tool_use');
 
-      // Second request WITHOUT tools array — must still route to suspended session
       const r2 = await postMessages(ts2.url, {
         model: 'x',
         max_tokens: 100,
-        // tools intentionally omitted
         messages: [
           { role: 'user', content: 'q' },
           {
@@ -1212,10 +1121,6 @@ describe('startEmbeddedServer', () => {
     }
   });
 });
-
-// ---------------------------------------------------------------------------
-// resolveRequestCwd — unit tests
-// ---------------------------------------------------------------------------
 
 describe('resolveRequestCwd', () => {
   function makeReq(authHeader?: string): import('node:http').IncomingMessage {
@@ -1256,14 +1161,9 @@ describe('resolveRequestCwd', () => {
 
   it('normalises dot-dot segments so traversal attempts are collapsed', () => {
     const req = makeReq('Bearer anthropic-copilot-proxy:/foo/bar/../../baz');
-    // /foo/bar/../../baz normalises to /baz — still absolute, so it is accepted
     expect(resolveRequestCwd(req, '/default')).toBe('/baz');
   });
 });
-
-// ---------------------------------------------------------------------------
-// Factory registration
-// ---------------------------------------------------------------------------
 
 describe('factory registration', () => {
   beforeEach(() => {
@@ -1280,10 +1180,6 @@ describe('factory registration', () => {
     expect(p?.id).toBe('anthropic-copilot');
   });
 });
-
-// ---------------------------------------------------------------------------
-// tool_choice pass-through — Copilot bridge
-// ---------------------------------------------------------------------------
 
 describe('tool_choice warning — copilot bridge', () => {
   let session: MockCopilotSession;

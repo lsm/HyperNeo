@@ -1,9 +1,3 @@
-/**
- * InterruptHandler Tests
- *
- * Tests for query interrupt handling.
- */
-
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import {
   InterruptHandler,
@@ -97,7 +91,6 @@ describe('InterruptHandler', () => {
     mockAbortController = new AbortController();
     mockQueryPromise = null;
 
-    // Default: no durable delivery jobs (legacy path — the cancel is a no-op).
     cancelForSessionSpy = mock(() => [] as string[]);
     markFailedSpy = mock(() => null);
     mockDb = {
@@ -227,16 +220,10 @@ describe('InterruptHandler', () => {
       expect(cancelForSessionSpy).toHaveBeenCalledWith('test-session-id');
       expect(markFailedSpy).toHaveBeenCalledWith('test-session-id', 'turn-uuid');
       expect(markFailedSpy).toHaveBeenCalledWith('test-session-id', 'steer-uuid');
-      // The durable cancel runs BEFORE the state flip — a processor claiming a
-      // job while the interrupt unwinds must find it already gone.
       expect(callOrder).toEqual(['cancel', 'setInterrupted']);
     });
 
     it('notifies the delivery feeds (sdk_messages + job_queue) after cancelling deliveries (#862 review P1)', async () => {
-      // cancelForSessionWithMessages (raw DELETE job_queue) and
-      // markDeliveryFailedByUuid (raw UPDATE sdk_messages) write without a
-      // notify, so without the explicit notifyChange the queued/retrying badge
-      // would stay stuck after an interrupt until an unrelated write/reconnect.
       const notifySpy = mock(() => {});
       cancelForSessionSpy = mock(() => ['turn-uuid']);
       mockDb = {
@@ -263,17 +250,11 @@ describe('InterruptHandler', () => {
 
       await handler.handleInterrupt();
 
-      // The pre-claim window can leave a durable job pending while the state
-      // reads idle — the cancel must run before the idle early-return.
       expect(cancelForSessionSpy).toHaveBeenCalledWith('test-session-id');
       expect(markFailedSpy).toHaveBeenCalledWith('test-session-id', 'pre-claim-uuid');
     });
 
     it('terminalizes enqueued orphan rows (no active job) so a Stop is not undone by the post-interrupt idle reconcile (#861)', async () => {
-      // An enqueued user row with NO active durable job isn't returned by
-      // cancelForSessionWithMessages. Without terminalizing it here, the idle
-      // reconcileStrandedDeliveries would re-enqueue it — restarting a prompt
-      // the user just stopped.
       cancelForSessionSpy = mock(() => ['active-uuid']);
       const orphan = { uuid: 'orphan-uuid' };
       const getMessagesByStatusSpy = mock((_sid: string, status: string) =>
@@ -288,9 +269,7 @@ describe('InterruptHandler', () => {
 
       await handler.handleInterrupt();
 
-      // The active-job UUID is terminalized…
       expect(markFailedSpy).toHaveBeenCalledWith('test-session-id', 'active-uuid');
-      // …and so is the enqueued orphan (not in the cancelled set).
       expect(markFailedSpy).toHaveBeenCalledWith('test-session-id', 'orphan-uuid');
     });
 
@@ -371,18 +350,9 @@ describe('InterruptHandler', () => {
     });
 
     it('should publish query.trigger after interrupt completion to replay deferred rows', async () => {
-      // The interrupt path reaches idle WITHOUT the query.trigger that
-      // SDKMessageHandler.finishTurn publishes on normal turn end, so a row
-      // persisted as 'deferred' while the session was processing (e.g. an
-      // external event in 'defer' mode) would sit unconsumed indefinitely.
-      // The interrupt→idle transition must drive the deferred queue itself.
       handler = createHandler();
 
       await handler.handleInterrupt();
-      // The post-interrupt state is idle (setIdle just ran) — the fire-time
-      // recheck requires it. The trigger is scheduled through the
-      // query-settled + process-exit gate, so it fires on the next tick even
-      // when both are already settled.
       getStateSpy.mockReturnValue({ status: 'idle' });
       await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -405,9 +375,6 @@ describe('InterruptHandler', () => {
     });
 
     it('should skip query.trigger for teardown-bound interrupts', async () => {
-      // stopSessionPreserveDb (task cancellation/completion/shutdown) must not
-      // drive the deferred queue: replaying would promote deferred rows to
-      // enqueued and create delivery jobs for a session about to be cleaned up.
       handler = createHandler();
 
       await handler.handleInterrupt({ skipDeferredReplay: true });
@@ -416,10 +383,6 @@ describe('InterruptHandler', () => {
     });
 
     it('should honor teardown suppression in the delayed replay path', async () => {
-      // When the teardown-bound interrupt's 200ms settle wait times out, the
-      // delayed callback must ALSO honor skipDeferredReplay — otherwise it
-      // publishes query.trigger after teardown has proceeded, promoting
-      // deferred rows and creating delivery jobs for a dead session.
       let settleOldQuery!: () => void;
       const queryPromise = new Promise<void>((resolve) => {
         settleOldQuery = resolve;
@@ -434,9 +397,6 @@ describe('InterruptHandler', () => {
     });
 
     it('should delay query.trigger until the old query exits when the wait times out', async () => {
-      // The interrupt wait races the old queryPromise against 200ms; when the
-      // query is still unwinding, replaying immediately could launch a
-      // replacement query while the old subprocess is still alive.
       let settleOldQuery!: () => void;
       const queryPromise = new Promise<void>((resolve) => {
         settleOldQuery = resolve;
@@ -444,14 +404,11 @@ describe('InterruptHandler', () => {
       handler = createHandler({ queryPromise });
 
       const interrupted = handler.handleInterrupt();
-      // Let the 200ms race time out and the interrupt flow finish; the old
-      // query has NOT settled, so no replay yet.
       await new Promise((resolve) => setTimeout(resolve, 350));
       expect(busPublishAsyncSpy).not.toHaveBeenCalled();
 
       settleOldQuery();
       await interrupted;
-      // Post-interrupt idle — required by the fire-time recheck.
       getStateSpy.mockReturnValue({ status: 'idle' });
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(busPublishAsyncSpy).toHaveBeenCalledWith('query.trigger', {
@@ -460,11 +417,6 @@ describe('InterruptHandler', () => {
     });
 
     it('lets a later teardown request suppress an in-flight interrupt replay', async () => {
-      // interruptBySessionId quiesce (skipDeferredReplay) arriving while a
-      // user interrupt is already in flight: the teardown invocation
-      // early-returns on the shared 'interrupted' state, so suppression must
-      // be recorded where the in-flight interrupt's scheduled replay can
-      // observe it at fire time.
       let settleOldQuery!: () => void;
       const queryPromise = new Promise<void>((resolve) => {
         settleOldQuery = resolve;
@@ -476,22 +428,18 @@ describe('InterruptHandler', () => {
       });
       handler = createHandler({ queryPromise });
 
-      const interrupted = handler.handleInterrupt(); // user interrupt, in flight
+      const interrupted = handler.handleInterrupt();
       await new Promise((resolve) => setTimeout(resolve, 30));
-      await handler.handleInterrupt({ skipDeferredReplay: true }); // teardown, early-returns
+      await handler.handleInterrupt({ skipDeferredReplay: true });
 
       settleOldQuery();
       await interrupted;
-      status = 'idle'; // interrupt resolved; no newer turn
+      status = 'idle';
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(busPublishAsyncSpy).not.toHaveBeenCalled();
     });
 
     it('skips the delayed replay when a newer turn started before the process exited', async () => {
-      // While the gate waits for the old subprocess to exit, the interrupt has
-      // already exposed idle — a newer turn can start. Publishing then would
-      // steer the old deferred rows into that active turn; replay is left to
-      // the newer turn's own completion.
       let signalProcessExit!: () => void;
       const processExitedPromise = new Promise<void>((resolve) => {
         signalProcessExit = resolve;
@@ -501,19 +449,15 @@ describe('InterruptHandler', () => {
       handler = createHandler({ processExitedPromise });
 
       await handler.handleInterrupt();
-      status = 'idle'; // post-interrupt idle; gate still pending on process exit
+      status = 'idle';
       await new Promise((resolve) => setTimeout(resolve, 5));
-      status = 'processing'; // a newer turn starts before the process exits
+      status = 'processing';
       signalProcessExit();
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(busPublishAsyncSpy).not.toHaveBeenCalled();
     });
 
     it('should delay query.trigger until the subprocess exits even when the query settled in time', async () => {
-      // Query settlement is not a subprocess-exit guarantee
-      // (QueryLifecycleManager.stop separately awaits processExitedPromise);
-      // the replay must wait for both or the replacement query can race the
-      // old process holding workspace resources.
       let signalProcessExit!: () => void;
       const processExitedPromise = new Promise<void>((resolve) => {
         signalProcessExit = resolve;
@@ -521,8 +465,6 @@ describe('InterruptHandler', () => {
       handler = createHandler({ processExitedPromise });
 
       await handler.handleInterrupt();
-      // The (absent) query settled instantly, but the subprocess has not
-      // exited — no replay yet.
       getStateSpy.mockReturnValue({ status: 'idle' });
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(busPublishAsyncSpy).not.toHaveBeenCalled();
@@ -537,20 +479,17 @@ describe('InterruptHandler', () => {
     it('should resolve interrupt promise in finally block', async () => {
       handler = createHandler();
 
-      // Verify interrupt promise is resolved
       const interruptComplete = handler.handleInterrupt();
       await interruptComplete;
 
-      // Promise should be cleared
       expect(handler.getInterruptPromise()).toBeNull();
     });
 
     it('should handle query object without interrupt method', async () => {
-      handler = createHandler({ queryObject: {} as Query }); // No interrupt method
+      handler = createHandler({ queryObject: {} as Query });
 
       await handler.handleInterrupt();
 
-      // Should not throw
       expect(handler).toBeDefined();
     });
 
@@ -596,7 +535,6 @@ describe('InterruptHandler', () => {
       });
       handler = createHandler();
 
-      // Should not throw
       await handler.handleInterrupt();
 
       expect(mockLogger.warn).toHaveBeenCalledWith(
@@ -608,7 +546,6 @@ describe('InterruptHandler', () => {
     it('should skip close() when queryObject is null', async () => {
       handler = createHandler({ queryObject: null });
 
-      // Should not throw
       await handler.handleInterrupt();
 
       expect(sdkCloseSpy).not.toHaveBeenCalled();

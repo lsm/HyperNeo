@@ -1,16 +1,3 @@
-/**
- * Raw WebSocket helpers for protocol-level tests
- *
- * These helpers create raw WebSocket connections (bypassing MessageHub)
- * to test the WebSocket protocol layer directly: ping/pong, connection handling,
- * large message rejection, error responses, etc.
- *
- * For RPC-level tests, use daemon.messageHub.request() instead.
- */
-
-/**
- * Create raw WebSocket connection to daemon server
- */
 export function createWebSocket(baseUrl: string): WebSocket {
   const wsUrl = baseUrl.replace('http://', 'ws://');
   const ws = new WebSocket(`${wsUrl}/ws`);
@@ -24,9 +11,6 @@ export function createWebSocket(baseUrl: string): WebSocket {
   return ws;
 }
 
-/**
- * Create raw WebSocket and return a promise for the first message (connection.established)
- */
 export function createWebSocketWithFirstMessage(
   baseUrl: string,
   timeout = 5000
@@ -66,9 +50,6 @@ export function createWebSocketWithFirstMessage(
   return { ws, firstMessagePromise };
 }
 
-/**
- * Wait for WebSocket to reach a specific readyState
- */
 export async function waitForWebSocketState(
   ws: WebSocket,
   state: number,
@@ -83,17 +64,6 @@ export async function waitForWebSocketState(
   }
 }
 
-/**
- * Wait for next WebSocket message
- *
- * Uses a per-connection message queue so that messages arriving between
- * consecutive `waitForWebSocketMessage` calls are buffered rather than
- * dropped. Without this, rapid concurrent RPC responses can arrive in the
- * microtask gap between the previous promise resolving and the next
- * `addEventListener` call, causing intermittent timeouts (especially under
- * Node's native WebSocket, which delivers frames on a different cadence
- * than Bun's).
- */
 const messageQueues = new WeakMap<
   WebSocket,
   {
@@ -121,7 +91,6 @@ function ensureQueue(ws: WebSocket): {
       } catch {
         parsed = { _parseError: true, raw: event.data };
       }
-      // If a waiter is waiting, resolve it directly; otherwise buffer.
       const resolver = e.resolvers.shift();
       if (resolver) {
         e.rejecters.shift();
@@ -151,7 +120,6 @@ export async function waitForWebSocketMessage(
 ): Promise<Record<string, unknown>> {
   const entry = ensureQueue(ws);
 
-  // If a buffered message is already waiting, drain it immediately.
   if (entry.queue.length > 0) {
     const msg = entry.queue.shift() as Record<string, unknown>;
     return msg;
@@ -159,7 +127,6 @@ export async function waitForWebSocketMessage(
 
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      // Remove our resolver/rejecter from the pending lists on timeout.
       const idx = entry.resolvers.indexOf(resolve);
       if (idx >= 0) {
         entry.resolvers.splice(idx, 1);
@@ -172,7 +139,6 @@ export async function waitForWebSocketMessage(
       );
     }, timeout);
 
-    // Wrap resolve/reject so the timer is cleared when fulfilled.
     entry.resolvers.push((v: Record<string, unknown>) => {
       clearTimeout(timer);
       resolve(v);
@@ -184,9 +150,6 @@ export async function waitForWebSocketMessage(
   });
 }
 
-/**
- * Send raw RPC call via WebSocket and return message ID
- */
 export function sendRPCCall(
   ws: WebSocket,
   method: string,

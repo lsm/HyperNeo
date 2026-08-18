@@ -1,18 +1,3 @@
-/**
- * SpaceWorkflow Unit Tests
- *
- * Covers:
- * - Repository: full CRUD with node and transition management
- * - Repository: getWorkflowsReferencingAgent
- * - Repository: JSON round-trips (rules, tags, transitions, conditions)
- * - Manager: name uniqueness within space
- * - Manager: at-least-one-node validation
- * - Manager: agentId validation (non-empty, optional SpaceAgentLookup)
- * - Manager: transition validation (from/to node ID refs)
- * - Manager: condition validation (expression non-empty for 'condition' type)
- * - Manager: startNodeId validation
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -25,13 +10,7 @@ import {
 import type { SpaceAgentLookup } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import type { WorkflowNodeInput } from '@hyperneo/shared';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function makeDb(): BunDatabase {
-  // Use in-memory SQLite — faster than file-based DB and avoids filesystem
-  // I/O contention that caused beforeEach hook timeouts in CI.
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
@@ -53,7 +32,6 @@ function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: stri
   ).run(agentId, spaceId, name, Date.now(), Date.now());
 }
 
-// Node fixtures — no entryGate/exitGate/order in new model
 const coderNode: WorkflowNodeInput = { id: 'node-coder', name: 'Code', agentId: 'agent-coder' };
 const plannerNode: WorkflowNodeInput = {
   id: 'node-planner',
@@ -65,10 +43,6 @@ const generalNode: WorkflowNodeInput = {
   name: 'Review',
   agentId: 'agent-general',
 };
-
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
 
 describe('SpaceWorkflowRepository', () => {
   let db: BunDatabase;
@@ -87,10 +61,6 @@ describe('SpaceWorkflowRepository', () => {
       /* ignore */
     }
   });
-
-  // -------------------------------------------------------------------------
-  // CRUD
-  // -------------------------------------------------------------------------
 
   test('createWorkflow returns workflow with generated id and steps', () => {
     const wf = repo.createWorkflow({
@@ -177,7 +147,6 @@ describe('SpaceWorkflowRepository', () => {
       nodes: [plannerNode],
       completionAutonomyLevel: 3,
     });
-    // Another space — should not appear; use anonymous step (no fixed id) to avoid PK collision
     seedSpace(db, 'space-2');
     repo.createWorkflow({
       spaceId: 'space-2',
@@ -211,7 +180,6 @@ describe('SpaceWorkflowRepository', () => {
       completionAutonomyLevel: 3,
     });
     const before = wf.updatedAt;
-    // Small delay to ensure timestamp difference
     await new Promise((r) => setTimeout(r, 2));
     const updated = repo.updateWorkflow(wf.id, {
       nodes: [{ id: 'node-coder', name: 'Plan', agentId: 'agent-planner' }],
@@ -264,7 +232,6 @@ describe('SpaceWorkflowRepository', () => {
     expect(repo.deleteWorkflow(wf.id)).toBe(true);
     expect(repo.getWorkflow(wf.id)).toBeNull();
 
-    // Nodes should be gone (CASCADE)
     const rows = db.prepare(`SELECT * FROM space_workflow_nodes WHERE workflow_id = ?`).all(wf.id);
     expect(rows).toHaveLength(0);
   });
@@ -272,10 +239,6 @@ describe('SpaceWorkflowRepository', () => {
   test('deleteWorkflow returns false for missing id', () => {
     expect(repo.deleteWorkflow('no-such-id')).toBe(false);
   });
-
-  // -------------------------------------------------------------------------
-  // getWorkflowsReferencingAgent
-  // -------------------------------------------------------------------------
 
   test('getWorkflowsReferencingAgent returns workflows with matching agent', () => {
     seedAgent(db, 'agent-1', 'space-1', 'Alpha');
@@ -301,8 +264,6 @@ describe('SpaceWorkflowRepository', () => {
   });
 
   test('getWorkflowsReferencingAgent finds agent referenced via agents[] JSON config (multi-agent step)', () => {
-    // Multi-agent steps store agent_id = NULL and put agent IDs in the JSON config column.
-    // The LIKE-based query must catch these so deletion protection works for multi-agent steps.
     seedAgent(db, 'agent-multi-1', 'space-1', 'Multi1');
     seedAgent(db, 'agent-multi-2', 'space-1', 'Multi2');
     const wf = repo.createWorkflow({
@@ -320,7 +281,6 @@ describe('SpaceWorkflowRepository', () => {
       ],
       completionAutonomyLevel: 3,
     });
-    // Both agents must be found via the config LIKE path (agent_id is NULL in DB)
     const refs1 = repo.getWorkflowsReferencingAgent('agent-multi-1');
     expect(refs1).toHaveLength(1);
     expect(refs1[0].id).toBe(wf.id);
@@ -329,13 +289,8 @@ describe('SpaceWorkflowRepository', () => {
     expect(refs2).toHaveLength(1);
     expect(refs2[0].id).toBe(wf.id);
 
-    // An agent not in the step must not be returned
     expect(repo.getWorkflowsReferencingAgent('agent-coder')).toHaveLength(0);
   });
-
-  // -------------------------------------------------------------------------
-  // Multi-agent step persistence (agents[] and channels[] round-trips)
-  // -------------------------------------------------------------------------
 
   test('round-trip: step with agents[] is persisted and restored correctly', () => {
     seedAgent(db, 'agent-multi-1', 'space-1', 'Multi1');
@@ -355,7 +310,6 @@ describe('SpaceWorkflowRepository', () => {
             },
             { agentId: 'agent-multi-2', name: 'multi-2' },
           ],
-          // node-level instructions removed
         },
       ],
       completionAutonomyLevel: 3,
@@ -365,17 +319,14 @@ describe('SpaceWorkflowRepository', () => {
     expect(read).not.toBeNull();
     const node = read!.nodes[0];
 
-    // agentId should be absent (multi-agent step stored with NULL agent_id)
     expect(node.agentId).toBeUndefined();
 
-    // agents[] must be restored with all fields
     expect(node.agents).toHaveLength(2);
     expect(node.agents![0].agentId).toBe('agent-multi-1');
     expect(node.agents![0].instructions).toMatchObject({ mode: 'override', value: 'do A' });
     expect(node.agents![1].agentId).toBe('agent-multi-2');
     expect(node.agents![1].instructions).toBeUndefined();
 
-    // node-level instructions field removed from WorkflowNode schema
     expect('instructions' in node).toBe(false);
   });
 
@@ -417,7 +368,6 @@ describe('SpaceWorkflowRepository', () => {
   });
 
   test('round-trip: legacy single-agent step (agentId shorthand) normalises to agents[]', () => {
-    // Regression guard: ensure legacy agentId shorthand is normalised to agents[] on read-back.
     seedAgent(db, 'agent-1', 'space-1', 'Alpha');
     const wf = repo.createWorkflow({
       spaceId: 'space-1',
@@ -436,13 +386,8 @@ describe('SpaceWorkflowRepository', () => {
     expect(read).not.toBeNull();
     const node = read!.nodes[0];
 
-    // Legacy agentId shorthand is normalised to agents[] by insertNode
     expect(node.agents[0].agentId).toBe('agent-1');
   });
-
-  // -------------------------------------------------------------------------
-  // JSON round-trips
-  // -------------------------------------------------------------------------
 
   test('JSON round-trip: tags are persisted and restored', () => {
     const wf = repo.createWorkflow({
@@ -471,13 +416,8 @@ describe('SpaceWorkflowRepository', () => {
       completionAutonomyLevel: 3,
     });
     const fetched = repo.getWorkflow(wf.id)!;
-    // Legacy agentId shorthand is normalised to agents[] during insertNode
     expect(fetched.nodes[0].agents[0].agentId).toBe('agent-99');
   });
-
-  // -------------------------------------------------------------------------
-  // Layout field
-  // -------------------------------------------------------------------------
 
   test('createWorkflow stores layout and round-trips it', () => {
     const layout = {
@@ -542,9 +482,6 @@ describe('SpaceWorkflowRepository', () => {
     expect(updated?.layout).toBeUndefined();
   });
 
-  // maxIterations was removed from Create/UpdateSpaceWorkflowParams;
-  // the column is deprecated and populated from the DB default only.
-
   test('layout column contains raw JSON in the DB', () => {
     const layout = { [coderNode.id!]: { x: 1, y: 2 } };
     const wf = repo.createWorkflow({
@@ -560,10 +497,6 @@ describe('SpaceWorkflowRepository', () => {
     expect(JSON.parse(row.layout)).toEqual(layout);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Manager tests
-// ---------------------------------------------------------------------------
 
 describe('SpaceWorkflowManager', () => {
   let db: BunDatabase;
@@ -584,10 +517,6 @@ describe('SpaceWorkflowManager', () => {
       /* ignore */
     }
   });
-
-  // -------------------------------------------------------------------------
-  // Name uniqueness
-  // -------------------------------------------------------------------------
 
   test('createWorkflow throws if name already exists in space', () => {
     manager.createWorkflow({
@@ -614,7 +543,6 @@ describe('SpaceWorkflowManager', () => {
       nodes: [coderNode],
       completionAutonomyLevel: 3,
     });
-    // Use anonymous step (no fixed id) to avoid PK collision across spaces in the same DB
     const wf2 = manager.createWorkflow({
       spaceId: 'space-2',
       name: 'Same',
@@ -680,10 +608,6 @@ describe('SpaceWorkflowManager', () => {
     expect(wf.name).toBe('Trimmed');
   });
 
-  // -------------------------------------------------------------------------
-  // At-least-one-step
-  // -------------------------------------------------------------------------
-
   test('createWorkflow throws when steps is empty', () => {
     expect(() =>
       manager.createWorkflow({
@@ -722,10 +646,6 @@ describe('SpaceWorkflowManager', () => {
       WorkflowValidationError
     );
   });
-
-  // -------------------------------------------------------------------------
-  // Agent ID validation
-  // -------------------------------------------------------------------------
 
   test('createWorkflow accepts any non-empty agentId (no lookup)', () => {
     const wf = manager.createWorkflow({
@@ -816,10 +736,6 @@ describe('SpaceWorkflowManager', () => {
     ).toThrow(WorkflowValidationError);
   });
 
-  // -------------------------------------------------------------------------
-  // Delete
-  // -------------------------------------------------------------------------
-
   test('deleteWorkflow removes an existing workflow', () => {
     const wf = manager.createWorkflow({
       spaceId: 'space-1',
@@ -835,12 +751,6 @@ describe('SpaceWorkflowManager', () => {
     expect(manager.deleteWorkflow('no-such-id')).toBe(false);
   });
 
-  // -------------------------------------------------------------------------
-  // Deletion-safety (RFC §4 #3): a workflow with a non-archived run cannot be
-  // deleted — that run is still executable (done/cancelled reopen; only an
-  // archived task is a tombstone), so deleting the definition would orphan its
-  // pinned version and strand it.
-  // -------------------------------------------------------------------------
   function seedRunWithTask(
     workflowId: string,
     opts: { archived?: boolean; status?: string } = {}
@@ -867,15 +777,12 @@ describe('SpaceWorkflowManager', () => {
       nodes: [coderNode],
       completionAutonomyLevel: 3,
     });
-    seedRunWithTask(wf.id); // non-archived task → executable run
+    seedRunWithTask(wf.id);
     expect(() => manager.deleteWorkflow(wf.id)).toThrow(WorkflowDeletionBlockedError);
-    // The workflow is kept (not deleted) — the run is not orphaned.
     expect(manager.getWorkflow(wf.id)).not.toBeNull();
   });
 
   test('deleteWorkflow throws for a non-terminal run with no task yet (startup window)', () => {
-    // startWorkflowRun inserts the run before attaching its task; during that
-    // gap the run is executable and must block deletion.
     const wf = manager.createWorkflow({
       spaceId: 'space-1',
       name: 'Starting',
@@ -887,7 +794,7 @@ describe('SpaceWorkflowManager', () => {
       `INSERT INTO space_workflow_runs
          (id, space_id, workflow_id, definition_version, title, status, created_at, updated_at)
        VALUES (?, 'space-1', ?, NULL, 'R', 'in_progress', ?, ?)`
-    ).run(`run-${wf.id}`, wf.id, now, now); // no task seeded
+    ).run(`run-${wf.id}`, wf.id, now, now);
     expect(() => manager.deleteWorkflow(wf.id)).toThrow(WorkflowDeletionBlockedError);
     expect(manager.getWorkflow(wf.id)).not.toBeNull();
   });
@@ -899,15 +806,10 @@ describe('SpaceWorkflowManager', () => {
       nodes: [coderNode],
       completionAutonomyLevel: 3,
     });
-    // Terminal status + archived task = non-reopenable tombstone → safe to delete.
     seedRunWithTask(wf.id, { archived: true, status: 'cancelled' });
     expect(manager.deleteWorkflow(wf.id)).toBe(true);
     expect(manager.getWorkflow(wf.id)).toBeNull();
   });
-
-  // -------------------------------------------------------------------------
-  // Nodes stored in insertion order
-  // -------------------------------------------------------------------------
 
   test('steps are stored and retrieved in insertion order', () => {
     const wf = manager.createWorkflow({
@@ -920,10 +822,6 @@ describe('SpaceWorkflowManager', () => {
     expect(wf.nodes[1].name).toBe('Code');
     expect(wf.nodes[2].name).toBe('Review');
   });
-
-  // -------------------------------------------------------------------------
-  // getWorkflowsReferencingAgent
-  // -------------------------------------------------------------------------
 
   test('getWorkflowsReferencingAgent returns workflows using given agent', () => {
     seedAgent(db, 'agent-1', 'space-1', 'Alpha');
@@ -943,10 +841,6 @@ describe('SpaceWorkflowManager', () => {
     expect(refs).toHaveLength(1);
     expect(refs[0].id).toBe(wf.id);
   });
-
-  // -------------------------------------------------------------------------
-  // agents[] format validation (no agentLookup needed)
-  // -------------------------------------------------------------------------
 
   test('createWorkflow rejects agents[] entry with empty agentId (no lookup)', () => {
     expect(() =>
@@ -992,7 +886,6 @@ describe('SpaceWorkflowManager', () => {
             { agentId: 'agent-b', name: 'b' },
           ],
         },
-        // Synthetic single-agent end node — multi-agent end nodes are forbidden.
         { name: 'End', agentId: 'agent-a' },
       ],
       completionAutonomyLevel: 3,
@@ -1013,10 +906,6 @@ describe('SpaceWorkflowManager', () => {
       })
     ).toThrow(WorkflowValidationError);
   });
-
-  // -------------------------------------------------------------------------
-  // Channel validation — structural (no agentLookup needed)
-  // -------------------------------------------------------------------------
 
   test('createWorkflow rejects channels with empty from', () => {
     expect(() =>
@@ -1123,10 +1012,6 @@ describe('SpaceWorkflowManager', () => {
     expect(wf.channels![0].to).toEqual(['Review', 'QA']);
   });
 
-  // -------------------------------------------------------------------------
-  // Channels stored at workflow level
-  // -------------------------------------------------------------------------
-
   test('createWorkflow stores channels at workflow level (not node level)', () => {
     seedAgent(db, 'agent-coder-id', 'space-1', 'CoderAgent');
     seedAgent(db, 'agent-reviewer-id', 'space-1', 'ReviewerAgent');
@@ -1187,10 +1072,6 @@ describe('SpaceWorkflowManager', () => {
     expect(updated!.channels![0].from).toBe('Code');
   });
 
-  // -------------------------------------------------------------------------
-  // Multi-agent step CRUD round-trip via manager
-  // -------------------------------------------------------------------------
-
   test('createWorkflow with multi-agent step and channels persists and reads back correctly', () => {
     const wf = manager.createWorkflow({
       spaceId: 'space-1',
@@ -1226,7 +1107,6 @@ describe('SpaceWorkflowManager', () => {
     expect(node.agents![0].agentId).toBe('agent-coder');
     expect(node.agents![0].instructions).toMatchObject({ mode: 'override', value: 'write code' });
     expect(node.agents![1].agentId).toBe('agent-reviewer');
-    // node-level instructions removed from WorkflowNode
     expect('instructions' in node).toBe(false);
     expect(read.channels).toHaveLength(1);
     expect(read.channels![0]).toMatchObject({
@@ -1268,7 +1148,6 @@ describe('SpaceWorkflowManager', () => {
     const node = updated.nodes[0];
     expect(node.agentId).toBeUndefined();
     expect(node.agents).toHaveLength(2);
-    // channels are undefined since updateWorkflow didn't pass channels
     expect(updated.channels).toBeUndefined();
   });
 
@@ -1285,7 +1164,6 @@ describe('SpaceWorkflowManager', () => {
             { agentId: 'agent-b', name: 'b' },
           ],
         },
-        // Synthetic single-agent end node — multi-agent end nodes are forbidden.
         { id: 'step-end', name: 'End', agentId: 'agent-a' },
       ],
       startNodeId: 'step-1',
@@ -1298,7 +1176,6 @@ describe('SpaceWorkflowManager', () => {
   });
 
   test('legacy single-agent workflow continues to work alongside multi-agent workflows', () => {
-    // Create a mix of single-agent and multi-agent workflows
     const single = manager.createWorkflow({
       spaceId: 'space-1',
       name: 'Single Agent',
@@ -1317,7 +1194,6 @@ describe('SpaceWorkflowManager', () => {
             { agentId: 'agent-y', name: 'y' },
           ],
         },
-        // Synthetic single-agent end node — multi-agent end nodes are forbidden.
         { id: 'step-end', name: 'End', agentId: 'agent-x' },
       ],
       startNodeId: 'step-m',
@@ -1334,12 +1210,8 @@ describe('SpaceWorkflowManager', () => {
 
     const readMulti = manager.getWorkflow(multi.id)!;
     expect(readMulti.nodes[0].agents).toHaveLength(2);
-    expect(readMulti.channels).toBeUndefined(); // no channels passed
+    expect(readMulti.channels).toBeUndefined();
   });
-
-  // -------------------------------------------------------------------------
-  // Role field validation (no agentLookup needed)
-  // -------------------------------------------------------------------------
 
   test('createWorkflow rejects agents[] entry with empty role (no lookup)', () => {
     expect(() =>
@@ -1388,7 +1260,6 @@ describe('SpaceWorkflowManager', () => {
             { agentId: 'agent-a', name: 'quick-reviewer' },
           ],
         },
-        // Synthetic single-agent end node — multi-agent end nodes are forbidden.
         { name: 'End', agentId: 'agent-a' },
       ],
       completionAutonomyLevel: 3,
@@ -1398,12 +1269,7 @@ describe('SpaceWorkflowManager', () => {
     expect(wf.nodes[0].agents![1].name).toBe('quick-reviewer');
   });
 
-  // -------------------------------------------------------------------------
-  // Read-time backfill for legacy rows without role
-  // -------------------------------------------------------------------------
-
   test('repo backfills role = agentId for legacy rows persisted without role', () => {
-    // Simulate a legacy row: persist raw JSON without role fields
     const wf = repo.createWorkflow({
       spaceId: 'space-1',
       name: 'Legacy No-Role WF',
@@ -1421,7 +1287,6 @@ describe('SpaceWorkflowManager', () => {
     const read = repo.getWorkflow(wf.id)!;
     const node = read.nodes[0];
     expect(node.agents).toHaveLength(2);
-    // Backfill: role must equal agentId when absent
     expect(node.agents![0].name).toBe('agent-old-1');
     expect(node.agents![1].name).toBe('agent-old-2');
   });

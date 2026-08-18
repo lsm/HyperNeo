@@ -1,15 +1,3 @@
-/**
- * SpaceTasks — tabbed task list for a space.
- *
- * Tabs: Action (review + blocked, grouped by reason),
- *       Active (open + in_progress + approved — see `task-filters.ts` for why
- *       `approved` belongs here),
- *       Completed (done + cancelled + archived), Scheduled.
- *
- * Within each tab, tasks are grouped by status/reason in TaskGroup cards,
- * matching the RoomTasks component style.
- */
-
 import type { SpaceBlockReason, SpaceTask, SpaceTaskStatus, TaskSchedule } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -32,23 +20,8 @@ import {
 type TaskFilterTab = 'action' | 'active' | 'draft' | 'completed' | 'scheduled';
 type LegacyTaskFilterTab = TaskFilterTab | 'archived';
 
-/** Block reasons that indicate a task needs human attention */
 const ATTENTION_BLOCK_REASONS: SpaceBlockReason[] = ['human_input_requested'];
 
-/**
- * Per-tab membership predicates. The `action` and `active` predicates are
- * the shared helpers from `task-filters.ts`, which are the single source
- * of truth also used by the sidebar in `SpaceDetailPanel` (Tasks-nav
- * badge, "Active"/"Action" sub-tabs). Both surfaces import from the same
- * helper so the lists and the badge counts cannot drift apart — see the
- * `task-filters.ts` doc comments for why `approved` belongs in Active.
- *
- * Exported for tests that assert the tasks-view's `active` predicate
- * matches the sidebar's `isActiveTask` exactly. Keeping this exported is
- * a regression guard: if someone later re-inlines the predicate here,
- * the parity test in `task-filters.test.ts` will fail.
- */
-// Note: 'scheduled' tab is handled separately in the component (schedules, not tasks)
 export const TAB_PREDICATES: Record<
   Exclude<TaskFilterTab, 'scheduled'>,
   (task: SpaceTask) => boolean
@@ -59,33 +32,12 @@ export const TAB_PREDICATES: Record<
   completed: (t) => ['done', 'cancelled', 'archived'].includes(t.status),
 };
 
-/** Status group definitions within each tab */
 interface StatusGroupDef {
   status: SpaceTaskStatus;
   title: string;
   variant: 'default' | 'yellow' | 'purple' | 'green' | 'red' | 'gray';
-  /**
-   * Optional secondary `block_reason` filter applied server-side. Used by
-   * the Action tab to split blocked rows into "Needs Input" /
-   * "Gate Pending" / generic-"Blocked" groups via the same paginated
-   * `spaceTask.list` RPC. Tri-state: `undefined` = ignore the column,
-   * `null` = match rows with no reason set, value = match exactly.
-   */
   blockReason?: SpaceBlockReason | null;
-  /**
-   * Optional negative `block_reason` filter applied server-side. Mutually
-   * exclusive with `blockReason`. Used by the Action tab's generic
-   * "Blocked" bucket to include every blocked row whose reason is NOT one
-   * of the attention-required values, plus rows with no reason set —
-   * mirroring the legacy client-side filter.
-   */
   blockReasonNotIn?: SpaceBlockReason[];
-  /**
-   * Local predicate run against the full `tasks` signal, used only to
-   * compute the badge count shown in the group header. Mirrors the
-   * server-side filter exactly so badge counts match the page total
-   * the server returns. Defaults to a status-only match.
-   */
   matchFn?: (task: SpaceTask) => boolean;
 }
 
@@ -103,29 +55,17 @@ const ACTION_GROUPS: StatusGroupDef[] = [
     status: 'blocked',
     title: 'Blocked',
     variant: 'yellow',
-    // Server-side: include every blocked row whose reason is NOT one of the
-    // attention-required values (plus null reasons). Mirrors the legacy
-    // client-side `!ATTENTION_BLOCK_REASONS.includes(...)` filter so the
-    // totals stay disjoint from the two attention buckets above.
     blockReasonNotIn: ATTENTION_BLOCK_REASONS,
     matchFn: (t) =>
       t.status === 'blocked' &&
       !ATTENTION_BLOCK_REASONS.includes(t.blockReason as SpaceBlockReason),
   },
-  // Paused on a rate/usage cap (Part C): the worker is in cooldown and
-  // auto-resumes when the cap lifts (`restrictions.resetAt`), but the state
-  // is surfaced here so it stays visible with its manual Resume/Cancel
-  // actions while waiting.
   { status: 'rate_limited', title: 'Rate Limited', variant: 'yellow' },
   { status: 'usage_limited', title: 'Usage Limited', variant: 'yellow' },
 ];
 
 const ACTIVE_GROUPS: StatusGroupDef[] = [
   { status: 'in_progress', title: 'In Progress', variant: 'yellow' },
-  // `approved` is a transient state — the post-approval sub-session runs,
-  // then `mark_complete` transitions the task to `done`. Surface it in
-  // Active so a task stuck in `approved` (post-approval dispatch failed,
-  // `postApprovalBlockedReason` populated) stays visible.
   { status: 'approved', title: 'Post-Approval Running', variant: 'green' },
   { status: 'open', title: 'Open', variant: 'default' },
 ];
@@ -222,9 +162,6 @@ function MoreTabsDropdown({
     return () => document.removeEventListener('click', close);
   }, [isOpen]);
 
-  // Move focus into the menu on open so arrow/Escape work immediately. Restored
-  // to the trigger explicitly on Escape and after a selection (below); together
-  // these match the keyboard behavior of the Dropdown this replaced.
   useEffect(() => {
     if (!isOpen) return;
     const firstItem = menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]');
@@ -244,7 +181,6 @@ function MoreTabsDropdown({
   };
 
   const onTriggerKeyDown = (event: KeyboardEvent) => {
-    // Open with the arrow keys in addition to the native Enter/Space toggle.
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       setIsOpen(true);
@@ -385,20 +321,8 @@ function EmptyTabState({ tab }: { tab: TaskFilterTab }) {
   return <TaskStatePanel title={title} description={description} />;
 }
 
-/** Max dependency badges to render inline before collapsing into a "+N" overflow chip. */
 const MAX_VISIBLE_DEPENDENCY_BADGES = 3;
 
-/**
- * Inline dependency badges for a task. Each badge is a clickable pill showing
- * the prerequisite task number, coloured green when the dep is `done` and
- * gray otherwise. Deps not found in the loaded task list render as a gray
- * badge with a "task not found" tooltip. Shows at most
- * `MAX_VISIBLE_DEPENDENCY_BADGES` badges inline; any remainder is folded into
- * a non-interactive `+N` overflow chip.
- *
- * The dep lookup (`taskById`) is built once by the parent and passed in, so
- * the map construction is O(N) per render of the list — not per row.
- */
 function TaskDependencyBadges({
   dependsOnIds,
   taskById,
@@ -426,9 +350,6 @@ function TaskDependencyBadges({
 
         const interactive = !isMissing && !!onSelectDependency;
 
-        // Hover classes only applied when the badge is interactive —
-        // disabled buttons shouldn't carry hover state, even though
-        // browsers would ignore it.
         const colorClasses = isDone
           ? `text-green-300 bg-green-900/40 border-green-700/60${interactive ? ' hover:bg-green-900/60' : ''}`
           : `text-gray-300 bg-dark-700 border-dark-600${interactive ? ' hover:bg-dark-600' : ''}`;
@@ -475,10 +396,8 @@ function TaskDependencyBadges({
   );
 }
 
-/** Page size for per-group pagination in the Tasks view. */
 const TASK_GROUP_PAGE_SIZE = 10;
 
-/** Task group card with colored header, matching RoomTasks.TaskGroup style */
 function TaskGroup({
   title,
   count,
@@ -496,11 +415,6 @@ function TaskGroup({
   tasks: SpaceTask[];
   taskById: ReadonlyMap<string, SpaceTask>;
   onTaskClick?: (taskId: string) => void;
-  /**
-   * Optional pagination footer rendered when the group's total exceeds the
-   * page size. Encapsulates Prev/Next/range-text so the parent group wrapper
-   * owns offset state while this card stays presentation-only.
-   */
   pagination?: {
     offset: number;
     limit: number;
@@ -509,17 +423,7 @@ function TaskGroup({
     onNext: () => void;
     isLoading?: boolean;
   };
-  /**
-   * `true` while a paginated fetch is in flight. Used to render a loading
-   * placeholder in place of (potentially stale) rows so the user can't
-   * click into a task that no longer belongs to the visible page range.
-   */
   loading?: boolean;
-  /**
-   * Error state for paginated groups. When set, an inline banner replaces
-   * the rows and surfaces a Retry control. Pagination footer is preserved
-   * so the user retains a navigation path even after a failed fetch.
-   */
   error?: { message: string; onRetry?: () => void } | null;
 }) {
   const accentStyles: Record<string, string> = {
@@ -533,20 +437,12 @@ function TaskGroup({
 
   const showPagination = !!pagination && pagination.total > pagination.limit;
 
-  // Multi-word titles ("In Progress", "Post-Approval Running") must collapse to
-  // a single valid ID token — `aria-labelledby` splits on whitespace, so a raw
-  // title would make assistive tech look up several nonexistent IDs instead of
-  // the actual heading.
   const slug =
     title
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '') || 'group';
 
-  // Body precedence: error > loading-without-rows > rows. We deliberately
-  // render the loading placeholder when `tasks.length === 0` because the
-  // parent (`PaginatedTaskGroup`) clears the row list while a new page is
-  // fetching to prevent click-through to stale rows.
   const body = error ? (
     <div
       class="flex items-center justify-between gap-3 px-5 py-7 text-sm text-red-300"
@@ -621,14 +517,6 @@ function TaskGroup({
   );
 }
 
-/**
- * Footer row rendered below a paginated `TaskGroup` when the total row count
- * exceeds the page size. Shows "Showing X–Y of Z" with Prev/Next buttons.
- *
- * `pageSize` is the actual length of the current page (may be < `limit` on
- * the last page); used to compute the "Y" of "X–Y of Z" exactly without
- * needing an extra round-trip to the server.
- */
 export function TaskGroupPagination({
   offset,
   limit,
@@ -684,8 +572,6 @@ export function TaskGroupPagination({
   );
 }
 
-/** Individual task item — status conveyed by the unified StatusBadge, with an
- *  activity spinner when an in-progress task has a live workflow run behind it. */
 function TaskItem({
   task,
   taskById,
@@ -699,10 +585,6 @@ function TaskItem({
 }) {
   const isClickable = !!onClick;
   const statusConfig = getTaskStatusConfig(task.status);
-  // Show activity when a task is in_progress and either it's standalone (no
-  // workflow run to gate on, so trust the status) or its workflow run is
-  // genuinely live. Workflow tasks whose run has ended/crashed but whose status
-  // lags don't spin; standalone tasks aren't blocked by the missing run.
   const showsActivity =
     task.status === 'in_progress' &&
     (!task.workflowRunId || spaceStore.activeRuns.value.some((r) => r.id === task.workflowRunId));
@@ -761,9 +643,6 @@ function TaskItem({
           </svg>
         )}
       </div>
-      {/* Dependency pills are siblings of the row's button (not descendants):
-          interactive elements inside role="button" are invalid ARIA and can be
-          suppressed by assistive tech, so the badges render outside it. */}
       <TaskDependencyBadges
         dependsOnIds={task.dependsOn}
         taskById={taskById}
@@ -801,9 +680,6 @@ export function SpaceTasks({
   const activeTab: TaskFilterTab = rawActiveTab === 'archived' ? 'completed' : rawActiveTab;
   const routeSpaceId = navigationSpaceId ?? spaceId;
 
-  // Load schedules when the tab is switched to 'scheduled' or the active space changes.
-  // Including spaceId in deps prevents stale schedules from a previous space lingering
-  // when the user navigates between spaces while staying on the scheduled tab.
   useEffect(() => {
     if (activeTab === 'scheduled' && spaceId) {
       spaceStore.listSchedules().catch(() => {});
@@ -836,25 +712,15 @@ export function SpaceTasks({
     if (activeTab === 'scheduled') return [];
     const predicate = TAB_PREDICATES[activeTab as Exclude<TaskFilterTab, 'scheduled'>];
     if (!predicate) return [];
-    // Used only to drive the tab-empty-state decision; the per-group
-    // content is fetched server-side by `PaginatedTaskGroup`.
     return tasks.filter(predicate);
   }, [tasks, activeTab]);
 
-  // Build the dep lookup once per render of the list — O(N) total rather
-  // than O(N) per row inside the badge component.
   const taskById = useMemo(() => {
     const map = new Map<string, SpaceTask>();
     for (const t of tasks) map.set(t.id, t);
     return map;
   }, [tasks]);
 
-  // Empty-state guard is tab-aware: the Scheduled tab can have content even
-  // when `tasks` is empty (a freshly-created schedule that hasn't fired yet).
-  // Falling through to the global "No tasks yet" placeholder would hide the
-  // schedule list, leaving users with no way to view/manage their schedules.
-  // We always render the tab strip so users can navigate to the Scheduled tab
-  // even when no tasks have been spawned yet.
   const showGlobalEmpty = tasks.length === 0 && activeTab !== 'scheduled';
 
   const draftTab: TabConfig | null =
@@ -877,11 +743,6 @@ export function SpaceTasks({
     completedTab,
   ];
 
-  // The middle column can stay narrow (mobile, or desktop with both side panels
-  // open). Cap the compact strip at two inline tabs so the strip shows three
-  // controls total (two tabs + the overflow trigger) and never overflows on
-  // 320–420 px screens; the full set renders inline only at xl, where the
-  // column has enough room.
   const compactTabCount = 2;
   const compactTabs = allTabs.slice(0, compactTabCount);
   const compactOverflowTabs = allTabs.slice(compactTabCount);
@@ -905,7 +766,6 @@ export function SpaceTasks({
         <div
           class={`flex w-full gap-1 rounded-2xl border p-1.5 sm:w-auto sm:self-start ${GLASS_SURFACE}`}
         >
-          {/* Compact middle column: priority tabs plus an overflow menu. */}
           <div class="flex w-full gap-1 sm:w-auto xl:hidden">
             {compactTabs.map((tab) => (
               <TabButton
@@ -925,7 +785,6 @@ export function SpaceTasks({
               />
             )}
           </div>
-          {/* Wide middle column: all tabs inline. */}
           <div class="hidden gap-1 xl:flex">
             {allTabs.map((tab) => (
               <TabButton
@@ -980,7 +839,6 @@ export function SpaceTasks({
   );
 }
 
-/** Schedule list for the Scheduled tab */
 function ScheduleList({
   schedules,
   onPause,
@@ -1101,7 +959,6 @@ function ScheduleList({
   );
 }
 
-/** Groups tasks by status within the selected tab, rendering TaskGroup cards */
 function TaskGroupList({
   tasks,
   taskById,
@@ -1120,29 +977,12 @@ function TaskGroupList({
   return (
     <div class="space-y-4">
       {groups.map((group) => {
-        // Compute the badge count from the full `tasks` signal so it stays
-        // in sync with real-time updates (e.g. a task transitions from
-        // `open` to `in_progress` — the new "In Progress" badge updates
-        // before the paginated fetch lands). The actual page contents are
-        // fetched server-side from `PaginatedTaskGroup`.
         const matchFn = group.matchFn ?? ((t: SpaceTask) => t.status === group.status);
         const matching = tasks.filter(matchFn);
         const localCount = matching.length;
 
-        // Skip rendering empty groups, mirroring the legacy behaviour.
-        // Using the local count here means we don't fire a network
-        // request just to learn there's nothing to show.
         if (localCount === 0) return null;
 
-        // Content signature over the displayed fields of every task in this
-        // group. Excludes only `updatedAt`: it advances on every running-task
-        // step (the original re-fetch storm), while the fields below are stable
-        // during stepping. `result` is included — the daemon writes it only on
-        // discrete lifecycle transitions (done/blocked, outcome resolution,
-        // gate rejection, reactivation), never during in_progress steps — so it
-        // refreshes the blocked-row reason TaskItem renders without
-        // reintroducing the churn. Sorted so update order within `tasks`
-        // doesn't churn the signature.
         const contentSig = matching
           .map((t) =>
             [
@@ -1174,20 +1014,6 @@ function TaskGroupList({
   );
 }
 
-/**
- * Wrapper that owns per-group pagination state. Fetches a single page of
- * tasks for the group's status (and optional `blockReason` filter) on mount,
- * on group/space identity changes, on Prev/Next clicks, and whenever the
- * group's `contentSig` changes — i.e. a task was added/removed or a displayed
- * field (title/status/result/blockReason/pendingCheckpointType/dependsOn) was
- * edited.
- *
- * `contentSig` deliberately excludes `updatedAt`: a running task advances it
- * on every step, and wiring that into the deps re-fetched every visible
- * group's page on each step (the bug this corrects). Because the sig still
- * captures membership + displayed fields, both the row content and the
- * `page.total`-backed header count stay live on add/edit.
- */
 function PaginatedTaskGroup({
   spaceId,
   group,
@@ -1199,13 +1025,6 @@ function PaginatedTaskGroup({
   spaceId: string;
   group: StatusGroupDef;
   localCount: number;
-  /**
-   * Signature over the stable, displayed fields of every task in the group
-   * (ids + title/status/result/blockReason/pendingCheckpointType/dependsOn).
-   * Excludes only `updatedAt`. A change re-runs the fetch so adds, removes,
-   * and visible edits land in the page without refetching on every running-
-   * task step.
-   */
   contentSig: string;
   taskById: ReadonlyMap<string, SpaceTask>;
   onTaskClick?: (taskId: string) => void;
@@ -1217,31 +1036,14 @@ function PaginatedTaskGroup({
   });
   const [loading, setLoading] = useState(false);
   const [hasError, setHasError] = useState(false);
-  // Tracks whether the in-flight fetch was triggered by a Prev/Next click.
-  // Only those should clear the visible rows so the user can't open a task
-  // that no longer belongs to the page range shown in the footer.
   const [pageChanging, setPageChanging] = useState(false);
-  // Bumped by the Retry button to force the fetch effect to rerun on the
-  // same offset. Avoids hand-rolling an out-of-effect fetcher with its own
-  // cancellation logic.
   const [retryNonce, setRetryNonce] = useState(0);
 
-  // Reset offset to 0 when the group identity changes (tab switch, or — more
-  // importantly — when the user navigates between spaces while staying on
-  // the Tasks view: a stable `(title, status, blockReason)` triple across
-  // spaces would otherwise leak rows from the previous space's first page
-  // until something else churned the deps).
   const groupKey = `${spaceId}-${group.title}-${group.status}-${group.blockReason ?? ''}`;
   useEffect(() => {
     setOffset(0);
   }, [groupKey]);
 
-  // Re-fetch when:
-  //  - `groupKey` changes — different group/space identity
-  //  - `offset` changes — Prev/Next clicks
-  //  - `contentSig` changes — a task entered/left the group or a displayed
-  //    field was edited. `updatedAt` is intentionally excluded so a running
-  //    task stepping doesn't re-fetch every visible group on each step.
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -1257,10 +1059,6 @@ function PaginatedTaskGroup({
         setHasError(false);
         setPage(result);
 
-        // Clamp offset if total shrank (e.g. tasks moved to another
-        // status while the user was on a deeper page). If the current
-        // offset now points past the end, jump back one page so the
-        // user keeps seeing content rather than an empty card.
         if (result.total > 0 && offset >= result.total) {
           const lastPageOffset =
             Math.max(0, Math.ceil(result.total / TASK_GROUP_PAGE_SIZE) - 1) * TASK_GROUP_PAGE_SIZE;
@@ -1269,12 +1067,6 @@ function PaginatedTaskGroup({
       })
       .catch(() => {
         if (cancelled) return;
-        // Keep the previous page's `total` so Prev/Next remain visible
-        // and the user can click them to retry — collapsing to zero
-        // would strand the user on a blank card with no in-UI recovery
-        // after a transient RPC/network failure. Visible rows are
-        // dropped (they may now be stale) and an inline error banner
-        // is rendered in their place.
         setHasError(true);
         setPage((prev) => ({ tasks: [], total: prev.total }));
       })
@@ -1288,14 +1080,8 @@ function PaginatedTaskGroup({
     };
   }, [groupKey, offset, contentSig, retryNonce]);
 
-  // Use the server total once we have it; before the first fetch resolves,
-  // fall back to the local count so the header doesn't flash "(0)" for
-  // non-empty groups during initial load.
   const headerCount = page.total || localCount;
 
-  // Manual retry handler used by the inline error banner. Bumps a nonce so
-  // the fetch effect reruns on the same `offset` without duplicating
-  // fetch/cancellation logic.
   const retry = () => {
     setHasError(false);
     setRetryNonce((n) => n + 1);
@@ -1306,11 +1092,6 @@ function PaginatedTaskGroup({
       title={group.title}
       count={headerCount}
       variant={group.variant}
-      // While a Prev/Next page change is in flight (or after an error),
-      // hide the previous page's rows so the user can't open a task that
-      // no longer belongs to the range shown in the footer ("Showing
-      // 11–20" with rows 1–10 still on screen would mismatch click
-      // targets).
       tasks={pageChanging || hasError ? [] : page.tasks}
       taskById={taskById}
       onTaskClick={onTaskClick}

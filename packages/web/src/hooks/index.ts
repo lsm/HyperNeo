@@ -1,14 +1,3 @@
-/**
- * Hooks Index
- *
- * Re-exports all custom hooks for convenient importing.
- *
- * @example
- * ```typescript
- * import { useModal, useAutoScroll, useMessageHub } from '../hooks';
- * ```
- */
-
 export { useModal, type UseModalResult } from './useModal';
 export { useInputDraft, type UseInputDraftResult } from './useInputDraft';
 export {

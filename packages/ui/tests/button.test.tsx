@@ -1,8 +1,6 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { createElement } from 'preact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-// CloseButton from button.tsx is not re-exported from mod.ts (mod.ts exports dialog's CloseButton).
-// Import it directly from the button component source.
 import { CloseButton } from '../src/components/button/button.tsx';
 import { CloseContext } from '../src/hooks/use-close.ts';
 import { Button, ButtonGroup, DataInteractive } from '../src/mod.ts';
@@ -41,7 +39,6 @@ describe('Button', () => {
     );
     const link = screen.getByRole('link');
     expect(link).not.toBeNull();
-    // When as="a", type should not be set to "button"
     expect(link.getAttribute('type')).toBeNull();
   });
 
@@ -96,7 +93,6 @@ describe('Button', () => {
     await act(async () => {
       fireEvent.pointerLeave(btn, { pointerType: 'touch' });
     });
-    // touch leave does NOT clear hover
     expect(btn.getAttribute('data-hover')).toBe('');
   });
 
@@ -136,11 +132,9 @@ describe('Button', () => {
   it('should not set data-focus after touch pointer down', async () => {
     render(<Button>Touch Active</Button>);
     const btn = screen.getByRole('button');
-    // Touch pointer down sets isTouch = true
     await act(async () => {
       fireEvent.pointerDown(btn, { pointerType: 'touch' });
     });
-    // Subsequent focus should not set data-focus because isTouch is true
     await act(async () => {
       fireEvent.focus(btn);
     });
@@ -213,7 +207,6 @@ describe('CloseButton', () => {
   });
 
   it('should not throw when close is null (no context)', () => {
-    // CloseButton gracefully handles null close
     expect(() => {
       render(
         createElement(
@@ -433,7 +426,6 @@ describe('DataInteractive', () => {
     await act(async () => {
       fireEvent.pointerLeave(el, { pointerType: 'touch' });
     });
-    // touch leave does NOT clear hover
     expect(el.getAttribute('data-hover')).toBe('');
   });
 

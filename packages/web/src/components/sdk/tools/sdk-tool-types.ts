@@ -1,10 +1,3 @@
-/**
- * Local type mirrors for SDK tool outputs used by ToolResultCard.
- * Copied from packages/shared/src/sdk/sdk-tools.d.ts so the web
- * package can type-narrow without importing the excluded sdk/ dir.
- */
-
-// ─── FileReadOutput ───
 export type FileReadOutput =
   | {
       type: 'text';
@@ -49,7 +42,6 @@ export function isFileReadOutput(output: unknown): output is FileReadOutput {
   );
 }
 
-// ─── FileEditOutput ───
 export interface FileEditOutput {
   filePath: string;
   oldString: string;
@@ -85,7 +77,6 @@ export function isFileEditOutput(output: unknown): output is FileEditOutput {
   );
 }
 
-// ─── FileWriteOutput ───
 export interface FileWriteOutput {
   type: 'create' | 'update';
   filePath: string;

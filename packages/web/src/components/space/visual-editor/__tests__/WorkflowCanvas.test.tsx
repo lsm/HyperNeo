@@ -1,21 +1,3 @@
-/**
- * Unit tests for WorkflowCanvas node selection and multi-select behaviour.
- *
- * Tests:
- * - Renders all nodes
- * - Clicking a node selects it (isSelected visual indicator)
- * - Clicking a node calls onNodeSelect with the stepId
- * - Clicking background deselects the active node
- * - Clicking background calls onNodeSelect(null)
- * - Clicking a different node switches selection
- * - Delete key on selected node calls onDeleteNode
- * - Backspace key on selected node calls onDeleteNode
- * - Delete/Backspace without selection does not call onDeleteNode
- * - Delete key clears selection after onDeleteNode
- * - Delete key inside input does not trigger onDeleteNode
- * - Stale selectedNodeId is cleared when node removed from array
- */
-
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
@@ -31,8 +13,6 @@ vi.mock('../../../../lib/utils', () => ({
 }));
 
 afterEach(() => cleanup());
-
-// ---- Test fixtures ----
 
 const VP: ViewportState = { offsetX: 0, offsetY: 0, scale: 1 };
 
@@ -95,8 +75,6 @@ function renderCanvas(extra: Partial<WorkflowCanvasProps> = {}) {
   return { ...result, onNodeSelect, onDeleteNode };
 }
 
-// ---- Rendering ----
-
 describe('WorkflowCanvas — rendering', () => {
   it('renders all provided nodes', () => {
     const { getByTestId } = renderCanvas();
@@ -110,8 +88,6 @@ describe('WorkflowCanvas — rendering', () => {
     expect(getByTestId('workflow-node-step-2').className).not.toContain('ring-2');
   });
 });
-
-// ---- Selection ----
 
 describe('WorkflowCanvas — selection', () => {
   it('clicking a node adds selected classes', () => {
@@ -162,8 +138,6 @@ describe('WorkflowCanvas — selection', () => {
     expect(onNodeSelect).toHaveBeenCalledWith(null);
   });
 });
-
-// ---- Keyboard delete ----
 
 describe('WorkflowCanvas — keyboard delete', () => {
   it('Delete key calls onDeleteNode with selected stepId', () => {
@@ -223,8 +197,6 @@ describe('WorkflowCanvas — keyboard delete', () => {
   });
 });
 
-// ---- Stale selection cleanup ----
-
 describe('WorkflowCanvas — stale selection cleanup', () => {
   it('clears selection when the selected node is removed from the nodes array', () => {
     const onNodeSelect = vi.fn();
@@ -265,8 +237,6 @@ describe('WorkflowCanvas — stale selection cleanup', () => {
   });
 });
 
-// ---- isSelected prop propagation ----
-
 describe('WorkflowNode — isSelected prop via WorkflowCanvas', () => {
   it('node without selection does not have ring classes', () => {
     const { getByTestId } = renderCanvas();
@@ -281,8 +251,6 @@ describe('WorkflowNode — isSelected prop via WorkflowCanvas', () => {
     expect(getByTestId('workflow-node-step-2').className).not.toContain('ring-2');
   });
 });
-
-// ---- Transitions / edge integration ----
 
 const TRANSITIONS: VisualTransition[] = [
   { id: 'tr1', from: 'step-1', to: 'step-2' },
@@ -353,14 +321,12 @@ describe('WorkflowCanvas — edge selection mutual exclusivity', () => {
     }
     const { getByTestId } = render(<Wrapper />);
 
-    // Select an edge first
     const hitbox = getByTestId('edge-tr1').querySelectorAll('path')[0];
     fireEvent.click(hitbox);
     expect(onEdgeSelect).toHaveBeenCalledWith('tr1');
     expect(getByTestId('edge-tr1').getAttribute('data-selected')).toBe('true');
     onEdgeSelect.mockClear();
 
-    // Now select a node — edge should be cleared
     fireEvent.click(getByTestId('workflow-node-step-1'));
     expect(onEdgeSelect).toHaveBeenCalledWith(null);
     expect(getByTestId('edge-tr1').getAttribute('data-selected')).toBe('false');
@@ -386,12 +352,10 @@ describe('WorkflowCanvas — edge selection mutual exclusivity', () => {
     }
     const { getByTestId } = render(<Wrapper />);
 
-    // Select a node first
     fireEvent.click(getByTestId('workflow-node-step-1'));
     expect(getByTestId('workflow-node-step-1').className).toContain('ring-2');
     onNodeSelect.mockClear();
 
-    // Now select an edge — node should be cleared
     const hitbox = getByTestId('edge-tr1').querySelectorAll('path')[0];
     fireEvent.click(hitbox);
     expect(onNodeSelect).toHaveBeenCalledWith(null);
@@ -456,7 +420,6 @@ describe('WorkflowCanvas — edge delete', () => {
     }
     const { getByTestId } = render(<Wrapper />);
 
-    // Select edge (clears node selection)
     const hitbox = getByTestId('edge-tr1').querySelectorAll('path')[0];
     fireEvent.click(hitbox);
     fireEvent.keyDown(document.body, { key: 'Delete' });
@@ -466,14 +429,11 @@ describe('WorkflowCanvas — edge delete', () => {
 
   it('Delete on selected node does not call onDeleteEdge when edge not selected', () => {
     const { getByTestId, onDeleteEdge } = renderCanvasWithEdges();
-    // Select a node (mutually exclusive — no edge selected)
     fireEvent.click(getByTestId('workflow-node-step-1'));
     fireEvent.keyDown(document.body, { key: 'Delete' });
     expect(onDeleteEdge).not.toHaveBeenCalled();
   });
 });
-
-// ---- Channel edges ----
 
 import { computeChannelEdges } from '../WorkflowCanvas';
 import type { WorkflowChannel } from '@hyperneo/shared';
@@ -555,7 +515,6 @@ describe('computeChannelEdges', () => {
       makeAgentWithRole('agent-1', 'coder'),
       makeAgentWithRole('agent-2', 'reviewer'),
     ];
-    // Channel within the same node - both coder and reviewer are in step-1
     const channels: WorkflowChannel[] = [];
     const nodes = [makeNodeWithAgentsAndChannels('step-1', 'Step One', agents, channels)];
     const result = computeChannelEdges(nodes as any);
@@ -567,7 +526,6 @@ describe('computeChannelEdges', () => {
     const channels: WorkflowChannel[] = [{ id: 'ch-1', from: '*', to: 'coder' }];
     const nodes = [makeNodeWithAgentsAndChannels('step-1', 'Step One', agents, channels)];
     const result = computeChannelEdges(nodes as any);
-    // * to a role in same node = intra-node = skipped
     expect(result).toHaveLength(0);
   });
 
@@ -591,13 +549,10 @@ describe('computeChannelEdges', () => {
     const channels: WorkflowChannel[] = [];
     const nodes = [makeNodeWithAgentsAndChannels('step-1', 'Step One', agents, channels)];
     const result = computeChannelEdges(nodes as any);
-    // Unknown role can't be resolved, so edge is skipped
     expect(result).toHaveLength(0);
   });
 
   it('creates inter-node edge between two regular nodes', () => {
-    // Node A has coder, Node B has reviewer
-    // Channel: coder -> reviewer defined on Node A
     const nodeAAgents = [makeAgentWithRole('agent-1', 'coder')];
     const nodeBAgents = [makeAgentWithRole('agent-2', 'reviewer')];
     const nodeAChannels: WorkflowChannel[] = [{ from: 'coder', to: 'reviewer' }];
@@ -632,7 +587,6 @@ describe('computeChannelEdges', () => {
 describe('WorkflowCanvas — channel edge rendering', () => {
   it('renders no channel edges when nodes have no channels', () => {
     const { queryByTestId } = renderCanvas();
-    // No channel edges should be rendered
     expect(queryByTestId('channel-edge-list')).toBeNull();
   });
 
@@ -678,13 +632,10 @@ describe('WorkflowCanvas — channel edge rendering', () => {
     }
 
     const { container } = render(<WrapperWithChannels />);
-    // Should have channel edge elements
     const channelEdges = container.querySelectorAll('[data-channel-edge]');
     expect(channelEdges.length).toBeGreaterThan(0);
   });
 });
-
-// ---- Explicit channels prop ----
 
 import type { ResolvedWorkflowChannel } from '../EdgeRenderer';
 
@@ -716,13 +667,11 @@ describe('WorkflowCanvas — explicit channels prop', () => {
 
   it('renders channel edges from explicit channels prop', () => {
     const { container } = renderCanvasWithExplicitChannels();
-    // Channel edges are rendered inside the SVG overlay
     const channelEdges = container.querySelectorAll('[data-channel-edge]');
     expect(channelEdges.length).toBeGreaterThan(0);
   });
 
   it('prefers explicit channels over computed node channels when provided', () => {
-    // Node has a channel from step-1 to step-2 (via workflowChannels prop)
     const agentWithRole = makeAgent('agent-1', 'coder');
     const nodesWithChannels: WorkflowNodeData[] = [
       {
@@ -745,7 +694,6 @@ describe('WorkflowCanvas — explicit channels prop', () => {
         isStartNode: false,
       },
     ];
-    // Pass explicit channel: only the explicit edge renders.
     const duplicateChannels: ResolvedWorkflowChannel[] = [
       { fromStepId: 'step-2', toStepId: 'step-1', direction: 'one-way' as const },
     ];
@@ -765,7 +713,6 @@ describe('WorkflowCanvas — explicit channels prop', () => {
     }
 
     const { container } = render(<Wrapper />);
-    // Explicit channels should win, so only the explicitly passed edge renders.
     const explicitEdge = container.querySelector('[data-testid="channel-edge-step-2-step-1"]');
     expect(explicitEdge).toBeTruthy();
     expect(container.querySelectorAll('[data-channel-edge]').length).toBe(1);

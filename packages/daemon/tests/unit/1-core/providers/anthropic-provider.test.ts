@@ -1,7 +1,3 @@
-/**
- * Unit tests for Anthropic Provider
- */
-
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { AnthropicProvider } from '../../../../src/lib/providers/anthropic-provider';
 
@@ -10,7 +6,6 @@ describe('AnthropicProvider', () => {
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(() => {
-    // Store original env
     originalEnv = { ...process.env };
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
@@ -19,7 +14,6 @@ describe('AnthropicProvider', () => {
   });
 
   afterEach(() => {
-    // Restore env
     process.env = originalEnv;
   });
 
@@ -86,34 +80,28 @@ describe('AnthropicProvider', () => {
 
   describe('getModels without credentials', () => {
     it('should return empty array when no credentials are available', async () => {
-      // Remove credentials
       delete process.env.ANTHROPIC_API_KEY;
       delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
       delete process.env.ANTHROPIC_AUTH_TOKEN;
 
-      // Create new provider instance without credentials
       const providerWithoutCreds = new AnthropicProvider();
 
       const models = await providerWithoutCreds.getModels();
 
-      // Should return empty array (no static fallback)
       expect(models).toEqual([]);
     });
 
     it('should not attempt SDK call when credentials are missing', async () => {
-      // Remove credentials
       delete process.env.ANTHROPIC_API_KEY;
       delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
       delete process.env.ANTHROPIC_AUTH_TOKEN;
 
       const providerWithoutCreds = new AnthropicProvider();
 
-      // This should complete quickly (no SDK call)
       const startTime = Date.now();
       const models = await providerWithoutCreds.getModels();
       const duration = Date.now() - startTime;
 
-      // Should return empty array quickly (< 100ms)
       expect(models).toEqual([]);
       expect(duration).toBeLessThan(100);
     });
@@ -215,13 +203,8 @@ describe('AnthropicProvider', () => {
     });
 
     it('should return empty array when SDK loading fails', async () => {
-      // Set credentials so SDK load is attempted
       process.env.ANTHROPIC_API_KEY = 'test-key';
 
-      // Mock the SDK module with a query that fails when supportedModels is called.
-      // IMPORTANT: we must still provide createSdkMcpServer and tool so that other
-      // tests (e.g. provision-global-agent, task-agent-tools) don't break when
-      // this mock replaces setup.ts's default SDK mock.
       class MockMcpServer {
         readonly _registeredTools: Record<string, object> = {};
         connect(): void {}
@@ -260,13 +243,11 @@ describe('AnthropicProvider', () => {
         }),
       }));
 
-      // Clear cache to force fresh load
       const providerWithCreds = new AnthropicProvider();
       providerWithCreds.clearModelCache();
 
       const models = await providerWithCreds.getModels();
 
-      // Should return empty array when SDK fails
       expect(models).toEqual([]);
     });
   });
@@ -289,7 +270,6 @@ describe('AnthropicProvider', () => {
       expect(provider.ownsModel('glm-5')).toBe(false);
       expect(provider.ownsModel('deepseek-coder')).toBe(false);
       expect(provider.ownsModel('gpt-4')).toBe(false);
-      // copilot- aliases must route to AnthropicToCopilotBridgeProvider, not Anthropic
       expect(provider.ownsModel('copilot-sonnet')).toBe(false);
       expect(provider.ownsModel('copilot-mini')).toBe(false);
     });
@@ -304,7 +284,6 @@ describe('AnthropicProvider', () => {
       expect(provider.getModelForTier('sonnet')).toBe('sonnet');
       expect(provider.getModelForTier('haiku')).toBe('haiku');
       expect(provider.getModelForTier('opus')).toBe('opus');
-      // 'default' tier maps to 'sonnet' (legacy fallback)
       expect(provider.getModelForTier('default')).toBe('sonnet');
     });
   });
@@ -352,7 +331,6 @@ describe('AnthropicProvider', () => {
     });
 
     it('should allow clearing model cache', async () => {
-      // Set cache first
       provider.setModelCache([
         {
           id: 'cached',
@@ -367,21 +345,14 @@ describe('AnthropicProvider', () => {
         },
       ]);
 
-      // Clear cache
       provider.clearModelCache();
 
-      // Should return empty array when cache is cleared and no credentials
       const models = await provider.getModels();
       expect(models).toEqual([]);
     });
   });
 
   describe('convertSdkModels foreign-id filter', () => {
-    // Regression: when ANTHROPIC_BASE_URL is overridden to a non-Anthropic
-    // endpoint (e.g. GLM's Anthropic-compatible endpoint), the SDK may return
-    // foreign model IDs (e.g. `glm-5`). Those must be filtered out — tagging
-    // them as `provider: 'anthropic'` would surface GLM models in the
-    // Anthropic group of the model picker.
     it('drops glm-* SDK models so they do not get tagged as anthropic', () => {
       const sdkModels = [
         { value: 'sonnet', displayName: 'Sonnet', description: 'Sonnet 4.6 · ...' },
@@ -391,11 +362,8 @@ describe('AnthropicProvider', () => {
 
       const converted = provider.convertSdkModels(sdkModels);
 
-      // No GLM IDs leak through tagged as anthropic
       expect(converted.find((m) => m.id.startsWith('glm-'))).toBeUndefined();
-      // Anthropic-native IDs preserved
       expect(converted.map((m) => m.id)).toContain('sonnet');
-      // All surviving entries tagged as anthropic (the provider's contract)
       for (const m of converted) {
         expect(m.provider).toBe('anthropic');
       }

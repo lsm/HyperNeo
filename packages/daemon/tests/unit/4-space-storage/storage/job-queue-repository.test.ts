@@ -272,7 +272,6 @@ describe('JobQueueRepository', () => {
       const before = Date.now();
       const job = repository.fail(dequeued.id, 'timeout');
 
-      // retryCount was 0 before fail, delay = 2^0 * 1000 = 1000ms
       expect(job!.runAt).toBeGreaterThan(before);
     });
 
@@ -289,10 +288,7 @@ describe('JobQueueRepository', () => {
     it('marks job as dead when retryCount >= maxRetries', () => {
       repository.enqueue({ queue: 'test', payload: {}, maxRetries: 1 });
       const [first] = repository.dequeue('test');
-      // First failure: retryCount 0 < maxRetries 1, resets to pending
       repository.fail(first.id, 'err');
-      // Now retryCount is 1 which equals maxRetries 1
-      // Need to update run_at so we can dequeue it again
       db.prepare(`UPDATE job_queue SET run_at = ? WHERE id = ?`).run(Date.now() - 1, first.id);
       const [second] = repository.dequeue('test');
       const dead = repository.fail(second.id, 'final error');
@@ -329,12 +325,10 @@ describe('JobQueueRepository', () => {
 
     it('fail() on a pending job still applies retry logic', () => {
       const job = repository.enqueue({ queue: 'test', payload: {}, maxRetries: 3 });
-      // Job is pending (not processing)
       expect(job.status).toBe('pending');
 
       const failed = repository.fail(job.id, 'unexpected failure');
 
-      // fail() applies retry logic regardless of current status
       expect(failed).not.toBeNull();
       expect(failed!.status).toBe('pending');
       expect(failed!.retryCount).toBe(1);
@@ -351,7 +345,6 @@ describe('JobQueueRepository', () => {
 
       const failed = repository.fail(dequeued.id, 'post-complete failure');
 
-      // fail() doesn't check status — it resets to pending
       expect(failed).not.toBeNull();
       expect(failed!.status).toBe('pending');
       expect(failed!.retryCount).toBe(1);
@@ -365,7 +358,6 @@ describe('JobQueueRepository', () => {
       const dead = repository.getJob(dequeued.id);
       expect(dead!.status).toBe('dead');
 
-      // Calling fail() again on a dead job — retryCount(1) >= maxRetries(0), stays dead
       const failedAgain = repository.fail(dequeued.id, 'second failure');
       expect(failedAgain).not.toBeNull();
       expect(failedAgain!.status).toBe('dead');
@@ -417,7 +409,6 @@ describe('JobQueueRepository', () => {
       repository.enqueue({ queue: 'test', payload: {} });
       const toProcess = repository.enqueue({ queue: 'test', payload: {} });
       repository.dequeue('test', 1);
-      // manually mark one as completed to have variety
       const [processing] = repository.dequeue('test', 1);
       repository.complete(processing.id);
 
@@ -457,7 +448,6 @@ describe('JobQueueRepository', () => {
       repository.enqueue({ queue: 'test', payload: {} });
       const [processing] = repository.dequeue('test', 1);
       repository.complete(processing.id);
-      // Now we have: 1 pending, 1 completed
 
       const jobs = repository.listJobs({ status: ['pending', 'completed'] });
 
@@ -469,7 +459,6 @@ describe('JobQueueRepository', () => {
       repository.enqueue({ queue: 'test', payload: {} });
       repository.enqueue({ queue: 'test', payload: {} });
       repository.dequeue('test', 1);
-      // Now: 1 pending, 1 processing
 
       const jobs = repository.listJobs({ status: ['pending'] });
 
@@ -576,9 +565,6 @@ describe('JobQueueRepository', () => {
     });
 
     it('deletes failed jobs older than threshold', () => {
-      // Insert a 'failed' job directly — the processor never writes this status
-      // (it uses 'dead' for exhausted retries) but the type contract allows it,
-      // so cleanup must handle it to prevent indefinite accumulation.
       const now = Date.now();
       const db = (repository as any).db;
       db.exec(`
@@ -673,8 +659,6 @@ describe('JobQueueRepository', () => {
     });
 
     it('scopes reclamation to the requested queues only', () => {
-      // Two processors share one repository; each must only sweep its own
-      // lanes so the owner's exact-claim cancellation still applies.
       repository.enqueue({ queue: 'owned-q', payload: {} });
       repository.enqueue({ queue: 'other-q', payload: {} });
       repository.dequeue('owned-q', 1);
@@ -686,8 +670,6 @@ describe('JobQueueRepository', () => {
       expect(reclaimed).toHaveLength(1);
       expect(reclaimed[0].queue).toBe('owned-q');
       expect(repository.getJob(reclaimed[0].jobId)?.status).toBe('pending');
-      // The other processor's lane stays untouched — still processing with its
-      // original claim, so its owner (and only its owner) can still abort it.
       const other = repository.listJobs({ queue: 'other-q', status: 'processing' })[0];
       expect(other).toBeDefined();
     });

@@ -1,20 +1,10 @@
 import { clsx, type ClassValue } from 'clsx';
 
-/**
- * Utility function to merge class names
- */
 export function cn(...inputs: ClassValue[]) {
   return clsx(inputs);
 }
 
-/**
- * Copy text to clipboard
- *
- * Uses modern Clipboard API when available (requires secure context: HTTPS or localhost).
- * Falls back to legacy execCommand('copy') for insecure contexts (e.g., HTTP on LAN IP).
- */
 export async function copyToClipboard(text: string): Promise<boolean> {
-  // Try modern Clipboard API first (requires secure context)
   if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
     try {
       await navigator.clipboard.writeText(text);
@@ -24,11 +14,9 @@ export async function copyToClipboard(text: string): Promise<boolean> {
     }
   }
 
-  // Fallback: legacy execCommand('copy') for insecure contexts
   try {
     const textarea = document.createElement('textarea');
     textarea.value = text;
-    // Avoid scrolling to bottom
     textarea.style.position = 'fixed';
     textarea.style.top = '0';
     textarea.style.left = '0';
@@ -52,9 +40,6 @@ export async function copyToClipboard(text: string): Promise<boolean> {
   }
 }
 
-/**
- * Format relative time
- */
 export function formatRelativeTime(date: Date): string {
   const now = new Date();
   const diff = now.getTime() - date.getTime();
@@ -78,9 +63,6 @@ export function formatRelativeTime(date: Date): string {
   }
 }
 
-/**
- * Format relative time from a timestamp (ms since epoch)
- */
 export function getRelativeTime(ts: number): string {
   const diff = Date.now() - ts;
   const minutes = Math.floor(diff / 60_000);
@@ -92,14 +74,6 @@ export function getRelativeTime(ts: number): string {
   return `${days}d ago`;
 }
 
-/**
- * Format a relative time that may be in the past OR the future.
- *
- * Used by the Scheduled tab's `nextRunAt` column where timestamps are normally
- * future-dated but may briefly land in the past (clock drift, schedule fired
- * but not yet advanced, etc.). `getRelativeTime` is past-only and would render
- * future timestamps as "just now", which is misleading.
- */
 export function formatRelativeFuture(ts: number): string {
   const diff = ts - Date.now();
   const future = diff >= 0;
@@ -113,14 +87,10 @@ export function formatRelativeFuture(ts: number): string {
   return future ? `in ${days}d` : `${days}d ago`;
 }
 
-/**
- * Format token count in k format (e.g., 16500 -> "16.5k")
- */
 export function formatTokens(tokens: number): string {
   if (tokens < 1000) {
     return tokens.toString();
   }
   const k = tokens / 1000;
-  // Show 1 decimal place for precision
   return `${k.toFixed(1)}k`;
 }

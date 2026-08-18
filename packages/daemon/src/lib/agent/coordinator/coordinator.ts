@@ -1,6 +1,5 @@
 import type { AgentDefinition } from '@hyperneo/shared';
 
-/** The coordinator agent definition - applied to main thread via Options.agent */
 export const COORDINATOR_AGENT: AgentDefinition = {
   description: 'Coordinator agent that delegates all work to specialists',
   tools: [

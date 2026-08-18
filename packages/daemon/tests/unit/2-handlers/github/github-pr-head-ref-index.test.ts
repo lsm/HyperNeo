@@ -4,14 +4,6 @@ import {
   removePullRequestNumberByHeadRef,
 } from '../../../../src/lib/external-events/github/github-pr-head-ref-index';
 
-// Characterization tests for the per-cycle head-ref → PR-number multimap index
-// the /pulls polling handler maintains. These mutators were previously inline
-// in github-event-extension.ts (as ...ByHeadSha) with no direct unit coverage;
-// every branch is pinned here. The invariant they preserve: every value is a
-// deduplicated number[], and no key maps to an empty list (the key is deleted
-// when its last number is removed).
-
-/** Snapshot of a map as a plain object of number[] (arrays copied, order kept). */
 function snapshot(map: Map<string, number[]>): Record<string, number[]> {
   const out: Record<string, number[]> = {};
   for (const [key, numbers] of map) out[key] = [...numbers];
@@ -42,14 +34,11 @@ describe('addPullRequestNumberByHeadRef', () => {
     addPullRequestNumberByHeadRef(index, 'a@1', 1);
     addPullRequestNumberByHeadRef(index, 'b@2', 2);
     expect(snapshot(index)).toEqual({ 'a@1': [1], 'b@2': [2] });
-    // Mutating one key's array must not leak into the other.
     index.get('a@1')?.push(99);
     expect(snapshot(index)).toEqual({ 'a@1': [1, 99], 'b@2': [2] });
   });
 
   it('treats the head-ref key as an opaque string (no SHA-specific parsing)', () => {
-    // The legacy name was ...ByHeadSha, but the key is the composite head-ref
-    // key — any string works, including ones that are not SHAs at all.
     const index = new Map<string, number[]>();
     addPullRequestNumberByHeadRef(index, 'not-a-sha', 5);
     expect(snapshot(index)).toEqual({ 'not-a-sha': [5] });
@@ -83,8 +72,6 @@ describe('removePullRequestNumberByHeadRef', () => {
   });
 
   it('only removes the first matching value once even if duplicated', () => {
-    // filter() removes every equal value, so a (non-standard) duplicate entry
-    // is fully cleared in one call — pinning that filter semantics, not splice.
     const index = new Map<string, number[]>([['a@1', [42, 42, 7]]]);
     removePullRequestNumberByHeadRef(index, 'a@1', 42);
     expect(snapshot(index)).toEqual({ 'a@1': [7] });

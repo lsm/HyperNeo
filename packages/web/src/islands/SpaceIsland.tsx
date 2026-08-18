@@ -1,15 +1,3 @@
-/**
- * SpaceIsland — main content area for the Space view.
- *
- * Content priority chain (full-width, each replaces the next):
- * 1. sessionViewId set → ChatContainer (agent/session chat)
- * 2. taskViewId set    → SpaceTaskPane (full-width task detail)
- * 3. viewMode === 'configure' → SpaceConfigurePage (agents / workflows / settings)
- * 4. default           → overview surface (space task list/dashboard)
- *
- * Space navigation is handled by the Context Panel sidebar.
- */
-
 import { lazy, Suspense } from 'preact/compat';
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
@@ -76,7 +64,6 @@ const SpaceMemories = lazy(() =>
   import('../components/space/SpaceMemories').then((m) => ({ default: m.SpaceMemories }))
 );
 
-/** Shared Suspense fallback for lazy-loaded space views. */
 const lazyFallback = (
   <div class="flex-1 flex items-center justify-center bg-app-content">
     <div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
@@ -105,36 +92,21 @@ export default function SpaceIsland({
     const currentCanonicalId = currentSpaceCanonicalIdSignal.value;
     return currentCanonicalId === null || currentCanonicalId === spaceId;
   };
-  // Overlay session — shown as a slide-over on top of the current view
   const selectedAgentHandle = currentSpaceAgentHandleSignal.value;
   const overlaySessionId = spaceOverlaySessionIdSignal.value;
   const overlayAgentName = spaceOverlayAgentNameSignal.value;
   const overlayHighlightMessageId = spaceOverlayHighlightMessageIdSignal.value;
   const overlayTaskContext = spaceOverlayTaskContextSignal.value;
-  // Pending-agent overlay — workflow-declared peer that hasn't spawned yet.
-  // When set, renders PendingAgentOverlay; once the daemon spawns the session
-  // (via taskActivity), the overlay hands off to spaceOverlaySessionIdSignal
-  // and the standard AgentOverlayChat takes over.
   const overlayPendingTaskId = spaceOverlayPendingTaskIdSignal.value;
   const overlayPendingAgentName = spaceOverlayPendingAgentNameSignal.value;
   const handleOverlayClose = useCallback(() => {
     closeOverlayHistory();
   }, []);
 
-  // Refresh a long-horizon agent's record and re-resolve its session id
-  // (task #873): re-fetch the agent list, then — if the viewed agent now points
-  // to a different (restored/recreated) session — navigate to the live one
-  // instead of looping on a deleted id. The coordinator id is stable, so it
-  // just retries the load. Used by the unavailable-session "Refresh" action.
   const handleRefreshAgentRecord = useCallback(async () => {
     const viewedId = sessionViewId;
     if (!viewedId) return;
     await spaceStore.refreshLongHorizonAgents();
-    // Abort if the user navigated away — either to a different Space, or to a
-    // different session/view WITHIN the same Space. stillOnThisRouteSpace()
-    // only checks the Space id, so also compare the live route session id; an
-    // in-flight refresh must never navigate back to / re-select the old agent
-    // and clobber the store of the newly selected route.
     if (!stillOnThisRouteSpace()) return;
     if (currentSpaceSessionIdSignal.value !== viewedId) return;
     const parsed = parseLongHorizonAgentSessionId(viewedId);
@@ -144,15 +116,10 @@ export default function SpaceIsland({
     if (nextId && nextId !== viewedId) {
       navigateToSpaceSession(navigationSpaceId, nextId, true);
     } else {
-      // Same id (or agent removed) — retry the load.
       sessionStore.select(viewedId);
     }
   }, [sessionViewId, navigationSpaceId, stillOnThisRouteSpace]);
 
-  // Single overlay element shared across every rendering branch below — keeps
-  // the overlay/pending precedence in one place. Pending takes precedence over
-  // session because pending is cleared as part of pushOverlayHistory, so the
-  // two are never both set at the same time in practice.
   const overlay =
     overlayPendingTaskId && overlayPendingAgentName ? (
       <AgentOverlayChat
@@ -176,19 +143,9 @@ export default function SpaceIsland({
       />
     ) : null;
 
-  // Whether an agent overlay (live or pending) is open over the base content.
-  // When true the base chat/pane is inerted + hidden from the a11y tree so that,
-  // on mobile in particular, only the foreground overlay is interactive or
-  // focusable (task #873). The Portal + backdrop + focus-trap already keep it
-  // visually/keyboard-isolated; `inert` closes the accessibility gap (the base
-  // chat's composer/scroll remained in the a11y tree and reachable via swipe/
-  // virtual cursor). It is re-enabled the instant the overlay closes.
   const overlayActive = !!overlay;
   const baseLayerProps = overlayActive ? { inert: true, 'aria-hidden': true as const } : {};
 
-  // Test hook: expose overlay controls on window.__hyperneo_space_overlay so E2E
-  // tests can trigger the overlay programmatically. Opening is purely
-  // client-side signal manipulation — no security concern in exposing this.
   useEffect(() => {
     type OverlayApi = { open: (sessionId: string, agentName?: string) => void; close: () => void };
     const w = window as typeof window & { __hyperneo_space_overlay?: OverlayApi };
@@ -210,10 +167,6 @@ export default function SpaceIsland({
   const [creatingSession, setCreatingSession] = useState(false);
   const [, setActiveSessionRequestId] = useState<number | null>(null);
 
-  // For non-session views, show spinner/error while space data loads.
-  // Show spinner if space is not yet loaded and there's no error — this covers
-  // both the initial render (loading=false, space=null) before the useEffect has
-  // called selectSpace and the active-loading state (loading=true, space=null).
   const space = spaceStore.space.value;
 
   useEffect(() => {
@@ -222,8 +175,6 @@ export default function SpaceIsland({
     });
   }, [spaceId]);
 
-  // Reset task-dialog state when leaving the Tasks view or switching spaces
-  // so it doesn't reopen unexpectedly.
   useEffect(() => {
     if (viewMode !== 'tasks') {
       setCreateTaskOpen(false);
@@ -233,8 +184,6 @@ export default function SpaceIsland({
     setCreateTaskOpen(false);
   }, [spaceId]);
 
-  // Reset session-creation lock when switching spaces so a stale lock
-  // from space A doesn't block valid creates in space B.
   useEffect(() => {
     setCreatingSession(false);
     setActiveSessionRequestId(null);
@@ -261,16 +210,12 @@ export default function SpaceIsland({
           spaceId,
           workspacePath: space?.workspacePath,
         });
-        // Only navigate if the user is still in the same space and on the
-        // Sessions view; prevents stale async redirect if they navigated elsewhere.
         if (stillOnThisRouteSpace() && currentSpaceViewModeSignal.value === originViewMode) {
           navigateToSpaceSession(navigationSpaceId, response.sessionId);
         }
       } catch (err) {
         toast.error(err instanceof Error ? err.message : 'Failed to create session');
       } finally {
-        // Only clear the lock if this request is still the active one.
-        // A newer request in another space will have a different requestId.
         setActiveSessionRequestId((current) => {
           if (current === requestId) {
             setCreatingSession(false);
@@ -290,14 +235,8 @@ export default function SpaceIsland({
     ]
   );
 
-  // Session/agent chat view — render immediately, don't block on space data
-  // ChatContainer's root is already flex-1 flex-col overflow-hidden.
-  // AgentOverlayChat uses a Portal so it doesn't affect layout.
   if (sessionViewId) {
     const isSpaceAgentSession = sessionViewId === `space:chat:${spaceId}`;
-    // The Refresh action re-fetches the long-horizon-agent record, so it only
-    // applies to coordinator / `space:agent:` sessions — a regular (archived)
-    // Space session has no agent record to refresh.
     const isAgentSession = isSpaceAgentSession || sessionViewId.startsWith('space:agent:');
     return (
       <>
@@ -417,8 +356,6 @@ export default function SpaceIsland({
           isOpen={createTaskOpen}
           onClose={() => setCreateTaskOpen(false)}
           onCreated={(task) => {
-            // Only navigate if the user is still on the Tasks view of this space;
-            // prevents stale async redirect if they navigated elsewhere.
             if (currentSpaceViewModeSignal.value === 'tasks' && stillOnThisRouteSpace()) {
               navigateToSpaceTask(navigationSpaceId, task.id);
             }

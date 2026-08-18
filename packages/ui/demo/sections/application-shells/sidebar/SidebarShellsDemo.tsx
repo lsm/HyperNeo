@@ -42,7 +42,6 @@ const userNavigation = [
   { name: 'Sign out', href: '#' },
 ];
 
-// Demo 1: Simple Sidebar with Indigo Background
 function SimpleSidebar() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -141,7 +140,6 @@ function SimpleSidebar() {
         </div>
       </Dialog>
 
-      {/* Static sidebar for desktop */}
       <div class="hidden lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-72 lg:flex-col">
         <div class="relative flex grow flex-col gap-y-5 overflow-y-auto bg-accent-600 px-6 dark:bg-accent-800 dark:after:pointer-events-none dark:after:absolute dark:after:inset-y-0 dark:after:right-0 dark:after:w-px dark:after:bg-white/10">
           <div class="flex h-16 shrink-0 items-center">
@@ -251,13 +249,12 @@ function SimpleSidebar() {
       </div>
 
       <main class="py-10 lg:pl-72">
-        <div class="px-4 sm:px-6 lg:px-8">{/* Your content */}</div>
+        <div class="px-4 sm:px-6 lg:px-8"></div>
       </main>
     </div>
   );
 }
 
-// Demo 2: Dark Sidebar with Header, Search, and User Menu
 function DarkSidebarWithHeader() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -363,7 +360,6 @@ function DarkSidebarWithHeader() {
         </div>
       </Dialog>
 
-      {/* Static sidebar for desktop */}
       <div class="hidden lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-72 lg:flex-col">
         <div class="relative flex grow flex-col gap-y-5 overflow-y-auto bg-accent-600 px-6 pb-4 dark:bg-accent-800 dark:after:pointer-events-none dark:after:absolute dark:after:inset-y-0 dark:after:right-0 dark:after:w-px dark:after:bg-white/10">
           <div class="flex h-16 shrink-0 items-center">
@@ -456,7 +452,6 @@ function DarkSidebarWithHeader() {
             <MenuIcon aria-hidden="true" class="size-6" />
           </button>
 
-          {/* Separator */}
           <div aria-hidden="true" class="h-6 w-px bg-black/10 lg:hidden dark:bg-white/10" />
 
           <div class="flex flex-1 gap-x-4 self-stretch lg:gap-x-6">
@@ -481,13 +476,11 @@ function DarkSidebarWithHeader() {
                 <Bell aria-hidden="true" class="size-6" />
               </button>
 
-              {/* Separator */}
               <div
                 aria-hidden="true"
                 class="hidden lg:block lg:h-6 lg:w-px lg:bg-black/10 dark:lg:bg-white/10"
               />
 
-              {/* Profile dropdown */}
               <Menu as="div" class="relative">
                 <MenuButton class="relative flex items-center">
                   <span class="absolute -inset-1.5" />
@@ -531,14 +524,13 @@ function DarkSidebarWithHeader() {
         </div>
 
         <main class="py-10">
-          <div class="px-4 sm:px-6 lg:px-8">{/* Your content */}</div>
+          <div class="px-4 sm:px-6 lg:px-8"></div>
         </main>
       </div>
     </div>
   );
 }
 
-// Demo 3: Light Brand Sidebar
 function LightBrandSidebar() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -642,7 +634,6 @@ function LightBrandSidebar() {
         </div>
       </Dialog>
 
-      {/* Static sidebar for desktop */}
       <div class="hidden lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-72 lg:flex-col dark:bg-surface-2">
         <div class="flex grow flex-col gap-y-5 overflow-y-auto border-r border-surface-border bg-surface-0 px-6 dark:border-white/10 dark:bg-black/10">
           <div class="flex h-16 shrink-0 items-center">
@@ -759,13 +750,12 @@ function LightBrandSidebar() {
       </div>
 
       <main class="py-10 lg:pl-72">
-        <div class="px-4 sm:px-6 lg:px-8">{/* Your content */}</div>
+        <div class="px-4 sm:px-6 lg:px-8"></div>
       </main>
     </div>
   );
 }
 
-// Demo 4: Dark Brand Sidebar with Header
 function DarkBrandSidebarWithHeader() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -854,7 +844,6 @@ function DarkBrandSidebarWithHeader() {
         </div>
       </Dialog>
 
-      {/* Static sidebar for desktop */}
       <div class="hidden bg-surface-2 lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-72 lg:flex-col">
         <div class="flex grow flex-col gap-y-5 overflow-y-auto border-r border-surface-border px-6 dark:border-white/10 dark:bg-black/10">
           <div class="flex h-16 shrink-0 items-center">
@@ -954,7 +943,7 @@ function DarkBrandSidebarWithHeader() {
       </div>
 
       <main class="py-10 lg:pl-72">
-        <div class="px-4 sm:px-6 lg:px-8">{/* Your content */}</div>
+        <div class="px-4 sm:px-6 lg:px-8"></div>
       </main>
     </div>
   );

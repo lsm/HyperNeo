@@ -13,14 +13,9 @@ export interface ModalProps {
   showCloseButton?: boolean;
 }
 
-/** Focusable element selector */
 export const FOCUSABLE_SELECTOR =
   'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
-/**
- * Creates a focus trap handler for modal dialogs.
- * Exported for testing purposes.
- */
 export function createFocusTrapHandler(
   firstElement: HTMLElement | null,
   lastElement: HTMLElement | null
@@ -42,16 +37,7 @@ export function createFocusTrapHandler(
   };
 }
 
-/**
- * Sets up focus trap on a container element.
- * Exported for testing purposes.
- * @returns cleanup function to remove the event listener
- */
 export function setupFocusTrap(container: HTMLElement): () => void {
-  // Query the focusable list AT EVENT TIME rather than snapshotting it at
-  // setup: conditionally-rendered controls (e.g. the global recording chip
-  // inside the agent overlay panel) can appear after the trap was set up,
-  // and a snapshotted first/last pair would keep wrapping Tab past them.
   const handleTab = (e: KeyboardEvent) => {
     if (e.key !== 'Tab') return;
     const focusableElements = container.querySelectorAll(FOCUSABLE_SELECTOR);
@@ -115,10 +101,8 @@ export function Modal({
 
   const modalContent = (
     <div class="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fadeIn">
-      {/* Backdrop */}
       <div class="absolute inset-0 bg-black/70 backdrop-blur-sm cursor-pointer" onClick={onClose} />
 
-      {/* Modal */}
       <div
         ref={modalRef}
         role="dialog"
@@ -129,7 +113,6 @@ export function Modal({
         )}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
         {(title || showCloseButton) && (
           <div
             class={`flex items-center justify-between px-6 py-4 border-b ${borderColors.ui.default} flex-shrink-0`}
@@ -155,12 +138,10 @@ export function Modal({
           </div>
         )}
 
-        {/* Content */}
         <div class="px-6 py-4 overflow-y-auto flex-1">{children}</div>
       </div>
     </div>
   );
 
-  // Render in portal to avoid z-index issues
   return <Portal into="body">{modalContent}</Portal>;
 }

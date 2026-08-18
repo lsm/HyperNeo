@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for DiffViewer Component
- *
- * DiffViewer displays side-by-side or unified diff view for file changes.
- */
 import { describe, it, expect } from 'vitest';
 
 import { render } from '@testing-library/preact';
@@ -29,9 +24,7 @@ describe('DiffViewer', () => {
 
     it('should not render header when filePath is not provided', () => {
       const { container } = render(<DiffViewer oldText="line1" newText="line2" />);
-      // When no filePath, no header should contain the file path
       const fontMono = container.querySelector('.font-mono');
-      // The font-mono elements should not contain a file path
       const hasFilePath = fontMono?.textContent?.includes('/');
       expect(hasFilePath).toBeFalsy();
     });
@@ -70,7 +63,6 @@ describe('DiffViewer', () => {
   describe('Line Display', () => {
     it('should display line numbers', () => {
       const { container } = render(<DiffViewer oldText="line1\nline2" newText="line1\nmodified" />);
-      // Find table cells containing line numbers
       const cells = container.querySelectorAll('td');
       const lineNumberCells = Array.from(cells).filter(
         (cell) =>
@@ -100,9 +92,7 @@ describe('DiffViewer', () => {
           newText="ctx1\nctx2\nctx3\nmodified\nctx4\nctx5\nctx6"
         />
       );
-      // The diff should have at least rows for removal and addition
       const rows = container.querySelectorAll('tr');
-      // At minimum: 1 remove + 1 add = 2 rows
       expect(rows.length).toBeGreaterThanOrEqual(2);
     });
   });
@@ -110,7 +100,6 @@ describe('DiffViewer', () => {
   describe('Diff Algorithm', () => {
     it('should handle identical texts', () => {
       const { container } = render(<DiffViewer oldText="same content" newText="same content" />);
-      // With identical texts, there should be no adds or removes in footer
       const footer = container.querySelector('.border-t');
       expect(footer?.textContent).toContain('0 additions');
       expect(footer?.textContent).toContain('0 deletions');
@@ -153,7 +142,6 @@ describe('DiffViewer', () => {
       const oldText = 'context1\ncontext2\ncontext3\ncontext4\nchanged\nafter';
       const newText = 'context1\ncontext2\ncontext3\ncontext4\nmodified\nafter';
       const { container } = render(<DiffViewer oldText={oldText} newText={newText} />);
-      // Should show context lines (up to 3 before and after)
       const rows = container.querySelectorAll('tr');
       expect(rows.length).toBeGreaterThan(2);
     });
@@ -168,7 +156,6 @@ describe('DiffViewer', () => {
         .map((_, i) => (i === 5 ? 'changed' : `line${i}`))
         .join('\n');
       const { container } = render(<DiffViewer oldText={oldLines} newText={newLines} />);
-      // Should have separator row with "..."
       const cells = container.querySelectorAll('td');
       const separatorCell = Array.from(cells).find((cell) => cell.textContent === '...');
       expect(separatorCell).toBeTruthy();

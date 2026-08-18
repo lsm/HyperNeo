@@ -82,8 +82,6 @@ describe('StructuredLogFileSink', () => {
   });
 
   it('redacts comma-delimited Authorization schemes through end of line', () => {
-    // Digest/AWS-style values carry structural commas; a `,` boundary would
-    // persist the nonce/response/signature verbatim.
     const redacted = redactStructuredLogEvent(
       event(
         'Authorization: Digest username="u", nonce="secret-nonce", response="hash", algorithm=SHA-256'
@@ -93,10 +91,6 @@ describe('StructuredLogFileSink', () => {
   });
 
   it('redacts quoted values containing escaped quotes through the closing quote', () => {
-    // A JSON-serialized Digest value carries escaped quotes (`\"`); the naive
-    // `.*?` value treats the first escaped quote as the closing delimiter and
-    // persists the username/nonce/response. The escape-aware matcher consumes
-    // the whole value. (Codex P1, PR #2499.)
     const redacted = redactStructuredLogEvent(
       event('{"Authorization":"Digest username=\\"u\\", nonce=\\"secret\\""}')
     );
@@ -104,9 +98,6 @@ describe('StructuredLogFileSink', () => {
   });
 
   it('redacts equals-form Authorization values containing spaces through end of line', () => {
-    // AWS/Digest equals-form values carry spaces and structural commas; the
-    // generic `=` rule stops at the first whitespace and would persist the
-    // credential/signature. (Codex P1, PR #2499.)
     const redacted = redactStructuredLogEvent(
       event('Authorization=AWS4-HMAC-SHA256 Credential=AKIA123, Signature=deadbeef')
     );
@@ -114,9 +105,6 @@ describe('StructuredLogFileSink', () => {
   });
 
   it('redacts URL userinfo credentials', () => {
-    // A Basic-auth URL (`scheme://user:pass@host`) carries credentials without
-    // any `authorization`/`token`/`password` label; the userinfo must be
-    // redacted before the record is written. (Codex P1, PR #2499.)
     const redacted = redactStructuredLogEvent(
       event('installing from https://oauth2:secret@host/repo.git')
     );
@@ -124,24 +112,16 @@ describe('StructuredLogFileSink', () => {
   });
 
   it('redacts URL userinfo through the final @ delimiter', () => {
-    // A password containing an unescaped `@` must be consumed through the host
-    // delimiter, not the first `@`. (Codex P1, PR #2499.)
     const redacted = redactStructuredLogEvent(event('https://user:p@ass@host/repo.git'));
     expect(redacted.message).toBe('https://[REDACTED]@host/repo.git');
   });
 
   it('redacts multiline quoted secret values', () => {
-    // `.` does not consume newlines, so a quoted value spanning a line break was
-    // previously left verbatim. (Codex P1, PR #2499.)
     const redacted = redactStructuredLogEvent(event('token: "line1\nline2"'));
     expect(redacted.message).toBe('token: "[REDACTED]"');
   });
 
   it('redacts compound secret keys in serialized objects', () => {
-    // A serialized env/config object carries compound credential names
-    // (`AWS_SECRET_ACCESS_KEY`); the key matcher must recognize the sensitive
-    // COMPONENT inside the compound name, not only a bare `secret`/`token`/…
-    // key. (Codex P1, PR #2499.)
     const redacted = redactStructuredLogEvent(
       event('{"AWS_SECRET_ACCESS_KEY":"supersecret","DB_PASSWORD":"hunter2"}')
     );
@@ -151,9 +131,6 @@ describe('StructuredLogFileSink', () => {
   });
 
   it('redacts sensitive header tuple values', () => {
-    // `Array.from(headers.entries())` serializes a header as a two-element
-    // tuple; the value has no adjacent `Authorization:`/`Cookie:` label.
-    // (Codex P1, PR #2499.)
     const redacted = redactStructuredLogEvent(
       event(`[['Authorization','Basic dXNlcjpwYXNz'],['Cookie','session=secret']]`)
     );
@@ -161,8 +138,6 @@ describe('StructuredLogFileSink', () => {
   });
 
   it('redacts escaped-quote header tuple values through the closing quote', () => {
-    // A Digest/AWS tuple value carries escaped quotes; the naive value matcher
-    // stops at the first `\"` and persists the nonce/signature. (Codex P1.)
     const redacted = redactStructuredLogEvent(
       event(`["Authorization","Digest username=\\"u\\", nonce=\\"secret\\""]`)
     );
@@ -170,9 +145,6 @@ describe('StructuredLogFileSink', () => {
   });
 
   it('redacts structured header tuples in metadata arrays', () => {
-    // `Array.from(headers.entries())` in `metadata`/`context` is a real nested
-    // array, not a string — the string rules never see it, and element-wise
-    // recursion persists the credential. (Codex P1, PR #2499.)
     const redacted = redactStructuredLogEvent(
       event('msg', { headers: [['Authorization', 'Basic dXNlcjpwYXNz']] })
     );
@@ -180,9 +152,6 @@ describe('StructuredLogFileSink', () => {
   });
 
   it('redacts private-key fields', () => {
-    // `privateKey`/`private_key`/`SSH_PRIVATE_KEY` hold PEM/key material but are
-    // not recognized by the bare `secret`/`token`/`password` alternation.
-    // (Codex P1, PR #2499.)
     const redacted = redactStructuredLogEvent(
       event('{"privateKey":"-----BEGIN PRIVATE KEY-----","SSH_PRIVATE_KEY":"…"}', {
         private_key: 'pem',
@@ -193,23 +162,16 @@ describe('StructuredLogFileSink', () => {
   });
 
   it('does not redact an @ in the URL query or fragment', () => {
-    // The userinfo is confined to the authority (before `/`, `?`, or `#`); an
-    // `@` in a query/fragment must not be treated as a userinfo delimiter.
-    // (Codex P2, PR #2499.)
     const redacted = redactStructuredLogEvent(event('https://example.com?email=user@example.org'));
     expect(redacted.message).toBe('https://example.com?email=user@example.org');
   });
 
   it('redacts prefixed sensitive header tuples', () => {
-    // `X-Api-Key`/`Proxy-Authorization` carry the sensitive component inside a
-    // prefixed name; the tuple-name matcher must recognize it. (Codex P1.)
     const redacted = redactStructuredLogEvent(event(`["X-Api-Key","secret"]`));
     expect(redacted.message).toBe(`["X-Api-Key","[REDACTED]"]`);
   });
 
   it('redacts presigned URL query credentials', () => {
-    // AWS-style presigned URLs carry `X-Amz-Credential`/`X-Amz-Signature`
-    // parameters; neither is a bare `secret`/`token`/`password` key. (Codex P1.)
     const redacted = redactStructuredLogEvent(
       event('https://s3.amazonaws.com/bucket/key?X-Amz-Credential=AKIA123&X-Amz-Signature=deadbeef')
     );
@@ -219,23 +181,16 @@ describe('StructuredLogFileSink', () => {
   });
 
   it('redacts truncated unterminated quoted values', () => {
-    // The logger truncates messages at a fixed length, which can end inside a
-    // quoted credential; the value has no closing quote. (Codex P1, PR #2499.)
     const redacted = redactStructuredLogEvent(event('token: "abcdefghij'));
     expect(redacted.message).toBe('token: "[REDACTED]');
   });
 
   it('redacts truncated URL userinfo', () => {
-    // A truncated message can end inside `scheme://user:password` before the
-    // host `@`; redact through end of string. (Codex P1, PR #2499.)
     const redacted = redactStructuredLogEvent(event('https://user:partial-secret'));
     expect(redacted.message).toBe('https://[REDACTED]');
   });
 
   it('redacts Azure SAS signature parameters', () => {
-    // Azure SAS uses the short `sig` key, which must not be treated as sensitive
-    // everywhere but is a usable signed-request credential in query position.
-    // (Codex P1, PR #2499.)
     const redacted = redactStructuredLogEvent(
       event('https://acct.blob.core.windows.net/container?sv=2020&sig=abc123def')
     );
@@ -245,16 +200,11 @@ describe('StructuredLogFileSink', () => {
   });
 
   it('redacts complete unquoted equals-form secrets', () => {
-    // An unquoted secret with spaces (or PEM material) must be consumed through
-    // the field boundary, not the first whitespace. (Codex P1, PR #2499.)
     const redacted = redactStructuredLogEvent(event('PASSWORD=my secret phrase'));
     expect(redacted.message).toBe('PASSWORD=[REDACTED]');
   });
 
   it('redacts object-form header entries', () => {
-    // `headersToAcp` represents headers as `{ name, value }`; the credential
-    // lives on `value` with no sensitive key, so the recursive walk persists it.
-    // (Codex P1, PR #2499.)
     const redacted = redactStructuredLogEvent(
       event('msg', { headers: [{ name: 'Authorization', value: 'Basic dXNlcjpwYXNz' }] })
     );
@@ -264,9 +214,6 @@ describe('StructuredLogFileSink', () => {
   });
 
   it('redacts unquoted colon-form values for every sensitive key', () => {
-    // `token: abc` (no quotes, no `=`) previously passed through every rule —
-    // only authorization and cookies had colon-form handling. Like the
-    // authorization rule, the value runs to the `,`/`}`/EOL boundary.
     const redacted = redactStructuredLogEvent(
       event('token: abc', {
         plain1: 'api-key: sk-secret',
@@ -290,8 +237,6 @@ describe('StructuredLogFileSink', () => {
   });
 
   it('redacts unquoted header-form cookie values including semicolon tails', () => {
-    // Colon-form cookie values (quoted-value pattern needs a quote after the
-    // colon; the `=`-form needs `cookie=`) previously leaked verbatim.
     const redacted = redactStructuredLogEvent(
       event('Cookie: session=abc123; tracking=t2', {
         header: 'Set-Cookie: sid=secret123; Path=/; Expires=Wed, 21 Oct 2025 07:28:00 GMT',
@@ -347,8 +292,6 @@ describe('StructuredLogFileSink', () => {
   });
 
   it('drops only an unserializable record instead of disabling the sink', async () => {
-    // A bigint (or circular value) in metadata must not permanently disable
-    // the sink — later records, including fatals, still persist.
     const path = await tempPath('daemon.jsonl');
     const sink = createSink(path);
     sink.capture(event('good-before'));

@@ -1,10 +1,3 @@
-/**
- * SkillsRegistry Component
- *
- * Settings panel for managing the application-level Skills registry.
- * Allows users to view, add, edit, enable/disable, and remove skills.
- */
-
 import { useState } from 'preact/hooks';
 import type { AppSkill } from '@hyperneo/shared';
 import { useSkills } from '../../hooks/useSkills';
@@ -31,10 +24,6 @@ const SOURCE_TYPE_LABELS: Record<string, string> = {
 };
 
 export function SkillsRegistry() {
-  // useSkills() bridges signal changes into plain useState values so that this
-  // component never reads signal.value directly. This prevents the
-  // @preact/preset-vite transform from creating extra signal subscriptions
-  // that cause double-render artifacts when the LiveQuery snapshot fires.
   const { skills: skillsList, isLoading: isLoadingVal, error: errorVal } = useSkills();
 
   const [showAddDialog, setShowAddDialog] = useState(false);

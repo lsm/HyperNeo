@@ -9,9 +9,6 @@ import {
   isConnectorsLayerEnabled,
   isRegisteredConnector,
 } from './runtime/connectors/connector';
-// Side-effect import: seeds the built-in validator registry (named presets:
-// `pr_ready`, `pr_merged`, …) so admission below is populated before any
-// validation runs. (epic #2299, P2 #2302)
 import './runtime/built-in-validators';
 import {
   getRegisteredBuiltInValidatorIds,
@@ -34,17 +31,11 @@ const VALID_RESULT_TYPES = new Set([
   'emit_follow_up',
   'record_state',
 ]);
-/**
- * Admit a `externalLookups` entry when it names a registered connector. Driven
- * by the connector registry (no hardcoded `'github'`); the legacy literal is the
- * fallback when the connectors layer is disabled.
- */
 function isValidExternalLookup(id: string): boolean {
   if (!isConnectorsLayerEnabled()) return id === 'github';
   return isRegisteredConnector(id);
 }
 
-/** Human-readable list of admitted connector ids, for error messages. */
 function describeValidExternalLookups(): string {
   if (!isConnectorsLayerEnabled()) return '"github"';
   const ids = getRegisteredConnectorIds();
@@ -180,7 +171,6 @@ export function validateWorkflowHooks(hooks: unknown, nodes: WorkflowNodeInput[]
   const validNodes = nodeNames(nodes);
   const validSlotsByNode = agentSlotNamesByNode(nodes);
 
-  // Pre-scan hook IDs so cross-hook references (e.g. recentResultRef) can be validated.
   const hookIds = new Set<string>();
   for (const hook of hooks) {
     if (isRecord(hook) && typeof hook.id === 'string') {
@@ -320,10 +310,6 @@ export function validateWorkflowHooks(hooks: unknown, nodes: WorkflowNodeInput[]
     if (!isRecord(validator)) {
       errors.push(`${loc}.validator: expected object`);
     } else if (validator.kind === 'built_in') {
-      // A built-in id is admitted iff it is a REGISTERED named preset (compiled
-      // to a connector + predicate). The registry is the source of truth — the
-      // engine enumerates no ids (epic #2299, ADR #2). Unregistered ids fail
-      // closed so workflows cannot declare capabilities that block at runtime.
       if (typeof validator.id !== 'string' || !isRegisteredBuiltInValidator(validator.id)) {
         const implemented = getRegisteredBuiltInValidatorIds();
         const allowed =

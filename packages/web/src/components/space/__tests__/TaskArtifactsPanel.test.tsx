@@ -2,16 +2,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 
-// ---- Mock useSpaceTaskMessages ----
 vi.mock('../../../hooks/useSpaceTaskMessages', () => ({
   useSpaceTaskMessages: () => ({ rows: [] }),
 }));
 
-// ---- Mock connectionManager ----
 const mockRequest = vi.fn();
-// `hub.onEvent(channel, handler)` returns an unsubscribe function. The panel
-// subscribes to `space.artifactCache.updated` on mount; the tests don't care
-// about re-renders, so a no-op stub that returns an unsubscribe is sufficient.
 const mockOnEvent = vi.fn(() => () => {});
 const mockHub = { request: mockRequest, onEvent: mockOnEvent };
 
@@ -21,7 +16,6 @@ vi.mock('../../../lib/connection-manager', () => ({
   },
 }));
 
-// ---- Mock FileDiffView ----
 vi.mock('../FileDiffView', () => ({
   FileDiffView: ({ filePath, onBack }: { filePath: string; onBack: () => void }) => (
     <div data-testid="file-diff-view" data-file={filePath}>
@@ -32,7 +26,6 @@ vi.mock('../FileDiffView', () => ({
   ),
 }));
 
-// ---- Mock cn ----
 vi.mock('../../../lib/utils', () => ({
   cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
 }));
@@ -260,7 +253,7 @@ describe('TaskArtifactsPanel', () => {
   });
 
   it('shows relative time in each commit row', async () => {
-    const recentTimestamp = Date.now() - 5 * 60 * 1000; // 5 minutes ago
+    const recentTimestamp = Date.now() - 5 * 60 * 1000;
     mockRequest.mockImplementation((method: string) => {
       if (method === 'spaceWorkflowRun.getGateArtifacts')
         return Promise.resolve(UNCOMMITTED_RESULT);
@@ -293,7 +286,6 @@ describe('TaskArtifactsPanel', () => {
     const timeEl = getByTestId('artifacts-commits-list').querySelector(
       '[data-testid="artifacts-commit-time"]'
     );
-    // Should show something like "5m ago"
     expect(timeEl?.textContent).toMatch(/\d+[smhd] ago/);
   });
 
@@ -364,7 +356,6 @@ describe('TaskArtifactsPanel', () => {
     await waitFor(() =>
       expect(getByTestId('artifacts-commits-list').textContent).toContain('abc1234')
     );
-    // No link element
     expect(
       getByTestId('artifacts-commits-list').querySelector(
         '[data-testid="artifacts-commit-sha-link"]'
@@ -390,7 +381,6 @@ describe('TaskArtifactsPanel', () => {
       <TaskArtifactsPanel runId="run-1" onClose={vi.fn()} />
     );
     await waitFor(() => expect(getByTestId('artifacts-file-list')).toBeTruthy());
-    // Commits section should not be present
     expect(queryByTestId('artifacts-commits-list')).toBeNull();
   });
 });

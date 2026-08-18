@@ -38,13 +38,6 @@ export interface ChatComposerProps {
   sandboxSwitching: boolean;
   isWaitingForInput: boolean;
   isConnected: boolean;
-  /**
-   * True while THIS session is mid-recovery after a connection drop/resume —
-   * distinct from `isConnected` (socket-level). The composer stays disabled
-   * until the session channel is rejoined and state/messages are re-synced, so
-   * a user can't send into a session whose `session:${id}` membership hasn't
-   * been restored yet (the socket can report "ready" before that completes).
-   */
   isRecovering?: boolean;
   onModelSwitch: (model: ModelInfo) => void;
   onAutoScrollChange: (enabled: boolean) => void;
@@ -57,33 +50,14 @@ export interface ChatComposerProps {
   ) => Promise<void | boolean>;
   onOpenTools: () => void;
   agentMentionCandidates?: Array<{ id: string; name: string }>;
-  /** Override the default placeholder text in the message input */
   inputPlaceholder?: string;
-  /** Optional callback to intercept thinking-level changes instead of letting SessionStatusBar call the RPC directly */
   onThinkingLevelChange?: (level: ThinkingLevel) => Promise<void> | void;
   inputLeadingElement?: ComponentChildren;
   inputLeadingPaddingClass?: string;
   onDraftActiveChange?: (hasDraft: boolean) => void;
-  /** Optional inline error message rendered above the status bar (used by task sessions) */
   errorMessage?: string | null;
-  /**
-   * Whether this composer's send path honors 'defer' (queue for next turn).
-   * Defaults to true. Forwarded to MessageInput, which hides the Queue controls
-   * when false. Both the main chat and the task-session composers (agent
-   * slide-over + inline pane) honor defer through `space.task.sendMessage`.
-   */
   supportsQueueDelivery?: boolean;
-  /**
-   * Forwarded to MessageInput so the owning content column can register itself
-   * as the file-drop target. @see MessageInput#registerDropTarget
-   */
   registerDropTarget?: RegisterFileDropTarget;
-  /**
-   * SessionStore instance backing this composer's chat. Defaults to the
-   * singleton; simultaneously-mounted views (agent overlay) pass a dedicated
-   * instance so slash-command/reference autocomplete reflects their own
-   * session, not the primary chat's. Forwarded to MessageInput.
-   */
   store?: SessionStore;
 }
 

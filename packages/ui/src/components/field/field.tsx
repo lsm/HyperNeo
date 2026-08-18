@@ -4,16 +4,12 @@ import { render } from '../../internal/render.ts';
 import type { ElementType } from '../../internal/types.ts';
 import { useId } from '../../internal/use-id.ts';
 
-// --- FieldsetContext ---
-
 interface FieldsetContextValue {
   disabled: boolean;
 }
 
 const FieldsetContext = createContext<FieldsetContextValue | null>(null);
 FieldsetContext.displayName = 'FieldsetContext';
-
-// --- FieldContext ---
 
 interface FieldContextValue {
   disabled: boolean;
@@ -39,8 +35,6 @@ export function useFieldContext(): FieldContextValue | null {
 export function useFieldsetContext(): FieldsetContextValue | null {
   return useContext(FieldsetContext);
 }
-
-// --- Fieldset ---
 
 interface FieldsetProps {
   as?: ElementType;
@@ -76,8 +70,6 @@ function FieldsetFn({ as: Tag = 'fieldset', disabled = false, children, ...rest 
 
 FieldsetFn.displayName = 'Fieldset';
 export const Fieldset = FieldsetFn;
-
-// --- Field ---
 
 interface FieldProps {
   as?: ElementType;
@@ -144,8 +136,6 @@ function FieldFn({ as: Tag = 'div', disabled = false, children, ...rest }: Field
 FieldFn.displayName = 'Field';
 export const Field = FieldFn;
 
-// --- Legend ---
-
 interface LegendProps {
   as?: ElementType;
   children?: unknown;
@@ -164,8 +154,6 @@ function LegendFn({ as: Tag = 'legend', children, ...rest }: LegendProps) {
 
 LegendFn.displayName = 'Legend';
 export const Legend = LegendFn;
-
-// --- Label ---
 
 interface LabelProps {
   as?: ElementType;
@@ -226,8 +214,6 @@ function LabelFn({ as: Tag = 'label', passive = false, children, ...rest }: Labe
 LabelFn.displayName = 'Label';
 export const Label = LabelFn;
 
-// --- Description ---
-
 interface DescriptionProps {
   as?: ElementType;
   children?: unknown;
@@ -268,8 +254,6 @@ function DescriptionFn({ as: Tag = 'p', children, ...rest }: DescriptionProps) {
 DescriptionFn.displayName = 'Description';
 export const Description = DescriptionFn;
 
-// --- FieldError ---
-
 interface FieldErrorProps {
   as?: ElementType;
   children?: unknown;
@@ -286,9 +270,7 @@ function FieldErrorFn({ as: Tag = 'p', children, ...rest }: FieldErrorProps) {
 
   useEffect(() => {
     if (!fieldCtx) return;
-    // FieldError sets aria-invalid on the associated input (counter for multiple errors)
     fieldCtx.incrementInvalid();
-    // Also register as description for aria-describedby
     fieldCtx.addDescriptionId(id);
     return () => {
       fieldCtx.decrementInvalid();

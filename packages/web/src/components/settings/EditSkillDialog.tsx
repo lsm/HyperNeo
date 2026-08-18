@@ -1,10 +1,3 @@
-/**
- * EditSkillDialog Component
- *
- * Modal dialog for editing an existing skill in the application-level registry.
- * Pre-populates all fields from the existing skill and shows read-only ID / Created.
- */
-
 import { useState, useEffect } from 'preact/hooks';
 import type { AppSkill, AppSkillConfig } from '@hyperneo/shared';
 import type { AppMcpServer } from '@hyperneo/shared';
@@ -18,11 +11,8 @@ import { connectionManager } from '../../lib/connection-manager';
 interface FormState {
   displayName: string;
   description: string;
-  // builtin
   commandName: string;
-  // plugin
   pluginPath: string;
-  // mcp_server
   appMcpServerId: string;
 }
 
@@ -67,13 +57,11 @@ export function EditSkillDialog({ skill, isOpen, onClose }: EditSkillDialogProps
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [mcpServers, setMcpServers] = useState<AppMcpServer[]>([]);
 
-  // Re-sync form when the skill prop changes (e.g., live update)
   useEffect(() => {
     setForm(formFromSkill(skill));
     setErrors({});
   }, [skill.id]);
 
-  // Fetch MCP servers when dialog is open and skill is mcp_server type
   useEffect(() => {
     if (!isOpen || skill.sourceType !== 'mcp_server') return;
     const hub = connectionManager.getHubIfConnected();
@@ -137,7 +125,6 @@ export function EditSkillDialog({ skill, isOpen, onClose }: EditSkillDialogProps
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Edit Skill" size="md">
       <form onSubmit={handleSubmit} class="space-y-4">
-        {/* Read-only meta fields */}
         <div class="grid grid-cols-2 gap-3">
           <div>
             <label class="block text-xs font-medium text-gray-500 mb-1">ID</label>
@@ -153,7 +140,6 @@ export function EditSkillDialog({ skill, isOpen, onClose }: EditSkillDialogProps
           </div>
         </div>
 
-        {/* Display Name */}
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-1">
             Display Name <span class="text-red-400">*</span>
@@ -177,7 +163,6 @@ export function EditSkillDialog({ skill, isOpen, onClose }: EditSkillDialogProps
           {errors.displayName && <p class="text-xs text-red-400 mt-1">{errors.displayName}</p>}
         </div>
 
-        {/* Name — read-only after creation */}
         <div>
           <label class="block text-sm font-medium text-gray-500 mb-1">Name</label>
           <div class="text-sm text-gray-500 font-mono bg-dark-900 border border-dark-700 rounded-lg px-3 py-2">
@@ -186,7 +171,6 @@ export function EditSkillDialog({ skill, isOpen, onClose }: EditSkillDialogProps
           <p class="text-xs text-gray-600 mt-1">Name cannot be changed after creation</p>
         </div>
 
-        {/* Description */}
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-1">Description</label>
           <input
@@ -203,7 +187,6 @@ export function EditSkillDialog({ skill, isOpen, onClose }: EditSkillDialogProps
           />
         </div>
 
-        {/* Source Type — read-only */}
         <div>
           <label class="block text-sm font-medium text-gray-500 mb-1">Source Type</label>
           <div class="text-sm text-gray-500 bg-dark-900 border border-dark-700 rounded-lg px-3 py-2 capitalize">
@@ -215,7 +198,6 @@ export function EditSkillDialog({ skill, isOpen, onClose }: EditSkillDialogProps
           </div>
         </div>
 
-        {/* Conditional config fields */}
         {skill.sourceType === 'builtin' && (
           <div>
             <label class="block text-sm font-medium text-gray-300 mb-1">

@@ -19,8 +19,6 @@ import { useOutsideClick } from '../../internal/use-outside-click.ts';
 import { useTextValue } from '../../internal/use-text-value.ts';
 import { useTrackedPointer } from '../../internal/use-tracked-pointer.ts';
 
-// --- Comparison helpers ---
-
 function resolveCompare<T>(by?: string | ((a: T, b: T) => boolean)): (a: T, b: T) => boolean {
   if (typeof by === 'function') return by;
   if (typeof by === 'string') {
@@ -30,8 +28,6 @@ function resolveCompare<T>(by?: string | ((a: T, b: T) => boolean)): (a: T, b: T
   }
   return (a: T, b: T) => a === b;
 }
-
-// --- Types ---
 
 interface ListboxOptionData {
   id: string;
@@ -65,8 +61,6 @@ interface ListboxState {
   horizontal: boolean;
 }
 
-// --- Context ---
-
 const ListboxContext = createContext<ListboxState | null>(null);
 ListboxContext.displayName = 'ListboxContext';
 
@@ -77,8 +71,6 @@ function useListboxContext(component: string): ListboxState {
   }
   return ctx;
 }
-
-// --- Transition attributes helper ---
 
 function useTransitionAttrs(open: boolean, transition: boolean) {
   const [transitionAttrs, setTransitionAttrs] = useState<Record<string, ''>>({});
@@ -120,8 +112,6 @@ function useTransitionAttrs(open: boolean, transition: boolean) {
 
   return transitionAttrs;
 }
-
-// --- Listbox (root) ---
 
 interface ListboxProps<T> {
   as?: ElementType;
@@ -237,7 +227,6 @@ function ListboxFn<T>({
 
   const slot = { open, disabled, invalid, value };
 
-  // Build hidden input value for form integration
   let hiddenValue: string | string[] | undefined;
   if (name) {
     if (multiple && Array.isArray(value)) {
@@ -271,8 +260,6 @@ ListboxFn.displayName = 'Listbox';
 const ListboxWithName = ListboxFn as typeof ListboxFn & { displayName: string };
 ListboxWithName.displayName = 'Listbox';
 export const Listbox = ListboxWithName;
-
-// --- ListboxButton ---
 
 interface ListboxButtonProps {
   as?: ElementType;
@@ -397,8 +384,6 @@ function ListboxButtonFn({
 ListboxButtonFn.displayName = 'ListboxButton';
 export const ListboxButton = ListboxButtonFn;
 
-// --- ListboxOptions ---
-
 interface ListboxOptionsProps {
   as?: ElementType;
   transition?: boolean;
@@ -440,7 +425,6 @@ function ListboxOptionsFn({
   const searchBufferRef = useRef('');
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Close on outside click
   useOutsideClick(
     [buttonRef, optionsRef],
     useCallback(() => {
@@ -449,7 +433,6 @@ function ListboxOptionsFn({
     open
   );
 
-  // Close on escape
   useEscape(
     useCallback(
       (e: KeyboardEvent) => {
@@ -464,7 +447,6 @@ function ListboxOptionsFn({
     open
   );
 
-  // Focus the options container when listbox opens
   useEffect(() => {
     if (open) {
       requestAnimationFrame(() => {
@@ -475,7 +457,6 @@ function ListboxOptionsFn({
     }
   }, [open, optionsRef, setActiveOptionIndex]);
 
-  // Listen to the custom event dispatched by ListboxButton to focus first/last option
   useEffect(() => {
     const el = optionsRef.current;
     if (!el) return;
@@ -591,12 +572,10 @@ function ListboxOptionsFn({
           break;
         }
         case 'Escape': {
-          // handled by useEscape, but prevent default just in case
           e.preventDefault();
           break;
         }
         default: {
-          // Typeahead: single printable character
           if (e.key.length === 1 && e.key.match(/\S/)) {
             e.preventDefault();
             searchBufferRef.current += e.key.toLowerCase();
@@ -619,7 +598,6 @@ function ListboxOptionsFn({
               setActiveOptionIndex(matchIndex);
               setActivationTrigger(ActivationTrigger.Other);
             } else {
-              // Wrap around from beginning
               const wrapIndex = options.findIndex((opt) => {
                 if (opt.disabled) return false;
                 return opt.textValue().startsWith(query);
@@ -690,8 +668,6 @@ function ListboxOptionsFn({
 ListboxOptionsFn.displayName = 'ListboxOptions';
 export const ListboxOptions = ListboxOptionsFn;
 
-// --- ListboxOption ---
-
 interface ListboxOptionProps<T> {
   as?: ElementType;
   value: T;
@@ -731,11 +707,9 @@ function ListboxOptionFn<T>({
   const [hover, setHover] = useState(false);
   const [focus, setFocus] = useState(false);
 
-  // Compute active state
   const activeOption = activeOptionIndex !== null ? options[activeOptionIndex] : null;
   const isActive = activeOption ? activeOption.id === id : false;
 
-  // Compute selected state
   const isSelected = (() => {
     if (multiple && Array.isArray(value)) {
       return (value as unknown[]).some((v) => compare(v, optionValue));
@@ -744,7 +718,6 @@ function ListboxOptionFn<T>({
     return compare(value, optionValue);
   })();
 
-  // Register/unregister with listbox context on mount/unmount
   useEffect(() => {
     const optionData: ListboxOptionData = {
       id,
@@ -757,7 +730,6 @@ function ListboxOptionFn<T>({
     };
     registerOption(optionData);
     return () => unregisterOption(id);
-    // Only run on mount/unmount
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -776,7 +748,6 @@ function ListboxOptionFn<T>({
         } else {
           setValue([...arr, optionValue]);
         }
-        // keep open in multiple mode
       } else {
         setValue(optionValue);
         close();
@@ -849,8 +820,6 @@ ListboxOptionFn.displayName = 'ListboxOption';
 const ListboxOptionWithName = ListboxOptionFn as typeof ListboxOptionFn & { displayName: string };
 ListboxOptionWithName.displayName = 'ListboxOption';
 export const ListboxOption = ListboxOptionWithName;
-
-// --- ListboxSelectedOption ---
 
 interface ListboxSelectedOptionProps {
   as?: ElementType;

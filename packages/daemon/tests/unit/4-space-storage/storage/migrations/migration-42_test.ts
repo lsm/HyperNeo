@@ -1,17 +1,3 @@
-/**
- * Migration 42 Tests
- *
- * Tests for Migration 42: Clean up stale/zombie session groups and add partial
- * unique index on session_groups(ref_id) WHERE completed_at IS NULL.
- *
- * Covers:
- * - Fresh DB: unique index exists after full migration chain
- * - Fresh DB: duplicate active groups are rejected by the unique constraint
- * - Existing DB with zombie groups (active groups for terminal tasks): zombies are completed
- * - Existing DB with duplicate active groups: older duplicates are completed, newest kept
- * - Idempotency: running migration twice does not error
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -51,10 +37,6 @@ describe('Migration 42: Zombie group cleanup + partial unique index', () => {
     }
   });
 
-  // -------------------------------------------------------------------------
-  // Fresh DB — full schema + migration chain
-  // -------------------------------------------------------------------------
-
   test('fresh DB: idx_session_groups_active_ref unique index exists', () => {
     createTables(db);
     runMigrations(db, () => {});
@@ -66,13 +48,11 @@ describe('Migration 42: Zombie group cleanup + partial unique index', () => {
     runMigrations(db, () => {});
 
     const now = Date.now();
-    // Insert first active group
     db.prepare(
       `INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
 			 VALUES ('group-a', 'task', 'task-x', 0, '{}', ?)`
     ).run(now);
 
-    // Second insert for same ref_id with completed_at IS NULL should fail
     expect(() => {
       db.prepare(
         `INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
@@ -86,13 +66,11 @@ describe('Migration 42: Zombie group cleanup + partial unique index', () => {
     runMigrations(db, () => {});
 
     const now = Date.now();
-    // Insert a completed group
     db.prepare(
       `INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at, completed_at)
 			 VALUES ('group-a', 'task', 'task-x', 0, '{}', ?, ?)`
     ).run(now - 1000, now - 500);
 
-    // A new active group for the same ref_id is allowed (completed_at IS NULL)
     expect(() => {
       db.prepare(
         `INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
@@ -106,13 +84,11 @@ describe('Migration 42: Zombie group cleanup + partial unique index', () => {
     runMigrations(db, () => {});
 
     const now = Date.now();
-    // Insert an active task group
     db.prepare(
       `INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
 			 VALUES ('task-grp', 'task', 'shared-ref', 0, '{}', ?)`
     ).run(now);
 
-    // A different group type with the same ref_id should NOT be blocked
     expect(() => {
       db.prepare(
         `INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
@@ -121,14 +97,7 @@ describe('Migration 42: Zombie group cleanup + partial unique index', () => {
     }).not.toThrow();
   });
 
-  // -------------------------------------------------------------------------
-  // Existing DB with zombie groups (active groups for terminal tasks)
-  // -------------------------------------------------------------------------
-
   test('existing DB: zombie groups for terminal tasks are completed by migration', () => {
-    // Build a pre-migration DB state with stale groups.
-    // The tasks status CHECK must include 'review' (and not 'escalated') to prevent
-    // migration 16 from attempting to recreate the table with missing columns.
     db.exec('PRAGMA foreign_keys = ON');
     db.exec(`
 			CREATE TABLE IF NOT EXISTS rooms (
@@ -189,16 +158,13 @@ describe('Migration 42: Zombie group cleanup + partial unique index', () => {
 			VALUES ('legit-grp', 'task', 'task-active', 0, '{}', ${now});
 		`);
 
-    // Run migrations (which includes migration 42)
     runMigrations(db, () => {});
 
-    // Zombie should be completed
     const zombie = db
       .prepare(`SELECT completed_at FROM session_groups WHERE id = 'zombie-grp'`)
       .get() as { completed_at: number | null };
     expect(zombie.completed_at).not.toBeNull();
 
-    // Legitimate group should still be active
     const legit = db
       .prepare(`SELECT completed_at FROM session_groups WHERE id = 'legit-grp'`)
       .get() as { completed_at: number | null };
@@ -268,10 +234,6 @@ describe('Migration 42: Zombie group cleanup + partial unique index', () => {
     expect(zombie.completed_at).not.toBeNull();
   });
 
-  // -------------------------------------------------------------------------
-  // Existing DB with duplicate active groups
-  // -------------------------------------------------------------------------
-
   test('existing DB: oldest duplicates are completed, newest kept active', () => {
     db.exec('PRAGMA foreign_keys = ON');
     db.exec(`
@@ -333,13 +295,11 @@ describe('Migration 42: Zombie group cleanup + partial unique index', () => {
 
     runMigrations(db, () => {});
 
-    // Newest group should remain active
     const newGrp = db
       .prepare(`SELECT completed_at FROM session_groups WHERE id = 'new-grp'`)
       .get() as { completed_at: number | null };
     expect(newGrp.completed_at).toBeNull();
 
-    // Older groups should be completed
     const oldGrp = db
       .prepare(`SELECT completed_at FROM session_groups WHERE id = 'old-grp'`)
       .get() as { completed_at: number | null };
@@ -408,10 +368,8 @@ describe('Migration 42: Zombie group cleanup + partial unique index', () => {
 			VALUES ('grp-b', 'task', 'task-1', 0, '{}', ${now});
 		`);
 
-    // Should not throw even with identical created_at (rowid tiebreaker handles it)
     expect(() => runMigrations(db, () => {})).not.toThrow();
 
-    // One group should remain active, one should be completed
     const grpA = db.prepare(`SELECT completed_at FROM session_groups WHERE id = 'grp-a'`).get() as {
       completed_at: number | null;
     };
@@ -419,14 +377,9 @@ describe('Migration 42: Zombie group cleanup + partial unique index', () => {
       completed_at: number | null;
     };
 
-    // Exactly one should be active (completed_at IS NULL), one should be completed
     const activeCount = [grpA, grpB].filter((g) => g.completed_at === null).length;
     expect(activeCount).toBe(1);
   });
-
-  // -------------------------------------------------------------------------
-  // Idempotency
-  // -------------------------------------------------------------------------
 
   test('idempotency: running migrations twice does not error', () => {
     createTables(db);

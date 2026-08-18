@@ -1,16 +1,3 @@
-/**
- * InternalEventBus Unit Tests
- *
- * Covers:
- *   – awaited handler behaviour (publish)
- *   – structured handler failure behaviour
- *   – fire-and-forget behaviour (publishAsync)
- *   – subscriber-name diagnostics
- *   – session-scoped routing
- *
- * See docs/plans/internal-event-command-query-architecture.md
- */
-
 import { beforeEach, describe, expect, it } from 'bun:test';
 import {
   createInternalEventBus,
@@ -26,10 +13,6 @@ interface TestEventMap {
   'app.ping': { namespaceId: string; ts: number };
 }
 
-/**
- * Interface without a string index signature — verifies the class constraint
- * is loose enough to accept normal keyed interfaces (P2).
- */
 interface KeyedInterfaceEventMap {
   'order.placed': { namespaceId: string; orderId: string };
   'order.shipped': { namespaceId: string; orderId: string; tracking: string };
@@ -136,7 +119,7 @@ describe('InternalEventBus', () => {
       });
 
       expect(result.delivered).toBe(2);
-      expect(order).toEqual([2, 1]); // fast finishes first
+      expect(order).toEqual([2, 1]);
     });
 
     it('should return empty result when no handlers are registered', async () => {
@@ -328,7 +311,6 @@ describe('InternalEventBus', () => {
       expect(elapsed).toBeLessThan(10);
       expect(resolved).toBe(false);
 
-      // Wait for handler to finish
       await new Promise((r) => setTimeout(r, 80));
       expect(resolved).toBe(true);
     });
@@ -342,12 +324,10 @@ describe('InternalEventBus', () => {
         { subscriberName: 'flaky' }
       );
 
-      // Must not throw synchronously or as an unhandled rejection
       expect(() =>
         bus.publishAsync('session.created', { namespaceId: 's1', title: 'T1' })
       ).not.toThrow();
 
-      // Give microtasks a chance to run
       await new Promise((r) => setTimeout(r, 10));
     });
 
@@ -362,10 +342,8 @@ describe('InternalEventBus', () => {
       );
 
       bus.publishAsync('session.created', { namespaceId: 's1', title: 'T1' });
-      // Handler should NOT have run yet — it is deferred to the next microtask.
       expect(handlerRan).toBe(false);
 
-      // Drain microtasks
       await new Promise((r) => queueMicrotask(r));
       expect(handlerRan).toBe(true);
     });

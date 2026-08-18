@@ -1,21 +1,3 @@
-/**
- * LOCAL-ONLY fixture extractor — epic #2299, P2 #2303.
- *
- * Regenerates the `./real-snapshots/*.json` fixtures from a real daemon.db.
- * Not part of any test run (CI has no production DB); run it manually against
- * your local/staging DB when refreshing the snapshots:
- *
- *   bun packages/daemon/tests/unit/5-space/workflow/fixtures/extract-real-snapshots.ts
- *
- * Reads the DB READ-ONLY, picks one persisted workflow per built-in template
- * that carries hooks, anonymizes UUIDs, trims bulky prompt text, and writes one
- * sanitized fixture per template. See `real-snapshots/README.md` for the
- * sanitization rules and why these snapshots exist.
- *
- * Usage:
- *   DB_PATH=/path/to/daemon.db bun .../extract-real-snapshots.ts [output_dir]
- */
-
 import { Database } from 'bun:sqlite';
 import { mkdirSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
@@ -32,10 +14,6 @@ const TEMPLATES = [
 
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
-/** Keys whose values are bulky prompt/instructions TEXT — irrelevant to the
- *  migration and noisy in a fixture, so trimmed to a marker. Script `source`
- *  is NOT in this set: gate/hook scripts are migration-relevant (equivalence +
- *  isBuiltInGateShape read them) and contain no secrets (generic gh/jq bash). */
 const TRIM_KEYS = new Set(['value', 'instructions']);
 
 function slug(name: string): string {
@@ -46,7 +24,6 @@ function slug(name: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
-/** Recursively anonymize UUIDs and trim oversized prompt strings. */
 function sanitize(value: unknown, key?: string): unknown {
   if (typeof value === 'string') {
     const anonymized = value.replace(UUID_RE, '00000000-0000-4000-8000-000000000000');

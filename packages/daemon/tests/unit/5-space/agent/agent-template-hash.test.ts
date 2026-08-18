@@ -1,15 +1,3 @@
-/**
- * Unit tests for agent-template-hash utility.
- *
- * Verifies that:
- * - buildAgentTemplateFingerprint normalises the name (trim + lowercase),
- *   sorts the tools array, and preserves description / customPrompt verbatim
- * - computeAgentTemplateHash returns a deterministic 64-char SHA-256 hex
- * - Hash is stable across input orderings (tool array order, identity-only
- *   variations) and changes for any meaningful field difference
- * - agentTemplatesMatch reflects hash equality
- */
-
 import { describe, it, expect } from 'bun:test';
 import {
   buildAgentTemplateFingerprint,

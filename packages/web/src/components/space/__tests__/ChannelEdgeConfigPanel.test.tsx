@@ -1,24 +1,7 @@
-/**
- * Unit tests for ChannelEdgeConfigPanel
- *
- * Tests:
- * - Renders channel from/to display
- * - Renders channel from/to as a list when "to" is an array
- * - Renders cyclic info box with max-cycles input when shouldBeCyclic
- * - Adjusting max-cycles input calls onChange with updated channel
- * - Renders Delete channel button and calls onDelete
- * - Renders close button when showHeader is true
- * - Does not render cyclic info when shouldBeCyclic is false
- */
-
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/preact';
 import type { WorkflowChannel } from '@hyperneo/shared';
 import { ChannelEdgeConfigPanel } from '../visual-editor/ChannelEdgeConfigPanel';
-
-// ============================================================================
-// Helpers
-// ============================================================================
 
 function makeChannel(overrides: Partial<WorkflowChannel> = {}): WorkflowChannel {
   return {
@@ -39,10 +22,6 @@ function defaultProps(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 describe('ChannelEdgeConfigPanel', () => {
   afterEach(() => {

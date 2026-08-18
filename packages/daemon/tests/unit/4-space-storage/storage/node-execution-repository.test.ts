@@ -1,10 +1,3 @@
-/**
- * NodeExecutionRepository Tests
- *
- * Tests CRUD operations, status transitions with automatic timestamp stamping,
- * query by workflow run and node, session ID management, and FK cascade behavior.
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
@@ -36,7 +29,6 @@ describe('NodeExecutionRepository', () => {
     });
     spaceId = space.id;
 
-    // Insert workflow + run + agent for FK constraints
     workflowId = 'wf-1';
     agentId = 'agent-1';
     const now = Date.now();
@@ -61,7 +53,6 @@ describe('NodeExecutionRepository', () => {
     db.close();
   });
 
-  // Helper to create a node execution with defaults
   function createExecution(
     overrides: Partial<import('@hyperneo/shared').CreateNodeExecutionParams> = {}
   ) {
@@ -74,7 +65,6 @@ describe('NodeExecutionRepository', () => {
     });
   }
 
-  // Helper to create a node execution with an explicit created_at timestamp
   function createExecutionWithTimestamp(
     overrides: Partial<import('@hyperneo/shared').CreateNodeExecutionParams> & { createdAt: number }
   ) {
@@ -209,7 +199,6 @@ describe('NodeExecutionRepository', () => {
 
     it('orders by created_at ASC', () => {
       const e1 = createExecution({ agentName: 'first' });
-      // Advance time to ensure distinct created_at values across inserts
       const base = Date.now();
       const e2 = createExecutionWithTimestamp({ agentName: 'second', createdAt: base + 1 });
       const e3 = createExecutionWithTimestamp({ agentName: 'third', createdAt: base + 2 });
@@ -296,7 +285,6 @@ describe('NodeExecutionRepository', () => {
       });
 
       expect(updated!.status).toBe('in_progress');
-      // Explicit value should win, not auto-stamped Date.now()
       expect(updated!.startedAt).toBe(explicitTime);
     });
 
@@ -367,7 +355,6 @@ describe('NodeExecutionRepository', () => {
       const exec = createExecution();
       const originalUpdatedAt = exec.updatedAt;
 
-      // Small delay to ensure timestamp difference
       const updated = repo.update(exec.id, { status: 'in_progress' });
       expect(updated!.updatedAt).toBeGreaterThanOrEqual(originalUpdatedAt);
     });
@@ -503,7 +490,6 @@ describe('NodeExecutionRepository', () => {
       const exec = createExecution();
       expect(repo.getById(exec.id)).not.toBeNull();
 
-      // Delete the workflow run — node executions should cascade
       runRepo.deleteRun(workflowRunId);
       expect(repo.getById(exec.id)).toBeNull();
       expect(repo.listByWorkflowRun(workflowRunId)).toHaveLength(0);
@@ -513,7 +499,6 @@ describe('NodeExecutionRepository', () => {
       const exec = createExecution({ agentId });
       expect(exec.agentId).toBe(agentId);
 
-      // Delete the agent — FK ON DELETE SET NULL
       (db as any).prepare(`DELETE FROM space_agents WHERE id = ?`).run(agentId);
 
       const updated = repo.getById(exec.id)!;
@@ -528,13 +513,11 @@ describe('NodeExecutionRepository', () => {
       expect(exec.startedAt).toBeNull();
       expect(exec.completedAt).toBeNull();
 
-      // Start
       const started = repo.updateStatus(exec.id, 'in_progress')!;
       expect(started.status).toBe('in_progress');
       expect(started.startedAt).not.toBeNull();
       expect(started.completedAt).toBeNull();
 
-      // Complete
       const completed = repo.updateStatus(started.id, 'idle')!;
       expect(completed.status).toBe('idle');
       expect(completed.startedAt).toBe(started.startedAt);
@@ -546,13 +529,11 @@ describe('NodeExecutionRepository', () => {
       const first = repo.updateStatus(exec.id, 'in_progress')!;
       const firstStartedAt = first.startedAt;
 
-      // Simulate going to blocked then back to in_progress
       repo.updateStatus(exec.id, 'blocked');
       const reentry = repo.updateStatus(exec.id, 'in_progress')!;
 
       expect(reentry.status).toBe('in_progress');
       expect(reentry.startedAt).not.toBeNull();
-      // startedAt is re-stamped (may be same ms on fast machines)
       expect(reentry.startedAt).toBeGreaterThanOrEqual(firstStartedAt!);
     });
   });
@@ -595,8 +576,6 @@ describe('NodeExecutionRepository', () => {
     });
 
     it('transition to in_progress does NOT auto-stamp lastActivityAt', () => {
-      // lastActivityAt is refreshed by activity sources (tool/message/commit),
-      // NOT by status transitions — so it must stay null on an in_progress write.
       const exec = createExecution();
       const updated = repo.update(exec.id, { status: 'in_progress' });
       expect(updated!.lastActivityAt).toBeNull();
@@ -613,7 +592,6 @@ describe('NodeExecutionRepository', () => {
       const exec = createExecution();
       const originalUpdatedAt = exec.updatedAt;
 
-      // touchLastActivity must update only last_activity_at; updated_at stays.
       repo.touchLastActivity(exec.id, 1_700_000_000_000);
       const after = repo.getById(exec.id)!;
       expect(after.lastActivityAt).toBe(1_700_000_000_000);
@@ -685,7 +663,6 @@ describe('NodeExecutionRepository', () => {
     });
 
     it('notify is a silent no-op when no reactive db is wired', () => {
-      // The default `repo` has no reactiveDb — none of these may throw.
       const exec = createExecution();
       expect(() => repo.touchLastActivity(exec.id, 1)).not.toThrow();
       expect(() => repo.update(exec.id, { status: 'idle' })).not.toThrow();

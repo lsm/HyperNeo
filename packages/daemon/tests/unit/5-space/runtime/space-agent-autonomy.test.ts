@@ -1,15 +1,3 @@
-/**
- * Unit tests for autonomy level behavior — space agent prompt and tool behavior.
- *
- * Verifies the behavioral contract for supervised vs semi_autonomous autonomy levels:
- *
- * 1. Prompt generation with `supervised` autonomy includes "notify human" instruction
- * 2. Prompt generation with `semi_autonomous` autonomy includes "retry once autonomously" instruction
- * 3. Prompt generation with no autonomy level defaults to supervised instructions
- * 4. Notification messages include the space's autonomy level so the agent can act accordingly
- * 5. `retry_task` tool succeeds regardless of autonomy level — the gate is in the prompt, not the tool
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
@@ -28,13 +16,7 @@ import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts
 import { createSpaceAgentToolHandlers } from '../../../../src/lib/space/tools/space-agent-tools.ts';
 import type { SpaceAutonomyLevel } from '@hyperneo/shared/types/space';
 
-// ---------------------------------------------------------------------------
-// DB + space setup helpers (mirrors space-agent-tools.test.ts patterns)
-// ---------------------------------------------------------------------------
-
 function makeDb(): BunDatabase {
-  // Use in-memory SQLite — faster than file-based DB and avoids filesystem
-  // I/O contention that caused beforeEach hook timeouts in CI.
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
@@ -132,10 +114,6 @@ function makeHandlers(ctx: TestCtx) {
   });
 }
 
-// ---------------------------------------------------------------------------
-// 1. Prompt — supervised mode
-// ---------------------------------------------------------------------------
-
 describe('buildSpaceChatSystemPrompt — level 1 (supervised) autonomy', () => {
   test('explicitly labels the space at autonomy level 1', () => {
     const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
@@ -168,14 +146,9 @@ describe('buildSpaceChatSystemPrompt — level 1 (supervised) autonomy', () => {
 
   test('does NOT include level >= 3 autonomous-action instructions', () => {
     const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
-    // The level >= 3 section about acting without human approval should not be present
     expect(prompt).not.toContain('act without human approval');
   });
 });
-
-// ---------------------------------------------------------------------------
-// 2. Prompt — semi_autonomous mode
-// ---------------------------------------------------------------------------
 
 describe('buildSpaceChatSystemPrompt — level 3 (semi-autonomous) autonomy', () => {
   test('explicitly labels the space at autonomy level 3', () => {
@@ -207,14 +180,9 @@ describe('buildSpaceChatSystemPrompt — level 3 (semi-autonomous) autonomy', ()
 
   test('does NOT include the level 1 "wait for human approval" restriction for all events', () => {
     const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
-    // At level 1 this restriction is present — at level 3 it should not be
     expect(prompt).not.toContain('wait for human approval');
   });
 });
-
-// ---------------------------------------------------------------------------
-// 2b. Prompt — level 4 (act-first) autonomy
-// ---------------------------------------------------------------------------
 
 describe('buildSpaceChatSystemPrompt — level 4 (act-first) autonomy', () => {
   test('explicitly labels the space at autonomy level 4', () => {
@@ -229,8 +197,6 @@ describe('buildSpaceChatSystemPrompt — level 4 (act-first) autonomy', () => {
   });
 
   test('escalates only on irreversibility, not on plain uncertainty', () => {
-    // Regression guard for the over-escalation defect: "uncertainty" must no longer read as a
-    // standalone escalation trigger. Escalation is gated on reversibility/cost instead.
     const prompt = buildSpaceChatSystemPrompt({ autonomyLevel: 4 });
     expect(prompt).not.toContain('or uncertainty');
     expect(prompt).toMatch(/irreversible/i);
@@ -256,10 +222,6 @@ describe('buildSpaceChatSystemPrompt — level 4 (act-first) autonomy', () => {
     expect(escalation).not.toContain('and one direct question');
   });
 });
-
-// ---------------------------------------------------------------------------
-// 3. Default autonomy level — treated as supervised
-// ---------------------------------------------------------------------------
 
 describe('buildSpaceChatSystemPrompt — default autonomy level (level 1 fallback)', () => {
   test('omitting autonomyLevel defaults to level 1', () => {
@@ -290,14 +252,6 @@ describe('buildSpaceChatSystemPrompt — default autonomy level (level 1 fallbac
   });
 });
 
-// ---------------------------------------------------------------------------
-// 4. (Removed — formatEventMessage tests migrated to space-agent-notification-service.test.ts)
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// 5. retry_task tool — callable at both autonomy levels (gate is in the prompt)
-// ---------------------------------------------------------------------------
-
 describe('retry_task tool — autonomy level does not affect tool behavior', () => {
   let ctx: TestCtx;
   beforeEach(() => {
@@ -308,8 +262,6 @@ describe('retry_task tool — autonomy level does not affect tool behavior', () 
   });
 
   function createNeedsAttentionTask(ctx: TestCtx): string {
-    // Create a task directly in blocked status by inserting it via the DB
-    // (createStandaloneTask creates in open status; we need blocked for retry_task)
     const taskId = `task-retry-${Math.random().toString(36).slice(2)}`;
     ctx.db
       .prepare(
@@ -330,9 +282,6 @@ describe('retry_task tool — autonomy level does not affect tool behavior', () 
   }
 
   test('retry_task tool resets needs_attention task to pending — no autonomy gate in tool code', async () => {
-    // The SpaceAgentToolsConfig has no autonomyLevel field. The tool always succeeds when the
-    // task is retryable. The autonomy gate lives in the prompt (supervised: requires human
-    // approval; semi_autonomous: may retry once without human input).
     const taskId = createNeedsAttentionTask(ctx);
     const handlers = makeHandlers(ctx);
 
@@ -370,8 +319,6 @@ describe('retry_task tool — autonomy level does not affect tool behavior', () 
   });
 
   test('tool succeeds but prompts differ — supervised restricts, semi_autonomous permits autonomous retry', async () => {
-    // Architectural contract: the TOOL is autonomy-level-agnostic; the PROMPT encodes policy.
-    // This test verifies both sides: the tool call succeeds AND the prompts differ on retry_task.
     const taskId = createNeedsAttentionTask(ctx);
     const result = await makeHandlers(ctx).retry_task({ task_id: taskId });
     const parsed = JSON.parse(result.content[0].text);
@@ -380,20 +327,13 @@ describe('retry_task tool — autonomy level does not affect tool behavior', () 
     const supervisedPrompt = buildSpaceChatSystemPrompt({ autonomyLevel: 1 });
     const semiPrompt = buildSpaceChatSystemPrompt({ autonomyLevel: 3 });
 
-    // Both prompts reference retry
     expect(supervisedPrompt).toContain('retry');
     expect(semiPrompt).toContain('retry');
 
-    // Supervised: must not call without explicit human instruction
     expect(supervisedPrompt).toContain('without explicit human instruction');
-    // Semi-autonomous: may retry once without human input
     expect(semiPrompt).toContain('retry a failed task once');
   });
 });
-
-// ---------------------------------------------------------------------------
-// 6. space-agent-tools approve_task — autonomy-gated
-// ---------------------------------------------------------------------------
 
 describe('space-agent-tools approve_task — completion autonomy', () => {
   let ctx: TestCtx;
@@ -459,10 +399,6 @@ describe('space-agent-tools approve_task — completion autonomy', () => {
     expect(parsed.task.approvalSource).toBe('agent');
   });
 });
-
-// ---------------------------------------------------------------------------
-// 7. Prompt structure — both levels include Event Handling and Escalation
-// ---------------------------------------------------------------------------
 
 describe('buildSpaceChatSystemPrompt — sections always present regardless of autonomy level', () => {
   const levels: Array<SpaceAutonomyLevel | undefined> = [1, 3, 4, 5, undefined];

@@ -1,17 +1,9 @@
 // @ts-nocheck
-/**
- * Tests for Session Status Tracking
- *
- * Tests the actual exported functions from session-status.ts:
- * - initSessionStatusTracking()
- * - allSessionStatuses (computed signal)
- */
 
 import type { AgentProcessingState, Session } from '@hyperneo/shared';
 import type { Signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Mock localStorage
 const createMockLocalStorage = () => {
   let store: Record<string, string> = {};
   return {
@@ -32,18 +24,15 @@ const createMockLocalStorage = () => {
 const mockLocalStorage = createMockLocalStorage();
 const originalLocalStorage = globalThis.localStorage;
 
-// Setup state signals for mocking
 let mockSessions: Signal<Session[]>;
 let mockCurrentSessionIdSignal: Signal<string | null>;
 
 describe('session-status (real module tests)', () => {
   beforeEach(() => {
-    // Setup mock localStorage
     globalThis.localStorage = mockLocalStorage as unknown as Storage;
     mockLocalStorage.clear();
     vi.clearAllMocks();
 
-    // Reset signals
     const { signal } = require('@preact/signals');
     mockSessions = signal<Session[]>([]);
     mockCurrentSessionIdSignal = signal<string | null>(null);
@@ -54,7 +43,6 @@ describe('session-status (real module tests)', () => {
     vi.resetModules();
   });
 
-  // Helper to create mock sessions
   const createMockSession = (id: string, overrides: Partial<Session> = {}): Session => ({
     id,
     title: `Session ${id}`,
@@ -133,7 +121,6 @@ describe('session-status (real module tests)', () => {
         }),
       ];
 
-      // Set localStorage data
       mockLocalStorage.setItem('kai:session-last-seen', JSON.stringify({ 'sess-1': 5 }));
 
       vi.doMock('../state.js', () => ({
@@ -146,12 +133,9 @@ describe('session-status (real module tests)', () => {
       const module = await import('../session-status.js');
       const { allSessionStatuses } = module;
 
-      // Need to call initSessionStatusTracking to load the localStorage data
       module.initSessionStatusTracking();
 
-      // sess-1: 10 - 5 = 5 unread
       expect(allSessionStatuses.value.get('sess-1')?.unreadCount).toBe(5);
-      // sess-2: 5 - 0 = 5 unread
       expect(allSessionStatuses.value.get('sess-2')?.unreadCount).toBe(5);
     });
 
@@ -219,7 +203,6 @@ describe('session-status (real module tests)', () => {
 
   describe('initSessionStatusTracking', () => {
     it('should load last seen counts from localStorage', async () => {
-      // Set up localStorage with data
       mockLocalStorage.setItem(
         'kai:session-last-seen',
         JSON.stringify({ 'sess-1': 5, 'sess-2': 10 })
@@ -258,9 +241,8 @@ describe('session-status (real module tests)', () => {
       const module = await import('../session-status.js');
       module.initSessionStatusTracking();
 
-      // After initialization, check that statuses reflect loaded data
-      expect(module.allSessionStatuses.value.get('sess-1')?.unreadCount).toBe(5); // 10 - 5
-      expect(module.allSessionStatuses.value.get('sess-2')?.unreadCount).toBe(5); // 15 - 10
+      expect(module.allSessionStatuses.value.get('sess-1')?.unreadCount).toBe(5);
+      expect(module.allSessionStatuses.value.get('sess-2')?.unreadCount).toBe(5);
     });
 
     it('should subscribe to currentSessionIdSignal changes', async () => {
@@ -287,13 +269,10 @@ describe('session-status (real module tests)', () => {
       const module = await import('../session-status.js');
       module.initSessionStatusTracking();
 
-      // Initially unread (20 - 0)
       expect(module.allSessionStatuses.value.get('sess-1')?.unreadCount).toBe(20);
 
-      // Simulate switching to this session (which marks it as read)
       mockCurrentSessionIdSignal.value = 'sess-1';
 
-      // Now should be marked as read
       expect(module.allSessionStatuses.value.get('sess-1')?.unreadCount).toBe(0);
     });
   });
@@ -401,10 +380,8 @@ describe('session-status (real module tests)', () => {
       const module = await import('../session-status.js');
       module.initSessionStatusTracking();
 
-      // Switch to session - should mark as read
       mockCurrentSessionIdSignal.value = 'sess-1';
 
-      // Check localStorage was updated
       const stored = mockLocalStorage.getItem('kai:session-last-seen');
       expect(stored).toBeDefined();
       const data = JSON.parse(stored!);
@@ -412,7 +389,6 @@ describe('session-status (real module tests)', () => {
     });
 
     it('should handle corrupted localStorage data gracefully', async () => {
-      // Set invalid data
       mockLocalStorage.setItem('kai:session-last-seen', 'not valid json');
 
       mockSessions.value = [
@@ -437,14 +413,11 @@ describe('session-status (real module tests)', () => {
 
       const module = await import('../session-status.js');
 
-      // Should not throw, should handle gracefully
       expect(() => module.initSessionStatusTracking()).not.toThrow();
-      expect(module.allSessionStatuses.value.get('sess-1')?.unreadCount).toBe(5); // 5 - 0 (default)
+      expect(module.allSessionStatuses.value.get('sess-1')?.unreadCount).toBe(5);
     });
 
     it('should handle empty localStorage', async () => {
-      // No localStorage data set
-
       mockSessions.value = [
         createMockSession('sess-1', {
           metadata: {
@@ -468,14 +441,12 @@ describe('session-status (real module tests)', () => {
       const module = await import('../session-status.js');
 
       expect(() => module.initSessionStatusTracking()).not.toThrow();
-      // All sessions are fully unread when no lastSeen data exists
       expect(module.allSessionStatuses.value.get('sess-1')?.unreadCount).toBe(5);
     });
   });
 
   describe('reactivity to signal changes', () => {
     it('should compute statuses from sessions signal', async () => {
-      // Set up sessions with two sessions from the start
       mockSessions.value = [
         createMockSession('sess-1', {
           processingState: JSON.stringify({ status: 'processing', phase: 'thinking' }),
@@ -492,7 +463,6 @@ describe('session-status (real module tests)', () => {
 
       const { allSessionStatuses } = await import('../session-status.js');
 
-      // Should have both sessions
       expect(allSessionStatuses.value.size).toBe(2);
       expect(allSessionStatuses.value.get('sess-1')?.processingState).toEqual({
         status: 'processing',
@@ -538,7 +508,6 @@ describe('session-status (real module tests)', () => {
 
   describe('localStorage save error handling', () => {
     it('should handle localStorage.setItem failure gracefully (line 69)', async () => {
-      // Create a localStorage that throws on setItem
       const throwingLocalStorage = {
         ...createMockLocalStorage(),
         setItem: vi.fn(() => {
@@ -570,10 +539,7 @@ describe('session-status (real module tests)', () => {
       const module = await import('../session-status.js');
       module.initSessionStatusTracking();
 
-      // Switch to session - should trigger save which will fail
       mockCurrentSessionIdSignal.value = 'sess-1';
-
-      // Should have handled error gracefully (no throw)
     });
   });
 });

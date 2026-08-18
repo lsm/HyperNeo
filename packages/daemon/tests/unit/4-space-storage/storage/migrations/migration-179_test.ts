@@ -1,19 +1,3 @@
-/**
- * Migration 179 Tests — `pending_agent_messages.workflow_node_id`.
- *
- * The pending-message queue was keyed only by (workflow_run_id,
- * target_agent_name); M179 adds workflow_node_id so two unstarted nodes reusing
- * a slot name don't cross-receive. These tests cover only the migration itself
- * (column add); the node-scoped drain/retention behavior is covered by the
- * PendingAgentMessageRepository suite.
- *
- * Covers:
- *   - Pre-M179 schema: the column is added.
- *   - Idempotent re-run.
- *   - Fresh, fully-migrated DB carries the column from createTables.
- *   - Missing-table guard (empty DB).
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -26,7 +10,6 @@ function columnNames(db: BunDatabase, table: string): string[] {
   return rows.map((r) => r.name);
 }
 
-/** Minimal pre-M179 shape: pending_agent_messages without workflow_node_id. */
 function seedPreM179Schema(db: BunDatabase): void {
   db.exec(`
     CREATE TABLE pending_agent_messages (

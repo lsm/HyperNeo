@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * SlashCommandOutput Component Tests
- *
- * Tests slash command output parsing and rendering
- */
 import { describe, it, expect, vi } from 'vitest';
 
 import { render } from '@testing-library/preact';
@@ -65,7 +60,6 @@ Line 3</local-command-stdout>`;
       const content = '<local-command-stdout>  Trimmed content  </local-command-stdout>';
       const { container } = render(<SlashCommandOutput content={content} />);
 
-      // Content should be trimmed
       expect(container.textContent).toContain('Trimmed content');
     });
 
@@ -87,7 +81,6 @@ Line 3</local-command-stdout>`;
       const content = 'Before <local-command-stdout>Output</local-command-stdout> After';
       const { container } = render(<SlashCommandOutput content={content} />);
 
-      // Should extract only the stdout content
       expect(container.textContent).toContain('Output');
     });
   });
@@ -240,8 +233,6 @@ Line 3</local-command-stdout>`;
       const content = '<local-command-stdout>   </local-command-stdout>';
       const { container } = render(<SlashCommandOutput content={content} />);
 
-      // Trimmed empty content should result in empty output or minimal render
-      // The component should handle this gracefully
       expect(container.innerHTML).not.toContain('undefined');
     });
 
@@ -260,7 +251,6 @@ Line 3</local-command-stdout>`;
       const content = `<local-command-stdout>${longOutput}</local-command-stdout>`;
       const { container } = render(<SlashCommandOutput content={content} />);
 
-      // Should render without error
       expect(container.textContent).toContain('x');
     });
 

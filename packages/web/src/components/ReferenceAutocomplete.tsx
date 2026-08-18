@@ -32,11 +32,6 @@ function TypeIcon({ type }: { type: ReferenceType }) {
   return <ReferenceTypeIcon type={type} className={TYPE_ICON_CLASS[type]} />;
 }
 
-/**
- * Determine the header label for the autocomplete menu.
- * Shows "Files & Folders" when results only contain file/folder types,
- * otherwise shows "References".
- */
 function resolveHeaderLabel(results: ReferenceSearchResult[]): string {
   const types = new Set(results.map((r) => r.type));
   const hasTaskOrGoal = types.has('task') || types.has('goal');
@@ -55,12 +50,10 @@ export default function ReferenceAutocomplete({
   const selectedItemRef = useRef<HTMLButtonElement>(null);
   const [isMobile, setIsMobile] = useState(false);
 
-  // Detect touch/mobile device on mount
   useEffect(() => {
     setIsMobile(window.matchMedia('(pointer: coarse)').matches);
   }, []);
 
-  // Scroll selected item into view
   useEffect(() => {
     if (selectedItemRef.current) {
       selectedItemRef.current.scrollIntoView({
@@ -70,7 +63,6 @@ export default function ReferenceAutocomplete({
     }
   }, [selectedIndex, isMobile]);
 
-  // Close on click or touch outside
   useEffect(() => {
     const handleOutside = (e: MouseEvent | TouchEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
@@ -87,7 +79,6 @@ export default function ReferenceAutocomplete({
 
   if (results.length === 0) return null;
 
-  // Group results by type, preserving global index for selection
   const groups: Array<{
     type: ReferenceType;
     items: Array<{ result: ReferenceSearchResult; globalIndex: number }>;
@@ -126,7 +117,6 @@ export default function ReferenceAutocomplete({
         maxWidth: isMobile ? undefined : '420px',
       }}
     >
-      {/* Header */}
       <div class={`px-3 py-2 border-b ${borderColors.ui.default} bg-dark-850/50`}>
         <div class="flex items-center gap-2">
           <svg class="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -141,11 +131,9 @@ export default function ReferenceAutocomplete({
         </div>
       </div>
 
-      {/* Grouped results */}
       <div class="py-1">
         {groups.map(({ type, items }) => (
           <div key={type}>
-            {/* Section label */}
             <div class="px-3 pt-2 pb-1">
               <span class="text-[10px] font-semibold uppercase tracking-wider text-gray-500">
                 {TYPE_LABELS[type]}
@@ -183,7 +171,6 @@ export default function ReferenceAutocomplete({
         ))}
       </div>
 
-      {/* Footer hint */}
       <div class={`px-3 py-2 border-t ${borderColors.ui.default} bg-dark-850/50`}>
         {isMobile ? (
           <p class="text-xs text-gray-500">Tap to select</p>

@@ -1,8 +1,3 @@
-/**
- * Production entry point for compiled binary.
- * Does NOT import dev-server.ts or Vite — only production code.
- */
-
 export {};
 
 if (process.argv[2] === '--hyperneo-acp-mcp-proxy') {
@@ -16,12 +11,7 @@ if (process.argv[2] === '--hyperneo-acp-mcp-proxy') {
       import('./src/prod-server-embedded'),
       import('./package.json'),
     ]);
-  // The SDK CLI binary is no longer embedded in the compiled binary.
-  // Instead, the runtime resolver (sdk-cli-resolver.ts) downloads it
-  // on first use and caches it at ~/.hyperneo/sdk/. This keeps the
-  // compiled binary ~66 MB instead of ~266 MB.
 
-  // Handle uncaught errors to prevent silent crashes
   process.on('unhandledRejection', (reason, promise) => {
     console.error('[Fatal] Unhandled Promise Rejection:', reason);
     console.error('Promise:', promise);
@@ -52,7 +42,6 @@ if (process.argv[2] === '--hyperneo-acp-mcp-proxy') {
     process.exit(0);
   }
 
-  // Production binary always runs in production mode
   process.env.NODE_ENV = 'production';
 
   const config = getConfig(cliOptions);

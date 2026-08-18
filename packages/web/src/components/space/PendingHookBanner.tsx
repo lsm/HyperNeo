@@ -1,14 +1,3 @@
-/**
- * PendingHookBanner — thread-view CTA for workflow hooks awaiting human
- * approval or retry.
- *
- * Shows whenever the task's workflow run has at least one hook whose
- * evaluated status is `blocked_by_hook` (human approval) or
- * `waiting_on_hook_retry` (retryable block).
- *
- * Provides the human approval flow for workflows that use hooks.
- */
-
 import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
 import { connectionManager } from '../../lib/connection-manager';
 import { InlineStatusBanner, type InlineStatusBannerAction } from './InlineStatusBanner';
@@ -17,7 +6,6 @@ import { useRunHookStates, type HookBannerSummary } from './use-run-hook-states'
 interface PendingHookBannerProps {
   runId: string;
   spaceId: string;
-  /** Workflow ID for the run; used to resolve hook definitions. */
   workflowId: string | null;
   summaries?: HookBannerSummary[];
   fetchError?: string | null;

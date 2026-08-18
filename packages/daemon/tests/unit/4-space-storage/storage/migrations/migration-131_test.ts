@@ -151,10 +151,6 @@ describe('Migration 131: remove global Neo schema surface', () => {
   });
 
   test('runMigration66 is a no-op when sessions CHECK already lacks neo (post-M131 / fresh tip)', () => {
-    // Reproduces the CI failure on daemon restart: after M131 has rebuilt the
-    // sessions table without 'neo' (and rows for newer types like 'space_chat'
-    // exist), re-running the legacy M66 probe-and-rebuild would copy those rows
-    // into a stale CHECK that does not include 'space_chat' and crash startup.
     db.exec(`
 			CREATE TABLE sessions (
 				id TEXT PRIMARY KEY,

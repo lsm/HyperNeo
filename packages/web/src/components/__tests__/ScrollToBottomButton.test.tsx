@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for ScrollToBottomButton Component
- *
- * Tests the floating scroll-to-bottom button with click handling and accessibility.
- */
 import { describe, it, expect, vi } from 'vitest';
 
 import { render, fireEvent, cleanup } from '@testing-library/preact';

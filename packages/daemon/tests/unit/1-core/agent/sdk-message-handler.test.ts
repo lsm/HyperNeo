@@ -1,9 +1,3 @@
-/**
- * SDKMessageHandler Tests
- *
- * Tests for processing incoming SDK messages.
- */
-
 import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import {
   SDKMessageHandler,
@@ -75,7 +69,6 @@ describe('SDKMessageHandler', () => {
   let mockLifecycleManager: QueryLifecycleManager;
   let mockContext: SDKMessageHandlerContext;
 
-  // Spy functions
   let saveSDKMessageSpy: ReturnType<typeof mock>;
   let updateSessionSpy: ReturnType<typeof mock>;
   let getMessagesByStatusSpy: ReturnType<typeof mock>;
@@ -121,7 +114,6 @@ describe('SDKMessageHandler', () => {
       },
     };
 
-    // Database spies
     saveSDKMessageSpy = mock(() => true);
     updateSessionSpy = mock(() => {});
     getMessagesByStatusSpy = mock(() => []);
@@ -139,7 +131,6 @@ describe('SDKMessageHandler', () => {
       abortTransaction: mock(() => {}),
     } as unknown as Database;
 
-    // MessageHub spies
     publishSpy = mock(async () => {});
     mockMessageHub = {
       event: publishSpy,
@@ -148,7 +139,6 @@ describe('SDKMessageHandler', () => {
       command: mock(async () => {}),
     } as unknown as MessageHub;
 
-    // DaemonHub spies
     emitSpy = mock(async () => {});
     mockDaemonHub = {
       emit: emitSpy,
@@ -159,7 +149,6 @@ describe('SDKMessageHandler', () => {
       subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
     } as unknown as InternalEventBus<any>;
 
-    // StateManager spies
     detectPhaseFromMessageSpy = mock(async () => {});
     setIdleSpy = mock(async () => {});
     beginTerminalIdleSpy = mock(() => {});
@@ -173,7 +162,6 @@ describe('SDKMessageHandler', () => {
       getState: getStateSpy,
     } as unknown as ProcessingStateManager;
 
-    // ContextTracker spies
     getContextInfoSpy = mock(() => ({ totalTokens: 1000, maxTokens: 128000 }));
     updateWithDetailedBreakdownSpy = mock(() => {});
     mockContextTracker = {
@@ -184,7 +172,6 @@ describe('SDKMessageHandler', () => {
       markCompactionTriggered: mock(() => {}),
     } as unknown as ContextTracker;
 
-    // MessageQueue spies
     enqueueMessageSpy = mock(async () => 'context-id');
     messageQueueClearSpy = mock(() => {});
     mockMessageQueue = {
@@ -193,22 +180,18 @@ describe('SDKMessageHandler', () => {
       clear: messageQueueClearSpy,
     } as unknown as MessageQueue;
 
-    // ErrorManager spy
     handleErrorSpy = mock(async () => {});
     mockErrorManager = {
       handleError: handleErrorSpy,
     } as unknown as ErrorManager;
 
-    // LifecycleManager spy
     lifecycleStopSpy = mock(async () => {});
     mockLifecycleManager = {
       stop: lifecycleStopSpy,
     } as unknown as QueryLifecycleManager;
 
-    // Delivery-turn stall watchdog liveness bump
     bumpDeliveryTurnActivitySpy = mock(() => {});
 
-    // Create context
     mockContext = {
       session: mockSession,
       db: mockDb,
@@ -244,7 +227,6 @@ describe('SDKMessageHandler', () => {
   describe('resetCircuitBreaker', () => {
     it('should reset the circuit breaker', () => {
       handler.resetCircuitBreaker();
-      // Should not throw
       expect(handler).toBeDefined();
     });
   });
@@ -252,7 +234,6 @@ describe('SDKMessageHandler', () => {
   describe('markApiSuccess', () => {
     it('should mark API success', () => {
       handler.markApiSuccess();
-      // Should not throw
       expect(handler).toBeDefined();
     });
   });
@@ -286,7 +267,6 @@ describe('SDKMessageHandler', () => {
 
         await handler.handleMessage(delta);
 
-        // A quiet generation is "alive" — the watchdog window is reset per token.
         expect(bumpDeliveryTurnActivitySpy).toHaveBeenCalledTimes(1);
       });
 
@@ -296,7 +276,6 @@ describe('SDKMessageHandler', () => {
         await handler.handleMessage(delta);
 
         expect(saveSDKMessageSpy).not.toHaveBeenCalled();
-        // messageHub.event + internalEventBus.publish are both wired to publishSpy.
         expect(publishSpy).not.toHaveBeenCalled();
       });
 
@@ -309,14 +288,10 @@ describe('SDKMessageHandler', () => {
       });
 
       it('a stream_event heartbeating past the no-activity window keeps the watchdog alive', async () => {
-        // Mirrors the real wiring: each token delta calls bumpDeliveryTurnActivity,
-        // which resets the watchdog. Simulate a long quiet generation (> the window)
-        // that emits a steady token stream and assert the watchdog never fires.
         bumpDeliveryTurnActivitySpy.mockClear();
         for (let i = 0; i < 5; i++) {
           await handler.handleMessage(makeStreamEvent());
         }
-        // 5 deltas → 5 liveness bumps; the turn is alive, never stalled.
         expect(bumpDeliveryTurnActivitySpy).toHaveBeenCalledTimes(5);
         expect(saveSDKMessageSpy).not.toHaveBeenCalled();
       });
@@ -335,9 +310,6 @@ describe('SDKMessageHandler', () => {
     });
 
     it('never persists or broadcasts internal CLI lifecycle/state messages', async () => {
-      // New in Claude Code 2.1.x (SDK 0.3.233): fire-and-forget signals that
-      // carry no chat content and have no downstream consumer. Persisting them
-      // would accumulate invisible rows and wake every live subscriber.
       const internalMessages: SDKMessage[] = [
         {
           type: 'command_lifecycle',
@@ -384,25 +356,18 @@ describe('SDKMessageHandler', () => {
     });
 
     it('should normalize missing usage on messages with BetaMessage (bridge provider crash guard)', async () => {
-      // Bridge providers (Codex, Copilot) may produce messages without a
-      // usage field on the nested BetaMessage. The Claude Agent SDK's
-      // internal functions access message.usage.input_tokens without
-      // null-checking, so we must ensure all persisted messages with a
-      // BetaMessage have a usage object.
       const message: SDKMessage = {
         type: 'assistant',
         uuid: 'test-uuid',
         message: { role: 'assistant', content: [] },
       } as unknown as SDKMessage;
 
-      // message.message.usage should be undefined before handling
       expect(
         (message as unknown as { message: { usage?: unknown } }).message.usage
       ).toBeUndefined();
 
       await handler.handleMessage(message);
 
-      // After handling, usage should be normalized with zeroed fields
       expect(
         (message as unknown as { message: { usage: Record<string, number> } }).message.usage
       ).toEqual({
@@ -412,13 +377,10 @@ describe('SDKMessageHandler', () => {
         cache_read_input_tokens: 0,
       });
 
-      // The normalized message should be saved to DB
       expect(saveSDKMessageSpy).toHaveBeenCalledWith('test-session-id', message);
     });
 
     it('should not overwrite existing usage on messages with BetaMessage', async () => {
-      // When usage is already present (e.g. direct Anthropic provider),
-      // it should be left untouched.
       const originalUsage = {
         input_tokens: 500,
         output_tokens: 200,
@@ -508,8 +470,6 @@ describe('SDKMessageHandler', () => {
       await handler.handleMessage(message);
 
       expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-msg-1'], 'consumed');
-      // Bug fix: timestamp must be updated so message appears at correct position
-      // after page refresh (not at original queue time)
       expect(mockDb.updateMessageTimestamp).toHaveBeenCalledWith('db-msg-1');
       expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
         sessionId: 'test-session-id',
@@ -540,10 +500,6 @@ describe('SDKMessageHandler', () => {
       const message: SDKMessage = {
         type: 'user',
         uuid: 'tool-result-uuid',
-        // The SDK conversation id (session.sdkSessionId) — deliberately DISTINCT
-        // from the application session.id ('test-session-id'). The consumed event
-        // must carry the app id so execution lookups (node_executions.agent_session_id)
-        // resolve; publishing the SDK conversation id would miss every tool-result.
         session_id: 'sdk-conversation-id',
         message: {
           role: 'user',
@@ -632,7 +588,6 @@ describe('SDKMessageHandler', () => {
       await handler.handleMessage(message);
 
       expect(mockSession.sdkSessionId).toBe('sdk-session-123');
-      // sdkOriginPath should be set to the session's workspacePath (no worktree in this session)
       expect(mockSession.sdkOriginPath).toBe('/test/path');
       expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
         sdkSessionId: 'sdk-session-123',
@@ -646,9 +601,6 @@ describe('SDKMessageHandler', () => {
     });
 
     it('rotates sdkSessionId when an init reports a different id (e.g. after /clear)', async () => {
-      // resetContextPerTurn issues /clear in-stream; the SDK rotates to a fresh
-      // session and emits a new init. Capturing the new id keeps daemon-restart
-      // resume pointing at the live conversation, not the stale pre-clear one.
       mockSession.sdkSessionId = 'existing-session-id';
 
       const message: SDKMessage = {
@@ -695,7 +647,6 @@ describe('SDKMessageHandler', () => {
 
       await handler.handleMessage(message);
 
-      // Browser autocomplete must not advertise terminal-only commands.
       expect(mockContext.onInitSlashCommands).toHaveBeenCalledWith(['help', 'compact']);
     });
 
@@ -714,11 +665,6 @@ describe('SDKMessageHandler', () => {
     });
 
     it('suppresses setIdle for the result of an in-stream /clear (resetContextPerTurn)', async () => {
-      // /clear is internal → the generator skips setProcessing → its result would
-      // otherwise publish a spurious idle→idle and fire the one-shot node-agent
-      // completion callback before the cleared handoff is reviewed. The
-      // suppression armed by clearConversationContext makes that result's setIdle
-      // a one-shot no-op; the next (handoff's) result still completes the turn.
       const result = (uuid: string): SDKMessage =>
         ({
           type: 'result',
@@ -737,18 +683,14 @@ describe('SDKMessageHandler', () => {
       handler.suppressIdleForNextResult();
       setIdleSpy.mockClear();
 
-      // /clear's result: suppressed (no setIdle, no premature idle publish).
       await handler.handleMessage(result('clear-result'));
       expect(setIdleSpy).not.toHaveBeenCalled();
 
-      // The cleared handoff's result: setIdle runs normally → completes the turn.
       await handler.handleMessage(result('handoff-result'));
       expect(setIdleSpy).toHaveBeenCalled();
     });
 
     it('should persist and broadcast api_retry message', async () => {
-      // api_retry has session_id but should not overwrite sdkSessionId
-      // — only system/init messages are the authoritative source
       const message: SDKMessage = {
         type: 'system',
         subtype: 'api_retry',
@@ -764,11 +706,8 @@ describe('SDKMessageHandler', () => {
       await handler.handleMessage(message);
 
       expect(mockSession.sdkSessionId).toBeUndefined();
-      // api_retry is now persisted and broadcast to appear in transcript
       expect(saveSDKMessageSpy).toHaveBeenCalled();
       expect(publishSpy).toHaveBeenCalled();
-      // Internal event should still be emitted for existing consumers
-      // Check that the FIRST call to emitSpy is the retryAttempt event
       const firstEmitCall = emitSpy.mock.calls[0];
       expect(firstEmitCall).toBeTruthy();
       expect(firstEmitCall[0]).toBe('session.retryAttempt');
@@ -780,7 +719,6 @@ describe('SDKMessageHandler', () => {
     });
 
     it('should reset thinking token tracking on system init (new query start)', async () => {
-      // Stale counters from an interrupted previous turn
       await handler.handleMessage({
         type: 'system',
         subtype: 'thinking_tokens',
@@ -802,7 +740,6 @@ describe('SDKMessageHandler', () => {
       } as unknown as SDKMessage;
       await handler.handleMessage(assistantA);
 
-      // New SDK query/session starts with init
       await handler.handleMessage({
         type: 'system',
         subtype: 'init',
@@ -811,7 +748,6 @@ describe('SDKMessageHandler', () => {
         slash_commands: [],
       } as unknown as SDKMessage);
 
-      // Next thinking block should not inherit the previous turn's stamp baseline
       const assistantB: SDKMessage = {
         type: 'assistant',
         uuid: 'assistant-b',
@@ -842,14 +778,11 @@ describe('SDKMessageHandler', () => {
 
       await handler.handleMessage(message);
 
-      // Should NOT be persisted
       expect(saveSDKMessageSpy).not.toHaveBeenCalled();
-      // Estimate should be stashed for later stamping on assistant message
       expect(handler['currentThinkingTokensEstimate']).toBe(1500);
     });
 
     it('should stamp thinking estimate on assistant message with thinking block', async () => {
-      // First, send a thinking_tokens message to stash the estimate
       const thinkingMessage: SDKMessage = {
         type: 'system',
         subtype: 'thinking_tokens',
@@ -861,7 +794,6 @@ describe('SDKMessageHandler', () => {
 
       await handler.handleMessage(thinkingMessage);
 
-      // Then send an assistant message with a thinking block
       const assistantMessage: SDKMessage = {
         type: 'assistant',
         uuid: 'assistant-uuid',
@@ -878,7 +810,6 @@ describe('SDKMessageHandler', () => {
 
       await handler.handleMessage(assistantMessage);
 
-      // Verify the estimate was stamped on the message
       expect(saveSDKMessageSpy).toHaveBeenCalledWith(
         'test-session-id',
         expect.objectContaining({
@@ -887,7 +818,6 @@ describe('SDKMessageHandler', () => {
         })
       );
 
-      // Verify the handler reset the estimate after consuming it
       const secondAssistantMessage: SDKMessage = {
         type: 'assistant',
         uuid: 'assistant-uuid-2',
@@ -901,8 +831,6 @@ describe('SDKMessageHandler', () => {
 
       await handler.handleMessage(secondAssistantMessage);
 
-      // Second message should NOT have the estimate (it was reset)
-      // Check the last call to saveSDKMessageSpy
       const lastCall = saveSDKMessageSpy.mock.calls[saveSDKMessageSpy.mock.calls.length - 1];
       expect(lastCall).toBeTruthy();
       const savedMessage = lastCall[1] as SDKMessage;
@@ -911,8 +839,6 @@ describe('SDKMessageHandler', () => {
     });
 
     it('should persist per-block deltas from a cumulative turn-level estimate', async () => {
-      // Simulate a task-agent turn where the SDK emits a cumulative estimate
-      // that increases, and assistant thinking is split across messages.
       await handler.handleMessage({
         type: 'system',
         subtype: 'thinking_tokens',
@@ -967,8 +893,6 @@ describe('SDKMessageHandler', () => {
     });
 
     it('should not repeat the same cumulative count on later thinking blocks', async () => {
-      // Provider keeps emitting the same cumulative estimate while the SDK
-      // streams multiple assistant thinking messages.
       await handler.handleMessage({
         type: 'system',
         subtype: 'thinking_tokens',
@@ -1044,7 +968,6 @@ describe('SDKMessageHandler', () => {
       } as unknown as SDKMessage;
       await handler.handleMessage(assistantA);
 
-      // End the turn
       await handler.handleMessage({
         type: 'result',
         subtype: 'success',
@@ -1059,7 +982,6 @@ describe('SDKMessageHandler', () => {
         modelUsage: {},
       } as unknown as SDKMessage);
 
-      // A later thinking block in a new turn should not inherit stale estimate
       const assistantB: SDKMessage = {
         type: 'assistant',
         uuid: 'assistant-b',
@@ -1100,7 +1022,6 @@ describe('SDKMessageHandler', () => {
       } as unknown as SDKMessage;
       await handler.handleMessage(assistantA);
 
-      // Provider repeats the same cumulative estimate.
       await handler.handleMessage({
         type: 'system',
         subtype: 'thinking_tokens',
@@ -1134,7 +1055,6 @@ describe('SDKMessageHandler', () => {
     });
 
     it('should treat a decreased cumulative estimate as a new thinking block', async () => {
-      // First thinking block ends with a cumulative estimate of 300.
       await handler.handleMessage({
         type: 'system',
         subtype: 'thinking_tokens',
@@ -1156,7 +1076,6 @@ describe('SDKMessageHandler', () => {
       } as unknown as SDKMessage;
       await handler.handleMessage(assistantA);
 
-      // Cumulative drops: the SDK has started a new thinking block.
       await handler.handleMessage({
         type: 'system',
         subtype: 'thinking_tokens',
@@ -1178,7 +1097,6 @@ describe('SDKMessageHandler', () => {
       } as unknown as SDKMessage;
       await handler.handleMessage(assistantB);
 
-      // Same cumulative repeated again for the new block should not re-stamp.
       await handler.handleMessage({
         type: 'system',
         subtype: 'thinking_tokens',
@@ -1265,9 +1183,6 @@ describe('SDKMessageHandler', () => {
     });
 
     it('should never inject a /context slash command into the queue', async () => {
-      // We replaced the legacy slash-command-based approach with native
-      // `query.getContextUsage()`, so the handler must not enqueue any
-      // '/context' messages on turn end.
       const message: SDKMessage = {
         type: 'result',
         subtype: 'success',
@@ -1325,10 +1240,6 @@ describe('SDKMessageHandler', () => {
       await handler.handleMessage(message);
 
       expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-msg-1'], 'consumed');
-      // Fallback-ack preserves original timestamp (T1) instead of updating
-      // to turn-end time — the message was already positioned at yield time
-      // by handleMessageYielded, or if that didn't fire, T1 is a better
-      // approximation than T_end.
       expect(mockDb.updateMessageTimestamp).not.toHaveBeenCalledWith('db-msg-1');
       expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
         sessionId: 'test-session-id',
@@ -1390,21 +1301,16 @@ describe('SDKMessageHandler', () => {
     });
 
     it('should handle result message with missing usage (bridge provider edge case)', async () => {
-      // SDK 0.2.84+ may produce result messages without usage when using bridge
-      // providers like anthropic-copilot. The handler must not crash.
       const message: SDKMessage = {
         type: 'result',
         subtype: 'success',
         uuid: 'no-usage-uuid',
-        // Deliberately omit `usage` to simulate the bridge provider edge case
         total_cost_usd: 0,
         modelUsage: {},
       } as unknown as SDKMessage;
 
-      // Should not throw
       await handler.handleMessage(message);
 
-      // Metadata should still be updated (with zero tokens)
       expect(updateSessionSpy).toHaveBeenCalled();
       expect(setIdleSpy).toHaveBeenCalled();
     });
@@ -1580,7 +1486,6 @@ describe('SDKMessageHandler', () => {
     });
 
     it('should detect SDK cost reset and update baseline', async () => {
-      // First result - SDK reports 1.0
       mockSession.metadata = {
         ...mockSession.metadata,
         lastSdkCost: 1.0,
@@ -1588,20 +1493,17 @@ describe('SDKMessageHandler', () => {
         totalCost: 1.0,
       };
 
-      // SDK reset - now reports 0.5 (less than last 1.0)
       const message: SDKMessage = {
         type: 'result',
         subtype: 'success',
         uuid: 'test-uuid',
         usage: { input_tokens: 100, output_tokens: 50 },
-        total_cost_usd: 0.5, // Less than lastSdkCost (1.0)
+        total_cost_usd: 0.5,
         modelUsage: {},
       } as unknown as SDKMessage;
 
       await handler.handleMessage(message);
 
-      // New baseline should be old baseline (0) + old lastSdkCost (1.0) = 1.0
-      // Total cost should be new baseline (1.0) + current SDK cost (0.5) = 1.5
       expect(mockSession.metadata?.costBaseline).toBe(1.0);
       expect(mockSession.metadata?.totalCost).toBe(1.5);
       expect(mockSession.metadata?.lastSdkCost).toBe(0.5);
@@ -1736,7 +1638,6 @@ describe('SDKMessageHandler', () => {
 
       await handler.handleMessage(message);
 
-      // setCompacting should not be called for 'thinking' status
       expect(setCompactingSpy).not.toHaveBeenCalled();
     });
   });
@@ -1789,27 +1690,22 @@ describe('SDKMessageHandler', () => {
 
       await freshHandler.handleMessage(message);
 
-      // Give the fire-and-forget refreshContextUsage a tick to resolve
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(setCompactingSpy).toHaveBeenCalledWith(false);
       expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
       expect(updateWithDetailedBreakdownSpy).toHaveBeenCalled();
-      // No /context slash command is injected anywhere
       expect(mockMessageQueue.enqueueWithId).not.toHaveBeenCalled();
     });
   });
 
   describe('circuit breaker integration', () => {
     it('should handle circuit breaker trip with active query', async () => {
-      // Set up context with active query
       mockContext.queryObject = {} as unknown as SDKMessageHandlerContext['queryObject'];
       mockContext.queryPromise = Promise.resolve();
 
-      // Create handler fresh with the context that has query
       const handlerWithQuery = new SDKMessageHandler(mockContext);
 
-      // Send many error messages to trip the circuit breaker
       const errorMessage: SDKMessage = {
         type: 'user',
         uuid: 'error-uuid',
@@ -1820,7 +1716,6 @@ describe('SDKMessageHandler', () => {
         },
       } as unknown as SDKMessage;
 
-      // Trip the circuit breaker by sending multiple error messages
       for (let i = 0; i < 4; i++) {
         await handlerWithQuery.handleMessage({
           ...errorMessage,
@@ -1828,23 +1723,18 @@ describe('SDKMessageHandler', () => {
         } as SDKMessage);
       }
 
-      // Give async callback time to execute
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // Verify circuit breaker tripped and stopped the query
       expect(lifecycleStopSpy).toHaveBeenCalledWith({ catchQueryErrors: true });
       expect(setIdleSpy).toHaveBeenCalled();
     });
 
     it('should handle circuit breaker trip without active query', async () => {
-      // No query object or promise
       mockContext.queryObject = null;
       mockContext.queryPromise = null;
 
-      // Create handler fresh
       const handlerNoQuery = new SDKMessageHandler(mockContext);
 
-      // Trip the circuit breaker
       const errorMessage: SDKMessage = {
         type: 'user',
         uuid: 'error-uuid',
@@ -1864,9 +1754,7 @@ describe('SDKMessageHandler', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // Should NOT call stop if no query running
       expect(lifecycleStopSpy).not.toHaveBeenCalled();
-      // But should still reset to idle
       expect(setIdleSpy).toHaveBeenCalled();
     });
 
@@ -1876,7 +1764,6 @@ describe('SDKMessageHandler', () => {
 
       const handlerWithQuery = new SDKMessageHandler(mockContext);
 
-      // Trip the circuit breaker
       const errorMessage: SDKMessage = {
         type: 'user',
         uuid: 'error-uuid',
@@ -1896,7 +1783,6 @@ describe('SDKMessageHandler', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // Verify an assistant message was deferred
       const saveCalls = saveSDKMessageSpy.mock.calls;
       const assistantSaves = saveCalls.filter(
         (call: unknown[]) => (call[1] as SDKMessage).type === 'assistant'
@@ -1910,7 +1796,6 @@ describe('SDKMessageHandler', () => {
 
       const handlerWithQuery = new SDKMessageHandler(mockContext);
 
-      // Trip the circuit breaker
       const errorMessage: SDKMessage = {
         type: 'user',
         uuid: 'error-uuid',
@@ -1930,7 +1815,6 @@ describe('SDKMessageHandler', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // Verify error manager was called
       expect(handleErrorSpy).toHaveBeenCalled();
     });
 
@@ -1940,7 +1824,6 @@ describe('SDKMessageHandler', () => {
 
       const handlerWithQuery = new SDKMessageHandler(mockContext);
 
-      // Trip the circuit breaker
       const errorMessage: SDKMessage = {
         type: 'user',
         uuid: 'error-uuid',
@@ -1960,7 +1843,6 @@ describe('SDKMessageHandler', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // Verify message queue was cleared
       expect(messageQueueClearSpy).toHaveBeenCalled();
     });
 
@@ -1970,7 +1852,6 @@ describe('SDKMessageHandler', () => {
 
       const handlerWithQuery = new SDKMessageHandler(mockContext);
 
-      // Trip the circuit breaker
       const errorMessage: SDKMessage = {
         type: 'user',
         uuid: 'error-uuid',
@@ -1990,7 +1871,6 @@ describe('SDKMessageHandler', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // Verify session.errorClear was emitted
       expect(emitSpy).toHaveBeenCalledWith('session.errorClear', {
         sessionId: 'test-session-id',
       });
@@ -1998,7 +1878,6 @@ describe('SDKMessageHandler', () => {
   });
 
   describe('context refresh via SDK getContextUsage()', () => {
-    // Shared helper: canned SDK response
     function makeSdkContextResponse() {
       return {
         categories: [
@@ -2104,7 +1983,6 @@ describe('SDKMessageHandler', () => {
       } as unknown as SDKMessage;
 
       await h.handleMessage(resultMessage);
-      // fire-and-forget → wait one tick
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
@@ -2123,7 +2001,6 @@ describe('SDKMessageHandler', () => {
       mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
       const h = new SDKMessageHandler(mockContext);
 
-      // Error-subtype result — the turn is still over, context should refresh.
       const errorResult: SDKMessage = {
         type: 'result',
         subtype: 'error_during_execution',
@@ -2151,7 +2028,6 @@ describe('SDKMessageHandler', () => {
       mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
       const h = new SDKMessageHandler(mockContext);
 
-      // Send 4 non-result assistant messages — should NOT refresh yet
       for (let i = 0; i < 4; i++) {
         const assistant: SDKMessage = {
           type: 'assistant',
@@ -2163,7 +2039,6 @@ describe('SDKMessageHandler', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(getContextUsageSpy).not.toHaveBeenCalled();
 
-      // 5th event triggers refresh
       const assistant5: SDKMessage = {
         type: 'assistant',
         uuid: 'a-5',
@@ -2173,7 +2048,6 @@ describe('SDKMessageHandler', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
 
-      // Counter resets — another 4 events should NOT trigger
       for (let i = 0; i < 4; i++) {
         const a: SDKMessage = {
           type: 'assistant',
@@ -2250,7 +2124,6 @@ describe('SDKMessageHandler', () => {
         modelUsage: {},
       } as unknown as SDKMessage;
 
-      // Must not throw
       await h.handleMessage(resultMessage);
       await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -2264,10 +2137,6 @@ describe('SDKMessageHandler', () => {
       });
 
       it('does not enqueue /compact for non-PROVIDER_NO_SDK_AUTO_COMPACT providers (SDK handles)', async () => {
-        // OpenRouter is NOT in PROVIDER_NO_SDK_AUTO_COMPACT — its SDK
-        // auto-compact is enabled via Options.settings.autoCompactWindow.
-        // HyperNeo must not preempt the SDK's own trigger, even when context is
-        // near capacity and even when the SDK reports isAutoCompactEnabled=true.
         setModelsCache(
           new Map([
             [
@@ -2330,7 +2199,6 @@ describe('SDKMessageHandler', () => {
       });
 
       it('does not enqueue /compact for custom-provider sessions (SDK handles via Options.settings)', async () => {
-        // custom-provider is not in PROVIDER_NO_SDK_AUTO_COMPACT either.
         setModelsCache(
           new Map([
             [
@@ -2392,8 +2260,6 @@ describe('SDKMessageHandler', () => {
       });
 
       it('does not enqueue /compact for native anthropic provider (SDK handles)', async () => {
-        // Native Anthropic provider: SDK auto-compact works correctly, so
-        // HyperNeo fallback is not installed.
         setModelsCache(
           new Map([
             [
@@ -2471,8 +2337,6 @@ describe('SDKMessageHandler', () => {
         }));
 
         mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
-        // Unknown provider is in PROVIDER_NO_SDK_AUTO_COMPACT, but model info
-        // lookup fails so HyperNeo cannot compute a threshold.
         mockContext.session.config.provider = 'unknown-no-sdk-compact';
         mockContext.session.config.model = 'unknown-model';
 
@@ -2500,13 +2364,6 @@ describe('SDKMessageHandler', () => {
       });
 
       it('does NOT enqueue /compact for global Kimi (SDK native auto-compact handles it)', async () => {
-        // Global Kimi (kimi-k2.7-code) resolves to the SDK's 200k fallback (no
-        // `[1m]` analog, not in the SDK model DB). Empirically every window
-        // override is clamped to 200k, so the only safe compaction path is the
-        // SDK's own native auto-compact, armed at 200k − 33k = 167k — safely
-        // below Kimi's real 262k window. HyperNeo's async fallback must stay inert
-        // for Kimi (it fires after turns and cannot prevent within-turn/resume
-        // overflow). See shouldUseNeoKaiCompactFallback history.
         setModelsCache(
           new Map([
             [
@@ -2564,8 +2421,6 @@ describe('SDKMessageHandler', () => {
         await h.handleMessage(resultMessage);
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        // Context is still tracked; the HyperNeo fallback must NOT fire — Kimi uses
-        // SDK native auto-compact (200k belief, fires at 167k, safely < 262k real).
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
         expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
         expect(mockContextTracker.markCompactionTriggered).not.toHaveBeenCalled();
@@ -2630,8 +2485,6 @@ describe('SDKMessageHandler', () => {
         await h.handleMessage(resultMessage);
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        // Context is still tracked; the HyperNeo fallback must NOT fire — Kimi uses
-        // SDK native auto-compact (200k belief, fires at 167k, safely < 262k real).
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
         expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
         expect(mockContextTracker.markCompactionTriggered).not.toHaveBeenCalled();
@@ -2644,7 +2497,6 @@ describe('SDKMessageHandler', () => {
       mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
       const h = new SDKMessageHandler(mockContext);
 
-      // Run one complete turn: 5 events + result + compact
       for (let i = 0; i < 6; i++) {
         await h.handleMessage({
           type: 'assistant',
@@ -2688,7 +2540,6 @@ describe('SDKMessageHandler', () => {
     });
 
     it('should reset circuit breaker error tracking', async () => {
-      // First, trigger some errors but not enough to trip
       const errorMessage: SDKMessage = {
         type: 'user',
         uuid: 'error-uuid',
@@ -2699,17 +2550,13 @@ describe('SDKMessageHandler', () => {
         },
       } as unknown as SDKMessage;
 
-      // Send 2 errors (not enough to trip with threshold of 3)
       await handler.handleMessage(errorMessage);
       await handler.handleMessage({ ...errorMessage, uuid: 'error-uuid-2' } as SDKMessage);
 
-      // Mark success to reset error tracking
       handler.markApiSuccess();
 
-      // Send one more error - should NOT trip since errors were reset
       await handler.handleMessage({ ...errorMessage, uuid: 'error-uuid-3' } as SDKMessage);
 
-      // Should NOT have tripped (no stop called)
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(lifecycleStopSpy).not.toHaveBeenCalled();
     });
@@ -2726,7 +2573,6 @@ describe('SDKMessageHandler', () => {
 
       const handlerWithQuery = new SDKMessageHandler(mockContext);
 
-      // Trip the circuit breaker
       const errorMessage: SDKMessage = {
         type: 'user',
         uuid: 'error-uuid',
@@ -2746,16 +2592,12 @@ describe('SDKMessageHandler', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // Verify it was tripped
       expect(lifecycleStopSpy).toHaveBeenCalled();
 
-      // Reset all mocks
       lifecycleStopSpy.mockClear();
 
-      // Reset the circuit breaker
       handlerWithQuery.resetCircuitBreaker();
 
-      // Try to trip again - should work after reset
       for (let i = 0; i < 4; i++) {
         await handlerWithQuery.handleMessage({
           ...errorMessage,
@@ -2765,24 +2607,15 @@ describe('SDKMessageHandler', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // Should have tripped again
       expect(lifecycleStopSpy).toHaveBeenCalled();
     });
   });
 
-  // markMessageAccepted signals delivery waiters ONLY when the ACP acceptance
-  // actually took (the row is consumed). A racing interrupt/error that already
-  // flipped the row `failed` must NOT confirm an LTA/task-agent source.
-  // (task #861, review P2.2b — the race-win branch.)
   describe('markMessageAccepted (ACP signal guard)', () => {
     it('does NOT signal delivery waiters when the row is failed (acceptance did not take)', async () => {
-      // Row is absent/failed → getMessageByStatusAndUuid returns null for every
-      // status, so handleMessageYielded is a no-op and the consumed check fails.
       getMessageByStatusAndUuidSpy.mockImplementation(() => null);
       const waiter = waitForDeliveryConsumption(mockSession.id, 'msg-failed');
       handler.markMessageAccepted('msg-failed');
-      // signalDeliveryConsumed would resolve the waiter synchronously; race it
-      // against a short timeout — the guard must suppress the signal.
       const winner = await Promise.race([
         waiter.promise.then(() => 'signaled' as const),
         new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), 50)),

@@ -1,26 +1,3 @@
-/**
- * Chat/Thread Lifecycle Recovery — stale waiting_for_input on the daemon.
- *
- * Regression coverage for scenario 5 (terminal result arrival after stale
- * waiting_for_input). The recovery invariant spans two collaborators:
- *
- *   1. ProcessingStateManager.restoreFromDatabase() preserves a
- *      waiting_for_input state (and its pendingQuestion) across a restart,
- *      while resetting processing/queued/cooldown to idle.
- *   2. The terminal-result path inside SDKMessageHandler —
- *      `if (isSDKResultMessage(message) && !usesSessionStateChangedTurnEnd)
- *      await stateManager.setIdle()` — clears that stale question before
- *      type-specific handling so an interrupted AskUserQuestion turn cannot
- *      keep the composer locked.
- *
- * To actually protect invariant (2), these tests wire a REAL
- * ProcessingStateManager as the handler's state manager and deliver a
- * terminal result message through SDKMessageHandler.handleMessage() — NOT
- * by calling setIdle() directly. detectPhaseFromMessage() early-returns
- * while not processing, so the only thing that can release the stale lock
- * on a result is the handler's terminal-result setIdle() call.
- */
-
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import { SDKMessageHandler } from '../../../../src/lib/agent/sdk-message-handler';
@@ -39,8 +16,6 @@ const sessionId = 'recovery-session';
 describe('chat/thread lifecycle recovery — stale waiting_for_input', () => {
   let manager: ProcessingStateManager;
   let handler: SDKMessageHandler;
-  // In-memory stand-in for the persisted session row. updateSession mutates
-  // it so restoreFromDatabase reflects what a restart would observe.
   let stored: { processingState?: string } | null;
   let db: Database;
   let internalEventBus: InternalEventBus<any>;
@@ -132,22 +107,12 @@ describe('chat/thread lifecycle recovery — stale waiting_for_input', () => {
 
   test('a terminal result delivered through SDKMessageHandler clears a stale waiting_for_input restored after restart', async () => {
     const pendingQuestion: PendingUserQuestion = { toolUseId: 'stale-question', questions: [] };
-    // 1. A crash left the session persisted in waiting_for_input.
     stored = { processingState: JSON.stringify({ status: 'waiting_for_input', pendingQuestion }) };
 
-    // 2. Restart: the waiting state and its pending question are restored,
-    //    so the UI can still surface the unanswered prompt.
     manager.restoreFromDatabase();
     expect(manager.isWaitingForInput()).toBe(true);
     expect(manager.getPendingQuestion()?.toolUseId).toBe('stale-question');
 
-    // 3. Deliver a terminal ERROR result through the real handler. An error
-    //    result is isSDKResultMessage but NOT isSDKResultSuccess, so it runs
-    //    the handler's stale-clear at the top of the result path but never
-    //    reaches handleResultMessage()/finishTurn() (which would also call
-    //    setIdle for a success result). This isolates the fixed path: if the
-    //    "clear stale waiting_for_input on result" setIdle() is removed or
-    //    reordered, this assertion fails.
     const result: SDKMessage = {
       type: 'result',
       subtype: 'error_max_turns',
@@ -157,15 +122,10 @@ describe('chat/thread lifecycle recovery — stale waiting_for_input', () => {
     } as unknown as SDKMessage;
     await handler.handleMessage(result);
 
-    // 4. The stale lock is released: composer unlocks, no lingering question.
     expect(manager.isIdle()).toBe(true);
     expect(manager.isWaitingForInput()).toBe(false);
     expect(manager.getPendingQuestion()).toBeNull();
 
-    // 5. The cleared state was persisted — a second daemon restart must NOT
-    //    re-lock the composer in waiting_for_input. Restore into a FRESH
-    //    manager (same DB) so the assertion depends on the persisted row, not
-    //    the in-memory state of the manager we just cleared.
     expect(stored?.processingState).toContain('"status":"idle"');
     const restarted = new ProcessingStateManager(sessionId, internalEventBus, db);
     restarted.restoreFromDatabase();
@@ -175,9 +135,6 @@ describe('chat/thread lifecycle recovery — stale waiting_for_input', () => {
   });
 
   test('an interrupted processing turn recovers to idle on restart (not waiting_for_input)', () => {
-    // Contrast spine: although waiting_for_input is preserved across restart,
-    // a session that crashed mid-processing must come back idle so it is not
-    // stuck — only a deliberate waiting_for_input is restored as-is.
     stored = {
       processingState: JSON.stringify({ status: 'processing', phase: 'streaming' }),
     };

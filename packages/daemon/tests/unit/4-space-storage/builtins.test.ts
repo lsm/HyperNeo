@@ -1,13 +1,3 @@
-/**
- * Built-ins Registry Consistency Tests
- *
- * The registry in `src/lib/builtins.ts` is the single source of truth for
- * default MCP servers and skills. These tests pin down invariants that both
- * seeders (`seedDefaultMcpEntries` and `SkillsManager.initializeBuiltins`)
- * depend on, so a bad data change fails fast with a clear message rather
- * than producing a subtly broken DB.
- */
-
 import { describe, test, expect } from 'bun:test';
 import { BUILTIN_MCP_SERVERS, BUILTIN_SKILLS } from '../../../src/lib/builtins';
 

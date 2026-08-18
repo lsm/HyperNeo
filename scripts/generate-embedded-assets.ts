@@ -1,13 +1,3 @@
-/**
- * Scans packages/web/dist/ and generates packages/cli/src/embedded-assets.ts
- * with Bun file imports for embedding in compiled binaries.
- *
- * Also scans packages/skills/ recursively and embeds all skill files as
- * embeddedBuiltinSkills — extracted to ~/.hyperneo/skills/ at startup.
- *
- * Usage: bun run scripts/generate-embedded-assets.ts
- */
-
 import { readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, extname } from 'node:path';
 
@@ -37,7 +27,6 @@ const MIME_TYPES: Record<string, string> = {
   '.webmanifest': 'application/manifest+json',
 };
 
-// File extensions to skip (not needed in the binary)
 const SKIP_EXTENSIONS = new Set(['.map']);
 
 function sanitizeIdentifier(relativePath: string): string {
@@ -63,7 +52,6 @@ function walkDir(dir: string): string[] {
   return files;
 }
 
-// Verify dist directory exists
 try {
   statSync(DIST_DIR);
 } catch {
@@ -72,7 +60,6 @@ try {
   process.exit(1);
 }
 
-// Scan dist directory
 const allFiles = walkDir(DIST_DIR);
 const imports: string[] = [];
 const mapEntries: string[] = [];
@@ -82,7 +69,6 @@ for (const absPath of allFiles) {
   const relPath = relative(DIST_DIR, absPath);
   const ext = extname(relPath);
 
-  // Skip source maps and other unnecessary files
   if (SKIP_EXTENSIONS.has(ext)) {
     skipped++;
     continue;
@@ -97,7 +83,6 @@ for (const absPath of allFiles) {
   mapEntries.push(`\t['${urlPath}', { filePath: ${id}, mimeType: '${mime}' }],`);
 }
 
-// Scan packages/skills/ recursively for built-in skill files
 const skillImports: string[] = [];
 const skillMapEntries: string[] = [];
 
@@ -113,14 +98,12 @@ if (skillsExist) {
   const skillFiles = walkDir(SKILLS_DIR);
   for (const absPath of skillFiles) {
     const relPath = relative(SKILLS_DIR, absPath).replace(/\\/g, '/');
-    // Sanitize for use as a JS identifier
     const varName =
       'skill_' +
       relPath
         .replace(/[^a-zA-Z0-9]/g, '_')
         .replace(/_+/g, '_')
         .replace(/^_|_$/, '');
-    // Import path relative to packages/cli/src/ → ../../skills/<relPath>
     const importPath = `'../../skills/${relPath}' with { type: 'file' }`;
     skillImports.push(`import ${varName} from ${importPath};`);
     skillMapEntries.push(`\t['${relPath}', ${varName}],`);

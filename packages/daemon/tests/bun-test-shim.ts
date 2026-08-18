@@ -1,7 +1,3 @@
-// bun:test compatibility shim for Vitest. The daemon's vitest config aliases
-// the `bun:test` specifier to this module, which re-exports Vitest equivalents
-// so the existing suites run without editing their import lines.
-
 import {
   afterAll as afterAllRaw,
   afterEach as afterEachRaw,
@@ -16,13 +12,6 @@ import {
 
 export { describe, expect, vi };
 
-/**
- * bun:test allows `it(name, fn, { timeout })` / `it(name, fn, timeoutMs)`.
- * Vitest 4 removed the options-object-as-third-argument form and wants
- * `it(name, options, fn)` instead. Transparently reorder the arguments so
- * existing bun-style call sites keep working. A numeric third argument is
- * already a valid Vitest signature and is passed through untouched.
- */
 function wrapTestFn<T extends object>(fn: T): T {
   return new Proxy(fn, {
     apply(target, thisArg, args: unknown[]) {
@@ -37,13 +26,6 @@ function wrapTestFn<T extends object>(fn: T): T {
 export const it = wrapTestFn(vitestIt);
 export const test = wrapTestFn(vitestTest);
 
-/**
- * bun:test hooks accept `(fn, { timeout })` (options object as 2nd arg).
- * Vitest 4 dropped the options-object form for hooks and expects a numeric
- * timeout (`beforeEach(fn, timeout)`). Normalize: if the 2nd arg is a
- * `{ timeout }` object, pass the number instead — otherwise Vitest prints
- * "Hook timed out in [object Object]ms" and ignores the timeout.
- */
 function wrapHookFn<T extends object>(fn: T): T {
   return new Proxy(fn, {
     apply(target, thisArg, args: unknown[]) {
@@ -64,13 +46,10 @@ export const afterEach = wrapHookFn(afterEachRaw);
 export const beforeAll = wrapHookFn(beforeAllRaw);
 export const afterAll = wrapHookFn(afterAllRaw);
 
-/** bun's `jest` namespace maps to Vitest's `vi`. */
 export const jest = vi;
 
-/** bun's `mock(fn?)` maps to Vitest `vi.fn(fn?)`. Also carries `.module` and `.restore`. */
 type MockFn = typeof vi.fn & {
   module: typeof vi.mock;
-  /** bun's `mock.restore()` restores all spies — Vitest: `vi.restoreAllMocks()`. */
   restore: typeof vi.restoreAllMocks;
 };
 export const mock: MockFn = Object.assign(vi.fn.bind(vi), {
@@ -78,24 +57,13 @@ export const mock: MockFn = Object.assign(vi.fn.bind(vi), {
   restore: vi.restoreAllMocks.bind(vi),
 }) as MockFn;
 
-/** bun's `spyOn` maps to Vitest `vi.spyOn`. */
 export const spyOn = vi.spyOn.bind(vi);
 
-/**
- * bun's `setDefaultTimeout(ms)` sets the per-test timeout for the file.
- * Vitest configures this globally, so we forward to `vi.setConfig`.
- */
 export function setDefaultTimeout(ms: number): void {
   vi.setConfig({ testTimeout: ms });
 }
 
-/** bun re-exports `Mock` as a type; Vitest's closest is `Mock` from 'vitest'. */
 export type { Mock } from 'vitest';
-
-// ---------------------------------------------------------------------------
-// bun-specific matchers that Vitest/Chai does not provide.
-// Only the matchers actually used by the suites are implemented.
-// ---------------------------------------------------------------------------
 
 function passFail(pass: boolean, message: () => string) {
   return { pass, message };

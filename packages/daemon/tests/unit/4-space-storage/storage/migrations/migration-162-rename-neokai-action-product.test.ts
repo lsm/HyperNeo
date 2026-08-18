@@ -59,13 +59,11 @@ describe('Migration 162: rename neokai_action / neokai_product to hyperneo_*', (
         sdk_message TEXT NOT NULL
       );
     `);
-    // Legacy action row: column + JSON discriminator both say neokai_action.
     db.prepare(`INSERT INTO sdk_messages (id, message_type, sdk_message) VALUES (?, ?, ?)`).run(
       'a',
       'neokai_action',
       JSON.stringify({ type: 'neokai_action', uuid: 'u1', action: 'sdk_resume_choice' })
     );
-    // Unrelated SDK message must be left untouched.
     db.prepare(`INSERT INTO sdk_messages (id, message_type, sdk_message) VALUES (?, ?, ?)`).run(
       'b',
       'assistant',
@@ -134,7 +132,6 @@ describe('Migration 162: rename neokai_action / neokai_product to hyperneo_*', (
   });
 
   test('is a no-op when the tables do not exist (fresh/partial schema)', () => {
-    // Neither sdk_messages nor evolution_episodes exist — guards must short-circuit.
     expect(() => runMigration162(db)).not.toThrow();
   });
 });

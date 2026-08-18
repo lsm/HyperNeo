@@ -1,32 +1,3 @@
-/**
- * Migration 103 Tests — PR 1/5 of the task-agent-as-post-approval-executor refactor.
- *
- * Migration 103:
- *   - Rebuilds `space_tasks` to widen the `status` CHECK constraint so it
- *     accepts the new `'approved'` value.
- *   - Adds three nullable columns to `space_tasks`:
- *       `post_approval_session_id`, `post_approval_started_at`,
- *       `post_approval_blocked_reason`.
- *   - Adds `space_workflows.post_approval` (nullable JSON text column) that
- *     stores the optional `PostApprovalRoute`.
- *
- * See `docs/plans/remove-completion-actions-task-agent-as-post-approval-executor.md`
- * §1.1–1.2 for the schema contract. This is purely schema — no runtime
- * consumer reads these columns yet (PR 2 wires them up).
- *
- * Covers:
- *   - Fresh, fully-migrated DB — the widened CHECK accepts `'approved'` and
- *     the new columns exist on both tables.
- *   - Pre-M103 schema with existing rows — the table rebuild preserves
- *     every row unchanged, including all status values.
- *   - Pre-M103 indexes on `space_tasks` survive the rebuild.
- *   - Running the migration a second time is a no-op (idempotent).
- *   - A `space_workflows` row round-trips `post_approval` as NULL by default
- *     and as JSON when written.
- *   - Legacy `status='failed'` is still rejected (the widening only adds
- *     `'approved'`, it does not accept arbitrary strings).
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -58,9 +29,6 @@ function tableSql(db: BunDatabase, table: string): string {
 
 function seedPreM103Schema(db: BunDatabase): void {
   db.exec('PRAGMA foreign_keys = OFF');
-  // Minimal parent tables (only what the FKs need). We create both tables
-  // that `space_tasks` references so post-rebuild inserts work even with
-  // foreign_keys=ON, mirroring production.
   db.exec(`
 		CREATE TABLE spaces (
 			id TEXT PRIMARY KEY,
@@ -76,9 +44,6 @@ function seedPreM103Schema(db: BunDatabase): void {
 			updated_at INTEGER NOT NULL
 		)
 	`);
-  // Pre-M103 space_tasks — note the CHECK clause does NOT include 'approved'
-  // and none of the three post_approval_* columns exist yet. This is the
-  // shape M103 must rebuild.
   db.exec(`
 		CREATE TABLE space_tasks (
 			id TEXT PRIMARY KEY,
@@ -117,13 +82,11 @@ function seedPreM103Schema(db: BunDatabase): void {
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
-  // Two pre-existing indexes — M103 must preserve them across the rebuild.
   db.exec(
     `CREATE UNIQUE INDEX idx_space_tasks_space_task_number ON space_tasks(space_id, task_number)`
   );
   db.exec(`CREATE INDEX idx_space_tasks_space_id ON space_tasks(space_id)`);
 
-  // Pre-M103 space_workflows — no `post_approval` column.
   db.exec(`
 		CREATE TABLE space_workflows (
 			id TEXT PRIMARY KEY,
@@ -256,7 +219,6 @@ describe('Migration 103: task status "approved" + post_approval schema', () => {
   describe('fresh DB (all migrations applied)', () => {
     beforeEach(() => {
       runMigrations(db, () => {});
-      // Seed a space so FKs work.
       const now = Date.now();
       db.prepare(
         `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
@@ -376,8 +338,6 @@ describe('Migration 103: task status "approved" + post_approval schema', () => {
         now,
         now
       );
-      // Seed one row for every legal pre-M103 status so we verify the
-      // rebuild preserves them verbatim.
       const seeds: Array<[string, number, string, string]> = [
         ['t-open', 1, 'open', 'Open'],
         ['t-inp', 2, 'in_progress', 'In Progress'],
@@ -614,7 +574,6 @@ describe('Migration 103: task status "approved" + post_approval schema', () => {
 				)
 			`);
       expect(() => runMigration103(db)).not.toThrow();
-      // space_tasks got the new columns, space_workflows still doesn't exist.
       expect(columnNames(db, 'space_tasks')).toContain('post_approval_session_id');
       const wfExists = db
         .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='space_workflows'`)

@@ -1,16 +1,5 @@
-/**
- * Anthropic-compatible Provider Translator
- *
- * Defines shared Anthropic Messages API types and SSE builder helpers for
- * Anthropic-compatible provider bridges.
- */
-
 import type { AnthropicErrorType } from '../shared/error-envelope.js';
 export type { AnthropicErrorType } from '../shared/error-envelope.js';
-
-// ---------------------------------------------------------------------------
-// Anthropic Messages API types (minimal subset needed by the bridge)
-// ---------------------------------------------------------------------------
 
 export type AnthropicContentBlockText = {
   type: 'text';
@@ -78,27 +67,17 @@ export type AnthropicRequest = {
   max_tokens?: number;
   stream?: boolean;
   tool_choice?: ToolChoice;
-  /**
-   * Extended-thinking configuration emitted by the SDK.
-   * The bridge maps `budget_tokens` to OpenAI `reasoning.effort`.
-   */
   thinking?: { type: 'enabled'; budget_tokens: number } | { type: 'adaptive' };
 };
 
-/** Extract plain text from an Anthropic system field. */
 export function extractSystemText(system: AnthropicRequest['system'] | undefined): string {
   if (!system) return '';
   if (typeof system === 'string') return system;
   return system.map((b) => b.text).join('\n');
 }
 
-// ---------------------------------------------------------------------------
-// SSE helpers — emit Anthropic streaming event strings
-// ---------------------------------------------------------------------------
-
 const SSE_SEP = '\n\n';
 
-/** Build a Server-Sent Events formatted string from event name and data. */
 function sseEvent(event: string, data: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}${SSE_SEP}`;
 }
@@ -190,22 +169,11 @@ export function contentBlockStopSSE(index: number): string {
 }
 
 export type MessageDeltaUsage = {
-  /**
-   * Output token count for this message. Use the real count from
-   * `thread/tokenUsage/updated` when available; otherwise pass the heuristic
-   * estimate (`Math.ceil(text.length / 4)` accumulated across text_delta events).
-   * The `outputTokens > 0` guard in `drainToSSE` selects between the two.
-   */
   outputTokens: number;
-  /** Input token count for this message (from Codex usage events when available). */
   inputTokens?: number | null;
-  /** Cache creation input token count (from Codex usage events when available). */
   cacheCreationInputTokens?: number | null;
-  /** Cache read input token count (from Codex usage events when available). */
   cacheReadInputTokens?: number | null;
-  /** Model context window (from Codex usage events when available). */
   modelContextWindow?: number | null;
-  /** Thinking / reasoning token count (from OpenAI usage events when available). */
   thinkingTokens?: number | null;
 };
 

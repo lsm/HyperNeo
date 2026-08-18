@@ -1,10 +1,3 @@
-/**
- * TaskScheduleRepository — CRUD for the `task_schedules` table.
- *
- * Schedules are immutable after creation except through the explicit mutation
- * methods (update, updateStatus, updateAfterFire, updatePendingJobId).
- */
-
 import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
 import type {
@@ -56,8 +49,6 @@ export interface UpdateTaskScheduleParams {
 export class TaskScheduleRepository {
   constructor(private db: BunDatabase) {}
 
-  // ─── Create ──────────────────────────────────────────────────────────────────
-
   create(params: CreateTaskScheduleParams): TaskSchedule {
     const id = generateUUID();
     const now = Date.now();
@@ -85,9 +76,9 @@ export class TaskScheduleRepository {
         params.runAt ?? null,
         params.timezone ?? 'UTC',
         params.nextRunAt ?? null,
-        null, // last_run_at
-        null, // last_created_task_id
-        null, // pending_job_id
+        null,
+        null,
+        null,
         'active',
         params.createdByAgent ?? null,
         params.createdBySession ?? null,
@@ -98,8 +89,6 @@ export class TaskScheduleRepository {
 
     return this.getById(id)!;
   }
-
-  // ─── Read ─────────────────────────────────────────────────────────────────────
 
   getById(id: string): TaskSchedule | null {
     const row = this.db.prepare(`SELECT * FROM task_schedules WHERE id = ?`).get(id) as
@@ -132,17 +121,6 @@ export class TaskScheduleRepository {
     return rows.map((r) => this.rowToSchedule(r));
   }
 
-  /**
-   * List active schedules whose nextRunAt <= now AND have no pending job
-   * linked. Used for startup re-seeding to recover lost jobs.
-   *
-   * The `pending_job_id IS NULL` filter is important for paginated recovery:
-   * after a page is re-seeded (each schedule gets a new pending job linked),
-   * those rows must drop out of subsequent pages so the loop can advance to
-   * the next batch of orphaned schedules. Without it, the first page would
-   * be returned again with no actionable rows and the loop would stop early
-   * even though further due schedules remain.
-   */
   listActiveDue(now: number, limit = 100): TaskSchedule[] {
     const rows = this.db
       .prepare(
@@ -158,10 +136,6 @@ export class TaskScheduleRepository {
     return rows.map((r) => this.rowToSchedule(r));
   }
 
-  /**
-   * List active schedules with a pendingJobId set.
-   * Used during startup to verify pending jobs still exist.
-   */
   listActiveWithPendingJob(): TaskSchedule[] {
     const rows = this.db
       .prepare(
@@ -172,11 +146,6 @@ export class TaskScheduleRepository {
     return rows.map((r) => this.rowToSchedule(r));
   }
 
-  /**
-   * List active schedules belonging to a specific space.
-   * Used by SpaceManager.resumeSpace / startSpace to re-seed schedules whose
-   * fire jobs were skipped while the space was paused/stopped.
-   */
   listActiveBySpace(spaceId: string): TaskSchedule[] {
     const rows = this.db
       .prepare(
@@ -186,8 +155,6 @@ export class TaskScheduleRepository {
       .all(spaceId) as Record<string, unknown>[];
     return rows.map((r) => this.rowToSchedule(r));
   }
-
-  // ─── Update ───────────────────────────────────────────────────────────────────
 
   update(id: string, params: UpdateTaskScheduleParams): TaskSchedule | null {
     const now = Date.now();
@@ -231,31 +198,25 @@ export class TaskScheduleRepository {
       values.push(params.nextRunAt ?? null);
     }
 
-    if (sets.length === 1) return this.getById(id); // nothing changed
+    if (sets.length === 1) return this.getById(id);
 
     values.push(id);
     this.db.prepare(`UPDATE task_schedules SET ${sets.join(', ')} WHERE id = ?`).run(...values);
     return this.getById(id);
   }
 
-  /** Update the pending job ID (called after each enqueue / cancel). */
   updatePendingJobId(id: string, pendingJobId: string | null): void {
     this.db
       .prepare(`UPDATE task_schedules SET pending_job_id = ?, updated_at = ? WHERE id = ?`)
       .run(pendingJobId, Date.now(), id);
   }
 
-  /** Update status (active / paused / completed). */
   updateStatus(id: string, status: TaskScheduleStatus): void {
     this.db
       .prepare(`UPDATE task_schedules SET status = ?, updated_at = ? WHERE id = ?`)
       .run(status, Date.now(), id);
   }
 
-  /**
-   * Called after a schedule fires — records last fire time, the created task ID,
-   * updates nextRunAt, and optionally marks as completed (for 'at' triggers).
-   */
   updateAfterFire(
     id: string,
     opts: {
@@ -284,16 +245,6 @@ export class TaskScheduleRepository {
       );
   }
 
-  /**
-   * Compare-and-swap variant of `updateAfterFire`: only applies the update
-   * when the row's `pending_job_id` still equals `expectedPendingJobId`. This
-   * lets the fire handler detect concurrent pause/delete/reschedule that
-   * happened between the initial read and the post-task commit, and roll back
-   * the in-flight transaction so we don't overwrite the new state.
-   *
-   * Returns true when the row was updated, false when the precondition failed
-   * (status changed, schedule deleted, pending_job_id moved).
-   */
   updateAfterFireIfPending(
     id: string,
     expectedPendingJobId: string,
@@ -325,12 +276,6 @@ export class TaskScheduleRepository {
     return result.changes > 0;
   }
 
-  /**
-   * Compare-and-swap pause: only transitions to paused and clears the pending
-   * job when the row's `pending_job_id` still equals `expectedPendingJobId` and
-   * the status is still `expectedStatus`. Returns true on success, false when
-   * the precondition failed (concurrent fire/reschedule/delete won).
-   */
   pauseIfPending(
     id: string,
     expectedStatus: TaskScheduleStatus,
@@ -346,11 +291,6 @@ export class TaskScheduleRepository {
     return result.changes > 0;
   }
 
-  /**
-   * Compare-and-swap resume: only transitions to active and sets the pending
-   * job when the row's `status` is still `paused`. Returns true on success,
-   * false when the schedule is no longer paused (concurrent resume/delete won).
-   */
   resumeIfPaused(
     id: string,
     opts: {
@@ -369,26 +309,17 @@ export class TaskScheduleRepository {
     return result.changes > 0;
   }
 
-  // ─── Delete ───────────────────────────────────────────────────────────────────
-
   delete(id: string): boolean {
     const result = this.db.prepare(`DELETE FROM task_schedules WHERE id = ?`).run(id);
     return result.changes > 0;
   }
 
-  /**
-   * Compare-and-swap delete: only removes the row when its `pending_job_id`
-   * still equals `expectedPendingJobId`. Returns true on success, false when
-   * the precondition failed (concurrent fire/reschedule already advanced it).
-   */
   deleteIfPending(id: string, expectedPendingJobId: string | null): boolean {
     const result = this.db
       .prepare(`DELETE FROM task_schedules WHERE id = ? AND pending_job_id IS ?`)
       .run(id, expectedPendingJobId);
     return result.changes > 0;
   }
-
-  // ─── Private helpers ──────────────────────────────────────────────────────────
 
   private rowToSchedule(row: Record<string, unknown>): TaskSchedule {
     return {

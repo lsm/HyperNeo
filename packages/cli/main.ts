@@ -9,7 +9,6 @@ if (process.argv[2] === '--hyperneo-acp-mcp-proxy') {
     import('@hyperneo/daemon/config'),
     import('./src/cli-utils'),
   ]);
-  // Parse CLI arguments
   const { options: cliOptions, error } = parseArgs(process.argv.slice(2));
 
   if (error) {
@@ -43,11 +42,9 @@ if (process.argv[2] === '--hyperneo-acp-mcp-proxy') {
   console.log(`   Database: ${config.dbPath}\n`);
 
   if (isDev) {
-    // Development mode: Vite dev server + Daemon (for local development with HMR)
     const { startDevServer } = await import('./src/dev-server');
     await startDevServer(config);
   } else {
-    // Production/Test mode: Static files + Daemon (production-like, no HMR)
     const { startProdServer } = await import('./src/prod-server');
     await startProdServer(config);
   }

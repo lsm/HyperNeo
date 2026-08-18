@@ -1,19 +1,7 @@
-/**
- * GitHub Event Filter Unit Tests
- *
- * Tests for event filtering logic:
- * - Repository matching (exact and wildcard)
- * - Author allowlist/blocklist modes
- * - Label modes (require_any, require_all, exclude, any)
- * - Event type filtering
- * - Combined filters
- */
-
 import { describe, test, expect, beforeEach } from 'bun:test';
 import { GitHubEventFilter } from '../../../../src/lib/github/event-filter';
 import type { GitHubEvent, GitHubFilterConfig } from '@hyperneo/shared';
 
-// Helper to create a basic GitHub event for testing
 function createTestEvent(overrides: Partial<GitHubEvent> = {}): GitHubEvent {
   return {
     id: 'test-event-id',
@@ -41,7 +29,6 @@ function createTestEvent(overrides: Partial<GitHubEvent> = {}): GitHubEvent {
   };
 }
 
-// Helper to create a basic filter config
 function createFilterConfig(overrides: Partial<GitHubFilterConfig> = {}): GitHubFilterConfig {
   return {
     repositories: ['testowner/testrepo'],
@@ -579,13 +566,13 @@ describe('GitHubEventFilter', () => {
     test('should allow all actions when event type filter not specified', async () => {
       const config = createFilterConfig({
         events: {
-          issues: ['opened'], // Only issue filter set
+          issues: ['opened'],
         },
       });
       const filter = new GitHubEventFilter(config);
       const event = createTestEvent({
         eventType: 'pull_request',
-        action: 'closed', // PR action, not filtered
+        action: 'closed',
       });
 
       const result = await filter.filter(event);
@@ -647,7 +634,7 @@ describe('GitHubEventFilter', () => {
           number: 1,
           title: 'Test',
           body: 'Body',
-          labels: ['documentation'], // Not in required labels
+          labels: ['documentation'],
         },
       });
 
@@ -659,7 +646,7 @@ describe('GitHubEventFilter', () => {
 
     test('should stop at first failed filter (repository)', async () => {
       const config = createFilterConfig({
-        repositories: ['other/repo'], // Will fail first
+        repositories: ['other/repo'],
         authors: {
           mode: 'allowlist',
           users: ['testuser'],
@@ -683,17 +670,14 @@ describe('GitHubEventFilter', () => {
       const filter = new GitHubEventFilter(initialConfig);
       const event = createTestEvent();
 
-      // Initially should fail
       let result = await filter.filter(event);
       expect(result.passed).toBe(false);
 
-      // Update config
       const newConfig = createFilterConfig({
         repositories: ['testowner/testrepo'],
       });
       filter.setConfig(newConfig);
 
-      // Now should pass
       result = await filter.filter(event);
       expect(result.passed).toBe(true);
     });
@@ -704,7 +688,6 @@ describe('GitHubEventFilter', () => {
       const config = createFilterConfig();
       const filter = new GitHubEventFilter(config);
 
-      // Should not throw
       expect(() => filter.clearCache()).not.toThrow();
     });
   });
@@ -721,17 +704,15 @@ describe('GitHubEventFilter', () => {
       const event = createTestEvent({
         eventType: 'issue_comment',
         action: 'created',
-        issue: undefined, // No issue data
+        issue: undefined,
         comment: {
           id: 'comment-1',
           body: 'Test comment',
         },
       });
 
-      // Should pass because labels check uses empty array when no issue
       const result = await filter.filter(event);
 
-      // require_any with empty event labels will fail if labels are specified
       expect(result.passed).toBe(false);
     });
   });

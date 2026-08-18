@@ -1,22 +1,9 @@
 // @ts-nocheck
-/**
- * Unit tests for ReadOnlyWorkflowCanvas
- *
- * Tests:
- * 1. Renders without crashing when workflow is found
- * 2. Renders empty/loading state when workflowId is not found in store
- * 3. Calls onNodeClick when a node is selected
- * 4. Passes readOnly=true to WorkflowCanvas so WorkflowNode gets draggable={false}
- * 5. Channel selection shows ChannelInfoPanel
- * 6. Channel info panel shows correct from/to node names
- */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import type { SpaceWorkerAgent, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
-
-// ---- Signals for mocking ----
 
 let mockWorkflows = signal<SpaceWorkflow[]>([]);
 let mockAgents = signal<SpaceWorkerAgent[]>([]);
@@ -54,9 +41,6 @@ vi.mock('../../../lib/utils', () => ({
   cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
 }));
 
-// Capture readOnly prop passed to WorkflowCanvas by ReadOnlyWorkflowCanvas.
-// The actual draggable={false} behavior is a consequence of readOnly=true being
-// forwarded to WorkflowCanvas, which is tested in WorkflowCanvas's own tests.
 const capturedReadOnly: { value?: boolean } = {};
 let capturedOnChannelSelect: ((id: string | null) => void) | undefined;
 
@@ -95,15 +79,12 @@ vi.mock('../visual-editor/CanvasToolbar', () => ({
   CanvasToolbar: () => <div data-testid="canvas-toolbar" />,
 }));
 
-// Re-initialize signals after hoisting
 mockWorkflows = signal<SpaceWorkflow[]>([]);
 mockAgents = signal<SpaceWorkerAgent[]>([]);
 mockTasks = signal<SpaceTask[]>([]);
 mockNodeExecutionsByNodeId = signal(new Map());
 
 import { ReadOnlyWorkflowCanvas } from '../ReadOnlyWorkflowCanvas';
-
-// ---- Helpers ----
 
 function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
   return {
@@ -124,8 +105,6 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
     ...overrides,
   };
 }
-
-// ---- Tests ----
 
 describe('ReadOnlyWorkflowCanvas', () => {
   beforeEach(() => {
@@ -163,7 +142,6 @@ describe('ReadOnlyWorkflowCanvas', () => {
     const { getByTestId } = render(
       <ReadOnlyWorkflowCanvas workflowId="wf-1" onNodeClick={onNodeClick} />
     );
-    // Find the button whose data-step-id is the persisted ID 'n1'
     const canvas = getByTestId('visual-workflow-canvas');
     await waitFor(() => {
       expect(canvas.querySelector('[data-step-id="n1"]')).not.toBeNull();
@@ -171,7 +149,6 @@ describe('ReadOnlyWorkflowCanvas', () => {
     const nodeBtn = canvas.querySelector('[data-step-id="n1"]') as HTMLElement;
     nodeBtn.click();
     expect(onNodeClick).toHaveBeenCalledTimes(1);
-    // Called with persisted node ID and node name
     expect(onNodeClick).toHaveBeenCalledWith('n1', 'Planner', []);
   });
 
@@ -184,10 +161,8 @@ describe('ReadOnlyWorkflowCanvas', () => {
   it('does not crash when onChannelSelect fires with unknown or null channel id', () => {
     mockWorkflows.value = [makeWorkflow()];
     const { queryByTestId } = render(<ReadOnlyWorkflowCanvas workflowId="wf-1" />);
-    // Fire with an ID that doesn't match any channel — panel should stay hidden
     capturedOnChannelSelect?.('no-such-channel');
     expect(queryByTestId('channel-info-panel')).toBeNull();
-    // Fire with null — deselect, panel stays hidden
     capturedOnChannelSelect?.(null);
     expect(queryByTestId('channel-info-panel')).toBeNull();
   });

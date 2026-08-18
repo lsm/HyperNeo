@@ -1,38 +1,13 @@
-/**
- * Migration 35 & 36 Tests
- *
- * Migration 35: Add iteration_count and max_iterations columns to space_workflow_runs.
- * Migration 36: Add max_iterations column to space_workflows.
- *
- * NOTE: These columns (iteration_count, max_iterations) were added in M35/M36 but
- * subsequently removed in M71 (space_workflow_runs) and M74 (space_workflows).
- * After a full migration run the columns no longer exist.
- * Tests that verify the final schema check for the absence of these columns.
- *
- * Covers:
- * - Idempotency: running migrations twice does not error
- * - Post-M71: iteration_count and max_iterations are absent on space_workflow_runs
- * - Post-M74: max_iterations is absent on space_workflows
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function columnExists(db: BunDatabase, table: string, column: string): boolean {
   const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   return rows.some((r) => r.name === column);
 }
-
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
 
 describe('Migration 35: Add iteration tracking to space_workflow_runs', () => {
   let testDir: string;
@@ -60,13 +35,11 @@ describe('Migration 35: Add iteration tracking to space_workflow_runs', () => {
   });
 
   test('fresh DB: iteration_count column is absent after M71 removed it', () => {
-    // M35 added iteration_count; M71 removed it via table rebuild.
     runMigrations(db, () => {});
     expect(columnExists(db, 'space_workflow_runs', 'iteration_count')).toBe(false);
   });
 
   test('fresh DB: max_iterations column is absent on space_workflow_runs after M71', () => {
-    // M35 added max_iterations; M71 removed it via table rebuild.
     runMigrations(db, () => {});
     expect(columnExists(db, 'space_workflow_runs', 'max_iterations')).toBe(false);
   });
@@ -96,8 +69,6 @@ describe('Migration 35: Add iteration tracking to space_workflow_runs', () => {
   });
 
   test('upgrade path: migrations can run on older DB schema', () => {
-    // Simulate a pre-migration-35 database with the space_workflow_runs table
-    // but without iteration columns
     db.exec(`
 			CREATE TABLE spaces (
 				id TEXT PRIMARY KEY, workspace_path TEXT NOT NULL UNIQUE,
@@ -129,7 +100,6 @@ describe('Migration 35: Add iteration tracking to space_workflow_runs', () => {
 			)
 		`);
 
-    // Insert existing rows before migration
     const now = Date.now();
     db.prepare(
       `INSERT INTO spaces (id, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
@@ -141,7 +111,6 @@ describe('Migration 35: Add iteration tracking to space_workflow_runs', () => {
       `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
     ).run('run-1', 'space-1', 'wf-1', 'Old Run', 'in_progress', now, now);
 
-    // Run migrations — should not throw
     expect(() => runMigrations(db, () => {})).not.toThrow();
   });
 });
@@ -172,7 +141,6 @@ describe('Migration 36: Add max_iterations to space_workflows', () => {
   });
 
   test('fresh DB: max_iterations column does NOT exist on space_workflows after M74 dropped it', () => {
-    // M36 added max_iterations to space_workflows; M74 dropped it.
     runMigrations(db, () => {});
     expect(columnExists(db, 'space_workflows', 'max_iterations')).toBe(false);
   });

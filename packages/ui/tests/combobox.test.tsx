@@ -36,15 +36,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// NOTE: BasicCombobox uses Combobox as="div" so that opening does NOT remount children.
-// When Combobox uses the default as={Fragment}, opening changes data-open which causes
-// the Fragment to wrap in a <span>, remounting all children including ComboboxInput.
-// Using as="div" prevents this remount so we can reliably interact with the input.
-
-// BasicComboboxNoUnmount keeps options mounted even when closed (unmount={false}).
-// This is needed for RAF tests where we press ArrowDown/Up on a closed combobox:
-// with unmount=true, options are not mounted when closed so options=[] in the closure,
-// causing the RAF callback to call calculateActiveIndex with an empty list.
 function BasicComboboxNoUnmount() {
   return (
     <Combobox as="div">
@@ -171,7 +162,6 @@ describe('Combobox', () => {
   it('should open on ArrowDown in input and activate first option via RAF', async () => {
     const raf = new RAFQueue();
     raf.install();
-    // Use unmount={false} variant so options are already registered when closed
     render(<BasicComboboxNoUnmount />);
     const input = screen.getByRole('combobox');
     await act(async () => {
@@ -189,7 +179,6 @@ describe('Combobox', () => {
   it('should open on ArrowUp in input and activate last option via RAF', async () => {
     const raf = new RAFQueue();
     raf.install();
-    // Use unmount={false} variant so options are already registered when closed
     render(<BasicComboboxNoUnmount />);
     const input = screen.getByRole('combobox');
     await act(async () => {
@@ -229,13 +218,13 @@ describe('Combobox', () => {
     const listbox = screen.getByRole('listbox');
     const options = screen.getAllByRole('option');
     await act(async () => {
-      fireEvent.keyDown(input, { key: 'ArrowDown' }); // -> 0
+      fireEvent.keyDown(input, { key: 'ArrowDown' });
     });
     await act(async () => {
-      fireEvent.keyDown(input, { key: 'ArrowDown' }); // -> 1
+      fireEvent.keyDown(input, { key: 'ArrowDown' });
     });
     await act(async () => {
-      fireEvent.keyDown(input, { key: 'ArrowUp' }); // -> 0
+      fireEvent.keyDown(input, { key: 'ArrowUp' });
     });
     expect(listbox.getAttribute('aria-activedescendant')).toBe(options[0].getAttribute('id'));
   });
@@ -246,15 +235,14 @@ describe('Combobox', () => {
     fireEvent.click(screen.getByText('Toggle'));
     const listbox = screen.getByRole('listbox');
     const options = screen.getAllByRole('option');
-    // Activate an option first, then go to last, then Home
     await act(async () => {
-      fireEvent.keyDown(input, { key: 'ArrowDown' }); // -> 0
+      fireEvent.keyDown(input, { key: 'ArrowDown' });
     });
     await act(async () => {
-      fireEvent.keyDown(input, { key: 'ArrowDown' }); // -> 1
+      fireEvent.keyDown(input, { key: 'ArrowDown' });
     });
     await act(async () => {
-      fireEvent.keyDown(input, { key: 'Home' }); // -> 0
+      fireEvent.keyDown(input, { key: 'Home' });
     });
     expect(listbox.getAttribute('aria-activedescendant')).toBe(options[0].getAttribute('id'));
   });
@@ -266,10 +254,10 @@ describe('Combobox', () => {
     const listbox = screen.getByRole('listbox');
     const options = screen.getAllByRole('option');
     await act(async () => {
-      fireEvent.keyDown(input, { key: 'ArrowDown' }); // -> 0
+      fireEvent.keyDown(input, { key: 'ArrowDown' });
     });
     await act(async () => {
-      fireEvent.keyDown(input, { key: 'End' }); // -> last
+      fireEvent.keyDown(input, { key: 'End' });
     });
     expect(listbox.getAttribute('aria-activedescendant')).toBe(
       options[options.length - 1].getAttribute('id')
@@ -279,7 +267,6 @@ describe('Combobox', () => {
   it('should do nothing on Home/End when closed', () => {
     render(<BasicCombobox />);
     const input = screen.getByRole('combobox');
-    // Not open, Home/End should not crash
     fireEvent.keyDown(input, { key: 'Home' });
     fireEvent.keyDown(input, { key: 'End' });
     expect(screen.queryByRole('listbox')).toBeNull();
@@ -292,13 +279,13 @@ describe('Combobox', () => {
     const listbox = screen.getByRole('listbox');
     const options = screen.getAllByRole('option');
     await act(async () => {
-      fireEvent.keyDown(input, { key: 'ArrowDown' }); // -> 0
+      fireEvent.keyDown(input, { key: 'ArrowDown' });
     });
     await act(async () => {
-      fireEvent.keyDown(input, { key: 'ArrowDown' }); // -> 1
+      fireEvent.keyDown(input, { key: 'ArrowDown' });
     });
     await act(async () => {
-      fireEvent.keyDown(input, { key: 'PageUp' }); // -> 0
+      fireEvent.keyDown(input, { key: 'PageUp' });
     });
     expect(listbox.getAttribute('aria-activedescendant')).toBe(options[0].getAttribute('id'));
   });
@@ -310,10 +297,10 @@ describe('Combobox', () => {
     const listbox = screen.getByRole('listbox');
     const options = screen.getAllByRole('option');
     await act(async () => {
-      fireEvent.keyDown(input, { key: 'ArrowDown' }); // -> 0
+      fireEvent.keyDown(input, { key: 'ArrowDown' });
     });
     await act(async () => {
-      fireEvent.keyDown(input, { key: 'PageDown' }); // -> last
+      fireEvent.keyDown(input, { key: 'PageDown' });
     });
     expect(listbox.getAttribute('aria-activedescendant')).toBe(
       options[options.length - 1].getAttribute('id')
@@ -356,10 +343,8 @@ describe('Combobox', () => {
   it('should clear input on Escape when closed', () => {
     render(<BasicCombobox />);
     const input = screen.getByRole('combobox') as HTMLInputElement;
-    // Set a value in input without opening
     Object.defineProperty(input, 'value', { value: 'some text', writable: true });
     fireEvent.keyDown(input, { key: 'Escape' });
-    // input.value should be cleared
     expect(input.value).toBe('');
   });
 
@@ -413,9 +398,7 @@ describe('Combobox', () => {
     render(
       <BasicCombobox value="a" onChange={vi.fn()} displayValue={(v: string) => `Label: ${v}`} />
     );
-    // displayValue sync happens on close; currently closed so it fires
     const input = screen.getByRole('combobox') as HTMLInputElement;
-    // The effect runs: !open → sync value
     expect(input.value).toBe('Label: a');
   });
 
@@ -437,10 +420,10 @@ describe('Combobox', () => {
     const listbox = screen.getByRole('listbox');
     const options = screen.getAllByRole('option');
     await act(async () => {
-      fireEvent.keyDown(input, { key: 'ArrowDown' }); // -> A
+      fireEvent.keyDown(input, { key: 'ArrowDown' });
     });
     await act(async () => {
-      fireEvent.keyDown(input, { key: 'ArrowDown' }); // skip B -> C
+      fireEvent.keyDown(input, { key: 'ArrowDown' });
     });
     expect(listbox.getAttribute('aria-activedescendant')).toBe(options[2].getAttribute('id'));
   });
@@ -465,11 +448,9 @@ describe('Combobox', () => {
       </Combobox>
     );
     fireEvent.input(screen.getByRole('combobox'));
-    // Open via input
     expect(screen.queryByRole('listbox')).not.toBeNull();
     fireEvent.click(screen.getByText('A'));
     expect(onChange).toHaveBeenCalledWith(['a']);
-    // stays open
     expect(screen.queryByRole('listbox')).not.toBeNull();
   });
 
@@ -643,7 +624,6 @@ describe('Combobox', () => {
       </Combobox>
     );
     const input = screen.getByRole('combobox');
-    // keydown should be ignored (disabled returns early)
     fireEvent.keyDown(input, { key: 'ArrowDown' });
     expect(input.getAttribute('aria-expanded')).toBe('false');
   });
@@ -840,17 +820,13 @@ describe('Combobox', () => {
   it('should sync displayValue when option closes', async () => {
     const displayValue = (v: string) => `Label: ${v}`;
     render(<BasicCombobox value="a" onChange={vi.fn()} displayValue={displayValue} />);
-    // Open
     fireEvent.click(screen.getByText('Toggle'));
-    // Select and close (onChange is vi.fn() so value stays 'a')
     fireEvent.click(screen.getByText('Option C'));
     const input = screen.getByRole('combobox') as HTMLInputElement;
-    // After close with displayValue, input syncs to value 'a'
     expect(input.value).toBe('Label: a');
   });
 
   it('should keep open in multiple mode after Enter select', async () => {
-    // In combobox multiple mode, Enter selects and closes (same as single)
     const onChange = vi.fn();
     render(
       <Combobox as="div" multiple value={[]} onChange={onChange}>
@@ -869,7 +845,6 @@ describe('Combobox', () => {
     await act(async () => {
       fireEvent.keyDown(input, { key: 'Enter' });
     });
-    // Combobox Enter closes
     expect(screen.queryByRole('listbox')).toBeNull();
   });
 
@@ -887,10 +862,10 @@ describe('Combobox', () => {
     const listbox = screen.getByRole('listbox');
     const options = screen.getAllByRole('option');
     await act(async () => {
-      fireEvent.keyDown(input, { key: 'ArrowDown' }); // -> 0
+      fireEvent.keyDown(input, { key: 'ArrowDown' });
     });
     await act(async () => {
-      fireEvent.keyDown(input, { key: 'ArrowDown' }); // -> 1
+      fireEvent.keyDown(input, { key: 'ArrowDown' });
     });
     expect(listbox.getAttribute('aria-activedescendant')).toBe(options[1].getAttribute('id'));
   });
@@ -901,18 +876,17 @@ describe('Combobox', () => {
     fireEvent.click(screen.getByText('Toggle'));
     const listbox = screen.getByRole('listbox');
     const options = screen.getAllByRole('option');
-    // Go to last (index 2), then arrow up to middle (index 1)
     await act(async () => {
-      fireEvent.keyDown(input, { key: 'ArrowDown' }); // -> 0
+      fireEvent.keyDown(input, { key: 'ArrowDown' });
     });
     await act(async () => {
-      fireEvent.keyDown(input, { key: 'ArrowDown' }); // -> 1
+      fireEvent.keyDown(input, { key: 'ArrowDown' });
     });
     await act(async () => {
-      fireEvent.keyDown(input, { key: 'ArrowDown' }); // -> 2
+      fireEvent.keyDown(input, { key: 'ArrowDown' });
     });
     await act(async () => {
-      fireEvent.keyDown(input, { key: 'ArrowUp' }); // -> 1
+      fireEvent.keyDown(input, { key: 'ArrowUp' });
     });
     expect(listbox.getAttribute('aria-activedescendant')).toBe(options[1].getAttribute('id'));
   });
@@ -920,7 +894,6 @@ describe('Combobox', () => {
   it('should handle ArrowUp when closed (activates last via RAF)', async () => {
     const raf = new RAFQueue();
     raf.install();
-    // Use unmount={false} variant so options are already registered when closed
     render(<BasicComboboxNoUnmount />);
     const input = screen.getByRole('combobox');
     await act(async () => {

@@ -1,22 +1,8 @@
 // @ts-nocheck
-/**
- * Unit tests for SpaceCreateDialog
- *
- * Tests:
- * - Dialog renders when open
- * - Workspace path required validation
- * - Name auto-suggestion from path
- * - Name can be manually overridden
- * - Submit calls space.create RPC
- * - Success: navigates to new space and closes
- * - Error: shows error message
- * - Cancel: closes and resets form
- */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, waitFor, cleanup } from '@testing-library/preact';
 
-// Mocks must be declared before imports
 const mockRequest = vi.fn();
 const mockGetHubIfConnected = vi.fn();
 const mockNavigateToSpace = vi.fn();
@@ -181,14 +167,11 @@ describe('SpaceCreateDialog', () => {
   it('does not override name when user has already typed it', () => {
     const { getByPlaceholderText } = render(<SpaceCreateDialog isOpen={true} onClose={onClose} />);
     const nameInput = getByPlaceholderText('e.g., My App') as HTMLInputElement;
-    // User types a custom name
     fireEvent.input(nameInput, { target: { value: 'Custom Name' } });
 
-    // Now change the path
     const pathInput = getByPlaceholderText('/Users/you/projects/my-app');
     fireEvent.input(pathInput, { target: { value: '/projects/different-dir' } });
 
-    // Name should remain the custom one
     expect(nameInput.value).toBe('Custom Name');
   });
 

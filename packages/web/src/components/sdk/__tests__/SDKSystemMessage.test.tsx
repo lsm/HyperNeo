@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * SDKSystemMessage Component Tests
- *
- * Tests system message rendering for init, compact_boundary, status, and hook_response
- */
 import { describe, it, expect } from 'vitest';
 
 import { render, fireEvent } from '@testing-library/preact';
@@ -11,10 +6,8 @@ import { SDKSystemMessage } from '../SDKSystemMessage';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
 
-// Helper to create a valid UUID
 const createUUID = (): UUID => crypto.randomUUID() as UUID;
 
-// Factory functions for test messages
 function createInitMessage(
   overrides: Partial<Extract<SDKMessage, { type: 'system'; subtype: 'init' }>> = {}
 ): Extract<SDKMessage, { type: 'system' }> {
@@ -129,7 +122,6 @@ describe('SDKSystemMessage', () => {
       });
       const { container } = render(<SDKSystemMessage message={message} />);
 
-      // Should strip "claude-" prefix
       expect(container.textContent).toContain('3-5-sonnet-20241022');
     });
 
@@ -304,7 +296,6 @@ describe('SDKSystemMessage', () => {
       const message = createStatusMessage('compacting');
       const { container } = render(<SDKSystemMessage message={message} />);
 
-      // Yellow text for compacting status
       expect(container.querySelector('.text-yellow-600, .text-yellow-400')).toBeTruthy();
     });
   });
@@ -322,7 +313,6 @@ describe('SDKSystemMessage', () => {
       const message = createHookResponseMessage();
       const { container } = render(<SDKSystemMessage message={message} />);
 
-      // First line of stdout shown as summary in header
       expect(container.textContent).toContain('Hook executed successfully');
     });
 
@@ -330,7 +320,6 @@ describe('SDKSystemMessage', () => {
       const message = createHookResponseMessage();
       const { container } = render(<SDKSystemMessage message={message} />);
 
-      // Full stdout (second line) should not be visible until expanded
       expect(container.textContent).not.toContain('All checks passed');
     });
 
@@ -353,7 +342,6 @@ describe('SDKSystemMessage', () => {
       fireEvent.click(button);
 
       expect(container.textContent).toContain('Validation failed');
-      // Error text should have red styling
       expect(container.querySelector('.text-red-700, .text-red-300')).toBeTruthy();
     });
 
@@ -378,7 +366,6 @@ describe('SDKSystemMessage', () => {
       const message = createHookResponseWithError();
       const { container } = render(<SDKSystemMessage message={message} />);
 
-      // Should have error X icon in header
       const errorSvg = container.querySelector('.text-red-500');
       expect(errorSvg).toBeTruthy();
     });
@@ -389,14 +376,11 @@ describe('SDKSystemMessage', () => {
 
       const button = container.querySelector('button')!;
 
-      // Initially collapsed — no full stdout body
       expect(container.textContent).not.toContain('All checks passed');
 
-      // Expand
       fireEvent.click(button);
       expect(container.textContent).toContain('All checks passed');
 
-      // Collapse
       fireEvent.click(button);
       expect(container.querySelector('.p-3.border-t')).toBeFalsy();
     });
@@ -749,7 +733,6 @@ describe('SDKSystemMessage', () => {
 
       const { container } = render(<SDKSystemMessage message={message} />);
 
-      // Should use the custom color class
       expect(container.querySelector('.border-purple-200')).toBeTruthy();
     });
   });
@@ -1071,14 +1054,11 @@ describe('SDKSystemMessage', () => {
 
       const button = container.querySelector('button')!;
 
-      // Initially collapsed
       expect(container.textContent).not.toContain('Working Directory');
 
-      // Expand
       fireEvent.click(button);
       expect(container.textContent).toContain('Working Directory');
 
-      // Collapse
       fireEvent.click(button);
       expect(container.querySelector('.mt-3.pt-3')).toBeFalsy();
     });
@@ -1089,16 +1069,12 @@ describe('SDKSystemMessage', () => {
 
       const button = container.querySelector('button')!;
 
-      // Initially collapsed
       expect(container.textContent).not.toContain('Metadata');
 
-      // Expand
       fireEvent.click(button);
       expect(container.textContent).toContain('Metadata');
 
-      // Collapse
       fireEvent.click(button);
-      // Expanded section should be hidden
       const expandedSection = container.querySelector('.p-3.border-t');
       expect(expandedSection).toBeFalsy();
     });
@@ -1110,12 +1086,10 @@ describe('SDKSystemMessage', () => {
       const { container } = render(<SDKSystemMessage message={message} />);
 
       const button = container.querySelector('button')!;
-      const svg = container.querySelectorAll('svg')[1]; // Second SVG is the chevron
+      const svg = container.querySelectorAll('svg')[1];
 
-      // Initially not rotated
       expect(svg?.className.baseVal || svg?.getAttribute('class')).not.toContain('rotate-180');
 
-      // After click, should be rotated
       fireEvent.click(button);
       const rotatedSvg = container.querySelectorAll('svg')[1];
       expect(rotatedSvg?.className.baseVal || rotatedSvg?.getAttribute('class')).toContain(

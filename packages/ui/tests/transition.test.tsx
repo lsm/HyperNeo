@@ -10,7 +10,6 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-// Helper consumer component that reads OpenClosedContext
 function OpenClosedConsumer() {
   const state = useContext(OpenClosedContext);
   return (
@@ -18,7 +17,6 @@ function OpenClosedConsumer() {
   );
 }
 
-// A queuing RAF that collects callbacks for manual flushing
 class RAFQueue {
   callbacks: FrameRequestCallback[] = [];
   private idCounter = 0;
@@ -28,7 +26,6 @@ class RAFQueue {
     return ++this.idCounter;
   }
 
-  // Run exactly one round of pending RAF callbacks
   flushOne(): void {
     const batch = this.callbacks.splice(0);
     for (const cb of batch) {
@@ -36,7 +33,6 @@ class RAFQueue {
     }
   }
 
-  // Flush all pending callbacks up to maxRounds levels deep
   flush(maxRounds = 20): void {
     for (let i = 0; i < maxRounds; i++) {
       if (this.callbacks.length === 0) break;
@@ -50,17 +46,14 @@ class RAFQueue {
   }
 }
 
-// Store the original getAnimations
 const originalGetAnimations = Element.prototype.getAnimations;
 
-// Mock getAnimations to return animations with controllable finished promises
 function mockGetAnimations(opts: { transitionDuration?: string; animationDuration?: string }): {
   resolveAnimations: () => void;
   restore: () => void;
 } {
   let resolveFn: (() => void) | null = null;
 
-  // Create a mock CSSStyleDeclaration
   const styleMock = {
     transitionDuration: opts.transitionDuration ?? '0s',
     animationDuration: opts.animationDuration ?? '0s',
@@ -68,9 +61,7 @@ function mockGetAnimations(opts: { transitionDuration?: string; animationDuratio
 
   vi.stubGlobal('getComputedStyle', () => styleMock);
 
-  // Mock getAnimations on Element.prototype
   Element.prototype.getAnimations = function () {
-    // Check if there are transitions/animations based on duration
     const hasTransition =
       opts.transitionDuration && opts.transitionDuration !== '0s' && opts.transitionDuration !== '';
     const hasAnimation =
@@ -80,7 +71,6 @@ function mockGetAnimations(opts: { transitionDuration?: string; animationDuratio
       return [];
     }
 
-    // Create a mock animation with a controllable finished promise
     const finishedPromise = new Promise<void>((resolve) => {
       resolveFn = resolve;
     });
@@ -134,7 +124,6 @@ describe('Transition', () => {
       </Transition>
     );
     await act(async () => {});
-    // The element should still be in the DOM
     const el = screen.getByText('Hidden content');
     expect(el).not.toBeNull();
   });
@@ -174,7 +163,6 @@ describe('Transition', () => {
   });
 
   it('should not render context wrapper when show is not provided (uncontrolled)', async () => {
-    // When show is not provided, Transition renders without OpenClosedContext.Provider
     render(
       <OpenClosedContext.Provider value={State.Open}>
         <Transition>
@@ -187,7 +175,6 @@ describe('Transition', () => {
   });
 
   it('should read visibility from OpenClosedContext when show is not provided', async () => {
-    // When show is undefined, it reads from context
     render(
       <OpenClosedContext.Provider value={State.Closed}>
         <Transition unmount={false}>
@@ -196,7 +183,6 @@ describe('Transition', () => {
       </OpenClosedContext.Provider>
     );
     await act(async () => {});
-    // Should be hidden since context says Closed - element should still be in DOM
     const el = screen.getByText('Content');
     expect(el).not.toBeNull();
   });
@@ -214,7 +200,6 @@ describe('Transition', () => {
   });
 
   it('should throw error when no show prop and no context', async () => {
-    // The component should throw an error when show is not provided and no context
     expect(() => {
       render(
         <Transition>
@@ -245,7 +230,6 @@ describe('Transition', () => {
   it('should hide element when toggled from visible to hidden (no CSS transition)', async () => {
     const raf = new RAFQueue();
     raf.install();
-    // No transitions - getAnimations returns empty array
     const mock = mockGetAnimations({ transitionDuration: '0s', animationDuration: '0s' });
 
     const { rerender } = render(
@@ -264,7 +248,6 @@ describe('Transition', () => {
         </Transition>
       );
     });
-    // Flush: runLeave phase 1 (already ran sync), phase 2 RAF runs waitForTransition with no duration -> done() immediately -> setShouldRender(false)
     await act(async () => {
       raf.flush();
     });
@@ -297,8 +280,6 @@ describe('Transition', () => {
       raf.flush();
     });
 
-    // With no transition duration, the transition completes immediately
-    // Check that afterEnter was called (which means the transition ran)
     expect(afterEnter).toHaveBeenCalled();
   });
 
@@ -407,7 +388,6 @@ describe('Transition', () => {
     const beforeEnter = vi.fn();
     const raf = new RAFQueue();
     raf.install();
-    // Use a mock with transitions so the component will go through transition logic
     mockGetAnimations({ transitionDuration: '0s', animationDuration: '0s' });
 
     render(
@@ -422,17 +402,12 @@ describe('Transition', () => {
     });
 
     expect(screen.getByText('No appear content')).not.toBeNull();
-    // When appear=false, the component still runs transitions unless initial=false
-    // The current implementation does call beforeEnter even with appear=false
-    // because the default value of initial=true makes it behave like a visible transition
-    // This is a change from the old behavior but matches Headless UI v2 behavior
     expect(beforeEnter).toHaveBeenCalled();
   });
 
   it('should wait for getAnimations().finished promise before calling afterEnter', async () => {
     const raf = new RAFQueue();
     raf.install();
-    // Mock with transition duration - returns an animation with a pending finished promise
     const mock = mockGetAnimations({
       transitionDuration: '0.3s',
       animationDuration: '0s',
@@ -453,15 +428,12 @@ describe('Transition', () => {
         </Transition>
       );
     });
-    // Flush both RAF levels so waitForTransition attaches to getAnimations
     await act(async () => {
       raf.flush();
     });
 
-    // Resolve the animation finished promise
     await act(async () => {
       mock.resolveAnimations();
-      // Wait for promise to resolve
       await new Promise((resolve) => setTimeout(resolve, 10));
     });
 
@@ -496,7 +468,6 @@ describe('Transition', () => {
       raf.flush();
     });
 
-    // Resolve the animation finished promise
     await act(async () => {
       mock.resolveAnimations();
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -563,12 +534,10 @@ describe('Transition', () => {
         </Transition>
       );
     });
-    // Flush phase 2 RAF (adds data-closed, calls waitForTransition)
     await act(async () => {
       raf.flush();
     });
 
-    // Resolve the animation finished promise
     await act(async () => {
       mock.resolveAnimations();
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -617,12 +586,10 @@ describe('Transition', () => {
         </Transition>
       );
     });
-    // Flush both levels. No CSS transition -> done() called immediately -> attrs removed
     await act(async () => {
       raf.flush();
     });
 
-    // After transition completes: no data-enter or data-transition anywhere in DOM
     expect(document.querySelector('[data-enter]')).toBeNull();
     expect(document.querySelector('[data-transition]')).toBeNull();
   });
@@ -641,7 +608,6 @@ describe('Transition', () => {
       </Transition>
     );
 
-    // Start enter - RAF1 pending
     await act(async () => {
       rerender(
         <Transition show={true} afterEnter={afterEnter} beforeLeave={beforeLeave}>
@@ -649,7 +615,6 @@ describe('Transition', () => {
         </Transition>
       );
     });
-    // Now immediately start leave before RAF runs.
     await act(async () => {
       rerender(
         <Transition show={false} afterEnter={afterEnter} beforeLeave={beforeLeave}>
@@ -657,28 +622,22 @@ describe('Transition', () => {
         </Transition>
       );
     });
-    // Flush all RAFs
     await act(async () => {
       raf.flush();
     });
 
-    // Leave should have called beforeLeave
     expect(beforeLeave).toHaveBeenCalled();
-    // With rapid toggling, the behavior depends on the specific implementation
-    // The key is that it doesn't crash and calls the appropriate callbacks
   });
 });
 
 describe('Transition - hasTransition utility', () => {
   afterEach(() => {
-    // Restore getAnimations after each test in this describe block
     Element.prototype.getAnimations = originalGetAnimations;
   });
 
   it('should skip waitForTransition when no CSS transition duration', async () => {
     const raf = new RAFQueue();
     raf.install();
-    // getAnimations returns empty array - no transitions
     mockGetAnimations({ transitionDuration: '0s', animationDuration: '0s' });
 
     const afterEnter = vi.fn();
@@ -700,14 +659,12 @@ describe('Transition - hasTransition utility', () => {
       raf.flush();
     });
 
-    // With no transition, afterEnter should be called immediately (no event needed)
     expect(afterEnter).toHaveBeenCalled();
   });
 
   it('should detect transition from transitionDuration with multiple values', async () => {
     const raf = new RAFQueue();
     raf.install();
-    // Multiple values - non-zero duration means getAnimations returns an animation
     const mock = mockGetAnimations({
       transitionDuration: '0s, 0.3s',
       animationDuration: '0s',
@@ -732,7 +689,6 @@ describe('Transition - hasTransition utility', () => {
       raf.flush();
     });
 
-    // Resolve the animation finished promise
     await act(async () => {
       mock.resolveAnimations();
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -769,7 +725,6 @@ describe('Transition - hasTransition utility', () => {
       raf.flush();
     });
 
-    // Now resolve the animation finished promise
     await act(async () => {
       mock.resolveAnimations();
       await new Promise((resolve) => setTimeout(resolve, 10));

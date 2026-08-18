@@ -1,17 +1,3 @@
-/**
- * SDK Config RPC Handlers
- *
- * Provides granular control over SDK configuration with:
- * - Runtime changes via native SDK methods when available
- * - Automatic query restart when required
- * - Validation before applying changes
- *
- * ARCHITECTURE: Follows the 3-layer communication pattern:
- * - RPC handlers do minimal work and return fast (<100ms for config reads)
- * - Heavy operations (restart) are explicit via restartQuery parameter
- * - State updates are broadcast via InternalEventBus<DaemonInternalEventMap> events
- */
-
 import type { MessageHub, Session } from '@hyperneo/shared';
 import type {
   GetModelSettingsRequest,
@@ -56,18 +42,11 @@ import {
 
 const log = new Logger('config-handlers');
 
-/**
- * Setup SDK config RPC handlers
- */
 export function setupConfigHandlers(
   messageHub: MessageHub,
   sessionManager: SessionManager,
   _internalEventBus: InternalEventBus<DaemonInternalEventMap>
 ): void {
-  // ============================================================================
-  // Model Settings
-  // ============================================================================
-
   messageHub.onRequest('config.model.get', async (data) => {
     const { sessionId } = data as GetModelSettingsRequest;
     const agentSession = await sessionManager.getSessionAsync(sessionId);
@@ -94,13 +73,9 @@ export function setupConfigHandlers(
       errors: [] as Array<{ field: string; error: string }>,
     };
 
-    // Handle model change (runtime native via existing handleModelSwitch)
     if (settings.model) {
       const provider = agentSession.getSessionData().config.provider;
       if (!provider) {
-        // Session has no provider — cannot route the model switch.
-        // This is a misconfigured session; surface the error rather than
-        // silently falling back to 'anthropic' (which switchModel rejects anyway).
         log.warn('config.model.update: session has no provider configured — skipping model switch');
         results.errors.push({
           field: 'model',
@@ -119,7 +94,6 @@ export function setupConfigHandlers(
       }
     }
 
-    // Handle maxThinkingTokens change (runtime native)
     if (settings.maxThinkingTokens !== undefined) {
       const result = await agentSession.setMaxThinkingTokens(settings.maxThinkingTokens);
       if (result.success) {
@@ -132,7 +106,6 @@ export function setupConfigHandlers(
       }
     }
 
-    // Handle other settings (persist only, applied on next query)
     const persistSettings: Partial<Session['config']> = {};
     if (settings.fallbackModel !== undefined) {
       persistSettings.fallbackModel = settings.fallbackModel;
@@ -154,10 +127,6 @@ export function setupConfigHandlers(
     return results;
   });
 
-  // ============================================================================
-  // System Prompt
-  // ============================================================================
-
   messageHub.onRequest('config.systemPrompt.get', async (data) => {
     const { sessionId } = data as GetSystemPromptRequest;
     const agentSession = await sessionManager.getSessionAsync(sessionId);
@@ -173,16 +142,13 @@ export function setupConfigHandlers(
     const agentSession = await sessionManager.getSessionAsync(sessionId);
     if (!agentSession) throw new Error('Session not found');
 
-    // Validate
     const validation = validateSystemPromptConfig(systemPrompt);
     if (!validation.valid) {
       return { success: false, applied: false, error: validation.error };
     }
 
-    // Persist to database
     await agentSession.updateConfig({ systemPrompt });
 
-    // Restart query if requested
     if (restartQuery) {
       const result = await agentSession.resetQuery({ restartQuery: true });
       if (!result.success) {
@@ -202,10 +168,6 @@ export function setupConfigHandlers(
       message: 'Restart query to apply changes',
     };
   });
-
-  // ============================================================================
-  // Tools Configuration
-  // ============================================================================
 
   messageHub.onRequest('config.tools.get', async (data) => {
     const { sessionId } = data as GetToolsConfigRequest;
@@ -225,13 +187,11 @@ export function setupConfigHandlers(
     const agentSession = await sessionManager.getSessionAsync(sessionId);
     if (!agentSession) throw new Error('Session not found');
 
-    // Validate
     const validation = validateToolsConfig(settings);
     if (!validation.valid) {
       return { success: false, applied: false, error: validation.error };
     }
 
-    // Persist - map tools to sdkToolsPreset
     const configUpdate: Partial<Session['config']> = {};
     if (settings.tools !== undefined) configUpdate.sdkToolsPreset = settings.tools;
     if (settings.allowedTools !== undefined) configUpdate.allowedTools = settings.allowedTools;
@@ -240,7 +200,6 @@ export function setupConfigHandlers(
 
     await agentSession.updateConfig(configUpdate);
 
-    // Restart query if requested
     if (restartQuery) {
       const result = await agentSession.resetQuery({ restartQuery: true });
       if (!result.success) {
@@ -260,10 +219,6 @@ export function setupConfigHandlers(
       message: 'Restart query to apply changes',
     };
   });
-
-  // ============================================================================
-  // Agents/Subagents
-  // ============================================================================
 
   messageHub.onRequest('config.agents.get', async (data) => {
     const { sessionId } = data as GetAgentsConfigRequest;
@@ -280,16 +235,13 @@ export function setupConfigHandlers(
     const agentSession = await sessionManager.getSessionAsync(sessionId);
     if (!agentSession) throw new Error('Session not found');
 
-    // Validate
     const validation = validateAgentsConfig(agents);
     if (!validation.valid) {
       return { success: false, applied: false, error: validation.error };
     }
 
-    // Persist
     await agentSession.updateConfig({ agents });
 
-    // Restart query if requested
     if (restartQuery) {
       const result = await agentSession.resetQuery({ restartQuery: true });
       if (!result.success) {
@@ -309,10 +261,6 @@ export function setupConfigHandlers(
       message: 'Restart query to apply changes',
     };
   });
-
-  // ============================================================================
-  // Sandbox
-  // ============================================================================
 
   messageHub.onRequest('config.sandbox.get', async (data) => {
     const { sessionId } = data as GetSandboxConfigRequest;
@@ -329,16 +277,13 @@ export function setupConfigHandlers(
     const agentSession = await sessionManager.getSessionAsync(sessionId);
     if (!agentSession) throw new Error('Session not found');
 
-    // Validate
     const validation = validateSandboxConfig(sandbox);
     if (!validation.valid) {
       return { success: false, applied: false, error: validation.error };
     }
 
-    // Persist
     await agentSession.updateConfig({ sandbox });
 
-    // Restart query if requested
     if (restartQuery) {
       const result = await agentSession.resetQuery({ restartQuery: true });
       if (!result.success) {
@@ -358,10 +303,6 @@ export function setupConfigHandlers(
       message: 'Restart query to apply changes',
     };
   });
-
-  // ============================================================================
-  // MCP Servers
-  // ============================================================================
 
   messageHub.onRequest('config.mcp.get', async (data) => {
     const { sessionId } = data as GetMcpConfigRequest;
@@ -383,7 +324,6 @@ export function setupConfigHandlers(
     const agentSession = await sessionManager.getSessionAsync(sessionId);
     if (!agentSession) throw new Error('Session not found');
 
-    // Validate
     if (mcpServers) {
       const validation = validateMcpServersConfig(mcpServers);
       if (!validation.valid) {
@@ -391,9 +331,6 @@ export function setupConfigHandlers(
       }
     }
 
-    // Persist user-managed MCP servers via the safe merge API that preserves
-    // in-process runtime servers (node-agent, task-agent, space-agent-tools, db-query).
-    // Other config fields (strictMcpConfig) go through updateConfig as before.
     if (mcpServers !== undefined) {
       await agentSession.updateUserMcpServers(mcpServers);
     }
@@ -401,7 +338,6 @@ export function setupConfigHandlers(
       await agentSession.updateConfig({ strictMcpConfig });
     }
 
-    // Restart query if requested
     if (restartQuery) {
       const result = await agentSession.resetQuery({ restartQuery: true });
       if (!result.success) {
@@ -427,15 +363,11 @@ export function setupConfigHandlers(
     const agentSession = await sessionManager.getSessionAsync(sessionId);
     if (!agentSession) throw new Error('Session not found');
 
-    // Validate
     const validation = validateMcpServerConfig(name, config);
     if (!validation.valid) {
       return { success: false, applied: false, error: validation.error };
     }
 
-    // Merge with existing user-managed servers (subprocess/external only).
-    // Reading only the persisted (non-SDK) subset via the current in-memory config;
-    // updateUserMcpServers will preserve in-process servers on the way back in.
     const currentConfig = agentSession.getSessionData().config;
     const currentSubprocessServers = Object.fromEntries(
       Object.entries(currentConfig.mcpServers ?? {}).filter(
@@ -444,10 +376,8 @@ export function setupConfigHandlers(
     );
     const updatedServers = { ...currentSubprocessServers, [name]: config };
 
-    // Persist via the safe merge API that preserves in-process runtime servers.
     await agentSession.updateUserMcpServers(updatedServers);
 
-    // Restart if requested
     if (restartQuery) {
       const result = await agentSession.resetQuery({ restartQuery: true });
       if (!result.success) {
@@ -473,12 +403,9 @@ export function setupConfigHandlers(
     const agentSession = await sessionManager.getSessionAsync(sessionId);
     if (!agentSession) throw new Error('Session not found');
 
-    // Build updated subprocess-only server map without the removed entry.
     const currentConfig = agentSession.getSessionData().config;
     const allServers = currentConfig.mcpServers ?? {};
 
-    // Reject attempts to remove in-process (SDK-type) runtime servers —
-    // they are managed by the daemon, not user configuration.
     const targetServer = allServers[name] as { type?: string } | undefined;
     if (targetServer && targetServer.type === 'sdk') {
       throw new Error(
@@ -491,10 +418,8 @@ export function setupConfigHandlers(
     );
     delete currentSubprocessServers[name];
 
-    // Persist via the safe merge API that preserves in-process runtime servers.
     await agentSession.updateUserMcpServers(currentSubprocessServers);
 
-    // Restart if requested
     if (restartQuery) {
       const result = await agentSession.resetQuery({ restartQuery: true });
       if (!result.success) {
@@ -514,10 +439,6 @@ export function setupConfigHandlers(
       message: 'Restart query to apply changes',
     };
   });
-
-  // ============================================================================
-  // Output Format
-  // ============================================================================
 
   messageHub.onRequest('config.outputFormat.get', async (data) => {
     const { sessionId } = data as GetOutputFormatRequest;
@@ -534,7 +455,6 @@ export function setupConfigHandlers(
     const agentSession = await sessionManager.getSessionAsync(sessionId);
     if (!agentSession) throw new Error('Session not found');
 
-    // Validate if provided
     if (outputFormat) {
       const validation = validateOutputFormat(outputFormat);
       if (!validation.valid) {
@@ -542,12 +462,10 @@ export function setupConfigHandlers(
       }
     }
 
-    // Persist
     await agentSession.updateConfig({
       outputFormat: outputFormat || undefined,
     });
 
-    // Restart query if requested
     if (restartQuery) {
       const result = await agentSession.resetQuery({ restartQuery: true });
       if (!result.success) {
@@ -567,10 +485,6 @@ export function setupConfigHandlers(
       message: 'Restart query to apply changes',
     };
   });
-
-  // ============================================================================
-  // Beta Features
-  // ============================================================================
 
   messageHub.onRequest('config.betas.get', async (data) => {
     const { sessionId } = data as GetBetasConfigRequest;
@@ -587,16 +501,13 @@ export function setupConfigHandlers(
     const agentSession = await sessionManager.getSessionAsync(sessionId);
     if (!agentSession) throw new Error('Session not found');
 
-    // Validate
     const validation = validateBetasConfig(betas);
     if (!validation.valid) {
       return { success: false, applied: false, error: validation.error };
     }
 
-    // Persist
     await agentSession.updateConfig({ betas });
 
-    // Restart query if requested
     if (restartQuery) {
       const result = await agentSession.resetQuery({ restartQuery: true });
       if (!result.success) {
@@ -616,10 +527,6 @@ export function setupConfigHandlers(
       message: 'Restart query to apply changes',
     };
   });
-
-  // ============================================================================
-  // Environment Settings
-  // ============================================================================
 
   messageHub.onRequest('config.env.get', async (data) => {
     const { sessionId } = data as GetEnvConfigRequest;
@@ -641,16 +548,13 @@ export function setupConfigHandlers(
     const agentSession = await sessionManager.getSessionAsync(sessionId);
     if (!agentSession) throw new Error('Session not found');
 
-    // Validate
     const validation = validateEnvConfig(settings);
     if (!validation.valid) {
       return { success: false, applied: false, error: validation.error };
     }
 
-    // Persist
     await agentSession.updateConfig(settings);
 
-    // Restart query if requested
     if (restartQuery) {
       const result = await agentSession.resetQuery({ restartQuery: true });
       if (!result.success) {
@@ -671,10 +575,6 @@ export function setupConfigHandlers(
     };
   });
 
-  // ============================================================================
-  // Permissions
-  // ============================================================================
-
   messageHub.onRequest('config.permissions.get', async (data) => {
     const { sessionId } = data as GetPermissionsConfigRequest;
     const agentSession = await sessionManager.getSessionAsync(sessionId);
@@ -692,7 +592,6 @@ export function setupConfigHandlers(
     const agentSession = await sessionManager.getSessionAsync(sessionId);
     if (!agentSession) throw new Error('Session not found');
 
-    // Validate permission mode
     const validModes = ['default', 'bypassPermissions', 'acceptEdits', 'prompt'];
     if (!validModes.includes(permissionMode)) {
       return {
@@ -702,7 +601,6 @@ export function setupConfigHandlers(
       };
     }
 
-    // Use SDK's native setPermissionMode() if available
     const result = await agentSession.setPermissionMode(permissionMode);
 
     if (result.success) {
@@ -711,10 +609,6 @@ export function setupConfigHandlers(
 
     return { success: false, applied: false, error: result.error };
   });
-
-  // ============================================================================
-  // Bulk Configuration
-  // ============================================================================
 
   messageHub.onRequest('config.getAll', async (data) => {
     const { sessionId } = data as GetAllConfigRequest;
@@ -737,14 +631,11 @@ export function setupConfigHandlers(
       errors: [] as Array<{ field: string; error: string }>,
     };
 
-    // 1. Apply runtime-native changes first
     const runtimeConfig = { ...config };
 
     if (runtimeConfig.model) {
       const provider = agentSession.getSessionData().config.provider;
       if (!provider) {
-        // Session has no provider — surface the error instead of silently
-        // falling back (switchModel rejects missing provider internally anyway).
         log.warn('config.updateBulk: session has no provider configured — skipping model switch');
         results.errors.push({
           field: 'model',
@@ -790,10 +681,8 @@ export function setupConfigHandlers(
       delete runtimeConfig.permissionMode;
     }
 
-    // 2. Persist remaining config (restart-required)
     const remainingKeys = Object.keys(runtimeConfig);
     if (remainingKeys.length > 0) {
-      // Map tools to sdkToolsPreset if present
       const configToUpdate = { ...runtimeConfig } as Partial<Session['config']>;
       if ('tools' in configToUpdate && configToUpdate.tools !== undefined) {
         (configToUpdate as Record<string, unknown>).sdkToolsPreset = configToUpdate.tools;

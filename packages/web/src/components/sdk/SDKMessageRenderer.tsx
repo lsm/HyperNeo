@@ -1,7 +1,3 @@
-/**
- * SDK Message Renderer - Routes SDK messages to appropriate renderers
- */
-
 import type { JSX } from 'preact';
 import { memo } from 'preact/compat';
 import { useState } from 'preact/hooks';
@@ -35,7 +31,6 @@ import {
   isHiddenSystemSubtype,
 } from '@hyperneo/shared/sdk/type-guards';
 
-// Component imports
 import { SDKAssistantMessage } from './SDKAssistantMessage.tsx';
 import { SDKRateLimitEvent } from './SDKRateLimitEvent.tsx';
 import { SDKResultMessage } from './SDKResultMessage.tsx';
@@ -53,20 +48,12 @@ interface Props {
   toolResultsMap?: Map<string, unknown>;
   toolInputsMap?: Map<string, unknown>;
   subagentMessagesMap?: Map<string, SDKMessage[]>;
-  /** tool_use_id → terminal task_notification (folded onto the tool card). */
   taskNotificationsMap?: Map<string, SDKTaskNotificationMessage>;
-  /** tool_use_id → latest live task_progress (folded onto running tool cards). */
   taskProgressMap?: Map<string, SDKTaskProgressMessage>;
-  /** tool_use_ids whose card is rendered in this slice — gates task_notification
-   * suppression (a nested tool_use whose parent is paginated out has no target). */
   foldableToolUseIds?: Set<string>;
-  /** UUIDs of hook_started/hook_progress phases whose run reached
-   * hook_response in the same turn — gates the hook running spinner so
-   * completed phases don't look still-running. */
   completedHookUuids?: Set<string>;
   replacementStatusMap?: Map<string, MessageReplacementStatus>;
-  sessionInfo?: SystemInitMessage; // Optional session init info to attach to user messages
-  // Question handling props for inline QuestionPrompt rendering
+  sessionInfo?: SystemInitMessage;
   sessionId?: string;
   resolvedQuestions?: Map<string, ResolvedQuestion>;
   pendingQuestion?: PendingUserQuestion | null;
@@ -74,34 +61,15 @@ interface Props {
     state: 'submitted' | 'cancelled',
     responses: QuestionDraftResponse[]
   ) => void;
-  onRewind?: (uuid: string) => void; // Rewind to this message
-  rewindingMessageUuid?: string | null; // UUID of message currently being rewound (shows spinner)
-  /** When true, renders all message types without skipping (for task conversation timelines) */
+  onRewind?: (uuid: string) => void;
+  rewindingMessageUuid?: string | null;
   taskContext?: boolean;
-  /**
-   * When true, keeps sub-agent child messages in the main feed instead of
-   * suppressing them in favor of nested SubagentBlock rendering.
-   */
   showSubagentMessages?: boolean;
-  /**
-   * When true, renders Task/Agent tool_use blocks as normal tool cards instead
-   * of SubagentBlock.
-   */
   flattenSubagentTools?: boolean;
-  /** When true, user messages containing tool_result blocks are rendered. */
   showToolResultUserMessages?: boolean;
-  /**
-   * When true, the last non-terminal event message in a compact task thread is
-   * still executing. The receiving component shows a faint white shimmer sweep
-   * (the `.running-shimmer` overlay) across its visible boundary element (e.g.
-   * the assistant message bubble or tool card).
-   */
   isRunning?: boolean;
-  /** Tool use IDs within this assistant message whose cards are currently running. */
   runningToolUseIds?: Set<string>;
-  /** Visual marker for messages superseded/retracted by later SDK rows. */
   replacementStatus?: MessageReplacementStatus;
-  /** True when this row is the latest visible SDK row in the session stream. */
   isLiveTail?: boolean;
 }
 
@@ -132,11 +100,6 @@ function ReplacementStatusFrame({
   );
 }
 
-/**
- * Check if message is a sub-agent message (has parent_tool_use_id) or carries an
- * agent_id that matches a known Task/Agent tool_use id. Sub-agent messages are
- * shown inside SubagentBlock, not as separate messages.
- */
 function isSubagentMessage(
   message: SDKMessage,
   subagentMessagesMap?: Map<string, SDKMessage[]>
@@ -153,7 +116,6 @@ function isSubagentMessage(
 function isRenderableSystemMessage(message: SDKMessage): boolean {
   if (!isSDKSystemMessage(message)) return false;
   const subtype = (message as { subtype?: unknown }).subtype as string;
-  // Render system messages unless they're in the explicit hidden set
   return !isHiddenSystemSubtype(subtype);
 }
 
@@ -166,9 +128,6 @@ function isToolResultUserMessage(message: SDKMessage): boolean {
   );
 }
 
-/**
- * Compact renderer for system/init messages in task context
- */
 function SystemInitPill({ message }: { message: SystemInitMessage }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -246,9 +205,6 @@ function SystemInitPill({ message }: { message: SystemInitMessage }) {
   );
 }
 
-/**
- * Main SDK message renderer - routes to appropriate sub-renderer
- */
 function SDKMessageRendererImpl({
   message,
   toolResultsMap,
@@ -275,7 +231,6 @@ function SDKMessageRendererImpl({
   replacementStatus,
   isLiveTail = false,
 }: Props) {
-  // HyperNeo-native action messages are always shown and handled separately.
   if (isHyperNeoActionMessage(message)) {
     const actionMsg = message as HyperNeoActionMessage;
     if (actionMsg.action === 'sdk_resume_choice') {
@@ -283,20 +238,15 @@ function SDKMessageRendererImpl({
         <SDKResumeChoiceMessage message={actionMsg} sessionId={sessionId ?? actionMsg.session_id} />
       );
     }
-    // Unknown action type — render nothing
     return null;
   }
 
-  // The remaining message is a native SDKMessage.
   const sdkMessage = message as SDKMessage;
 
-  // Skip messages that shouldn't be shown to user (e.g., stream events)
   if (!isUserVisibleMessage(sdkMessage) && !isRenderableSystemMessage(sdkMessage)) {
     return null;
   }
 
-  // Skip session init messages - they're now shown as indicators attached to user messages
-  // In task context, render them as compact info pills
   if (isSDKSystemInit(sdkMessage)) {
     if (taskContext) {
       return <SystemInitPill message={sdkMessage as SystemInitMessage} />;
@@ -304,11 +254,6 @@ function SDKMessageRendererImpl({
     return null;
   }
 
-  // Skip sub-agent messages - they're now shown inside SubagentBlock.
-  // Exception: a nested task_notification. If its parent card is in the slice
-  // it's folded onto the nested ToolResultCard (suppressed below); if the parent
-  // was paginated out it must render the fallback row. Either way don't drop it
-  // here — the task_notification branch below decides fold vs fallback.
   if (
     !showSubagentMessages &&
     isSubagentMessage(sdkMessage, subagentMessagesMap) &&
@@ -324,14 +269,6 @@ function SDKMessageRendererImpl({
     return null;
   }
 
-  // task_notification is folded onto its originating tool_use card (green
-  // check / red X + summary + usage). Suppress the standalone system row only
-  // when that tool_use's card is actually rendered in the current paginated
-  // slice — verified via `foldableToolUseIds` (top-level tool_uses + nested
-  // tool_uses whose parent Task/Agent card is present). A nested tool_use
-  // whose parent SubagentBlock was paginated out has no render target, so its
-  // notification must fall back to a row. A true orphan (no tool_use_id) also
-  // falls through to SDKSystemMessage.
   if (
     isSDKSystemMessage(sdkMessage) &&
     (sdkMessage as { subtype?: string }).subtype === 'task_notification'
@@ -342,11 +279,8 @@ function SDKMessageRendererImpl({
     }
   }
 
-  // Compute the rendered message component
   let renderedMessage: JSX.Element | null = null;
 
-  // Route to appropriate renderer based on message type
-  // Handle user replay messages (slash command responses) first
   if (isSDKUserMessageReplay(sdkMessage)) {
     renderedMessage = (
       <SDKUserMessage
@@ -358,7 +292,6 @@ function SDKMessageRendererImpl({
       />
     );
   } else if (isSDKUserMessage(sdkMessage)) {
-    // Always render user messages - pass rewind mode props
     renderedMessage = (
       <SDKUserMessage
         message={sdkMessage}
@@ -413,7 +346,6 @@ function SDKMessageRendererImpl({
   } else if (isSDKRateLimitEvent(sdkMessage)) {
     renderedMessage = <SDKRateLimitEvent message={sdkMessage as SDKRateLimitEventType} />;
   } else {
-    // Fallback for unknown message types (shouldn't happen, but safe)
     renderedMessage = (
       <div class="p-3 bg-gray-100 dark:bg-gray-800 rounded">
         <div class="text-xs text-gray-600 dark:text-gray-400 mb-1">
@@ -465,9 +397,4 @@ function areMessageRendererPropsEqual(prev: Props, next: Props): boolean {
   );
 }
 
-/**
- * Memoized to keep large SDK threads responsive: streaming appends often update
- * only one or two message objects, so unchanged rows can skip re-running the
- * tool/result routing and markdown/tool block rendering work.
- */
 export const SDKMessageRenderer = memo(SDKMessageRendererImpl, areMessageRendererPropsEqual);

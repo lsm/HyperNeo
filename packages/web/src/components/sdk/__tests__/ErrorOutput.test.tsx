@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for ErrorOutput Component
- *
- * Tests parsing and rendering of error output from <local-command-stderr> tags.
- */
 
 import { describe, it, expect } from 'vitest';
 import { render, cleanup } from '@testing-library/preact';
@@ -123,7 +118,6 @@ Error
       const content = '<local-command-stderr>Error</local-command-stderr>';
       const { container } = render(<ErrorOutput content={content} />);
 
-      // Check for red error styling
       const errorBox = container.querySelector('.bg-red-950\\/40');
       expect(errorBox).toBeTruthy();
 
@@ -174,7 +168,6 @@ Error
       const content = '<local-command-stderr>Error: 400 {invalid json here}</local-command-stderr>';
       const { container } = render(<ErrorOutput content={content} />);
 
-      // Should display raw content since JSON is invalid
       expect(container.textContent).toContain('API Error (400)');
       expect(container.textContent).toContain('{invalid json here}');
     });
@@ -183,18 +176,15 @@ Error
       const content = '<local-command-stderr>{"status":"failed","code":123}</local-command-stderr>';
       const { container } = render(<ErrorOutput content={content} />);
 
-      // Should stringify the JSON
       expect(container.textContent).toContain('Error');
       expect(container.textContent).toContain('failed');
     });
 
     it('should stringify JSON when Error:statusCode format lacks message fields', () => {
-      // JSON with status code prefix but no error.message or message property
       const content =
         '<local-command-stderr>Error: 403 {"status":"forbidden","code":403}</local-command-stderr>';
       const { container } = render(<ErrorOutput content={content} />);
 
-      // Should show status code and stringified JSON
       expect(container.textContent).toContain('API Error (403)');
       expect(container.textContent).toContain('"status"');
       expect(container.textContent).toContain('forbidden');
@@ -205,7 +195,6 @@ Error
         '<local-command-stderr>{"error":{"message":"Something failed"}}</local-command-stderr>';
       const { container } = render(<ErrorOutput content={content} />);
 
-      // Should not show status code
       const text = container.textContent || '';
       expect(text).not.toContain('API Error (');
     });
@@ -239,7 +228,6 @@ Error
       const content = '<local-command-stderr></local-command-stderr>';
       const { container } = render(<ErrorOutput content={content} />);
 
-      // Empty content after trim should still render
       expect(container.innerHTML).toBe('');
     });
 
@@ -247,7 +235,6 @@ Error
       const content = '<local-command-stderr>   </local-command-stderr>';
       const { container } = render(<ErrorOutput content={content} />);
 
-      // Whitespace-only content after trim is empty
       expect(container.innerHTML).toBe('');
     });
 
@@ -256,7 +243,6 @@ Error
         '<local-command-stderr>Error: <script>alert("xss")</script></local-command-stderr>';
       const { container } = render(<ErrorOutput content={content} />);
 
-      // Should render as text, not execute script
       expect(container.textContent).toContain('<script>');
     });
 

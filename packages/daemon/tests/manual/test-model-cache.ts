@@ -1,9 +1,3 @@
-/**
- * Manual test script to verify TTL-based lazy cache refresh
- *
- * Usage: bun run packages/daemon/tests/manual/test-model-cache.ts
- */
-
 import {
   initializeModels,
   getAvailableModels,

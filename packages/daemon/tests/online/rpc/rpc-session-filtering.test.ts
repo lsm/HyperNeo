@@ -1,12 +1,3 @@
-/**
- * Session Filtering Tests
- *
- * Tests server-side session filtering via session.list RPC:
- * - Default: excludes archived sessions
- * - status filter: returns only sessions with that status
- * - includeArchived: returns all sessions regardless of status
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 
@@ -97,21 +88,18 @@ describe('Session Filtering', () => {
       await archiveSession(s2);
       await archiveSession(s3);
 
-      // Default: only active sessions
       let sessions = await listSessions();
       let ids = sessions.map((s) => s.id);
       expect(ids).toContain(s1);
       expect(ids).not.toContain(s2);
       expect(ids).not.toContain(s3);
 
-      // includeArchived: all sessions
       sessions = await listSessions({ includeArchived: true });
       ids = sessions.map((s) => s.id);
       expect(ids).toContain(s1);
       expect(ids).toContain(s2);
       expect(ids).toContain(s3);
 
-      // status=archived: only archived
       sessions = await listSessions({ status: 'archived' });
       ids = sessions.map((s) => s.id);
       expect(ids).toContain(s2);
@@ -133,13 +121,11 @@ describe('Session Filtering', () => {
       await archiveSession(session1Id);
       await archiveSession(session2Id);
 
-      // Default: no sessions visible
       let sessions = await listSessions();
       let ids = sessions.map((s) => s.id);
       expect(ids).not.toContain(session1Id);
       expect(ids).not.toContain(session2Id);
 
-      // includeArchived: both visible
       sessions = await listSessions({ includeArchived: true });
       ids = sessions.map((s) => s.id);
       expect(ids).toContain(session1Id);
@@ -149,24 +135,19 @@ describe('Session Filtering', () => {
     test('handles session status change from active to archived and back', async () => {
       const sessionId = await createSession('/test/filter-edge-2');
 
-      // Initially visible
       let sessions = await listSessions();
       expect(sessions.map((s) => s.id)).toContain(sessionId);
 
-      // Archive it
       await archiveSession(sessionId);
 
-      // Should be filtered out
       sessions = await listSessions();
       expect(sessions.map((s) => s.id)).not.toContain(sessionId);
 
-      // Unarchive it (update status back to active)
       await daemon.messageHub.request('session.update', {
         sessionId,
         status: 'active',
       });
 
-      // Should be visible again
       sessions = await listSessions();
       expect(sessions.map((s) => s.id)).toContain(sessionId);
     });

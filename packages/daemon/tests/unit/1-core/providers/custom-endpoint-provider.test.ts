@@ -11,11 +11,6 @@ import type {
   OpenAIChatBridgeServer,
 } from '../../../../src/lib/providers/openai-chat-bridge/server';
 
-/**
- * Fake bridge factory — records every config passed in so tests can assert
- * which baseUrl/apiKey/capability flags were forwarded without spinning up a
- * real Bun.serve listener per test.
- */
 function makeFakeBridge(): {
   factory: (config: OpenAIChatBridgeConfig) => OpenAIChatBridgeServer;
   configs: OpenAIChatBridgeConfig[];
@@ -100,7 +95,7 @@ describe('CustomEndpointProvider', () => {
   it('reports aggregated capabilities across models', () => {
     const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: makeFakeBridge().factory });
     expect(p.capabilities.functionCalling).toBe(true);
-    expect(p.capabilities.vision).toBe(true); // one model supports vision
+    expect(p.capabilities.vision).toBe(true);
     expect(p.capabilities.streaming).toBe(true);
     expect(p.capabilities.maxContextWindow).toBe(32000);
   });
@@ -135,7 +130,6 @@ describe('CustomEndpointProvider', () => {
 
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const [url, init] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
-    // baseUrl has no trailing slash; openai-chat probe path is /models
     expect(url).toBe('http://localhost:1234/v1/models');
     expect(init?.method).toBe('GET');
   });
@@ -190,8 +184,6 @@ describe('CustomEndpointProvider', () => {
 
     const [, init] = (fetchImpl.mock.calls[0] as [string, RequestInit]) ?? [];
     const headers = init?.headers as Record<string, string>;
-    // Anthropic-native upstreams enforce x-api-key; bridge sends both
-    // (anthropic-messages-bridge/server.ts:206-211), probe must too.
     expect(headers['x-api-key']).toBe('anthropic-key');
     expect(headers['authorization']).toBe('Bearer anthropic-key');
   });
@@ -386,7 +378,6 @@ describe('CustomEndpointProvider', () => {
       const p = new CustomEndpointProvider(baseConfig, {
         bridgeFactory: makeFakeBridge().factory,
       });
-      // `qwen2.5-7b` does not opt into thinking.
       expect(p.getModelThinkingMode('qwen2.5-7b')).toBe('off');
     });
 
@@ -415,10 +406,6 @@ describe('CustomEndpointProvider', () => {
     });
 
     it('returns "off" for non-thinking models even when a sibling model supports thinking', () => {
-      // Provider-level aggregate would advertise `thinking: on` because one
-      // sibling supports it — but the non-thinking model must still report
-      // `off` so the builder doesn't emit `thinking` payloads that the
-      // upstream would reject.
       const p = new CustomEndpointProvider(
         {
           ...baseConfig,
@@ -462,7 +449,6 @@ describe('CustomEndpointProvider', () => {
       { bridgeFactory: fake.factory }
     );
     const cfg = p.buildSdkConfig('not-a-real-model');
-    // First model id wins when no defaultModelId is configured.
     expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('qwen2.5-7b');
   });
 
@@ -517,7 +503,6 @@ describe('CustomEndpointProvider', () => {
         }
       );
       p.buildSdkConfig('claude-sonnet-proxied');
-      // Must route to anthropic-messages factory, NOT openai-chat.
       expect(anthropicConfigs).toHaveLength(1);
       expect(openaiFake.configs).toHaveLength(0);
       expect(anthropicConfigs[0].baseUrl).toBe('https://claude.example.com');
@@ -563,7 +548,6 @@ describe('CustomEndpointProvider', () => {
         baseUrl: 'http://localhost:11434',
         toolUseSupported: true,
         modelContextWindow: 32768,
-        // Must bind to loopback so other local users can't reach the bridge.
         hostname: '127.0.0.1',
       });
     });
@@ -605,7 +589,6 @@ describe('CustomEndpointProvider', () => {
         anthropic.getConfig().models[0],
         anthropic.getType()
       );
-      // Anthropic upstream supports everything by default.
       expect(anthropicCaps.caching).toBe(true);
       expect(anthropicCaps.thinking).toBe(true);
       expect(anthropicCaps.vision).toBe(true);
@@ -670,9 +653,6 @@ describe('CustomEndpointProvider', () => {
     });
 
     it('produces distinct bridge instances for models that differ only in chatTemplateKwargs', () => {
-      // Without chatTemplateKwargs in the cache key, the model declaring
-      // `enable_thinking:false` would silently share its bridge with the
-      // sibling model that wants thinking on.
       const fake = makeFakeBridge();
       const p = new CustomEndpointProvider(
         {

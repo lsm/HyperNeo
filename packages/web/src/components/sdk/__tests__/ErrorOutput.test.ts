@@ -1,9 +1,3 @@
-/**
- * ErrorOutput Component Tests
- *
- * Tests parsing and detection of <local-command-stderr> content
- */
-
 import { parseErrorOutput, hasErrorOutput } from '../ErrorOutput';
 
 describe('ErrorOutput', () => {
@@ -88,7 +82,6 @@ describe('ErrorOutput', () => {
 
   describe('real-world error scenarios', () => {
     it('should parse the dead loop error (invalid_request_error with thinking blocks)', () => {
-      // This is the actual error that caused the dead loop
       const content = `<local-command-stderr>Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"messages.153.content.0.type: Expected \`thinking\` or \`redacted_thinking\`, but found \`text\`. When \`thinking\` is enabled, a final \`assistant\` message must start with a thinking block. We recommend you include thinking blocks from previous turns. To avoid this requirement, disable \`thinking\`. Please consult our documentation at https://docs.claude.com/en/docs/build-with-claude/extended-thinking"},"request_id":"req_011CWuPJiJorsdkEiphgSECJ"}</local-command-stderr>`;
 
       expect(hasErrorOutput(content)).toBe(true);
@@ -100,7 +93,6 @@ describe('ErrorOutput', () => {
     });
 
     it('should parse tool_use_id mismatch error', () => {
-      // Another common error that can cause loops
       const content = `<local-command-stderr>Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"messages.0.content.0: unexpected \`tool_use_id\` found in \`tool_result\` blocks: toolu_01GuuKwisqkrZK2zgSY4BUSs. Each \`tool_result\` block must have a corresponding \`tool_use\` block in the previous message."},"request_id":"req_011CWvC8ic7WgWQfmEasGh1V"}</local-command-stderr>`;
 
       expect(hasErrorOutput(content)).toBe(true);

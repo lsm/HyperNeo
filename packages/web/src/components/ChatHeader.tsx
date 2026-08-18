@@ -1,16 +1,3 @@
-/**
- * ChatHeader Component
- *
- * Header section for the chat container with session title and a single
- * far-right "info" button that opens the merged session info panel (live
- * sections + metadata + the actions that previously lived in a kebab menu).
- * Extracted from ChatContainer.tsx for better separation of concerns.
- *
- * Unified Session Architecture:
- * - Features prop controls visibility of UI elements (sessionInfo, archive, etc.)
- * - Space sessions hide features that aren't applicable
- */
-
 import type { ChatMessage, Session, SessionFeatures } from '@hyperneo/shared';
 import { DEFAULT_WORKER_FEATURES } from '@hyperneo/shared';
 import { rightPanelTargetSignal } from '../lib/signals.ts';
@@ -33,14 +20,6 @@ export interface ChatHeaderProps {
   backgroundTaskMessages?: ChatMessage[];
   toolInputsMap?: Map<string, unknown>;
   titleOverride?: string;
-  /**
-   * When provided, renders a left-arrow back button in the header's left
-   * slot (replacing the `MobileMenuButton`) that invokes this callback on
-   * click. Used when `ChatContainer` is embedded in a slide-over overlay
-   * (e.g. `AgentOverlayChat`) so the user can dismiss it without the
-   * redundant wrapper header chrome. When omitted, the header falls back to
-   * the default `MobileMenuButton` which toggles the context panel.
-   */
   onBack?: () => void;
 }
 
@@ -62,17 +41,12 @@ export function ChatHeader({
   onBack,
 }: ChatHeaderProps) {
   const rightPanelOpen = rightPanelTargetSignal.value !== null;
-  // The Git review panel applies to any session with a workspace (worktree or
-  // direct mode), so reserve header space whenever one is present — matching
-  // the gating in RightPanel's useToggleTarget.
   const rightPanelAvailable = !!session?.id && Boolean(session.workspacePath || session.worktree);
 
   return (
     <div
       data-tauri-drag-region
       class={cn(
-        // z-30 lifts the header (and its dropdown panel) above the floating
-        // ChatComposer (z-10) so a tall panel isn't painted over at the bottom.
         'relative z-30 flex h-[52px] flex-shrink-0 items-center bg-app-content px-4',
         rightPanelAvailable && !rightPanelOpen && 'pr-14'
       )}
@@ -110,11 +84,6 @@ export function ChatHeader({
           </h2>
         </div>
 
-        {/* The info button is the single entry point for session actions
-            (Tools/Export/Reset/Archive/Delete) AND, when features.sessionInfo is
-            set, the live + metadata sections. It must render for every session
-            type — lobby/space sessions (sessionInfo: false) still need the
-            actions that previously lived in the always-present kebab. */}
         <SessionInfoPanelButton
           session={session}
           features={features}

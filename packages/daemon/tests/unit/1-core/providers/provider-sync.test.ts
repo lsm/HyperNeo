@@ -1,7 +1,3 @@
-/**
- * Tests for provider-sync utilities
- */
-
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { resetProviderRegistry, getProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
@@ -67,7 +63,6 @@ describe('removeProviderFromRegistry', () => {
     const registry = getProviderRegistry();
     expect(registry.has('missing')).toBe(false);
 
-    // Should not throw
     await removeProviderFromRegistry('missing');
   });
 

@@ -8,7 +8,6 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-// Helper to render a basic tooltip
 function BasicTooltip({
   showDelay = 500,
   hideDelay = 0,
@@ -37,7 +36,6 @@ describe('Tooltip', () => {
 
     it('panel is hidden by default (unmounts when closed)', () => {
       render(<BasicTooltip />);
-      // By default unmount=true and open=false → panel should not be in DOM
       expect(screen.queryByTestId('panel')).toBeNull();
     });
 
@@ -63,10 +61,8 @@ describe('Tooltip', () => {
       await act(async () => {
         fireEvent.mouseEnter(trigger);
       });
-      // Not visible yet
       expect(screen.queryByTestId('panel')).toBeNull();
 
-      // Advance past delay
       await act(async () => {
         vi.advanceTimersByTime(500);
       });
@@ -102,13 +98,11 @@ describe('Tooltip', () => {
       render(<BasicTooltip showDelay={0} hideDelay={0} />);
       const trigger = screen.getByTestId('trigger');
 
-      // Open
       await act(async () => {
         fireEvent.mouseEnter(trigger);
       });
       expect(screen.queryByTestId('panel')).not.toBeNull();
 
-      // Close
       await act(async () => {
         fireEvent.mouseLeave(trigger);
       });
@@ -144,7 +138,6 @@ describe('Tooltip', () => {
       await act(async () => {
         fireEvent.mouseLeave(trigger);
       });
-      // Not hidden yet
       expect(screen.queryByTestId('panel')).not.toBeNull();
 
       await act(async () => {
@@ -174,7 +167,6 @@ describe('Tooltip', () => {
     it('does not error on Escape key when already closed', async () => {
       render(<BasicTooltip />);
       const trigger = screen.getByTestId('trigger');
-      // Should not throw
       await act(async () => {
         fireEvent.keyDown(trigger, { key: 'Escape' });
       });
@@ -244,7 +236,6 @@ describe('Tooltip', () => {
   describe('static prop', () => {
     it('static panel stays in DOM even when closed', () => {
       render(<BasicTooltip staticPanel />);
-      // With static=true, panel is always in DOM
       expect(screen.queryByTestId('panel')).not.toBeNull();
     });
 
@@ -358,8 +349,6 @@ describe('Tooltip', () => {
 
     it('does not show panel when trigger is disabled and focus fires (span trigger)', async () => {
       vi.useFakeTimers();
-      // Use as="span" so the element is focusable (not a form element with disabled blocking)
-      // but the TooltipTrigger disabled prop causes handleFocus to early-return (line 154).
       render(
         <Tooltip showDelay={0}>
           <TooltipTrigger as="span" disabled data-testid="trigger" tabIndex={0}>
@@ -370,7 +359,6 @@ describe('Tooltip', () => {
       );
       const trigger = screen.getByTestId('trigger');
       await act(async () => {
-        // span elements handle focus events even with the disabled prop
         trigger.focus();
       });
       expect(screen.queryByTestId('panel')).toBeNull();
@@ -407,15 +395,12 @@ describe('Tooltip', () => {
       await act(async () => {
         fireEvent.mouseEnter(trigger);
       });
-      // Leave before timer fires
       await act(async () => {
         fireEvent.mouseLeave(trigger);
       });
-      // Advance past original show delay
       await act(async () => {
         vi.advanceTimersByTime(600);
       });
-      // Should NOT have opened because leave cancelled the timer
       expect(screen.queryByTestId('panel')).toBeNull();
     });
   });
@@ -430,7 +415,6 @@ describe('Tooltip', () => {
           </TooltipPanel>
         </Tooltip>
       );
-      // unmount=false keeps panel in DOM even when closed
       expect(screen.queryByTestId('panel')).not.toBeNull();
     });
   });

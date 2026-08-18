@@ -48,7 +48,6 @@ export function useChatComposerController({
         if (!confirmed) return;
       }
 
-      // Warn when switching from non-Anthropic to Anthropic provider
       const currentProvider = currentModelInfo?.provider ?? '';
       const targetProvider = model.provider ?? '';
       const isCrossProviderToAnthropic =

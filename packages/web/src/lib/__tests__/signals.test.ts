@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for Shared Signals
- *
- * Tests the exported signals from signals.ts
- */
 
 import {
   currentSessionIdSignal,
@@ -15,7 +10,6 @@ import {
 describe('signals', () => {
   describe('currentSessionIdSignal', () => {
     beforeEach(() => {
-      // Reset to initial state
       currentSessionIdSignal.value = null;
     });
 
@@ -46,14 +40,12 @@ describe('signals', () => {
 
       unsubscribe();
 
-      // First value is initial (null), then 3 updates
       expect(values).toEqual([null, 'session-1', 'session-2', null]);
     });
   });
 
   describe('sidebarOpenSignal', () => {
     beforeEach(() => {
-      // Reset to initial state
       sidebarOpenSignal.value = false;
     });
 
@@ -87,7 +79,6 @@ describe('signals', () => {
 
   describe('sessionsSignal', () => {
     beforeEach(() => {
-      // Reset to initial state
       sessionsSignal.value = [];
     });
 
@@ -135,14 +126,12 @@ describe('signals', () => {
 
       unsubscribe();
 
-      // Initial + 2 updates
       expect(updateCount).toBe(3);
     });
   });
 
   describe('slashCommandsSignal', () => {
     beforeEach(() => {
-      // Reset to initial state
       slashCommandsSignal.value = [];
     });
 

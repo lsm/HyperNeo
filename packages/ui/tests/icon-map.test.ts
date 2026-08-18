@@ -125,18 +125,13 @@ describe('heroiconToLucide', () => {
   });
 
   test('maps alias icons to same target', () => {
-    // PlusSmallIcon maps to same as PlusIcon
     expect(heroiconToLucide['PlusSmallIcon']).toBe(heroiconToLucide['PlusIcon']);
-    // GlobeAmericasIcon and GlobeAltIcon map to same target
     expect(heroiconToLucide['GlobeAmericasIcon']).toBe(heroiconToLucide['GlobeAltIcon']);
-    // ArrowLongRightIcon and ArrowRightIcon map to same target
     expect(heroiconToLucide['ArrowLongRightIcon']).toBe(heroiconToLucide['ArrowRightIcon']);
-    // ArrowLongLeftIcon and ArrowLeftIcon map to same target
     expect(heroiconToLucide['ArrowLongLeftIcon']).toBe(heroiconToLucide['ArrowLeftIcon']);
   });
 
   test('contains mappings for all Tailwind UI v4 reference icons', () => {
-    // Core icons used in reference examples
     const coreIcons = [
       'HomeIcon',
       'UsersIcon',
@@ -183,7 +178,6 @@ describe('heroiconToLucide', () => {
     const availableIconNames = Object.keys(lucideIcons);
 
     for (const [heroiconName, lucideName] of Object.entries(heroiconToLucide)) {
-      // Check both the base name and the name with Icon suffix
       const hasBaseName = availableIconNames.includes(lucideName);
       const hasIconName = availableIconNames.includes(lucideName + 'Icon');
 

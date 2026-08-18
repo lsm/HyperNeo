@@ -29,30 +29,9 @@ export type OllamaBridgeConfig = {
   baseUrl: string;
   apiKey?: string;
   fetchImpl?: typeof fetch;
-  /**
-   * Extra HTTP headers attached to every upstream `/api/chat` request.
-   * Used by custom Ollama-native endpoints that gate access via custom
-   * auth headers (e.g. `x-api-key` on a reverse proxy in front of Ollama).
-   */
   headers?: Record<string, string>;
-  /**
-   * Whether the active model supports tool use. When false, `tools[]` is
-   * stripped from the upstream request body so older Ollama servers (or
-   * models without tool support) don't reject the call.
-   */
   toolUseSupported?: boolean;
-  /**
-   * Max context window for the active model. Forwarded as `options.num_ctx`
-   * so Ollama allocates an adequate KV cache instead of falling back to its
-   * compile-time default (2k tokens on many builds).
-   */
   modelContextWindow?: number;
-  /**
-   * Bind the embedded HTTP server to a specific interface. Defaults to all
-   * interfaces for backwards compatibility with the built-in OllamaProvider.
-   * Custom-endpoint callers pass `'127.0.0.1'` so the bridge isn't reachable
-   * from other local users.
-   */
   hostname?: string;
 };
 
@@ -212,15 +191,9 @@ function buildOllamaRequest(
     ollamaOptions.num_predict = body.max_tokens;
   }
   if (options?.modelContextWindow && options.modelContextWindow > 0) {
-    // Without num_ctx Ollama falls back to a compile-time default (2k tokens
-    // on many builds), silently truncating long prompts. Forward the model's
-    // declared context window so the upstream allocates a matching KV cache.
     ollamaOptions.num_ctx = options.modelContextWindow;
   }
   if (Object.keys(ollamaOptions).length > 0) request.options = ollamaOptions;
-  // `toolUseSupported` defaults to true to preserve the previous behaviour
-  // for the built-in OllamaProvider. Custom-endpoint callers pass false to
-  // strip tools when the model doesn't support them.
   const allowTools = options?.toolUseSupported !== false;
   if (allowTools && body.tools && body.tools.length > 0) {
     request.tools = body.tools.map((tool) => ({
@@ -388,9 +361,6 @@ async function streamOllamaToAnthropic(params: {
 
 export function createOllamaAnthropicBridgeServer(config: OllamaBridgeConfig): OllamaBridgeServer {
   const fetchImpl = config.fetchImpl ?? fetch;
-  // Strip trailing slashes plus `/api/chat` if the user pasted the full
-  // endpoint URL (common copy-paste from Ollama docs). Without this the
-  // upstream request would target `/api/chat/api/chat` and fail with 404.
   const baseUrl = config.baseUrl.replace(/\/$/, '').replace(/\/api\/chat\/?$/i, '');
   const server = Bun.serve({
     ...(config.hostname ? { hostname: config.hostname } : {}),
@@ -471,8 +441,6 @@ export function createOllamaAnthropicBridgeServer(config: OllamaBridgeConfig): O
           headers: {
             'Content-Type': 'application/json',
             ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
-            // User-supplied headers win so an integrator can override the
-            // auth header name (e.g. `x-custom-auth`) for reverse proxies.
             ...config.headers,
           },
           body: JSON.stringify(requestBody),

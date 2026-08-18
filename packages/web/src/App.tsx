@@ -11,8 +11,6 @@ import { CommandPalette } from './islands/CommandPalette.tsx';
 import { ConnectionOverlay } from './components/ConnectionOverlay.tsx';
 import { connectionManager } from './lib/connection-manager.ts';
 import { initializeApplicationState } from './lib/state.ts';
-// Importing for side effect: registers the default command set on the
-// commandRegistry singleton so the palette has commands before first render.
 import './lib/default-commands.ts';
 import {
   currentSessionIdSignal,
@@ -50,10 +48,8 @@ import {
 import { deriveAppExpectedPath } from './lib/app-routing.ts';
 
 export function App() {
-  // Set --safe-height CSS custom property on iPad Safari for correct viewport sizing
   useViewportSafety();
 
-  // Cmd+K command palette + any other registered shortcuts.
   useGlobalShortcuts();
 
   useEffect(() => {
@@ -66,40 +62,25 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    // STEP 1: Initialize URL-based router BEFORE any state management
-    // This ensures we read the session ID from URL on page load
     const initialSessionId = initializeRouter();
 
-    // STEP 2: Initialize state management when app mounts
     const init = async () => {
       try {
-        // Wait for MessageHub connection to be ready
         const hub = await connectionManager.getHub();
 
-        // Initialize new unified stores (Phase 3 migration)
         await globalStore.initialize();
 
-        // Initialize legacy state channels (will be removed in Phase 5)
-        // Pass initialSessionId so state channels know the URL state
         await initializeApplicationState(hub, currentSessionIdSignal);
 
-        // Initialize session status tracking for sidebar live indicators
         initSessionStatusTracking();
 
-        // Sync currentSessionIdSignal with sessionStore.select()
-        // This bridges the old signal-based approach with the new store
         effect(() => {
           const sessionId = currentSessionIdSignal.value;
           const spaceSessionId = currentSpaceSessionIdSignal.value;
-          // Don't clobber sessions managed by space routes
-          // (ChatContainer calls sessionStore.select directly in that case)
           if (spaceSessionId) return;
           sessionStore.select(sessionId);
         });
 
-        // STEP 3: After connection is ready, restore session from URL
-        // If the URL has a session ID, set it in the signal
-        // This is done AFTER state is initialized to ensure proper syncing
         if (initialSessionId) {
           batch(() => {
             currentSessionIdSignal.value = initialSessionId;
@@ -112,9 +93,6 @@ export function App() {
 
     init();
 
-    // STEP 4: Sync URL when session/space changes from external sources
-    // (e.g., session created/deleted in another tab)
-    // This effect watches for signal changes and updates the URL
     return effect(() => {
       const sessionId = currentSessionIdSignal.value;
       const spaceId = currentSpaceIdSignal.value;
@@ -140,11 +118,9 @@ export function App() {
         navSection,
       });
 
-      // Only update URL if it's out of sync
-      // This prevents unnecessary history updates and loops
       if (currentPath !== expectedPath) {
         if (sessionId) {
-          navigateToSession(sessionId, true); // replace=true to avoid polluting history
+          navigateToSession(sessionId, true);
         } else if (spaceTaskId && spaceId) {
           navigateToSpaceTask(
             spaceId,
@@ -186,12 +162,8 @@ export function App() {
   return (
     <>
       <div class="desktop-window-shell flex h-dvh overflow-hidden bg-app-sidebar relative pt-safe">
-        {/* Sidebar — section switcher, section content, settings */}
         <ContextPanel />
 
-        {/* Main Content — rounded-left "card" on desktop; the sidebar shell
-				    behind shows through the corners to separate it from the panels.
-				    BottomTabBar is inline (flex-shrink-0) so no extra padding needed. */}
         <div class="flex-1 flex flex-col overflow-hidden min-w-0 bg-app-content md:rounded-l-[28px]">
           <MainContent />
         </div>
@@ -200,13 +172,10 @@ export function App() {
         <RightPanelToggle />
       </div>
 
-      {/* Global Toast Container */}
       <ToastContainer />
 
-      {/* Command palette (Cmd+K) */}
       <CommandPalette />
 
-      {/* Connection Overlay - blocks UI when disconnected */}
       <ConnectionOverlay />
     </>
   );

@@ -1,17 +1,10 @@
 // @ts-nocheck
-/**
- * Tests for useChatBase Hook
- *
- * Tests the unified chat interface hook that composes useFileAttachments
- * and useAutoScroll with input management, message sending, and keyboard handling.
- */
 
 import { renderHook, act, waitFor } from '@testing-library/preact';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { signal } from '@preact/signals';
 import type { RefObject } from 'preact';
 
-// Mock dependencies
 vi.mock('../useFileAttachments.ts', () => ({
   useFileAttachments: vi.fn(() => ({
     attachments: [],
@@ -38,11 +31,9 @@ import { useChatBase } from '../useChatBase.ts';
 import { useFileAttachments } from '../useFileAttachments.ts';
 import { useAutoScroll } from '../useAutoScroll.ts';
 
-// Type the mocked functions
 const mockUseFileAttachments = vi.mocked(useFileAttachments);
 const mockUseAutoScroll = vi.mocked(useAutoScroll);
 
-// Helper to create default options
 function createDefaultOptions(overrides = {}) {
   return {
     chatId: 'test-chat-id',
@@ -56,7 +47,6 @@ describe('useChatBase', () => {
     vi.clearAllMocks();
     vi.useRealTimers();
 
-    // Reset mock implementations to defaults
     mockUseFileAttachments.mockReturnValue({
       attachments: [],
       fileInputRef: { current: null },
@@ -113,20 +103,16 @@ describe('useChatBase', () => {
       const options = createDefaultOptions();
       const { result } = renderHook(() => useChatBase(options));
 
-      // Input state
       expect(typeof result.current.input).toBe('string');
       expect(typeof result.current.setInput).toBe('function');
       expect(typeof result.current.handleInput).toBe('function');
 
-      // Sending
       expect(typeof result.current.sending).toBe('boolean');
       expect(typeof result.current.sendMessage).toBe('function');
       expect(typeof result.current.canSend).toBe('boolean');
 
-      // Keyboard handling
       expect(typeof result.current.handleKeyDown).toBe('function');
 
-      // Attachments
       expect(Array.isArray(result.current.attachments)).toBe(true);
       expect(result.current.fileInputRef).toBeDefined();
       expect(typeof result.current.handleFileSelect).toBe('function');
@@ -136,13 +122,11 @@ describe('useChatBase', () => {
       expect(typeof result.current.handlePaste).toBe('function');
       expect(typeof result.current.clearAttachments).toBe('function');
 
-      // Auto-scroll
       expect(result.current.messagesContainerRef).toBeDefined();
       expect(result.current.messagesEndRef).toBeDefined();
       expect(typeof result.current.showScrollButton).toBe('boolean');
       expect(typeof result.current.scrollToBottom).toBe('function');
 
-      // Errors
       expect(result.current.error).toBeNull();
       expect(typeof result.current.clearError).toBe('function');
     });
@@ -187,14 +171,12 @@ describe('useChatBase', () => {
       const options = createDefaultOptions();
       const { result } = renderHook(() => useChatBase(options));
 
-      // First set an error by trying to send empty message
       act(() => {
         result.current.sendMessage();
       });
 
       expect(result.current.error).toBe('Message cannot be empty');
 
-      // Now type something
       const mockEvent = {
         target: { value: 'New text' },
       } as unknown as Event;
@@ -272,7 +254,6 @@ describe('useChatBase', () => {
     it('should allow sending when only attachments exist (no text)', async () => {
       const sendMessage = vi.fn(async () => {});
 
-      // Mock attachments being present
       mockUseFileAttachments.mockReturnValue({
         attachments: [{ data: 'base64', media_type: 'image/png', name: 'test.png', size: 100 }],
         fileInputRef: { current: null },
@@ -329,17 +310,14 @@ describe('useChatBase', () => {
         sendPromise = result.current.sendMessage();
       });
 
-      // During send, sending should be true
       expect(result.current.sending).toBe(true);
       expect(result.current.canSend).toBe(false);
 
-      // Resolve the send
       resolveSend!();
       await act(async () => {
         await sendPromise;
       });
 
-      // After send, sending should be false
       expect(result.current.sending).toBe(false);
       expect(result.current.canSend).toBe(true);
     });
@@ -466,7 +444,6 @@ describe('useChatBase', () => {
         await result.current.sendMessage();
       });
 
-      // Input should be preserved on error
       expect(result.current.input).toBe('Test message');
       expect(mockClear).not.toHaveBeenCalled();
     });
@@ -496,14 +473,12 @@ describe('useChatBase', () => {
       const options = createDefaultOptions();
       const { result } = renderHook(() => useChatBase(options));
 
-      // Set an error
       act(() => {
         result.current.sendMessage();
       });
 
       expect(result.current.error).toBe('Message cannot be empty');
 
-      // Clear it
       act(() => {
         result.current.clearError();
       });
@@ -653,13 +628,11 @@ describe('useChatBase', () => {
         result.current.setInput('Test message');
       });
 
-      // Start first send
       let firstSendPromise: Promise<void>;
       act(() => {
         firstSendPromise = result.current.sendMessage();
       });
 
-      // Try to send via keyboard while sending
       expect(result.current.sending).toBe(true);
 
       const mockEvent = {
@@ -675,10 +648,8 @@ describe('useChatBase', () => {
         result.current.handleKeyDown(mockEvent);
       });
 
-      // Should only have been called once (the original send)
       expect(sendMessage).toHaveBeenCalledTimes(1);
 
-      // Resolve and complete
       resolveSend!();
       await act(async () => {
         await firstSendPromise;
@@ -761,7 +732,6 @@ describe('useChatBase', () => {
         result.current.handleFileDrop(files);
       });
 
-      // Should have been called with a FileList-like object
       expect(mockHandleFileDrop).toHaveBeenCalled();
     });
 
@@ -944,7 +914,6 @@ describe('useChatBase', () => {
       const options = createDefaultOptions({ messages });
       renderHook(() => useChatBase(options));
 
-      // useAutoScroll should be called with messageCount based on signal length
       expect(mockUseAutoScroll).toHaveBeenCalledWith(
         expect.objectContaining({
           messageCount: 1,
@@ -1029,7 +998,6 @@ describe('useChatBase', () => {
 
       const { result } = renderHook(() => useChatBase(options));
 
-      // Wait for the effect to run
       await act(async () => {
         await vi.runAllTimersAsync();
       });
@@ -1058,7 +1026,6 @@ describe('useChatBase', () => {
     it('should not load draft when loadDraft is not provided', async () => {
       const options = createDefaultOptions({
         persistDraft: true,
-        // loadDraft not provided
       });
 
       const { result } = renderHook(() => useChatBase(options));
@@ -1102,10 +1069,8 @@ describe('useChatBase', () => {
         result.current.setInput('New input');
       });
 
-      // Should not save immediately
       expect(saveDraft).not.toHaveBeenCalled();
 
-      // Advance past debounce (500ms)
       await act(async () => {
         await vi.advanceTimersByTimeAsync(500);
       });
@@ -1123,7 +1088,6 @@ describe('useChatBase', () => {
 
       const { result } = renderHook(() => useChatBase(options));
 
-      // Type multiple times quickly
       act(() => {
         result.current.setInput('A');
       });
@@ -1144,15 +1108,12 @@ describe('useChatBase', () => {
         result.current.setInput('ABC');
       });
 
-      // Not saved yet (not enough time passed)
       expect(saveDraft).not.toHaveBeenCalled();
 
-      // Advance past the remaining debounce time
       await act(async () => {
         await vi.advanceTimersByTimeAsync(500);
       });
 
-      // Should only save once with final value
       expect(saveDraft).toHaveBeenCalledTimes(1);
       expect(saveDraft).toHaveBeenCalledWith('ABC');
     });
@@ -1192,15 +1153,12 @@ describe('useChatBase', () => {
         result.current.setInput('New input');
       });
 
-      // Unmount before debounce completes
       unmount();
 
-      // Advance past debounce
       await act(async () => {
         await vi.advanceTimersByTimeAsync(500);
       });
 
-      // Should not have called saveDraft (timeout was cleared)
       expect(saveDraft).not.toHaveBeenCalled();
     });
 
@@ -1223,7 +1181,6 @@ describe('useChatBase', () => {
 
       loadDraft.mockClear();
 
-      // Change chatId
       rerender({ chatId: 'chat-2' });
 
       await act(async () => {
@@ -1265,18 +1222,15 @@ describe('useChatBase', () => {
         result.current.setInput('Message 1');
       });
 
-      // First send
       let sendPromise: Promise<void>;
       act(() => {
         sendPromise = result.current.sendMessage();
       });
 
-      // Try to send again while first is in progress
       act(() => {
         result.current.setInput('Message 2');
       });
 
-      // This should not send because canSend is false
       act(() => {
         result.current.handleKeyDown({
           key: 'Enter',
@@ -1288,12 +1242,10 @@ describe('useChatBase', () => {
         } as unknown as KeyboardEvent);
       });
 
-      // Wait for first send to complete
       await act(async () => {
         await sendPromise;
       });
 
-      // Only one send should have occurred
       expect(sendMessage).toHaveBeenCalledTimes(1);
       expect(sendMessage).toHaveBeenCalledWith('Message 1', undefined);
     });
@@ -1302,7 +1254,6 @@ describe('useChatBase', () => {
       const options = createDefaultOptions({ messages: undefined });
       const { result } = renderHook(() => useChatBase(options));
 
-      // Should not throw and should still function
       expect(result.current.canSend).toBe(true);
     });
 

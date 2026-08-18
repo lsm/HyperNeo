@@ -1,31 +1,5 @@
-/**
- * Active-turn activity preview rendering.
- *
- * Pure transformations that turn raw activity rows / tool inputs into the
- * human-readable one-line previews and summary entries the client renders in
- * the task roster / active-turn rail.
- *
- * Extracted verbatim from `live-query-handlers.ts` as the first increment of
- * the module-decomposition program (see
- * `docs/architecture/module-decomposition-program.md`). This module is a pure
- * leaf: it depends on nothing outside the TS standard library and is consumed
- * by the named-query registry in `live-query-handlers.ts`.
- *
- * Exported surface (the narrow capability callers depend on):
- *  - `buildActiveTurnSummariesFromRows` — aggregate raw entries into per-session summaries.
- *  - `mapActiveTurnEntryRow` — map a single raw row to a roster entry (registry `mapRow`).
- *
- * The `activity*` / `activityPreviewFrom*` helpers below are module-private.
- */
-
 const ACTIVITY_PREVIEW_MAX_LEN = 200;
 
-/**
- * Collapse arbitrary text into a single line and cap its length so the
- * server-side preview matches what the rail can render without further work.
- * Mirrors the client-side `oneLine` shape so trailing ellipses and whitespace
- * collapsing line up byte-for-byte across server and client.
- */
 function activityOneLine(value: string, max = ACTIVITY_PREVIEW_MAX_LEN): string {
   const collapsed = value.replace(/\s+/g, ' ').trim();
   if (collapsed.length === 0) return '';
@@ -82,11 +56,6 @@ function activityPreviewFromQuestionInput(input: Record<string, unknown>): strin
   return `${activityOneLine(text, 60)}${suffix}`;
 }
 
-/**
- * Pick a human-friendly preview from a tool_use input object. The branch order
- * mirrors the SDK tool registry summaries where possible so compact roster
- * lines carry the same primary meaning as full chat tool blocks.
- */
 function activityPreviewFromToolInput(toolName: string, input: Record<string, unknown>): string {
   if (toolName.startsWith('mcp__')) {
     return '';
@@ -164,18 +133,6 @@ function activityPreviewFromToolInput(toolName: string, input: Record<string, un
   }
 }
 
-/**
- * Aggregate the per-entry rows produced by `SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL`
- * into the `ActiveTurnSummary[]` payload the client consumes.
- *
- * Each row corresponds to a single activity entry (one assistant content
- * block, or one user-row entry). Rows are already chronologically sorted by
- * the SQL — we only need to group by sessionId and translate the raw
- * `blockType` discriminator into the public `ActivityEntry.kind` shape, while
- * computing previews / unwrapping `tool_use.input` JSON server-side.
- *
- * Exported for unit-test coverage.
- */
 export function buildActiveTurnSummariesFromRows(
   rows: Record<string, unknown>[]
 ): Array<{ sessionId: string; turnIndex: number; entries: Record<string, unknown>[] }> {

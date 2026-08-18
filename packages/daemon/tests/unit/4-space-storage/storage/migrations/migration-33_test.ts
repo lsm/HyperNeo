@@ -1,29 +1,8 @@
-/**
- * Migration 33 Tests
- *
- * Tests for Migration 33: Add inject_workflow_context column to space_agents.
- *
- * NOTE: M33 added inject_workflow_context to space_agents, but M74 later dropped
- * role, config, and inject_workflow_context from space_agents entirely.
- * After a full migration run, inject_workflow_context and role no longer exist.
- *
- * Covers:
- * - Fresh DB (full migration chain): inject_workflow_context is absent (dropped by M74)
- * - Fresh DB: role is absent (dropped by M74)
- * - Fresh DB: new agents can be inserted without role/inject_workflow_context
- * - Legacy DB path: M33 adds column, then M74 drops it
- * - Idempotency: running migration on a table that already has the column is a no-op
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function columnExists(db: BunDatabase, table: string, column: string): boolean {
   const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
@@ -37,10 +16,6 @@ function getColumnDefault(db: BunDatabase, table: string, column: string): strin
   }>;
   return rows.find((r) => r.name === column)?.dflt_value ?? null;
 }
-
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
 
 describe('Migration 33: Add inject_workflow_context to space_agents', () => {
   let testDir: string;
@@ -68,18 +43,12 @@ describe('Migration 33: Add inject_workflow_context to space_agents', () => {
     }
   });
 
-  // -------------------------------------------------------------------------
-  // Fresh DB — full migration chain (post-M74)
-  // -------------------------------------------------------------------------
-
   test('fresh DB: inject_workflow_context column does NOT exist after M74 dropped it', () => {
-    // M33 added inject_workflow_context; M74 dropped it.
     runMigrations(db, () => {});
     expect(columnExists(db, 'space_agents', 'inject_workflow_context')).toBe(false);
   });
 
   test('fresh DB: role column does NOT exist after M74 dropped it', () => {
-    // role was added by M29; M74 dropped it.
     runMigrations(db, () => {});
     expect(columnExists(db, 'space_agents', 'role')).toBe(false);
   });
@@ -108,12 +77,7 @@ describe('Migration 33: Add inject_workflow_context to space_agents', () => {
     expect(columnExists(db, 'space_agents', 'inject_workflow_context')).toBe(false);
   });
 
-  // -------------------------------------------------------------------------
-  // Legacy DB path — simulate pre-migration-33 state without the column
-  // -------------------------------------------------------------------------
-
   test('legacy DB: column is added to existing table that lacks it', () => {
-    // Create the space_agents table as it existed before migration 33
     db.exec(`
 			CREATE TABLE spaces (
 				id TEXT PRIMARY KEY,
@@ -150,13 +114,10 @@ describe('Migration 33: Add inject_workflow_context to space_agents', () => {
 		`);
     db.exec(`CREATE INDEX idx_space_agents_space_id ON space_agents(space_id)`);
 
-    // Confirm column is absent before migration
     expect(columnExists(db, 'space_agents', 'inject_workflow_context')).toBe(false);
 
-    // Run migrations (M33 adds inject_workflow_context, then M74 drops it)
     runMigrations(db, () => {});
 
-    // After full migration chain, column is dropped by M74
     expect(columnExists(db, 'space_agents', 'inject_workflow_context')).toBe(false);
   });
 
@@ -196,10 +157,6 @@ describe('Migration 33: Add inject_workflow_context to space_agents', () => {
 
     runMigrations(db, () => {});
 
-    // After full migration chain, role and inject_workflow_context are dropped by M74.
-    // Verify the original agent rows still exist with their names preserved. (M170
-    // backfills the other missing presets into this legacy Space, so the row count
-    // grows beyond the original two — the two originals must still be present.)
     const rows = db.prepare(`SELECT id, name FROM space_agents`).all() as Array<{
       id: string;
       name: string;
@@ -208,19 +165,13 @@ describe('Migration 33: Add inject_workflow_context to space_agents', () => {
     expect(byId.get('agent-1')).toBe('Coder');
     expect(byId.get('agent-2')).toBe('Planner');
 
-    // Verify columns are gone
     expect(columnExists(db, 'space_agents', 'role')).toBe(false);
     expect(columnExists(db, 'space_agents', 'inject_workflow_context')).toBe(false);
   });
 
-  // -------------------------------------------------------------------------
-  // Idempotency — column already exists
-  // -------------------------------------------------------------------------
-
   test('idempotency: running migration twice does not error', () => {
     runMigrations(db, () => {});
     expect(() => runMigrations(db, () => {})).not.toThrow();
-    // After full chain, inject_workflow_context is dropped by M74
     expect(columnExists(db, 'space_agents', 'inject_workflow_context')).toBe(false);
   });
 

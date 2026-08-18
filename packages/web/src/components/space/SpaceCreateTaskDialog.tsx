@@ -1,7 +1,3 @@
-/**
- * SpaceCreateTaskDialog — modal form to create a standalone task or scheduled task in a Space.
- */
-
 import { useMemo, useState } from 'preact/hooks';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
@@ -50,17 +46,10 @@ const COMMON_TIMEZONES = [
   'Pacific/Auckland',
 ];
 
-/**
- * Lightweight frontend cron validation.
- * Supports 5-field and 6-field cron, named shortcuts, L/W/Q tokens, and
- * weekday/month names. Does not validate every edge case — the daemon
- * validates with croner and returns errors.
- */
 function isValidCronExpression(expr: string): boolean {
   const trimmed = expr.trim();
   if (!trimmed) return false;
 
-  // Named shortcuts
   if (/^@(hourly|daily|midnight|weekly|monthly|yearly|annually)$/.test(trimmed)) return true;
 
   const parts = trimmed.split(/\s+/);
@@ -68,21 +57,12 @@ function isValidCronExpression(expr: string): boolean {
 
   const hasSeconds = parts.length === 6;
 
-  // Field validators indexed by position (0 = seconds when present, else minute)
-  // Each field accepts: single value, *, */step, range, range/step, list (values/ranges/*),
-  // and field-specific tokens (L, W, ?, month names, weekday names, nth-weekday, etc.)
   const fieldPatterns = [
-    // seconds (optional)
     /^([0-5]?\d|[*](?:\/[1-9]\d?)?|(?:[0-5]?\d)(?:-[0-5]?\d)?(?:\/[1-9]\d?)?|(?:[0-5]?\d|[*])(?:,(?:[0-5]?\d|[*]|[0-5]?\d-[0-5]?\d))+|\?)$/,
-    // minute
     /^([0-5]?\d|[*](?:\/[1-9]\d?)?|(?:[0-5]?\d)(?:-[0-5]?\d)?(?:\/[1-9]\d?)?|(?:[0-5]?\d|[*])(?:,(?:[0-5]?\d|[*]|[0-5]?\d-[0-5]?\d))+|\?)$/,
-    // hour
     /^([01]?\d|2[0-3]|[*](?:\/[1-9]\d?)?|(?:[01]?\d|2[0-3])(?:-[01]?\d|2[0-3])?(?:\/[1-9]\d?)?|(?:[01]?\d|2[0-3]|[*])(?:,(?:[01]?\d|2[0-3]|[*]|[01]?\d-2[0-3]|[01]?\d-[01]?\d|2[0-3]-2[0-3]))+|\?)$/,
-    // day of month
     /^([1-9]|[12]\d|3[01]|[*](?:\/[1-9]\d?)?|(?:[1-9]|[12]\d|3[01])(?:-[1-9]|[12]\d|3[01])?(?:\/[1-9]\d?)?|(?:[1-9]|[12]\d|3[01]|[*])(?:,(?:[1-9]|[12]\d|3[01]|[*]|[1-9]-[1-9]|[1-9]-[12]\d|[1-9]-3[01]|[12]\d-[12]\d|[12]\d-3[01]|3[01]-3[01]))+|L|L-[1-9]|L-[12]\d|L-3[01]|LW|\?|(?:[1-9]|[12]\d|3[01])W)$/,
-    // month
     /^([1-9]|1[0-2]|[*](?:\/[1-9]\d?)?|(?:[1-9]|1[0-2])(?:-[1-9]|1[0-2])?(?:\/[1-9]\d?)?|(?:[1-9]|1[0-2]|[*])(?:,(?:[1-9]|1[0-2]|[*]|[1-9]-[1-9]|[1-9]-1[0-2]|1[0-2]-1[0-2]))+|JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC|\?)$/i,
-    // weekday
     /^([0-7]|[*](?:\/[1-9]\d?)?|(?:[0-7])(?:-[0-7])?(?:\/[1-9]\d?)?|(?:[0-7]|[*])(?:,(?:[0-7]|[*]|[0-7]-[0-7]))+|\+|\+[0-7]|\+(?:MON|TUE|WED|THU|FRI|SAT|SUN)|MON|TUE|WED|THU|FRI|SAT|SUN|L|\?|(?:MON|TUE|WED|THU|FRI|SAT|SUN)#(?:[1-5]|L))$/i,
   ];
 
@@ -140,7 +120,6 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Schedule fields
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [triggerType, setTriggerType] = useState<TaskScheduleTriggerType>('at');
   const [cronExpression, setCronExpression] = useState('');
@@ -236,7 +215,6 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
           </div>
         )}
 
-        {/* Title */}
         <div>
           <label class="block text-sm font-medium text-gray-200 mb-1.5">
             Title
@@ -253,7 +231,6 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
           />
         </div>
 
-        {/* Description */}
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-1.5">
             Description
@@ -269,7 +246,6 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
           />
         </div>
 
-        {/* Priority row */}
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-1.5">Priority</label>
           <select
@@ -288,7 +264,6 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
           </select>
         </div>
 
-        {/* Schedule toggle */}
         <div class="border-t border-dark-700 pt-4">
           <label class="flex items-center gap-2 cursor-pointer">
             <input
@@ -301,10 +276,8 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
           </label>
         </div>
 
-        {/* Schedule options */}
         {scheduleEnabled && (
           <div class="space-y-4 rounded-lg border border-dark-700 bg-dark-800/50 p-4">
-            {/* Trigger type */}
             <div>
               <label class="block text-sm font-medium text-gray-300 mb-1.5">Trigger</label>
               <div class="flex gap-3">
@@ -336,7 +309,6 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
               </div>
             </div>
 
-            {/* One-time: datetime picker */}
             {triggerType === 'at' && (
               <div>
                 <label class="block text-sm font-medium text-gray-300 mb-1.5">
@@ -356,7 +328,6 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
               </div>
             )}
 
-            {/* Recurring: cron input + presets */}
             {triggerType === 'cron' && (
               <div class="space-y-3">
                 <div>
@@ -399,7 +370,6 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
               </div>
             )}
 
-            {/* Timezone — only meaningful for cron triggers */}
             {triggerType === 'cron' && (
               <div>
                 <label class="block text-sm font-medium text-gray-300 mb-1.5">Timezone</label>
@@ -418,7 +388,6 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
               </div>
             )}
 
-            {/* Preview */}
             {preview && (
               <div class="text-xs text-gray-400 bg-dark-900/50 rounded px-3 py-2 border border-dark-700">
                 {preview}

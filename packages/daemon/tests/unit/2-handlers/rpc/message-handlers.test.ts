@@ -1,18 +1,3 @@
-/**
- * Tests for Message Handlers - format functions and RPC handlers
- *
- * Coverage for:
- * - convertToMarkdown: Session to markdown conversion
- * - formatMessage: Message type dispatch
- * - formatUserMessage: User message formatting
- * - formatAssistantMessage: Assistant message formatting
- * - formatResultMessage: Result message formatting
- * - message.removeOutput: Remove large task output
- * - message.sdkMessages: Get SDK messages
- * - message.count: Get message count
- * - session.export: Export session to markdown/json
- */
-
 import { describe, test, expect, beforeEach, mock, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import type { Database } from '../../../../src/storage/database';
@@ -23,10 +8,8 @@ import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { Session } from '@hyperneo/shared';
 
-// Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
-// Helper to create a minimal mock MessageHub that captures handlers
 function createMockMessageHub(): {
   hub: MessageHub;
   handlers: Map<string, RequestHandler>;
@@ -57,7 +40,6 @@ function createMockMessageHub(): {
   return { hub, handlers };
 }
 
-// Helper to create a mock AgentSession
 function createMockAgentSession(): {
   agentSession: AgentSession;
   mocks: {
@@ -92,7 +74,6 @@ function createMockAgentSession(): {
   return { agentSession, mocks };
 }
 
-// Helper to create mock SessionManager
 function createMockSessionManager(): {
   sessionManager: SessionManager;
   mocks: {
@@ -126,9 +107,6 @@ function createMockSessionManager(): {
   return { sessionManager, mocks, agentSessionData };
 }
 
-// Re-implement the format functions to test the logic directly
-// This mirrors the implementation in message-handlers.ts
-
 function convertToMarkdown(
   session: {
     id: string;
@@ -140,7 +118,6 @@ function convertToMarkdown(
 ): string {
   const lines: string[] = [];
 
-  // Header
   lines.push(`# ${session.title || 'Untitled Session'}`);
   lines.push('');
   lines.push(`**Session ID:** ${session.id}`);
@@ -150,7 +127,6 @@ function convertToMarkdown(
   lines.push('---');
   lines.push('');
 
-  // Messages
   for (const msg of messages) {
     const formatted = formatMessage(msg);
     if (formatted) {
@@ -333,7 +309,6 @@ describe('Message Handlers - Format Functions', () => {
 
       const result = convertToMarkdown(session, messages);
 
-      // Should not contain these message types
       expect(result).not.toContain('## system');
       expect(result).not.toContain('## stream_event');
     });
@@ -631,7 +606,6 @@ describe('Message RPC Handlers', () => {
     messageHubData = createMockMessageHub();
     sessionManagerData = createMockSessionManager();
 
-    // Setup handlers with mocked dependencies
     setupMessageHandlers(messageHubData.hub, sessionManagerData.sessionManager);
   });
 

@@ -1,10 +1,3 @@
-/**
- * SpaceWorkflowRepository — `WorkflowNodeAgent.timeoutMs` round-trip tests.
- *
- * Per-slot agent timeouts live with the workflow definition (not the runtime),
- * so they must round-trip through create / get / list / update without loss.
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -39,7 +32,7 @@ describe('SpaceWorkflowRepository — WorkflowNodeAgent.timeoutMs round-trip', (
           name: 'Coding',
           agents: [
             { agentId: 'agent-1', name: 'coder', timeoutMs: 600_000 },
-            { agentId: 'agent-2', name: 'reviewer' /* no override */ },
+            { agentId: 'agent-2', name: 'reviewer' },
           ],
         },
       ],

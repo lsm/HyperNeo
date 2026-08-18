@@ -1,17 +1,3 @@
-/**
- * Security Agent Unit Tests
- *
- * Tests for the security agent's pattern-based detection:
- * - Test pattern-based detection with known attack vectors
- * - Test safe content passes through
- * - Test suspicious content flags for review
- * - Test dangerous content is blocked
- *
- * Note: These tests focus on the pattern-based pre-check (Stage 1).
- * AI-based deep check (Stage 2) is skipped by using content short enough
- * to not trigger AI check, or by mocking.
- */
-
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { SecurityAgent } from '../../../../src/lib/github/security-agent';
 
@@ -19,8 +5,6 @@ describe('SecurityAgent', () => {
   let aiCheckSpy: ReturnType<typeof spyOn> | undefined;
 
   beforeEach(() => {
-    // Unit tests should not call the real SDK/network path.
-    // Force deterministic fallback behavior for any path that would invoke aiCheck().
     aiCheckSpy = spyOn(
       SecurityAgent.prototype as unknown as {
         aiCheck: (
@@ -107,8 +91,6 @@ describe('SecurityAgent', () => {
 
       const result = await agent.check(content);
 
-      // "act-as-system" is detected but not in high-risk list
-      // Without AI check available, it falls back to medium risk
       expect(result.passed).toBe(false);
       expect(result.injectionRisk).toBe('medium');
     });
@@ -117,12 +99,10 @@ describe('SecurityAgent', () => {
   describe('Pattern-Based Detection - Suspicious Patterns', () => {
     test('should detect special tokens pattern', async () => {
       const agent = new SecurityAgent({ apiKey: 'test-key' });
-      // Use a short content to avoid AI check, but with pattern
       const content = 'Here is data: <|special|>';
 
       const result = await agent.check(content);
 
-      // Pattern detected, but may not be high-risk - check for pattern detection
       expect(result.reason).toBeDefined();
     });
 
@@ -354,7 +334,6 @@ Let me know if this works.
 
       expect(result.passed).toBe(false);
       expect(result.injectionRisk).toBe('high');
-      // Should detect multiple patterns
       expect(result.reason).toContain('ignore-instructions');
     });
   });
@@ -366,7 +345,6 @@ Let me know if this works.
         model: 'claude-3-opus-latest',
       });
 
-      // Agent created successfully with custom model
       expect(agent).toBeDefined();
     });
 

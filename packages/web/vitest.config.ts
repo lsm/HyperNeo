@@ -12,30 +12,22 @@ export default defineConfig({
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
     exclude: ['node_modules', 'dist'],
     globals: true,
-    // Component tests assert through real-timer waitFor against multi-effect
-    // data loads; the 5s default intermittently kills correct tests on loaded
-    // CI runners (see the SpaceGoals entry in flaky-tests.json).
     testTimeout: 15_000,
     setupFiles: ['./vitest.setup.ts'],
     coverage: {
       provider: 'v8',
       reportsDirectory: 'coverage',
       reporter: ['text', 'lcov'],
-      exclude: [
-        'src/index.ts', // Bun server - not testable in vitest
-        '**/index.ts', // Barrel exports - just re-exports
-      ],
+      exclude: ['src/index.ts', '**/index.ts'],
     },
   },
 
   resolve: {
     alias: [
-      // Handle subpath imports (e.g., @hyperneo/shared/sdk/type-guards)
       {
         find: /^@hyperneo\/shared\/(.+)$/,
         replacement: resolve(__dirname, '../shared/src/$1'),
       },
-      // Handle main package import
       {
         find: '@hyperneo/shared',
         replacement: resolve(__dirname, '../shared/src/mod.ts'),

@@ -1,19 +1,3 @@
-/**
- * Unit tests for pr-ready built-in validator.
- *
- * Covers:
- *   - missing PR URL
- *   - closed PR
- *   - unknown mergeability (retryable)
- *   - non-mergeable PR
- *   - unknown mergeStateStatus (retryable)
- *   - unsatisfied mergeStateStatus
- *   - unresolved review threads
- *   - successful handoff
- *   - gh CLI error (MCP error payload copy)
- *   - task-banner state distinction (block vs retryable_block)
- */
-
 import { describe, test, expect } from 'bun:test';
 import { createPrReadyValidator } from '../../../../src/lib/space/runtime/built-in-validators/pr-ready-validator';
 import type { HookExecutorContext } from '../../../../src/lib/space/runtime/hook-executor';
@@ -175,10 +159,7 @@ describe('pr-ready validator', () => {
   });
 
   test('post-approval merge-blocker report is exempt ONLY while the task is approved', async () => {
-    // During post-approval (task approved) the coder reports a blocker over the
-    // pr_ready-hooked channel; the PR is by definition not ready, so the gate
-    // must allow the report through without a gh call.
-    const spawn = makeMockSpawn([]); // no gh calls expected — exemption short-circuits
+    const spawn = makeMockSpawn([]);
     const validator = createPrReadyValidator(spawn);
     const ctx: HookExecutorContext = {
       ...makeContext('https://github.com/acme/corp/pull/42'),
@@ -195,10 +176,6 @@ describe('pr-ready validator', () => {
   });
 
   test('a spoofed merge reason during an in-progress handoff is NOT exempt', async () => {
-    // The initial implementation handoff runs while the task is in-progress, so
-    // a sender cannot spoof `merge_blocked` to bypass the gate and activate
-    // Review with an unready PR. The validator proceeds and blocks on the real
-    // state.
     const prView = { ...VALID_PR_VIEW, mergeable: 'CONFLICTING' };
     const spawn = makeMockSpawn([{ stdout: JSON.stringify(prView), stderr: '', exitCode: 0 }]);
     const validator = createPrReadyValidator(spawn);
@@ -216,8 +193,6 @@ describe('pr-ready validator', () => {
   });
 
   test('undefined taskStatus (no provider) does NOT exempt — fails closed', async () => {
-    // When the engine has no task-status provider, the exemption does not fire,
-    // so a `merge_fix_pushed` reason cannot spoof the gate.
     const prView = { ...VALID_PR_VIEW, mergeable: 'CONFLICTING' };
     const spawn = makeMockSpawn([{ stdout: JSON.stringify(prView), stderr: '', exitCode: 0 }]);
     const validator = createPrReadyValidator(spawn);
@@ -412,14 +387,12 @@ describe('pr-ready validator', () => {
     const resetEpochSeconds = Math.floor((Date.now() + 90_000) / 1000);
     const spawn = makeMockSpawn([
       {
-        // First call: gh pr view exits non-zero with rate-limit stderr
         stdout: '',
         stderr:
           'HTTP 403: rate limit exceeded (https://docs.github.com/rest/overview/resources-in-the-rest-api#rate-limiting)',
         exitCode: 1,
       },
       {
-        // Follow-up probe: gh api /rate_limit succeeds and reports graphql reset
         stdout: JSON.stringify({ resources: { graphql: { reset: resetEpochSeconds } } }),
         stderr: '',
         exitCode: 0,
@@ -440,7 +413,6 @@ describe('pr-ready validator', () => {
         exitCode: 1,
       },
       {
-        // Probe fails too — should fall back to default backoff
         stdout: '',
         stderr: 'network unreachable',
         exitCode: 1,
@@ -457,13 +429,11 @@ describe('pr-ready validator', () => {
     const resetEpochSeconds = Math.floor((Date.now() + 75_000) / 1000);
     const spawn = makeMockSpawn([
       {
-        // gh pr view --json url for current branch — rate-limited
         stdout: '',
         stderr: 'HTTP 403: rate limit exceeded',
         exitCode: 1,
       },
       {
-        // /rate_limit probe (current branch view uses the GraphQL PR finder)
         stdout: JSON.stringify({ resources: { graphql: { reset: resetEpochSeconds } } }),
         stderr: '',
         exitCode: 0,
@@ -481,13 +451,11 @@ describe('pr-ready validator', () => {
     const spawn = makeMockSpawn([
       { stdout: JSON.stringify(VALID_PR_VIEW), stderr: '', exitCode: 0 },
       {
-        // reviewThreads query — rate-limited
         stdout: '',
         stderr: 'HTTP 403: rate limit exceeded',
         exitCode: 1,
       },
       {
-        // /rate_limit probe
         stdout: JSON.stringify({ resources: { core: { reset: resetEpochSeconds } } }),
         stderr: '',
         exitCode: 0,
@@ -515,9 +483,6 @@ describe('pr-ready validator', () => {
   });
 
   test('permission-error 403 without rate-limit text does NOT promote to retryable', async () => {
-    // gh stderr from a token lacking permissions — bare 403 must not be
-    // classified as a rate-limit, otherwise the workflow would back off
-    // instead of surfacing the credential issue.
     const spawn = makeMockSpawn([
       {
         stdout: '',
@@ -532,19 +497,16 @@ describe('pr-ready validator', () => {
   });
 
   test('graphql rate-limit probe reads both core and graphql reset windows', async () => {
-    // core.reset far in future, graphql.reset sooner — pick earliest.
     const graphqlReset = Math.floor((Date.now() + 75_000) / 1000);
     const coreReset = Math.floor((Date.now() + 300_000) / 1000);
     const spawn = makeMockSpawn([
       { stdout: JSON.stringify(VALID_PR_VIEW), stderr: '', exitCode: 0 },
       {
-        // reviewThreads query rate-limited
         stdout: '',
         stderr: 'API rate limit exceeded',
         exitCode: 1,
       },
       {
-        // /rate_limit probe — both windows present
         stdout: JSON.stringify({
           resources: {
             core: { reset: coreReset },
@@ -560,7 +522,6 @@ describe('pr-ready validator', () => {
     expect(result.type).toBe('retryable_block');
     const retryAfterMs = (result as { retryAfterMs?: number }).retryAfterMs;
     expect(retryAfterMs).toBeGreaterThanOrEqual(60_000);
-    // Closer to the graphql reset (75s) than the core reset (300s).
     expect(retryAfterMs!).toBeLessThanOrEqual(75_000);
   });
 
@@ -571,13 +532,11 @@ describe('pr-ready validator', () => {
       [
         { stdout: JSON.stringify(VALID_PR_VIEW), stderr: '', exitCode: 0 },
         {
-          // reviewThreads query for Enterprise PR rate-limited
           stdout: '',
           stderr: 'API rate limit exceeded',
           exitCode: 1,
         },
         {
-          // /rate_limit probe
           stdout: JSON.stringify({ resources: { core: { reset: resetEpochSeconds } } }),
           stderr: '',
           exitCode: 0,
@@ -588,7 +547,6 @@ describe('pr-ready validator', () => {
     const validator = createPrReadyValidator(spawn);
     const result = await validator(makeContext('https://github.example.com/acme/corp/pull/42'));
     expect(result.type).toBe('retryable_block');
-    // The /rate_limit probe call should include --hostname github.example.com
     const rateLimitCall = calls.find((c) => c.cmd.includes('/rate_limit'));
     expect(rateLimitCall).toBeDefined();
     const hostnameIdx = rateLimitCall!.cmd.indexOf('--hostname');
@@ -611,11 +569,9 @@ describe('pr-ready validator', () => {
     );
     const validator = createPrReadyValidator(spawn);
     const result = await validator(makeContext('https://github.com/acme/corp/pull/42'));
-    // Should be retryable_block with RATE_LIMIT_MIN_BACKOFF_MS, not the result of a /rate_limit probe
     expect(result.type).toBe('retryable_block');
     const retryAfterMs = (result as { retryAfterMs?: number }).retryAfterMs;
     expect(retryAfterMs).toBe(RATE_LIMIT_MIN_BACKOFF_MS);
-    // No /rate_limit probe should have been made (only 2 calls: pr view + review threads)
     expect(calls.length).toBe(2);
   });
 

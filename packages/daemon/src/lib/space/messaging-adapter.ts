@@ -697,8 +697,6 @@ function legacyTargetActors(
     return (
       parsed?.workflowRunId === row.workflowRunId &&
       parsed.agentName === row.targetAgentName &&
-      // Scope to the pinned node when the row carries one, so two nodes reusing
-      // a slot don't both project a pinned row.
       (row.workflowNodeId == null || parsed.nodeId === row.workflowNodeId)
     );
   });
@@ -719,7 +717,6 @@ function declaredLegacyTargetActors(
   return workflow.nodes.flatMap((node) =>
     node.agents.flatMap((agent): ActorRef[] => {
       if (agent.name !== row.targetAgentName) return [];
-      // Scope to the pinned node when the row carries one.
       if (row.workflowNodeId != null && node.id !== row.workflowNodeId) return [];
       const actorId = workerActorId(row.workflowRunId, node.id, agent.name);
       if (actors.some((actor) => actor.actorId === actorId)) return [];

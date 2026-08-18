@@ -1,9 +1,3 @@
-/**
- * EventSubscriptionSetup Tests
- *
- * Tests for DaemonHub event subscription setup.
- */
-
 import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import {
   EventSubscriptionSetup,
@@ -31,19 +25,16 @@ describe('EventSubscriptionSetup', () => {
   let emitSpy: ReturnType<typeof mock>;
   let unsubscribeSpy: ReturnType<typeof mock>;
 
-  // Mock handlers
   let mockModelSwitchHandler: ModelSwitchHandler;
   let mockInterruptHandler: InterruptHandler;
   let mockQueryModeHandler: QueryModeHandler;
 
-  // Store callbacks registered via daemonHub.on()
   let registeredCallbacks: Map<string, (data: unknown) => Promise<void>>;
 
   beforeEach(() => {
     registeredCallbacks = new Map();
     unsubscribeSpy = mock(() => {});
 
-    // Mock subscriptions to capture callbacks and return unsubscribe function
     onSpy = mock((event: string, callback: (data: unknown) => Promise<void>) => {
       registeredCallbacks.set(event, callback);
       return unsubscribeSpy;
@@ -61,7 +52,6 @@ describe('EventSubscriptionSetup', () => {
       emit: emitSpy,
     } as unknown as DaemonHub;
 
-    // Create mock handlers
     mockModelSwitchHandler = {
       switchModel: mock(async () => ({ success: true, model: 'test-model' })),
     } as unknown as ModelSwitchHandler;
@@ -75,7 +65,6 @@ describe('EventSubscriptionSetup', () => {
       sendEnqueuedMessagesOnTurnEnd: mock(async () => {}),
     } as unknown as QueryModeHandler;
 
-    // Create mock session
     const mockSession: Session = {
       id: 'test-session-id',
       title: 'Test Session',
@@ -87,7 +76,6 @@ describe('EventSubscriptionSetup', () => {
       metadata: {},
     };
 
-    // Create context
     mockContext = {
       session: mockSession,
       daemonHub: mockDaemonHub,
@@ -97,9 +85,6 @@ describe('EventSubscriptionSetup', () => {
       queryModeHandler: mockQueryModeHandler,
       resetQuery: mock(async () => ({ success: true })),
       startQueryAndEnqueue: mock(async () => {}),
-      // AgentSession provides this in production (v2 default-on). Including it
-      // here exercises the real message.persisted branch instead of silently
-      // falling through to startQueryAndEnqueue merely because the mock omitted it.
       deliverChatMessage: mock(async () => {}),
     };
 
@@ -116,8 +101,6 @@ describe('EventSubscriptionSetup', () => {
     it('should register all event subscriptions', () => {
       setup.setup();
 
-      // Should register 5 event handlers (query.sendEnqueuedOnTurnEnd was
-      // removed — it was never published; task #861 item 14).
       expect(onSpy).toHaveBeenCalledTimes(5);
       expect(registeredCallbacks.has('model.switchRequest')).toBe(true);
       expect(registeredCallbacks.has('agent.interruptRequest')).toBe(true);
@@ -129,7 +112,6 @@ describe('EventSubscriptionSetup', () => {
     it('should pass sessionId to subscription options', () => {
       setup.setup();
 
-      // All subscriptions should include sessionId option
       for (const call of onSpy.mock.calls) {
         expect(call[2]).toEqual(expect.objectContaining({ sessionId: 'test-session-id' }));
       }
@@ -195,12 +177,6 @@ describe('EventSubscriptionSetup', () => {
       });
 
       it('client.interrupt RPC path cancels pending durable deliveries end-to-end (#3744105273)', async () => {
-        // Drive the exact wiring the client.interrupt RPC takes:
-        // session-handlers publishes agent.interruptRequest → this subscriber →
-        // the REAL InterruptHandler. A pending message_delivery job + its hidden
-        // enqueued SDK row must both be gone afterwards. The round-7 test called
-        // the AgentSession wrapper directly and missed that this path bypassed
-        // the cancel entirely.
         const raw = new BunDatabase(':memory:');
         createTables(raw);
         const jobQueueRepo = new JobQueueRepository(raw);
@@ -266,12 +242,6 @@ describe('EventSubscriptionSetup', () => {
       });
 
       it('handleInterrupt({preserveDeliveryJobs:true}) keeps requeued delivery jobs for restart (Codex P1)', async () => {
-        // Daemon shutdown requeues in-flight message_delivery rows for the next
-        // boot BEFORE stopping sessions; the shutdown stop path
-        // (stopSessionPreserveDb) must NOT then cancel them. handleInterrupt with
-        // preserveDeliveryJobs skips the durable-job cancel while still aborting
-        // the in-flight query. (The default user-interrupt path cancels — see
-        // the test above.)
         const raw = new BunDatabase(':memory:');
         createTables(raw);
         const jobQueueRepo = new JobQueueRepository(raw);
@@ -318,7 +288,6 @@ describe('EventSubscriptionSetup', () => {
 
         await realInterruptHandler.handleInterrupt({ preserveDeliveryJobs: true });
 
-        // The job + its enqueued SDK row survive — preserved for restart reclaim.
         expect((raw.prepare(`SELECT COUNT(*) AS n FROM job_queue`).get() as { n: number }).n).toBe(
           1
         );
@@ -381,10 +350,6 @@ describe('EventSubscriptionSetup', () => {
 
     describe('message.persisted handler', () => {
       it('v2 default routes through deliverChatMessage, not startQueryAndEnqueue', async () => {
-        // With v2 default-on and deliverChatMessage wired (production state), an
-        // ordinary persisted message enqueues a durable job_queue row instead of
-        // driving the query inline. Asserting startQueryAndEnqueue here would only
-        // pass because the mock omitted deliverChatMessage — masking the real path.
         setup.setup();
 
         const callback = registeredCallbacks.get('message.persisted')!;
@@ -452,7 +417,6 @@ describe('EventSubscriptionSetup', () => {
       setup.setup();
       setup.cleanup();
 
-      // 5 subscriptions = 5 unsubscribe calls
       expect(unsubscribeSpy).toHaveBeenCalledTimes(5);
     });
 
@@ -460,25 +424,21 @@ describe('EventSubscriptionSetup', () => {
       setup.setup();
       setup.cleanup();
 
-      // Second cleanup should not call unsubscribe again
       setup.cleanup();
-      expect(unsubscribeSpy).toHaveBeenCalledTimes(5); // Still 5, not 10
+      expect(unsubscribeSpy).toHaveBeenCalledTimes(5);
     });
 
     it('should handle unsubscribe errors gracefully', () => {
-      // Make unsubscribe throw
       unsubscribeSpy.mockImplementation(() => {
         throw new Error('Unsubscribe failed');
       });
 
       setup.setup();
 
-      // Should not throw
       setup.cleanup();
     });
 
     it('should work when called before setup', () => {
-      // Should not throw
       setup.cleanup();
       expect(unsubscribeSpy).not.toHaveBeenCalled();
     });

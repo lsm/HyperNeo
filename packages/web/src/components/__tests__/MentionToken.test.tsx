@@ -1,7 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for MentionToken Component
- */
 
 import { render, fireEvent } from '@testing-library/preact';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -67,7 +64,6 @@ describe('MentionToken', () => {
     it('falls back to mention.id when displayText is empty string', () => {
       const mention: ReferenceMention = { type: 'task', id: 't-99', displayText: '' };
       const { container } = render(<MentionToken mention={mention} />);
-      // empty string is falsy, falls back to id
       expect(container.textContent).toContain('t-99');
     });
 
@@ -323,10 +319,8 @@ describe('MentionToken', () => {
       const token = container.querySelector('[aria-label]');
       fireEvent.mouseEnter(token!);
       const tooltip = container.querySelector('[role="tooltip"]');
-      // No status span: inner container has only displayText + type:id children
       const innerContainer = tooltip?.querySelector('span');
       const childSpans = innerContainer?.querySelectorAll(':scope > span');
-      // Only two: displayText and type:id (no status span)
       expect(childSpans?.length).toBe(2);
     });
 

@@ -1,17 +1,3 @@
-/**
- * SpaceRuntime — Tick Loop Correctness Tests
- *
- * Covers tick loop behaviors NOT covered by the main space-runtime.test.ts:
- * - Tick picks up tasks from new workflow runs created between ticks
- * - Multiple ticks do not duplicate executors for the same run
- * - Tick processes multiple independent workflow runs in the same tick
- * - processCompletedTasks error isolation (one bad run doesn't starve others)
- * - Executor creation failure during rehydration is handled gracefully
- * - cleanupTerminalExecutors removes 'done' runs (not just cancelled)
- * - start()/stop() lifecycle: timer management, idempotent start, stop clears timer
- * - Tick spawns agents for tasks added to an existing run between ticks
- */
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -31,13 +17,7 @@ import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceWorkflow } from '@hyperneo/shared';
 
-// ---------------------------------------------------------------------------
-// DB helpers
-// ---------------------------------------------------------------------------
-
 function makeDb(): BunDatabase {
-  // Use in-memory SQLite — faster than file-based DB and avoids filesystem
-  // I/O contention that caused beforeEach hook timeouts in CI.
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
@@ -100,10 +80,6 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string, name: s
   ).run(agentId, spaceId, name, Date.now(), Date.now());
 }
 
-// ---------------------------------------------------------------------------
-// Fixture helpers
-// ---------------------------------------------------------------------------
-
 function buildLinearWorkflow(
   spaceId: string,
   workflowManager: SpaceWorkflowManager,
@@ -129,10 +105,6 @@ function buildLinearWorkflow(
     completionAutonomyLevel: 3,
   });
 }
-
-// ---------------------------------------------------------------------------
-// Mock TaskAgentManager factory
-// ---------------------------------------------------------------------------
 
 function makeMockTaskAgentManager(
   taskRepo: SpaceTaskRepository,
@@ -232,24 +204,12 @@ function makeMockTaskAgentManager(
       overrides.injectRuntimeRecoveryMessage ??
       (async (sessionId: string) => `runtime-nag:${sessionId}`),
     getAgentSessionById: overrides.getAgentSessionById ?? (() => null),
-    // PR 3/5 added a post-approval awareness injection via
-    // `injectIntoTaskAgent`. The tick-loop mock is not exercising delivery,
-    // so return a trivial "not injected" result — production treats this as
-    // best-effort anyway.
     injectIntoTaskAgent: async () => ({ injected: false, reason: 'no-session' }),
     _spawned: spawned,
   };
 }
 
-// ---------------------------------------------------------------------------
-// Test suite
-// ---------------------------------------------------------------------------
-
 describe('SpaceRuntime — tick loop correctness', () => {
-  // Covers the per-tick scheduling/dispatch loop and approval → router
-  // hand-off. The legacy approval→done dispatch path was removed in PR 4/5;
-  // `dispatchPostApproval` is the only route now.
-
   let db: BunDatabase;
 
   let workflowRunRepo: SpaceWorkflowRunRepository;
@@ -330,7 +290,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
     seedSpaceRow(db, SPACE_ID_2, '/tmp/tick-ws-2');
     seedAgentRow(db, AGENT_PLANNER, SPACE_ID, 'Planner');
     seedAgentRow(db, AGENT_CODER, SPACE_ID, 'Coder');
-    // Seed agents in second space too
     seedAgentRow(db, `${AGENT_PLANNER}-s2`, SPACE_ID_2, 'Planner');
     seedAgentRow(db, `${AGENT_CODER}-s2`, SPACE_ID_2, 'Coder');
 
@@ -380,10 +339,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
     };
   }
 
-  // -------------------------------------------------------------------------
-  // Tick picks up new tasks with workflow runs
-  // -------------------------------------------------------------------------
-
   describe('tick picks up new tasks from workflow runs', () => {
     test('tick spawns agent for task created by startWorkflowRun before first tick', async () => {
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
@@ -396,7 +351,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
       const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
       expect(tasks[0].status).toBe('open');
 
-      // First tick picks up the pending task and spawns agent
       await rt.executeTick();
 
       expect(tam._spawned).toContain(tasks[0].id);
@@ -413,17 +367,14 @@ describe('SpaceRuntime — tick loop correctness', () => {
       });
       const rt = new SpaceRuntime(buildConfig(tam));
 
-      // First tick — no runs yet
       await rt.executeTick();
       expect(tam._spawned).toHaveLength(0);
 
-      // Create a workflow run between ticks
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
       ]);
       const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Late Run');
 
-      // Second tick picks up the new run's task
       await rt.executeTick();
 
       expect(tam._spawned).toContain(tasks[0].id);
@@ -445,12 +396,10 @@ describe('SpaceRuntime — tick loop correctness', () => {
       ]);
       const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-      // First tick spawns agent for first task
       await rt.executeTick();
       expect(tam._spawned).toContain(tasks[0].id);
       const firstSpawnCount = tam._spawned.length;
 
-      // Simulate a new task being added to the same run (e.g., by channel activation)
       const newTask = taskRepo.createTask({
         spaceId: SPACE_ID,
         title: 'Code',
@@ -466,17 +415,12 @@ describe('SpaceRuntime — tick loop correctness', () => {
         status: 'pending',
       });
 
-      // Second tick picks up the new task
       await rt.executeTick();
       expect(tam._spawned.length).toBeGreaterThan(firstSpawnCount);
       expect(taskRepo.getTask(tasks[0].id)!.status).toBe('in_progress');
       expect(taskRepo.getTask(newTask.id)!.status).toBe('archived');
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Multiple ticks do not duplicate executors
-  // -------------------------------------------------------------------------
 
   describe('multiple ticks do not duplicate executors', () => {
     test('executor count stays 1 after multiple ticks for the same active run', async () => {
@@ -526,10 +470,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Tick skips already-running tasks
-  // -------------------------------------------------------------------------
-
   describe('tick skips already-running tasks', () => {
     test('in_progress task with alive agent is not re-spawned', async () => {
       let spawnCount = 0;
@@ -549,11 +489,9 @@ describe('SpaceRuntime — tick loop correctness', () => {
       ]);
       await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-      // First tick spawns
       await rt.executeTick();
       expect(spawnCount).toBe(1);
 
-      // Subsequent ticks skip alive agent
       await rt.executeTick();
       await rt.executeTick();
       await rt.executeTick();
@@ -561,16 +499,8 @@ describe('SpaceRuntime — tick loop correctness', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // processCompletedTasks error isolation
-  // -------------------------------------------------------------------------
-
   describe('processCompletedTasks error isolation', () => {
     test('error in one run does not prevent processing the other run', async () => {
-      // Strategy: create two runs with the real spaceManager, then build a
-      // fresh runtime with a faulty spaceManager that throws for SPACE_ID.
-      // The fresh runtime rehydrates both runs on first tick, then
-      // processRunTick throws for run1 but succeeds for run2.
       const spawned: string[] = [];
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
         isTaskAgentAlive: (taskId: string) => {
@@ -585,7 +515,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
         },
       });
 
-      // Create runs with real spaceManager so startWorkflowRun succeeds
       const realRt = new SpaceRuntime(buildConfig(tam));
       const wf1 = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
@@ -596,7 +525,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
       await realRt.startWorkflowRun(SPACE_ID, wf1.id, 'Failing Run');
       const { tasks: tasks2 } = await realRt.startWorkflowRun(SPACE_ID_2, wf2.id, 'Good Run');
 
-      // Now build a fresh runtime with a faulty spaceManager
       const faultySpaceManager = {
         getSpace: async (id: string) => {
           if (id === SPACE_ID) {
@@ -611,17 +539,13 @@ describe('SpaceRuntime — tick loop correctness', () => {
         spaceManager: faultySpaceManager as never,
       });
 
-      // executeTick rehydrates both runs, then processRunTick throws for run1
-      // but continues to process run2. Re-throws the first error at the end.
       await expect(faultyRt.executeTick()).rejects.toThrow('Simulated DB corruption');
 
-      // The good run's task was spawned successfully despite the sibling error
       expect(spawned).toContain(tasks2[0].id);
       expect(taskRepo.getTask(tasks2[0].id)!.status).toBe('in_progress');
     });
 
     test('first error is re-thrown after all runs are processed', async () => {
-      // Create two runs with real spaceManager first
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
       const realRt = new SpaceRuntime(buildConfig(tam));
 
@@ -634,7 +558,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
       await realRt.startWorkflowRun(SPACE_ID, wf1.id, 'Run 1');
       await realRt.startWorkflowRun(SPACE_ID, wf2.id, 'Run 2');
 
-      // Build fresh runtime with getSpace that always throws
       const faultySpaceManager = {
         getSpace: async () => {
           throw new Error('getSpace always fails');
@@ -646,18 +569,11 @@ describe('SpaceRuntime — tick loop correctness', () => {
         spaceManager: faultySpaceManager as never,
       });
 
-      // Both runs error, but executeTick re-throws (first error only)
-      // after processing all runs — it doesn't bail on the first error.
       await expect(faultyRt.executeTick()).rejects.toThrow('getSpace always fails');
 
-      // Both executors are still in the map (error doesn't remove them)
       expect(faultyRt.executorCount).toBe(2);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Executor creation failure during rehydration
-  // -------------------------------------------------------------------------
 
   describe('rehydration graceful failure handling', () => {
     test('rehydration skips run whose workflow was deleted (no throw)', async () => {
@@ -665,7 +581,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
         { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
       ]);
 
-      // Create a run directly via repo
       const run = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
         workflowId: workflow.id,
@@ -673,11 +588,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-      // Delete the workflow — rehydration should skip this run
-      // Simulate a workflow deleted out from under an active run — a legacy
-      // orphan the deletion guard (RFC §4 #3) now prevents in normal operation,
-      // but which rehydration must still tolerate. Bypass the manager guard by
-      // deleting at the repo level (no active-run check).
       new SpaceWorkflowRepository(db).deleteWorkflow(workflow.id);
 
       const freshRt = new SpaceRuntime(buildConfig());
@@ -690,7 +600,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
         { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
       ]);
 
-      // Create a run that will be rehydrated
       const run = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
         workflowId: workflow.id,
@@ -698,7 +607,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-      // Also create a task for it
       taskRepo.createTask({
         spaceId: SPACE_ID,
         title: 'Plan',
@@ -709,11 +617,9 @@ describe('SpaceRuntime — tick loop correctness', () => {
 
       const freshRt = new SpaceRuntime(buildConfig());
 
-      // First tick triggers rehydration
       await freshRt.executeTick();
       expect(freshRt.executorCount).toBe(1);
 
-      // Second tick does NOT re-rehydrate
       await freshRt.executeTick();
       expect(freshRt.executorCount).toBe(1);
     });
@@ -748,10 +654,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(freshRt.getExecutor(run2.id)).toBeDefined();
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Layer 1 runtime anti-stuck recovery
-  // -------------------------------------------------------------------------
 
   describe('Layer 1 runtime anti-stuck recovery', () => {
     test('nags only the stale agent in a multi-agent node', async () => {
@@ -1481,16 +1383,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(state.failedNudgeCount).toBe(0);
     });
 
-    // -------------------------------------------------------------------------
-    // lastActivityAt-driven detection (task #943)
-    // -------------------------------------------------------------------------
-
     test('does NOT nag an actively-working agent whose lastActivityAt is fresh', async () => {
-      // Reproduces the observed false-stall: an in_progress node whose
-      // startedAt and last SDK message are 20min stale (the OLD signals), but
-      // whose lastActivityAt is fresh because the agent is pushing commits /
-      // making tool calls / exchanging messages. The stall detector must key
-      // off lastActivityAt and NOT nag an agent that is plainly working.
       const nags: Array<{ sessionId: string; message: string }> = [];
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
         isSessionAlive: () => true,
@@ -1511,9 +1404,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
         agentSessionId: 'session:actively-working',
         startedAt: Date.now() - 20 * 60_000,
       });
-      // Old SDK message — under the pre-lastActivityAt logic this alone would nag.
       saveAssistantMessage('session:actively-working', { minutesAgo: 20, toolUse: true });
-      // Fresh activity signal — agent just tooled/pushed/messaged.
       nodeExecutionRepo.touchLastActivity(execution.id, Date.now());
 
       await rt.executeTick();
@@ -1523,9 +1414,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
     });
 
     test('nags a genuinely-stuck agent whose lastActivityAt is stale', async () => {
-      // Counterpoint: when lastActivityAt IS stale (no tool calls, no messages,
-      // no commits for 20min) the detector must still fire — lastActivityAt is
-      // authoritative precisely because it is the real-activity signal.
       const nags: Array<{ sessionId: string; message: string }> = [];
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
         isSessionAlive: () => true,
@@ -1547,7 +1435,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
         startedAt: Date.now() - 20 * 60_000,
       });
       saveAssistantMessage('session:stuck', { minutesAgo: 20, toolUse: true });
-      // Stale activity — last genuine work was 20min ago.
       nodeExecutionRepo.touchLastActivity(execution.id, Date.now() - 20 * 60_000);
 
       await rt.executeTick();
@@ -1558,11 +1445,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
     });
 
     test('does NOT nag when a recent SDK message is newer than a stale lastActivityAt', async () => {
-      // lastActivityAt is stale (an old tool call 20min ago) but a fresh SDK
-      // message shows the agent just made progress. The detector must take the
-      // NEWEST applicable timestamp — a stale lastActivityAt must not shadow a
-      // newer SDK message, or the agent gets nagged/restarted despite just
-      // having produced output. (Regression guard for the ??-chain ordering bug.)
       const nags: Array<{ sessionId: string; message: string }> = [];
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
         isSessionAlive: () => true,
@@ -1583,7 +1465,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
         agentSessionId: 'session:recent-sdk',
         startedAt: Date.now() - 20 * 60_000,
       });
-      // Stale activity, fresh SDK message.
       nodeExecutionRepo.touchLastActivity(execution.id, Date.now() - 20 * 60_000);
       saveAssistantMessage('session:recent-sdk', { minutesAgo: 0, toolUse: true });
 
@@ -1593,10 +1474,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('in_progress');
     });
   });
-
-  // -------------------------------------------------------------------------
-  // cleanupTerminalExecutors for 'done' runs
-  // -------------------------------------------------------------------------
 
   describe('cleanupTerminalExecutors', () => {
     test('removes executor for done run', async () => {
@@ -1608,7 +1485,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
       const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
       expect(rt.executorCount).toBe(1);
 
-      // Mark run as done externally
       workflowRunRepo.transitionStatus(run.id, 'done');
 
       await rt.executeTick();
@@ -1720,7 +1596,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
         taskRepo.updateTask(task.id, { status: 'done' });
       }
 
-      // Delete the run record entirely
       db.prepare('DELETE FROM space_workflow_runs WHERE id = ?').run(run.id);
 
       await rt.executeTick();
@@ -1745,7 +1620,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
       const { run: run1 } = await rt.startWorkflowRun(SPACE_ID, wf1.id, 'Run 1');
       const { run: run2 } = await rt.startWorkflowRun(SPACE_ID, wf2.id, 'Run 2');
 
-      // Cancel run1, leave run2 in_progress
       workflowRunRepo.transitionStatus(run1.id, 'cancelled');
 
       await rt.executeTick();
@@ -1755,10 +1629,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(rt.executorCount).toBe(1);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Approval-gate and success-result nag suppression
-  // -------------------------------------------------------------------------
 
   describe('approval-gate and success-result nag suppression', () => {
     test('does not nag when task is pending task_completion approval', async () => {
@@ -1782,7 +1652,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
         agentSessionId: 'session:awaiting-approval',
         startedAt: Date.now() - 20 * 60_000,
       });
-      // Mark task as awaiting approval
       taskRepo.updateTask(tasks[0].id, {
         status: 'review',
         pendingCheckpointType: 'task_completion',
@@ -1825,10 +1694,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Multiple independent workflow runs processed in same tick
-  // -------------------------------------------------------------------------
-
   describe('multiple independent workflow runs in same tick', () => {
     test('tick spawns agents for tasks across multiple runs', async () => {
       db.prepare(`UPDATE spaces SET max_concurrent_tasks = ? WHERE id = ?`).run(2, SPACE_ID);
@@ -1851,7 +1716,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
       const { tasks: tasks1 } = await rt.startWorkflowRun(SPACE_ID, wf1.id, 'Run 1');
       const { tasks: tasks2 } = await rt.startWorkflowRun(SPACE_ID, wf2.id, 'Run 2');
 
-      // Single tick spawns agents for both runs
       await rt.executeTick();
 
       expect(tam._spawned).toContain(tasks1[0].id);
@@ -1877,14 +1741,11 @@ describe('SpaceRuntime — tick loop correctness', () => {
       const { run: run1 } = await rt.startWorkflowRun(SPACE_ID, wf1.id, 'Run 1');
       const { run: run2 } = await rt.startWorkflowRun(SPACE_ID, wf2.id, 'Run 2');
 
-      // Tick to spawn both
       await rt.executeTick();
       expect(rt.executorCount).toBe(2);
 
-      // Complete run1 externally
       workflowRunRepo.transitionStatus(run1.id, 'done');
 
-      // Next tick cleans up run1, keeps run2
       await rt.executeTick();
 
       expect(rt.getExecutor(run1.id)).toBeUndefined();
@@ -1893,13 +1754,8 @@ describe('SpaceRuntime — tick loop correctness', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // start() / stop() lifecycle
-  // -------------------------------------------------------------------------
-
   describe('start() / stop() lifecycle', () => {
     test('start() is idempotent — calling twice does not create duplicate timers', async () => {
-      // Intercept setInterval to count how many timers are created
       const origSetInterval = globalThis.setInterval;
       let intervalCount = 0;
       globalThis.setInterval = ((...args: Parameters<typeof setInterval>) => {
@@ -1910,9 +1766,8 @@ describe('SpaceRuntime — tick loop correctness', () => {
       try {
         const rt = new SpaceRuntime(buildConfig());
         rt.start();
-        rt.start(); // second call should be no-op
+        rt.start();
 
-        // Only one interval should have been created
         expect(intervalCount).toBe(1);
         await rt.stop();
       } finally {
@@ -1921,7 +1776,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
     });
 
     test('stop() clears the timer — clearInterval is called', async () => {
-      // Use a deterministic approach: intercept clearInterval to verify it's called
       const origClearInterval = globalThis.clearInterval;
       let clearCalled = false;
       globalThis.clearInterval = ((...args: Parameters<typeof clearInterval>) => {
@@ -1944,7 +1798,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
     test('stop() when not started is a no-op', async () => {
       const rt = new SpaceRuntime(buildConfig());
 
-      // Should not throw
       await expect(rt.stop()).resolves.toBeUndefined();
     });
 
@@ -1964,7 +1817,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
 
         await rt.stop();
 
-        // Restart — should create a new interval
         rt.start();
         expect(intervalCount).toBe(2);
 
@@ -1974,10 +1826,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
       }
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Spawn failure handling
-  // -------------------------------------------------------------------------
 
   describe('tick handles spawn failure gracefully', () => {
     test('spawn failure for one task does not prevent spawning another task', async () => {
@@ -2003,7 +1851,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
       });
       const rt = new SpaceRuntime(buildConfig(tam));
 
-      // Create two separate workflow runs so tasks are processed in order
       const wf1 = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
       ]);
@@ -2014,13 +1861,10 @@ describe('SpaceRuntime — tick loop correctness', () => {
       const { tasks: tasks1 } = await rt.startWorkflowRun(SPACE_ID, wf1.id, 'Run 1');
       const { tasks: tasks2 } = await rt.startWorkflowRun(SPACE_ID, wf2.id, 'Run 2');
 
-      // Tick — first spawn fails, second should succeed
       await rt.executeTick();
 
       expect(callCount).toBe(2);
-      // First task failed to spawn — run task remains in_progress while execution retries stay pending
       expect(taskRepo.getTask(tasks1[0].id)!.status).toBe('in_progress');
-      // Second task should have been spawned successfully
       expect(spawned).toContain(tasks2[0].id);
       expect(taskRepo.getTask(tasks2[0].id)!.status).toBe('in_progress');
     });
@@ -2049,24 +1893,18 @@ describe('SpaceRuntime — tick loop correctness', () => {
       ]);
       await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-      // First tick — spawn fails, task stays open
       await rt.executeTick();
       const tasks = taskRepo.listByWorkflowRun(workflowRunRepo.listBySpace(SPACE_ID)[0].id);
       expect(tasks[0].status).toBe('in_progress');
       const runExecsAfterFail = nodeExecutionRepo.listByWorkflowRun(tasks[0].workflowRunId!);
       expect(runExecsAfterFail.some((exec) => exec.status === 'pending')).toBe(true);
 
-      // Second tick — spawn succeeds (failOnce is now false)
       await rt.executeTick();
       const updated = taskRepo.getTask(tasks[0].id)!;
       expect(updated.status).toBe('in_progress');
       expect(updated.taskAgentSessionId).toBeTruthy();
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Race condition: rehydration + fresh executor from startWorkflowRun
-  // -------------------------------------------------------------------------
 
   describe('rehydration does not duplicate executors from startWorkflowRun', () => {
     test('startWorkflowRun before first tick — rehydration skips already-registered executor', async () => {
@@ -2080,8 +1918,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
       ]);
       const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
 
-      // startWorkflowRun already registered the executor.
-      // First executeTick triggers rehydration — should NOT duplicate.
       expect(rt.executorCount).toBe(1);
 
       await rt.executeTick();
@@ -2089,10 +1925,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(rt.getExecutor(run.id)).toBeDefined();
     });
   });
-
-  // -------------------------------------------------------------------------
-  // executeTick rehydration happens exactly once
-  // -------------------------------------------------------------------------
 
   describe('rehydration happens exactly once', () => {
     test('rehydrate is called exactly once across multiple ticks', async () => {
@@ -2109,16 +1941,10 @@ describe('SpaceRuntime — tick loop correctness', () => {
       await rt.executeTick();
       await rt.executeTick();
 
-      // TaskAgentManager.rehydrate() called exactly once (on the first tick)
       expect(rehydrateCount).toBe(1);
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Auto-resume of rate/usage-limited tasks across daemon restarts
-  // (recoverRateLimitedTasks). The in-memory watchdog cooldown does not survive
-  // a restart; this tick sweep is driven off the persisted restrictions.resetAt.
-  // -------------------------------------------------------------------------
   describe('auto-resume of rate/usage-limited tasks', () => {
     test('restores a paused task whose resetAt has passed (cross-restart backstop)', async () => {
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
@@ -2135,7 +1961,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
         restrictions: {
           type: 'usage_limit',
           limit: 'parsed-reset',
-          resetAt: Date.now() - 60_000, // reset already passed
+          resetAt: Date.now() - 60_000,
           sessionRole: 'worker',
         },
       });

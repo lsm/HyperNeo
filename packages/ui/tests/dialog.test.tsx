@@ -33,14 +33,12 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.useRealTimers();
-  // Clean up portal root
   const portalRoot = document.getElementById('headlessui-portal-root');
   if (portalRoot) {
     portalRoot.remove();
   }
 });
 
-// Dialog renders through a Portal, so we query via document.body
 function getDialog() {
   return document.querySelector('[role="dialog"]');
 }
@@ -57,7 +55,6 @@ describe('Dialog', () => {
         <div>Dialog content</div>
       </Dialog>
     );
-    // Portal mounts asynchronously; give it a tick
     await act(async () => {});
     expect(getDialog()).toBeNull();
   });
@@ -303,11 +300,9 @@ describe('Dialog', () => {
         </Dialog>
       );
       await act(async () => {});
-      // Advance past setTimeout(0) in useOutsideClick
       await act(async () => {
         vi.advanceTimersByTime(10);
       });
-      // Click outside the panel
       await act(async () => {
         document.body.dispatchEvent(
           new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
@@ -331,7 +326,6 @@ describe('Dialog', () => {
     );
     await act(async () => {});
 
-    // Transition open=false -> open=true triggers enter branch
     await act(async () => {
       rerender(
         <Dialog open={true} onClose={onClose} transition>
@@ -361,7 +355,6 @@ describe('Dialog', () => {
       raf.flush();
     });
 
-    // Transition open=true -> open=false triggers leave branch
     await act(async () => {
       rerender(
         <Dialog open={false} onClose={onClose} transition unmount={false}>
@@ -373,17 +366,13 @@ describe('Dialog', () => {
       raf.flush();
     });
 
-    // unmount=false keeps it in DOM
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
   });
 
   it('should accept initialFocus prop', async () => {
-    // This test verifies that the Dialog accepts the initialFocus prop
-    // The actual focus behavior is tested in use-focus-trap.test.tsx
     const onClose = vi.fn();
     const initialFocusRef = { current: null as HTMLInputElement | null };
 
-    // Should not throw when passing initialFocus
     const { container } = render(
       <Dialog open={true} onClose={onClose} initialFocus={initialFocusRef}>
         <DialogPanel>
@@ -408,7 +397,6 @@ describe('Dialog', () => {
     );
     await act(async () => {});
 
-    // In demo mode, aria-modal should not be set (undefined becomes null when getting attribute)
     const dialog = getDialog();
     expect(dialog?.getAttribute('aria-modal')).toBeNull();
   });
@@ -473,7 +461,6 @@ describe('Dialog', () => {
     if (panel) {
       fireEvent.click(panel);
     }
-    // Parent click should not be called because click is stopped
     expect(parentClick).not.toHaveBeenCalled();
   });
 });

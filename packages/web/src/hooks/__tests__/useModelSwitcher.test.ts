@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for useModelSwitcher Hook
- *
- * Tests model information loading and switching for a session.
- */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/preact';
@@ -19,7 +14,6 @@ import {
   useFilteredModelsForPicker,
 } from '../useModelSwitcher.ts';
 
-// Mock the connection manager
 const mockGetHubIfConnected = vi.fn();
 
 vi.mock('../../lib/connection-manager', () => ({
@@ -28,9 +22,7 @@ vi.mock('../../lib/connection-manager', () => ({
   },
 }));
 
-// Mock connectionState signal — default to 'connected' so loadModelInfo runs
 const { mockConnectionState } = vi.hoisted(() => {
-  // vi.hoisted runs before imports, so we inline a minimal signal-like object
   const obj = { value: 'connected' };
   return { mockConnectionState: obj };
 });
@@ -39,7 +31,6 @@ vi.mock('../../lib/state', () => ({
   connectionState: mockConnectionState,
 }));
 
-// Mock toast
 const mockToastSuccess = vi.fn();
 const mockToastError = vi.fn();
 const mockToastInfo = vi.fn();
@@ -208,7 +199,6 @@ describe('useModelSwitcher', () => {
     });
 
     it('keeps GLM models when GLM is the active provider even if not authenticated', () => {
-      // Avoids confusing the user about an already-active GLM session.
       const auth = new Map([['glm', { id: 'glm', isAuthenticated: false }]]);
       const filtered = filterModelsForPicker([...glmModels, anthropicModel], auth, 'glm');
       expect(filtered.map((m) => m.id).sort()).toEqual(['glm-5', 'glm-5.2', 'sonnet']);
@@ -566,7 +556,6 @@ describe('useModelSwitcher', () => {
       });
 
       const families = result.current.availableModels.map((m) => m.family);
-      // Should be sorted: opus, sonnet, haiku, glm
       expect(families).toEqual(['opus', 'sonnet', 'haiku', 'glm']);
     });
 
@@ -585,8 +574,6 @@ describe('useModelSwitcher', () => {
       await waitFor(() => {
         expect(result.current.loading).toBe(false);
       });
-
-      // Error should be handled gracefully (no throw)
     });
 
     it('should handle no hub connection', async () => {
@@ -594,7 +581,6 @@ describe('useModelSwitcher', () => {
 
       const { result } = renderHook(() => useModelSwitcher('session-1'));
 
-      // Should handle gracefully
       await waitFor(() => {
         expect(result.current.loading).toBe(false);
       });
@@ -744,7 +730,6 @@ describe('useModelSwitcher', () => {
         expect(result.current.loading).toBe(false);
       });
 
-      // Now set mock to return null for the switch call
       mockGetHubIfConnected.mockReturnValue(null);
 
       await act(async () => {
@@ -792,7 +777,6 @@ describe('useModelSwitcher', () => {
     });
 
     it('should set switching state during switch', async () => {
-      // Track switching states throughout the switch operation
       const switchingStates: boolean[] = [];
 
       const mockHub = {
@@ -817,7 +801,6 @@ describe('useModelSwitcher', () => {
         expect(result.current.loading).toBe(false);
       });
 
-      // Initial state should be not switching
       expect(result.current.switching).toBe(false);
       switchingStates.push(result.current.switching);
 
@@ -825,11 +808,9 @@ describe('useModelSwitcher', () => {
         await result.current.switchModel({ id: 'claude-opus-4-5-20251101', provider: 'anthropic' });
       });
 
-      // After switch completes, should not be switching
       expect(result.current.switching).toBe(false);
       switchingStates.push(result.current.switching);
 
-      // Verify the switch was called
       expect(mockHub.request).toHaveBeenCalledWith('session.model.switch', {
         sessionId: 'session-1',
         model: 'claude-opus-4-5-20251101',
@@ -875,8 +856,6 @@ describe('useModelSwitcher', () => {
 
   describe('switchModel - cross-provider', () => {
     it('should match currentModelInfo by provider after cross-provider switch', async () => {
-      // Two providers both expose claude-sonnet-4-20250514; the post-switch find must
-      // prefer the entry for the provider that was actually switched to.
       const mockHub = {
         onEvent: vi.fn(() => () => {}),
         request: vi
@@ -915,14 +894,12 @@ describe('useModelSwitcher', () => {
       });
 
       await act(async () => {
-        // Switch to the copilot variant
         await result.current.switchModel({
           id: 'claude-sonnet-4-20250514',
           provider: 'anthropic-copilot',
         });
       });
 
-      // Should resolve to the copilot entry, not the anthropic one
       expect(result.current.currentModelInfo?.provider).toBe('anthropic-copilot');
       expect(result.current.currentModelInfo?.name).toBe('Sonnet (Copilot)');
     });
@@ -953,7 +930,6 @@ describe('useModelSwitcher', () => {
       });
 
       expect(mockToastError).toHaveBeenCalledWith('Model provider information is missing');
-      // Should not have made an RPC call for the switch
       expect(mockHub.request).not.toHaveBeenCalledWith('session.model.switch', expect.anything());
     });
   });
@@ -964,13 +940,11 @@ describe('useModelSwitcher', () => {
         onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
-          // First load (mount)
           .mockResolvedValueOnce({
             currentModel: 'claude-sonnet-4-20250514',
             modelInfo: null,
           })
           .mockResolvedValueOnce({ models: [] })
-          // Second load (reload)
           .mockResolvedValueOnce({
             currentModel: 'claude-opus-4-5-20251101',
             modelInfo: { id: 'claude-opus-4-5-20251101', name: 'Opus' },
@@ -1001,13 +975,11 @@ describe('useModelSwitcher', () => {
         onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
-          // First load (session-1)
           .mockResolvedValueOnce({
             currentModel: 'model-1',
             modelInfo: null,
           })
           .mockResolvedValueOnce({ models: [] })
-          // Second load (session-2)
           .mockResolvedValueOnce({
             currentModel: 'model-2',
             modelInfo: null,
@@ -1040,7 +1012,6 @@ describe('useModelSwitcher', () => {
         onEvent: vi.fn(() => () => {}),
         request: vi
           .fn()
-          // First load (mount)
           .mockResolvedValueOnce({
             currentModel: 'model-1',
             modelInfo: null,
@@ -1048,7 +1019,6 @@ describe('useModelSwitcher', () => {
           .mockResolvedValueOnce({
             models: [{ id: 'model-1', display_name: 'Model 1', description: '' }],
           })
-          // Second load (after providers.changed)
           .mockResolvedValueOnce({
             currentModel: 'model-1',
             modelInfo: null,
@@ -1070,9 +1040,7 @@ describe('useModelSwitcher', () => {
 
       expect(result.current.availableModels.length).toBe(1);
 
-      // Simulate providers.changed event by invoking the registered handler
       const eventHandler = mockHub.onEvent.mock.results[0]?.value;
-      // onEvent returns an unsubscribe function; the handler is the second arg
       const registeredHandler = mockHub.onEvent.mock.calls.find(
         (call) => call[0] === 'providers.changed'
       )?.[1];
@@ -1217,7 +1185,6 @@ describe('useModelSwitcher', () => {
         expect(result.current.loading).toBe(false);
       });
 
-      // Server-provided alias is used directly
       expect(result.current.availableModels[0].alias).toBe('copilot-anthropic-opus');
     });
   });
@@ -1253,10 +1220,6 @@ describe('mapRawModelsToModelInfos', () => {
     expect(result[0].provider).toBe('anthropic');
   });
 
-  // Regression: when the backend omits the provider field on a non-Anthropic
-  // model ID (e.g. due to a stale cache or env-leak that confuses the
-  // AnthropicProvider), the FE must NOT lump it under 'anthropic'. Infer the
-  // provider from the model ID instead.
   it('infers glm provider when backend omits the provider field for glm-* ids', () => {
     const result = mapRawModelsToModelInfos([
       { id: 'glm-5', display_name: 'GLM-5', description: '' },
@@ -1290,9 +1253,6 @@ describe('mapRawModelsToModelInfos', () => {
     expect(result[0].thinkingModes).toBe('granular');
   });
 
-  // Regression for review feedback on PR #1925: the ID-inference fallback
-  // must mirror the daemon's `inferProviderForModel` so frontend grouping
-  // never disagrees with backend routing.
   it('routes openai/gpt-* refs to openrouter, not anthropic-codex', () => {
     const result = mapRawModelsToModelInfos([
       { id: 'openai/gpt-5.4', display_name: 'GPT-5.4 (OR)', description: '' },
@@ -1324,9 +1284,6 @@ describe('mapRawModelsToModelInfos', () => {
     expect(result[0].provider).toBe('anthropic');
   });
 
-  // Regression: OpenRouter IDs with tier suffixes carry both '/' and ':'
-  // (e.g. `google/gemma-4-31b:free`). Slash-routing must precede the
-  // generic colon→ollama fallback so these stay under OpenRouter.
   it('routes slash refs with colon tier suffix to openrouter, not ollama', () => {
     const result = mapRawModelsToModelInfos([
       { id: 'google/gemma-4-31b:free', display_name: 'Gemma 4 31B', description: '' },
@@ -1387,7 +1344,6 @@ describe('mapRawModelsToModelInfos', () => {
   });
 });
 
-// Helper to create a minimal ModelInfo
 function makeModel(id: string, provider: string) {
   return {
     id,
@@ -1402,7 +1358,6 @@ function makeModel(id: string, provider: string) {
   };
 }
 
-// Helper to create a ProviderAuthStatus map entry
 function makeAuth(id: string, isAuthenticated: boolean, needsRefresh = false) {
   return { id, displayName: id, isAuthenticated, needsRefresh };
 }
@@ -1432,9 +1387,8 @@ describe('filterModelsForPicker', () => {
     const result = filterModelsForPicker(
       [anthropicModel, copilotModel],
       authMap,
-      'anthropic-copilot' // current provider
+      'anthropic-copilot'
     );
-    // Both should appear: anthropic (not in map = optimistic), copilot (current)
     expect(result).toHaveLength(2);
   });
 
@@ -1453,17 +1407,13 @@ describe('filterModelsForPicker', () => {
     const result = filterModelsForPicker(
       [anthropicModel, copilotModel, codexModel],
       authMap,
-      'anthropic' // current: unauthenticated but must show
+      'anthropic'
     );
-    // anthropic = current (keep), copilot = unauth+not current (hide), codex = auth (keep)
     expect(result.map((m) => m.provider)).toEqual(['anthropic', 'anthropic-codex']);
   });
 
   it('shows provider absent from auth map optimistically', () => {
-    const authMap = new Map([
-      ['anthropic', makeAuth('anthropic', true)],
-      // 'anthropic-copilot' not in map
-    ]);
+    const authMap = new Map([['anthropic', makeAuth('anthropic', true)]]);
     const result = filterModelsForPicker([anthropicModel, copilotModel], authMap);
     expect(result).toHaveLength(2);
   });

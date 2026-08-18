@@ -1,11 +1,3 @@
-/**
- * Global Spotlight-style palette.
- *
- * Cmd+K opens command mode. Cmd+P opens quick-open mode for chats, messages,
- * tasks, and spaces. Both modes intentionally share one shell so search feels
- * global instead of page-local.
- */
-
 import type { Session, SpaceTask } from '@hyperneo/shared';
 import { Dialog, DialogBackdrop, DialogPanel } from '@hyperneo/ui';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';

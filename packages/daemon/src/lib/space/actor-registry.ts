@@ -59,12 +59,6 @@ export class SpaceActorRegistryAdapter {
       this.add(actors, actor);
     }
 
-    // Cache resolved (pinned) definitions per (workflowId, version). Runs of the same
-    // workflow can be pinned to different versions after an edit, so keying by workflowId
-    // alone would conflate them; runs that share a version still dedup here. Resolved lazily
-    // only for runs that have pending node-agent messages — the per-run execution loop below
-    // does not need the workflow, so deferring keeps actor lookup near per-workflow cost
-    // instead of scaling with the full versioned run history.
     const workflowByKey = new Map<string, SpaceWorkflow>();
     const definitionKey = (wfId: string, version: string | null): string =>
       `${wfId}:${version ?? 'head'}`;
@@ -264,9 +258,6 @@ function pendingWorkerActors(
   let nodes =
     workflow?.nodes.filter((node) => node.agents.some((agent) => agent.name === targetAgentName)) ??
     [];
-  // Scope to the pinned node when the queued row carries one, so two nodes
-  // reusing a slot don't both project through the first one. Explicit null check
-  // so an empty-string node id still pins.
   if (workflowNodeId != null) {
     nodes = nodes.filter((node) => node.id === workflowNodeId);
   }

@@ -16,7 +16,6 @@ function tableColumns(db: BunDatabase, name: string): string[] {
   );
 }
 
-/** Primary-key columns in declaration order (pk > 0). */
 function pkColumns(db: BunDatabase, name: string): string[] {
   return (db.prepare(`PRAGMA table_info(${name})`).all() as Array<{ name: string; pk: number }>)
     .filter((r) => r.pk > 0)
@@ -70,12 +69,10 @@ describe('Migration 180: space_workflow_definition_versions', () => {
       to: string;
       on_delete: string;
     }>;
-    // Cleans version rows when a whole Space is deleted (matches space_workflow_runs).
     const spaceFk = fks.find((f) => f.table === 'spaces');
     expect(spaceFk).toBeDefined();
     expect(spaceFk?.from).toBe('space_id');
     expect(spaceFk?.on_delete).toBe('CASCADE');
-    // No FK to space_workflows — individual workflow deletion must NOT erase pinned versions.
     expect(fks.find((f) => f.table === 'space_workflows')).toBeUndefined();
   });
 
@@ -106,7 +103,6 @@ describe('Migration 180: space_workflow_definition_versions', () => {
     ).n;
     expect(n).toBe(1);
 
-    // A distinct hash for the same workflow is a separate version row.
     ins.run('wf-1', 'hash-b', 'sp-1', '{}', 'update', 3);
     const n2 = (
       db.prepare(`SELECT COUNT(*) AS n FROM space_workflow_definition_versions`).get() as {

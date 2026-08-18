@@ -1,14 +1,4 @@
 #!/usr/bin/env bun
-/**
- * Offline maintenance for the HyperNeo message search FTS index.
- *
- * Usage:
- *   bun run scripts/maintain-message-search-db.ts [--db-path /path/to/daemon.db] [--yes]
- *
- * The daemon must be stopped unless --force is provided. The script checkpoints WAL,
- * creates a timestamped backup in the standard backups/ directory, optimizes FTS,
- * and optionally VACUUMs the database to reclaim disk space.
- */
 
 import { Database as BunDatabase } from 'bun:sqlite';
 import {
@@ -22,9 +12,6 @@ import {
 } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import { dirname, join, resolve } from 'node:path';
-// Relative import (the root scripts/ dir is not a consumer of @hyperneo/daemon,
-// so the package boundary can't be used here) — resolves the data dir through the
-// same migration/fallback path as the daemon.
 import { getDataDir } from '../packages/daemon/src/lib/data-dir.ts';
 
 const DEFAULT_DB_PATH = join(getDataDir(), 'data', 'daemon.db');

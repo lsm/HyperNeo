@@ -1,13 +1,3 @@
-/**
- * Tests for Auth RPC Handlers
- *
- * Tests the RPC handlers for authentication operations:
- * - auth.status - Get HyperNeo auth status
- * - auth.providers - List all providers with auth status
- * - auth.login - Initiate OAuth login for a provider
- * - auth.logout - Logout from a provider
- */
-
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import { setupAuthHandlers } from '../../../../src/lib/rpc-handlers/auth-handlers';
@@ -17,10 +7,8 @@ import { resetProviderRegistry, getProviderRegistry } from '../../../../src/lib/
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { KeychainUnavailableError } from '../../../../src/lib/credentials/credential-store';
 
-// Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
-// Mock AuthManager
 const mockAuthManager = {
   getAuthStatus: mock(async () => ({
     isAuthenticated: true,
@@ -28,7 +16,6 @@ const mockAuthManager = {
   })),
 };
 
-// Mock Provider for testing
 function createMockProvider(overrides: Partial<Provider> = {}): Provider {
   return {
     id: 'test-provider',
@@ -46,7 +33,6 @@ function createMockProvider(overrides: Partial<Provider> = {}): Provider {
   } as Provider;
 }
 
-// Pre-created mock providers for use in tests
 const mockProvider = createMockProvider();
 const mockProviderNoOAuth = createMockProvider({
   id: 'test-provider-no-oauth',
@@ -59,7 +45,6 @@ const mockProviderNoLogout = createMockProvider({
   logout: undefined,
 });
 
-// Helper to create a minimal mock MessageHub that captures handlers
 function createMockMessageHub(): {
   hub: MessageHub;
   handlers: Map<string, RequestHandler>;
@@ -97,14 +82,11 @@ describe('Auth RPC Handlers', () => {
   beforeEach(() => {
     messageHubData = createMockMessageHub();
 
-    // Reset provider registry
     resetProviderRegistry();
     registry = getProviderRegistry();
 
-    // Reset mocks
     mockAuthManager.getAuthStatus.mockClear();
 
-    // Setup handlers
     setupAuthHandlers(messageHubData.hub, mockAuthManager as unknown as AuthManager);
   });
 
@@ -135,12 +117,10 @@ describe('Auth RPC Handlers', () => {
     });
 
     it('returns providers with auth status', async () => {
-      // Use getProviderRegistry directly to ensure we get the same instance the handler uses
       const testRegistry = getProviderRegistry();
       const mockProvider = createMockProvider();
       testRegistry.register(mockProvider);
 
-      // Verify provider was registered
       expect(testRegistry.getAll()).toHaveLength(1);
 
       const handler = messageHubData.handlers.get('auth.providers');
@@ -209,35 +189,27 @@ describe('Auth RPC Handlers', () => {
     });
 
     it('re-initializes built-in providers that were unregistered', async () => {
-      // Simulate a built-in provider that was unregistered (e.g., user deleted it)
       resetProviderFactory();
       resetProviderRegistry();
       registry = getProviderRegistry();
 
-      // Register only a mock provider, not the real built-ins
       const mockProvider = createMockProvider({ id: 'anthropic-codex' });
       registry.register(mockProvider);
 
-      // Now unregister it to simulate deletion
       registry.unregister('anthropic-codex');
       expect(registry.has('anthropic-codex')).toBe(false);
 
-      // Re-setup handlers so they use the new registry
       setupAuthHandlers(messageHubData.hub, mockAuthManager as unknown as AuthManager);
 
       const handler = messageHubData.handlers.get('auth.login');
       expect(handler).toBeDefined();
 
-      // This would have failed before the fix because the provider was unregistered.
-      // With initializeProviders() called inside the handler, built-ins are restored.
       const result = (await handler!({ providerId: 'anthropic-codex' }, {})) as {
         success: boolean;
         authUrl?: string;
       };
 
-      // The real AnthropicToCodexBridgeProvider is registered by initializeProviders()
       expect(registry.has('anthropic-codex')).toBe(true);
-      // The real provider supports OAuth, so login should succeed
       expect(result.success).toBe(true);
     });
 
@@ -431,7 +403,6 @@ describe('Auth RPC Handlers', () => {
 
       expect(result.success).toBe(true);
       expect(mockProvider.logout).toHaveBeenCalled();
-      // Should still call removeCredentials to ensure no stale ghost rows remain
       expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
     });
 
@@ -488,10 +459,6 @@ describe('Auth RPC Handlers', () => {
     });
 
     it('surfaces keychain guidance when locked-read returns null and provider has no logout', async () => {
-      // getCredentials() returns null on locked Keychain even if a credential
-      // exists there. Without explicit handling, logout would claim env-managed
-      // and leave the Keychain credential intact. Attempt remove to surface
-      // unlock guidance.
       const credentialManager = {
         getCredentials: mock(async () => null),
         removeCredentials: mock(async () => {
@@ -526,12 +493,6 @@ describe('Auth RPC Handlers', () => {
     });
 
     it('surfaces keychain guidance when backend is keychain-fallback (round 7 fix)', async () => {
-      // Same scenario as the keychain-unavailable test above, but with the
-      // `keychain-fallback` backend — the round 7 fix extended the guard
-      // at auth-handlers.ts:249 to treat both backends as "Keychain
-      // unreachable". Without the fix this branch would report
-      // env-managed and leave the Keychain credential intact even though
-      // one provider had entered fallback mode.
       const credentialManager = {
         getCredentials: mock(async () => null),
         removeCredentials: mock(async () => {
@@ -728,7 +689,6 @@ describe('Auth RPC Handlers', () => {
         error?: string;
       };
 
-      // Keychain-only persistence: if keychain removal fails, do not claim logout succeeded.
       expect(result.success).toBe(false);
       expect(result.error).toContain('security unlock-keychain');
       expect(mockProvider.logout).toHaveBeenCalledTimes(1);
@@ -872,8 +832,6 @@ describe('Auth RPC Handlers', () => {
         mockAuthManager as unknown as AuthManager,
         credentialManager as never
       );
-      // Definitive failure: refreshToken returns false AND getCredentials returns null
-      // (provider cleared its own credentials via logout)
       const mockProvider = createMockProvider({
         refreshToken: mock(async () => false),
         getCredentials: mock(async () => null),
@@ -902,7 +860,6 @@ describe('Auth RPC Handlers', () => {
         mockAuthManager as unknown as AuthManager,
         credentialManager as never
       );
-      // Transient failure: refreshToken returns false BUT getCredentials still has tokens
       const mockProvider = createMockProvider({
         refreshToken: mock(async () => false),
         getCredentials: mock(async () => ({
@@ -921,7 +878,6 @@ describe('Auth RPC Handlers', () => {
       };
 
       expect(result.success).toBe(false);
-      // Row is removed first, then restored because provider still holds credentials
       expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
       expect(credentialManager.storeOAuthTokens).toHaveBeenCalledWith('test-provider', {
         type: 'oauth',

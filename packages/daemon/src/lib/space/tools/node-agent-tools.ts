@@ -1,32 +1,3 @@
-/**
- * Node Agent Tools — MCP tool handlers for node agent sub-sessions.
- *
- * Action tools:
- *   send_message            — channel-validated direct messaging
- *   save_artifact           — persist typed data to the workflow run artifact store
- *   create_standalone_task  — create a new task in the same Space
- *
- * Discovery tools (read-only):
- *   list_artifacts        — list artifacts for the current workflow run
- *   list_peers            — discover other group members with agent names and permitted channels
- *   list_reachable_agents — list all reachable agents/nodes grouped by proximity
- *   list_channels         — list all channels declared in the workflow
- *
- * Communication model:
- * - Node agents communicate via declared channel topology (`send_message`).
- * - `save_artifact` stores artifacts in the workflow run table as a generic
- *   SHAPE from a closed vocabulary (link/commit_set/check/metric/decision/note)
- *   with a freeform `kind` semantic hint. Save STRUCTURED FACTS as the matching
- *   shape (a PR/preview/doc → `link`, a review verdict → `decision`, CI/tests →
- *   `check`, current status → `note`), NOT a re-narration of the chat thread.
- *   Rolling status: `save_artifact({ shape: 'note', data: { text: '...' } })`.
- *
- * Design:
- * - Handlers are pure functions tested independently of any MCP server layer.
- * - Dependencies are injected via `NodeAgentToolsConfig`.
- * - Message delivery is delegated to AgentMessageRouter for topology validation.
- */
-
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
 import {
@@ -106,10 +77,6 @@ import type { WorkflowArtifactProfile } from '../runtime/artifact-profile';
 import type { WorkflowHookEngine } from '../runtime/workflow-hook-engine';
 import { wrapHandlerWithHooks } from '../runtime/workflow-hook-engine';
 
-/**
- * Decode the JSON payload from a ToolResult created by jsonResult().
- * Returns the parsed object or null if parsing fails.
- */
 function decodeToolResultPayload(result: ToolResult): Record<string, unknown> | null {
   try {
     const text = result.content?.[0]?.text;
@@ -122,171 +89,42 @@ function decodeToolResultPayload(result: ToolResult): Record<string, unknown> | 
   return null;
 }
 
-// Re-export for consumers that want the shared type
 export type { ToolResult };
 
 const log = new Logger('node-agent-tools');
 
-// ---------------------------------------------------------------------------
-// Config
-// ---------------------------------------------------------------------------
-
-/**
- * Dependencies injected into createNodeAgentToolHandlers().
- * All fields are required unless noted — the caller (TaskAgentManager) wires them up.
- */
 export interface NodeAgentToolsConfig {
-  /** Session ID of this node agent (used to exclude self from list_peers). */
   mySessionId: string;
-  /** Agent name of this node agent (e.g., 'coder', 'reviewer'). */
   myAgentName: string;
-  /**
-   * Optional agent name aliases that should be treated as equivalent to myAgentName for
-   * writer authorization checks (e.g., slot name + underlying agent name).
-   */
   myAgentNameAliases?: string[];
-  /** ID of the parent task (used for error messages). */
   taskId: string;
-  /** Space ID — used for event emission. */
   spaceId: string;
-  /**
-   * Pre-built channel resolver for this sub-session's topology.
-   * Created by TaskAgentManager at session spawn time from the workflow run config.
-   * An empty resolver (no channels) means send_message is unavailable for this session.
-   */
   channelResolver: ChannelResolver;
-  /** Workflow run ID — used to query node execution state. */
   workflowRunId: string;
-  /** Workflow node ID — used to query peer executions on the same node. */
   workflowNodeId: string;
-  /**
-   * Node execution repository for list_peers and send_message peer resolution.
-   */
   nodeExecutionRepo: NodeExecutionRepository;
-  /**
-   * InternalEventBus<DaemonInternalEventMap> instance for emitting task update events.
-   * Optional — if omitted, no events are emitted (e.g. in unit tests that don't need them).
-   */
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
-  /**
-   * Optional AgentMessageRouter for unified message delivery.
-   * send_message delegates all routing to AgentMessageRouter.
-   */
   agentMessageRouter: AgentMessageRouter;
-  /**
-   * Workflow definition for this task.
-   * Used by list_channels to access channel definitions. Null when the task has
-   * no workflow assigned.
-   */
   workflow: SpaceWorkflow | null;
-  /**
-   * Optional callback for the `approve_task` tool. When provided, `approve_task`
-   * is added to the MCP server. Intended for the end node when
-   * `space.autonomyLevel >= workflow.completionAutonomyLevel`. The handler
-   * also runtime-checks as defense-in-depth against a buggy/malicious client
-   * bypassing registration gating.
-   */
   onApproveTask?: (args: ApproveTaskInput) => Promise<ToolResult>;
-  /**
-   * Optional callback for the `submit_for_approval` tool. When provided, the
-   * tool is added to the MCP server. Always present for end nodes regardless
-   * of autonomy level — agents may voluntarily escalate risky outcomes for
-   * human review even when they could self-close.
-   */
   onSubmitForApproval?: (args: SubmitForApprovalInput) => Promise<ToolResult>;
-  /**
-   * Optional callback for the `mark_complete` tool (PR 2/5 of the
-   * task-agent-as-post-approval-executor refactor). When provided, the tool
-   * is mirrored onto this node-agent's MCP surface so a spawned post-approval
-   * sub-session can close its task directly via `approved → done`. Routed
-   * through the same `mark_complete` handler the Task Agent uses — the
-   * autonomy / status validation is centralised on the task side.
-   */
   onMarkComplete?: (args: MarkCompleteInput) => Promise<ToolResult>;
-  /**
-   * Optional callback for `create_standalone_task`. When provided, node agents
-   * can create follow-up tasks without receiving the broader space-agent-tools
-   * namespace.
-   */
   onCreateStandaloneTask?: (args: CreateStandaloneTaskInput) => Promise<ToolResult>;
-  /** Optional callback for dynamic external-event subscription requests. */
   onSubscribeExternalEvent?: (args: SubscribeExternalEventInput) => Promise<ToolResult>;
-  /** Optional callback for dynamic external-event unsubscription requests. */
   onUnsubscribeExternalEvent?: (args: UnsubscribeExternalEventInput) => Promise<ToolResult>;
-  /**
-   * Optional callback for the read-only `list_subscriptions` diagnostic. Returns
-   * the declared / persisted / active subscription layers for a run. Read-only —
-   * never mutates subscription state.
-   */
   onListSubscriptions?: (args: ListSubscriptionsInput) => Promise<ToolResult>;
-  /**
-   * Optional callback for \`publish_task\`. When provided, node agents can
-   * publish draft tasks (transition draft → open) without the broader
-   * space-agent-tools namespace.
-   */
   onPublishTask?: (args: PublishTaskInput) => Promise<ToolResult>;
-  /**
-   * Optional callback for \`archive_task\`. When provided, node agents can
-   * archive tasks without the broader space-agent-tools namespace.
-   */
   onArchiveTask?: (args: ArchiveTaskInput) => Promise<ToolResult>;
-  /** Optional lookup callback for symmetric reply routing to Space sessions. */
   replyRoutingLookup?: (agentName?: string | null) => string | null;
-  /**
-   * Workflow run artifact repository for save_artifact / list_artifacts tools.
-   * Optional — when absent, artifact tools are not registered.
-   */
   artifactRepo?: WorkflowRunArtifactRepository;
-  /**
-   * Domain artifact profile. Owns coding-specific semantics (primary-link
-   * resolution, terminal outcome summary) so
-   * these handlers never name domain kinds. Threaded from TaskAgentManager.
-   */
   artifactProfile?: WorkflowArtifactProfile;
-  /**
-   * Task repository for list_tasks and get_task tools.
-   * Optional — when absent, task read tools are not registered.
-   */
   taskRepo?: SpaceTaskRepository;
-  /**
-   * MCP audit log repository for recording write operations.
-   * Optional — when absent, no audit entries are written.
-   */
   auditLogRepo?: McpAuditLogRepository;
-  /**
-   * External event store for the `get_external_event` on-demand fetch tool.
-   * Optional — when absent, the tool is not registered. Reads are scoped to
-   * the current space so events never leak across spaces.
-   */
   externalEventStore?: ExternalEventStore;
-  /**
-   * Optional callback invoked when the agent calls `restore_node_agent`.
-   *
-   * Wired by TaskAgentManager to re-attach the per-session node-agent MCP server
-   * (preserving any other registry-sourced servers) and emit a structured log
-   * entry for diagnosis. The callback is fire-and-forget from the tool's
-   * perspective — failures are logged but do not block the tool result.
-   *
-   * When omitted (e.g. in unit tests), the tool still succeeds and reports the
-   * visible MCP server names but performs no server-side reattachment.
-   */
   onRestoreNodeAgent?: (args: { reason?: string }) => Promise<void> | void;
-  /**
-   * Optional workflow hook engine for intercepting and modifying MCP actions.
-   * When provided, registered hooks run before `send_message`, `save_artifact`,
-   * `submit_for_approval`, `approve_task`, and `mark_complete` handlers.
-   */
   hookEngine?: WorkflowHookEngine;
 }
 
-// ---------------------------------------------------------------------------
-// Tool handlers (separated for testability)
-// ---------------------------------------------------------------------------
-
-/**
- * Create handler functions for the node agent peer communication tools.
- * Returns a map of tool name → async handler function.
- */
 export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
   const {
     mySessionId,
@@ -300,7 +138,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
     workflow,
   } = config;
 
-  /** Helper to log MCP write operations to the audit log. */
   function logAudit(
     toolName: string,
     paramsSummary: Record<string, unknown>,
@@ -324,34 +161,13 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
   }
 
   const handlers = {
-    /**
-     * List all peers (other group members) with their agent names, statuses, session IDs,
-     * permitted channel connections, and completion state.
-     *
-     * Does NOT include self (filtered by `mySessionId`).
-     * Always includes `space-agent` as an escalation target.
-     *
-     * Returns permittedTargets: agent names this agent can directly send to via send_message.
-     * Returns completionState per peer: execution status, latest progress summary, and completedAt.
-     * Returns nodeCompletionState: all executions on this workflow node with their completion state.
-     *
-     * Progress summary is sourced from the latest `note` artifact for the node
-     * (written via save_artifact({ shape: 'note', ... })). Falls back to ne.result for
-     * historical rows that predate the artifact migration.
-     */
     async list_peers(_args: ListPeersInput): Promise<ToolResult> {
       const resolver = channelResolver;
 
-      // Within-node executions (agents sharing the same workflow node as the caller).
       const nodeExecs = workflowRunId
         ? nodeExecutionRepo.listByNode(workflowRunId, workflowNodeId)
         : [];
 
-      // Fetch the rolling-status (note) artifact for this node so we can surface
-      // it in completionState. The rolling status is the note keyed 'current'
-      // (what save_artifact writes for status). A node may carry other notes too
-      // (e.g. migrated unknown legacy types), so select 'current' explicitly and
-      // fall back to the most recently updated note.
       let latestProgressSummary: string | null = null;
       if (config.artifactRepo && workflowRunId) {
         const noteArtifacts = config.artifactRepo.listByRun(workflowRunId, {
@@ -367,7 +183,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         }
       }
 
-      // Exclude self (by agentSessionId) and include peers with a session or completed state
       const withinNodePeers = nodeExecs
         .filter(
           (ne) =>
@@ -382,7 +197,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
                 ? ('failed' as const)
                 : ('active' as const);
 
-          // Source completion summary from artifacts first, then fall back to ne.result.
           const completionSummary = latestProgressSummary ?? ne.result ?? null;
 
           return {
@@ -410,13 +224,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         };
       });
 
-      // Cross-node peers from channel topology:
-      // All declared peer nodes reachable via send_message — even those not yet started.
-      // This fixes the chicken-and-egg problem where agents couldn't discover peers that
-      // haven't been activated yet (they'd see no peers and never know to send a message).
-      //
-      // Channels may be addressed by either agent name (e.g. 'coder') or node name
-      // (e.g. 'Coding'), so we query by both to ensure we don't miss any targets.
       const myNodeName = workflow?.nodes.find((n) => n.id === workflowNodeId)?.name;
       const topologyTargetsRaw = [
         ...resolver.getPermittedTargets(myAgentName),
@@ -440,12 +247,10 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       }> = [];
 
       if (workflowRunId && topologyTargets.length > 0) {
-        // All executions in this run (to look up cross-node state).
         const allRunExecs = nodeExecutionRepo.listByWorkflowRun(workflowRunId);
-        // Index by workflowNodeId for fast lookup
         const execsByNode = new Map<string, typeof allRunExecs>();
         for (const exec of allRunExecs) {
-          if (exec.workflowNodeId === workflowNodeId) continue; // skip self-node
+          if (exec.workflowNodeId === workflowNodeId) continue;
           const arr = execsByNode.get(exec.workflowNodeId) ?? [];
           arr.push(exec);
           execsByNode.set(exec.workflowNodeId, arr);
@@ -454,21 +259,16 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         const seenAgentNames = new Set<string>(withinNodePeers.map((p) => p.agentName));
 
         for (const targetNodeName of topologyTargets) {
-          // Resolve the target node definition so we can look up its executions.
           const targetNode = workflow?.nodes.find((n) => n.name === targetNodeName);
           const targetNodeId = targetNode?.id;
           const targetExecs = targetNodeId ? (execsByNode.get(targetNodeId) ?? []) : [];
 
           if (targetExecs.length === 0) {
-            // Node not yet activated — resolve declared agent slots from the workflow
-            // definition and show them as "not_started" so the caller knows who to
-            // target via send_message to kick off the node.
             let agentNames: string[] = [];
             if (targetNode) {
               try {
                 agentNames = resolveNodeAgents(targetNode).map((a) => a.name);
               } catch {
-                // If resolveNodeAgents fails, fall back to the node name itself.
                 agentNames = [targetNodeName];
               }
             } else {
@@ -493,13 +293,10 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
               });
             }
           } else {
-            // Node has execution records — include all agents with their current status.
             for (const ne of targetExecs) {
               if (seenAgentNames.has(ne.agentName)) continue;
               seenAgentNames.add(ne.agentName);
               const execStatus = ne.status;
-              // 'pending' means the execution was created but the session hasn't spawned yet —
-              // report as 'not_started' rather than 'active' to avoid misleading callers.
               const memberStatus =
                 execStatus === 'idle'
                   ? ('completed' as const)
@@ -527,10 +324,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       }
 
       const peers = [...withinNodePeers, ...crossNodePeers];
-      // Include BOTH topology node names (e.g. 'Review') AND resolved agent slot names
-      // (e.g. 'agent-reviewer') so callers can use either form with send_message.
-      // The router accepts both: node names via nodeGroups fan-out, slot names via
-      // allDeclaredAgentNames or peer session lookup.
       const permittedTargetSet = new Set<string>([
         ...topologyTargets,
         ...crossNodePeers.map((p) => p.agentName),
@@ -552,13 +345,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       });
     },
 
-    /**
-     * Send a message to a peer agent by name (DM), a node by name (fan-out),
-     * or broadcast to all permitted targets.
-     *
-     * Validates against declared channel topology — returns an error with
-     * available targets if not permitted.
-     */
     async send_message(args: SendMessageInput): Promise<ToolResult> {
       const { target, message, data } = args;
       let translatedTargets: string[] = [];
@@ -625,7 +411,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         });
       }
 
-      // Build a human-readable summary
       const summaryParts: string[] = [];
       if (result.delivered.length > 0) {
         summaryParts.push(
@@ -649,21 +434,10 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       });
     },
 
-    /**
-     * List all agents and nodes this agent can reach, grouped as:
-     *   - withinNodePeers: agents in the same workflow node (current group members)
-     *   - crossNodeTargets: agents/nodes reachable via declared cross-node paths
-     *
-     * Uses agent-friendly terminology — no mention of channels or policies.
-     */
     async list_reachable_agents(_args: ListReachableAgentsInput): Promise<ToolResult> {
-      // Determine this agent's node name from the workflow definition.
-      // Falls back to myAgentName (agent slot name) for backward compatibility
-      // when no workflow is available (e.g. direct MCP calls without a workflow).
       const myNode = workflow?.nodes.find((n) => n.id === workflowNodeId);
       const myNodeName = myNode?.name ?? myAgentName;
 
-      // Within-node peers: other agents in the same node
       const nodeExecs = workflowRunId
         ? nodeExecutionRepo.listByNode(workflowRunId, workflowNodeId)
         : [];
@@ -682,16 +456,12 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
           };
         });
 
-      // Use channels from the resolver (which was built from the workflow channels at spawn time)
-      // or fall back to workflow.channels directly. This ensures the handler works both
-      // when a full workflow is available and when only a channel resolver is provided.
       const channels =
         channelResolver.getChannels().length > 0
           ? channelResolver.getChannels()
           : (workflow?.channels ?? []);
       const reachabilityDeclared = channels.length > 0;
 
-      // Cross-node targets: channels where FROM node is this agent's node
       type CrossNodeTarget = {
         nodeName: string;
       };
@@ -700,18 +470,15 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       if (reachabilityDeclared && myNodeName) {
         const seen = new Set<string>();
 
-        // Track within-node agent names to exclude them from cross-node targets
         const withinNodeAgentNames = new Set([myAgentName, ...nodeExecs.map((e) => e.agentName)]);
 
         for (const ch of channels) {
-          // Match channels where FROM is this agent's node name, slot name, or wildcard
           if (ch.from !== myNodeName && ch.from !== myAgentName && ch.from !== '*') continue;
           const tos = Array.isArray(ch.to) ? ch.to : [ch.to];
           for (const toNode of tos) {
-            // Skip: same as source, already seen, or is a within-node agent
             if (toNode === myNodeName || toNode === myAgentName) continue;
             if (seen.has(toNode)) continue;
-            if (withinNodeAgentNames.has(toNode)) continue; // within-node agent → not cross-node
+            if (withinNodeAgentNames.has(toNode)) continue;
             seen.add(toNode);
             crossNodeTargets.push({ nodeName: toNode });
           }
@@ -743,13 +510,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       });
     },
 
-    /**
-     * List all channels declared in this workflow.
-     *
-     * Returns the messaging topology for the current workflow run —
-     * channels define which agents can communicate. Use this to understand the
-     * full channel map before calling list_reachable_agents or send_message.
-     */
     async list_channels(_args: ListChannelsInput): Promise<ToolResult> {
       const channels = workflow?.channels ?? [];
       const result = channels.map((ch) => ({
@@ -767,19 +527,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       });
     },
 
-    // ── Artifact tools ────────────────────────────────────────────────
-
-    /**
-     * Persist data to the workflow run artifact store as a generic SHAPE.
-     *
-     * `shape` is a closed, domain-agnostic structure vocabulary (link,
-     * commit_set, check, metric, decision, note); `kind` is a freeform semantic
-     * hint. Identity is derived from the shape (note→single upsert, link→one
-     * per kind, check/metric→name, decision→key|kind|'current'), so repeated
-     * status updates overwrite in place instead of accumulating per round.
-     *
-     * Requires `artifactRepo` to be provided in the config.
-     */
     async save_artifact(args: SaveArtifactInput): Promise<ToolResult> {
       const { artifactRepo } = config;
       if (!artifactRepo) {
@@ -795,13 +542,10 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         });
       }
 
-      // Merge summary + data into a single payload, then fold in the kind hint.
       const artifactData: Record<string, unknown> = {};
       if (summary !== undefined) artifactData.summary = summary;
       if (data !== undefined) Object.assign(artifactData, data);
       if (kind !== undefined) artifactData.kind = kind;
-      // Link rows may carry a URL-bearing field under a domain key; normalise
-      // onto data.url so link readers (which key off data.url) find it.
       const normalized = shape === 'link' ? normalizeLinkData(artifactData) : artifactData;
 
       if (Object.keys(normalized).length === 0) {
@@ -811,7 +555,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         });
       }
 
-      // Validate the payload against the per-shape contract.
       const validation = validateArtifactShape(shape, normalized);
       if (!validation.ok) {
         return jsonResult({ success: false, error: validation.error });
@@ -860,9 +603,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         return jsonResult({ success: false, error: 'Artifact repository not available.' });
       }
       try {
-        // `type` filters by the canonical SHAPE vocabulary (link / commit_set /
-        // check / metric / decision / note); artifacts are always stored as a
-        // shape, so a single filter value is enough.
         const artifacts = artifactRepo.listByRun(workflowRunId, {
           nodeId: args.nodeId,
           artifactType: args.type,
@@ -893,7 +633,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         });
       }
       const result = await config.onCreateStandaloneTask(args);
-      // Decode the JSON payload from the ToolResult content to check success and extract the task ID.
       const payload = decodeToolResultPayload(result);
       const createdTask = payload?.task as { id: string } | undefined;
       if (payload?.success && createdTask?.id) {
@@ -1004,18 +743,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       return result;
     },
 
-    /**
-     * Fetch the full raw record for a single external event by id.
-     *
-     * On-demand counterpart to the lean "essence" injected into sessions as a
-     * message: use this for the rare deep-dive case where the digested summary
-     * is not enough and you need the complete payload (incl. `rawPayload`,
-     * `body`, `actor`, `eventType`, source-native fields, etc.).
-     *
-     * Returns a clear not-found result for unknown ids. Reads are scoped to the
-     * current space — an id that resolves to an event in another space is
-     * treated as not-found so events never leak across spaces.
-     */
     async get_external_event(args: GetExternalEventInput): Promise<ToolResult> {
       const { externalEventStore } = config;
       if (!externalEventStore) {
@@ -1025,8 +752,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         });
       }
       const record = externalEventStore.getById(args.eventId);
-      // Scope by space: getById resolves by id only, so an id belonging to
-      // another space must be treated as not-found.
       if (!record || record.event.spaceId !== spaceId) {
         return jsonResult({
           success: false,
@@ -1036,16 +761,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       return jsonResult({ success: true, event: record.event, state: record.state });
     },
 
-    /**
-     * List recent per-subscription external-event deliveries for diagnosis —
-     * why an event was (or was not) delivered to a run/node. Read-only.
-     *
-     * Reads `space_external_event_deliveries` joined to `space_external_events`,
-     * which `db_query` cannot reach because those tables are space-scoped (by
-     * `space_id`), not session-scoped. Always scoped to the current space;
-     * defaults to the current workflow run. Each row carries the delivery state
-     * plus a lean event essence (topic, source, summary, url, event state).
-     */
     async list_deliveries(args: ListDeliveriesInput): Promise<ToolResult> {
       const { externalEventStore } = config;
       if (!externalEventStore) {
@@ -1087,15 +802,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       return jsonResult({ success: true, deliveries });
     },
 
-    /**
-     * Read-only diagnostic: snapshot a workflow run's external-event
-     * subscriptions across three layers — declared (workflow definition),
-     * persisted (PR 5 table), and active (in-memory trie, cross-check only) —
-     * so an agent can confirm whether a node is actually wired to receive a
-     * class of events from durable state alone. Durable layers are the source of
-     * truth; the trie is a sanity check, with declared-vs-active drift surfaced
-     * via per-entry `source`/`active` flags and a `mismatches` summary.
-     */
     async list_subscriptions(args: ListSubscriptionsInput): Promise<ToolResult> {
       if (!config.onListSubscriptions) {
         return jsonResult({
@@ -1124,14 +830,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       return result;
     },
 
-    // ── Task read tools ──────────────────────────────────────────────
-
-    /**
-     * List tasks in the current space, optionally filtered by status.
-     *
-     * Use `compact: true` to return a trimmed projection (id, title, status,
-     * priority, createdAt) suitable for dense lists.
-     */
     async list_tasks(args: ListTasksInput): Promise<ToolResult> {
       const { taskRepo } = config;
       if (!taskRepo) {
@@ -1169,9 +867,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       }
     },
 
-    /**
-     * Get the full detail of a task by UUID or by numeric task number (e.g. #5).
-     */
     async get_task(args: GetTaskInput): Promise<ToolResult> {
       const { taskRepo } = config;
       if (!taskRepo) {
@@ -1182,7 +877,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
         task = taskRepo.getTaskByNumber(spaceId, args.task_number);
       } else if (args.task_id) {
         task = taskRepo.getTask(args.task_id);
-        // Scope by space: getTask resolves by UUID only, so verify ownership.
         if (task && task.spaceId !== spaceId) {
           task = null;
         }
@@ -1199,13 +893,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       return jsonResult({ success: true, task });
     },
 
-    /**
-     * List MCP audit log entries for this space, filtered by task or session.
-     *
-     * Returns entries ordered by timestamp descending (newest first).
-     * Use this to inspect the audit trail of tool operations performed
-     * by agents in this workflow.
-     */
     async list_audit_entries(args: ListAuditEntriesInput): Promise<ToolResult> {
       const { auditLogRepo } = config;
       if (!auditLogRepo) {
@@ -1248,22 +935,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       }
     },
 
-    // ── Self-heal ────────────────────────────────────────────────────
-
-    /**
-     * Self-heal primitive.
-     *
-     * Successfully invoking this tool is itself proof that the node-agent
-     * MCP server is registered for the current session — if the server were
-     * missing, the SDK would have rejected the call with "No such tool
-     * available". The handler additionally invokes the optional
-     * `onRestoreNodeAgent` callback (wired by TaskAgentManager) which
-     * re-attaches the per-session node-agent server as a belt-and-braces
-     * measure and writes a structured log entry for diagnosis.
-     *
-     * The result reports back the visible MCP server names so the agent can
-     * confirm its environment before retrying a critical handoff.
-     */
     async restore_node_agent(args: RestoreNodeAgentInput): Promise<ToolResult> {
       const reason = args.reason?.trim();
       log.info(
@@ -1293,7 +964,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
     },
   };
 
-  // Wrap action handlers with workflow hooks when engine is provided.
   if (config.hookEngine) {
     const meta = {
       sessionId: mySessionId,
@@ -1325,14 +995,6 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
   return handlers;
 }
 
-// ---------------------------------------------------------------------------
-// MCP server factory
-// ---------------------------------------------------------------------------
-
-/**
- * Create an MCP server exposing all node agent peer communication tools.
- * Pass the returned server to the AgentSessionInit.mcpServers for node agent sessions.
- */
 export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
   const handlers = createNodeAgentToolHandlers(config);
 
@@ -1340,7 +1002,6 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
     return config.onSubmitForApproval!(args);
   }
 
-  // Wrap submit_for_approval and mark_complete with hooks when engine is provided.
   let wrappedSubmitForApproval = submitForApproval;
   let wrappedMarkComplete = config.onMarkComplete;
   if (config.hookEngine) {

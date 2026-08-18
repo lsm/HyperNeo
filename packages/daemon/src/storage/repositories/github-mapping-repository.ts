@@ -1,9 +1,3 @@
-/**
- * GitHub Mapping Repository
- *
- * Repository for room GitHub mapping CRUD operations.
- */
-
 import type { Database as BunDatabase } from '../sqlite-compat';
 import { generateUUID } from '@hyperneo/shared';
 import type {
@@ -17,9 +11,6 @@ import type { SQLiteValue } from '../types';
 export class GitHubMappingRepository {
   constructor(private db: BunDatabase) {}
 
-  /**
-   * Create a new room GitHub mapping
-   */
   createMapping(params: CreateRoomGitHubMappingParams): RoomGitHubMapping {
     const id = generateUUID();
     const now = Date.now();
@@ -41,9 +32,6 @@ export class GitHubMappingRepository {
     return this.getMapping(id)!;
   }
 
-  /**
-   * Get a mapping by ID
-   */
   getMapping(id: string): RoomGitHubMapping | null {
     const stmt = this.db.prepare(`SELECT * FROM room_github_mappings WHERE id = ?`);
     const row = stmt.get(id) as Record<string, unknown> | undefined;
@@ -52,9 +40,6 @@ export class GitHubMappingRepository {
     return this.rowToMapping(row);
   }
 
-  /**
-   * Get a mapping by room ID
-   */
   getMappingByRoomId(roomId: string): RoomGitHubMapping | null {
     const stmt = this.db.prepare(`SELECT * FROM room_github_mappings WHERE room_id = ?`);
     const row = stmt.get(roomId) as Record<string, unknown> | undefined;
@@ -63,9 +48,6 @@ export class GitHubMappingRepository {
     return this.rowToMapping(row);
   }
 
-  /**
-   * List all mappings, ordered by priority (highest first)
-   */
   listMappings(): RoomGitHubMapping[] {
     const stmt = this.db.prepare(
       `SELECT * FROM room_github_mappings ORDER BY priority DESC, created_at ASC`
@@ -74,11 +56,7 @@ export class GitHubMappingRepository {
     return rows.map((r) => this.rowToMapping(r));
   }
 
-  /**
-   * List mappings for a specific repository
-   */
   listMappingsForRepository(owner: string, repo: string): RoomGitHubMapping[] {
-    // Get all mappings and filter in-memory since repositories is JSON
     const stmt = this.db.prepare(`SELECT * FROM room_github_mappings ORDER BY priority DESC`);
     const rows = stmt.all() as Record<string, unknown>[];
     const mappings = rows.map((r) => this.rowToMapping(r));
@@ -88,9 +66,6 @@ export class GitHubMappingRepository {
     );
   }
 
-  /**
-   * Update a mapping with partial updates
-   */
   updateMapping(id: string, params: UpdateRoomGitHubMappingParams): RoomGitHubMapping | null {
     const fields: string[] = [];
     const values: SQLiteValue[] = [];
@@ -117,25 +92,16 @@ export class GitHubMappingRepository {
     return this.getMapping(id);
   }
 
-  /**
-   * Delete a mapping by ID
-   */
   deleteMapping(id: string): void {
     const stmt = this.db.prepare(`DELETE FROM room_github_mappings WHERE id = ?`);
     stmt.run(id);
   }
 
-  /**
-   * Delete a mapping by room ID
-   */
   deleteMappingByRoomId(roomId: string): void {
     const stmt = this.db.prepare(`DELETE FROM room_github_mappings WHERE room_id = ?`);
     stmt.run(roomId);
   }
 
-  /**
-   * Convert a database row to a RoomGitHubMapping object
-   */
   private rowToMapping(row: Record<string, unknown>): RoomGitHubMapping {
     return {
       id: row.id as string,

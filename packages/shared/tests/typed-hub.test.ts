@@ -1,14 +1,7 @@
-/**
- * TypedHub Unit Tests
- *
- * Tests for type-safe MessageHub wrapper with InProcessTransportBus.
- */
-
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { TypedHub, TypedHubPublishError } from '../src/message-hub/typed-hub.ts';
 import type { BaseEventData } from '../src/message-hub/typed-hub.ts';
 
-// Define test event map (using dots like MessageHub convention)
 interface TestEventMap extends Record<string, BaseEventData> {
   'session.created': { sessionId: string; title: string };
   'session.updated': { sessionId: string; title?: string; status?: string };
@@ -106,7 +99,6 @@ describe('TypedHub', () => {
         title: 'Second',
       });
 
-      // Should only receive first event
       expect(received).toEqual(['first']);
     });
   });
@@ -117,7 +109,6 @@ describe('TypedHub', () => {
       const session2Events: string[] = [];
       const allEvents: string[] = [];
 
-      // Session-specific subscriptions
       hub.subscribe(
         'message.sent',
         (data) => {
@@ -134,12 +125,10 @@ describe('TypedHub', () => {
         { sessionId: 'session-2' }
       );
 
-      // Global subscription (no sessionId filter)
       hub.subscribe('message.sent', (data) => {
         allEvents.push(data.content);
       });
 
-      // Publish events for different sessions
       await hub.publish('message.sent', {
         sessionId: 'session-1',
         content: 'msg1',
@@ -153,11 +142,9 @@ describe('TypedHub', () => {
         content: 'msg3',
       });
 
-      // Session-specific handlers only get their session's events
       expect(session1Events).toEqual(['msg1']);
       expect(session2Events).toEqual(['msg2']);
 
-      // Global handler gets all events
       expect(allEvents).toEqual(['msg1', 'msg2', 'msg3']);
     });
 
@@ -172,7 +159,6 @@ describe('TypedHub', () => {
         { sessionId: 'target-session' }
       );
 
-      // These should be filtered out
       await hub.publish('message.sent', {
         sessionId: 'other-session',
         content: 'other1',
@@ -182,13 +168,11 @@ describe('TypedHub', () => {
         content: 'other2',
       });
 
-      // This should be received (and unsubscribe)
       await hub.publish('message.sent', {
         sessionId: 'target-session',
         content: 'target1',
       });
 
-      // This should be missed (already unsubscribed)
       await hub.publish('message.sent', {
         sessionId: 'target-session',
         content: 'target2',
@@ -200,14 +184,11 @@ describe('TypedHub', () => {
 
   describe('multi-participant communication', () => {
     it('should create participants connected to same bus', async () => {
-      // Create participant connected to same bus
       const participant = hub.createParticipant('component-a');
       await participant.initialize();
 
-      // Verify both share the same bus
       expect(participant.getBus()).toBe(hub.getBus());
 
-      // Each participant receives its own locally published events
       const hubReceived: string[] = [];
       const participantReceived: string[] = [];
 
@@ -219,24 +200,18 @@ describe('TypedHub', () => {
         participantReceived.push('participant:' + data.sessionId);
       });
 
-      // Hub publishes - hub receives via local dispatch
       await hub.publish('session.created', {
         sessionId: 'from-hub',
         title: 'From Hub',
       });
 
-      // Participant publishes - participant receives via local dispatch
       await participant.publish('session.created', {
         sessionId: 'from-participant',
         title: 'From Participant',
       });
 
-      // Local dispatch ensures each hub receives its own events
       expect(hubReceived).toContain('hub:from-hub');
       expect(participantReceived).toContain('participant:from-participant');
-
-      // Note: Cross-hub delivery via MessageHub/bus is a future enhancement
-      // For now, local dispatch provides EventBus-like behavior within each hub
 
       await participant.close();
     });
@@ -277,7 +252,6 @@ describe('TypedHub', () => {
         title: 'Concurrent',
       });
 
-      // Both should have completed; handler2 finishes first due to shorter timeout
       expect(order).toEqual(['handler2', 'handler1']);
     });
 
@@ -455,10 +429,8 @@ describe('TypedHub', () => {
         title: 'Async',
       });
 
-      // publishAsync returns immediately; handler has not completed
       expect(handlerCompleted).toBe(false);
 
-      // Wait for the microtask to run
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(handlerCompleted).toBe(true);
     });
@@ -468,7 +440,6 @@ describe('TypedHub', () => {
         throw new Error('should be swallowed');
       });
 
-      // publishAsync should not throw even though handler throws
       expect(() => {
         hub.publishAsync('session.created', {
           sessionId: 'swallow-test',
@@ -476,7 +447,6 @@ describe('TypedHub', () => {
         });
       }).not.toThrow();
 
-      // Wait for microtask
       await new Promise((resolve) => setTimeout(resolve, 20));
     });
 
@@ -544,7 +514,6 @@ describe('TypedHub', () => {
     it('should provide access to underlying MessageHub', () => {
       const messageHub = hub.getMessageHub();
       expect(messageHub).toBeDefined();
-      // Can use MessageHub for RPC if needed
       expect(typeof messageHub.request).toBe('function');
       expect(typeof messageHub.onRequest).toBe('function');
       expect(typeof messageHub.event).toBe('function');
@@ -573,7 +542,6 @@ describe('TypedHub', () => {
 
       await hub.close();
 
-      // After close, hub should be unusable
       await expect(
         hub.publish('session.created', {
           sessionId: 'after-close',
@@ -581,7 +549,6 @@ describe('TypedHub', () => {
         })
       ).rejects.toThrow();
 
-      // Only the first event should have been received
       expect(received).toEqual(['before-close']);
     });
   });

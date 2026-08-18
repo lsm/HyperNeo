@@ -1,15 +1,3 @@
-/**
- * AutonomyWorkflowSummary — "X of Y workflows auto-close without review" hint.
- *
- * Rendered below the autonomy selector in Space settings and next to the
- * slim autonomy bar on the Space Overview. Updates live as the user changes
- * `level`.
- *
- * The component is purely derived from the `workflows` + `level` props — no
- * RPC, no signals, no side effects. It's safe to render inside any parent
- * that already has the workflow list in scope.
- */
-
 import { useMemo, useState } from 'preact/hooks';
 import type { SpaceAutonomyLevel, SpaceWorkflowSummary } from '@hyperneo/shared';
 import { isWorkflowAutoClosingAtLevel } from '@hyperneo/shared';
@@ -18,12 +6,7 @@ import { cn } from '../../lib/utils.ts';
 interface AutonomyWorkflowSummaryProps {
   level: SpaceAutonomyLevel;
   workflows: SpaceWorkflowSummary[];
-  /** Optional extra tailwind classes applied to the wrapper. */
   class?: string;
-  /**
-   * When `true`, render in "compact" mode — smaller text and inline
-   * chevron. Used on the Space Overview where space is tight.
-   */
   compact?: boolean;
 }
 
@@ -58,7 +41,6 @@ export function AutonomyWorkflowSummary({
     return { autonomous: auto, total: workflows.length, blocking: blockingList };
   }, [workflows, level]);
 
-  // Nothing to say before workflows have loaded (or when the space has none).
   if (total === 0) {
     return null;
   }

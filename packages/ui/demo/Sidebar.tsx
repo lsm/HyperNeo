@@ -11,8 +11,6 @@ export interface NavCategory {
   sections: NavItem[];
 }
 
-// ─── Headless component primitives ───────────────────────────────────────────
-
 export const headlessNavItems: NavItem[] = [
   { id: 'hc-button', label: 'Button' },
   { id: 'hc-icon-button', label: 'IconButton' },
@@ -37,8 +35,6 @@ export const headlessNavItems: NavItem[] = [
   { id: 'hc-spinner', label: 'Spinner' },
   { id: 'hc-skeleton', label: 'Skeleton' },
 ];
-
-// ─── Application UI categories ────────────────────────────────────────────────
 
 export const appUiCategories: NavCategory[] = [
   {
@@ -160,8 +156,6 @@ export const appUiCategories: NavCategory[] = [
   },
 ];
 
-// ─── Sidebar component ────────────────────────────────────────────────────────
-
 interface SidebarProps {
   currentPage: string;
   activeSection: string;
@@ -187,7 +181,6 @@ export function Sidebar({ currentPage, activeSection, searchQuery, setSearchQuer
   return (
     <nav class="fixed left-0 top-0 w-64 h-screen overflow-y-auto bg-surface-1 border-r border-surface-border z-10 flex flex-col">
       <div class="p-4 flex-1">
-        {/* Search */}
         <div class="mb-4">
           <input
             type="search"
@@ -198,7 +191,6 @@ export function Sidebar({ currentPage, activeSection, searchQuery, setSearchQuer
           />
         </div>
 
-        {/* Headless Components */}
         {filteredHeadless.length > 0 && (
           <div class="mb-6">
             <p class="px-3 text-xs font-semibold uppercase tracking-wider text-text-tertiary mb-2">
@@ -226,7 +218,6 @@ export function Sidebar({ currentPage, activeSection, searchQuery, setSearchQuer
           </div>
         )}
 
-        {/* Application UI */}
         {filteredCategories.length > 0 && (
           <div>
             <p class="px-3 text-xs font-semibold uppercase tracking-wider text-text-tertiary mb-2">
@@ -252,7 +243,6 @@ export function Sidebar({ currentPage, activeSection, searchQuery, setSearchQuer
                     >
                       {category.label}
                     </a>
-                    {/* Sub-sections: shown when this category is the active page */}
                     {isCategoryActive && (
                       <ul class="ml-4 mt-1 space-y-0.5 border-l border-surface-border pl-2">
                         {filteredSections.map((section) => {
@@ -283,7 +273,6 @@ export function Sidebar({ currentPage, activeSection, searchQuery, setSearchQuer
                         })}
                       </ul>
                     )}
-                    {/* When searching and category is not active but has matching sections */}
                     {!isCategoryActive && q !== '' && filteredSections.length > 0 && (
                       <ul class="ml-4 mt-1 space-y-0.5 border-l border-surface-border pl-2">
                         {filteredSections.map((section) => (
@@ -306,7 +295,6 @@ export function Sidebar({ currentPage, activeSection, searchQuery, setSearchQuer
         )}
       </div>
 
-      {/* Scroll to top */}
       <div class="p-2 border-t border-surface-border">
         <button
           type="button"

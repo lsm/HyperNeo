@@ -187,10 +187,6 @@ describe('buildThreadEvents — multi-agent ordering and label preservation', ()
   });
 
   it('skips empty Opus 4.7 "omitted" thinking stubs (empty thinking + signature)', () => {
-    // Opus 4.7 with `thinking.display = 'omitted'` returns a
-    // structurally valid thinking block with empty `thinking` but a
-    // non-empty `signature`. Those stubs must not produce "Thinking"
-    // thread events with an empty summary.
     const row = makeRow({
       id: 'opus-47-omitted',
       label: 'Task Agent',
@@ -210,7 +206,6 @@ describe('buildThreadEvents — multi-agent ordering and label preservation', ()
     const events = buildThreadEvents([parseThreadRow(row)]);
     expect(events).toHaveLength(1);
     expect(events[0].kind).toBe('text');
-    // Ensure no thinking event leaked through with an empty summary
     expect(events.some((e) => e.kind === 'thinking')).toBe(false);
   });
 
@@ -474,13 +469,6 @@ describe('buildThreadEvents — multi-agent ordering and label preservation', ()
     expect(events[0].title).toBe('Question');
     expect(events[0].summary).toContain('Proceed with deploy?');
     expect(events[0].summary).toContain('Context: PR is green.');
-    // The synthesized message must contain ONLY the text block. Keeping
-    // the original tool_use here would make SDKAssistantMessage render a
-    // collapsed tool card alongside the text bubble, defeating the
-    // purpose of surfacing the question as visible text. Tool_use /
-    // tool_result pairing is unaffected: useMessageMaps builds
-    // toolResultsMap from the raw messages array, not from synthesized
-    // events.
     const synthesized = events[0].message as { message?: { content?: unknown[] } };
     const content = synthesized.message?.content ?? [];
     expect(content).toHaveLength(1);
@@ -510,7 +498,6 @@ describe('buildThreadEvents — multi-agent ordering and label preservation', ()
       createdAt: 1_000,
     });
     const events = buildThreadEvents([parseThreadRow(row)]);
-    // Falls through to the generic tool-rendering branch.
     expect(events[0].kind).toBe('tool');
   });
 

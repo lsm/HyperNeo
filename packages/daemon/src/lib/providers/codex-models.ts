@@ -1,10 +1,5 @@
 import type { ModelInfo } from '@hyperneo/shared';
 
-// Published context windows (what the official api.openai.com API honors and
-// what the model picker advertises). GPT-5.6's published spec is 1.05M; the
-// ChatGPT Codex backend (chatgpt.com/backend-api/codex) silently caps its INPUT
-// context at 272K — see codexBackendContextWindow() for that override, applied
-// only on the OAuth path so API-key routing keeps the full published window.
 export const MODEL_CONTEXT_WINDOWS = {
   'gpt-5.6-sol': 1050000,
   'gpt-5.6-terra': 1050000,
@@ -92,26 +87,12 @@ export function getModelContextWindow(modelId: string): number | undefined {
   return resolved ? MODEL_CONTEXT_WINDOWS[resolved] : undefined;
 }
 
-/**
- * Per-model INPUT-context overrides for the ChatGPT Codex backend
- * (chatgpt.com/backend-api/codex), which caps GPT-5.6 input at 272K despite the
- * 1.05M published spec (silently reduced from 372K around 2026-07-13). The
- * official api.openai.com API used by OPENAI_API_KEY honors the published
- * window, so this override is applied only on the ChatGPT OAuth path — reporting
- * it there stops conversations and compaction requests from growing past the
- * real cap and triggering empty/aborted 200s.
- */
 const CODEX_BACKEND_CONTEXT_WINDOW_OVERRIDES: Partial<Record<CodexBridgeModelId, number>> = {
   'gpt-5.6-sol': 272000,
   'gpt-5.6-terra': 272000,
   'gpt-5.6-luna': 272000,
 };
 
-/**
- * Effective INPUT context window for the ChatGPT Codex backend. Falls back to
- * the published MODEL_CONTEXT_WINDOWS value for models the backend does not
- * cap differently (and for unknown IDs).
- */
 export function codexBackendContextWindow(modelId: string): number | undefined {
   const resolved = resolveCodexBridgeModelId(modelId);
   if (!resolved) return undefined;
@@ -125,21 +106,6 @@ function getProviderAliases(id: CodexBridgeModelId, primaryAlias: string): strin
     .filter((alias) => alias !== primaryAlias);
 }
 
-/**
- * Codex model IDs for SDK routing.
- *
- * Following the GLM/Kimi pattern, we use real Codex model IDs directly instead
- * of aliasing to Anthropic model IDs. The SDK reads context window from
- * `/v1/models` metadata (via preferContextWindowMetadata: true) instead of its
- * hardcoded database, avoiding token counting mismatch.
- *
- * This identity mapping is used for:
- *   - `ANTHROPIC_DEFAULT_*_MODEL` env vars (so SDK sub-agents use real Codex IDs)
- *   - `buildSdkConfig()` resolution
- *
- * The bridge's per-session model overrides ensure the originally-selected Codex
- * model ID is preserved when the SDK sends requests.
- */
 export const CODEX_TO_SDK_MODEL: Record<CodexBridgeModelId, string> = {
   'gpt-5.6-sol': 'gpt-5.6-sol',
   'gpt-5.6-terra': 'gpt-5.6-terra',

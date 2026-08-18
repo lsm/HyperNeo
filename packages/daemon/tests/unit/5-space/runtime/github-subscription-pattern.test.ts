@@ -4,11 +4,6 @@ import {
   legacyGitHubTopic,
 } from '../../../../src/lib/external-events/github-subscription-pattern';
 
-// Characterization tests for the GitHub subscription topic grammar. These pin
-// the exact observable behavior of the (previously untested) helpers that were
-// consolidated from space-runtime.ts and space-long-horizon-agent-handlers.ts.
-// Expected values were captured from the implementation, not invented.
-
 describe('composeGitHubSubscriptionPattern', () => {
   describe('fully-qualified source-prefixed topic (5 segments)', () => {
     test('returns the topic unchanged when resource and action are valid', () => {
@@ -146,7 +141,6 @@ describe('repo resource (branch_protection_rule, spec row 7)', () => {
     ).toBe('github/acme/widgets/repo/main.branch_protection_edited');
   });
   test('owner literally named "repo" expands owner/repo/resource (bare third), not resource-first', () => {
-    // Must NOT become github/*/*/repo/widgets.pull_request.
     expect(composeGitHubSubscriptionPattern('github', 'github/repo/widgets/pull_request')).toBe(
       'github/repo/widgets/pull_request/*'
     );
@@ -160,7 +154,6 @@ describe('repo resource (branch_protection_rule, spec row 7)', () => {
     ).toBe('github/repo/widgets/repo/*.branch_protection_edited');
   });
   test('resource-first shorthand allows a resource-named entity (branch "pull_request")', () => {
-    // entity segment may legitimately be a resource name.
     expect(
       composeGitHubSubscriptionPattern(
         'github',

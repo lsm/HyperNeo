@@ -1,9 +1,3 @@
-/**
- * Config Tests
- *
- * Tests for the configuration module.
- */
-
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -13,12 +7,10 @@ describe('getConfig', () => {
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(() => {
-    // Store original environment
     originalEnv = { ...process.env };
   });
 
   afterEach(() => {
-    // Restore original environment
     process.env = originalEnv;
   });
 
@@ -42,12 +34,10 @@ describe('getConfig', () => {
     expect(config.port).toBe(9283);
     expect(config.host).toBe('0.0.0.0');
     expect(config.dbPath).toBe(join(homedir(), '.hyperneo', 'data', 'daemon.db'));
-    // 'default' maps to Sonnet 4.5 in the SDK
     expect(config.defaultModel).toBe('default');
     expect(config.maxTokens).toBe(8192);
     expect(config.temperature).toBe(1.0);
     expect(config.maxSessions).toBe(10);
-    // Ingress fan-out guardrail default (task #899)
     expect(config.maxSubscriptionsPerClient).toBe(128);
     expect(config.nodeEnv).toBe('production');
     expect(config.structuredLogFilePath).toBe(join(homedir(), '.hyperneo', 'logs', 'daemon.jsonl'));
@@ -80,7 +70,6 @@ describe('getConfig', () => {
   });
 
   test('HYPERNEO_MAX_SUBSCRIPTIONS_PER_CLIENT fails closed to the default on invalid input', () => {
-    // A guardrail must not silently disable itself on bad input.
     process.env.HYPERNEO_MAX_SUBSCRIPTIONS_PER_CLIENT = 'not-a-number';
     expect(getConfig().maxSubscriptionsPerClient).toBe(128);
 
@@ -90,9 +79,6 @@ describe('getConfig', () => {
     process.env.HYPERNEO_MAX_SUBSCRIPTIONS_PER_CLIENT = '-5';
     expect(getConfig().maxSubscriptionsPerClient).toBe(128);
 
-    // Partial parses must NOT be accepted: a numeric prefix or scientific
-    // notation would otherwise misconfigure the cap (1000000 disables it; 1e3
-    // breaks clients after one subscribe).
     process.env.HYPERNEO_MAX_SUBSCRIPTIONS_PER_CLIENT = '1000000oops';
     expect(getConfig().maxSubscriptionsPerClient).toBe(128);
 
@@ -172,7 +158,6 @@ describe('getConfig', () => {
 
     const config = getConfig();
 
-    // Falls back to the default, not PORT=8080
     expect(config.port).toBe(9283);
   });
 
@@ -217,10 +202,6 @@ describe('getConfig', () => {
   });
 
   test('isolated DB files derive distinct per-database log paths', () => {
-    // Codex P2 (PR #2499): distinct DB files in the SAME directory (the
-    // documented worktree command's /tmp/hyperneo-worktree-a.db vs -b.db) must
-    // not share one rotating log file — dirname alone maps both to
-    // <dir>/logs/daemon.jsonl. Fold the DB basename into the filename.
     process.env.NODE_ENV = 'production';
 
     process.env.DB_PATH = '/tmp/hyperneo-worktree-a.db';
@@ -234,9 +215,6 @@ describe('getConfig', () => {
   });
 
   test('same-stem DBs with different extensions derive distinct log paths', () => {
-    // Codex P2 (PR #2499): stripping the extension maps /tmp/hyperneo.db and
-    // /tmp/hyperneo.sqlite to the same log identity; keep the extension so the
-    // two independent sinks cannot rotate/drop each other's files.
     process.env.NODE_ENV = 'production';
 
     process.env.DB_PATH = '/tmp/hyperneo.db';
@@ -250,9 +228,6 @@ describe('getConfig', () => {
   });
 
   test('relative custom DB paths derive distinct per-database log paths', () => {
-    // Codex P2 (PR #2499): `dirname('worktree-a.db')` is '.', which the
-    // previous gate treated as non-isolatable — both relative DBs fell back to
-    // the shared log. Resolve the relative path before deriving the identity.
     process.env.NODE_ENV = 'production';
 
     process.env.DB_PATH = 'worktree-a.db';
@@ -266,9 +241,6 @@ describe('getConfig', () => {
   });
 
   test('structured log retained-file overrides are capped like the env fallback', () => {
-    // Codex P2 (PR #2499): the 1,000-file cap previously applied only to the env
-    // fallback; an embedder override of Number.MAX_SAFE_INTEGER would wedge
-    // rotate()'s decrementing loop.
     process.env.NODE_ENV = 'production';
 
     const config = getConfig({ structuredLogRetainedFiles: Number.MAX_SAFE_INTEGER });
@@ -277,8 +249,6 @@ describe('getConfig', () => {
   });
 
   test('parsePositiveInt rejects negative, fractional, and partial-numeric values', () => {
-    // Codex P2 (PR #2499): `Number(value) || fallback` accepts negatives and
-    // fractions; parsePositiveInt requires a pure positive digit string.
     expect(parsePositiveInt('-5', 64)).toBe(64);
     expect(parsePositiveInt('1.5', 64)).toBe(64);
     expect(parsePositiveInt('0', 64)).toBe(64);
@@ -287,10 +257,7 @@ describe('getConfig', () => {
     expect(parsePositiveInt(undefined, 64)).toBe(64);
     expect(parsePositiveInt('64', 64)).toBe(64);
     expect(parsePositiveInt(' 8 ', 8)).toBe(8);
-    // A very long digit string parses to Infinity, which must fall back rather
-    // than disable a guardrail (e.g. maxBytes: Infinity → rotation never runs).
     expect(parsePositiveInt('9'.repeat(400), 64)).toBe(64);
-    // A finite but out-of-safe-integer-range value would exceed SQLite's LIMIT.
     expect(parsePositiveInt('100000000000000000000', 64)).toBe(64);
   });
 

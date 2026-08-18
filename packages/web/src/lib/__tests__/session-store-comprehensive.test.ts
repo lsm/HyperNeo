@@ -1,16 +1,10 @@
 // @ts-nocheck
-/**
- * Comprehensive tests for SessionStore class
- *
- * Tests the SessionStore class to increase coverage to 85%+
- */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { sessionStore } from '../session-store';
 import type { Session, ContextInfo, AgentProcessingState, SessionState } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 
-// Mock connection manager
 const mockHub = {
   request: vi.fn().mockResolvedValue({ acknowledged: true }),
   onEvent: vi.fn(() => vi.fn()),
@@ -28,12 +22,10 @@ vi.mock('../connection-manager', () => ({
   },
 }));
 
-// Mock signals
 vi.mock('../signals', () => ({
   slashCommandsSignal: { value: [] },
 }));
 
-// Mock toast
 vi.mock('../toast', () => ({
   toast: {
     error: vi.fn(),
@@ -49,7 +41,6 @@ describe('SessionStore - Comprehensive Coverage', () => {
   });
 
   afterEach(async () => {
-    // Clean up by selecting null
     await sessionStore.select(null);
   });
 
@@ -108,7 +99,6 @@ describe('SessionStore - Comprehensive Coverage', () => {
     });
 
     it('should clear state when selecting null', async () => {
-      // First select a session
       mockHub.request.mockResolvedValue({
         sessionInfo: { id: 'session-1' },
         sdkMessages: [],
@@ -117,7 +107,6 @@ describe('SessionStore - Comprehensive Coverage', () => {
 
       await sessionStore.select('session-1');
 
-      // Then select null
       await sessionStore.select(null);
 
       expect(sessionStore.activeSessionId.value).toBe(null);
@@ -135,10 +124,8 @@ describe('SessionStore - Comprehensive Coverage', () => {
       await sessionStore.select('session-1');
       const initialCallCount = mockHub.request.mock.calls.length;
 
-      // Select same session again
       await sessionStore.select('session-1');
 
-      // Should not call hub again (early return in doSelect)
       expect(mockHub.request.mock.calls.length).toBe(initialCallCount);
     });
 
@@ -149,14 +136,12 @@ describe('SessionStore - Comprehensive Coverage', () => {
       });
       mockHub.onEvent.mockReturnValue(vi.fn());
 
-      // Rapidly switch sessions
       const p1 = sessionStore.select('session-1');
       const p2 = sessionStore.select('session-2');
       const p3 = sessionStore.select('session-3');
 
       await Promise.all([p1, p2, p3]);
 
-      // Should end up on session-3 (last one)
       expect(sessionStore.activeSessionId.value).toBe('session-3');
     });
   });
@@ -182,25 +167,16 @@ describe('SessionStore - Comprehensive Coverage', () => {
       expect(sessionStore.sessionState.value).toEqual(mockSessionState);
     });
 
-    // NOTE: messages are now streamed through the `messages.bySession`
-    // LiveQuery instead of being pulled via an RPC during
-    // `fetchInitialSessionState`. The delivery path is covered by the
-    // "LiveQuery messages.bySession subscription" describe block below and
-    // by the daemon-side test at
-    // `packages/daemon/tests/unit/2-handlers/rpc-handlers/live-query-messages.test.ts`.
-
     it('should handle fetch errors gracefully', async () => {
       mockHub.request.mockRejectedValue(new Error('Fetch failed'));
       mockHub.onEvent.mockReturnValue(vi.fn());
 
-      // Should not throw, but log error
       await expect(sessionStore.select('session-1')).resolves.not.toThrow();
     });
   });
 
   describe('computed accessors - with state', () => {
     beforeEach(() => {
-      // Set up some state directly on the singleton
       sessionStore.sessionState.value = {
         sessionInfo: {
           id: 'session-1',
@@ -223,7 +199,6 @@ describe('SessionStore - Comprehensive Coverage', () => {
     });
 
     afterEach(() => {
-      // Reset state
       sessionStore.sessionState.value = null;
     });
 
@@ -334,7 +309,6 @@ describe('SessionStore - Comprehensive Coverage', () => {
     });
 
     it('should handle clearError when no state exists', () => {
-      // Should not throw
       expect(() => sessionStore.clearError()).not.toThrow();
     });
 
@@ -343,7 +317,6 @@ describe('SessionStore - Comprehensive Coverage', () => {
         sessionInfo: {} as Session,
       };
 
-      // Should not throw
       expect(() => sessionStore.clearError()).not.toThrow();
     });
 
@@ -389,14 +362,6 @@ describe('SessionStore - Comprehensive Coverage', () => {
   });
 
   describe('LiveQuery messages.bySession subscription', () => {
-    /**
-     * Helper to drive the LiveQuery path from a test.
-     *
-     * `fire('liveQuery.snapshot' | 'liveQuery.delta', event)` invokes every
-     * handler that `hub.onEvent()` has registered — the snapshot/delta
-     * handlers installed by sessionStore.select() filter on
-     * `event.subscriptionId`, so tests can target a specific subscription.
-     */
     interface LqMockHub {
       request: ReturnType<typeof vi.fn>;
       onEvent: (channel: string, callback: (data: unknown) => void) => () => void;
@@ -508,7 +473,6 @@ describe('SessionStore - Comprehensive Coverage', () => {
       await sessionStore.select('session-1');
       const subId = hub.subscriptionId!;
 
-      // Start from empty snapshot so the delta add is the only change.
       hub.fire('liveQuery.snapshot', { subscriptionId: subId, rows: [] });
 
       const added: SDKMessage[] = [
@@ -529,7 +493,6 @@ describe('SessionStore - Comprehensive Coverage', () => {
       await sessionStore.select('session-1');
       const subId = hub.subscriptionId!;
 
-      // Snapshot in (timestamp, rowid) order: A then B.
       hub.fire('liveQuery.snapshot', {
         subscriptionId: subId,
         rows: [
@@ -552,8 +515,6 @@ describe('SessionStore - Comprehensive Coverage', () => {
         ],
       });
 
-      // A delivery-status update moves A's timestamp past B (queued → consumed
-      // re-timestamps the row). The store must re-sort by (timestamp, rowid).
       hub.fire('liveQuery.delta', {
         subscriptionId: subId,
         added: [],
@@ -581,7 +542,6 @@ describe('SessionStore - Comprehensive Coverage', () => {
 
       hub.fire('liveQuery.snapshot', { subscriptionId: subId, rows: [] });
 
-      // Fire a delta for an unrelated subscription — should be ignored.
       hub.fire('liveQuery.delta', {
         subscriptionId: 'some-other-id',
         added: [
@@ -600,15 +560,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
     });
 
     describe('messagesLoaded gate', () => {
-      // Regression coverage for the empty-state flash: the ChatContainer
-      // uses `messagesLoaded` together with `sessionState` to decide when
-      // to render the empty-state placeholder. If `messagesLoaded` goes
-      // true before the first LiveQuery snapshot applies, the UI will
-      // flash "No messages yet" for sessions that actually have messages
-      // but are still loading on slow networks.
-
       it('starts false on construction', () => {
-        // Fresh store state: no session has been selected yet.
         expect(sessionStore.messagesLoaded.value).toBe(false);
       });
 
@@ -616,14 +568,9 @@ describe('SessionStore - Comprehensive Coverage', () => {
         const hub = installLiveQueryHub();
         await sessionStore.select('session-1');
 
-        // The `state.session` RPC has already resolved here (the mock
-        // resolves it synchronously), but the LiveQuery snapshot has
-        // not been fired yet — this is the exact window where the
-        // empty-state flash would appear.
         expect(sessionStore.sessionState.value).not.toBeNull();
         expect(sessionStore.messagesLoaded.value).toBe(false);
 
-        // Only after the snapshot does the gate open.
         hub.fire('liveQuery.snapshot', { subscriptionId: hub.subscriptionId!, rows: [] });
         expect(sessionStore.messagesLoaded.value).toBe(true);
       });
@@ -655,18 +602,11 @@ describe('SessionStore - Comprehensive Coverage', () => {
         hub.fire('liveQuery.snapshot', { subscriptionId: hub.subscriptionId!, rows: [] });
         expect(sessionStore.messagesLoaded.value).toBe(true);
 
-        // Switching sessions clears the gate — the UI must stay on the
-        // loading skeleton until the new session's snapshot arrives,
-        // even if the prior session's messages had fully loaded.
         await sessionStore.select('session-2');
         expect(sessionStore.messagesLoaded.value).toBe(false);
       });
 
       it('opens the gate on subscribe failure so the UI can recover', async () => {
-        // First install the successful handler map for onEvent, then
-        // configure the subscribe RPC to reject. The `state.session`
-        // RPC still resolves so the sessionState path doesn't go into
-        // its own error branch; we're isolating the subscribe failure.
         const handlers = new Map<string, Array<(data: unknown) => void>>();
         mockHub.request.mockImplementation((channel: string, _params?: Record<string, unknown>) => {
           if (channel === 'state.session') {
@@ -694,9 +634,6 @@ describe('SessionStore - Comprehensive Coverage', () => {
 
         await sessionStore.select('session-1');
 
-        // Subscribe failed — we never got (and never will get) a
-        // snapshot. The gate must open anyway, otherwise the UI would
-        // sit on the loading skeleton forever.
         expect(sessionStore.messagesLoaded.value).toBe(true);
       });
     });
@@ -720,7 +657,6 @@ describe('SessionStore - Comprehensive Coverage', () => {
 
   describe('refresh()', () => {
     it('should refresh current session state', async () => {
-      // First select a session
       mockHub.request.mockResolvedValue({
         sessionInfo: { id: 'session-1', title: 'Original' },
         sdkMessages: [],
@@ -729,7 +665,6 @@ describe('SessionStore - Comprehensive Coverage', () => {
 
       await sessionStore.select('session-1');
 
-      // Mock updated state
       mockHub.request.mockResolvedValue({
         sessionInfo: { id: 'session-1', title: 'Updated' },
         sdkMessages: [],
@@ -745,12 +680,10 @@ describe('SessionStore - Comprehensive Coverage', () => {
 
       await sessionStore.refresh();
 
-      // Should not call hub.request
       expect(mockHub.request).not.toHaveBeenCalled();
     });
 
     it('should handle refresh errors gracefully', async () => {
-      // First select a session
       mockHub.request.mockResolvedValue({
         sessionInfo: { id: 'session-1' },
         sdkMessages: [],
@@ -759,17 +692,14 @@ describe('SessionStore - Comprehensive Coverage', () => {
 
       await sessionStore.select('session-1');
 
-      // Mock refresh error
       mockHub.request.mockRejectedValue(new Error('Refresh failed'));
 
-      // Should not throw
       await expect(sessionStore.refresh()).resolves.not.toThrow();
     });
   });
 
   describe('message management', () => {
     beforeEach(() => {
-      // Clear messages before each test in this suite
       sessionStore.sdkMessages.value = [];
     });
 
@@ -856,12 +786,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
   });
 
   describe('hasMoreMessages (pagination inference)', () => {
-    // `hasMoreMessages` is now set from the `messages.bySession` LiveQuery
-    // snapshot: it becomes true when the snapshot returns the full limit of
-    // rows (and therefore might be truncating older messages) and false
-    // otherwise. We drive it through the same hub mock the store sees.
-
-    const LIMIT = 200; // matches LIVE_QUERY_MESSAGE_LIMIT
+    const LIMIT = 200;
 
     beforeEach(async () => {
       await sessionStore.select(null);
@@ -971,7 +896,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
       const result = await sessionStore.loadOlderMessages(Date.now(), 100);
 
       expect(result.messages).toEqual(olderMessages);
-      expect(result.hasMore).toBe(false); // Less than limit
+      expect(result.hasMore).toBe(false);
     });
 
     it('should return hasMore true when message count equals limit', async () => {
@@ -1105,9 +1030,8 @@ describe('SessionStore - Comprehensive Coverage', () => {
 
       await sessionStore.select('session-1');
 
-      // Simulate error occurring AFTER session was opened
       if (sessionStateCallback) {
-        const errorOccurredAt = Date.now() + 1000; // After session switch
+        const errorOccurredAt = Date.now() + 1000;
         sessionStateCallback(
           {
             sessionInfo: { id: 'session-1' } as Session,
@@ -1121,7 +1045,6 @@ describe('SessionStore - Comprehensive Coverage', () => {
         );
       }
 
-      // Toast should be called for new error
       expect(toast.error).toHaveBeenCalledWith('New error after switch');
     });
 
@@ -1145,9 +1068,8 @@ describe('SessionStore - Comprehensive Coverage', () => {
 
       await sessionStore.select('session-1');
 
-      // Simulate error that occurred BEFORE session was opened (stale error)
       if (sessionStateCallback) {
-        const errorOccurredAt = Date.now() - 5000; // Before session switch
+        const errorOccurredAt = Date.now() - 5000;
         sessionStateCallback(
           {
             sessionInfo: { id: 'session-1' } as Session,
@@ -1161,7 +1083,6 @@ describe('SessionStore - Comprehensive Coverage', () => {
         );
       }
 
-      // Toast should NOT be called for stale error
       expect(toast.error).not.toHaveBeenCalledWith('Old stale error');
     });
 
@@ -1184,7 +1105,6 @@ describe('SessionStore - Comprehensive Coverage', () => {
 
       await sessionStore.select('session-1');
 
-      // Simulate session state with commands
       if (sessionStateCallback) {
         sessionStateCallback(
           {
@@ -1204,7 +1124,6 @@ describe('SessionStore - Comprehensive Coverage', () => {
     it('should show toast and log error when subscription setup fails', async () => {
       const { toast } = await import('../toast');
 
-      // Make getHub fail
       const { connectionManager } = await import('../connection-manager');
       vi.mocked(connectionManager.getHub).mockRejectedValueOnce(new Error('Connection failed'));
 
@@ -1216,7 +1135,6 @@ describe('SessionStore - Comprehensive Coverage', () => {
 
   describe('stopSubscriptions warning log', () => {
     it('should log warning when cleanup throws', async () => {
-      // Set up a cleanup function that throws
       mockHub.request.mockResolvedValue({
         sessionInfo: { id: 'session-1' },
         sdkMessages: [],
@@ -1228,17 +1146,13 @@ describe('SessionStore - Comprehensive Coverage', () => {
 
       await sessionStore.select('session-1');
 
-      // Select another session to trigger cleanup
-      mockHub.onEvent.mockReturnValue(vi.fn()); // Reset for next session
+      mockHub.onEvent.mockReturnValue(vi.fn());
       await sessionStore.select('session-2');
-
-      // Should not throw even though cleanup throws
     });
   });
 
   describe('refresh error logging', () => {
     it('should log error when refresh fails', async () => {
-      // First select a session
       mockHub.request.mockResolvedValue({
         sessionInfo: { id: 'session-1' },
         sdkMessages: [],
@@ -1247,16 +1161,12 @@ describe('SessionStore - Comprehensive Coverage', () => {
 
       await sessionStore.select('session-1');
 
-      // Make refresh fail
       mockHub.request.mockRejectedValue(new Error('Refresh network error'));
 
       await sessionStore.refresh();
-
-      // Should handle error gracefully (no throw)
     });
 
     it('should catch error when getHub fails during refresh', async () => {
-      // First select a session
       mockHub.request.mockResolvedValue({
         sessionInfo: { id: 'session-1' },
         sdkMessages: [],
@@ -1265,13 +1175,10 @@ describe('SessionStore - Comprehensive Coverage', () => {
 
       await sessionStore.select('session-1');
 
-      // Make getHub throw to trigger the catch block in refresh()
       const { connectionManager } = await import('../connection-manager');
       vi.mocked(connectionManager.getHub).mockRejectedValueOnce(new Error('Hub connection lost'));
 
       await sessionStore.refresh();
-
-      // Should handle error gracefully (no throw)
     });
   });
 

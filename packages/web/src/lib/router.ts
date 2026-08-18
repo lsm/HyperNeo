@@ -1,11 +1,3 @@
-/**
- * URL-based router for sessions, spaces, and settings.
- *
- * Room routes are intentionally not registered in the web client. Legacy room
- * data can still exist on stored sessions/tasks, but active Room UI routes are
- * no longer a client surface.
- */
-
 import { batch } from '@preact/signals';
 import {
   currentSessionIdSignal,
@@ -42,8 +34,6 @@ const SPACE_CONFIGURE_TAB_ROUTE_PATTERN =
 const SPACE_GOALS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/goals$/;
 const SPACE_MEMORIES_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/memories$/;
 const SPACE_EVOLVE_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/evolve$/;
-// Legacy alias of /evolve. Still accepted so existing bookmarks/links resolve;
-// applyPathToSignals normalizes it to /evolve via a history replacement.
 const SPACE_FORGE_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/forge$/;
 const SPACE_TASKS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/tasks$/;
 const SPACE_TASKS_ARCHIVED_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/tasks\/archived$/;
@@ -182,16 +172,10 @@ export function getSpaceMemoriesFromPath(path: string): string | null {
 export function getSpaceEvolveFromPath(path: string): string | null {
   const evolveMatch = path.match(SPACE_EVOLVE_ROUTE_PATTERN);
   if (evolveMatch) return evolveMatch[1];
-  // Legacy /forge alias resolves to the same space.
   const forgeMatch = path.match(SPACE_FORGE_ROUTE_PATTERN);
   return forgeMatch ? forgeMatch[1] : null;
 }
 
-/**
- * Compatibility wrapper for the legacy /forge route. /forge is now an alias of
- * the canonical /evolve route, so this recognizes both URL forms. Prefer
- * {@link getSpaceEvolveFromPath} in new code.
- */
 export function getSpaceForgeFromPath(path: string): string | null {
   return getSpaceEvolveFromPath(path);
 }
@@ -247,7 +231,6 @@ export function getSpaceTaskViewFromPath(
   };
 }
 
-/** Current location pathname — exported for callers that mirror route decisions. */
 export function getCurrentPath(): string {
   return window.location.pathname;
 }
@@ -288,10 +271,6 @@ export function createSpaceEvolvePath(spaceId: string): string {
   return `/space/${spaceId}/evolve`;
 }
 
-/**
- * Compatibility wrapper that generates the canonical /evolve path. Kept so
- * existing imports keep working; new code should use {@link createSpaceEvolvePath}.
- */
 export function createSpaceForgePath(spaceId: string): string {
   return createSpaceEvolvePath(spaceId);
 }
@@ -331,11 +310,6 @@ function pushPath(path: string, state: Record<string, unknown>, replace: boolean
   );
 }
 
-/**
- * Return to the previous view. Only use `history.back()` when the current entry
- * has an in-app predecessor; deep links and entries popped back to depth 0 use a
- * parent-view fallback so the browser does not leave HyperNeo.
- */
 export function navigateBack(fallback: () => void): void {
   if (getInAppHistoryDepth() > 0) {
     window.history.back();
@@ -602,10 +576,6 @@ export function navigateToSpaceEvolve(spaceId: string, replace = false): void {
   navSectionSignal.value = 'spaces';
 }
 
-/**
- * Compatibility wrapper that navigates to the canonical /evolve route. Kept so
- * existing imports keep working; new code should use {@link navigateToSpaceEvolve}.
- */
 export function navigateToSpaceForge(spaceId: string, replace = false): void {
   navigateToSpaceEvolve(spaceId, replace);
 }
@@ -967,9 +937,6 @@ export function pushOverlayHistoryForPendingAgent(
   spaceOverlaySessionIdSignal.value = null;
   spaceOverlayAgentNameSignal.value = agentName;
   spaceOverlayHighlightMessageIdSignal.value = null;
-  // Carry the clicked node ID into the task context so the pending overlay's
-  // first-send activation targets this exact node when multiple nodes reuse
-  // the same agent slot name.
   spaceOverlayTaskContextSignal.value = {
     taskId,
     agentName,
@@ -1001,7 +968,6 @@ export function clearOverlayHighlightMessageId(): void {
   spaceOverlayHighlightMessageIdSignal.value = null;
 }
 
-/** Clear all open/pending overlay signals without touching history. */
 export function clearOverlaySignals(): void {
   spaceOverlaySessionIdSignal.value = null;
   spaceOverlayAgentNameSignal.value = null;

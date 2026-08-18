@@ -1,10 +1,3 @@
-/**
- * Unit tests for the fallback-recovery pure module.
- *
- * Covers: chain resolution, next-entry selection (skip tried / same-model /
- * unavailable), format-agnostic reset-timestamp extraction across locales,
- * backoff-ladder progression, cooldown decision, and limit-kind classification.
- */
 import { describe, expect, test } from 'bun:test';
 import {
   BACKOFF_CAP_MS,
@@ -43,9 +36,6 @@ describe('resolveFallbackChain', () => {
   });
 
   test('an explicitly empty override disables fallback for that model', () => {
-    // The UI saves an empty chain as "disable fallback for this model"; a
-    // separate Delete removes the key to inherit the global list. Key presence
-    // (not length) is what selects the override.
     const chain = resolveFallbackChain(
       'anthropic',
       'claude-sonnet-4-5',
@@ -62,7 +52,6 @@ describe('resolveFallbackChain', () => {
   test('returns a defensive copy', () => {
     const chain = resolveFallbackChain('anthropic', 'x', undefined, [B, C]);
     chain.push(A);
-    // Re-resolving yields the original order — the caller did not mutate source.
     const again = resolveFallbackChain('anthropic', 'x', undefined, [B, C]);
     expect(again).toEqual([B, C]);
   });
@@ -132,8 +121,6 @@ describe('selectNextFallback', () => {
 });
 
 describe('extractResetTimestamp', () => {
-  // `now` fixed well before any test timestamp; future dates chosen so they are
-  // valid regardless of the host timezone for the local-parse strategy.
   const NOW = new Date('2026-01-01T00:00:00Z').getTime();
 
   test('ISO-8601 with Z', () => {
@@ -153,13 +140,10 @@ describe('extractResetTimestamp', () => {
       'Request rejected (429) · [1308][已达到 5 小时的使用上限。您的限额将在 2026-01-02 17:55:10 重置。]';
     const r = extractResetTimestamp(msg, NOW);
     expect(r?.strategy).toBe('yyyymmdd-hms');
-    // Expected parsed as LOCAL time — compute the same way the impl does so the
-    // assertion is timezone-independent.
     expect(r?.resetAtMs).toBe(new Date('2026-01-02T17:55:10').getTime());
   });
 
   test('does not match vendor phrasing — only the digit shape', () => {
-    // A message with cap wording but NO timestamp token returns null.
     const r = extractResetTimestamp('已达到使用上限，请稍后重试', NOW);
     expect(r).toBeNull();
   });
@@ -195,8 +179,6 @@ describe('extractResetTimestamp', () => {
   });
 
   test('ISO with offset is preferred over local interpretation', () => {
-    // 2026-01-01T12:00:00Z and a same-string local reading would differ; the
-    // explicit-Z match must win and produce the UTC value.
     const r = extractResetTimestamp('reset 2026-01-01T12:00:00Z', NOW);
     expect(r?.resetAtMs).toBe(new Date('2026-01-01T12:00:00Z').getTime());
   });
@@ -209,9 +191,6 @@ describe('extractResetTimestamp', () => {
   });
 
   test('scans past a stale timestamp to find the future reset', () => {
-    // A past request timestamp precedes the future quota reset in the same ISO
-    // format; the parser must continue to the second candidate rather than
-    // falling through to backoff.
     const past = new Date(NOW - 86_400_000).toISOString();
     const future = new Date(NOW + 3 * 3600_000).toISOString();
     const r = extractResetTimestamp(`requested ${past}; quota resets ${future}`, NOW);
@@ -227,50 +206,30 @@ describe('extractResetTimestamp', () => {
   });
 
   test('does not reparse a zoned timestamp as a daemon-local reset', () => {
-    // At 05:00Z, a stale `2026-01-01T11:00:00+08:00` is really 03:00Z (past).
-    // The ISO pass rejects it; the local-datetime pass must NOT strip the offset
-    // and accept the `11:00` prefix as a future daemon-local reset (which would
-    // delay recovery for hours).
     const staleZoned = new Date('2026-01-01T05:00:00Z').getTime();
     const r = extractResetTimestamp('retry 2026-01-01T11:00:00+08:00 please', staleZoned);
     expect(r).toBeNull();
   });
 
   test('does not reparse a fractional-zoned timestamp as a daemon-local reset', () => {
-    // Same hole as above, but the zoned timestamp carries fractional seconds
-    // (`11:00:00.000+08:00`). The old local lookahead only inspected the single
-    // char after seconds, so `.` slipped past and the local strategy re-accepted
-    // the `11:00` prefix as a future daemon-local reset, producing a false
-    // future reset. Rejecting `.<digit>` after seconds closes it (a bare local
-    // datetime never has fractional seconds). At 05:00Z the zoned value is
-    // 03:00Z (past) → ISO rejects; the local strategy must not rescue it.
     const staleZoned = new Date('2026-01-01T05:00:00Z').getTime();
     const r = extractResetTimestamp('retry 2026-01-01T11:00:00.000+08:00 please', staleZoned);
     expect(r).toBeNull();
   });
 
   test('a future fractional-zoned timestamp is parsed as ISO, not local', () => {
-    // Positive control: fractional-zoned timestamps still parse — via the ISO
-    // strategy with the offset applied — proving the fix rejects the LOCAL
-    // reparse only, not fractional seconds entirely.
     const r = extractResetTimestamp('resets 2026-01-01T20:00:00.000+08:00', NOW);
     expect(r?.strategy).toBe('iso8601');
     expect(r?.resetAtMs).toBe(new Date('2026-01-01T12:00:00Z').getTime());
   });
 
   test('a fractional-second LOCAL datetime is accepted (truncated to whole seconds)', () => {
-    // A bare fractional local datetime (no timezone) is a valid local reset;
-    // the local strategy consumes the fractional seconds and parseLocalGroups
-    // truncates to whole seconds. (Greptile: the prior `(?!\.\d)` lookahead
-    // wrongly rejected this form.)
     const r = extractResetTimestamp('resets 2026-01-02 17:55:10.123', NOW);
     expect(r?.strategy).toBe('yyyymmdd-hms');
     expect(r?.resetAtMs).toBe(new Date('2026-01-02T17:55:10').getTime());
   });
 
   test('a local datetime followed by non-offset text still matches', () => {
-    // The Chinese relay shape: `17:55:10 重置` — seconds followed by a space,
-    // not Z or an offset, so the local strategy still accepts it.
     const r = extractResetTimestamp('resets 2026-01-02 17:55:10 重置', NOW);
     expect(r?.strategy).toBe('yyyymmdd-hms');
     expect(r?.resetAtMs).toBe(new Date('2026-01-02T17:55:10').getTime());
@@ -281,7 +240,7 @@ describe('computeCooldown', () => {
   const NOW = new Date('2026-01-01T00:00:00Z').getTime();
 
   test('parsed-reset → free wait at reset time + buffer', () => {
-    const reset = NOW + 5 * 60 * 60 * 1000; // 5h out
+    const reset = NOW + 5 * 60 * 60 * 1000;
     const d = computeCooldown(`resets 2026-01-01T05:00:00Z`, 0, NOW);
     expect(d.reason).toBe('parsed-reset');
     expect(d.freeWait).toBe(true);
@@ -292,7 +251,6 @@ describe('computeCooldown', () => {
   });
 
   test('parsed-reset in near future still adds buffer (never negative)', () => {
-    // 5s in the future — delay = remaining (5s) + buffer (30s), never negative.
     const d = computeCooldown(`resets 2026-01-01T00:00:05Z`, 0, NOW);
     expect(d.delayMs).toBe(5000 + RESET_BUFFER_MS);
   });
@@ -374,7 +332,7 @@ describe('classifyLimitKind', () => {
 
 describe('isNonRetryableBillingError', () => {
   const NOW = new Date('2026-01-01T00:00:00Z').getTime();
-  const FUTURE = new Date('2026-01-01T05:00:00Z').toISOString(); // 5h out (within 7d horizon)
+  const FUTURE = new Date('2026-01-01T05:00:00Z').toISOString();
 
   test('402 is always billing (even with a reset timestamp)', () => {
     expect(isNonRetryableBillingError('402 payment required', NOW)).toBe(true);
@@ -388,9 +346,6 @@ describe('isNonRetryableBillingError', () => {
   });
 
   test('quota phrase WITH a resettable timestamp routes to recovery (not billing)', () => {
-    // A genuine cap response carrying a reset window is a rate/usage cap, not a
-    // billing dead-end — it must reach onRateLimitExhausted so the reset parser
-    // + usage-limit classification apply.
     expect(isNonRetryableBillingError(`429 quota exceeded — resets at ${FUTURE}`, NOW)).toBe(false);
     expect(
       isNonRetryableBillingError(`rate limited; insufficient_quota; reset ${FUTURE}`, NOW)

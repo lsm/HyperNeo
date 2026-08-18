@@ -1,13 +1,3 @@
-/**
- * Unit tests for InlineStatusBanner — the shared one-line banner primitive.
- *
- * Covers:
- *   - Renders tone class via data-tone attribute
- *   - Icon + label + meta rendering
- *   - Up to 3 actions fire callbacks on click
- *   - Actions respect disabled state
- */
-
 // @ts-nocheck
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { cleanup, fireEvent, render } from '@testing-library/preact';
@@ -71,7 +61,6 @@ describe('InlineStatusBanner', () => {
     const btn = getByTestId('retry-btn') as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
     fireEvent.click(btn);
-    // Disabled buttons don't fire click events in the DOM.
     expect(onClick).not.toHaveBeenCalled();
   });
 

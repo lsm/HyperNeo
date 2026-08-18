@@ -1,11 +1,3 @@
-/**
- * Unit tests for task-agent-tool-schemas.ts
- *
- * Verifies that each Zod schema:
- * - Accepts valid inputs (including optional fields present or absent)
- * - Rejects invalid inputs with a ZodError
- */
-
 import { describe, expect, test } from 'bun:test';
 import {
   ApproveTaskSchema,
@@ -16,10 +8,6 @@ import {
   UpdateTaskSchema,
   TASK_AGENT_TOOL_SCHEMAS,
 } from '../../../../src/lib/space/tools/task-agent-tool-schemas.ts';
-
-// ---------------------------------------------------------------------------
-// ApproveTaskSchema
-// ---------------------------------------------------------------------------
 
 describe('ApproveTaskSchema', () => {
   test('accepts empty object', () => {
@@ -33,9 +21,6 @@ describe('ApproveTaskSchema', () => {
   });
 
   test('schema description encodes Terminal Action pre-conditions (Task #136)', () => {
-    // The description is what surfaces to the LLM at tool-call time. It
-    // must restate the gating that the workflow node prompt also enforces
-    // so the model cannot interpret approve_task as valid mid-loop.
     const description = (ApproveTaskSchema as unknown as { description?: string }).description;
     expect(description).toBeDefined();
     expect(description).toMatch(/TERMINAL/i);
@@ -43,10 +28,6 @@ describe('ApproveTaskSchema', () => {
     expect(description).toContain('P0–P3');
   });
 });
-
-// ---------------------------------------------------------------------------
-// SubmitForApprovalSchema
-// ---------------------------------------------------------------------------
 
 describe('SubmitForApprovalSchema', () => {
   test('accepts empty object (reason is optional)', () => {
@@ -78,10 +59,6 @@ describe('SubmitForApprovalSchema', () => {
   });
 
   test('schema description equates submit_for_approval with approve_task (Task #136)', () => {
-    // Reviewer agents were treating submit_for_approval as "let a human
-    // decide for me" while findings were still open. The description must
-    // explicitly call out that it carries the same approval semantic as
-    // approve_task — both close the review loop.
     const description = (SubmitForApprovalSchema as unknown as { description?: string })
       .description;
     expect(description).toBeDefined();
@@ -89,14 +66,9 @@ describe('SubmitForApprovalSchema', () => {
     expect(description).toMatch(/approve_task/);
     expect(description).toContain('P0–P3');
     expect(description).toMatch(/APPROVE/);
-    // Must explicitly reject the "defer judgment" interpretation.
     expect(description).toMatch(/defer judgment|request changes/i);
   });
 });
-
-// ---------------------------------------------------------------------------
-// request_human_input
-// ---------------------------------------------------------------------------
 
 describe('RequestHumanInputSchema', () => {
   test('accepts valid input with question only', () => {
@@ -140,10 +112,6 @@ describe('RequestHumanInputSchema', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// TASK_AGENT_TOOL_SCHEMAS aggregate
-// ---------------------------------------------------------------------------
-
 describe('TASK_AGENT_TOOL_SCHEMAS', () => {
   test('contains all 6 tool schemas', () => {
     const keys = Object.keys(TASK_AGENT_TOOL_SCHEMAS);
@@ -169,10 +137,6 @@ describe('TASK_AGENT_TOOL_SCHEMAS', () => {
     expect(keys).not.toContain('advance_workflow');
   });
 });
-
-// ---------------------------------------------------------------------------
-// MarkCompleteSchema (PR 2/5)
-// ---------------------------------------------------------------------------
 
 describe('MarkCompleteSchema', () => {
   test('accepts empty object', () => {
@@ -210,10 +174,6 @@ describe('MarkCompleteSchema', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// list_group_members
-// ---------------------------------------------------------------------------
-
 describe('ListGroupMembersSchema', () => {
   test('accepts empty object', () => {
     const result = ListGroupMembersSchema.safeParse({});
@@ -221,7 +181,6 @@ describe('ListGroupMembersSchema', () => {
   });
 
   test('accepts object with extra fields (passthrough)', () => {
-    // Zod strips extra fields by default — just verify it does not throw
     const result = ListGroupMembersSchema.safeParse({ extra: 'ignored' });
     expect(result.success).toBe(true);
   });

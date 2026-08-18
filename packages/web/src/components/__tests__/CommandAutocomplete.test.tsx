@@ -1,11 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for CommandAutocomplete Component
- *
- * Tests the command autocomplete dropdown with navigation,
- * selection, and keyboard handling.
-import { describe, it, expect, vi } from 'vitest';
- */
 
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import CommandAutocomplete from '../CommandAutocomplete';
@@ -111,9 +104,7 @@ describe('CommandAutocomplete', () => {
         />
       );
 
-      // First command button should have selection styling
       const buttons = container.querySelectorAll('button');
-      // Skip header button, get command buttons
       const commandButtons = Array.from(buttons).filter((btn) => btn.textContent?.startsWith('/'));
       expect(commandButtons[0].className).toContain('bg-blue-500/20');
       expect(commandButtons[0].className).toContain('border-l-2');
@@ -133,10 +124,8 @@ describe('CommandAutocomplete', () => {
       const buttons = container.querySelectorAll('button');
       const commandButtons = Array.from(buttons).filter((btn) => btn.textContent?.startsWith('/'));
 
-      // Third command (/reset) should be highlighted
       expect(commandButtons[2].className).toContain('bg-blue-500/20');
 
-      // Other commands should not be highlighted
       expect(commandButtons[0].className).not.toContain('bg-blue-500/20');
       expect(commandButtons[1].className).not.toContain('bg-blue-500/20');
     });
@@ -163,7 +152,6 @@ describe('CommandAutocomplete', () => {
       const buttons = container.querySelectorAll('button');
       const commandButtons = Array.from(buttons).filter((btn) => btn.textContent?.startsWith('/'));
 
-      // Fourth command (/context) should now be highlighted
       expect(commandButtons[3].className).toContain('bg-blue-500/20');
     });
   });
@@ -182,7 +170,7 @@ describe('CommandAutocomplete', () => {
       const buttons = container.querySelectorAll('button');
       const commandButtons = Array.from(buttons).filter((btn) => btn.textContent?.startsWith('/'));
 
-      fireEvent.click(commandButtons[1]); // Click /clear
+      fireEvent.click(commandButtons[1]);
 
       expect(mockOnSelect).toHaveBeenCalledWith('/clear');
     });
@@ -200,7 +188,7 @@ describe('CommandAutocomplete', () => {
       const buttons = container.querySelectorAll('button');
       const commandButtons = Array.from(buttons).filter((btn) => btn.textContent?.startsWith('/'));
 
-      fireEvent.click(commandButtons[4]); // Click /model
+      fireEvent.click(commandButtons[4]);
 
       expect(mockOnSelect).toHaveBeenCalledWith('/model');
     });
@@ -217,7 +205,6 @@ describe('CommandAutocomplete', () => {
         />
       );
 
-      // Simulate click outside
       fireEvent.mouseDown(document);
 
       expect(mockOnClose).toHaveBeenCalledTimes(1);
@@ -429,7 +416,6 @@ describe('CommandAutocomplete', () => {
         />
       );
 
-      // The footer should contain keyboard hint for navigation
       const footer = container.querySelector('.border-t');
       expect(footer?.textContent).toContain('navigate');
     });
@@ -475,7 +461,7 @@ describe('CommandAutocomplete', () => {
       );
 
       const kbdElements = container.querySelectorAll('kbd');
-      expect(kbdElements.length).toBe(3); // Up/down, Enter, Esc
+      expect(kbdElements.length).toBe(3);
     });
   });
 
@@ -523,7 +509,6 @@ describe('CommandAutocomplete', () => {
         />
       );
 
-      // Should show all commands
       expect(container.textContent).toContain('/command0');
       expect(container.textContent).toContain('/command19');
     });

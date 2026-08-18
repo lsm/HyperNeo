@@ -1,9 +1,3 @@
-/**
- * Tests for useGitSessionStatus — the single shared git-status source.
- *
- * Covers: fetch on mount, interval polling while visible, pausing when the tab
- * is hidden, and manual refresh. Fake timers drive the polling interval.
- */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render } from '@testing-library/preact';
 import type { GitSessionStatusResponse } from '@hyperneo/shared';
@@ -36,8 +30,6 @@ const STATUS: GitSessionStatusResponse = {
   review: { files: [], totalAdditions: 0, totalDeletions: 0, pullRequest: null, checks: [] },
 };
 
-// Hook harness: Preact's testing-library may not export renderHook reliably
-// across versions, so capture the latest return into a module-level variable.
 let last: UseGitSessionStatusResult | null = null;
 function Harness({ sessionId }: { sessionId: string | null }) {
   last = useGitSessionStatus(sessionId);
@@ -79,7 +71,7 @@ describe('useGitSessionStatus', () => {
   it('polls on the interval while the tab is visible', async () => {
     render(<Harness sessionId="s1" />);
     await vi.advanceTimersByTimeAsync(10_000);
-    expect(mockGetStatus).toHaveBeenCalledTimes(2); // mount + 1 poll
+    expect(mockGetStatus).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(10_000);
     expect(mockGetStatus).toHaveBeenCalledTimes(3);
   });
@@ -88,12 +80,12 @@ describe('useGitSessionStatus', () => {
     setHidden(true);
     render(<Harness sessionId="s1" />);
     await vi.advanceTimersByTimeAsync(30_000);
-    expect(mockGetStatus).toHaveBeenCalledTimes(1); // mount only
+    expect(mockGetStatus).toHaveBeenCalledTimes(1);
   });
 
   it('manual refresh triggers an additional fetch', async () => {
     render(<Harness sessionId="s1" />);
-    await vi.advanceTimersByTimeAsync(0); // flush mount microtask
+    await vi.advanceTimersByTimeAsync(0);
     const before = mockGetStatus.mock.calls.length;
     last?.refresh();
     await vi.advanceTimersByTimeAsync(0);
@@ -113,28 +105,26 @@ describe('useGitSessionStatus', () => {
   it('queues a manual refresh behind an in-flight poll and runs it on settle', async () => {
     let resolvePoll!: (value: GitSessionStatusResponse) => void;
     mockGetStatus.mockReset();
-    mockGetStatus.mockResolvedValueOnce(STATUS); // mount resolves immediately
+    mockGetStatus.mockResolvedValueOnce(STATUS);
     mockGetStatus.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
           resolvePoll = resolve;
         })
-    ); // poll stays pending
-    mockGetStatus.mockResolvedValue(STATUS); // deferred refresh resolves
+    );
+    mockGetStatus.mockResolvedValue(STATUS);
 
     render(<Harness sessionId="s1" />);
-    await vi.advanceTimersByTimeAsync(0); // flush mount
+    await vi.advanceTimersByTimeAsync(0);
     expect(mockGetStatus).toHaveBeenCalledTimes(1);
 
-    await vi.advanceTimersByTimeAsync(10_000); // poll fires, stays pending
+    await vi.advanceTimersByTimeAsync(10_000);
     expect(mockGetStatus).toHaveBeenCalledTimes(2);
 
-    // Refresh clicked while the poll is in flight — must not be dropped.
     last?.refresh();
     await vi.advanceTimersByTimeAsync(0);
-    expect(mockGetStatus).toHaveBeenCalledTimes(2); // queued, not started yet
+    expect(mockGetStatus).toHaveBeenCalledTimes(2);
 
-    // Poll settles → queued refresh runs.
     resolvePoll(STATUS);
     await vi.advanceTimersByTimeAsync(0);
     expect(mockGetStatus).toHaveBeenCalledTimes(3);
@@ -142,8 +132,6 @@ describe('useGitSessionStatus', () => {
   });
 
   it('runs the new session load immediately when switching mid-flight', async () => {
-    // Session A's fetch stays pending; switching to B must not strand B on the
-    // loading skeleton waiting for the 10s poll, and loading must settle.
     let resolveA!: (value: GitSessionStatusResponse) => void;
     mockGetStatus.mockReset();
     mockGetStatus.mockImplementationOnce(
@@ -158,17 +146,13 @@ describe('useGitSessionStatus', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(mockGetStatus).toHaveBeenCalledWith('a');
 
-    // Switch before A resolves.
     rerender(<Harness sessionId="b" />);
     await vi.advanceTimersByTimeAsync(0);
 
-    // B's initial load fired immediately (not deferred to the next poll).
     expect(mockGetStatus).toHaveBeenCalledWith('b');
-    // B resolved → loading cleared, not stuck on the placeholder.
     expect(last?.loading).toBe(false);
     expect(last?.status?.sessionId).toBe('b');
 
-    // A resolves later — stale, must not clobber B's status.
     resolveA({ ...STATUS, sessionId: 'a' });
     await vi.advanceTimersByTimeAsync(0);
     expect(last?.status?.sessionId).toBe('b');

@@ -1,15 +1,3 @@
-/**
- * Unit tests for Workspace History RPC Handlers
- *
- * Covers:
- * - workspace.history — list recent workspaces
- * - workspace.add    — upsert a workspace into history
- * - workspace.remove — remove a workspace from history
- *
- * Uses an in-memory SQLite database to exercise the full repository layer,
- * plus a mock MessageHub to capture handler registrations.
- */
-
 import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
@@ -20,15 +8,7 @@ import { WorkspaceHistoryRepository } from '../../../../src/storage/repositories
 import { setupWorkspaceHandlers } from '../../../../src/lib/rpc-handlers/workspace-handlers';
 import type { MessageHub } from '@hyperneo/shared';
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 type RequestHandler = (data: unknown) => unknown;
-
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
 
 function createMockMessageHub(): {
   hub: MessageHub;
@@ -59,10 +39,6 @@ function createMockMessageHub(): {
 
   return { hub, handlers };
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe('workspace handlers', () => {
   let db: BunDatabase;
@@ -99,8 +75,6 @@ describe('workspace handlers', () => {
     });
 
     it('returns entries sorted by last_used_at descending', async () => {
-      // Insert two entries with explicit timestamps so the ordering is
-      // deterministic regardless of clock resolution or CPU load.
       db.prepare(
         'INSERT INTO workspace_history (path, last_used_at, use_count) VALUES (?, ?, 1)'
       ).run('/workspace/older', 1000);
@@ -119,10 +93,6 @@ describe('workspace handlers', () => {
     });
 
     it('breaks ties on identical last_used_at by insertion order (newest first)', async () => {
-      // When two rows share the same last_used_at (possible on fast
-      // machines where Date.now() returns identical values for two
-      // back-to-back inserts), the autoincrement `id` is used as a
-      // deterministic tiebreaker so the most-recently-inserted row wins.
       const sameTs = 1234;
       db.prepare(
         'INSERT INTO workspace_history (path, last_used_at, use_count) VALUES (?, ?, 1)'

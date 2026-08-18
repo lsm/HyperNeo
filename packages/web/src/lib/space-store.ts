@@ -1,28 +1,3 @@
-/**
- * SpaceStore - Space state management with WebSocket subscriptions
- *
- * ARCHITECTURE: Pure WebSocket (no REST API)
- * - Initial state: Fetched via RPC over WebSocket on space select
- * - Updates: Real-time via event subscriptions
- * - Single subscription source for space data
- * - Promise-chain lock for atomic space switching
- *
- * Signals (reactive state):
- * - spaceId: Current space ID
- * - space: Space metadata
- * - tasks: SpaceTask list for the space
- * - workflowRuns: SpaceWorkflowRun list for the space
- * - agents: SpaceWorkerAgent list for the space
- * - agentTemplates: Built-in agent templates from daemon seeding source
- * - workflows: SpaceWorkflow list for the space
- * - workflowTemplates: Built-in workflow templates from daemon seeding source
- * - runtimeState: Runtime state (running/paused/stopped)
- * - nodeExecutions: NodeExecution list for the OPEN task's run only (scoped per-run)
- * - nodeExecutionsByNodeId: NodeExecutions grouped by workflow node ID
- * - loading: Loading state
- * - error: Error state
- */
-
 import type {
   CreateSpaceWorkerAgentParams,
   CreateSpaceGoalParams,
@@ -84,24 +59,15 @@ export interface SpaceSessionSummary {
   lastActiveAt: number;
 }
 
-/**
- * A session row in the selected space's `sessions` signal (fed by the
- * `spaceSessions.bySpace` LiveQuery). Carries the same processing/message
- * state as a global chat session so the sidebar can render activity and
- * unread indicators uniformly.
- */
 export interface SpaceSessionRow {
   id: string;
   title: string;
   status: string;
-  /** Persisted agent processing state (JSON-serialised AgentProcessingState). */
   processingState?: string;
-  /** Total SDK messages for the session — drives the sidebar unread badge. */
   messageCount?: number;
   lastActiveAt: number;
 }
 
-/** Space enriched with active tasks and recent sessions for the global list */
 export interface SpaceWithTasks extends Space {
   tasks: SpaceTask[];
   sessions: SpaceSessionSummary[];
@@ -109,7 +75,6 @@ export interface SpaceWithTasks extends Space {
 
 export type ExternalEventDeliveryStatus = 'pending' | 'delivered' | 'failed';
 
-/** Min/max/avg/p95 of a set of millisecond ages. */
 export interface QueueAgeStats {
   count: number;
   minMs: number;
@@ -118,7 +83,6 @@ export interface QueueAgeStats {
   p95Ms: number;
 }
 
-/** Cumulative pending-external-event queue counters (process-lifetime). */
 export interface QueueHealthCounters {
   since: number;
   enqueue: number;
@@ -134,7 +98,6 @@ export interface QueueHealthCounters {
   cooldownSkips: number;
 }
 
-/** Live queue gauges computed at read time. */
 export interface QueueHealthGauges {
   queueDepth: number;
   queueKeys: number;
@@ -154,7 +117,6 @@ export type QueueHealthFailureCategory =
   | 'injection_error'
   | 'other';
 
-/** Daemon-wide aggregate queue-health snapshot. */
 export interface QueueHealthSnapshot {
   collectedAt: number;
   counters: QueueHealthCounters;
@@ -217,106 +179,62 @@ function workflowToSummary(wf: SpaceWorkflow): SpaceWorkflowSummary {
   };
 }
 class SpaceStore {
-  // ========================================
-  // Core Signals
-  // ========================================
-
-  /**
-   * Global list of all spaces (across all spaces, for the sidebar list).
-   * Populated by initGlobalList(); not tied to any selected space.
-   */
   readonly spaces = signal<Space[]>([]);
 
-  /**
-   * Spaces with their active (non-completed, non-cancelled) tasks.
-   * Used by the Context Panel thread-style list.
-   */
   readonly spacesWithTasks = signal<SpaceWithTasks[]>([]);
 
-  /** Current active space ID */
   readonly spaceId = signal<string | null>(null);
 
-  /** Space metadata */
   readonly space = signal<Space | null>(null);
 
-  /** Tasks for this space */
   readonly tasks = signal<SpaceTask[]>([]);
 
-  /** Workflow runs for this space */
   readonly workflowRuns = signal<SpaceWorkflowRun[]>([]);
 
-  /** Agents configured for this space */
   readonly agents = signal<SpaceWorkerAgent[]>([]);
 
-  /** Built-in agent templates sourced from daemon seeding definitions */
   readonly agentTemplates = signal<SpaceWorkerAgentTemplate[]>([]);
 
-  /** Long-horizon agents for this space */
   readonly longHorizonAgents = signal<SpaceLongHorizonAgent[]>([]);
 
-  /** Built-in long-horizon agent templates */
   readonly longHorizonAgentTemplates = signal<SpaceLongHorizonAgentTemplate[]>([]);
 
-  /** Workflow summaries for this space */
   readonly workflows = signal<SpaceWorkflowSummary[]>([]);
 
-  /** Full workflow definitions for configure views that need nodes */
   readonly workflowDetails = signal<SpaceWorkflow[]>([]);
 
-  /** Built-in workflow templates sourced from daemon seeding definitions */
   readonly workflowTemplates = signal<SpaceWorkflow[]>([]);
 
-  /** Runtime state for this space */
   readonly runtimeState = signal<RuntimeState | null>(null);
 
-  /** Task schedules for this space */
   readonly schedules = signal<TaskSchedule[]>([]);
 
-  /** Space goals for this space */
   readonly goals = signal<SpaceGoal[]>([]);
 
-  /** Goal events keyed by goal ID */
   readonly goalEvents = signal<Map<string, SpaceGoalEvent[]>>(new Map());
 
-  /** Live task-agent activity rows keyed by task ID */
   readonly taskActivity = signal<Map<string, SpaceTaskActivityMember[]>>(new Map());
 
-  /** Loading state */
   readonly loading = signal<boolean>(false);
 
-  /** Error state */
   readonly error = signal<string | null>(null);
 
-  /** Whether configure-view data (agents, workflows, templates) has been loaded for the current space */
   readonly configDataLoaded = signal<boolean>(false);
 
-  /** Whether node executions have been loaded for the current space */
   readonly nodeExecLoaded = signal<boolean>(false);
 
-  /** Sessions for this space — reactive via LiveQuery (title, status changes) */
   readonly sessions = signal<SpaceSessionRow[]>([]);
 
-  /**
-   * Optimistically patch a session row (e.g. inline rename) before the LiveQuery
-   * round-trip confirms it. No-op if the session isn't in the current space view.
-   */
   updateSession(sessionId: string, patch: Partial<Omit<SpaceSessionRow, 'id'>>): void {
     this.sessions.value = this.sessions.value.map((s) =>
       s.id === sessionId ? { ...s, ...patch } : s
     );
   }
 
-  /** Cleanup functions for the space sessions LiveQuery subscription */
   private spaceSessionsCleanupFns: Array<() => void> = [];
 
-  /** Stale-event guard for space sessions LiveQuery subscription */
   private activeSpaceSessionsSubscriptionId: string | null = null;
 
-  // ========================================
-  // Private Helpers
-  // ========================================
-
-  /** Derive runtime state from Space fields */
   private updateRuntimeState(space: Space): void {
     if (space.status === 'archived') {
       this.runtimeState.value = 'stopped';
@@ -329,19 +247,12 @@ class SpaceStore {
     this.runtimeState.value = space.paused ? 'paused' : 'running';
   }
 
-  // ========================================
-  // Computed Signals
-  // ========================================
-
-  /** Tasks that are currently in progress */
   readonly activeTasks = computed(() => this.tasks.value.filter((t) => t.status === 'in_progress'));
 
-  /** Workflow runs that are currently active (pending or in_progress) */
   readonly activeRuns = computed(() =>
     this.workflowRuns.value.filter((r) => r.status === 'pending' || r.status === 'in_progress')
   );
 
-  /** Tasks grouped by workflow run ID */
   readonly tasksByRun = computed(() => {
     const map = new Map<string, SpaceTask[]>();
     for (const task of this.tasks.value) {
@@ -353,15 +264,10 @@ class SpaceStore {
     return map;
   });
 
-  /** Tasks not associated with any workflow run */
   readonly standaloneTasks = computed(() => this.tasks.value.filter((t) => !t.workflowRunId));
 
-  /** Node executions for the OPEN task's run only — loaded via initial fetch and a single
-   *  `nodeExecutions.byRun` LiveQuery subscription. Scoped per-run so a task page only
-   *  pays for the one run it actually reads (not every run in the space). */
   readonly nodeExecutions = signal<NodeExecution[]>([]);
 
-  /** Node executions grouped by workflow node ID */
   readonly nodeExecutionsByNodeId = computed(() => {
     const map = new Map<string, NodeExecution[]>();
     for (const exec of this.nodeExecutions.value) {
@@ -375,98 +281,50 @@ class SpaceStore {
     return map;
   });
 
-  // ========================================
-  // Private State
-  // ========================================
-
-  /**
-   * Promise-chain lock for atomic space switching.
-   * The `.catch()` ensures a rejection in `doSelect` never permanently breaks
-   * the chain — future `selectSpace` calls will still execute.
-   */
   private selectPromise: Promise<void> = Promise.resolve();
 
-  /** Subscription cleanup functions */
   private cleanupFunctions: Array<() => void> = [];
 
-  /** The space-specific channel that was joined, for cleanup on switch */
   private activeSpaceChannel: string | null = null;
 
-  /** Whether global list subscriptions have been set up */
   private globalListInitialized = false;
 
-  /**
-   * Cleanup functions for global list event subscriptions.
-   * Stored so re-initialization (on reconnect) can remove old handlers
-   * before registering new ones on the same hub instance.
-   */
   private globalListCleanupFns: Array<() => void> = [];
 
-  /** Cleanup functions for the active task-activity LiveQuery subscription */
   private taskActivityCleanupFns: Array<() => void> = [];
 
-  /** Active task ID for the current task-activity LiveQuery subscription */
   private activeTaskActivityTaskId: string | null = null;
 
-  /** Stale-event guard for task-activity LiveQuery subscriptions */
   private activeTaskActivitySubscriptionIds = new Set<string>();
 
-  /** Cleanup functions for node execution LiveQuery subscriptions */
   private nodeExecCleanupFns: Array<() => void> = [];
 
-  /** Stale-event guard for node execution LiveQuery subscriptions */
   private activeNodeExecSubscriptionIds = new Set<string>();
 
-  /** The workflow run ID whose node executions are currently loaded/subscribed.
-   *  At most one run is active at a time — the open task's run. null = nothing
-   *  loaded (standalone task, no task open, or between runs). */
   private activeNodeExecRunId: string | null = null;
 
-  /** Monotonic counter bumped before each node-exec load so a stale in-flight
-   *  load (superseded by a task switch to a different run) can't clear the
-   *  shared `nodeExecPromise` out from under the newer load. */
   private nodeExecLoadGen = 0;
 
-  /** Monotonic counter so stale goal list responses cannot overwrite newer filters. */
   private goalListRequestVersion = 0;
 
-  /** In-flight promise for ensureConfigData to prevent duplicate fetches */
   private configDataPromise: Promise<void> | null = null;
 
-  /** In-flight promise for ensureNodeExecutions to prevent duplicate fetches */
   private nodeExecPromise: Promise<void> | null = null;
 
-  /** Cache of full workflow details fetched on-demand (keyed by workflowId) */
   private workflowDetailCache = new Map<string, SpaceWorkflow>();
 
-  /** In-flight promises for workflow detail fetches (keyed by workflowId).
-   *  Each promise captures the spaceId at request time; if the space changes
-   *  before resolution, the result is discarded instead of cached. */
   private workflowDetailPromises = new Map<string, Promise<SpaceWorkflow | null>>();
 
-  /** Per-workflow fetch generation counter. Incremented before each fetch and
-   *  on invalidation events. Stale responses compare their captured generation
-   *  against the current one and skip caching when they no longer match. */
   private workflowDetailFetchGens = new Map<string, number>();
 
-  /** Whether workflow summaries loaded successfully for the current space. */
   private workflowSummariesLoaded = false;
 
-  /** Retry counter for partial workflow-detail fan-out failures. Reset when
-   *  details load successfully or the space changes. */
   private workflowDetailsRetryCount = 0;
 
-  /** Whether a workflow-detail retry timeout is queued. */
   private workflowDetailsRetryPending = false;
 
-  /** Generation for the bulk workflow-detail load. Incremented when reconnect
-   *  invalidates an in-flight fan-out so old promise cleanup cannot clobber the
-   *  replacement load. */
   private workflowDetailsLoadGeneration = 0;
 
-  /** Monotonic counter bumped on every spaceWorkflow.updated/deleted event so
-   *  hooks keyed by workflowId can re-fetch when the same workflow is edited
-   *  or deleted in place. */
   readonly workflowVersions = signal<Map<string, number>>(new Map());
 
   private upsertLongHorizonAgent(agent: SpaceLongHorizonAgent): void {
@@ -517,25 +375,10 @@ class SpaceStore {
     );
   }
 
-  // ========================================
-  // Global Space List
-  // ========================================
-
-  /**
-   * Initialize the global space list.
-   * Fetches all spaces from the server and subscribes to global create/archive/delete events.
-   * Safe to call multiple times — idempotent after first call.
-   *
-   * On reconnect, refresh() resets `globalListInitialized` so this runs again.
-   * Before re-registering, any stale handlers from the previous run are removed
-   * via `globalListCleanupFns` to prevent duplicate subscriptions on the same hub.
-   */
   async initGlobalList(): Promise<void> {
     if (this.globalListInitialized) return;
     this.globalListInitialized = true;
 
-    // Remove stale handlers from the previous registration (e.g. after a refresh reset).
-    // This prevents duplicate event firings when the same hub instance is reused.
     for (const cleanup of this.globalListCleanupFns) {
       try {
         cleanup();
@@ -554,7 +397,6 @@ class SpaceStore {
       this.spaces.value = spaces;
       this.spacesWithTasks.value = enriched ?? [];
 
-      // Subscribe to global space events to keep list up-to-date
       this.globalListCleanupFns.push(
         hub.onEvent<{ spaceId: string; space: Space }>('space.created', (event) => {
           if (event.space) {
@@ -603,7 +445,6 @@ class SpaceStore {
         })
       );
 
-      // Keep spacesWithTasks in sync when tasks are created/updated
       this.globalListCleanupFns.push(
         hub.onEvent<{
           sessionId: string;
@@ -614,7 +455,6 @@ class SpaceStore {
           const swt = this.spacesWithTasks.value;
           const idx = swt.findIndex((s) => s.id === event.spaceId);
           if (idx >= 0) {
-            // Only add if not completed/cancelled
             if (event.task.status !== 'done' && event.task.status !== 'cancelled') {
               const nextTasks = this.upsertTaskOnePerRun(swt[idx].tasks, event.task);
               this.spacesWithTasks.value = [
@@ -638,7 +478,6 @@ class SpaceStore {
           const idx = swt.findIndex((s) => s.id === event.spaceId);
           if (idx >= 0) {
             const spaceTasks = swt[idx].tasks;
-            // If task was completed/cancelled, remove it
             if (event.task.status === 'done' || event.task.status === 'cancelled') {
               const updated = this.removeTaskOnePerRun(spaceTasks, event.task);
               this.spacesWithTasks.value = [
@@ -659,28 +498,10 @@ class SpaceStore {
       );
     } catch (err) {
       logger.error('Failed to initialize global space list:', err);
-      // Reset flag so retries work on reconnect
       this.globalListInitialized = false;
     }
   }
 
-  // ========================================
-  // Space Selection (with Promise-Chain Lock)
-  // ========================================
-
-  /**
-   * Select a space with atomic subscription management.
-   *
-   * Uses promise-chain locking to prevent race conditions:
-   * - Each selectSpace() waits for previous selectSpace() to complete
-   * - Unsubscribe -> Update state -> Subscribe happens atomically
-   *
-   * Note: errors from `doSelect` are already handled internally (set on
-   * `this.error`) and are logged. The chain `.catch()` is a safety net so
-   * that an unexpected rejection never permanently breaks the promise chain
-   * — callers always receive a resolved promise and observe errors via the
-   * `error` signal.
-   */
   selectSpace(spaceId: string | null): Promise<void> {
     this.selectPromise = this.selectPromise
       .then(() => this.doSelect(spaceId))
@@ -690,24 +511,15 @@ class SpaceStore {
     return this.selectPromise;
   }
 
-  /**
-   * Clear the current space selection
-   */
   clearSpace(): Promise<void> {
     return this.selectSpace(null);
   }
 
-  /**
-   * Internal selection logic (called within promise chain).
-   * The spaceIdOrSlug parameter can be either a UUID or a slug — both are resolved
-   * to the canonical UUID during initial state fetch.
-   */
   private async doSelect(spaceIdOrSlug: string | null): Promise<void> {
     if (this.spaceId.value === spaceIdOrSlug) {
       return;
     }
 
-    // 1. Stop current subscriptions and leave old channel
     this.stopSubscriptions();
     if (this.activeSpaceChannel) {
       const hub = connectionManager.getHubIfConnected();
@@ -717,7 +529,6 @@ class SpaceStore {
       this.activeSpaceChannel = null;
     }
 
-    // 2. Clear state
     this.space.value = null;
     this.tasks.value = [];
     this.workflowRuns.value = [];
@@ -748,17 +559,13 @@ class SpaceStore {
     this.workflowVersions.value = new Map();
     this.disposeSpaceSessionsSubscription();
 
-    // 3. Update active space (may be updated to real UUID after fetch)
     this.spaceId.value = spaceIdOrSlug;
 
-    // 4. Start new subscriptions if space selected
     if (spaceIdOrSlug) {
       this.loading.value = true;
       try {
-        // Resolve slug to UUID via overview fetch, then subscribe with the real UUID
         const resolvedId = await this.fetchAndResolveSpace(spaceIdOrSlug);
         if (resolvedId) {
-          // Keep store/API state canonical while preserving the URL-facing route identifier.
           if (resolvedId !== spaceIdOrSlug) {
             this.spaceId.value = resolvedId;
             if (currentSpaceIdSignal.value === spaceIdOrSlug) {
@@ -779,24 +586,13 @@ class SpaceStore {
     }
   }
 
-  // ========================================
-  // Subscription Management
-  // ========================================
-
-  /**
-   * Start subscriptions for a space
-   */
   private async startSubscriptions(spaceId: string): Promise<void> {
     const hub = await connectionManager.getHub();
 
-    // Join the space-specific channel so spaceAgent.* events are delivered.
-    // The daemon emits those events with sessionId: `space:${spaceId}`, which
-    // the server router delivers only to members of that channel.
     const spaceChannel = `space:${spaceId}`;
     hub.joinChannel(spaceChannel);
     this.activeSpaceChannel = spaceChannel;
 
-    // --- space.updated ---
     const unsubSpaceUpdated = hub.onEvent<{
       sessionId: string;
       spaceId: string;
@@ -810,19 +606,14 @@ class SpaceStore {
     });
     this.cleanupFunctions.push(unsubSpaceUpdated);
 
-    // --- spaceSessions.bySpace LiveQuery ---
     this.subscribeSpaceSessions(hub, spaceId);
 
-    // --- space.archived ---
     const unsubSpaceArchived = hub.onEvent<{
       sessionId: string;
       spaceId: string;
       space: Space;
     }>('space.archived', (event) => {
       if (event.spaceId === spaceId) {
-        // Conditional clear: only clear if still on this space when the promise chain
-        // executes. A late-arriving event for a previous space can otherwise clear the
-        // newly-selected space (race between selectSpace chain and delayed WS events).
         this.selectPromise = this.selectPromise
           .then(() => {
             if (this.spaceId.value === spaceId) {
@@ -836,15 +627,11 @@ class SpaceStore {
     });
     this.cleanupFunctions.push(unsubSpaceArchived);
 
-    // --- space.deleted ---
     const unsubSpaceDeleted = hub.onEvent<{
       sessionId: string;
       spaceId: string;
     }>('space.deleted', (event) => {
       if (event.spaceId === spaceId) {
-        // Conditional clear: only clear if still on this space when the promise chain
-        // executes. A late-arriving event for a previous space can otherwise clear the
-        // newly-selected space (race between selectSpace chain and delayed WS events).
         this.selectPromise = this.selectPromise
           .then(() => {
             if (this.spaceId.value === spaceId) {
@@ -858,7 +645,6 @@ class SpaceStore {
     });
     this.cleanupFunctions.push(unsubSpaceDeleted);
 
-    // --- space.task.created ---
     const unsubTaskCreated = hub.onEvent<{
       sessionId: string;
       spaceId: string;
@@ -871,7 +657,6 @@ class SpaceStore {
     });
     this.cleanupFunctions.push(unsubTaskCreated);
 
-    // --- space.task.updated ---
     const unsubTaskUpdated = hub.onEvent<{
       sessionId: string;
       spaceId: string;
@@ -884,7 +669,6 @@ class SpaceStore {
     });
     this.cleanupFunctions.push(unsubTaskUpdated);
 
-    // --- space.schedule.updated ---
     const unsubScheduleUpdated = hub.onEvent<{
       sessionId: string;
       spaceId: string;
@@ -899,7 +683,6 @@ class SpaceStore {
     });
     this.cleanupFunctions.push(unsubScheduleUpdated);
 
-    // --- space.workflowRun.created ---
     const unsubRunCreated = hub.onEvent<{
       sessionId: string;
       spaceId: string;
@@ -910,16 +693,11 @@ class SpaceStore {
         const exists = this.workflowRuns.value.some((r) => r.id === event.run.id);
         if (!exists) {
           this.workflowRuns.value = [...this.workflowRuns.value, event.run];
-          // Node-execution subscriptions are scoped to the OPEN task's run only
-          // (see ensureNodeExecutions), so a newly-created run is NOT auto-
-          // subscribed. If this run belongs to the open task, its subscription
-          // is established when SpaceTaskPane calls ensureNodeExecutions(runId).
         }
       }
     });
     this.cleanupFunctions.push(unsubRunCreated);
 
-    // --- space.workflowRun.updated ---
     const unsubRunUpdated = hub.onEvent<{
       sessionId: string;
       spaceId: string;
@@ -939,7 +717,6 @@ class SpaceStore {
     });
     this.cleanupFunctions.push(unsubRunUpdated);
 
-    // --- spaceAgent.created ---
     const unsubAgentCreated = hub.onEvent<{
       sessionId: string;
       spaceId: string;
@@ -954,7 +731,6 @@ class SpaceStore {
     });
     this.cleanupFunctions.push(unsubAgentCreated);
 
-    // --- spaceAgent.updated ---
     const unsubAgentUpdated = hub.onEvent<{
       sessionId: string;
       spaceId: string;
@@ -975,7 +751,6 @@ class SpaceStore {
     });
     this.cleanupFunctions.push(unsubAgentUpdated);
 
-    // --- spaceAgent.deleted ---
     const unsubAgentDeleted = hub.onEvent<{
       sessionId: string;
       spaceId: string;
@@ -987,7 +762,6 @@ class SpaceStore {
     });
     this.cleanupFunctions.push(unsubAgentDeleted);
 
-    // --- spaceLongHorizonAgent.created ---
     const unsubLongHorizonAgentCreated = hub.onEvent<{
       sessionId: string;
       spaceId: string;
@@ -999,7 +773,6 @@ class SpaceStore {
     });
     this.cleanupFunctions.push(unsubLongHorizonAgentCreated);
 
-    // --- spaceLongHorizonAgent.updated ---
     const unsubLongHorizonAgentUpdated = hub.onEvent<{
       sessionId: string;
       spaceId: string;
@@ -1011,7 +784,6 @@ class SpaceStore {
     });
     this.cleanupFunctions.push(unsubLongHorizonAgentUpdated);
 
-    // --- spaceLongHorizonAgent.deleted ---
     const unsubLongHorizonAgentDeleted = hub.onEvent<{
       sessionId: string;
       spaceId: string;
@@ -1025,7 +797,6 @@ class SpaceStore {
     });
     this.cleanupFunctions.push(unsubLongHorizonAgentDeleted);
 
-    // --- spaceWorkflow.created ---
     const unsubWorkflowCreated = hub.onEvent<{
       sessionId: string;
       spaceId: string;
@@ -1041,7 +812,6 @@ class SpaceStore {
     });
     this.cleanupFunctions.push(unsubWorkflowCreated);
 
-    // --- spaceWorkflow.updated ---
     const unsubWorkflowUpdated = hub.onEvent<{
       sessionId: string;
       spaceId: string;
@@ -1069,9 +839,6 @@ class SpaceStore {
         } else {
           this.workflowDetails.value = [...this.workflowDetails.value, event.workflow];
         }
-        // Evict cached detail, cancel any in-flight request, bump the fetch
-        // generation so stale responses skip caching, and advance the version
-        // so hooks keyed by workflowId re-fetch the new definition.
         this.workflowDetailCache.delete(event.workflow.id);
         this.workflowDetailPromises.delete(event.workflow.id);
         this.workflowDetailFetchGens.set(
@@ -1086,7 +853,6 @@ class SpaceStore {
     });
     this.cleanupFunctions.push(unsubWorkflowUpdated);
 
-    // --- spaceWorkflow.deleted ---
     const unsubWorkflowDeleted = hub.onEvent<{
       sessionId: string;
       spaceId: string;
@@ -1103,9 +869,6 @@ class SpaceStore {
           event.workflowId,
           (this.workflowDetailFetchGens.get(event.workflowId) ?? 0) + 1
         );
-        // Advance the version so consumers keyed by [workflowId, version]
-        // re-run and clear stale workflow detail/gates instead of keeping
-        // pre-delete state alive.
         this.workflowVersions.value = new Map(this.workflowVersions.value).set(
           event.workflowId,
           (this.workflowVersions.value.get(event.workflowId) ?? 0) + 1
@@ -1115,10 +878,6 @@ class SpaceStore {
     this.cleanupFunctions.push(unsubWorkflowDeleted);
   }
 
-  /**
-   * Fetch initial state and resolve slug to UUID.
-   * Returns the resolved space UUID, or null if not found.
-   */
   private async fetchAndResolveSpace(spaceIdOrSlug: string): Promise<string | null> {
     const hub = await connectionManager.getHub();
 
@@ -1137,14 +896,10 @@ class SpaceStore {
     this.space.value = overview.space;
     this.updateRuntimeState(overview.space);
     this.workflowRuns.value = overview.workflowRuns ?? [];
-    // Server already returns collapsed tasks via collapseToCanonicalTasks — use directly
     this.tasks.value = overview.tasks ?? [];
     return overview.space.id;
   }
 
-  /**
-   * Fetch agents for the space
-   */
   private async fetchAgents(
     hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
     spaceId: string
@@ -1169,31 +924,15 @@ class SpaceStore {
         'spaceLongHorizonAgent.list',
         { spaceId }
       );
-      // Guard against a space switch during the await: a refresh started in
-      // space A must not overwrite space B's agent list if the user navigated
-      // away before the RPC resolved. Mirrors fetchAgents.
       if (this.spaceId.value !== spaceId) return;
       this.longHorizonAgents.value = (result?.agents ?? []).filter(
         (agent) => agent.spaceId === spaceId
       );
     } catch (err) {
-      // On failure, KEEP the cached list. Clearing it would empty the Agents
-      // view (and ensureConfigData won't re-fetch because configDataLoaded is
-      // still true), which is worse than showing slightly-stale data. The
-      // refresh caller retries the session load regardless.
       logger.error('Failed to fetch long-horizon agents (keeping cached list):', err);
     }
   }
 
-  /**
-   * Force-refresh the long-horizon agent list for the current space (task #873).
-   *
-   * Unlike `ensureConfigData` (which dedupes once the config has loaded), this
-   * always re-fetches `spaceLongHorizonAgent.list`. The unavailable-session
-   * "Refresh agent record" action uses it to pick up a corrected `sessionId`
-   * after a reconnect/restart, instead of looping on a deleted id. No-op when
-   * no space is selected or the transport is unavailable.
-   */
   async refreshLongHorizonAgents(): Promise<void> {
     const spaceId = this.spaceId.value;
     if (!spaceId) return;
@@ -1222,9 +961,6 @@ class SpaceStore {
     }
   }
 
-  /**
-   * Fetch built-in agent templates from daemon seeding source.
-   */
   private async fetchAgentTemplates(
     hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
     spaceId: string
@@ -1243,14 +979,6 @@ class SpaceStore {
     }
   }
 
-  /**
-   * Fetch workflow summaries for the space. Summaries back the WorkflowList tab
-   * and anywhere only workflow metadata is needed. Full definitions (nodes,
-   * agents) are loaded separately by {@link ensureWorkflowDetails} to avoid
-   * flooding the hub with one spaceWorkflow.get per workflow on every config
-   * data load (which is also triggered by SpaceTaskPane, TaskAuxiliaryPanel,
-   * SpaceGoals, SpaceLongHorizonAgents, and reconnect refreshes).
-   */
   private async fetchWorkflows(
     hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
     spaceId: string
@@ -1270,24 +998,10 @@ class SpaceStore {
     }
   }
 
-  /**
-   * In-flight promise for ensureWorkflowDetails to dedupe concurrent callers.
-   */
   private workflowDetailsPromise: Promise<void> | null = null;
 
-  /**
-   * Whether full workflow definitions have been loaded for the current space.
-   * Reset on space switch; only the Configure Agents view relies on this.
-   */
   readonly workflowDetailsLoaded = signal<boolean>(false);
 
-  /**
-   * Bulk-load full workflow definitions (nodes + agent slots) for the Configure
-   * Agents view. Issues one spaceWorkflow.get per workflow — intentionally
-   * separated from ensureConfigData so summary-only consumers don't pay the
-   * cost. Idempotent: returns immediately if already loaded for this space.
-   * Callers: SpaceConfigurePage. Event handlers keep results fresh after load.
-   */
   async ensureWorkflowDetails(): Promise<void> {
     if (this.workflowDetailsLoaded.value) return;
     if (this.workflowDetailsPromise) return this.workflowDetailsPromise;
@@ -1295,21 +1009,11 @@ class SpaceStore {
     const spaceId = this.spaceId.value;
     if (!spaceId) return;
 
-    // Summary fetch failed inside ensureConfigData (other sub-fetches
-    // succeeded, so configDataLoaded still flipped to true). Don't leave the
-    // Agents tab on the loading spinner forever: retry the summary fetch with
-    // the same bounded backoff used for detail failures. If retries exhaust,
-    // mark details loaded so the empty state renders instead of spinning.
     if (!this.workflowSummariesLoaded) {
       this.retryWorkflowSummaries(spaceId);
       return;
     }
 
-    // Snapshot the workflow ids at request time so concurrent updates/deletes
-    // can be detected before assignment. Also snapshot current detail objects by
-    // reference; if a real-time event replaces an entry while the fan-out is in
-    // flight, its reference changes and we must prefer the event-updated version
-    // over the stale fetch response.
     const requestedIds = new Set(this.workflows.value.map((workflow) => workflow.id));
     const priorDetails = new Map<string, SpaceWorkflow>(
       this.workflowDetails.value.map((workflow) => [workflow.id, workflow])
@@ -1319,9 +1023,6 @@ class SpaceStore {
 
     this.workflowDetailsPromise = (async (): Promise<void> => {
       try {
-        // Clear cache + bump generations so every workflow gets a fresh RPC
-        // (reconnect/refresh path may have populated the cache from a prior
-        // load and we want to reflect server-side changes).
         for (const id of requestedIds) {
           this.workflowDetailCache.delete(id);
           this.workflowDetailPromises.delete(id);
@@ -1333,8 +1034,6 @@ class SpaceStore {
             return { id, detail };
           })
         );
-        // Drop the batch if the space switched or reconnect invalidated this
-        // bulk-load generation while we were fetching.
         if (
           this.spaceId.value !== spaceId ||
           this.workflowDetailsLoadGeneration !== loadGeneration
@@ -1342,12 +1041,6 @@ class SpaceStore {
           return;
         }
 
-        // Merge instead of replace so workflows created/imported by other
-        // clients during fan-out (handled by spaceWorkflow.created above)
-        // are preserved. Only the requested ids are overwritten; any other
-        // entry already in workflowDetails stays untouched. If a workflow was
-        // updated by a real-time event during the fan-out, prefer the current
-        // (event-updated) entry over the stale fetch response.
         const fetchedById = new Map<string, SpaceWorkflow>();
         let missing = 0;
         for (const { id, detail } of results) {
@@ -1357,17 +1050,12 @@ class SpaceStore {
             this.workflows.value.some((w) => w.id === id) &&
             !this.workflowDetails.value.some((w) => w.id === id)
           ) {
-            // Only count missing for workflows that are still present and have
-            // no usable prior detail. Workflows deleted during fan-out are
-            // dropped by the merge below; workflows already present from an
-            // earlier attempt can still render while retry continues.
             missing += 1;
           }
         }
         const merged: SpaceWorkflow[] = [];
         const seen = new Set<string>();
         for (const workflow of this.workflowDetails.value) {
-          // Drop entries no longer in the summary list (deleted).
           if (!this.workflows.value.some((w) => w.id === workflow.id)) continue;
           const fresh = fetchedById.get(workflow.id);
           const wasUpdatedDuringFetch = workflow !== priorDetails.get(workflow.id);
@@ -1380,9 +1068,6 @@ class SpaceStore {
           }
           seen.add(workflow.id);
         }
-        // Append freshly fetched workflows not yet tracked (e.g. created
-        // concurrently — the created handler added the summary, but the
-        // full detail arrives via this batch).
         for (const [id, detail] of fetchedById) {
           if (!seen.has(id) && this.workflows.value.some((w) => w.id === id)) {
             const current = this.workflowDetails.value.find((w) => w.id === id);
@@ -1398,19 +1083,12 @@ class SpaceStore {
           this.workflowDetailsRetryPending = false;
         } else {
           logger.error(`ensureWorkflowDetails: ${missing} workflow detail(s) failed to load`);
-          // Schedule a retry so transient RPC errors don't leave the Configure
-          // Agents tab stuck on the loading spinner forever. Cap retries to
-          // avoid hammering a permanently broken workflow.
           const MAX_RETRIES = 5;
           if (this.workflowDetailsRetryCount < MAX_RETRIES) {
             const delay = 2 ** this.workflowDetailsRetryCount * 3000;
             this.workflowDetailsRetryCount += 1;
             this.workflowDetailsRetryPending = true;
             setTimeout(() => {
-              // Only act if this timer still belongs to the current load. A
-              // stale timer from a prior space/generation must not clear the
-              // current pending flag — otherwise reconnect sees no pending
-              // work and skips refetching details for the active space.
               if (
                 this.spaceId.value === spaceId &&
                 this.workflowDetailsLoadGeneration === loadGeneration
@@ -1422,8 +1100,6 @@ class SpaceStore {
               }
             }, delay);
           } else {
-            // Exhausted retries: mark loaded so the UI shows what we have
-            // rather than spinning indefinitely.
             this.workflowDetailsLoaded.value = true;
             this.workflowDetailsRetryCount = 0;
             this.workflowDetailsRetryPending = false;
@@ -1442,14 +1118,6 @@ class SpaceStore {
     return this.workflowDetailsPromise;
   }
 
-  /**
-   * Bounded retry of the workflow summary fetch when it failed inside
-   * ensureConfigData. The summary fetch is the precondition for the detail
-   * fan-out — without it the Agents tab would spin forever. Reuses the same
-   * retry budget as {@link ensureWorkflowDetails} so exhaustion semantics are
-   * consistent: once retries run out, mark details loaded so the empty state
-   * renders rather than the loading spinner.
-   */
   private retryWorkflowSummaries(spaceId: string): void {
     const loadGeneration = this.workflowDetailsLoadGeneration;
     const MAX_RETRIES = 5;
@@ -1467,8 +1135,6 @@ class SpaceStore {
         return;
       }
       this.workflowDetailsRetryPending = false;
-      // Reset config flags so ensureConfigData re-fetches instead of
-      // short-circuiting on the prior (partially-failed) load.
       this.configDataLoaded.value = false;
       this.configDataPromise = null;
       this.ensureConfigData()
@@ -1485,7 +1151,6 @@ class SpaceStore {
               this.ensureWorkflowDetails().catch(() => {});
             }
           } else {
-            // Summary fetch failed again; schedule another bounded retry.
             this.retryWorkflowSummaries(spaceId);
           }
         })
@@ -1493,9 +1158,6 @@ class SpaceStore {
     }, delay);
   }
 
-  /**
-   * Fetch built-in workflow templates from daemon seeding source.
-   */
   private async fetchWorkflowTemplates(
     hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
     spaceId: string
@@ -1514,15 +1176,6 @@ class SpaceStore {
     }
   }
 
-  /**
-   * Fetch a full workflow by ID. Deduplicates concurrent requests and caches
-   * the result so multiple callers asking for the same workflow share one fetch.
-   *
-   * Stale-guard: the request captures the active spaceId at call time. If the
-   * space changes before the response arrives, the result is returned to the
-   * original caller but NOT cached, preventing stale data from polluting the
-   * cache after a space switch.
-   */
   async fetchWorkflowDetail(workflowId: string): Promise<SpaceWorkflow | null> {
     const cached = this.workflowDetailCache.get(workflowId);
     if (cached) return cached;
@@ -1533,8 +1186,6 @@ class SpaceStore {
     const spaceId = this.spaceId.value;
     if (!spaceId) return null;
 
-    // Capture generation at request time; if an invalidation event bumps it
-    // while this request is in flight, the stale response will skip caching.
     const generation = (this.workflowDetailFetchGens.get(workflowId) ?? 0) + 1;
     this.workflowDetailFetchGens.set(workflowId, generation);
 
@@ -1546,8 +1197,6 @@ class SpaceStore {
           spaceId,
         });
         if (result?.workflow) {
-          // Only cache if (a) we're still on the same space, AND (b) the
-          // generation hasn't been bumped by an invalidation event.
           if (
             this.spaceId.value === spaceId &&
             this.workflowDetailFetchGens.get(workflowId) === generation
@@ -1569,9 +1218,6 @@ class SpaceStore {
     return promise;
   }
 
-  /**
-   * Clear the workflow detail cache. Called on space switch.
-   */
   private clearWorkflowDetailCache(): void {
     this.workflowDetailCache.clear();
     this.workflowDetailPromises.clear();
@@ -1581,11 +1227,6 @@ class SpaceStore {
     this.workflowDetailsLoadGeneration += 1;
   }
 
-  /**
-   * Fetch node executions for a single workflow run (the open task's run).
-   * One RPC instead of one-per-run, so opening a task page no longer fans out
-   * hundreds of nodeExecution.list calls.
-   */
   private async fetchNodeExecutions(
     hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
     runId: string
@@ -1595,7 +1236,6 @@ class SpaceStore {
         workflowRunId: runId,
         spaceId: this.spaceId.value,
       });
-      // A run switch (or space switch) during the fetch invalidates this result.
       if (this.activeNodeExecRunId !== runId) return;
       this.nodeExecutions.value = result?.executions ?? [];
     } catch (err) {
@@ -1603,9 +1243,6 @@ class SpaceStore {
     }
   }
 
-  /**
-   * Stop all current subscriptions (synchronous)
-   */
   private stopSubscriptions(): void {
     for (const cleanup of this.cleanupFunctions) {
       try {
@@ -1619,15 +1256,6 @@ class SpaceStore {
     this.unsubscribeNodeExecutions();
   }
 
-  // ========================================
-  // Lazy-Loading: Config Data & Node Executions
-  // ========================================
-
-  /**
-   * Lazily load agents, agent templates, workflows, and workflow templates.
-   * Called by components that need this data (SpaceConfigurePage, SpaceTaskPane).
-   * Safe to call multiple times — deduplicates via promise + flag.
-   */
   async ensureConfigData(): Promise<void> {
     if (this.configDataLoaded.value) return;
     if (this.configDataPromise) return this.configDataPromise;
@@ -1654,7 +1282,6 @@ class SpaceStore {
         this.fetchLongHorizonAgents(hub, spaceId),
         this.fetchLongHorizonAgentTemplates(hub, spaceId),
       ]);
-      // Only mark loaded if still the same space
       if (this.spaceId.value === spaceId) {
         this.configDataLoaded.value = true;
       }
@@ -1663,22 +1290,7 @@ class SpaceStore {
     }
   }
 
-  /**
-   * Lazily load node executions for the OPEN task's run and subscribe to its
-   * LiveQuery updates. Only the passed-in run is fetched/subscribed — opening
-   * a task page no longer subscribes every run in the space. Switching runs
-   * (calling this with a different workflowRunId) tears down the previous run's
-   * subscription and establishes the new one.
-   *
-   * Standalone tasks (no workflowRunId) need no node-execution data: pass null
-   * and this is a no-op.
-   *
-   * Safe to call multiple times for the same run — deduplicates via promise +
-   * flag.
-   */
   async ensureNodeExecutions(workflowRunId: string | null): Promise<void> {
-    // Standalone task (no workflowRunId) — tear down any active node-execution
-    // subscription so a standalone task (or no open task) carries no live sub.
     if (!workflowRunId) {
       if (this.activeNodeExecRunId !== null) {
         this.unsubscribeNodeExecutions();
@@ -1688,17 +1300,13 @@ class SpaceStore {
       }
       return;
     }
-    // Already loaded for this exact run.
     if (this.activeNodeExecRunId === workflowRunId && this.nodeExecLoaded.value) return;
-    // Ride an in-flight load for the SAME run.
     if (this.nodeExecPromise && this.activeNodeExecRunId === workflowRunId) {
       return this.nodeExecPromise;
     }
     const spaceId = this.spaceId.value;
     if (!spaceId) return;
 
-    // Switch target run: reset loaded state, clear stale executions, drop the
-    // previous run's subscription so only the open task's run is live.
     this.activeNodeExecRunId = workflowRunId;
     this.nodeExecLoaded.value = false;
     this.nodeExecutions.value = [];
@@ -1709,7 +1317,6 @@ class SpaceStore {
     try {
       await this.nodeExecPromise;
     } finally {
-      // Only clear the shared promise if no newer load has superseded this one.
       if (gen === this.nodeExecLoadGen) this.nodeExecPromise = null;
     }
   }
@@ -1718,8 +1325,6 @@ class SpaceStore {
     try {
       const hub = await connectionManager.getHub();
       await this.fetchNodeExecutions(hub, runId);
-      // A task switch during the fetch changes activeNodeExecRunId; bail so a
-      // stale result for the previous run can't subscribe to the wrong run.
       if (this.activeNodeExecRunId !== runId) return;
       this.subscribeNodeExecutionsByRun(hub, runId);
       this.nodeExecLoaded.value = true;
@@ -1837,14 +1442,6 @@ class SpaceStore {
     }
   }
 
-  // ========================================
-  // Node Execution LiveQuery subscriptions
-  // ========================================
-
-  /**
-   * Subscribe to nodeExecutions.byRun for a single workflow run (the open
-   * task's run). At most one run is ever subscribed at a time.
-   */
   private subscribeNodeExecutionsByRun(
     hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
     runId: string
@@ -1893,19 +1490,12 @@ class SpaceStore {
       });
   }
 
-  /**
-   * Merge a LiveQuery snapshot (full replace for one run) into nodeExecutions.
-   */
   private mergeNodeExecSnapshot(rows: NodeExecution[], runId: string): void {
     const current = this.nodeExecutions.value;
-    // Remove old executions for this run, add fresh snapshot
     const filtered = current.filter((e) => e.workflowRunId !== runId);
     this.nodeExecutions.value = [...filtered, ...rows];
   }
 
-  /**
-   * Merge a LiveQuery delta (add/remove/update) into nodeExecutions.
-   */
   private mergeNodeExecDelta(event: LiveQueryDeltaEvent): void {
     const current = this.nodeExecutions.value;
     const next = new Map(current.map((e) => [e.id, e]));
@@ -1923,9 +1513,6 @@ class SpaceStore {
     this.nodeExecutions.value = Array.from(next.values());
   }
 
-  /**
-   * Unsubscribe from all node execution LiveQueries.
-   */
   private unsubscribeNodeExecutions(): void {
     for (const cleanup of this.nodeExecCleanupFns) {
       try {
@@ -1945,13 +1532,6 @@ class SpaceStore {
     this.activeNodeExecSubscriptionIds = new Set();
   }
 
-  // ========================================
-  // Space Sessions LiveQuery
-  // ========================================
-
-  /**
-   * Subscribe to spaceSessions.bySpace LiveQuery for real-time session title/status updates.
-   */
   private subscribeSpaceSessions(
     hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
     spaceId: string
@@ -2031,23 +1611,7 @@ class SpaceStore {
     }
   }
 
-  // ========================================
-  // Refresh
-  // ========================================
-
-  /**
-   * Refresh current space state from server.
-   * Called by the connection manager on WebSocket reconnect.
-   *
-   * Also re-initializes the global space list when it was previously set up.
-   * The old hub connection is closed on disconnect, tearing down any event
-   * subscriptions registered in initGlobalList(). Resetting the flag here
-   * ensures initGlobalList() runs again with the new hub connection — either
-   * immediately (if the global list was active) or lazily (on next Spaces
-   * section navigation).
-   */
   async refresh(): Promise<void> {
-    // Re-initialize global list subscriptions on the new hub if they existed
     if (this.globalListInitialized) {
       this.globalListInitialized = false;
       this.initGlobalList().catch((err) => {
@@ -2058,21 +1622,16 @@ class SpaceStore {
     const spaceId = this.spaceId.value;
     if (!spaceId) return;
 
-    // Track what was loaded before reconnect so we can re-fetch it
     const hadConfigData = this.configDataLoaded.value;
     const hadNodeExec = this.nodeExecLoaded.value;
     const hadWorkflowDetails = this.workflowDetailsLoaded.value;
     const hadWorkflowDetailsPending =
       this.workflowDetailsPromise !== null || this.workflowDetailsRetryPending;
 
-    // Reset lazy-load flags so ensureX methods will re-fetch
     this.configDataLoaded.value = false;
     this.configDataPromise = null;
     this.nodeExecLoaded.value = false;
     this.nodeExecPromise = null;
-    // workflowDetails may have drifted while disconnected; event handlers
-    // were torn down with the old hub. Reset so the Configure Agents view
-    // re-fetches on next mount.
     this.workflowDetailsLoaded.value = false;
     this.workflowDetailsPromise = null;
     this.workflowDetailsRetryPending = false;
@@ -2083,10 +1642,6 @@ class SpaceStore {
     try {
       await this.fetchAndResolveSpace(spaceId);
       await this.startSubscriptions(spaceId);
-      // Re-fetch previously loaded data in background. Only re-fetch workflow
-      // details if they had actually been loaded before reconnect, so summary-
-      // only consumers (task panes, goals, long-horizon agents) don't pay the
-      // per-workflow detail cost on reconnect.
       if (hadConfigData) {
         this.ensureConfigData().catch((err) => {
           logger.error('Failed to refresh config data:', err);
@@ -2102,9 +1657,6 @@ class SpaceStore {
           });
       }
       if (hadNodeExec) {
-        // Re-establish the open task's run subscription (activeNodeExecRunId
-        // survives the reset above; the old hub's handlers are torn down, so
-        // ensureNodeExecutions re-subscribes on the new hub).
         this.ensureNodeExecutions(this.activeNodeExecRunId).catch((err) => {
           logger.error('Failed to refresh node executions:', err);
         });
@@ -2114,14 +1666,6 @@ class SpaceStore {
     }
   }
 
-  // ========================================
-  // Space Methods
-  // ========================================
-
-  /**
-   * Update the current space metadata.
-   * Note: daemon's space.update returns Space directly (not wrapped).
-   */
   async updateSpace(params: UpdateSpaceParams): Promise<void> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
@@ -2136,9 +1680,6 @@ class SpaceStore {
     }
   }
 
-  /**
-   * Archive the current space
-   */
   async archiveSpace(): Promise<void> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
@@ -2147,15 +1688,9 @@ class SpaceStore {
     if (!hub) throw new Error('Not connected');
 
     await hub.request('space.archive', { id: spaceId });
-    // Clear selection after archive
     await this.clearSpace();
   }
 
-  /**
-   * Stop the current space: terminates all running agent sessions and cancels
-   * in-progress tasks/workflow runs. Marks the space as stopped so it does not
-   * auto-start on daemon restart. The space remains active and can be restarted.
-   */
   async stopSpace(): Promise<void> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
@@ -2170,10 +1705,6 @@ class SpaceStore {
     }
   }
 
-  /**
-   * Start (or restart) the current space after it has been stopped.
-   * Clears the stopped flag so the runtime resumes scheduling new work.
-   */
   async startSpace(): Promise<void> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
@@ -2188,9 +1719,6 @@ class SpaceStore {
     }
   }
 
-  /**
-   * Pause the current space (stops task scheduling without archiving)
-   */
   async pauseSpace(): Promise<void> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
@@ -2205,9 +1733,6 @@ class SpaceStore {
     }
   }
 
-  /**
-   * Resume a paused space
-   */
   async resumeSpace(): Promise<void> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
@@ -2222,9 +1747,6 @@ class SpaceStore {
     }
   }
 
-  /**
-   * Permanently delete the current space
-   */
   async deleteSpace(): Promise<void> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
@@ -2233,18 +1755,9 @@ class SpaceStore {
     if (!hub) throw new Error('Not connected');
 
     await hub.request('space.delete', { id: spaceId });
-    // Clear selection after delete
     await this.clearSpace();
   }
 
-  // ========================================
-  // Task Methods
-  // ========================================
-
-  /**
-   * Create a new task in the space.
-   * Note: daemon's spaceTask.create returns SpaceTask directly (not wrapped).
-   */
   async createTask(params: Omit<CreateSpaceTaskParams, 'spaceId'>): Promise<SpaceTask> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
@@ -2256,20 +1769,6 @@ class SpaceStore {
     return task;
   }
 
-  /**
-   * Fetch a single page of tasks for a status group, used by the per-group
-   * Prev/Next pagination in `SpaceTasks`. Returns the page of tasks plus the
-   * total count for the matching status (and optional `blockReason`) so the
-   * UI can render "Showing X–Y of Z" and disable Next at the end.
-   *
-   * Local-state only: this does NOT update `spaceStore.tasks`. Tab badge
-   * counts and the sidebar continue to read from the real-time `tasks`
-   * signal so a paginated group view never causes badges to drift.
-   *
-   * If the active space changes while the request is in flight, the result
-   * is still returned to the caller (it's local state, not a stored signal),
-   * but the caller's effect should ignore stale responses.
-   */
   async fetchTaskGroup(
     status: SpaceTaskStatus,
     options?: {
@@ -2288,12 +1787,6 @@ class SpaceStore {
     const limit = options?.limit ?? 10;
     const offset = options?.offset ?? 0;
 
-    // `blockReason` is tri-state: `undefined` = ignore the column, `null` =
-    // match rows with no reason set, value = match exactly. Only forward
-    // the field when the caller passes something so the daemon's
-    // `in (params)` check distinguishes omitted from null. The same goes
-    // for `blockReasonNotIn`, which is the inverse filter for the generic
-    // "Blocked" bucket.
     const payload: {
       spaceId: string;
       status: SpaceTaskStatus;
@@ -2312,10 +1805,6 @@ class SpaceStore {
     };
   }
 
-  /**
-   * Update a task.
-   * Note: daemon's spaceTask.update returns SpaceTask directly (not wrapped).
-   */
   async updateTask(taskId: string, params: UpdateSpaceTaskParams): Promise<SpaceTask> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
@@ -2364,11 +1853,6 @@ class SpaceStore {
     await hub.request('spaceWorkflowRun.cancel', { id: runId });
   }
 
-  /**
-   * Publish a draft task — transition from `draft` to `open`.
-   * Only draft tasks can be published. After publishing, the orchestrator
-   * can pick up the task and attach a workflow.
-   */
   async publishTask(taskId: string): Promise<SpaceTask> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
@@ -2382,14 +1866,6 @@ class SpaceStore {
     });
   }
 
-  /**
-   * Submit a task for human review (UI counterpart to the agent
-   * `submit_for_approval` tool). Routes to the `spaceTask.submitForReview` RPC
-   * which sets `status='review'`, `pendingCheckpointType='task_completion'`,
-   * and the pending-completion metadata so `PendingTaskCompletionBanner`
-   * renders. After unification, every task in `review` carries the banner —
-   * the bare `updateTask({status:'review'})` path is rejected by the daemon.
-   */
   async submitForReview(taskId: string, reason?: string | null): Promise<SpaceTask> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
@@ -2405,12 +1881,6 @@ class SpaceStore {
     return task;
   }
 
-  /**
-   * Approve or reject a task awaiting human sign-off at a `submit_for_approval`
-   * checkpoint (`pendingCheckpointType === 'task_completion'`). Routes to the
-   * `spaceTask.approvePendingCompletion` RPC which handles status transition,
-   * pending-field cleanup, and reason capture atomically.
-   */
   async approvePendingCompletion(
     taskId: string,
     approved: boolean,
@@ -2431,17 +1901,6 @@ class SpaceStore {
     return task;
   }
 
-  /**
-   * Send a human message into a task's agent thread.
-   *
-   * Returns the daemon response so callers can inspect delivered /
-   * queued / activated for non-delivery feedback.
-   *
-   * `images` is an optional list of base64-encoded image attachments. The
-   * daemon threads them into the SDK user-message content array so workflow
-   * agents see image blocks alongside the text — mirroring the regular
-   * (non-space) chat path.
-   */
   async sendTaskMessage(
     taskId: string,
     message: string,
@@ -2477,18 +1936,6 @@ class SpaceStore {
     });
   }
 
-  /**
-   * Lazy-activate a workflow-declared node agent for a task.
-   *
-   * Used by the agent dropdown when the user clicks a "(Not started)" peer:
-   * triggers the daemon to spawn the corresponding sub-session and
-   * (optionally) queues a first message that will be delivered as soon as
-   * the spawn completes.
-   *
-   * Returns the live sessionId when the agent is already spawned, otherwise
-   * `null` — callers should watch `taskActivity` for the new session to
-   * appear via the existing live-query subscription.
-   */
   async activateTaskNodeAgent(
     taskId: string,
     agentName: string,
@@ -2559,10 +2006,6 @@ class SpaceStore {
     return result?.deliveries ?? [];
   }
 
-  /**
-   * Fetch the daemon-wide pending external-event queue-health snapshot
-   * (counters + live gauges). Not space-scoped — the runtime is shared.
-   */
   async getExternalEventQueueHealth(): Promise<QueueHealthSnapshot | null> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
@@ -2570,9 +2013,6 @@ class SpaceStore {
     return result ?? null;
   }
 
-  /**
-   * List all artifacts for a workflow run.
-   */
   async listArtifacts(runId: string): Promise<WorkflowRunArtifact[]> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
@@ -2584,16 +2024,6 @@ class SpaceStore {
     return result?.artifacts ?? [];
   }
 
-  /**
-   * Fetch a paginated snapshot of task-thread messages.
-   */
-  // ========================================
-  // Hook Methods
-  // ========================================
-
-  /**
-   * List all hook states for a workflow run.
-   */
   async listHookStates(
     runId: string
   ): Promise<import('@hyperneo/shared').WorkflowHookStateSnapshot[]> {
@@ -2607,9 +2037,6 @@ class SpaceStore {
     return result?.hookStates ?? [];
   }
 
-  /**
-   * Approve or reject a hook awaiting human sign-off.
-   */
   async approveHook(
     runId: string,
     hookId: string,
@@ -2636,9 +2063,6 @@ class SpaceStore {
     );
   }
 
-  /**
-   * Retry a retryable_block hook by clearing its backoff state.
-   */
   async retryHook(
     runId: string,
     hookId: string
@@ -2663,10 +2087,6 @@ class SpaceStore {
     );
   }
 
-  // ========================================
-  // Agent Methods
-  // ========================================
-
   private upsertAgent(agent: SpaceWorkerAgent, expectedSpaceId?: string): void {
     const activeSpaceId = this.spaceId.value;
     const agentSpaceId = agent.spaceId;
@@ -2679,9 +2099,6 @@ class SpaceStore {
       : [...this.agents.value, agent];
   }
 
-  /**
-   * Create a new agent in the space
-   */
   async createAgent(
     params: Omit<CreateSpaceWorkerAgentParams, 'spaceId'>
   ): Promise<SpaceWorkerAgent> {
@@ -2699,9 +2116,6 @@ class SpaceStore {
     return agent;
   }
 
-  /**
-   * Update an agent
-   */
   async getAgentPromotionDraft(sessionId: string): Promise<SpaceWorkerAgentPromotionDraft> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
@@ -2776,12 +2190,6 @@ class SpaceStore {
     return agent;
   }
 
-  /**
-   * Preview the per-field before/after diff that `syncAgentFromTemplate`
-   * would apply, without writing. Used to populate the "Show diff" modal
-   * before a reset. Throws if the space is not selected, the hub is not
-   * connected, or the daemon rejects (non-seeded agent, preset removed).
-   */
   async previewAgentTemplateSync(agentId: string): Promise<SpaceWorkerAgentSyncPreview> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
@@ -2799,9 +2207,6 @@ class SpaceStore {
     return preview;
   }
 
-  /**
-   * Delete an agent from the space
-   */
   async deleteAgent(agentId: string): Promise<void> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
@@ -2812,10 +2217,6 @@ class SpaceStore {
     await hub.request('spaceAgent.delete', { id: agentId, spaceId });
     this.agents.value = this.agents.value.filter((agent) => agent.id !== agentId);
   }
-
-  // ========================================
-  // Long-Horizon Agent Methods
-  // ========================================
 
   async createLongHorizonAgent(params: {
     id?: string;
@@ -2870,11 +2271,6 @@ class SpaceStore {
     this.longHorizonAgents.value = this.longHorizonAgents.value.filter((a) => a.id !== agentId);
   }
 
-  /**
-   * Batched active-reminder counts. One round-trip returns `{ [agentId]: n }`
-   * for every requested agent, replacing the N per-agent `listReminders` calls
-   * the Agents tab used to fan out on each visit.
-   */
   async listLongHorizonAgentReminderCounts(agentIds: string[]): Promise<Record<string, number>> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
@@ -2953,13 +2349,6 @@ class SpaceStore {
     await hub.request('spaceLongHorizonAgent.deleteSubscription', { subscriptionId, spaceId });
   }
 
-  // ========================================
-  // Workflow Definition Methods
-  // ========================================
-
-  /**
-   * Create a new workflow definition
-   */
   async createWorkflow(params: Omit<CreateSpaceWorkflowParams, 'spaceId'>): Promise<SpaceWorkflow> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
@@ -2974,9 +2363,6 @@ class SpaceStore {
     return workflow;
   }
 
-  /**
-   * Update a workflow definition
-   */
   async updateWorkflow(
     workflowId: string,
     params: UpdateSpaceWorkflowParams
@@ -2995,9 +2381,6 @@ class SpaceStore {
     return workflow;
   }
 
-  /**
-   * Delete a workflow definition
-   */
   async deleteWorkflow(workflowId: string): Promise<void> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
@@ -3008,10 +2391,6 @@ class SpaceStore {
     await hub.request('spaceWorkflow.delete', { id: workflowId, spaceId });
   }
 
-  /**
-   * Sync a workflow from its built-in template, overwriting current content.
-   * Requires the workflow to have been created from a built-in template (templateName set).
-   */
   async syncWorkflowFromTemplate(
     workflowId: string,
     expectedRowHash?: string
@@ -3033,13 +2412,6 @@ class SpaceStore {
     return workflow;
   }
 
-  /**
-   * Preview the structural before/after diff that `syncWorkflowFromTemplate`
-   * would apply, without writing. Powers the "Review diff" affordance before a
-   * workflow reset — required when the row is both customized and has an update
-   * available. Throws if the space is not selected, the hub is not connected,
-   * or the daemon rejects (non-template workflow, template removed).
-   */
   async previewWorkflowTemplateSync(workflowId: string): Promise<SpaceWorkflowSyncPreview> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
@@ -3053,10 +2425,6 @@ class SpaceStore {
     );
     return preview;
   }
-
-  // ========================================
-  // Goal Methods
-  // ========================================
 
   upsertGoal(goal: SpaceGoal): void {
     this.goalListRequestVersion += 1;
@@ -3209,19 +2577,6 @@ class SpaceStore {
     return goal;
   }
 
-  // ========================================
-  // Task Schedule Methods
-  // ========================================
-
-  /**
-   * Create a recurring (cron) or one-shot (at) task schedule.
-   *
-   * If the user switches spaces while the request is in flight, the late
-   * response is dropped from the local signal so a schedule belonging to
-   * space A can't surface in space B's Scheduled tab. The schedule itself
-   * was still created on the daemon — the next list refresh will pick it
-   * up when the user returns to space A.
-   */
   async createSchedule(params: {
     title: string;
     description?: string;
@@ -3243,20 +2598,11 @@ class SpaceStore {
       ...params,
       spaceId,
     });
-    // Drop the response if the active space changed while we were awaiting.
     if (this.spaceId.value !== spaceId) return schedule;
     this.schedules.value = [...this.schedules.value, schedule];
     return schedule;
   }
 
-  /**
-   * List schedules for the current space, optionally filtered by status.
-   *
-   * Captures the spaceId before the await and re-checks it after; if the user
-   * has navigated away to another space while the request was in flight, the
-   * stale response is dropped so the new space's schedule state isn't
-   * overwritten.
-   */
   async listSchedules(status?: TaskScheduleStatus): Promise<TaskSchedule[]> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
@@ -3268,19 +2614,11 @@ class SpaceStore {
       spaceId,
       status,
     });
-    // Drop the response if the active space changed while we were awaiting.
     if (this.spaceId.value !== spaceId) return schedules;
     this.schedules.value = schedules;
     return schedules;
   }
 
-  /**
-   * Fetch a single task schedule (e.g. a goal's linked check-in schedule) so
-   * its cron/timezone can be pre-filled when editing. Resolves with the
-   * schedule, or null if it does not exist; rejects on transient errors (e.g.
-   * disconnected) so the caller can distinguish a missing schedule from a
-   * failed fetch and avoid acting on an unknown baseline.
-   */
   async getSchedule(scheduleId: string): Promise<TaskSchedule | null> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
@@ -3294,9 +2632,6 @@ class SpaceStore {
     return schedule;
   }
 
-  /**
-   * Pause a schedule.
-   */
   async pauseSchedule(scheduleId: string): Promise<TaskSchedule> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
@@ -3311,9 +2646,6 @@ class SpaceStore {
     return schedule;
   }
 
-  /**
-   * Resume a paused schedule.
-   */
   async resumeSchedule(scheduleId: string): Promise<TaskSchedule> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
@@ -3328,9 +2660,6 @@ class SpaceStore {
     return schedule;
   }
 
-  /**
-   * Delete a schedule.
-   */
   async deleteSchedule(scheduleId: string): Promise<void> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
@@ -3342,5 +2671,4 @@ class SpaceStore {
   }
 }
 
-/** Singleton space store instance */
 export const spaceStore = new SpaceStore();

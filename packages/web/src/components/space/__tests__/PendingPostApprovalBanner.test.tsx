@@ -1,15 +1,3 @@
-/**
- * Unit tests for PendingPostApprovalBanner.
- *
- * Covers:
- *   - Hidden when task.status !== 'approved'
- *   - Hidden when status==='approved' but no postApprovalBlockedReason
- *   - Renders reason + Send back + Mark done actions when blocked reason is set
- *   - Send back triggers spaceStore.updateTask with status='in_progress'
- *   - Mark done triggers spaceStore.updateTask with status='done'
- *   - View session action appears only when session id + handler both present
- */
-
 // @ts-nocheck
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';

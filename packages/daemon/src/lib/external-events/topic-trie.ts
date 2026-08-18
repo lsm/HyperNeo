@@ -1,22 +1,8 @@
 import type { NodeExecutionStatus } from '@hyperneo/shared';
 
-/**
- * Trie for matching validated external-event topic glob patterns.
- *
- * Supports exact path segments and segment-local `*` wildcards, including dotted
- * entity/action patterns such as `42.*` and `*.review_*`.
- *
- * This is a workflow-runtime utility, not an event-pipeline component.
- * The pipeline publishes events; the workflow runtime uses this trie
- * to match subscriptions against incoming event topics.
- */
 export class TopicTrie<T> {
   private root = new TrieNode<T>();
 
-  /**
-   * Insert a value at a glob pattern.
-   * Pattern segments may contain segment-local `*` wildcards.
-   */
   insert(pattern: string, value: T): void {
     const segments = pattern.split('/');
     let node = this.root;
@@ -36,10 +22,6 @@ export class TopicTrie<T> {
     node.values.push(value);
   }
 
-  /**
-   * Lookup all values whose patterns match the given topic.
-   * Returns all values from exact matches AND wildcard matches.
-   */
   lookup(topic: string): T[] {
     const segments = topic.split('/');
     const results: T[] = [];
@@ -70,12 +52,6 @@ export class TopicTrie<T> {
     return results;
   }
 
-  /**
-   * Return every stored value (across all patterns). Read-only enumeration
-   * used by diagnostics (e.g. listing active subscriptions for a run) — not a
-   * matching path. Each value is responsible for carrying its own topic/pattern
-   * (the trie keys by path and does not reconstruct the original pattern here).
-   */
   values(): T[] {
     const out: T[] = [];
     const walk = (node: TrieNode<T>): void => {
@@ -87,9 +63,6 @@ export class TopicTrie<T> {
     return out;
   }
 
-  /**
-   * Count all stored values matching a predicate.
-   */
   count(predicate: (value: T) => boolean): number {
     let total = 0;
 
@@ -109,9 +82,6 @@ export class TopicTrie<T> {
     return total;
   }
 
-  /**
-   * Remove all values matching a predicate and prune empty branches.
-   */
   remove(predicate: (value: T) => boolean): void {
     const clean = (node: TrieNode<T>): boolean => {
       if (node.values) {

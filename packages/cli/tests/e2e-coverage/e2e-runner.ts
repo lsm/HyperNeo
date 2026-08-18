@@ -1,25 +1,14 @@
 #!/usr/bin/env bun
-/**
- * E2E Test Runner with In-Process Server
- *
- * Runs a single Playwright test file with an in-process daemon server
- * to collect both server-side and browser-side coverage.
- *
- * Usage: bun --coverage ./tests/e2e-coverage/e2e-runner.ts <test-file>
- * Example: bun --coverage ./tests/e2e-coverage/e2e-runner.ts session-routing
- */
 import { spawn } from 'child_process';
 import { createServer } from 'net';
 import { resolve } from 'path';
 import { Hono } from 'hono';
 import { serveStatic } from 'hono/bun';
 
-// Import daemon components - instrumented by bun --coverage
 import { createDaemonApp } from '@hyperneo/daemon/app';
 import { getConfig } from '@hyperneo/daemon/config';
 import { createWebSocketHandlers } from '@hyperneo/daemon/routes/setup-websocket';
 
-// Server state
 let server: ReturnType<typeof Bun.serve> | null = null;
 let daemonContext: Awaited<ReturnType<typeof createDaemonApp>> | null = null;
 
@@ -44,31 +33,25 @@ async function startServer(): Promise<{ port: number; baseUrl: string }> {
 
   console.log(`\n🚀 Starting in-process server on port ${serverPort}...`);
 
-  // Setup workspace
   const workspace = `/tmp/e2e-runner-${Date.now()}`;
   await Bun.$`mkdir -p ${workspace}`;
 
-  // Configure
   process.env.HYPERNEO_WORKSPACE_PATH = workspace;
   const config = getConfig();
   config.port = serverPort;
   config.dbPath = `${workspace}/daemon.db`;
 
-  // Create daemon
   daemonContext = await createDaemonApp({ config, verbose: false, standalone: false });
   daemonContext.server.stop();
 
-  // Web dist path
   const distPath = resolve(import.meta.dir, '../../../web/dist');
   const distExists = await Bun.file(resolve(distPath, 'index.html')).exists();
   if (!distExists) {
     throw new Error('Web dist not found. Run: cd packages/web && bun run build');
   }
 
-  // WebSocket handlers
   const wsHandlers = createWebSocketHandlers(daemonContext.transport, daemonContext.sessionManager);
 
-  // Hono for static files
   const app = new Hono();
   app.use('/*', serveStatic({ root: distPath }));
   app.get('*', async (c) => {
@@ -76,7 +59,6 @@ async function startServer(): Promise<{ port: number; baseUrl: string }> {
     return c.html(html);
   });
 
-  // Start server
   server = Bun.serve({
     hostname: '127.0.0.1',
     port: serverPort,
@@ -91,7 +73,6 @@ async function startServer(): Promise<{ port: number; baseUrl: string }> {
     websocket: wsHandlers,
   });
 
-  // Wait for ready
   for (let i = 0; i < 50; i++) {
     try {
       const res = await fetch(baseUrl);
@@ -113,7 +94,6 @@ async function stopServer(): Promise<void> {
 }
 
 async function findTestFile(testFile: string, e2eDir: string): Promise<string> {
-  // Check possible locations for the test file
   const locations = [
     `tests/${testFile}.e2e.ts`,
     `tests/serial/${testFile}.e2e.ts`,
@@ -128,7 +108,6 @@ async function findTestFile(testFile: string, e2eDir: string): Promise<string> {
     }
   }
 
-  // Default to main tests directory if not found
   return `tests/${testFile}.e2e.ts`;
 }
 
@@ -183,22 +162,17 @@ async function main(): Promise<number> {
 
 process.on('SIGINT', async () => {
   await stopServer();
-  // Use exitCode to allow coverage to be written
   process.exitCode = 130;
 });
 
 process.on('SIGTERM', async () => {
   await stopServer();
-  // Use exitCode to allow coverage to be written
   process.exitCode = 143;
 });
 
-// Use process.exitCode instead of process.exit() to allow Bun to write coverage
-// Then force exit after a short delay to prevent hanging from open handles
 main()
   .then((code) => {
     process.exitCode = code;
-    // Give Bun time to write coverage, then force exit
     setTimeout(() => {
       console.log('⏱️ Force exiting to prevent hang...');
       process.exit(code);

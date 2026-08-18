@@ -1,29 +1,3 @@
-/**
- * Unit tests for retry-utils.ts (M9.4)
- *
- * Scenarios covered:
- *   retryWithBackoff:
- *     1. Returns result immediately on first success
- *     2. Retries up to maxRetries times on failure, then throws
- *     3. Returns early on first success after failures
- *     4. Respects custom delaysMs array
- *     5. Reuses last delay when retries exceed delaysMs length
- *     6. onRetry callback called before each retry attempt
- *     7. isRetryable: skips retry for non-retryable errors
- *     8. isRetryable: retries for retryable errors
- *     9. Zero maxRetries: only one attempt, throws on failure
- *    10. Default maxRetries uses MAX_NETWORK_RETRIES constant
- *
- *   parseRetryAfter:
- *    11. Returns null when header is absent
- *    12. Parses integer seconds correctly
- *    13. Parses HTTP date string correctly
- *    14. Handles array-valued header (takes first)
- *    15. Returns null for unparseable values
- *    16. Returns 0 for past HTTP date (not negative)
- *    17. Case-insensitive key lookup (Retry-After vs retry-after)
- */
-
 import { describe, test, expect } from 'bun:test';
 import {
   retryWithBackoff,
@@ -31,11 +5,6 @@ import {
 } from '../../../../src/lib/space/runtime/retry-utils.ts';
 import { MAX_NETWORK_RETRIES } from '../../../../src/lib/space/runtime/constants.ts';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Create a function that fails `failCount` times then succeeds. */
 function makeFlaky(failCount: number, result = 'ok'): () => Promise<string> {
   let calls = 0;
   return async () => {
@@ -45,16 +14,11 @@ function makeFlaky(failCount: number, result = 'ok'): () => Promise<string> {
   };
 }
 
-/** Create a function that always fails with the given message. */
 function makeAlwaysFail(msg = 'permanent error'): () => Promise<never> {
   return async () => {
     throw new Error(msg);
   };
 }
-
-// ---------------------------------------------------------------------------
-// retryWithBackoff tests
-// ---------------------------------------------------------------------------
 
 describe('retryWithBackoff', () => {
   test('returns result immediately on first success', async () => {
@@ -71,7 +35,6 @@ describe('retryWithBackoff', () => {
   });
 
   test('returns on first success after initial failures', async () => {
-    // fails twice, succeeds on 3rd call
     const fn = makeFlaky(2, 'recovered');
     const result = await retryWithBackoff(fn, { maxRetries: 3, delaysMs: [0, 0, 0] });
     expect(result).toBe('recovered');
@@ -84,7 +47,6 @@ describe('retryWithBackoff', () => {
       throw new Error('fail');
     };
     await expect(retryWithBackoff(fn, { maxRetries: 2, delaysMs: [0, 0] })).rejects.toThrow('fail');
-    // 1 initial + 2 retries = 3 total attempts
     expect(callCount).toBe(3);
   });
 
@@ -100,7 +62,6 @@ describe('retryWithBackoff', () => {
         },
       })
     ).rejects.toThrow();
-    // onRetry called for attempt 1 and 2 (not for the initial attempt or the final failure)
     expect(retryAttempts).toEqual([1, 2]);
   });
 
@@ -117,7 +78,6 @@ describe('retryWithBackoff', () => {
         isRetryable: () => false,
       })
     ).rejects.toThrow('auth error');
-    // Only 1 attempt — no retries because isRetryable returned false
     expect(callCount).toBe(1);
   });
 
@@ -125,8 +85,8 @@ describe('retryWithBackoff', () => {
     let callCount = 0;
     const fn = async () => {
       callCount++;
-      if (callCount === 1) throw new Error('network error'); // retryable
-      if (callCount === 2) throw new Error('auth error'); // non-retryable
+      if (callCount === 1) throw new Error('network error');
+      if (callCount === 2) throw new Error('auth error');
       return 'ok';
     };
     await expect(
@@ -152,10 +112,8 @@ describe('retryWithBackoff', () => {
   });
 
   test('reuses last delaysMs entry when retries exceed array length', async () => {
-    // 3 retries but only 1 delay value — last delay (0) should be reused
     const fn = makeAlwaysFail('err');
     await expect(retryWithBackoff(fn, { maxRetries: 3, delaysMs: [0] })).rejects.toThrow('err');
-    // No assertion on delay — just verifying it doesn't throw unexpectedly
   });
 
   test('default maxRetries matches MAX_NETWORK_RETRIES constant', async () => {
@@ -167,13 +125,9 @@ describe('retryWithBackoff', () => {
     await expect(
       retryWithBackoff(fn, { delaysMs: Array(MAX_NETWORK_RETRIES).fill(0) })
     ).rejects.toThrow('fail');
-    expect(callCount).toBe(MAX_NETWORK_RETRIES + 1); // 1 initial + MAX_NETWORK_RETRIES retries
+    expect(callCount).toBe(MAX_NETWORK_RETRIES + 1);
   });
 });
-
-// ---------------------------------------------------------------------------
-// parseRetryAfter tests
-// ---------------------------------------------------------------------------
 
 describe('parseRetryAfter', () => {
   test('returns null when header is absent', () => {
@@ -200,7 +154,7 @@ describe('parseRetryAfter', () => {
     const futureDate = new Date(Date.now() + 10_000).toUTCString();
     const ms = parseRetryAfter({ 'retry-after': futureDate });
     expect(ms).toBeGreaterThan(0);
-    expect(ms).toBeLessThanOrEqual(10_000 + 100); // small clock tolerance
+    expect(ms).toBeLessThanOrEqual(10_000 + 100);
   });
 
   test('returns 0 for past HTTP date (not negative)', () => {
@@ -220,9 +174,7 @@ describe('parseRetryAfter', () => {
   });
 
   test('lowercase key takes precedence when both cases present', () => {
-    // Tests that the lookup finds one of the valid values
     const ms = parseRetryAfter({ 'retry-after': '10', 'Retry-After': '20' });
-    // Whichever key is found first, it should return a valid positive ms value
     expect(ms).toBeGreaterThan(0);
   });
 });

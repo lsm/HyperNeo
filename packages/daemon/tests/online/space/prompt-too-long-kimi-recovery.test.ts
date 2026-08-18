@@ -1,29 +1,3 @@
-/**
- * Kimi prompt-too-long recovery — online integration test with Dev Proxy.
- *
- * Kimi surfaces context-window overflows as a 400 error that the SDK injects as a
- * user message containing `<local-command-stderr>`. The Space runtime must detect
- * that form and run the same compact-then-continue recovery used for the terminal
- * `result` form.
- *
- * This test exercises the full runtime recovery path against a real daemon and a
- * Dev Proxy-mocked API:
- *   1. Start a Space workflow run with a worker node and let its kickoff turn
- *      finish against the default Dev Proxy catch-all mock.
- *   2. Park the execution as `idle` so the runtime sweep can enter recovery.
- *   3. Inject a Kimi-style user message containing `<local-command-stderr>` via
- *      `test.injectSDKMessage` (the SDK's own 400 path does not wrap mocked
- *      responses in stderr tags, so we inject the persisted form directly).
- *   4. Poll for the persisted stderr SDK message.
- *   5. Poll for the runtime-injected `/compact` user message.
- *   6. Poll for the continue nag injected after the `/compact` turn succeeds
- *      against the catch-all mock.
- *
- * Running:
- *   cd packages/daemon && HYPERNEO_USE_DEV_PROXY=1 bun test \
- *     ./tests/online/space/prompt-too-long-kimi-recovery.test.ts
- */
-
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
@@ -35,9 +9,6 @@ const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 const IDLE_TIMEOUT = IS_MOCK ? 20_000 : 60_000;
 const SETUP_TIMEOUT = IS_MOCK ? 45_000 : 90_000;
 const TEST_TIMEOUT = IS_MOCK ? 180_000 : 300_000;
-// Recovery polling must tolerate the 5s tick-loop interval on slower CI runners
-// (Linux). Each poll waits for the tick to detect the overflow and inject
-// /compact or the continue nag — allow at least two tick periods plus overhead.
 const RECOVERY_TIMEOUT = IS_MOCK ? 60_000 : 90_000;
 
 const STEP_CODE_ID = 'step-code-kimi-recovery-001';
@@ -257,16 +228,9 @@ describe('Kimi prompt-too-long recovery — online with Dev Proxy', () => {
     );
     daemon.trackSession(sessionId);
 
-    // Let the initial kickoff turn fully complete before injecting the overflow.
-    // We must wait for the RESULT message (not just idle) because the
-    // task-agent-manager injects the kickoff user message asynchronously after
-    // spawning the session — if we inject the stderr before the kickoff is
-    // delivered, the kickoff becomes the last SDK message and the tick loop
-    // never detects the overflow.
     await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
     await waitForSdkMessageType(daemon, sessionId, 'result', IDLE_TIMEOUT);
 
-    // Park the execution as idle so the runtime sweep enters recovery.
     await daemon.messageHub.request('nodeExecution.update', {
       id: execution.id,
       spaceId: space.id,
@@ -274,7 +238,6 @@ describe('Kimi prompt-too-long recovery — online with Dev Proxy', () => {
       result: 'Kimi prompt-too-long injected',
     });
 
-    // Simulate the SDK injecting Kimi's 400 as a user message with stderr tags.
     const stderrMessage = `<local-command-stderr>${stderrContent}</local-command-stderr>`;
     await daemon.messageHub.request('test.injectSDKMessage', {
       sessionId,
@@ -285,7 +248,6 @@ describe('Kimi prompt-too-long recovery — online with Dev Proxy', () => {
       },
     });
 
-    // Verify the injected overflow message is persisted.
     const persistedStderrText = await waitForSdkMessageText(
       daemon,
       sessionId,
@@ -295,7 +257,6 @@ describe('Kimi prompt-too-long recovery — online with Dev Proxy', () => {
     expect(persistedStderrText).toContain('<local-command-stderr>');
     expect(persistedStderrText).toContain(stderrContent);
 
-    // Tick loop detects the overflow user message and injects /compact.
     const compactMessage = await waitForUserMessageText(
       daemon,
       sessionId,
@@ -304,7 +265,6 @@ describe('Kimi prompt-too-long recovery — online with Dev Proxy', () => {
     );
     expect(compactMessage.text).toBe('/compact');
 
-    // The /compact turn succeeds (catch-all mock), then the continue nag is injected.
     const continueMessage = await waitForUserMessageText(
       daemon,
       sessionId,

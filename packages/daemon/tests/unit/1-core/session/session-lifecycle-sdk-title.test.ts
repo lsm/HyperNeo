@@ -1,29 +1,8 @@
-/**
- * SDK Title Generation Tests
- *
- * Tests for the generateTitleWithSdk private method, covering:
- * - Thinking is disabled to prevent models with adaptive thinking from
- *   returning thinking-only responses (the root cause of the bug fixed in
- *   session/sdk-title-generation-empty-response-error)
- * - Title is correctly extracted from text blocks
- * - Fallback path is used when SDK call fails
- *
- * Design note: only the external @anthropic-ai/claude-agent-sdk package is
- * mocked here. Internal modules (provider-service, sdk-cli-resolver, etc.) use
- * their real implementations to avoid global mock pollution that would break
- * other test files sharing the same bun test process.
- */
-
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 
-// Track query call options to verify what is passed to the SDK.
-// Only updated on calls that carry a `thinking` option (title generation),
-// not on model-loading calls (maxTurns: 0).
 let lastTitleQueryOptions: Record<string, unknown> | undefined;
 let lastTitleProcessEnv: Record<string, string | undefined> | undefined;
 
-// Mutable state controlling which messages the SDK query mock yields for
-// title generation. Set in beforeEach so each test starts from a known state.
 let mockSdkMessages: unknown[] = [];
 
 async function* makeAsyncGen(messages: unknown[]) {
@@ -32,13 +11,6 @@ async function* makeAsyncGen(messages: unknown[]) {
   }
 }
 
-/**
- * Build a Query-compatible mock from a message list.
- *
- * The returned object is an async iterable (for the title-generation loop) and
- * also exposes the `supportedModels()` / `interrupt()` methods that
- * loadModelsFromSdk() calls when loading the available model list.
- */
 function makeQueryMock(messages: unknown[]) {
   const gen = makeAsyncGen(messages);
   return Object.assign(gen, {
@@ -47,10 +19,6 @@ function makeQueryMock(messages: unknown[]) {
   });
 }
 
-// Only mock.module calls for EXTERNAL packages are placed at the top level.
-// Mocking internal relative-import modules here would permanently replace
-// them for ALL test files in the same bun test run, breaking tests that
-// import those modules directly (e.g. provider-service.test.ts).
 class MockMcpServerForSdk {
   readonly _registeredTools: Record<string, object> = {};
   connect(): void {}
@@ -60,9 +28,6 @@ let _toolBatch: Array<{ name: string; def: object }> = [];
 mock.module('@anthropic-ai/claude-agent-sdk', () => ({
   query: (params: { prompt: string; options?: Record<string, unknown> }) => {
     const opts = params.options ?? {};
-    // Capture options only from the title-generation call, which is the one
-    // that carries thinking: { type: 'disabled' }. Model-loading calls use
-    // maxTurns: 0 with no thinking option and are not interesting here.
     if ('thinking' in opts) {
       lastTitleQueryOptions = opts;
       lastTitleProcessEnv = {
@@ -124,8 +89,6 @@ mock.module('@hyperneo/shared/sdk/type-guards', () => ({
     msg.type === 'system' && msg.subtype === 'commands_changed',
   isSDKThinkingTokensMessage: (msg: { type: string; subtype?: string }) =>
     msg.type === 'system' && msg.subtype === 'thinking_tokens',
-  // Mirrors packages/shared/src/sdk/type-guards.ts flattenSDKSlashCommands so a
-  // leaked mock keeps sdk-message-handler's commands_changed path working.
   flattenSDKSlashCommands: (commands: Array<{ name?: string; aliases?: string[] }>) => {
     const names = new Set<string>();
     const normalize = (n: string) => (n.startsWith('/') ? n.slice(1) : n);
@@ -253,8 +216,6 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     const { resetProviderServiceInstance } = await import('../../../../src/lib/provider-service');
     const { SessionLifecycle } = await import('../../../../src/lib/session/session-lifecycle.js');
     SessionLifecycleCtor = SessionLifecycle;
-    // Set API key before provider construction/registration so CI Bun versions
-    // that snapshot process.env during provider setup still see credentials.
     process.env.ANTHROPIC_API_KEY = 'test-api-key';
     resetProviderRegistry();
     resetProviderFactory();
@@ -265,7 +226,6 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 
     lastTitleQueryOptions = undefined;
     lastTitleProcessEnv = undefined;
-    // Default: assistant message with a plain text block
     mockSdkMessages = [
       {
         type: 'assistant',
@@ -327,8 +287,6 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
       command: mock(async () => {}),
     } as unknown as MessageHub;
 
-    // (no methods are called by SessionLifecycle post-M5; an empty stub is
-    // sufficient for type compatibility).
     mockToolsConfigManager = {} as unknown as ToolsConfigManager;
 
     mockTitleProviderService = {
@@ -403,7 +361,6 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     resetProviderRegistry();
     resetProviderFactory();
     resetProviderServiceInstance();
-    // Restore the empty API key set by unit-test setup.ts
     process.env.ANTHROPIC_API_KEY = '';
     process.env.GLM_API_KEY = '';
   });
@@ -480,11 +437,6 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
   });
 
   it('should fall back to message text when assistant message contains only thinking blocks', async () => {
-    // Regression test for the original bug: models with adaptive thinking (e.g. Opus 4.6)
-    // may return an assistant message whose content array contains only thinking blocks with
-    // no text block. Without `thinking: { type: 'disabled' }` in the query options, this
-    // caused a "No text content in SDK response" error. With the fix in place, this scenario
-    // cannot occur in production, but the defensive fallback path should still work correctly.
     const thinkingOnlyQuery: SessionLifecycleConfig['titleGenerationQueryForTesting'] = (
       params
     ) => {
@@ -542,8 +494,6 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
   });
 
   it('should skip auto-title generation when a user has manually renamed the session', async () => {
-    // titleSetBy === 'user' guards a manual rename from being clobbered by the
-    // auto-gen job: the model is never queried and the session record is untouched.
     const { mockAgentSession, mockSessionCache: sessionCache } = makeSessionCache();
     mockAgentSession.getSessionData = mock(() => ({
       id: 'test-id',
@@ -569,16 +519,11 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 
     expect(result.title).toBe('My Renamed Title');
     expect(result.isFallback).toBe(false);
-    // The model was never queried for a title...
     expect(lastTitleQueryOptions).toBeUndefined();
-    // ...and the session record was not written.
     expect(mockDb.updateSession).not.toHaveBeenCalled();
   });
 
   it('does not clobber a manual rename that lands during title generation', async () => {
-    // The top-of-function guard passes (not yet renamed), so the model is called.
-    // Mid-generation (inside the query override) the user renames; the post-await
-    // re-check must see titleSetBy='user' and discard the generated title.
     const { mockAgentSession, mockSessionCache: sessionCache } = makeSessionCache();
     mockAgentSession.getSessionData = mock(() => ({
       id: 'test-id',
@@ -594,7 +539,6 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     ) => {
       const opts = params.options ?? {};
       if ('thinking' in opts) lastTitleQueryOptions = opts;
-      // Simulate the user renaming while the model call is in flight.
       mockAgentSession.getSessionData = mock(() => ({
         id: 'test-id',
         title: 'My Manual Title',
@@ -620,17 +564,12 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 
     const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
 
-    // Kept the manual title; the generated title ('My Generated Title') was discarded.
     expect(result.title).toBe('My Manual Title');
     expect(result.isFallback).toBe(false);
-    // The generated title was NOT written over the rename.
     expect(mockDb.updateSession).not.toHaveBeenCalled();
   });
 
   it('does not overwrite a manual rename when the fallback path runs', async () => {
-    // Generation succeeds but the branch rename throws, landing in the catch
-    // block — and the user has renamed in the meantime. The catch must re-check
-    // and keep the manual title rather than writing the fallback over it.
     const { mockAgentSession, mockSessionCache: sessionCache } = makeSessionCache();
     mockAgentSession.getSessionData = mock(() => ({
       id: 'test-id',
@@ -641,7 +580,6 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
       config: { model: 'claude-sonnet-4-20250514', provider: 'anthropic' },
       worktree: { path: '/w', branch: 'session/test-id', mainRepoPath: '/repo' },
     }));
-    // Branch rename fails, and the user renames during that failure.
     mockWorktreeManager.renameBranch = mock(async () => {
       mockAgentSession.getSessionData = mock(() => ({
         id: 'test-id',
@@ -667,16 +605,12 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 
     const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
 
-    // Kept the manual title; the fallback ('Create a login form') was not written.
     expect(result.title).toBe('My Manual Title');
     expect(result.isFallback).toBe(false);
     expect(mockDb.updateSession).not.toHaveBeenCalled();
   });
 
   it('preserves a manual rename that lands during the branch rename', async () => {
-    // Worktree session: generation succeeds, then the user renames while the
-    // branch is being renamed (renameBranch returns true). The write must keep
-    // the user's title while still persisting the new branch name (no desync).
     const { mockAgentSession, mockSessionCache: sessionCache } = makeSessionCache();
     mockAgentSession.getSessionData = mock(() => ({
       id: 'test-id',
@@ -687,7 +621,6 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
       config: { model: 'claude-sonnet-4-20250514', provider: 'anthropic' },
       worktree: { path: '/w', branch: 'session/test-id', mainRepoPath: '/repo' },
     }));
-    // renameBranch succeeds, and the user renames during it.
     mockWorktreeManager.renameBranch = mock(async () => {
       mockAgentSession.getSessionData = mock(() => ({
         id: 'test-id',
@@ -713,16 +646,12 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 
     const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
 
-    // User's title kept; generated title discarded.
     expect(result.title).toBe('My Manual Title');
     expect(result.isFallback).toBe(false);
-    // The write happened once (persisting the branch rename)...
     expect(mockDb.updateSession).toHaveBeenCalledTimes(1);
     const [, written] = mockDb.updateSession.mock.calls[0];
-    // ...with the user's title, not the generated one...
     expect(written.title).toBe('My Manual Title');
     expect(written.metadata.titleSetBy).toBe('user');
-    // ...and the new branch name persisted (no metadata/branch desync).
     expect(written.worktree?.branch).not.toBe('session/test-id');
   });
 

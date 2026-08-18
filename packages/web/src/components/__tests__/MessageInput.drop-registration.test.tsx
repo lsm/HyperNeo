@@ -1,16 +1,10 @@
 // @ts-nocheck
-/**
- * Tests for MessageInput's registerDropTarget contract: the composer hands its
- * file-drop handler up to the owning content column (which owns the drop zone),
- * self-gates on `disabled`, and clears the registration on unmount.
- */
 import { signal } from '@preact/signals';
 import { cleanup, render } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockAgentWorking = signal(false);
 
-// Controllable handleFileDrop spy — the registered handler must forward to this.
 const handleFileDrop = vi.fn(async () => {});
 
 vi.mock('../../lib/state.ts', () => ({
@@ -145,7 +139,6 @@ describe('MessageInput registerDropTarget', () => {
     const file = new File(['x'], 'a.png', { type: 'image/png' });
     const files = makeFileList([file]);
     latest!(files);
-    // The wrapper fire-and-forgets the async call; flush microtasks.
     await Promise.resolve();
     await Promise.resolve();
 

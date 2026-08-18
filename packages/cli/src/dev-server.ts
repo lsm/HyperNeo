@@ -79,8 +79,6 @@ const VITE_CLIENT_SHIM = [
 export async function startDevServer(config: Config) {
   log.info('🔧 Starting unified development server...');
 
-  // Register signal handlers FIRST, before any async operations
-  // This ensures Ctrl+C works even if startup hangs
   let isShuttingDown = false;
   let daemonContext: Awaited<ReturnType<typeof createDaemonApp>> | null = null;
   let vite: Awaited<ReturnType<typeof createViteServer>> | null = null;
@@ -89,13 +87,11 @@ export async function startDevServer(config: Config) {
 
   const shutdown = async (signal: string) => {
     if (isShuttingDown) {
-      // Second Ctrl+C - force exit immediately
       log.warn('Forcing exit...');
       process.exit(1);
     }
     isShuttingDown = true;
 
-    // Cancel pending SDK warmup if shutting down early
     if (typeof sdkWarmupTimer !== 'undefined') clearTimeout(sdkWarmupTimer);
 
     log.info(
@@ -110,7 +106,6 @@ export async function startDevServer(config: Config) {
 
       if (vite) {
         log.info('🛑 Stopping Vite dev server...');
-        // Add timeout for Vite close - it can hang on active HMR connections
         await Promise.race([
           vite.close(),
           new Promise<void>((resolve) => {
@@ -124,7 +119,6 @@ export async function startDevServer(config: Config) {
 
       if (daemonContext) {
         log.info('🛑 Cleaning up daemon...');
-        // Add timeout for daemon cleanup as well
         await Promise.race([
           daemonContext.cleanup(),
           new Promise<void>((resolve) => {
@@ -147,25 +141,16 @@ export async function startDevServer(config: Config) {
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-  // Sync built-in skill files from packages/skills/ to ~/.hyperneo/skills/.
-  // In dev mode the source files live in the monorepo; in the compiled binary they
-  // are embedded and extracted by prod-server-embedded.ts instead. Both end up at
-  // ~/.hyperneo/skills/{commandName}/ which QueryOptionsBuilder injects as SDK plugins.
   const skillsSourceDir = resolve(import.meta.dir, '../../skills');
   const skillsDestDir = join(getDataDir(), 'skills');
   await ensureBuiltinSkills(skillsSourceDir, skillsDestDir);
 
-  // Create daemon app in embedded mode (no root route). The sink-ready
-  // callback wires the real flush before the factory's long-running init so a
-  // startup failure is still persisted to the structured log file, and the
-  // catch drains that sink before the rejection exits the process.
-  // (Codex P2, PR #2499.)
   let flushStructuredLogs: () => Promise<void> = () => Promise.resolve();
   try {
     daemonContext = await createDaemonApp({
       config,
       verbose: true,
-      standalone: false, // Skip root info route in embedded mode
+      standalone: false,
       onStructuredLogSinkReady: (flush) => {
         flushStructuredLogs = flush;
       },
@@ -187,10 +172,8 @@ export async function startDevServer(config: Config) {
 
   log.info('Room orchestration is handled by RoomAgentService');
 
-  // Stop the daemon's internal server (we'll create a unified one)
   daemonContext.server.stop();
 
-  // Find an available port for Vite dev server
   log.info('📦 Starting Vite dev server...');
   const vitePort = await findAvailablePort();
   log.info(`   Found available Vite port: ${vitePort}`);
@@ -202,35 +185,27 @@ export async function startDevServer(config: Config) {
       host: '0.0.0.0',
       port: vitePort,
       strictPort: false,
-      // The unified dev server is often stopped while the browser stays open.
-      // Vite's HMR client aggressively reconnects after shutdown, which can
-      // create thousands of failed localhost requests. Keep Vite's dev
-      // transforms, but require a manual browser refresh for UI changes.
       hmr: false,
     },
   });
   await vite.listen();
   log.info(`✅ Vite dev server running on port ${vitePort}`);
 
-  // Get WebSocket handlers from daemon
   const { createWebSocketHandlers } = await import('@hyperneo/daemon/routes/setup-websocket');
   const wsHandlers = createWebSocketHandlers(daemonContext.transport, daemonContext.sessionManager);
 
-  // Create unified Bun server that combines daemon + Vite proxy
   server = Bun.serve({
     hostname: config.host,
     port: config.port,
-    idleTimeout: 255, // Max value (255 sec) - prevent timeout on long requests
+    idleTimeout: 255,
 
     async fetch(req, server) {
       const url = new URL(req.url);
 
-      // CORS preflight
       if (req.method === 'OPTIONS') {
         return createCorsPreflightResponse();
       }
 
-      // WebSocket upgrade at /ws (daemon WebSocket)
       if (isWebSocketPath(url.pathname)) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const upgraded = (server as any).upgrade(req, {
@@ -240,13 +215,12 @@ export async function startDevServer(config: Config) {
         });
 
         if (upgraded) {
-          return; // WebSocket upgrade successful
+          return;
         }
 
         return new Response('WebSocket upgrade failed', { status: 500 });
       }
 
-      // Proxy all other requests to Vite dev server
       try {
         if (url.pathname === '/@vite/client') {
           return new Response(VITE_CLIENT_SHIM, {
@@ -259,16 +233,13 @@ export async function startDevServer(config: Config) {
 
         const viteUrl = `http://localhost:${vitePort}${url.pathname}${url.search}`;
 
-        // Forward request with original headers
         const fetchOptions: RequestInit = {
           method: req.method,
           headers: Object.fromEntries(req.headers.entries()),
         };
 
-        // Forward request body for methods that may have one
         if (req.method !== 'GET' && req.method !== 'HEAD') {
           fetchOptions.body = req.body;
-          // Bun supports streaming body via duplex
           (fetchOptions as Record<string, unknown>).duplex = 'half';
         }
 
@@ -283,7 +254,6 @@ export async function startDevServer(config: Config) {
           });
         }
 
-        // Create response with Vite's response
         return new Response(viteResponse.body, {
           status: viteResponse.status,
           headers: viteResponse.headers,

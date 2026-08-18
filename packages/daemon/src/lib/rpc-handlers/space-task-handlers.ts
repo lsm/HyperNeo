@@ -1,13 +1,3 @@
-/**
- * Space Task RPC Handlers
- *
- * RPC handlers for SpaceTask CRUD operations:
- * - spaceTask.create - Create a task in a Space
- * - spaceTask.list   - List tasks in a Space
- * - spaceTask.get    - Get a task by ID
- * - spaceTask.update - Update task fields (metadata and status with transition validation)
- */
-
 import {
   isRateOrUsageLimited,
   isWorkflowRecoveryTransition,
@@ -93,10 +83,6 @@ async function validateWorkflowModelOverrides(
   return Object.keys(clean).length > 0 ? clean : null;
 }
 
-/**
- * Factory that creates a SpaceTaskManager bound to a specific spaceId.
- * Injected so tests can substitute a mock manager.
- */
 export type SpaceTaskManagerFactory = (spaceId: string) => SpaceTaskManager;
 
 export function setupSpaceTaskHandlers(
@@ -108,7 +94,6 @@ export function setupSpaceTaskHandlers(
   spaceRuntimeService?: SpaceRuntimeService,
   spaceGoalService?: Pick<SpaceGoalService, 'handleTaskTerminal'>
 ): void {
-  // ─── spaceTask.create ───────────────────────────────────────────────────────
   messageHub.onRequest('spaceTask.create', async (data) => {
     const params = data as CreateSpaceTaskParams & { draft?: boolean; goalId?: unknown };
 
@@ -118,12 +103,10 @@ export function setupSpaceTaskHandlers(
     if (!params.title || params.title.trim() === '') {
       throw new Error('title is required');
     }
-    // description is required but may be an empty string — reject only null/undefined
     if (params.description === undefined || params.description === null) {
       throw new Error('description must not be null');
     }
 
-    // Verify space exists
     const space = await spaceManager.getSpace(params.spaceId);
     if (!space) {
       throw new Error(`Space not found: ${params.spaceId}`);
@@ -140,8 +123,6 @@ export function setupSpaceTaskHandlers(
       ...rest
     } = params as typeof params & { id?: unknown };
 
-    // The draft flag is an alias for status: 'draft'. Reject contradictory
-    // input instead of silently allowing status to override draft: true.
     if (draft && rest.status && rest.status !== 'draft') {
       throw new Error('draft: true cannot be combined with a non-draft status');
     }
@@ -164,26 +145,6 @@ export function setupSpaceTaskHandlers(
     return task;
   });
 
-  // ─── spaceTask.list ─────────────────────────────────────────────────────────
-  //
-  // Two response shapes for backward compatibility:
-  //
-  //   1. Legacy / overview call: `{ spaceId, includeArchived? }` →
-  //      returns `SpaceTask[]` (full list, no pagination). Used by the
-  //      initial space-overview load, sidebar badge counts, and tab counts.
-  //
-  //   2. Paginated single-group call: any of `status`, `limit`, `offset`,
-  //      or `blockReason` provided → returns `PaginatedSpaceTaskResult`
-  //      `{ tasks, total }`. Used by the Tasks view's per-group Prev/Next
-  //      pagination (10 items per status group).
-  //
-  // `blockReason` is treated as a tri-state filter: omitted (undefined) =
-  // ignore the column; `null` = match rows with no reason set; a value =
-  // match exactly. The Action tab uses this to split blocked rows into
-  // "Needs Input" / "Gate Pending" / generic-"Blocked" buckets. `blockReason`
-  // requires `status === 'blocked'` — combining it with another status
-  // filter would silently return an empty page (the data shape doesn't
-  // support that combination), so we reject it loudly instead.
   messageHub.onRequest('spaceTask.list', async (data) => {
     const params = data as {
       spaceId: string;
@@ -199,7 +160,6 @@ export function setupSpaceTaskHandlers(
       throw new Error('spaceId is required');
     }
 
-    // Verify space exists
     const space = await spaceManager.getSpace(params.spaceId);
     if (!space) {
       throw new Error(`Space not found: ${params.spaceId}`);
@@ -250,7 +210,6 @@ export function setupSpaceTaskHandlers(
     return result;
   });
 
-  // ─── spaceTask.get ──────────────────────────────────────────────────────────
   messageHub.onRequest('spaceTask.get', async (data) => {
     const params = data as { spaceId: string; taskId: string };
 
@@ -261,7 +220,6 @@ export function setupSpaceTaskHandlers(
       throw new Error('taskId is required');
     }
 
-    // Verify space exists (consistent with create/list validation pattern)
     const space = await spaceManager.getSpace(params.spaceId);
     if (!space) {
       throw new Error(`Space not found: ${params.spaceId}`);
@@ -276,7 +234,6 @@ export function setupSpaceTaskHandlers(
     return task;
   });
 
-  // ─── spaceTask.update ───────────────────────────────────────────────────────
   messageHub.onRequest('spaceTask.update', async (data) => {
     const params = data as {
       spaceId: string;
@@ -293,9 +250,6 @@ export function setupSpaceTaskHandlers(
 
     const { spaceId, taskId, goalId: _goalId, ...updateParams } = params;
 
-    // Verify space exists — consistent with create/list/get validation.
-    // Without this check, a bad spaceId would surface as "Task not found" rather
-    // than "Space not found", which is misleading.
     const space = await spaceManager.getSpace(spaceId);
     if (!space) {
       throw new Error(`Space not found: ${spaceId}`);
@@ -419,12 +373,7 @@ export function setupSpaceTaskHandlers(
       };
     };
 
-    // Route to setTaskStatus only when the status is actually changing.
-    // Sending the current status as part of a broader metadata update must not
-    // trigger a transition check (same→same is not in the transition table and
-    // would throw a misleading "Invalid status transition" error).
     if (updateParams.status !== undefined) {
-      // Fetch the current task to compare status before routing
       const currentTask = await taskManager.getTask(taskId);
       if (!currentTask) {
         throw new Error(`Task not found: ${taskId}`);
@@ -462,12 +411,6 @@ export function setupSpaceTaskHandlers(
             });
           }
         } else {
-          // Tear down the workflow session when an active/paused task moves to a
-          // stopped state. The 'blocked' target is restricted to rate/usage-
-          // limited origins (a rate-limited task blocked manually must release
-          // its armed cooldown session) so this stays scoped to the rate-limit
-          // work — manually blocking a running `in_progress` task is unchanged
-          // from before this PR (out of scope here).
           const fromActivePaused =
             currentTask.status === 'in_progress' ||
             currentTask.status === 'blocked' ||
@@ -477,14 +420,6 @@ export function setupSpaceTaskHandlers(
             updateParams.status === 'blocked' && isRateOrUsageLimited(currentTask.status);
           const shouldStopWorkflowForStatus =
             !!currentTask.workflowRunId && fromActivePaused && (toStopped || toBlockedFromPaused);
-          // Reject bare transitions into `review`. Every task that lands in
-          // `review` MUST carry the pending-completion fields so
-          // `PendingTaskCompletionBanner` renders and approvals route through
-          // `PostApprovalRouter`. Callers must use `spaceTask.submitForReview`
-          // (UI) or the agent `submit_for_approval` tool — both go through
-          // `SpaceTaskManager.submitTaskForReview` which writes the metadata
-          // atomically. Without this guard a stray `update({status:'review'})`
-          // would re-introduce the banner-less generic-button flow.
           if (updateParams.status === 'review') {
             throw new Error(
               `spaceTask.update cannot transition a task into 'review' directly. ` +
@@ -492,18 +427,6 @@ export function setupSpaceTaskHandlers(
                 `so the pending-completion fields get stamped and the approval banner renders.`
             );
           }
-          // Reject bare transitions into `approved`. The `approved` status
-          // is owned by the post-approval pipeline:
-          //   - human approvals → `spaceTask.approvePendingCompletion`,
-          //     which dispatches `PostApprovalRouter` (it calls
-          //     `setTaskStatus(approved)` with the right metadata).
-          //   - agent approvals → the runtime's reactive
-          //     `reportedStatus='done'` handler, again routing through
-          //     `PostApprovalRouter`.
-          // A bare `update({status:'approved'})` would skip the awareness
-          // event, the post-approval dispatch, and the approval-source
-          // stamping — the same kind of gap the `→ review` guard above
-          // closes on the entry side.
           if (updateParams.status === 'approved') {
             throw new Error(
               `spaceTask.update cannot transition a task into 'approved' directly. ` +
@@ -512,16 +435,6 @@ export function setupSpaceTaskHandlers(
                 `approval metadata and dispatch the configured post-approval step.`
             );
           }
-          // Reject archiving a task that belongs to an ACTIVE (non-terminal)
-          // workflow run. Archiving it would strand the run: listByWorkflowRun
-          // excludes archived tasks, so processRunTick early-returns on the
-          // now-empty list and no reconciliation cancels the orphan — the run
-          // stays `in_progress` forever with no canonical task to advance.
-          // G1 (task #849) widened this from review/approved→archived to
-          // open→archived (every run task's initial state). Tasks with no run,
-          // and tasks on terminal (done/cancelled) runs, archive normally.
-          // Direct the caller to Cancel, which routes through cancelWorkflowRun
-          // and tears the run down properly.
           if (
             updateParams.status === 'archived' &&
             currentTask.workflowRunId &&
@@ -548,13 +461,6 @@ export function setupSpaceTaskHandlers(
             emitTaskUpdated = false;
             handleGoalTerminal = false;
           } else {
-            // Status is changing — validate via setTaskStatus (enforces transitions).
-            // `approvalReason` is stamped on review→done; `cancelReason` is
-            // persisted into the same underlying column for review→cancelled
-            // transitions (and other terminal rejections). We map both onto the
-            // manager's `approvalReason` option because the DB schema keeps a
-            // single `approval_reason` column doubling as audit trail for
-            // approvals *and* rejections.
             const mappedReason =
               updateParams.status === 'cancelled'
                 ? (updateParams.cancelReason ?? updateParams.approvalReason ?? undefined)
@@ -565,7 +471,6 @@ export function setupSpaceTaskHandlers(
               reportedSummary: Object.hasOwn(updateParams, 'reportedSummary')
                 ? updateParams.reportedSummary
                 : undefined,
-              // Human-initiated approval when transitioning from review → done
               approvalSource:
                 currentTask.status === 'review' && updateParams.status === 'done'
                   ? 'human'
@@ -573,10 +478,6 @@ export function setupSpaceTaskHandlers(
               approvalReason: mappedReason,
             });
 
-            // When the transition alone cannot carry the rejection reason (e.g.
-            // review → cancelled — setTaskStatus only stamps approvalReason on
-            // review→done), apply it in a follow-up write. Keeps the audit trail
-            // complete regardless of direction.
             if (
               updateParams.status === 'cancelled' &&
               (updateParams.cancelReason ?? updateParams.approvalReason)
@@ -590,10 +491,6 @@ export function setupSpaceTaskHandlers(
               );
             }
 
-            // When a status transition is combined with other field updates
-            // (e.g. taskAgentSessionId), those fields are silently dropped by
-            // setTaskStatus. Apply them in a follow-up updateTask call so
-            // callers can atomically set status + metadata in one RPC.
             const {
               status: _s,
               result: _r,
@@ -610,10 +507,6 @@ export function setupSpaceTaskHandlers(
           }
         }
       } else {
-        // Status is the same — treat as a regular field update.
-        // updateParams still contains the unchanged status field; SpaceTaskManager.updateTask
-        // strips it internally (guard: params.status !== task.status is false) so no
-        // transition check fires and the status column is left untouched in the DB.
         await ensureWorkflowOverridesStillUnlocked(updateParams);
         const dependencyUpdate = await updateTaskWithRuntimeDependencyBlock(currentTask);
         task = dependencyUpdate.task;
@@ -623,7 +516,6 @@ export function setupSpaceTaskHandlers(
         }
       }
     } else {
-      // No status field — general field update
       const currentTask = await taskManager.getTask(taskId);
       if (!currentTask) {
         throw new Error(`Task not found: ${taskId}`);
@@ -637,7 +529,6 @@ export function setupSpaceTaskHandlers(
       }
     }
 
-    // Best-effort goal terminal handling — must not abort the RPC response.
     if (handleGoalTerminal && spaceGoalService && TERMINAL_TASK_STATUSES.has(task.status)) {
       try {
         spaceGoalService.handleTaskTerminal(task.id);
@@ -664,7 +555,6 @@ export function setupSpaceTaskHandlers(
     return task;
   });
 
-  // ─── spaceTask.recoverWorkflow ────────────────────────────────────────────
   messageHub.onRequest('spaceTask.recoverWorkflow', async (data) => {
     const params = data as {
       spaceId: string;
@@ -695,20 +585,6 @@ export function setupSpaceTaskHandlers(
     );
   });
 
-  // ─── spaceTask.submitForReview ──────────────────────────────────────────────
-  // User-initiated counterpart to the agent `submit_for_approval` tool. Both
-  // paths converge on `SpaceTaskManager.submitTaskForReview`, which atomically
-  // transitions the task into `review` and stamps the pending-completion
-  // fields that drive `PendingTaskCompletionBanner`. Without this RPC the UI
-  // "Submit for Review" button degraded to a bare status update — landing the
-  // task in `review` with no banner, no metadata, and a generic Approve button
-  // that bypassed `PostApprovalRouter`. After unification, every task in
-  // `review` is banner-eligible regardless of who submitted it.
-  //
-  // `pendingCompletionSubmittedByNodeId` is set to `null` for user-initiated
-  // submissions — same semantics as a Task Agent self-submit. The post-
-  // approval router treats both identically (no waiting end-node session to
-  // resume; awareness events are best-effort).
   messageHub.onRequest('spaceTask.submitForReview', async (data) => {
     const params = data as {
       spaceId: string;
@@ -744,18 +620,6 @@ export function setupSpaceTaskHandlers(
     return task;
   });
 
-  // ─── spaceTask.approvePendingCompletion ─────────────────────────────────────
-  // Design v2 (Task #39): human approval / rejection for tasks paused at a
-  // `submit_for_approval` checkpoint (`pendingCheckpointType === 'task_completion'`).
-  //
-  // - `approved: true`  → transitions the task review → done, stamps approval
-  //   metadata, clears pending-completion fields, and fires `space.task.updated`.
-  // - `approved: false` → transitions the task back to in_progress so the end-node
-  //   agent can revise its output; clears pending-completion fields. The optional
-  //   `reason` is written to `approvalReason` as a rejection rationale.
-  //
-  // The handler refuses to operate on tasks that are not paused at a
-  // `task_completion` checkpoint to avoid accidentally closing in-flight work.
   messageHub.onRequest('spaceTask.approvePendingCompletion', async (data) => {
     const params = data as {
       spaceId: string;
@@ -799,25 +663,6 @@ export function setupSpaceTaskHandlers(
           'spaceRuntimeService is required to approve pending completion — post-approval routing is the sole approval path.'
         );
       }
-      // Delegate to the PostApprovalRouter. `dispatchPostApproval` transitions
-      // review → approved (via SpaceTaskManager.setTaskStatus, stamping
-      // `approvalReason` from `contextExtras`) and dispatches the configured
-      // post-approval step (no-route → done, or spawn fresh node-agent). The
-      // pending-completion fields are cleared by a `finally` around
-      // `router.route()` inside `dispatchPostApproval` (Layer B invariant), so
-      // by the time we re-read below they are null regardless of which router
-      // branch ran — or whether the dispatch threw.
-      //
-      // Layer C robustness: the review → approved status transition commits
-      // BEFORE the async post-approval dispatch. If that dispatch throws (e.g.
-      // an SDK `"user interrupted"` abort during sub-session spawn — reproducer
-      // task #847), the approval is nonetheless durable, so we must NOT surface
-      // the raw throw: the user would assume the click failed and click again,
-      // hitting the double-approval guard. Instead, confirm the task reached
-      // `approved` and capture the failure as a post-approval-blocked reason so
-      // the UI surfaces a recovery banner. If the status transition itself
-      // failed (task never reached `approved`), rethrow — the approval did not
-      // happen.
       try {
         await spaceRuntimeService.dispatchPostApproval(params.spaceId, params.taskId, 'human', {
           approvalReason: params.reason ?? null,
@@ -834,15 +679,10 @@ export function setupSpaceTaskHandlers(
           postApprovalBlockedReason: mapPostApprovalDispatchWarning(detail),
         });
       }
-      // Re-read the task so the caller sees the post-router state.
       const refreshed = await taskManager.getTask(params.taskId);
       if (!refreshed) throw new Error(`Task not found: ${params.taskId}`);
       task = refreshed;
     } else {
-      // review → in_progress (reject). Reason captured as `approvalReason`
-      // for audit. `setTaskStatus` nulls the pending-completion fields in
-      // the same UPDATE (centralised "exit review" cleanup), so the
-      // follow-up `updateTask` only stamps the rejection reason.
       task = await taskManager.setTaskStatus(params.taskId, 'in_progress');
       task = await taskManager.updateTask(params.taskId, {
         approvalReason: params.reason ?? null,
@@ -863,11 +703,6 @@ export function setupSpaceTaskHandlers(
     return task;
   });
 
-  // ─── spaceTask.publish ─────────────────────────────────────────────────────
-  // Promote a draft task to `open` so the orchestrator can pick it up.
-  // This is the only valid transition out of `draft` — enforced by
-  // VALID_SPACE_TASK_TRANSITIONS. The handler validates the current status
-  // before delegating to SpaceTaskManager.publishTask.
   messageHub.onRequest('spaceTask.publish', async (data) => {
     const params = data as { spaceId: string; taskId: string };
 

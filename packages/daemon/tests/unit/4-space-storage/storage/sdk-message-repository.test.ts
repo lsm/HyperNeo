@@ -1,9 +1,3 @@
-/**
- * SDK Message Repository Tests
- *
- * Tests for SDK message CRUD operations, pagination, and query mode tracking.
- */
-
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import {
@@ -18,7 +12,6 @@ describe('SDKMessageRepository', () => {
   let db: Database;
   let repository: SDKMessageRepository;
 
-  // Helper to create a user message
   function createUserMessage(content: string, uuid: string = crypto.randomUUID()): SDKMessage {
     return {
       type: 'user',
@@ -30,7 +23,6 @@ describe('SDKMessageRepository', () => {
     } as SDKMessage;
   }
 
-  // Helper to create an assistant message
   function createAssistantMessage(content: string, toolUseId?: string): SDKMessage {
     const blocks: Array<{ type: string; text?: string; id?: string }> = [
       { type: 'text', text: content },
@@ -47,7 +39,6 @@ describe('SDKMessageRepository', () => {
     } as SDKMessage;
   }
 
-  // Helper to create a subagent message
   function createSubagentMessage(content: string, parentToolUseId: string): SDKMessage {
     return {
       type: 'assistant',
@@ -206,21 +197,14 @@ describe('SDKMessageRepository', () => {
     }
 
     it('returns false when no card exists (bun:sqlite .get() yields null, not undefined)', () => {
-      // Regression: `row !== undefined` inverted the polarity under
-      // bun:sqlite — an empty table read as "an unresolved card exists", so
-      // emitSdkResumeChoiceMessage's dedupe suppressed the card entirely and
-      // sessions with a purged SDK transcript parked on sdk_resume_choice
-      // forever with nothing to answer.
       expect(repository.hasUnresolvedHyperNeoAction('s1', 'sdk_resume_choice')).toBe(false);
     });
 
     it('returns true only while an unresolved card exists', () => {
       insertActionCard('s1', false);
       expect(repository.hasUnresolvedHyperNeoAction('s1', 'sdk_resume_choice')).toBe(true);
-      // A resolved card does not count.
       insertActionCard('s2', true);
       expect(repository.hasUnresolvedHyperNeoAction('s2', 'sdk_resume_choice')).toBe(false);
-      // Another session's unresolved card does not leak across sessions.
       expect(repository.hasUnresolvedHyperNeoAction('s3', 'sdk_resume_choice')).toBe(false);
     });
   });
@@ -467,7 +451,6 @@ describe('SDKMessageRepository', () => {
       const { messages } = repository.getSDKMessages('session-1');
 
       expect(messages.length).toBe(3);
-      // Messages should be in chronological order (oldest first)
       const content0 = (
         messages[0] as { message?: { content?: Array<{ type: string; text?: string }> } }
       ).message?.content;
@@ -499,8 +482,6 @@ describe('SDKMessageRepository', () => {
     });
 
     it('includes same-timestamp rows at the before cursor (inclusive boundary)', () => {
-      // 'older' at T-1d; 'a' and 'b' share timestamp T (a same-ms burst like
-      // hook phases). saveSDKMessage stamps real time, so set timestamps directly.
       repository.saveSDKMessage('session-1', createUserMessage('older', 'm-older'));
       repository.saveSDKMessage('session-1', createUserMessage('a', 'm-a'));
       repository.saveSDKMessage('session-1', createUserMessage('b', 'm-b'));
@@ -513,9 +494,6 @@ describe('SDKMessageRepository', () => {
         `UPDATE sdk_messages SET timestamp = ? WHERE json_extract(sdk_message, '$.uuid') IN ('m-a', 'm-b')`
       ).run(Tiso);
 
-      // before = T (the boundary/oldest-shown cursor). An inclusive boundary
-      // surfaces the same-ms sibling 'b' (and 'a', which the client dedups by
-      // id) plus the older row — instead of permanently skipping rows at T.
       const { messages } = repository.getSDKMessages('session-1', 100, Tms);
       const texts = messages.map(
         (m) =>
@@ -526,10 +504,6 @@ describe('SDKMessageRepository', () => {
     });
 
     it('advances through more-than-limit same-timestamp rows via the rowid cursor', () => {
-      // 5 messages sharing one timestamp T, paginated with limit 3. A
-      // timestamp-only cursor would return the same newest 3 every page (client
-      // dedups them, never reaching rows 1-2). The (timestamp, rowid) cursor
-      // must reach the older same-ms rows.
       for (let i = 0; i < 5; i += 1) {
         repository.saveSDKMessage('session-1', createUserMessage(`same-${i}`, `m-${i}`));
       }
@@ -542,16 +516,13 @@ describe('SDKMessageRepository', () => {
       const oldest = page1.messages[0] as { rowid?: number; timestamp?: number };
       expect(oldest.rowid).toBeDefined();
 
-      // Page 2 uses the oldest page-1 row's (timestamp, rowid) as the cursor.
       const page2 = repository.getSDKMessages('session-1', 3, Tms, undefined, oldest.rowid);
       const page2Texts = page2.messages.map(
         (m) =>
           (m as { message?: { content?: Array<{ text?: string }> } }).message?.content?.[0]?.text
       );
-      // The two older same-ms rows (inserted first) are now reachable.
       expect(page2Texts).toContain('same-0');
       expect(page2Texts).toContain('same-1');
-      // None of page 1's rows leak into page 2.
       expect(page2Texts).not.toContain('same-4');
     });
 
@@ -590,9 +561,6 @@ describe('SDKMessageRepository', () => {
       const { messages, hasMore } = repository.getSDKMessages('session-1', 2);
       const metadataMessages = repository.getBackgroundTaskMessages('session-1');
 
-      // Order-independent: back-to-back saves can share a millisecond, which
-      // makes `getSDKMessages`' timestamp-DESC ordering nondeterministic
-      // between the user row and the task_notification row.
       expect(messages.map((message) => (message as { subtype?: string }).subtype).sort()).toEqual([
         'task_notification',
         undefined,
@@ -773,9 +741,6 @@ describe('SDKMessageRepository', () => {
       const { messages } = repository.getSDKMessages('session-1', 2);
 
       expect(messages).toHaveLength(2);
-      // Order-independent: back-to-back saves can share a millisecond, which
-      // makes `getSDKMessages`' timestamp-DESC ordering nondeterministic
-      // between the user and assistant rows.
       expect(messages.map((message) => message.type).sort()).toEqual(['assistant', 'user']);
     });
 
@@ -890,7 +855,6 @@ describe('SDKMessageRepository', () => {
 
       const { messages } = repository.getSDKMessages('session-1', 100, middleTime);
 
-      // Should only get messages before middleTime
       expect(messages.length).toBe(1);
       const content = (
         messages[0] as { message?: { content?: Array<{ type: string; text?: string }> } }
@@ -909,7 +873,6 @@ describe('SDKMessageRepository', () => {
 
       const { messages } = repository.getSDKMessages('session-1', 100, undefined, middleTime);
 
-      // Should only get messages after middleTime
       expect(messages.length).toBe(2);
     });
 
@@ -921,7 +884,6 @@ describe('SDKMessageRepository', () => {
 
       const { messages } = repository.getSDKMessages('session-1');
 
-      // Should include both top-level and subagent messages
       expect(messages.length).toBe(3);
       expect(messages.every((message) => (message as { id?: string }).id)).toBe(true);
     });
@@ -935,7 +897,6 @@ describe('SDKMessageRepository', () => {
 
       const { messages } = repository.getSDKMessages('session-1');
 
-      // Only top-level message should be returned
       expect(messages.length).toBe(1);
     });
 
@@ -955,7 +916,6 @@ describe('SDKMessageRepository', () => {
 
       const { messages } = repository.getSDKMessages('session-1');
 
-      // Only top-level assistant and subagent response should be returned (thinking_tokens filtered)
       expect(messages.length).toBe(2);
       expect(
         messages.some((message) => (message as { subtype?: string }).subtype === 'thinking_tokens')
@@ -996,7 +956,6 @@ describe('SDKMessageRepository', () => {
     });
 
     it('should return hasMore=true when there are more messages', () => {
-      // Create more than limit messages
       for (let i = 0; i < 110; i++) {
         repository.saveSDKMessage('session-1', createUserMessage(`Message ${i}`));
       }
@@ -1008,7 +967,6 @@ describe('SDKMessageRepository', () => {
     });
 
     it('should return hasMore=false when there are no more messages', () => {
-      // Create fewer messages than limit
       for (let i = 0; i < 50; i++) {
         repository.saveSDKMessage('session-1', createUserMessage(`Message ${i}`));
       }
@@ -1020,7 +978,6 @@ describe('SDKMessageRepository', () => {
     });
 
     it('should return hasMore=true when exactly limit messages exist', () => {
-      // Create exactly limit messages
       for (let i = 0; i < 100; i++) {
         repository.saveSDKMessage('session-1', createUserMessage(`Message ${i}`));
       }
@@ -1028,7 +985,7 @@ describe('SDKMessageRepository', () => {
       const { messages, hasMore } = repository.getSDKMessages('session-1', 100);
 
       expect(messages.length).toBe(100);
-      expect(hasMore).toBe(true); // Can't know for sure, so assume there might be more
+      expect(hasMore).toBe(true);
     });
 
     it('should exclude unconsumed user messages from transcript query', () => {
@@ -1107,10 +1064,6 @@ describe('SDKMessageRepository', () => {
         total_cost_usd: 0,
         usage: {},
       } as unknown as SDKMessage);
-      // hook_started/hook_progress are no longer globally hidden (chat-visible
-      // hook events now); task_* are hidden but kept as progress signals via
-      // LAST_MESSAGE_PROGRESS_SUBTYPES, so they're not skipped here. Sample the
-      // remaining hidden non-progress subtypes.
       for (const subtype of ['session_state_changed', 'commands_changed', 'elicitation_complete']) {
         repository.saveSDKMessage('session-1', {
           type: 'system',
@@ -1290,9 +1243,6 @@ describe('SDKMessageRepository', () => {
   });
 
   describe('visible_message_count maintenance', () => {
-    // These tests use a sessions table that carries `visible_message_count`,
-    // unlike the suite-wide setup (which has no sessions table at all and so
-    // exercises the no-op guard).
     let badgeDb: Database;
     let badgeRepo: SDKMessageRepository;
     const SID = 'sess-badge';
@@ -1313,7 +1263,6 @@ describe('SDKMessageRepository', () => {
       return row.n;
     }
 
-    /** Same predicate the former spaceSessions.bySpace subquery used — drift check. */
     function freshBadgeCount(sessionId: string = SID): number {
       const excluded = [
         'session_state_changed',
@@ -1446,7 +1395,6 @@ describe('SDKMessageRepository', () => {
       expect(badgeCount()).toBe(0);
       badgeRepo.updateMessageStatus([id], 'consumed');
       expect(badgeCount()).toBe(1);
-      // Back to a non-visible status removes it again.
       badgeRepo.updateMessageStatus([id], 'enqueued');
       expect(badgeCount()).toBe(0);
       expect(badgeCount()).toBe(freshBadgeCount());
@@ -1472,9 +1420,6 @@ describe('SDKMessageRepository', () => {
     });
 
     it('recomputeVisibleMessageCount repairs drift after a bypass insert', () => {
-      // Simulates scripts/recover-messages.ts: a raw INSERT into sdk_messages
-      // that skips the maintained counter, then a repair via the shared public
-      // recompute entry point (so the script reuses the predicate, not a copy).
       const insertRaw = badgeDb.prepare(
         `INSERT INTO sdk_messages
            (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, parent_tool_use_id)
@@ -1482,20 +1427,14 @@ describe('SDKMessageRepository', () => {
       );
       insertRaw.run('raw-1', SID, 'assistant', null, '{}', '2026-01-01T00:00:00Z');
       insertRaw.run('raw-2', SID, 'user', null, '{}', '2026-01-01T00:00:01Z');
-      // The bypass insert left the counter stale at 0.
       expect(badgeCount()).toBe(0);
-      // Returns true because the value actually changed; counter now matches.
       expect(badgeRepo.recomputeVisibleMessageCount(SID)).toBe(true);
       expect(badgeCount()).toBe(2);
       expect(badgeCount()).toBe(freshBadgeCount());
-      // A second recompute is a no-op (returns false, value unchanged).
       expect(badgeRepo.recomputeVisibleMessageCount(SID)).toBe(false);
     });
 
     it('stays consistent with a fresh COUNT(*) across a mixed sequence', () => {
-      // Anti-drift: a representative mix of inserts, a status flip, a hidden
-      // subtype, and a partial rewind — the maintained counter must equal a
-      // freshly computed badge count throughout.
       badgeRepo.saveSDKMessage(SID, createAssistantMessage('a'));
       badgeRepo.saveSDKMessage(SID, createSubagentMessage('sub', 'tu1'));
       const pending = badgeRepo.saveUserMessage(SID, createUserMessage('p'), 'enqueued');
@@ -1507,7 +1446,6 @@ describe('SDKMessageRepository', () => {
         uuid: 'hidden',
       } as unknown as SDKMessage);
       expect(badgeCount()).toBe(freshBadgeCount());
-      // Rewind from the 3rd-oldest row onward.
       const mid = badgeDb
         .prepare(
           `SELECT timestamp FROM sdk_messages WHERE session_id = ? ORDER BY timestamp ASC LIMIT 1 OFFSET 2`
@@ -1535,7 +1473,6 @@ describe('SDKMessageRepository', () => {
         );
       `);
       const subsetRepo = new SDKMessageRepository(subsetDb as never);
-      // Must not throw and must not try to UPDATE a non-existent sessions table.
       expect(() =>
         subsetRepo.saveSDKMessage('no-sessions', createAssistantMessage('x'))
       ).not.toThrow();
@@ -1610,7 +1547,6 @@ describe('SDKMessageRepository', () => {
       const messages = repository.getMessagesByStatus('session-1', 'deferred');
 
       expect(messages.length).toBe(3);
-      // Chronological order means oldest first
       const text0 = (
         (messages[0] as { message?: { content?: Array<{ type: string; text?: string }> } }).message
           ?.content?.[0] as { text?: string }
@@ -1697,7 +1633,6 @@ describe('SDKMessageRepository', () => {
       );
 
       expect(repository.markDeliveryConsumedByUuid('session-1', 'uuid-once')).not.toBeNull();
-      // Already consumed — no-op, returns null so the caller skips the broadcast.
       expect(repository.markDeliveryConsumedByUuid('session-1', 'uuid-once')).toBeNull();
     });
 
@@ -1736,13 +1671,12 @@ describe('SDKMessageRepository', () => {
         'uuid-kick',
         'uuid-member',
         'uuid-def-member',
-        'uuid-kick', // duplicate — must not double-flip
+        'uuid-kick',
       ]);
 
       expect(flipped.sort()).toEqual([kickoffId, memberId].sort());
       expect(repository.getMessagesByStatus('session-1', 'enqueued').length).toBe(0);
       expect(repository.getMessagesByStatus('session-1', 'consumed').length).toBe(2);
-      // The deferred member is not a consume candidate — stays deferred.
       expect(repository.getMessagesByStatus('session-1', 'deferred').length).toBe(1);
     });
 
@@ -1752,8 +1686,6 @@ describe('SDKMessageRepository', () => {
         createUserMessage('excluded member', 'uuid-excl'),
         'deferred'
       );
-      // A dead-lettered batch must not terminalize a member the user deferred
-      // out of the prompt before delivery.
       expect(repository.markDeliveryFailedByUuidInclusive('session-1', 'uuid-excl')).toBeNull();
       expect(repository.getMessagesByStatus('session-1', 'deferred').length).toBe(1);
     });
@@ -1810,9 +1742,6 @@ describe('SDKMessageRepository', () => {
         sendStatus?: string;
       }
     ): void {
-      // Stamp the shared monotonic counter for consumed user rows AND terminal
-      // results (mirrors saveSDKMessage/markDeliveryConsumedByUuid), so
-      // hasTerminalResultAfter compares counter-to-counter. NULL otherwise.
       const effectiveStatus = opts.sendStatus ?? (type === 'user' ? 'consumed' : null);
       const needsSeq =
         (type === 'user' && effectiveStatus === 'consumed') || (type === 'result' && opts.terminal);
@@ -1833,9 +1762,6 @@ describe('SDKMessageRepository', () => {
         crypto.randomUUID(),
         sessionId,
         type,
-        // hasTerminalResultAfter counts only `subtype = 'success'` results, so a
-        // terminal result without an explicit subtype defaults to success (the
-        // common case); tests that exercise error results pass subtype explicitly.
         opts.subtype ?? (type === 'result' && opts.terminal ? 'success' : null),
         '{}',
         opts.timestamp,
@@ -1882,8 +1808,6 @@ describe('SDKMessageRepository', () => {
         terminal: true,
         subtype: 'error_max_budget_usd',
       });
-      // The SDK persists error results WITHOUT emitting session.error — the
-      // bridge uses this lookup to classify budget exhaustion as terminal.
       expect(repository.getErrorTerminalResultSubtypeAfter('session-1', 'msg-budget')).toBe(
         'error_max_budget_usd'
       );
@@ -1907,9 +1831,6 @@ describe('SDKMessageRepository', () => {
     });
 
     it('getErrorTerminalResultSubtypeAfter classifies the LATEST attempt outcome (Codex review)', () => {
-      // Retries do not restamp the user row's consumed_seq, so error results
-      // from every attempt are in range — an initial retryable error followed
-      // by a terminal one must classify terminal, not keep the oldest subtype.
       insertMessage('session-1', 'user', {
         uuid: 'msg-multi',
         timestamp: '2026-08-11T15:28:00.000Z',
@@ -1930,10 +1851,6 @@ describe('SDKMessageRepository', () => {
     });
 
     it('ignores NESTED subagent results when detecting turn completion (P1)', () => {
-      // A subagent result carries a non-null parent_tool_use_id. If the daemon
-      // crashes after the subagent finishes but before the outer turn ends, that
-      // nested result must NOT be accepted as proof the whole delivery turn
-      // terminated — recovery would wrongly complete the owning job.
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq, parent_tool_use_id)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -1950,7 +1867,6 @@ describe('SDKMessageRepository', () => {
         1,
         null
       );
-      // A nested result (subagent) persisted after consumption.
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq, parent_tool_use_id)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -1965,15 +1881,12 @@ describe('SDKMessageRepository', () => {
         1,
         null,
         null,
-        'tool-use-123' // nested under a subagent tool_use
+        'tool-use-123'
       );
       expect(repository.hasTerminalResultAfter('session-1', 'outer-msg')).toBe(false);
     });
 
     it('treats a missing consumption watermark (migrated row) as unknown/live, not completed (P1)', () => {
-      // On an upgrade, in-flight consumed rows have NULL consumed_seq. Falling
-      // back to insertion rowid could match the PREVIOUS turn's result and
-      // wrongly complete the job. NULL must mean "unknown" → don't complete.
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -1987,9 +1900,8 @@ describe('SDKMessageRepository', () => {
         'consumed',
         0,
         'migrated-msg',
-        null // migrated before the column existed
+        null
       );
-      // A terminal result after it, but its consumption boundary is unknown.
       insertMessage('session-1', 'result', {
         timestamp: '2026-08-11T15:21:00.000Z',
         terminal: true,
@@ -1998,10 +1910,6 @@ describe('SDKMessageRepository', () => {
     });
 
     it('is true when a terminal result shares the consumption millisecond but inserts after (P2 tiebreak)', () => {
-      // An immediate error/interrupt can persist its terminal result in the SAME
-      // millisecond as the consumed timestamp. The strict `>` on timestamps would
-      // miss it (equal strings); the rowid tiebreak (result inserts after the
-      // message's row) must still detect the turn ended.
       insertMessage('session-1', 'user', {
         uuid: 'tie-msg',
         timestamp: '2026-08-11T15:25:00.000Z',
@@ -2009,7 +1917,6 @@ describe('SDKMessageRepository', () => {
       });
       const flipped = repository.markDeliveryConsumedByUuid('session-1', 'tie-msg');
       expect(flipped).not.toBeNull();
-      // Reuse the exact consumed timestamp so the two rows tie on the millisecond.
       const consumedTs = (
         db.prepare(`SELECT timestamp FROM sdk_messages WHERE id = ?`).get(flipped) as {
           timestamp: string;
@@ -2044,10 +1951,6 @@ describe('SDKMessageRepository', () => {
     });
 
     it('uses the CONSUMPTION boundary, not the persistence time — a queued-then-consumed message ignores the prior turn result (P1)', () => {
-      // A message queued while turn T1 ran keeps its original persistence time;
-      // T1 ends with a terminal result AFTER that but BEFORE the message is
-      // consumed as the start of T2. After consumption the boundary must be the
-      // consumption moment so the previous turn's result is excluded.
       insertMessage('session-1', 'user', {
         uuid: 'queued-msg',
         timestamp: '2026-08-11T15:20:00.000Z',
@@ -2057,20 +1960,12 @@ describe('SDKMessageRepository', () => {
         timestamp: '2026-08-11T15:21:00.000Z',
         terminal: true,
       });
-      // T2 consumes the message — the consumed-flip aligns the row to T_consumed.
       const flipped = repository.markDeliveryConsumedByUuid('session-1', 'queued-msg');
       expect(flipped).not.toBeNull();
-      // The prior result (15:21) is now before consumption → excluded; T2 hasn't
-      // ended → false (the reclaimed job must resume T2, not complete as done).
       expect(repository.hasTerminalResultAfter('session-1', 'queued-msg')).toBe(false);
     });
 
     it('aligns the timestamp for a NON-RENDERABLE consumed message too (P1)', () => {
-      // A non-renderable user row (e.g. a tool-result response) is excluded from
-      // turn-index assignment but must still be aligned to T_consumed — otherwise
-      // a queued-then-promoted non-renderable message keeps its original time and
-      // matches the PREVIOUS turn's terminal result on a stale re-claim, losing
-      // the response. See Codex (PR #2463, P1).
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, is_renderable)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -2084,7 +1979,7 @@ describe('SDKMessageRepository', () => {
         'enqueued',
         0,
         'nr-msg',
-        0 // non-renderable
+        0
       );
       insertMessage('session-1', 'result', {
         timestamp: '2026-08-11T15:21:00.000Z',
@@ -2097,18 +1992,11 @@ describe('SDKMessageRepository', () => {
           timestamp: string;
         }
       ).timestamp;
-      // Aligned to ~T_consumed, not the 15:20 queued time.
       expect(Date.parse(ts)).toBeGreaterThan(Date.parse('2026-08-11T15:22:00.000Z'));
-      // The 15:21 prior result is now before consumption → the turn is NOT ended.
       expect(repository.hasTerminalResultAfter('session-1', 'nr-msg')).toBe(false);
     });
 
     it('orders by the CONSUMPTION watermark, not the message rowid — a prior-turn result sharing the ms is excluded (P2)', () => {
-      // A message queued during turn A and consumed as turn B keeps its ORIGINAL
-      // rowid (insertion order). If A's result lands in the same millisecond as
-      // B's consumption, a rowid tiebreak would sort A's result AFTER the
-      // message's consumption and wrongly complete B's job. The consumption
-      // watermark (consumed_seq = MAX(rowid)+1) must exclude A's result.
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, is_renderable)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -2118,14 +2006,12 @@ describe('SDKMessageRepository', () => {
         'user',
         null,
         '{}',
-        '2026-08-11T15:20:00.000Z', // queued during turn A
+        '2026-08-11T15:20:00.000Z',
         'enqueued',
         0,
         'promoted-msg',
         1
       );
-      // Turn A's result, persisted AFTER the message was queued but in the same
-      // millisecond as B's consumption below.
       insertMessage('session-1', 'result', {
         timestamp: '2026-08-11T15:30:00.000Z',
         terminal: true,
@@ -2138,10 +2024,7 @@ describe('SDKMessageRepository', () => {
         }
       ).consumed_seq;
       expect(seq).toBeGreaterThan(0);
-      // A's result (rowid < consumed_seq) is NOT after the consumption → false.
       expect(repository.hasTerminalResultAfter('session-1', 'promoted-msg')).toBe(false);
-      // Turn B's own terminal result (persisted after consumption, rowid >= seq)
-      // IS detected.
       insertMessage('session-1', 'result', {
         timestamp: '2026-08-11T15:31:00.000Z',
         terminal: true,
@@ -2150,11 +2033,6 @@ describe('SDKMessageRepository', () => {
     });
 
     it('uses a genuinely monotonic counter — a terminal result stamped after multiple consumes is detected for all (P2)', () => {
-      // consumed_seq and terminal-result seq both come from the shared
-      // delivery_consumed_seq counter, so ordering is independent of SQLite
-      // rowid reuse (a deleted max rowid can be reused by a later insert).
-      // Consume two steers without intervening inserts, then stamp a terminal
-      // result: it must be detected for both (its counter value is higher).
       const seed = db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid, is_renderable)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
@@ -2179,11 +2057,8 @@ describe('SDKMessageRepository', () => {
         'm2',
         1
       );
-      // Consume both — each draws an increasing counter value.
       repository.markDeliveryConsumedByUuid('s', 'm1');
       repository.markDeliveryConsumedByUuid('s', 'm2');
-      // A terminal result stamped AFTER both consumptions (higher counter) is
-      // detected for both.
       insertMessage('s', 'result', {
         timestamp: '2026-08-11T15:05:00.000Z',
         terminal: true,
@@ -2199,7 +2074,6 @@ describe('SDKMessageRepository', () => {
         sendStatus: 'enqueued',
       });
       repository.markDeliveryConsumedByUuid('session-1', 'own-turn-msg');
-      // The consumed message's own turn ends normally.
       insertMessage('session-1', 'result', {
         timestamp: new Date(Date.now() + 60_000).toISOString(),
         terminal: true,
@@ -2228,9 +2102,6 @@ describe('SDKMessageRepository', () => {
     });
 
     it('refresh: the search index reflects the consumption timestamp, not the queued time (P2)', () => {
-      // `updateMessageStatus` upserts the search row AFTER aligning the row to
-      // T_consumed (same transaction), so message_search must order this
-      // non-task message by its consumption moment, not when it was queued.
       createSearchIndex();
       const sdkMessage = createUserMessage('searchable body text', 'search-msg');
       db.prepare(
@@ -2242,7 +2113,7 @@ describe('SDKMessageRepository', () => {
         'user',
         null,
         JSON.stringify(sdkMessage),
-        '2020-01-01T00:00:00.000Z', // old queued time
+        '2020-01-01T00:00:00.000Z',
         'enqueued',
         0,
         'search-msg'
@@ -2262,7 +2133,6 @@ describe('SDKMessageRepository', () => {
         )
         .get() as { timestamp: number } | undefined;
       expect(searchRow).toBeDefined();
-      // T_consumed (~now), not the 2020 queued time.
       expect(searchRow!.timestamp).toBeGreaterThanOrEqual(before);
       expect(searchRow!.timestamp).toBeLessThanOrEqual(after);
     });
@@ -2272,7 +2142,6 @@ describe('SDKMessageRepository', () => {
         expect(repository.hasDeliveryTurnEnd('session-1', 'm1')).toBe(false);
         repository.recordDeliveryTurnEnd('session-1', 'm1', '2026-08-11T16:00:00.000Z');
         expect(repository.hasDeliveryTurnEnd('session-1', 'm1')).toBe(true);
-        // Scoped by session + message.
         expect(repository.hasDeliveryTurnEnd('session-1', 'm2')).toBe(false);
         expect(repository.hasDeliveryTurnEnd('session-2', 'm1')).toBe(false);
       });
@@ -2290,11 +2159,8 @@ describe('SDKMessageRepository', () => {
       });
 
       it('rewind (deleteMessagesAtAndAfter) clears markers for rewound UUIDs (P2)', () => {
-        // A long-horizon inbox retry can re-persist the same UUID after a rewind;
-        // a stale marker must not survive to mark the new turn as already ended.
         repository.recordDeliveryTurnEnd('session-1', 'rewound-uuid', 't1');
         expect(repository.hasDeliveryTurnEnd('session-1', 'rewound-uuid')).toBe(true);
-        // Seed a message at the rewind boundary so deleteMessagesAtAndAfter has a row.
         db.prepare(
           `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
            VALUES (?, ?, ?, ?, ?, ?, ?)`
@@ -2314,9 +2180,6 @@ describe('SDKMessageRepository', () => {
   });
 
   describe('classifyReclaimTermination — crash-window reclaim decision (task #946)', () => {
-    // Mirrors saveSDKMessage/markDeliveryConsumedByUuid: stamp the shared
-    // monotonic counter for consumed user rows and terminal results so
-    // hasTerminalResultAfter orders them counter-to-counter.
     function bumpSeq(): number {
       return (
         db
@@ -2353,9 +2216,6 @@ describe('SDKMessageRepository', () => {
       ).run(crypto.randomUUID(), 'session-1', 'result', subtype, '{}', at, 1, bumpSeq());
     }
 
-    // The decision the bridge makes at the top of a consumed reclaim, given the
-    // durable repo signals. This is the exact composition agent-session.ts wires
-    // up in reclaimTurnAlreadySucceeded.
     function decisionFor(uuid: string): ReturnType<typeof classifyReclaimTermination> {
       return classifyReclaimTermination({
         successResult: repository.hasTerminalResultAfter('session-1', uuid),
@@ -2372,7 +2232,6 @@ describe('SDKMessageRepository', () => {
           terminalIdleInFlight: false,
         })
       ).toBe('terminated');
-      // A success result wins even if a marker also exists.
       expect(
         classifyReclaimTermination({
           successResult: true,
@@ -2380,7 +2239,6 @@ describe('SDKMessageRepository', () => {
           terminalIdleInFlight: false,
         })
       ).toBe('terminated');
-      // THE CRASH WINDOW: a bare marker (no success result) must NOT terminate.
       expect(
         classifyReclaimTermination({
           successResult: false,
@@ -2388,7 +2246,6 @@ describe('SDKMessageRepository', () => {
           terminalIdleInFlight: false,
         })
       ).toBe('redrive');
-      // Nothing ended → drive normally.
       expect(
         classifyReclaimTermination({
           successResult: false,
@@ -2396,10 +2253,6 @@ describe('SDKMessageRepository', () => {
           terminalIdleInFlight: false,
         })
       ).toBe('live');
-      // A terminal-idle drain keeps durable turn ownership even with a success
-      // result / marker (mirrors the original hasSettledTurnTermination guard).
-      // Covers all remaining idleInFlight=true combos: the drain short-circuits
-      // to 'live' before success/marker are even consulted.
       expect(
         classifyReclaimTermination({
           successResult: true,
@@ -2431,25 +2284,16 @@ describe('SDKMessageRepository', () => {
     });
 
     it('CRASH WINDOW (end-to-end data flow): a consumed turn with a bare marker and NO success result is cleared and re-driven, not silently completed', () => {
-      // Setup: the kickoff was consumed, the turn ended via a result-less path
-      // (query error / interrupt) so the idle waiter recorded a bare marker, and
-      // the daemon then exited BEFORE the producedResult/retry decision ran.
       const uuid = 'msg-crash-window';
       insertConsumedUser(uuid, '2026-08-11T17:00:00.000Z');
       repository.recordDeliveryTurnEnd('session-1', uuid, '2026-08-11T17:00:42.000Z');
-      // No success result exists.
       expect(repository.hasTerminalResultAfter('session-1', uuid)).toBe(false);
       expect(repository.hasDeliveryTurnEnd('session-1', uuid)).toBe(true);
 
-      // Pre-fix this was 'terminated' (silent complete). Now it must redrive.
       expect(decisionFor(uuid)).toBe('redrive');
 
-      // The bridge clears the stale marker on the redrive decision so a re-crash
-      // cannot loop on turn_terminated...
       repository.clearDeliveryTurnEnd('session-1', uuid);
       expect(repository.hasDeliveryTurnEnd('session-1', uuid)).toBe(false);
-      // ...and with the marker gone the reclaim now drives normally (the
-      // producedResult/stall-retry path decides the retry/dead-letter outcome).
       expect(decisionFor(uuid)).toBe('live');
     });
 
@@ -2457,15 +2301,11 @@ describe('SDKMessageRepository', () => {
       const uuid = 'msg-succeeded';
       insertConsumedUser(uuid, '2026-08-11T17:10:00.000Z');
       insertTerminalResult('2026-08-11T17:10:53.000Z', 'success');
-      // A marker may also exist (the idle waiter fires on every turn end); the
-      // success result still wins → terminate (silent complete is correct here).
       repository.recordDeliveryTurnEnd('session-1', uuid, '2026-08-11T17:10:54.000Z');
       expect(decisionFor(uuid)).toBe('terminated');
     });
 
     it('a consumed turn whose only result is an ERROR does not terminate (retry, do not silently complete)', () => {
-      // An error result is NOT success (hasTerminalResultAfter filters subtype).
-      // Even with a marker, this must redrive so the failure surfaces/retries.
       const uuid = 'msg-error-result';
       insertConsumedUser(uuid, '2026-08-11T17:20:00.000Z');
       insertTerminalResult('2026-08-11T17:20:53.000Z', 'error_during_execution');
@@ -2693,11 +2533,6 @@ describe('SDKMessageRepository', () => {
       expect(message).toBeUndefined();
     });
 
-    // Regression: the original implementation loaded every user row for the
-    // session and scanned in JS — O(N) per lookup. The current impl seeks
-    // idx_sdk_messages_session_uuid (session_id, sdk_uuid) directly; sdk_uuid
-    // is populated at INSERT time, so the column seek matches the old
-    // json_extract form without the per-row JSON parse.
     it('should find the right message among many user rows in the same session', () => {
       const sessionId = 'session-busy';
       for (let i = 0; i < 50; i++) {
@@ -2711,9 +2546,6 @@ describe('SDKMessageRepository', () => {
       expect(message?.content).toBe('Message 37');
     });
 
-    // Exercises the fast indexed-seek path: messages persisted via
-    // saveUserMessage have send_status set ('consumed' by default), which
-    // is what production rewind targets always look like.
     it('should find consumed user messages via the indexed path', () => {
       const sessionId = 'session-consumed';
       repository.saveUserMessage(
@@ -2729,9 +2561,6 @@ describe('SDKMessageRepository', () => {
       expect(message?.content).toBe('Consumed message');
     });
 
-    // Exercises the fast path for the failed-send_status branch — also a
-    // valid rewind target (see the `(send_status, 'consumed') IN
-    // ('consumed', 'failed')` predicate used elsewhere).
     it('should find failed user messages via the indexed path', () => {
       const sessionId = 'session-failed';
       repository.saveUserMessage(
@@ -2747,9 +2576,6 @@ describe('SDKMessageRepository', () => {
       expect(message?.content).toBe('Failed message');
     });
 
-    // Coverage must match getUserMessages (which returns user rows of
-    // every send_status), otherwise rewind would surface a checkpoint
-    // from a manual/queued flow that it then can't resolve.
     it('should find enqueued user messages via the indexed path', () => {
       const sessionId = 'session-enqueued';
       repository.saveUserMessage(
@@ -2778,22 +2604,15 @@ describe('SDKMessageRepository', () => {
       expect(message?.uuid).toBe('uuid-deferred');
     });
 
-    // If duplicate user rows share a uuid across different send_status
-    // buckets within the same session (no DB-level uniqueness on the
-    // json_extract'd uuid), the function must return the
-    // chronologically earliest row — rewind's deletion-bound math
-    // depends on the timestamp being the earliest occurrence.
     it('should return the earliest match across send_status buckets', async () => {
       const sessionId = 'session-dup';
 
-      // 'failed' message persisted first (earliest timestamp)
       repository.saveUserMessage(
         sessionId,
         createUserMessage('Earliest failed copy', 'shared-uuid'),
         'failed'
       );
 
-      // Force a later timestamp on the second insert
       await new Promise((r) => setTimeout(r, 5));
 
       repository.saveUserMessage(
@@ -2809,11 +2628,6 @@ describe('SDKMessageRepository', () => {
     });
   });
 
-  // The three uuid lookups must seek the (session_id, sdk_uuid) column index
-  // rather than scanning the session partition or parsing JSON per row. These
-  // EXPLAIN assertions guard against regressing to a json_extract / non-sargable
-  // form. The inline schema above includes idx_sdk_messages_session_uuid to
-  // mirror the post-M163 production schema.
   describe('uuid lookups use the sdk_uuid column index', () => {
     function queryPlan(sql: string, params: unknown[]): string {
       const rows = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params) as Array<{
@@ -2823,8 +2637,6 @@ describe('SDKMessageRepository', () => {
     }
 
     beforeEach(() => {
-      // Seed a realistic mix in one session so the planner has stats and
-      // prefers the selective (session_id, sdk_uuid) seek over a partition walk.
       const insert = db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, is_renderable, is_terminal, parent_tool_use_id, task_id, sdk_uuid, replacement_metadata_normalized)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
@@ -2927,9 +2739,7 @@ describe('SDKMessageRepository', () => {
       const { messages } = repository.getSDKMessages('session-1');
       expect(messages.length).toBe(2);
 
-      // Human message — no origin field
       expect((messages[0] as { origin?: string }).origin).toBeUndefined();
-      // System message — origin='system'
       expect((messages[1] as { origin?: string }).origin).toBe('system');
     });
 
@@ -3263,9 +3073,6 @@ describe('SDKMessageRepository', () => {
     } as unknown as SDKMessage;
 
     function linkTaskSession(sessionId: string, taskId: string): void {
-      // Only the columns resolveTaskIdForSession reads. Created locally (not in
-      // the shared beforeEach) so the sessions join in searchMessages — which
-      // expects the full production sessions shape — is unaffected.
       db.exec(`
         CREATE TABLE IF NOT EXISTS sessions (
           id TEXT PRIMARY KEY,
@@ -3293,31 +3100,22 @@ describe('SDKMessageRepository', () => {
       ).id;
     }
 
-    // Reproduces the P1: a user message typed while the agent is mid-turn must
-    // NOT open a new conversation turn at enqueue, or the in-flight prompt's
-    // result inherits the queued message's turn and renders under it.
     it('keeps the in-flight result under the original prompt when a message is queued mid-turn', () => {
       linkTaskSession('session-1', 'task-1');
       const u1 = repository.saveUserMessage('session-1', createUserMessage('go'), 'consumed');
       repository.saveSDKMessage('session-1', createAssistantMessage('working'));
-      // User types mid-flight → enqueued, not consumed yet.
       const u2 = repository.saveUserMessage(
         'session-1',
         createUserMessage('also this'),
         'enqueued'
       );
-      // U1's turn finishes with a result.
       repository.saveSDKMessage('session-1', resultMessage);
       const r1 = resultId();
 
-      // Before consume: U2 did NOT open a turn, so the result stays in turn 1
-      // (U1's turn) — not misattributed to U2.
       expect(turnOf(u1)).toBe(1);
       expect(turnOf(r1)).toBe(1);
       expect(turnOf(u2)).toBe(1);
 
-      // SDK yields U2 → it becomes an anchor and opens turn 2; U1's result stays
-      // grouped under turn 1.
       repository.updateMessageStatus([u2], 'consumed');
       expect(turnOf(u2)).toBe(2);
       expect(turnOf(r1)).toBe(1);
@@ -3325,7 +3123,7 @@ describe('SDKMessageRepository', () => {
 
     it('assigns sequential turns when multiple queued messages are consumed in order', () => {
       linkTaskSession('session-1', 'task-1');
-      repository.saveUserMessage('session-1', createUserMessage('go'), 'consumed'); // turn 1
+      repository.saveUserMessage('session-1', createUserMessage('go'), 'consumed');
       const u2 = repository.saveUserMessage('session-1', createUserMessage('two'), 'enqueued');
       const u3 = repository.saveUserMessage('session-1', createUserMessage('three'), 'enqueued');
 
@@ -3335,13 +3133,9 @@ describe('SDKMessageRepository', () => {
       expect(turnOf(u3)).toBe(3);
     });
 
-    // A batched queue flush is ONE provider prompt: sharedTurn assigns every
-    // member the SAME turn index instead of N artificial MAX+1 turns (which
-    // would burn the compact feed's recent-turn allowance and attach the
-    // response to the last artificial turn).
     it('assigns ONE shared turn to a batched flush consumed together (sharedTurn)', () => {
       linkTaskSession('session-1', 'task-1');
-      repository.saveUserMessage('session-1', createUserMessage('go'), 'consumed'); // turn 1
+      repository.saveUserMessage('session-1', createUserMessage('go'), 'consumed');
       const u2 = repository.saveUserMessage('session-1', createUserMessage('two'), 'enqueued');
       const u3 = repository.saveUserMessage('session-1', createUserMessage('three'), 'enqueued');
       const u4 = repository.saveUserMessage('session-1', createUserMessage('four'), 'enqueued');
@@ -3351,16 +3145,11 @@ describe('SDKMessageRepository', () => {
       expect(turnOf(u2)).toBe(2);
       expect(turnOf(u3)).toBe(2);
       expect(turnOf(u4)).toBe(2);
-      // The next ordinary anchor continues after the shared turn.
       const u5 = repository.saveUserMessage('session-1', createUserMessage('five'), 'enqueued');
       repository.updateMessageStatus([u5], 'consumed');
       expect(turnOf(u5)).toBe(3);
     });
 
-    // recoverOrphanedConsumedMessages flips already-consumed (already-anchored)
-    // user rows to 'failed'. That consumed→failed transition must NOT reassign a
-    // turn, or those rows get scattered to new high turn numbers and break
-    // grouping on multi-session tasks.
     it('does not re-bump the turn when an already-consumed row is flipped to failed (recovery path)', () => {
       linkTaskSession('session-1', 'task-1');
       const u1 = repository.saveUserMessage('session-1', createUserMessage('first'), 'consumed');
@@ -3368,18 +3157,15 @@ describe('SDKMessageRepository', () => {
       expect(turnOf(u1)).toBe(1);
       expect(turnOf(u2)).toBe(2);
 
-      // Recovery flips the already-consumed u1 to 'failed'. Its turn must stay 1.
       repository.updateMessageStatus([u1], 'failed');
 
       expect(turnOf(u1)).toBe(1);
       expect(turnOf(u2)).toBe(2);
     });
 
-    // A queued message that genuinely fails delivery (enqueued→failed) is a new
-    // visible anchor and SHOULD get a turn.
     it('assigns a turn when a queued message fails delivery (enqueued→failed)', () => {
       linkTaskSession('session-1', 'task-1');
-      repository.saveUserMessage('session-1', createUserMessage('go'), 'consumed'); // turn 1
+      repository.saveUserMessage('session-1', createUserMessage('go'), 'consumed');
       const u2 = repository.saveUserMessage('session-1', createUserMessage('lost'), 'enqueued');
 
       repository.updateMessageStatus([u2], 'failed');
@@ -3390,14 +3176,10 @@ describe('SDKMessageRepository', () => {
     it("keeps each session's non-anchor rows on that session's own turn across interleaved sessions (#2338)", () => {
       linkTaskSession('sess-A', 'task-1');
       linkTaskSession('sess-B', 'task-1');
-      // A opens turn 1 (global), B opens turn 2 (global), then each streams an
-      // answer. A non-anchor row must inherit its OWN session's turn, not the
-      // task-wide max — otherwise A's answer lands on B's turn and is orphaned
-      // from A's anchor in the (sessionId, turnIndex) partitioning.
-      repository.saveUserMessage('sess-A', createUserMessage('A-prompt'), 'consumed'); // turn 1
-      repository.saveUserMessage('sess-B', createUserMessage('B-prompt'), 'consumed'); // turn 2
-      repository.saveSDKMessage('sess-A', createAssistantMessage('A-answer')); // non-anchor
-      repository.saveSDKMessage('sess-B', createAssistantMessage('B-answer')); // non-anchor
+      repository.saveUserMessage('sess-A', createUserMessage('A-prompt'), 'consumed');
+      repository.saveUserMessage('sess-B', createUserMessage('B-prompt'), 'consumed');
+      repository.saveSDKMessage('sess-A', createAssistantMessage('A-answer'));
+      repository.saveSDKMessage('sess-B', createAssistantMessage('B-answer'));
 
       const latestAssistantTurn = (sid: string): number | null =>
         (
@@ -3410,14 +3192,13 @@ describe('SDKMessageRepository', () => {
             .get(sid) as { t: number | null }
         ).t;
 
-      expect(latestAssistantTurn('sess-A')).toBe(1); // A's answer on A's turn, NOT 2
+      expect(latestAssistantTurn('sess-A')).toBe(1);
       expect(latestAssistantTurn('sess-B')).toBe(2);
     });
 
     it('aligns the timestamp with the new turn when a queued row is promoted on consume/fail (#2338)', () => {
       linkTaskSession('session-1', 'task-1');
-      repository.saveUserMessage('session-1', createUserMessage('go'), 'consumed'); // turn 1
-      // Enqueued row with a deliberately old timestamp (typed mid-run).
+      repository.saveUserMessage('session-1', createUserMessage('go'), 'consumed');
       const u2 = 'u2-old-ts';
       db.prepare(
         `INSERT INTO sdk_messages (
@@ -3428,9 +3209,6 @@ describe('SDKMessageRepository', () => {
                    'enqueued', 'human', 1, 0, 'task-1', NULL, NULL, 1)`
       ).run(u2);
 
-      // Any promote path (here: enqueued→failed, e.g. markEnqueuedMessageFailed)
-      // must move the timestamp off the stale typed time so createdAt order
-      // agrees with the reassigned turn.
       repository.updateMessageStatus([u2], 'failed');
 
       const ts = (

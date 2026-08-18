@@ -47,13 +47,6 @@ function applyDelta(
   return sortRows(Array.from(next.values()));
 }
 
-/**
- * Subscribe to the curated `taskMilestones.byTask` LiveQuery and return the
- * milestone rows (ascending by time) plus connection/loading state. Rows arrive
- * pre-curated with real content from the backend; presentation curation
- * (collapsing retry bursts, deduping consecutive duplicates) happens in the
- * component via `curateTaskMilestones`.
- */
 export function useTaskMilestones({ taskId }: UseTaskMilestonesOptions): UseTaskMilestonesResult {
   const { request, onEvent, getHub, isConnected } = useMessageHub();
   const [rows, setRows] = useState<TaskMilestoneRow[]>([]);
@@ -118,8 +111,6 @@ export function useTaskMilestones({ taskId }: UseTaskMilestonesOptions): UseTask
     };
   }, [getHub, isConnected, onEvent, request, taskId]);
 
-  // rows is already kept sorted (the snapshot handler and applyDelta both sort),
-  // so return it directly — no redundant re-sort on every state change.
   const hasTask = taskId != null;
 
   return {

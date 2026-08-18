@@ -1,31 +1,9 @@
-/**
- * github connector (L2, epic #2299 / P1 #2301; promoted from the #2300 spike).
- *
- * A `Connector` (see `connector.ts`) whose ops cover the coding capabilities:
- * PR readiness (`getPrReadiness`), PR merged state (`getPr`), and PR reactions
- * (`getReactions`). Each op is a thin wrapper over `gh` via the shared
- * `runGhJson`; the L3 validator + predicate evaluate the returned `data`
- * without knowing what a PR is. Domain knowledge lives HERE (L2), not in the
- * validator or predicate (L3).
- *
- * Registered in production by `registerProductionConnectors()` (see
- * `production.ts`). The `auth` surface is what lets the hook executor inject
- * GitHub credentials into sandboxed script hooks generically (no hardcoded
- * `GITHUB_LOOKUP_ENV_KEYS` in the executor).
- */
-
 import { resolveGithubConfigDir, runGhJson } from '../gh-lookup-helpers';
 import { parsePrUrl } from '../parse-pr-url';
 import type { Connector, ConnectorContext, ConnectorOp, ConnectorOutcome } from './connector';
 
 const GITHUB_CONNECTOR_ID = 'github';
 
-/**
- * Env keys the github connector admits into a SANDBOXED script-hook env. This
- * is the exact surface the legacy `GITHUB_LOOKUP_ENV_KEYS` in the hook executor
- * injected — preserved verbatim so script-hook behavior is identical whether
- * the connectors layer is on or off.
- */
 const GITHUB_SANDBOX_ENV_KEYS: readonly string[] = [
   'GH_TOKEN',
   'GITHUB_TOKEN',
@@ -46,60 +24,14 @@ export function createGithubConnector(
       resolveExtraEnv: () => ({ GH_CONFIG_DIR: resolveGithubConfigDir() }),
     },
     ops: {
-      /**
-       * `github.getPr({ prUrl })` → `{ url, state, mergeable, mergeStateStatus }`.
-       * Backs `pr_merged` (predicate on `state`).
-       */
       getPr: makeGetPrOp(spawnImpl),
 
-      /**
-       * `github.getPrReadiness({ prUrl })` →
-       * `{ url, state, mergeable, mergeStateStatus, unresolvedThreadUrls }`.
-       * Composite op (pr view + paginated review threads) backing `pr_ready`.
-       *
-       * This is the key finding for pr_ready: a handoff gate spans two github
-       * lookups (PR metadata AND review threads), so it needs ONE composite op
-       * on the connector rather than two predicate evaluations. That keeps the
-       * L3 validator as single-(connector, op, predicate) while the connector
-       * — the legitimate home of domain logic — composes the lookups.
-       */
       getPrReadiness: makeGetPrReadinessOp(spawnImpl),
 
-      /**
-       * `github.getReactions({ prUrl })` →
-       * `{ reactions: [{ login, content, createdAt }] }`. Retained L2 op;
-       * currently unreferenced by production validators (the legacy codex gate
-       * uses bash, and the new `codex_review_approved` preset fetches PR
-       * reviews, not reactions). Kept for future reuse / pr_ready cutover.
-       */
       getReactions: makeGetReactionsOp(spawnImpl),
 
-      /**
-       * `github.getCodexApproval({ prUrl })` → `{ prUrl, headSha, approved }`.
-       * Backs `codex_review_approved`: `approved` is true when a codex bot left
-       * a PR review with state `APPROVED` whose `commit_id` is the current head
-       * — the head-specific signal codex actually emits (a PR-level +1 reaction
-       * is not head-bound; codex does not post comments quoting the 40-char
-       * SHA). Composite op: pr view (head SHA) + reviews, with a head re-resolve
-       * after the reviews fetch to close the TOCTOU window. Enforces a
-       * github.com / GH_HOST allow-list before any gh call.
-       */
       getCodexApproval: makeGetCodexApprovalOp(spawnImpl),
 
-      /**
-       * `github.getReviewEvidence({ prUrl, sinceIso })` →
-       * `{ url, ownPr, formalReviewCount, commentEvidenceCount, reviewEvidence, reviewCount }`.
-       * Backs `review_posted` (predicate: a formal review OR, for own PRs, a
-       * comment/commented-review since `sinceIso`).
-       *
-       * Composite op (pr view + viewer lookup) mirroring the legacy
-       * REVIEW_POSTED bash: it assembles the DOMAIN FACTS (counts + the
-       * own-PR boolean) and leaves the POLICY — formal-review-first, own-PR
-       * comment fallback — to the L3 predicate in the preset. The one
-       * cross-field comparison the predicate language cannot express
-       * (prAuthor === viewer) lives here, exactly as `getPrReadiness`
-       * composes its two lookups in-connector.
-       */
       getReviewEvidence: makeGetReviewEvidenceOp(spawnImpl),
     },
   };
@@ -156,13 +88,6 @@ function makeGetPrReadinessOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
     );
     if (!prOutcome.ok) return prOutcome;
 
-    // Resolve canonical owner/repo/number for the review-threads query. The
-    // input may be a noncanonical selector (branch, number, URL with suffix)
-    // that `gh pr view` accepts but parsePrUrl rejects — so prefer the input
-    // URL, then fall back to the canonical URL gh returned in `prOutcome.url`.
-    // If neither parses, FAIL CLOSED: fabricating an empty unresolved-thread
-    // list would let a handoff through on a PR that may have unresolved threads
-    // (the production validator resolves the canonical URL too).
     const canonicalUrl = asString((prOutcome.data as Record<string, unknown>)?.url);
     const meta = parsePrUrl(prUrl) ?? (canonicalUrl ? parsePrUrl(canonicalUrl) : null);
     if (!meta) {
@@ -194,10 +119,6 @@ function makeGetReactionsOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
     const meta = parsePrUrl(prUrl);
     if (!meta) return { ok: false, error: `unable to parse GitHub PR URL: ${prUrl}` };
 
-    // NOTE: the production codex script uses `--paginate` and merges the
-    // concatenated JSON arrays with `jq -s add`. This op fetches a single
-    // page (100 reactions) so stdout is one clean JSON array; multi-page merge
-    // is deferred (not part of the abstraction honesty test).
     const outcome = await runGhJson(
       [
         'gh',
@@ -215,16 +136,7 @@ function makeGetReactionsOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
     if (!outcome.ok) return outcome;
 
     const raw = outcome.data;
-    // `--paginate` returns a concatenation of JSON arrays (not a single array).
-    // Normalise both the single-array and concatenated cases into one list.
     const list = normaliseReactionsPayload(raw);
-    // Optional freshness filter: when `sinceIso` is supplied, drop reactions
-    // created before it. This lets the codex preset treat "fresh +1" as a
-    // STATIC predicate over a pre-filtered list — the freshness anchor
-    // (cycle_start_at) is resolved from context by the param resolver, so the
-    // predicate itself stays constant. ISO-8601 strings compare correctly
-    // lexicographically; sub-second fractions are normalised away to match
-    // GitHub's second-precision `created_at`.
     const sinceIso = normaliseIso(asString(opParams.sinceIso));
     const reactions = list
       .map((r) => {
@@ -243,28 +155,6 @@ function makeGetReactionsOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
 
 function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
   return async (_opParams, ctx): Promise<ConnectorOutcome> => {
-    // The run's PR is resolved from the WORKSPACE BRANCH (`gh pr view --json url`)
-    // — engine/git-controlled. The caller's pr_url is deliberately IGNORED: a
-    // prompt-injected agent could pass a foreign, already-codex-approved PR's
-    // url, and every prior run-PR source (artifacts, gate data, hook state) also
-    // traces back to that same agent-controlled value. The workspace branch is
-    // the PR the run is actually operating on (the task worktree's branch), so
-    // binding here is the strongest available anchor.
-    //
-    // Residual (architectural limit): a SHELL-CAPABLE agent can `git checkout`
-    // a different branch or change the worktree's remote before send_message,
-    // influencing which PR this resolves (or exfiltrating credentials via a
-    // malicious remote host). Fully closing that requires a server-side,
-    // non-agent-influenceable PR identity (e.g. the task's PR recorded at
-    // creation) plus workspace-remote restrictions — system-level changes beyond
-    // this opt-in hook. The gate is defense-in-depth; merge remains the
-    // authoritative binding. Fails closed if the workspace isn't on a PR branch.
-    //
-    // Strip GH_REPO for this lookup (via the stripGHRepo option — no process.env
-    // mutation, which would race under concurrent hooks): buildGitHubLookupEnv
-    // forwards GH_REPO, and when set, `gh pr view` (no arg) resolves the PR from
-    // GH_REPO's repository, not the workspace's. Stripping it forces gh to use
-    // the local workspace repository.
     const wsOutcome = await runGhJson(
       ['gh', 'pr', 'view', '--json', 'url'],
       ctx.workspacePath || '/tmp',
@@ -281,12 +171,6 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
       };
     }
 
-    // Host allow-list: reject an attacker-influenced absolute `pr_url` whose
-    // host isn't github.com or the configured GH_HOST BEFORE any gh call, so
-    // the daemon's GitHub credentials (esp. GH_ENTERPRISE_TOKEN) are never
-    // directed at an arbitrary host. parsePrUrl alone is insufficient — it
-    // requires `/pull/<digits>`, so a malformed host slips past as null. Mirrors
-    // the sibling getReviewEvidence op.
     let inputHost: string | undefined;
     try {
       inputHost = new URL(prUrl).hostname || undefined;
@@ -322,17 +206,7 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
       return { ok: false, error: 'Failed to resolve current head SHA for codex approval check' };
     }
 
-    // PR reviews (paginated). The endpoint returns oldest-first, so a recent
-    // codex verdict can land beyond page 1 on a heavily-reviewed PR; this gate
-    // has no timeout, so a missed verdict would poll forever — hence paginating
-    // rather than the single-page fetch the sibling ops defer. (The 10-page cap
-    // fails closed — see below.)
     const reviews: Array<{ login: string; state: string; commitId: string }> = [];
-    // Cap at 10 pages (1000 reviews) as a pathologically-busy-PR backstop. The
-    // endpoint is oldest-first, so a later verdict beyond the cap is unseen —
-    // if the cap is hit the prefix is NOT authoritative (a stale APPROVED in it
-    // could hide a later CHANGES_REQUESTED beyond review 1000), so the gate
-    // fails CLOSED below rather than evaluating a partial history.
     let page = 1;
     for (; page <= 10; page++) {
       const pageOutcome = await runGhJson(
@@ -360,9 +234,6 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
       }
       if (batch.length < 100) break;
     }
-    // The loop ran past page 10 without a short <100 page → the 10th page was
-    // full, so more reviews may exist. Fail closed: never approve on a partial
-    // history where a later CHANGES_REQUESTED could be hiding.
     if (page > 10) {
       return {
         ok: false,
@@ -371,34 +242,10 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
       };
     }
 
-    // Codex bot login matcher (mirrors the legacy bash): case-insensitive
-    // "codex" substring + "[bot]" suffix so only GitHub App bots match — a
-    // human login containing "codex" cannot spoof the check.
     const isCodexBot = (login: string): boolean =>
       login.toLowerCase().includes('codex') && login.endsWith('[bot]');
 
-    // Approval = a codex bot review with state APPROVED on the CURRENT head
-    // (commit_id === headSha) — head-specific via the review's commit_id, the
-    // same binding merge-pr-validator uses (reviews filtered to commit === head).
-    //
-    // Coalesced by submission order; the latest DECISIVE verdict (APPROVED or
-    // CHANGES_REQUESTED) wins. COMMENTED/PENDING/DISMISSED are non-decisive and
-    // do NOT supersede a prior changes request — so APPROVED → CHANGES_REQUESTED
-    // → COMMENTED still rejects (the changes request stands until a later
-    // APPROVED supersedes it). Mirrors the repo's hasOutstandingChangesRequest.
-    //
-    // This is STRICTER than a legacy +1-reaction check: it presumes the
-    // configured Codex posts a formal APPROVED review; the validator has no
-    // timeout, so a Codex that only +1s or comments would leave the
-    // handoff in retryable_block (fail-safe — never wrongly opens, but never
-    // proceeds). Operators whose Codex behaves that way should not enable it.
     const codexHeadReviews = reviews.filter((r) => isCodexBot(r.login) && r.commitId === headSha);
-    // The latest DECISIVE verdict (APPROVED or CHANGES_REQUESTED) wins. The
-    // reviews array is oldest-first (the endpoint lists by id ascending), so the
-    // LAST decisive element in array order is the newest — no timestamp sort,
-    // which would be ambiguous when two reviews share a `submitted_at` second
-    // (GitHub is second-precision): a stable sort would leave an earlier APPROVED
-    // first and open the gate despite a same-second later CHANGES_REQUESTED.
     const decisive = codexHeadReviews.filter((r) => {
       const s = r.state.toUpperCase();
       return s === 'APPROVED' || s === 'CHANGES_REQUESTED';
@@ -407,11 +254,6 @@ function makeGetCodexApprovalOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
       decisive.length > 0 ? decisive[decisive.length - 1].state.toUpperCase() : undefined;
     const approved = latestDecisiveState === 'APPROVED';
 
-    // TOCTOU guard: a commit pushed between the head resolution above and the
-    // reviews fetch would leave `headSha` stale — a codex review on the old head
-    // could then satisfy `approved` for a now-current, unreviewed head. Only
-    // matters when about to allow: re-resolve the head and, if it moved, surface
-    // retryable so the gate re-checks against the new head.
     if (approved) {
       const recheck = await runGhJson(
         ['gh', 'pr', 'view', prUrl, '--json', 'headRefOid'],
@@ -446,9 +288,6 @@ function makeGetReviewEvidenceOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
   return async (opParams, ctx): Promise<ConnectorOutcome> => {
     const prUrl = asString(opParams.prUrl);
     if (!prUrl) return { ok: false, error: 'prUrl is required' };
-    // The since-workflow-start window is mandatory — without it the gate cannot
-    // tell a fresh review from a stale one. Fail loudly (the legacy bash exited 1
-    // with the same intent) rather than silently accepting any review.
     const sinceIso = normaliseIso(asString(opParams.sinceIso));
     if (!sinceIso) {
       return {
@@ -457,17 +296,6 @@ function makeGetReviewEvidenceOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
       };
     }
 
-    // Host allow-list: reject ANY absolute URL whose host isn't github.com or the
-    // configured GH_HOST before invoking gh. An attacker-influenced pr_url must
-    // not direct the daemon's GitHub credentials (especially GH_ENTERPRISE_TOKEN)
-    // at an arbitrary host — `gh pr view <url>` posts to that host with an
-    // Authorization header. parsePrUrl alone is insufficient: it requires
-    // `/pull/<digits>`, so a URL like https://evil.example.com/.../pull/42abc
-    // returns null and slips past. Use the URL parser so EVERY absolute URL is
-    // host-checked; non-URL selectors (branch / number / owner#N) don't parse and
-    // fall through to gh's default host (GH_HOST/github.com). Preserves +
-    // strengthens the legacy hook check
-    // (`PR_HOST != github.com && PR_HOST != ${GH_HOST:-github.com}` → reject).
     const hostError = validatePrLookupHost(prUrl);
     if (hostError) return hostError;
 
@@ -486,13 +314,6 @@ function makeGetReviewEvidenceOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
       comments?: Array<{ createdAt?: string }>;
     };
 
-    // Best-effort viewer login for the own-PR fallback. A lookup failure is NOT
-    // fatal: it just means we cannot prove the viewer owns the PR, so
-    // comment-only evidence is rejected and only a formal review counts —
-    // matching the legacy REVIEW_POSTED bash, which treats a missing viewer as
-    // "not an own PR". Resolve the host from the PR URL (via the canonical url
-    // gh returned, falling back to the input) so GitHub Enterprise lookups hit
-    // the right host — mirrors getReactions and the old hook bash's `--hostname`.
     let viewerLogin: string | undefined;
     const canonicalUrl = asString(prData.url);
     const viewerMeta = parsePrUrl(prUrl) ?? (canonicalUrl ? parsePrUrl(canonicalUrl) : null);
@@ -515,24 +336,12 @@ function makeGetReviewEvidenceOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
     const authorLogin = asString(prData.author?.login);
     const ownPr = Boolean(authorLogin && viewerLogin && authorLogin === viewerLogin);
 
-    // ISO-8601 strings compare lexicographically; normaliseIso strips
-    // sub-second fractions so millisecond anchors match GitHub's second-precision
-    // submitted_at / created_at. Exclusive `>` matches the legacy bash
-    // (`select(.submittedAt > $since)`) — a review at the exact start tick is
-    // not "since" the workflow started.
     const isSince = (iso: string | undefined): boolean => {
       const n = normaliseIso(asString(iso));
       return n !== undefined && n > sinceIso;
     };
 
     const reviews = prData.reviews ?? [];
-    // Counts evidence from ANY author (not just the viewer). This matches the
-    // gate bash (the task's scoped target) and the task description ("has a
-    // formal review... been posted since start?"). The old RUNTIME hook bash
-    // additionally filtered by viewer login — a no-op under single-daemon-auth
-    // (the agent posts reviews as the daemon account = the viewer) that would
-    // have wrongly blocked legitimate reviews in any mixed-account setup, so it
-    // is intentionally not replicated. See PR #2367.
     const formalReviewCount = reviews.filter(
       (r) => isSince(r.submittedAt) && (r.state === 'APPROVED' || r.state === 'CHANGES_REQUESTED')
     ).length;
@@ -542,15 +351,6 @@ function makeGetReviewEvidenceOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
     const prCommentCount = (prData.comments ?? []).filter((c) => isSince(c.createdAt)).length;
     const commentEvidenceCount = commentedReviewCount + prCommentCount;
 
-    // If the viewer lookup failed (e.g. a GitHub rate limit on `gh api user`) and
-    // the outcome hinges on the own-PR determination — no formal review, but
-    // comment evidence that would pass IF the viewer owns the PR — propagate the
-    // failure verbatim (runGhJson already set `retryable`/`retryAfterMs` for rate
-    // limits) so the validator surfaces it as a retryable_block instead of
-    // swallowing it into a terminal "not satisfied" block. Without this, valid
-    // own-PR comment feedback stays rejected for the duration of core-API
-    // throttling. When a formal review exists (or there's no comment evidence),
-    // the viewer is irrelevant and a failed lookup is safe to ignore.
     if (!viewerOutcome.ok && formalReviewCount === 0 && commentEvidenceCount > 0) {
       return viewerOutcome;
     }
@@ -577,10 +377,6 @@ function makeGetReviewEvidenceOp(spawnImpl: typeof Bun.spawn): ConnectorOp {
   };
 }
 
-/** Strip sub-second fractions from an ISO timestamp so second-precision
- *  `created_at` values compare cleanly against a millisecond anchor. Assumes
- *  UTC ('Z') offsets — sufficient for the mocked data the codex preset tests
- *  use. */
 function normaliseIso(value: string | undefined): string | undefined {
   if (!value) return undefined;
   const dot = value.indexOf('.');
@@ -600,7 +396,6 @@ interface ReviewThreadsPage {
   pageInfo: { hasNextPage: boolean; endCursor: string | null };
 }
 
-/** Returns a ConnectorOutcome whose ok-branch data is `{ unresolvedThreadUrls }`. */
 async function fetchUnresolvedReviewThreads(
   meta: { host: string; owner: string; repo: string; number: string },
   ctx: ConnectorContext,
@@ -626,9 +421,6 @@ async function fetchUnresolvedReviewThreads(
       '-F',
       `number=${meta.number}`,
     ];
-    // Bind `$cursor` on paginated requests — the cursor query declares it as a
-    // required variable, so omitting `-f cursor=` makes GitHub reject page 2
-    // (matching the production validator at pr-ready-validator.ts:356-367).
     if (cursor) args.push('-f', `cursor=${cursor}`);
     args.push('-f', `query=${query}`);
     const outcome = await runGhJson(args, ctx.workspacePath || '/tmp', spawnImpl, {

@@ -130,12 +130,6 @@ describe('resolveSpaceMcpSessionPolicy', () => {
   });
 
   test('routes post-approval sub-sessions as ad-hoc members requiring space-agent-tools (#852)', () => {
-    // A post-approval spawn (e.g. the built-in `merger`) carries NO NodeExecution
-    // row and its id has no `:exec:` segment, so it must NOT be mistaken for a
-    // workflow worker (which only requires `node-agent`). It is an ad-hoc Space
-    // member and therefore requires `space-agent-tools` — the invariant
-    // `spawnPostApprovalSubSession` must satisfy by attaching that server, else
-    // `ensureMemberSpaceMcpInvariant` throws at first turn.
     const session = makeSession({
       id: 'space:space-1:task:task-1:post-approval:merger',
       type: 'worker',
@@ -157,7 +151,6 @@ describe('resolveSpaceMcpSessionPolicy', () => {
       isWorkflowWorker: false,
     });
     expect(policy.requiredServers).toBe(SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS);
-    // Belt-and-braces: this is exactly the set ensureMemberSpaceMcpInvariant enforces.
     expect(missingMcpServers(undefined, policy.requiredServers)).toEqual(['space-agent-tools']);
   });
 

@@ -209,8 +209,6 @@ describe('SpaceLongHorizonAgents', () => {
   });
 
   it('loads active-reminder counts via a single batched RPC', async () => {
-    // Replaces the former N per-agent `listLongHorizonAgentReminders` fan-out:
-    // one round-trip receives `{ [agentId]: n }` for every configured agent.
     mockLongHorizonAgents.value = [
       makeLongHorizonAgent({ id: 'lh-1' }),
       makeLongHorizonAgent({ id: 'lh-2', handle: 'qa', displayName: 'QA' }),
@@ -219,11 +217,8 @@ describe('SpaceLongHorizonAgents', () => {
 
     const { findByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
-    // Active count surfaces on the first agent's card; the zero-count agent
-    // renders no reminder badge.
     expect(await findByText(/3 reminders/)).toBeTruthy();
 
-    // Exactly one batched call carrying both agent ids.
     await waitFor(() => {
       expect(mockListLongHorizonAgentReminderCounts).toHaveBeenCalledTimes(1);
     });

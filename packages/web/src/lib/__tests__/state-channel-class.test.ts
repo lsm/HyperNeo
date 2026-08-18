@@ -1,20 +1,13 @@
 // @ts-nocheck
-/**
- * Comprehensive tests for StateChannel class
- *
- * Tests the StateChannel class to increase coverage to 85%+
- */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { StateChannel } from '../state-channel';
 import type { MessageHub } from '@hyperneo/shared';
 
-// Mock MessageHub
 vi.mock('@hyperneo/shared', () => ({
   MessageHub: vi.fn(),
 }));
 
-// Module-level mock objects
 const mockHubObj: {
   request: ReturnType<typeof vi.fn>;
   onEvent: ReturnType<typeof vi.fn>;
@@ -40,14 +33,12 @@ describe('StateChannel - Comprehensive Coverage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
-    // Reset mock hub
     mockHubObj.request = vi.fn(() => Promise.resolve({ data: 'test', timestamp: 123456 }));
     mockHubObj.onEvent = vi.fn(() => vi.fn());
     mockHubObj.onConnection = vi.fn(() => vi.fn());
     mockHubObj.joinRoom = vi.fn(() => {});
     mockHubObj.leaveRoom = vi.fn(() => {});
 
-    // Create channel
     channel = new StateChannel(mockHubObj as unknown as MessageHub, 'test.channel');
   });
 
@@ -111,7 +102,6 @@ describe('StateChannel - Comprehensive Coverage', () => {
     it('should fetch snapshot and setup subscriptions on start', async () => {
       await channel.start();
 
-      // After migration, request() takes 2 args: method and merged options
       expect(mockHubObj.request).toHaveBeenCalledWith('test.channel', {});
       expect(mockHubObj.onEvent).toHaveBeenCalled();
     });
@@ -138,7 +128,6 @@ describe('StateChannel - Comprehensive Coverage', () => {
 
       await nonBlockingChannel.start();
 
-      // Should still fetch snapshot
       expect(mockHubObj.request).toHaveBeenCalled();
       await nonBlockingChannel.stop();
     });
@@ -152,7 +141,6 @@ describe('StateChannel - Comprehensive Coverage', () => {
 
       await refreshChannel.start();
 
-      // Fast forward time
       vi.advanceTimersByTime(2000);
 
       await refreshChannel.stop();
@@ -169,7 +157,6 @@ describe('StateChannel - Comprehensive Coverage', () => {
       await channel.start();
       await channel.stop();
 
-      // The stop method should complete without error
       expect(channel.value).toBeDefined();
     });
 
@@ -183,7 +170,6 @@ describe('StateChannel - Comprehensive Coverage', () => {
       await refreshChannel.start();
       await refreshChannel.stop();
 
-      // Timer should be cleared
       vi.advanceTimersByTime(5000);
 
       await refreshChannel.stop();
@@ -199,7 +185,6 @@ describe('StateChannel - Comprehensive Coverage', () => {
 
       await optimisticChannel.start();
 
-      // Add some optimistic updates
       optimisticChannel.updateOptimistic('test-1', (_current) => ({
         data: 'optimistic-1',
       }));
@@ -243,7 +228,6 @@ describe('StateChannel - Comprehensive Coverage', () => {
 
       await channel.start();
 
-      // Should log error but not throw
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
       await channel.refresh().catch(() => {});
       consoleSpy.mockRestore();
@@ -272,10 +256,8 @@ describe('StateChannel - Comprehensive Coverage', () => {
         data: 'optimistic',
       }));
 
-      // Wait for timeout
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      // Should revert
       expect(testChannel.value?.data).not.toBe('optimistic');
 
       await testChannel.stop();
@@ -298,16 +280,12 @@ describe('StateChannel - Comprehensive Coverage', () => {
 
       const confirmed = Promise.reject(new Error('Failed'));
 
-      // Pass the original rejecting promise
       channel.updateOptimistic('update-1', (_current) => ({ data: 'optimistic' }), confirmed);
 
-      // Handle the rejection separately to avoid unhandled promise warning
       await confirmed.catch(() => {});
 
-      // Wait for async rejection handling
       await new Promise((resolve) => setTimeout(resolve, 20));
 
-      // Should have reverted back to original value
       expect(channel.value?.data).not.toBe('optimistic');
     });
 
@@ -315,13 +293,12 @@ describe('StateChannel - Comprehensive Coverage', () => {
       vi.useFakeTimers();
 
       const testChannel = new StateChannel(mockHubObj as unknown as MessageHub, 'test.channel', {
-        optimisticTimeout: 100, // 100ms timeout
+        optimisticTimeout: 100,
       });
 
       mockHubObj.request.mockResolvedValue({ data: 'original' });
       await testChannel.start();
 
-      // Create a promise that never resolves
       const neverResolves = new Promise<void>(() => {
         // This promise never resolves
       });
@@ -332,13 +309,10 @@ describe('StateChannel - Comprehensive Coverage', () => {
         neverResolves
       );
 
-      // Initially should have optimistic value
       expect(testChannel.value?.data).toBe('optimistic');
 
-      // Advance time past the timeout
       await vi.advanceTimersByTimeAsync(150);
 
-      // Should have reverted back to original value
       expect(testChannel.value?.data).toBe('original');
 
       await testChannel.stop();
@@ -348,10 +322,8 @@ describe('StateChannel - Comprehensive Coverage', () => {
     it('should no-op when state is null', () => {
       const emptyChannel = new StateChannel(mockHubObj as unknown as MessageHub, 'test.channel');
 
-      // Should not throw when state is null
       emptyChannel.updateOptimistic('update-1', (current) => current as { data: string });
 
-      // Value should remain null
       expect(emptyChannel.value).toBeNull();
     });
 
@@ -380,7 +352,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 
       await channel.start();
 
-      privateChannel.lastSync.value = Date.now() - 120000; // 2 minutes ago
+      privateChannel.lastSync.value = Date.now() - 120000;
 
       expect(channel.isStale(60000)).toBe(true);
     });
@@ -394,7 +366,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
 
       await channel.start();
 
-      privateChannel.lastSync.value = Date.now() - 30000; // 30 seconds ago
+      privateChannel.lastSync.value = Date.now() - 30000;
 
       expect(channel.isStale(60000)).toBe(false);
     });
@@ -421,12 +393,10 @@ describe('StateChannel - Comprehensive Coverage', () => {
 
       const startPromise = channel.start();
 
-      // Loading should be true during fetch
       expect(channel.isLoading.value).toBe(true);
 
       await startPromise;
 
-      // Loading should be false after fetch
       expect(channel.isLoading.value).toBe(false);
     });
 
@@ -461,7 +431,6 @@ describe('StateChannel - Comprehensive Coverage', () => {
 
       await messagesChannel.start();
 
-      // Should deduplicate and merge
       const result = messagesChannel.value?.sdkMessages;
       expect(result).toBeDefined();
     });
@@ -504,15 +473,12 @@ describe('StateChannel - Comprehensive Coverage', () => {
 
       await channel.start();
 
-      // Get the reconnection handler
       const onConnectionCall = mockHubObj.onConnection.mock.calls[0];
       if (onConnectionCall) {
         const callback = onConnectionCall[0];
 
-        // Simulate reconnection
         callback('connected');
 
-        // Should fetch new snapshot
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
 
@@ -560,7 +526,6 @@ describe('StateChannel - Comprehensive Coverage', () => {
 
       await channel.start();
 
-      // Should use fallback timestamp
       expect(channel.lastSyncTime.value).toBeGreaterThan(0);
     });
 
@@ -570,7 +535,6 @@ describe('StateChannel - Comprehensive Coverage', () => {
 
       await Promise.all([promise1, promise2]);
 
-      // Should complete without error
       expect(channel.value).toBeDefined();
     });
 
@@ -579,7 +543,6 @@ describe('StateChannel - Comprehensive Coverage', () => {
       await channel.stop();
       await channel.stop();
 
-      // Should complete without error
       expect(channel.value).toBeDefined();
     });
   });
@@ -595,7 +558,6 @@ describe('StateChannel - Comprehensive Coverage', () => {
 
       await deltaChannel.start();
 
-      // Should have called onEvent for the delta channel
       expect(mockHubObj.onEvent).toHaveBeenCalled();
       const calls = mockHubObj.onEvent.mock.calls;
       const deltaCall = calls.find((call) => call[0] === 'test.channel.delta');
@@ -614,16 +576,13 @@ describe('StateChannel - Comprehensive Coverage', () => {
 
       await deltaChannel.start();
 
-      // Get the delta callback
       const calls = mockHubObj.onEvent.mock.calls;
       const deltaCall = calls.find((call) => call[0] === 'test.channel.delta');
 
       if (deltaCall) {
         const deltaCallback = deltaCall[1];
-        // Simulate delta update
         deltaCallback({ newField: 'value' });
 
-        // mergeDelta should have been called
         expect(mergeFn).toHaveBeenCalled();
       }
 
@@ -631,7 +590,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
     });
 
     it('should skip delta when state is null', async () => {
-      mockHubObj.request.mockResolvedValue(null); // state will be null
+      mockHubObj.request.mockResolvedValue(null);
 
       const mergeFn = vi.fn((current, delta) => ({ ...current, ...delta }));
       const deltaChannel = new StateChannel(mockHubObj as unknown as MessageHub, 'test.channel', {
@@ -642,16 +601,13 @@ describe('StateChannel - Comprehensive Coverage', () => {
 
       await deltaChannel.start();
 
-      // Get the delta callback
       const calls = mockHubObj.onEvent.mock.calls;
       const deltaCall = calls.find((call) => call[0] === 'test.channel.delta');
 
       if (deltaCall) {
         const deltaCallback = deltaCall[1];
-        // Simulate delta update when state is null - should not throw
         deltaCallback({ newField: 'value' });
 
-        // mergeFn should NOT have been called since state is null
         expect(mergeFn).not.toHaveBeenCalled();
       }
 
@@ -663,21 +619,15 @@ describe('StateChannel - Comprehensive Coverage', () => {
     it('should throw error when hybridRefresh fails', async () => {
       await channel.start();
 
-      // Make fetchSnapshot fail on reconnect
       mockHubObj.request.mockRejectedValue(new Error('Fetch failed'));
 
       const onConnectionCall = mockHubObj.onConnection.mock.calls[0];
       if (onConnectionCall) {
         const callback = onConnectionCall[0];
 
-        // Trigger reconnection - this calls hybridRefresh internally
-        // The error should be caught by the .catch(console.error) handler
         callback('connected');
 
-        // Wait for async operation
         await new Promise((resolve) => setTimeout(resolve, 10));
-
-        // Error should be handled (caught by catch block)
       }
     });
   });

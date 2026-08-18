@@ -35,11 +35,6 @@ import { AcpClient, type AcpClientOptions } from './acp-client';
 import { AcpQueryAdapter } from './acp-query-adapter';
 import { AcpMcpProxyBridge, shouldProxy } from './mcp-proxy-bridge';
 
-// Deliberately NOT synced with the SDK runner's 60s default
-// (agent/query-runner.ts): ACP agents are user-configured external processes
-// with their own startup profile — no resumed-transcript cold-start herd.
-// The shared HYPERNEO_SDK_STARTUP_TIMEOUT_MS override still wins here; see
-// .env.example before copying the SDK value.
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
 const RETRY_EXIT_TIMEOUT_MS = 5000;
 
@@ -400,9 +395,6 @@ function acpInstructionBlocks(queryOptions: Options): AcpContentBlock[] {
   ];
 }
 
-/**
- * Runs ACP agent sessions with same external lifecycle contract as QueryRunner.
- */
 type AcpClientFactory = (options: AcpClientOptions) => AcpClient;
 
 export class AcpQueryRunner {
@@ -456,16 +448,7 @@ export class AcpQueryRunner {
     let receivedAcpMessageDuringRun = false;
     let restoreMessageEnqueuedHandler: (() => void) | undefined;
     let proxyBridge: AcpMcpProxyBridge | null = null;
-    // Set at the end of the try block; the finally-block deferred replay is
-    // gated on it so a terminal failure (handleRunError) does not drive the
-    // next turn.
     let turnCompletedNormally = false;
-    // THIS run's controller, retained when created inside the try. The ctx
-    // field cannot be snapshotted up front: it is assigned only at controller
-    // creation (a retry would otherwise capture the previous run's), and the
-    // finally block aborts (and nulls) it on every non-stale completion — so
-    // only the retained reference distinguishes "interrupted during the run"
-    // from "aborted during normal cleanup".
     let runAbortController: AbortController | null = this.ctx.queryAbortController;
 
     try {
@@ -510,10 +493,6 @@ export class AcpQueryRunner {
         throw new Error('Set HYPERNEO_ACP_COMMAND to enable ACP agents.');
       }
       const { command, args } = parseAcpCommand(acpCommand);
-      // Snapshot auth tokens BEFORE provider cleanup — clearProviderRoutingEnvVars()
-      // deletes ANTHROPIC_AUTH_TOKEN, and credential discovery populates tokens
-      // after provider-service module load, so neither the live env nor the
-      // startup snapshot has them by the time we build the ACP child env.
       const preCleanupAuth = {
         ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN,
         CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN,
@@ -590,14 +569,6 @@ export class AcpQueryRunner {
         omitProviderManaged: true,
         omitProviderManagedPreserveAuth: true,
       });
-      // Restore user-configured Anthropic overrides so an Anthropic-backed ACP
-      // agent inherits the real endpoint/model/auth.
-      // - Base URL / model / timeout: from the daemon-startup snapshot in
-      //   provider-service (frozen at module load), which excludes routing vars
-      //   leaked by concurrent bridge provider turns.
-      // - Auth tokens: read live from process.env before this ACP env build,
-      //   because credential discovery runs after module load. The sk-ant-oat
-      //   prefix check excludes non-Anthropic bridge tokens.
       const userEnv = getUserConfiguredAnthropicEnv();
       for (const [key, value] of Object.entries(userEnv)) {
         if (key === 'ANTHROPIC_AUTH_TOKEN' && !value.startsWith('sk-ant-oat')) continue;
@@ -705,14 +676,8 @@ export class AcpQueryRunner {
           onConfigOptionsUpdate: (configOptions) => this.updateAcpModelCache(configOptions),
           onSubmitted: () => {
             if (submitted) return;
-            // Persist enqueued→submitted first. If this throws, AcpTransport
-            // rejects the request and the flag stays false, so the failure path
-            // cannot mistakenly settle only a nonexistent submitted row.
             const persisted = this.ctx.messageHandler.markMessageSubmitted(message.uuid ?? '');
             if (!persisted) {
-              // remove/defer won after generator yield but before stdin submission.
-              // Throw inside AcpTransport's write callback so the request aborts;
-              // never acknowledge or execute a successfully revoked prompt.
               throw new Error('ACP prompt was revoked before submission');
             }
             submitted = true;
@@ -758,9 +723,6 @@ export class AcpQueryRunner {
 
               if (!this.ctx.isCleaningUp()) {
                 const processingState = stateManager.getState();
-                // Mirrors the non-ACP runner: only publish the terminal idle
-                // (draining delivery waiters) when the throwing message ends the
-                // turn (the final `result`).
                 await drainDeliveryWaitersOnTerminalSDKMessage(
                   stateManager,
                   acpMessage as SDKMessage
@@ -782,12 +744,6 @@ export class AcpQueryRunner {
             throw new Error('ACP startup timeout - query aborted');
           }
         } finally {
-          // The prompt reached the ACP subprocess (stdin write completed) but
-          // the run ended — interrupt, error, adapter close, or a submission
-          // boundary throw — before any acceptance signal. Settle fail-ambiguous
-          // so the row is visible-failed and never auto-replayed. Covers BOTH
-          // submitted (run ended) and enqueued (transition threw/was revoked),
-          // not just the submitted state. See Codex (#3743968032, #3744886836).
           if (!accepted) {
             this.ctx.messageHandler.markACPDeliveryFailed(message.uuid ?? '');
           }
@@ -797,13 +753,6 @@ export class AcpQueryRunner {
       if (this.ctx.getQueryGeneration() === queryGeneration) {
         messageQueue.stop();
       }
-      // The turn consumed its input and ended without reaching the catch —
-      // classify completion for the finally-block deferred replay. A single
-      // status read is insufficient: an interrupt that completes before this
-      // line runs has already returned the session to idle, masquerading as
-      // a normal end. The captured abort signal is the durable evidence — an
-      // interrupt (user, sibling quiesce, or teardown) aborted it mid-run —
-      // and the status check catches an interrupt still in flight.
       turnCompletedNormally =
         !runAbortController?.signal.aborted && stateManager.getState().status !== 'interrupted';
     } catch (error) {
@@ -840,10 +789,6 @@ export class AcpQueryRunner {
           this.ctx.queryAbortController = null;
         }
 
-        // Snapshot BEFORE resetProcessExitedPromise clears it: close() only
-        // initiates termination (SIGTERM, up to 5s before SIGKILL), so the
-        // deferred replay below must gate on the captured exit promise or
-        // the replacement turn can race the exiting child's workspace locks.
         const processExitSnapshot = this.ctx.processExitedPromise ?? Promise.resolve();
         this.ctx.resetProcessExitedPromise();
         messageQueue.stop();
@@ -867,28 +812,10 @@ export class AcpQueryRunner {
 
         if (!this.ctx.isCleaningUp() && !recoveryState.rateLimitCooldownScheduled) {
           await stateManager.setIdle();
-          // Drive the deferred queue on ACP turn completion, mirroring
-          // SDKMessageHandler.finishTurn: without this, a message persisted as
-          // 'deferred' while the ACP node was processing (e.g. an external
-          // event in 'defer' mode) is never replayed — the automatic replay is
-          // specific to the Claude SDK path. No-op when no deferred rows exist.
-          // Gated on the captured process exit AND rechecked at fire time:
-          // after a terminal error (handleRunError) or an interrupt that
-          // started during cleanup awaits, replaying would restart deferred
-          // work that just stopped.
           void processExitSnapshot.then(() => {
             if (
               turnCompletedNormally &&
-              // Recheck cleanup at fire time too: teardown can complete its
-              // interrupt and return the session to idle while we waited for
-              // the process exit — publishing then would promote deferred
-              // rows for a session that is being cancelled/shut down.
               !this.ctx.isCleaningUp() &&
-              // Require a genuinely idle session, mirroring the interrupt
-              // replay path: a newer turn that started during the exit wait
-              // (the exit promise is the OLD child's, up to ~5s under
-              // SIGTERM→SIGKILL) must not have the old deferred rows steered
-              // into it — their replay is left to that turn's completion.
               stateManager.getState().status === 'idle' &&
               session.config.queryMode !== 'manual'
             ) {
@@ -919,10 +846,6 @@ export class AcpQueryRunner {
       return;
     }
 
-    // A stale query (a newer query started — e.g. a resetContextPerTurn clear
-    // bumped the generation before stop()) must not touch shared state from the
-    // catch: no retry, no messageQueue.clear(), no idle, no error surfacing.
-    // The error is from the intentional stop; the newer query owns the session.
     if (this.ctx.getQueryGeneration() !== queryGeneration) {
       return;
     }
@@ -1029,7 +952,6 @@ export class AcpQueryRunner {
           : undefined;
 
       if (!recoveryState.rateLimitCooldownScheduled) {
-        // Recovery declined, so this error is terminal. Fence before publishing it.
         stateManager.beginTerminalIdle();
         await errorManager.handleError(
           session.id,

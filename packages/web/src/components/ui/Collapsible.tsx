@@ -39,12 +39,10 @@ export function Collapsible({
       if (isOpen) {
         const scrollHeight = contentRef.current.scrollHeight;
         setHeight(scrollHeight);
-        // After animation completes, set to auto for dynamic content
         const timer = setTimeout(() => setHeight(undefined), 200);
         return () => clearTimeout(timer);
       } else {
         setHeight(contentRef.current.scrollHeight);
-        // Force reflow
         setTimeout(() => setHeight(0), 0);
       }
     }
@@ -52,7 +50,6 @@ export function Collapsible({
 
   return (
     <div class={cn(borderColors.ui.default, className)}>
-      {/* Trigger */}
       <button
         onClick={toggle}
         class="flex items-center justify-between w-full text-left transition-colors"
@@ -74,7 +71,6 @@ export function Collapsible({
         </svg>
       </button>
 
-      {/* Content */}
       <div
         ref={contentRef}
         style={{

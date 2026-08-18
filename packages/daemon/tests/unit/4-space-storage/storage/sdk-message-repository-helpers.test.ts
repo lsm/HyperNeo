@@ -1,13 +1,3 @@
-/**
- * Unit tests for the derived-column helpers exported by SDKMessageRepository.
- *
- * These helpers are the single source of truth for the values stamped into
- * `sdk_messages.is_renderable`, `sdk_messages.is_terminal`, and
- * `sdk_messages.parent_tool_use_id` on every INSERT. Live-query handlers and
- * the compact-feed query both read those columns directly, so a regression in
- * the helpers silently corrupts the timeline.
- */
-
 import { describe, expect, test } from 'bun:test';
 import {
   computeIsRenderable,
@@ -16,17 +6,11 @@ import {
 } from '../../../../src/storage/repositories/sdk-message-repository';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 
-// Cast helper: the production helpers accept SDKMessage but tests construct
-// minimal payloads that exercise specific branches.
 const asMsg = (payload: Record<string, unknown>): SDKMessage => payload as unknown as SDKMessage;
 
 describe('computeIsRenderable', () => {
   describe('user messages', () => {
     test('mixed-content user with text + tool_result is NOT renderable', () => {
-      // Production behaviour (`.some()` semantics): any tool_result block
-      // suppresses the row from the compact feed, even if the rest of the
-      // content is non-empty text. Mismatching this with `.every()` would
-      // silently include tool-result-only echoes in the user-facing feed.
       expect(
         computeIsRenderable(
           asMsg({
@@ -67,13 +51,10 @@ describe('computeIsRenderable', () => {
     });
 
     test('user with empty content array IS renderable', () => {
-      // No tool_result blocks → not suppressed. Mirrors the production
-      // `.some()` behaviour over an empty array.
       expect(computeIsRenderable(asMsg({ type: 'user', message: { content: [] } }))).toBe(1);
     });
 
     test('user with non-array content (string) IS renderable', () => {
-      // Falls through the array guard — content is treated as plain text.
       expect(computeIsRenderable(asMsg({ type: 'user', message: { content: 'plain' } }))).toBe(1);
     });
   });
@@ -152,8 +133,6 @@ describe('computeIsRenderable', () => {
     });
 
     test('assistant with non-array content IS renderable', () => {
-      // Falls through the array guard — caller has already produced a
-      // usable payload, so don't suppress.
       expect(
         computeIsRenderable(asMsg({ type: 'assistant', message: { content: 'unknown' } }))
       ).toBe(1);

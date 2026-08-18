@@ -1,29 +1,12 @@
-/**
- * Unit tests for useSessionQuestionState hook
- *
- * Verifies that:
- * - Returns empty state when sessionId is undefined
- * - Joins/leaves the session channel correctly
- * - Extracts pendingQuestion from waiting_for_input agentState
- * - Syncs resolvedQuestions from session metadata
- * - Filters state.session events by channel (no cross-session contamination)
- * - onQuestionResolved provides an optimistic local update
- */
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup, waitFor } from '@testing-library/preact';
 import type { SessionState } from '@hyperneo/shared';
 import { useSessionQuestionState } from '../useSessionQuestionState';
 
-// -------------------------------------------------------
-// Mocks
-// -------------------------------------------------------
-
 const mockRequest = vi.fn();
 const mockJoinRoom = vi.fn();
 const mockLeaveRoom = vi.fn();
 
-// Capture registered state.session handlers so tests can fire them
 type HandlerWithContext = (data: unknown, context: { channel?: string }) => void;
 const sessionStateHandlers: HandlerWithContext[] = [];
 
@@ -44,10 +27,6 @@ vi.mock('../useMessageHub.ts', () => ({
     leaveRoom: mockLeaveRoom,
   }),
 }));
-
-// -------------------------------------------------------
-// Helpers
-// -------------------------------------------------------
 
 function makeIdleSessionState(): SessionState {
   return {
@@ -87,10 +66,6 @@ function fireSessionEvent(channel: string, data: unknown): void {
   }
 }
 
-// -------------------------------------------------------
-// Tests
-// -------------------------------------------------------
-
 describe('useSessionQuestionState', () => {
   beforeEach(() => {
     mockRequest.mockReset();
@@ -98,7 +73,6 @@ describe('useSessionQuestionState', () => {
     mockJoinRoom.mockReset();
     mockLeaveRoom.mockReset();
     sessionStateHandlers.length = 0;
-    // Default: fetch returns idle state
     mockRequest.mockResolvedValue(makeIdleSessionState());
   });
 
@@ -113,7 +87,6 @@ describe('useSessionQuestionState', () => {
     expect(result.current.resolvedQuestions.size).toBe(0);
     expect(typeof result.current.onQuestionResolved).toBe('function');
 
-    // Should not join any channel
     expect(mockJoinRoom).not.toHaveBeenCalled();
   });
 
@@ -186,20 +159,16 @@ describe('useSessionQuestionState', () => {
   });
 
   it('ignores state.session events from OTHER channels (cross-session contamination fix)', async () => {
-    // Two hooks for different sessions
     const { result: leaderResult } = renderHook(() => useSessionQuestionState('leader-session'));
     const { result: workerResult } = renderHook(() => useSessionQuestionState('worker-session'));
 
     act(() => {
-      // Fire an event only on the worker's channel
       fireSessionEvent('session:worker-session', makeWaitingSessionState('tool-worker'));
     });
 
-    // Worker should have the pending question (channel matches)
     await waitFor(() => {
       expect(workerResult.current.pendingQuestion?.toolUseId).toBe('tool-worker');
     });
-    // Leader should NOT have received the worker's event (cross-session contamination fix)
     expect(leaderResult.current.pendingQuestion).toBeNull();
   });
 
@@ -238,9 +207,7 @@ describe('useSessionQuestionState', () => {
       ]);
     });
 
-    // pendingQuestion should be cleared
     expect(result.current.pendingQuestion).toBeNull();
-    // resolvedQuestions should have the entry
     expect(result.current.resolvedQuestions.size).toBe(1);
     const resolved = result.current.resolvedQuestions.get('tool-001');
     expect(resolved?.state).toBe('submitted');
@@ -250,7 +217,6 @@ describe('useSessionQuestionState', () => {
   it('onQuestionResolved is a no-op when no pendingQuestion exists', () => {
     const { result } = renderHook(() => useSessionQuestionState('session-abc'));
 
-    // Should not throw
     act(() => {
       result.current.onQuestionResolved('cancelled', []);
     });
@@ -267,7 +233,6 @@ describe('useSessionQuestionState', () => {
       await new Promise((r) => setTimeout(r, 0));
     });
 
-    // Optimistically resolve the question
     await act(async () => {
       result.current.onQuestionResolved('submitted', [
         { questionIndex: 0, selectedLabels: ['Yes'], customText: undefined },
@@ -276,17 +241,14 @@ describe('useSessionQuestionState', () => {
 
     expect(result.current.resolvedQuestions.size).toBe(1);
 
-    // Server sends a state event without sessionInfo (no metadata/resolvedQuestions)
     act(() => {
       fireSessionEvent('session:session-abc', makeIdleSessionState());
     });
 
     await waitFor(() => {
-      // pendingQuestion cleared by the server event
       expect(result.current.pendingQuestion).toBeNull();
     });
 
-    // Optimistic resolved entry must NOT be erased by the null-metadata event
     expect(result.current.resolvedQuestions.size).toBe(1);
     expect(result.current.resolvedQuestions.get('tool-001')?.state).toBe('submitted');
   });

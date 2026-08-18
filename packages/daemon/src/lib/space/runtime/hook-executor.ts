@@ -1,11 +1,3 @@
-/**
- * Hook Executor
- *
- * Executes workflow hook validators (built-in or script) and returns a typed
- * WorkflowHookResult. Script validators run in a restricted environment with
- * credential stripping, timeout-based SIGKILL, and bounded stdout capture.
- */
-
 import type {
   WorkflowHook,
   WorkflowHookResult,
@@ -27,81 +19,39 @@ import {
   getRegisteredConnectorIds,
   isConnectorsLayerEnabled,
 } from './connectors/connector';
-// Side-effect: seeds the connector registry + built-in connector deps so the
-// engine never sees an empty registry (see connectors/production.ts).
 import './connectors/production';
-// Side-effect: seeds the built-in validator registry (named presets, e.g.
-// `pr_ready`/`pr_merged`) so dispatch + validation need no hardcoded ids. Also
-// imported for its side effect by workflow-hook-validation.ts; ESM loads it
-// once. (epic #2299, P2 #2302)
 import './built-in-validators';
 import { getBuiltInValidator } from './built-in-validator-registry';
 import { resolveGithubConfigDir } from './gh-lookup-helpers';
 
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
-
-/** Context provided to the hook executor for building script env vars. */
 export interface HookExecutorContext {
   workspacePath: string;
   runId: string;
   hookId: string;
   methodName: string;
-  /** Bounded action params safe for script env serialization. */
   params: Record<string, unknown>;
-  /** Original unbounded action params. Built-in validators may inspect routing fields here. */
   rawParams?: Record<string, unknown>;
   nodeId: string;
   nodeName: string;
   sessionId: string;
   taskId: string;
   workflowRunCreatedAt?: number;
-  /**
-   * Current status of the owning Space task (e.g. `'in_progress'`, `'approved'`,
-   * `'done'`). Built-in validators use this to distinguish execution phases —
-   * e.g. a `pr_ready` exemption for post-approval merge-blocker reports must
-   * only fire while the task is `approved`, so an initial implementation
-   * handoff cannot spoof it. Optional: omitted when the engine has no task
-   * status provider.
-   */
   taskStatus?: string;
   targetNode?: string;
   hookLocalState: Record<string, unknown>;
-  /**
-   * The run's frozen reviewed PR URL — the pr_url stamped by the `pr_ready`
-   * validator's hook (the only source after the engine gates pr_url stamping on
-   * that validator). Built-in validators that gate post-approval handoffs (e.g.
-   * `post_approval_only`) compare the caller-supplied `pr_url` against this to
-   * stop a prompt-injected post-approval worker from redirecting the approval
-   * authority to a different PR. Undefined when no pr_ready handoff has frozen
-   * an identity yet (the run's first handoff).
-   */
   frozenPrUrl?: string;
   currentArtifacts: Record<string, unknown>[];
   permittedExternalLookups: string[];
-  /** Optional bounded template data from the hook definition. */
   templateData?: Record<string, unknown>;
 }
 
-/** Result of executing a single hook validator. */
 export interface HookExecutorResult {
   result: WorkflowHookResult;
   error?: string;
 }
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/** Default timeout for hook scripts (30 seconds). */
 const DEFAULT_TIMEOUT_MS = 30_000;
 
-/** Environment variable prefixes that are stripped from the restricted env.
- * `NEOKAI_` is retained as a stripped prefix so stale legacy internals from old
- * deployments do not leak into hook scripts, even though no NEOKAI_* aliases are
- * injected or read.
- */
 const RESTRICTED_ENV_PREFIXES = [
   'ANTHROPIC_',
   'CLAUDE_',
@@ -112,13 +62,8 @@ const RESTRICTED_ENV_PREFIXES = [
   'NEOKAI_',
 ];
 
-/** Environment variable keys matching this regex are stripped. */
 const RESTRICTED_ENV_KEY_PATTERN = /SECRET|TOKEN|PASSWORD|CREDENTIAL|API_KEY/i;
 
-/**
- * Hook-specific env vars injected into every hook script under the canonical
- * `HYPERNEO_*` names.
- */
 const HOOK_INJECTED_ENV_KEYS = new Set([
   'HYPERNEO_HOOK_ID',
   'HYPERNEO_WORKFLOW_RUN_ID',
@@ -137,7 +82,6 @@ const HOOK_INJECTED_ENV_KEYS = new Set([
   'HYPERNEO_HOOK_TEMPLATE_DATA_JSON',
 ]);
 
-/** Keys that are always allowed regardless of prefix/pattern. */
 const ALWAYS_ALLOWED_ENV_KEYS = new Set([
   'PATH',
   'HOME',
@@ -149,11 +93,6 @@ const ALWAYS_ALLOWED_ENV_KEYS = new Set([
   'HYPERNEO_VALIDATION_BASE_REF',
 ]);
 
-/**
- * GitHub credential keys for the LEGACY env-injection fallback (used only when
- * `HYPERNEO_WORKFLOW_CONNECTORS=0`). The connectors-layer path reads this exact
- * surface from the github connector's `auth.envKeys` instead.
- */
 const GITHUB_LOOKUP_ENV_KEYS = new Set([
   'GH_TOKEN',
   'GITHUB_TOKEN',
@@ -163,10 +102,8 @@ const GITHUB_LOOKUP_ENV_KEYS = new Set([
   'GH_CONFIG_DIR',
 ]);
 
-/** SSH agent / Git credential helper keys — stripped from restricted env. */
 const SSH_ENV_KEYS = new Set(['SSH_AUTH_SOCK', 'SSH_AGENT_LAUNCHER', 'SSH_AGENT_PID']);
 
-/** Credential-bearing config path variables — stripped from restricted env. */
 const CREDENTIAL_PATH_ENV_KEYS = new Set([
   'KUBECONFIG',
   'DOCKER_CONFIG',
@@ -177,36 +114,8 @@ const CREDENTIAL_PATH_ENV_KEYS = new Set([
   'AZURE_CONFIG_DIR',
 ]);
 
-// ---------------------------------------------------------------------------
-// Built-in validators
-// ---------------------------------------------------------------------------
-
-/**
- * Signature every named preset (built-in validator) exposes. Concrete presets
- * are registered in `built-in-validators/index.ts` (e.g. `pr_ready` /
- * `pr_merged`) and dispatched generically via `getBuiltInValidator` from the
- * registry — the engine branches on no validator id (epic #2299, ADR #2).
- */
 export type BuiltInValidatorFn = (context: HookExecutorContext) => Promise<WorkflowHookResult>;
 
-// ---------------------------------------------------------------------------
-// Environment builder
-// ---------------------------------------------------------------------------
-
-/**
- * Resolve the env-key sets + derived extras a sandboxed script hook may receive,
- * driven by its permitted connectors. When the connectors layer is enabled
- * (default), each permitted connector's `auth.envKeys` are admitted and its
- * `auth.resolveExtraEnv()` merged in — replacing the old hardcoded
- * `GITHUB_LOOKUP_ENV_KEYS` + `permitGithub` special-case. The legacy branch is
- * kept verbatim as a rollback fallback (`HYPERNEO_WORKFLOW_CONNECTORS=0`).
- *
- * `permitted` admits a key only for a connector the hook actually declared;
- * `managed` is the superset across ALL registered connectors. Connector auth
- * keys (e.g. GH_CONFIG_DIR, GH_HOST) don't match the SECRET/TOKEN strip
- * pattern, so without the managed set they would leak to hooks that omitted the
- * connector — they must be denied by default and admitted only when permitted.
- */
 function resolvePermittedConnectorAuth(lookups: string[]): {
   permitted: Set<string>;
   managed: Set<string>;
@@ -216,8 +125,6 @@ function resolvePermittedConnectorAuth(lookups: string[]): {
     const permitted = new Set<string>();
     const managed = new Set<string>();
     const extraEnv: Record<string, string | undefined> = {};
-    // Every registered connector's auth keys are "managed" — denied unless that
-    // connector is in `lookups`.
     for (const id of getRegisteredConnectorIds()) {
       const connector = getConnector(id);
       for (const key of connector?.auth?.envKeys ?? []) managed.add(key);
@@ -234,7 +141,6 @@ function resolvePermittedConnectorAuth(lookups: string[]): {
     }
     return { permitted, managed, extraEnv };
   }
-  // Legacy fallback (pre-connectors): only 'github' is recognized.
   const permitGithub = lookups.includes('github');
   return {
     permitted: permitGithub ? new Set(GITHUB_LOOKUP_ENV_KEYS) : new Set(),
@@ -268,9 +174,6 @@ function buildHookRestrictedEnv(
       continue;
     }
 
-    // A connector-managed credential key whose connector was NOT permitted is
-    // denied — these keys bypass the SECRET/TOKEN strip pattern below, so
-    // without this they would leak to hooks that omitted the connector.
     if (connectorManagedEnvKeys.has(key)) continue;
 
     const isPrefixRestricted = RESTRICTED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix));
@@ -286,13 +189,10 @@ function buildHookRestrictedEnv(
     env[key] = value as string;
   }
 
-  // Connector-derived extras (e.g. resolved GH_CONFIG_DIR) override any same-key
-  // process.env value passed through above — matching the legacy precedence.
   for (const [key, value] of Object.entries(connectorExtraEnv)) {
     if (value !== undefined) env[key] = value;
   }
 
-  // Inject hook-specific environment variables
   env['HYPERNEO_HOOK_ID'] = context.hookId;
   env['HYPERNEO_WORKFLOW_RUN_ID'] = context.runId;
   env['HYPERNEO_WORKSPACE_PATH'] = context.workspacePath;
@@ -345,16 +245,13 @@ function buildHookRestrictedEnv(
     }
   }
 
-  // Resolve the validation base override from process env.
   const validationBaseRef = env['HYPERNEO_VALIDATION_BASE_REF'];
   if (validationBaseRef !== undefined) {
     env['HYPERNEO_VALIDATION_BASE_REF'] = validationBaseRef;
   }
 
-  // Merge user-specified env (cannot override injected vars)
   if (scriptEnv) {
     for (const [key, value] of Object.entries(scriptEnv)) {
-      // User env cannot override hook-injected vars (HYPERNEO_*)
       if (HOOK_INJECTED_ENV_KEYS.has(key)) {
         continue;
       }
@@ -374,20 +271,6 @@ function buildHookRestrictedEnv(
   return env;
 }
 
-// ---------------------------------------------------------------------------
-// Script executor
-// ---------------------------------------------------------------------------
-
-/**
- * Executes a hook script validator and returns the parsed WorkflowHookResult.
- *
- * Uses Bun.spawn in array form (no shell interpolation). Runs in a restricted
- * environment with credential stripping, streaming maxBuffer enforcement, and
- * timeout-based SIGKILL.
- *
- * Exit 0 with parseable JSON stdout → parsed WorkflowHookResult
- * Non-zero / timeout / malformed stdout → block result with error reason
- */
 export async function executeHookScript(
   validator: WorkflowHookScriptValidator,
   context: HookExecutorContext
@@ -410,8 +293,6 @@ export async function executeHookScript(
 
   const restrictedEnv = buildHookRestrictedEnv(context);
 
-  // Isolate HOME to a temp directory so restricted hooks cannot read
-  // disk-backed credentials from the user profile.
   const hookHome = mkdtempSync(join(tmpdir(), 'hyperneo-hook-'));
   restrictedEnv['HOME'] = hookHome;
 
@@ -443,7 +324,6 @@ export async function executeHookScript(
     (async () => {
       const killTimer = setTimeout(() => {
         killed = true;
-        // Kill the entire process group so background children are reaped.
         try {
           if (proc.pid) {
             process.kill(-proc.pid, 'SIGKILL');
@@ -459,8 +339,6 @@ export async function executeHookScript(
       const code = await proc.exited;
       clearTimeout(killTimer);
 
-      // Reap any background children in the process group after the main
-      // script exits (success, failure, or timeout).
       try {
         if (proc.pid) {
           process.kill(-proc.pid, 'SIGKILL');
@@ -492,7 +370,6 @@ export async function executeHookScript(
     };
   }
 
-  // Exit 0 — parse JSON stdout as WorkflowHookResult
   const parsed = parseJsonStdout(stdoutResult.text);
   if (!parsed) {
     return {
@@ -503,7 +380,6 @@ export async function executeHookScript(
     };
   }
 
-  // Validate that parsed result has a recognized type
   const validTypes = new Set([
     'allow',
     'block',
@@ -521,7 +397,6 @@ export async function executeHookScript(
     };
   }
 
-  // Validate required fields for the specific result type
   const validationErrors = validateWorkflowHookResult(parsed);
   if (validationErrors.length > 0) {
     return {
@@ -532,15 +407,10 @@ export async function executeHookScript(
     };
   }
 
-  // Merge parsed data into the result shape
   const result = deepMergeWithDepthLimit({}, parsed) as unknown as WorkflowHookResult;
 
   return { result };
 }
-
-// ---------------------------------------------------------------------------
-// Hook Executor class
-// ---------------------------------------------------------------------------
 
 export interface HookExecutorConfig {
   workspacePath: string;

@@ -1,24 +1,3 @@
-/**
- * SpaceRuntime
- *
- * Agent-centric orchestration engine for Spaces.
- * Manages workflow run lifecycles and standalone task queuing
- * using Space tables exclusively (not Room tables).
- *
- * Responsibilities:
- * - Maintain a Map<runId, WorkflowExecutor> for active workflow runs
- * - Rehydrate executors from DB on first executeTick() call
- * - Start new workflow runs (creates run record + executor + first node task)
- * - Spawn Task Agent sessions for pending tasks
- * - Monitor agent liveness and recover from crashes
- * - Resolve task types from agent roles (planner → planning, coder/general → coding, etc.)
- * - Filter and expose workflow rules applicable to a given node
- * - Clean up executors when runs reach terminal states
- *
- * In the agent-centric model, agents drive workflow progression via send_message
- * and `task.reportedStatus` — SpaceRuntime no longer calls advance() directly.
- */
-
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat';
 import type {
   CreateNodeExecutionParams,
@@ -146,178 +125,52 @@ const PRIORITY_ORDER: Record<SpaceTaskPriority, number> = {
   low: 3,
 };
 
-// ---------------------------------------------------------------------------
-// Config
-// ---------------------------------------------------------------------------
-
 export interface SpaceRuntimeConfig {
-  /** Raw Bun SQLite database — used to create per-space SpaceTaskManagers */
   db: BunDatabase;
-  /**
-   * Optional absolute path to the SQLite database file.
-   *
-   * Threaded through from `SpaceRuntimeServiceConfig`; retained for callers
-   * that need DB access from injected helpers.
-   */
   dbPath?: string;
-  /**
-   * Channel cycle repository for rate-based dead-loop detection on cyclic
-   * channels. Injected (mirroring ChannelRouter / TaskAgentManager) so the repo
-   * can be mocked in recovery tests and a single instance is shared. Auto-built
-   * from `db` when not supplied.
-   */
   channelCycleRepo?: ChannelCycleRepository;
-  /** Space manager for listing spaces and fetching workspace paths */
   spaceManager: SpaceManager;
-  /** Agent manager for resolving agents */
   spaceAgentManager: SpaceAgentManager;
-  /** Long-horizon agent repository for durable external-event subscriptions. */
   longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
-  /**
-   * Durable workflow-run event subscription store. Source of truth for
-   * agent-registered `dynamic` runtime subscriptions (static template interests
-   * are re-materialized from the workflow definition); the in-memory topic trie
-   * is rebuilt from it on rehydrate. Auto-created from `db` when not supplied.
-   */
   workflowEventSubscriptionRepo?: SpaceWorkflowEventSubscriptionRepository;
-  /** Workflow manager for loading workflow definitions */
   spaceWorkflowManager: SpaceWorkflowManager;
-  /** Workflow run repository for run CRUD and status updates */
   workflowRunRepo: SpaceWorkflowRunRepository;
-  /** Task repository for querying tasks by run/node */
   taskRepo: SpaceTaskRepository;
-  /** Node execution repository for workflow-internal execution state */
   nodeExecutionRepo: NodeExecutionRepository;
-  /** Optional reactive DB invalidation hooks for task LiveQuery surfaces */
   reactiveDb?: ReactiveDatabase;
-  /**
-   * Optional TaskAgentManager for Task Agent mode.
-   *
-   * SpaceRuntime uses TaskAgentManager for node-agent session lifecycle
-   * (spawn/liveness/cancel) and optional Task Agent messaging sessions.
-   */
   taskAgentManager?: TaskAgentManager;
-  /**
-   * Interval between executeTick() calls in milliseconds.
-   * Used by start(). Default: 5000 (5 seconds).
-   */
   tickIntervalMs?: number;
-  /**
-   * Silence window for alive node-agent sessions before Layer 1 runtime recovery
-   * considers a non-terminal last SDK message stuck. Default: 15 minutes.
-   */
   agentNoProgressThresholdMs?: number;
-  /**
-   * Minimum wait after injecting a runtime nag before Layer 1 may restart/block
-   * the same still-stale session. Default: 2 minutes.
-   */
   agentStuckNagGraceMs?: number;
-  /**
-   * InternalEventBus for publishing typed Space domain events and subscribing to
-   * external event publications.
-   */
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
-  /** Command bus used to inject matched external events into node-agent sessions. */
   commandBus?: InternalCommandBus<DaemonCommandMap>;
-  /** Persistent external-event delivery state store. */
   externalEventStore?: ExternalEventStore;
-  /**
-   * Optional queue-health metrics collector for the pending external-event
-   * delivery queue. Defaults to a new in-memory instance. The same instance is
-   * wired to the store's delivery-terminal hook by the service so terminal
-   * outcomes are counted from a single observation point.
-   */
   queueHealthMetrics?: ExternalEventQueueMetrics;
-  /**
-   * Per-target recoverable-failure cool-down window for external-event
-   * injection (ms). Defaults to {@link EXTERNAL_EVENT_DELIVERY_COOLDOWN_MS}
-   * (env `HYPERNEO_EXTERNAL_EVENT_DELIVERY_COOLDOWN_MS`, default 30s). Exposed
-   * primarily for tests; production omits it to use the env default.
-   */
   externalEventDeliveryCooldownMs?: number;
-  /**
-   * Soft cap on the per-delivery cool-down map size; once exceeded, expired
-   * entries are swept on arm. Defaults to
-   * {@link EXTERNAL_EVENT_DELIVERY_COOLDOWN_MAP_CAP}. Exposed for tests.
-   */
   externalEventDeliveryCooldownMapCap?: number;
-  /**
-   * Completion detector — inspects the canonical `SpaceTask` to decide whether
-   * a workflow run is complete or ready for runtime resolution.
-   *
-   * Defaults to `new CompletionDetector(taskRepo)` when not provided.
-   */
   completionDetector?: CompletionDetector;
-  /**
-   * Optional artifact repository used by `dispatchPostApproval` to resolve
-   * PR URLs (and other structured end-node artifacts) into the template
-   * interpolation context for post-approval sessions.
-   */
   artifactRepo?: WorkflowRunArtifactRepository;
-  /**
-   * Domain artifact profile. Owns coding-specific semantics (which `link` is
-   * the run's PR, which `decision` is the terminal outcome) so this class never
-   * names domain kinds. When omitted, primary-link resolution returns '' and
-   * outcome summaries return undefined.
-   */
   artifactProfile?: WorkflowArtifactProfile;
-  /**
-   * Optional SDK message repository used to emit synthetic SDK messages into
-   * a task's agent session. Defaults to a repo constructed from `db` if not
-   * provided — tests can inject a stub to assert emissions.
-   */
   sdkMessageRepo?: SDKMessageRepository;
-  /**
-   * Persistent queue for workflow agent handoff messages. SpaceRuntime sweeps
-   * this queue every tick so queued node-to-node handoffs are retried and either
-   * delivered or escalated instead of waiting indefinitely for a Task Agent wakeup.
-   */
   pendingMessageRepo?: PendingAgentMessageRepository;
-  /**
-   * Optional callback emitted when runtime mutates a SpaceTask internally.
-   * Used to fan out `space.task.updated` events for UI synchronization.
-   */
   onTaskUpdated?: (payload: {
     spaceId: string;
     task: SpaceTask;
     archiveSource?: 'user' | 'system_reconcile';
   }) => Promise<void> | void;
-  /**
-   * Optional callback emitted when runtime creates a workflow run internally.
-   * Used to fan out `space.workflowRun.created` events for UI synchronization.
-   */
   onWorkflowRunCreated?: (payload: {
     spaceId: string;
     run: SpaceWorkflowRun;
   }) => Promise<void> | void;
-  /**
-   * Optional callback emitted when runtime updates workflow run status internally.
-   * Used to fan out `space.workflowRun.updated` events for UI synchronization.
-   */
   onWorkflowRunUpdated?: (payload: {
     spaceId: string;
     run: SpaceWorkflowRun;
   }) => Promise<void> | void;
-  /**
-   * Optional LLM-backed workflow selector used when a standalone task has no
-   * `preferredWorkflowId` and multiple workflows are available. Should return
-   * one of the provided workflow ids, or `null` to fall back to the
-   * deterministic tag-based tiebreak (`default` → `v2` → most recently updated).
-   *
-   * Dependency-injected so tests can provide a deterministic stub without
-   * touching the provider SDK. In production, wire this to
-   * `selectWorkflowWithLlmDefault` from `./llm-workflow-selector`.
-   */
   selectWorkflowWithLlm?: SelectWorkflowWithLlm;
-  /** Optional goal service for processing terminal goal-task side effects. */
   goalService?: Pick<import('../goals/goal-service').SpaceGoalService, 'handleTaskTerminal'>;
-  /** Optional Forge scope service for automatic terminal task evidence capture. */
   evolutionScopeService?: import('../evolution-scope-service').EvolutionScopeService;
-  /** Optional actor registry for long-horizon external-event delivery. */
   actorRegistry?: SpaceActorRegistryAdapter;
-  /** Optional durable inbox for inactive long-horizon external-event delivery. */
   spaceAgentInboxRepo?: SpaceAgentInboxRepository;
-  /** Optional direct long-horizon event delivery hook supplied by SpaceRuntimeService. */
   deliverLongHorizonExternalEvent?: (args: {
     spaceId: string;
     agentId: string;
@@ -327,21 +180,11 @@ export interface SpaceRuntimeConfig {
 }
 
 interface StartWorkflowRunOptions {
-  /**
-   * Optional canonical parent task for this workflow run.
-   * When provided, runtime-created node tasks are marked with this parent
-   * so user-facing views can keep a one-task-per-run list.
-   */
   parentTaskId?: string;
 }
 
 type WorkflowTaskRecoveryTargetStatus = 'open' | 'in_progress';
 
-// ---------------------------------------------------------------------------
-// SpaceRuntime
-// ---------------------------------------------------------------------------
-
-/** Metadata stored alongside each executor to allow recreation with fresh state */
 interface ExecutorMeta {
   workflow: SpaceWorkflow;
   spaceId: string;
@@ -355,12 +198,6 @@ interface WorkflowSubscriptionTarget {
   nodeId: string;
   agentName: string;
   topic?: string;
-  /**
-   * Origin of the subscription:
-   * - `static`  — declared in the workflow template's `eventInterests`
-   * - `dynamic` — registered at runtime via MCP tooling (`subscribe_external_event`
-   *              / `subscribe_pr_events`), e.g. a coder subscribing to its own PR.
-   */
   subscriptionKind?: 'static' | 'dynamic';
   sessionId?: string;
 }
@@ -388,18 +225,6 @@ function isLongHorizonSubscriptionTarget(
   return target.kind === 'long_horizon_agent';
 }
 
-// ---------------------------------------------------------------------------
-// listSubscriptions — read-only diagnostic result (Task #908)
-// ---------------------------------------------------------------------------
-
-/**
- * A declared static event interest, re-derived from the workflow definition
- * (durable). `topic` and `topicFrom` are mutually exclusive. `active` is a live
- * cross-check against the in-memory trie: true iff a `static` trie entry exists
- * for this slot + topic. `topicFrom` interests are inert until their resolver
- * ships, so they report `active: false` and are excluded from the mismatch
- * count (they are known-not-active by design, not drift).
- */
 interface SubscriptionDeclaredInterest {
   nodeId: string;
   nodeName: string;
@@ -410,11 +235,6 @@ interface SubscriptionDeclaredInterest {
   active: boolean;
 }
 
-/**
- * A persisted dynamic subscription row from `space_workflow_event_subscriptions`
- * (durable). `active` is a live cross-check: true iff a `dynamic` trie entry
- * exists for this slot + topic.
- */
 interface SubscriptionPersistedRow {
   nodeId: string;
   agentName: string;
@@ -425,18 +245,6 @@ interface SubscriptionPersistedRow {
   active: boolean;
 }
 
-/**
- * An active in-memory trie entry — the live cross-check layer, NEVER the
- * answer on its own. `source` reconciles it against durable state:
- * `'declared'` (a workflow-definition interest backs this static entry),
- * `'persisted'` (a table row backs this dynamic entry), `'orphan'` (in the
- * trie with no durable backing — indicates drift, e.g. a stale trie entry left
- * by a partial rehydrate, a mid-run definition-version change, or a static
- * entry surviving on a terminal/non-canonical task; benign in the upgrade
- * window, worth investigating if it persists in steady state), or `'unknown'`
- * (a static entry whose declaration layer could not be loaded — backing is
- * unverifiable, so it is neither confirmed nor reported as drift).
- */
 interface SubscriptionActiveEntry {
   nodeId: string;
   agentName: string;
@@ -448,38 +256,18 @@ interface SubscriptionActiveEntry {
 
 interface SubscriptionListResult {
   workflowRunId: string;
-  /** nodeId filter applied, or null when the whole run is returned. */
   nodeId: string | null;
-  /**
-   * Whether the run's workflow definition resolved. When false, `declared` is
-   * empty NOT because nothing is declared but because the definition could not
-   * be loaded (e.g. a deleted/stale definition) — so the caller does not
-   * misread an unavailable durable layer as "node declares no subscriptions."
-   */
   definitionResolved: boolean;
   declared: SubscriptionDeclaredInterest[];
   persisted: SubscriptionPersistedRow[];
   active: SubscriptionActiveEntry[];
-  /** Reconciliation counts derived from the three layers. */
   mismatches: {
-    /**
-     * Declared concrete-topic interests with no matching active static entry.
-     * Suppressed for terminal-task runs (see listSubscriptions): their static
-     * interests are intentionally cleared by the task lifecycle.
-     */
     declaredNotActive: number;
-    /** Persisted rows with no matching active dynamic entry. */
     persistedNotActive: number;
-    /** Active entries with no durable backing (static w/o declared, dynamic w/o persisted). */
     orphanActive: number;
   };
 }
 
-// Normalized reconciliation key: slot (node + agent) + lowercased topic, plus
-// an optional taskId. Static declaration has no task (interests are slot-level
-// in the workflow definition), so static keys omit it; dynamic rows/targets
-// both carry taskId and include it so two tasks sharing a slot+topic can't
-// cross-match (which would mask the persisted↔active drift this tool surfaces).
 function subscriptionReconcileKey(
   nodeId: string,
   agentName: string,
@@ -538,27 +326,11 @@ interface NonTerminalIdleState {
   lastAttentionLogAt: number | null;
 }
 
-/**
- * Recovery state for a node-agent session that ended on a terminal error
- * result. Tracks the number of auto-continue injections and the normalized
- * error signature of the last error we continued past, so a deterministic
- * repeat (identical signature) can be escalated instead of looped on.
- *
- * `lastSessionId` detects a re-spawn (new session after `blocked` recovery):
- * the count resets so a genuinely restarted session gets a fresh budget, while
- * the total stays bounded by `MAX_BLOCKED_RUN_RETRIES`.
- */
 interface TerminalErrorContinueState {
   lastSessionId: string | null;
   continueCount: number;
   lastRetriedErrorSignature: string | null;
   lastContinueAt: number | null;
-  /**
-   * Consecutive failed `injectRuntimeRecoveryMessage` attempts. A live but
-   * wedged session whose injection keeps throwing would otherwise retry every
-   * grace interval forever; once this reaches the cap the execution escalates
-   * to `blocked`. Reset to 0 on any successful injection.
-   */
   failedInjectionCount: number;
 }
 
@@ -571,54 +343,14 @@ const EXTERNAL_EVENT_RATE_LIMIT_PER_MIN = parsePositiveIntegerEnv(
   'EXTERNAL_EVENT_RATE_LIMIT_PER_MIN',
   10
 );
-/**
- * Per-target cool-down applied after a RECOVERABLE external-event delivery
- * failure (the dispatch threw non-terminally). While a target is within this
- * window of its last recoverable failure, new injections for it are SKIPPED —
- * the event stays `published` and re-evaluates on the next source re-poll — so a
- * target session stuck in a provider-error loop no longer mints a fresh
- * `failed` user-message row (fresh UUID) on every re-poll. The cool-down lifts
- * after the window; the core turn-recovery fix (this PR) recovers the session
- * within it. Terminal failures (subscription gone, task terminal, missing
- * command handler) do NOT arm the cool-down — they are done. Bounded by
- * {@link SpaceRuntime.externalEventDeliveryCooldowns}.
- */
 const EXTERNAL_EVENT_DELIVERY_COOLDOWN_MS = parsePositiveIntegerEnv(
   'HYPERNEO_EXTERNAL_EVENT_DELIVERY_COOLDOWN_MS',
   30_000
 );
-/**
- * Soft cap on the per-delivery cool-down map. Entries are reaped lazily on re-
- * query, so a delivery that fails once and is never republished would otherwise
- * linger until runtime stop; in a long-running daemon a provider-error storm
- * targeting many distinct deliveries could grow the map without bound. On arm,
- * once the map exceeds this cap, expired entries are swept (amortized over
- * arms). A still-oversized map after the sweep means a genuinely large set of
- * live (in-window) failing deliveries — itself a bounded, observable signal.
- */
 const EXTERNAL_EVENT_DELIVERY_COOLDOWN_MAP_CAP = parsePositiveIntegerEnv(
   'HYPERNEO_EXTERNAL_EVENT_DELIVERY_COOLDOWN_MAP_CAP',
   4096
 );
-/**
- * TTL for pending external-event deliveries that are waiting for their target
- * node to become active (in-memory pending queue, DB-persisted pending rows,
- * and retry replay).
- *
- * **TTL anchor is the external event's age** — i.e. the source-event row's
- * `created_at` (ingestion time), NOT the delivery row's registration time.
- * External events are time-sensitive (e.g. a GitHub review comment), so a
- * delivery is dropped once its *event* is older than this window, regardless
- * of when the delivery row was registered. This matters for delayed
- * registration (event backdated/backlogged, subscription added late, or daemon
- * restart replay): such deliveries must not get a fresh TTL window measured
- * from registration. The delivery table intentionally has no `created_at`
- * column; if registration-age TTL were ever wanted, it would require a schema
- * migration plus changes to both `collectPersistedPendingDeliveries` and the
- * rehydrate retry sweep (which both read `eventRecord.createdAt`).
- *
- * See `isQueuedExternalEventExpired` and design doc §5 "Backpressure — Event TTL".
- */
 const EXTERNAL_EVENT_QUEUE_TTL_MS = parsePositiveIntegerEnv('EXTERNAL_EVENT_QUEUE_TTL_MS', 300_000);
 
 export function parsePositiveIntegerEnv(name: string, fallback: number): number {
@@ -629,19 +361,6 @@ export function parsePositiveIntegerEnv(name: string, fallback: number): number 
   return value;
 }
 
-// ---------------------------------------------------------------------------
-// Internal notification event shape
-// ---------------------------------------------------------------------------
-
-/**
- * Discriminated union of structured runtime events emitted by `SpaceRuntime`.
- *
- * Used as the input shape for {@link SpaceRuntime['safeNotify']} so call sites
- * stay readable (`kind: 'task_blocked', ...`) while the publisher maps them
- * onto the typed `space.*` events on `InternalEventBus`. Kept private to this
- * module — external consumers should subscribe to `InternalEventBus` events
- * directly via `DaemonInternalEventMap`.
- */
 type SpaceNotificationEvent =
   | {
       kind: 'task_blocked';
@@ -720,14 +439,6 @@ type SpaceNotificationEvent =
       timestamp: string;
     };
 
-/**
- * Map a notification event onto the corresponding typed `InternalEventBus` event.
- *
- * Returns `null` for unrecognised events (defensive — all current `kind`s map).
- * The `namespaceId` field is set to `'global'` because these events are
- * space-scoped, not session-scoped. Subscribers that need space-scoped
- * filtering should inspect `payload.spaceId`.
- */
 function formatCommandError(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === 'string') return error;
@@ -890,132 +601,38 @@ function mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
 }
 
 export class SpaceRuntime {
-  /** Map from workflowRunId → WorkflowExecutor for all active runs */
   private executors = new Map<string, WorkflowExecutor>();
 
-  /**
-   * Metadata stored per run so the executor can be recreated with fresh DB
-   * state when the run has been externally modified (e.g. status reset after
-   * a human gate approval).
-   */
   private executorMeta = new Map<string, ExecutorMeta>();
 
-  /**
-   * Per-space SpaceTaskManager instances, cached to avoid creating a new
-   * manager + repository on every executor build.
-   */
   private taskManagers = new Map<string, SpaceTaskManager>();
 
-  /**
-   * Set to true after the first executeTick() call, after rehydrateExecutors()
-   * has loaded in-progress runs from the DB. Prevents repeated rehydration.
-   */
   private rehydrated = false;
 
-  /** Handle returned by setInterval when the tick loop is running */
   private tickTimer: ReturnType<typeof setInterval> | null = null;
-  /** Single-flight guard to prevent overlapping executeTick() runs. */
   private tickInFlight = false;
-  /**
-   * Timestamp (ms) of the last periodic `channel_cycle_events` prune. Rows are
-   * pruned at most once per `DEAD_LOOP_WINDOW_MS` from `executeTick` so that
-   * history retained on reopenable done/cancelled runs (which are no longer
-   * traversed, so lazy per-channel pruning never runs) cannot grow the table
-   * without bound on a long-lived daemon. See {@link pruneExpiredCycleEvents}.
-   */
   private lastGlobalCyclePruneAt = 0;
 
-  /**
-   * InternalEventBus for publishing typed Space domain events.
-   *
-   * Subscribers like `SpaceAgentNotificationService` listen here to translate
-   * runtime events into agent-facing messages. May be undefined when the
-   * runtime is constructed in tests that don't need to assert on the bus.
-   */
   private internalEventBus: InternalEventBus<DaemonInternalEventMap> | undefined;
 
-  /**
-   * Lazy-initialized SDK message repository used for thread-event emission.
-   * Sourced from `config.sdkMessageRepo` when provided, otherwise constructed
-   * on first use from `config.db`.
-   */
   private sdkMessageRepo: SDKMessageRepository | null = null;
 
-  /**
-   * Completion detector — inspects canonical `SpaceTask` to decide completion.
-   * Initialized from config or defaulted to `new CompletionDetector(taskRepo)`.
-   */
   private completionDetector: CompletionDetector;
 
-  /**
-   * Deduplication set for notifications keyed by `taskId:status` (e.g. `task-1:blocked`
-   * or `task-1:timeout`). Prevents re-notifying for the same task+status across ticks.
-   * Entries are cleared when the task leaves the flagged state.
-   *
-   * Restart contract: this set is in-memory only and starts empty on every daemon restart.
-   * Tasks already in `blocked` at restart time will be re-notified once on the first
-   * tick. This is intentional: the Space Agent session is also new after restart and needs to
-   * learn about outstanding issues. No DB persistence for dedup state is required.
-   */
   private notifiedTaskSet = new Set<string>();
 
-  /**
-   * In-memory crash counter per execution key (`${runId}:${nodeExecutionId}`).
-   *
-   * Tracks how many times a workflow node agent session has been detected dead.
-   * When the count reaches MAX_TASK_AGENT_CRASH_RETRIES, the node execution is
-   * escalated to `blocked`. Below the limit, execution is reset to `pending` for
-   * re-spawn to tolerate transient startup failures.
-   *
-   * Reset contract: this map is in-memory only and starts empty on every daemon restart.
-   */
   private taskCrashCounts = new Map<string, number>();
 
-  /**
-   * In-memory retry counter per workflow run ID.
-   *
-   * Tracks how many times a blocked run has been automatically recovered by
-   * resetting its blocked executions to `pending`. When the count reaches
-   * MAX_BLOCKED_RUN_RETRIES, the run stays blocked and a
-   * `workflow_run_needs_attention` event is emitted instead.
-   *
-   * Reset contract: in-memory only, starts empty on every daemon restart.
-   */
   private blockedRetryCounts = new Map<string, number>();
 
-  /** In-memory store of resolved channels per run ID. Replaces run.config._resolvedChannels. */
   private workflowChannelsMap = new Map<string, WorkflowChannel[]>();
 
-  /**
-   * Tracks idle executions whose last SDK message was non-terminal.
-   *
-   * This is an in-memory guard only. Naturally idle incomplete executions are
-   * preserved; qualified stale idle sessions receive one direct runtime nudge,
-   * then repeated qualified idle is logged for human visibility.
-   */
   private nonTerminalIdleStates = new Map<string, NonTerminalIdleState>();
 
-  /**
-   * In-memory recovery state keyed by `${runId}:${nodeExecutionId}` for
-   * node-agent sessions that ended on a terminal error result.
-   *
-   * Bounds auto-continue injections (`MAX_TERMINAL_ERROR_CONTINUE_RETRIES`)
-   * before escalating to `blocked`, and short-circuits deterministic repeats.
-   */
   private terminalErrorContinueStates = new Map<string, TerminalErrorContinueState>();
 
-  /**
-   * In-memory Layer 1 recovery state keyed by `${runId}:${nodeExecutionId}`.
-   * NodeExecution IDs are per agent slot, so a stuck agent in a multi-agent node
-   * can be nudged/restarted without touching sibling agents.
-   */
   private agentStuckRecovery = new Map<string, AgentStuckRecoveryState>();
 
-  /**
-   * Prompt-too-long recovery state keyed by `${runId}:${nodeExecutionId}`.
-   * Tracks compact-then-continue progress for executions that overflowed their
-   * context window and received a terminal `prompt_too_long` result.
-   */
   private promptTooLongRecovery = new Map<string, PromptTooLongRecoveryState>();
   private readonly toolContinuationRepo: ToolContinuationRecoveryRepository;
   private readonly workflowEventSubscriptionRepo: SpaceWorkflowEventSubscriptionRepository;
@@ -1024,42 +641,13 @@ export class SpaceRuntime {
   private readonly externalEventRetryTimers = new Map<string, Timer>();
   private readonly externalEventRetryCounts = new Map<string, number>();
   private readonly externalEventDeliveriesInFlight = new Set<string>();
-  /**
-   * Tracks in-flight task reactivation promises (check_failed recovery) so
-   * concurrent deliveries targeting the same task await the recovery —
-   * including ensureExecutorRegistered / prepareSubSessionForWorkflowResume —
-   * before injecting into the session, avoiding stale/missing workflow tools.
-   */
   private readonly recoveryInFlight = new Map<string, Promise<void>>();
   private readonly cancelledLongHorizonDeliveries = new Set<string>();
   private readonly longHorizonSubscriptionPatterns = new Map<string, string>();
   private readonly externalEventRateLimits = new Map<string, ExternalEventRateLimitState>();
-  /**
-   * Per-delivery cool-down: maps a delivery key (event + target — see
-   * {@link buildDeliveryKey}) to the epoch ms of its last RECOVERABLE delivery
-   * failure. While `now - lastFailureAt < {@link deliveryCooldownMs}`, a FRESH
-   * dispatch (publish / re-poll) of that same delivery is skipped in
-   * {@link handleExternalEventImpl} so a session stuck in a provider-error loop
-   * does not mint a fresh `failed` user-message row on every source re-poll of
-   * the same event. Distinct events and the bounded retry path
-   * ({@link scheduleExternalEventRetry}, which bypasses
-   * {@link handleExternalEventImpl}) are unaffected. Entries hold only a
-   * timestamp (no timers) and expire lazily in
-   * {@link isDeliveryInDeliveryCooldown}.
-   */
   private readonly externalEventDeliveryCooldowns = new Map<string, number>();
-  /**
-   * Active cool-down window (ms). Bound from config at construction so tests can
-   * shrink it; production uses {@link EXTERNAL_EVENT_DELIVERY_COOLDOWN_MS}.
-   */
   private readonly deliveryCooldownMs: number;
-  /** Soft cap on {@link externalEventDeliveryCooldowns}; sweeps expired on arm. */
   private readonly deliveryCooldownMapCap: number;
-  /**
-   * Pending external-event queue health counters. Defaults to a fresh
-   * in-memory instance; the service wires the store's delivery-terminal hook
-   * to the same instance (when shared) so terminal outcomes are counted once.
-   */
   private readonly queueHealthMetrics: ExternalEventQueueMetrics;
   private unsubscribeExternalEventPublished?: () => void;
   private unsubscribeSdkToolUseCreated?: () => void;
@@ -1068,40 +656,10 @@ export class SpaceRuntime {
   private unsubscribeSpacePaused?: () => void;
   private unsubscribeSpaceStopped?: () => void;
   private acceptingExternalEvents = false;
-  /**
-   * Incremented by stop(). start() captures the current value for its
-   * fire-and-forget restart IIFE to detect a stop() that landed during the
-   * IIFE's awaited space scan and abort before re-subscribing/ticking a
-   * stopped runtime.
-   */
   private runtimeGeneration = 0;
-  /**
-   * False during a stop→start paused-space reconciliation; executeTick returns
-   * early while false so interval ticks can't process events against a stale
-   * pausedSpaceIds before the reconciliation IIFE rebuilds it.
-   */
   private reconciliationDone = true;
-  /**
-   * Set true by stop(), false by start(). Guards retained-event replay so an
-   * in-flight handler past the stop point cannot re-set the deferred-flush flag
-   * and inject retained events after shutdown. Defaults false so pre-start
-   * callers (tests, direct ensure) are not blocked.
-   */
   private isStopped = false;
-  /**
-   * Sync cache of paused/stopped space ids, maintained via the space
-   * pause/resume registers and seeded on rehydrate. Lets the delivery hot path
-   * defer (not inject) events for paused spaces without an async lookup —
-   * pauseSpace does not terminate sessions, so a live in_progress session would
-   * otherwise be injected during pause.
-   */
   private pausedSpaceIds = new Set<string>();
-  /**
-   * Re-entrancy depth for {@link handleExternalEvent}. When > 0, a newly-created
-   * PR auto-subscription must not synchronously redispatch retained events — it
-   * would re-handle the in-flight event. The redispatch is deferred via
-   * {@link retainedEventRedispatchPending} and flushed when depth returns to 0.
-   */
   private externalEventHandlingDepth = 0;
   private retainedEventRedispatchPending = false;
 
@@ -1113,9 +671,6 @@ export class SpaceRuntime {
     if (hasSqlExec(config.db)) {
       this.toolContinuationRepo.ensureSchema();
     }
-    // Workflow-run event subscriptions are the durable source of truth for the
-    // in-memory topic trie; auto-create the repo + table so the trie can be
-    // rebuilt purely from it on rehydrate.
     this.workflowEventSubscriptionRepo =
       config.workflowEventSubscriptionRepo ??
       new SpaceWorkflowEventSubscriptionRepository(config.db);
@@ -1181,11 +736,6 @@ export class SpaceRuntime {
     );
   }
 
-  /**
-   * Lazy accessor for the SDK message repository. Constructed from `config.db`
-   * on first use when the caller did not inject one. Centralized here so
-   * emission sites can stay one-liners and tests can inject a stub via config.
-   */
   private getSdkMessageRepo(): SDKMessageRepository {
     if (!this.sdkMessageRepo) {
       this.sdkMessageRepo = new SDKMessageRepository(this.config.db, this.config.reactiveDb);
@@ -1201,20 +751,6 @@ export class SpaceRuntime {
     return this.config.nodeExecutionRepo.createOrIgnore(params);
   }
 
-  /**
-   * Validate that a configured custom-agent reference still exists before a
-   * node_execution is created. A non-null agentId pointing at a deleted
-   * space_agents row would otherwise make the INSERT raise
-   * SQLITE_CONSTRAINT_FOREIGNKEY (INSERT OR IGNORE does not suppress foreign-key
-   * failures). Null agentId (built-in/worker slots) is always valid and left
-   * untouched — we never silently null a reference the workflow genuinely
-   * requires.
-   *
-   * This is the shared chokepoint for every runtime node-activation path (run
-   * start, restart-recovery downstream activation, event/task recovery, queued
-   * handoff). The channel-router activation path performs the same check up
-   * front with the node name for a richer diagnostic.
-   */
   private assertAgentReferenceExists(params: CreateNodeExecutionParams): void {
     const agentId = params.agentId;
     if (!agentId) return;
@@ -1236,11 +772,6 @@ export class SpaceRuntime {
     nodes: WorkflowNode[],
     options: { clearQueuedDeliveries?: boolean } = {}
   ): void {
-    // Refresh only workflow-defined static interests, preserving agent-created
-    // (dynamic) subscriptions so an agent that explicitly subscribed keeps
-    // receiving events after a re-registration. Static interests are not
-    // persisted (they are re-materialized from the definition), so only the
-    // trie needs clearing here — the durable table holds dynamic rows only.
     this.topicTrie.remove(
       (target) =>
         isWorkflowSubscriptionTarget(target) &&
@@ -1253,11 +784,6 @@ export class SpaceRuntime {
     for (const node of nodes) {
       for (const agentEntry of resolveNodeAgents(node)) {
         for (const interest of agentEntry.eventInterests ?? []) {
-          // Only static `topic` interests are registered here. A `topicFrom`
-          // interest is resolved into a concrete topic against the run's primary
-          // link at subscription time (see `resolveTopicFromInterest`); that
-          // resolution is wired in a later PR, so `topicFrom` interests are
-          // intentionally inert here and must not enter the trie yet.
           if (typeof interest.topic !== 'string') continue;
           const result = this.registerSubscription(
             workflowRunId,
@@ -1283,28 +809,12 @@ export class SpaceRuntime {
   private registerRunInterestsFromWorkflow(run: SpaceWorkflowRun, workflow: SpaceWorkflow): void {
     const task = this.pickCanonicalTaskForRun(run, this.config.taskRepo.listByWorkflowRun(run.id));
     if (!task) return;
-    // Skip static re-materialization when the canonical task is terminal or
-    // retryably cancelled: its static interests were cleared by the task
-    // lifecycle (clearTaskInterests on done/archived,
-    // clearTaskInterestsPreservingDynamic on cancelled), and re-adding them
-    // would undo that — a matching event would terminalize as
-    // target_task_terminal instead of waiting for the task to resume (retry) or
-    // fan out to a dead target. (Not gated on RUN status: a done run whose task
-    // is review/approved still needs its static interests for the post-approval
-    // phase.)
     if (task.status === 'cancelled' || task.status === 'done' || task.status === 'archived') {
       return;
     }
     this.registerRunInterests(run.id, task.id, workflow.nodes);
   }
 
-  /**
-   * Register a single external event subscription for a specific workflow
-   * run target. This is the primary entry point for runtime-driven
-   * subscription registration (MCP tool, gate/artifact scripts).
-   *
-   * For test use and future runtime callers.
-   */
   registerSubscription(
     workflowRunId: string,
     taskId: string,
@@ -1325,29 +835,14 @@ export class SpaceRuntime {
     }
     const normalized = trimmed.toLowerCase();
     const subscriptionKind = options.subscriptionKind ?? 'dynamic';
-    // Resolve the run before mutating anything. A stale worker whose run is gone
-    // would yield an undeliverable, non-durable target — reject up front.
     const run = this.config.workflowRunRepo.getRun(workflowRunId);
     if (!run) {
       return { success: false, error: `Workflow run not found: ${workflowRunId}` };
     }
-    // The task-lifecycle gate applies to DYNAMIC (agent-driven) registrations
-    // only: a stale worker subscribing after its task is terminal/detached would
-    // persist a row that fans out to a known-invalid target. STATIC interests are
-    // runtime-driven re-materialization (registerRunInterests), and a run can be
-    // rehydratable (in_progress/blocked) with a retryably-CANCELLED canonical
-    // task — rejecting there would make registerRunInterests throw and abort the
-    // whole rehydrate pass, so static skips this check (run-level eligibility
-    // already gates the static-rebuild loop).
     if (subscriptionKind === 'dynamic') {
       const taskError = this.validateSubscriptionTargetTask(run, taskId);
       if (taskError) return { success: false, error: taskError };
     }
-    // Capture the entry this registration displaces (idempotent re-registration
-    // of the same slot+topic+kind) so the trie can be restored if a later step
-    // fails — otherwise the dedup-remove below drops the pre-existing entry
-    // while the table keeps its row, and events stop reaching the still-
-    // subscribed actor until restart.
     const displaced = this.findExactWorkflowSubscriptionTarget(
       workflowRunId,
       taskId,
@@ -1366,8 +861,6 @@ export class SpaceRuntime {
         target.subscriptionKind === subscriptionKind &&
         target.topic?.toLowerCase() === normalized
     );
-    // The per-slot cap protects against agents registering excessive
-    // user/static/dynamic interests on a single slot.
     const existingInterests = this.topicTrie.count(
       (target) =>
         isWorkflowSubscriptionTarget(target) &&
@@ -1390,15 +883,6 @@ export class SpaceRuntime {
       topic: trimmed,
       subscriptionKind,
     });
-    // Write-through: persist DYNAMIC subscriptions so they survive a daemon
-    // restart — these cannot be re-derived, so the table is their only source.
-    // Static (template) interests are deliberately NOT persisted: they are
-    // re-materialized from the workflow definition on rehydrate
-    // (`ensureExecutorRegistered` / the static-rebuild loop), which already
-    // applies the correct review/post-approval eligibility. The slot+topic+kind
-    // is the upsert key, so re-registering is idempotent. If the durable write
-    // fails, roll back the trie insert so the two stay consistent (the entry
-    // would not survive a restart anyway) and surface the failure.
     if (subscriptionKind === 'dynamic') {
       try {
         this.workflowEventSubscriptionRepo.upsert({
@@ -1411,8 +895,6 @@ export class SpaceRuntime {
           subscriptionKind,
         });
       } catch (err) {
-        // Roll back the new trie entry and restore whatever re-registration
-        // displaced, keeping the trie consistent with the durable store.
         this.topicTrie.remove(
           (target) =>
             isWorkflowSubscriptionTarget(target) &&
@@ -1431,26 +913,12 @@ export class SpaceRuntime {
         return { success: false, error: 'Failed to persist subscription.' };
       }
     }
-    // An event can arrive in the brief interval between an external resource
-    // being created and the actor registering its dynamic interest. Unmatched
-    // events stay `published` for the bounded retention TTL; replay here so a
-    // newly-registered interest receives any event that arrived in that gap.
-    // Static interests are rebuilt during rehydrate before the runtime accepts
-    // events, so only runtime-created dynamic interests need the direct replay.
     if (subscriptionKind === 'dynamic') {
       this.redispatchRetainedExternalEvents();
     }
     return { success: true };
   }
 
-  /**
-   * Verify `taskId` belongs to `run` and is in a lifecycle that can still
-   * deliver events. Applied to DYNAMIC (agent-driven) registrations only — a
-   * stale worker subscribing after its task is terminal (done/archived/cancelled)
-   * or detached from the run would persist a row that fans events out to a
-   * known-invalid target (delivery rejects it; task-lifecycle cleanup already
-   * fired). Returns an error string, or null when the task is eligible.
-   */
   private validateSubscriptionTargetTask(run: SpaceWorkflowRun, taskId: string): string | null {
     const task = this.config.taskRepo.getTask(taskId);
     if (!task || task.workflowRunId !== run.id) {
@@ -1462,11 +930,6 @@ export class SpaceRuntime {
     return null;
   }
 
-  /**
-   * Find the existing workflow-subscription trie entry for an exact slot + topic
-   * (case-insensitive) + kind, if any. Used to capture the entry an idempotent
-   * re-registration displaces so it can be restored on a later failure.
-   */
   private findExactWorkflowSubscriptionTarget(
     workflowRunId: string,
     taskId: string,
@@ -1489,29 +952,6 @@ export class SpaceRuntime {
       );
   }
 
-  /**
-   * Read-only diagnostic snapshot of a run's external-event subscriptions across
-   * three layers (Task #908):
-   *   1. `declared`  — static interests from the workflow definition (durable).
-   *   2. `persisted` — dynamic rows from `space_workflow_event_subscriptions` (durable).
-   *   3. `active`    — in-memory trie entries (live cross-check ONLY).
-   *
-   * The durable layers (1 + 2) are the source of truth; the trie (3) is never
-   * the answer, only a sanity check — each active entry is reconciled against
-   * durable state so declared-vs-active drift surfaces as `source: 'orphan'`,
-   * and durable rows missing from the trie surface via `active: false` plus the
-   * `mismatches` counts. For task #896 this returns "Coding node has no declared
-   * PR-event interest" from durable data alone.
-   *
-   * `spaceId` guards cross-space access: a run in another space is rejected.
-   *
-   * `declaredNotActive` only fires when a static entry *should* be live — i.e.
-   * the run's canonical task is non-terminal. For a terminal task
-   * (`done`/`archived`/`cancelled`) `registerRunInterestsFromWorkflow`
-   * deliberately clears static interests, so their `active: false` is expected
-   * lifecycle cleanup, not drift (the count is suppressed there to keep the
-   * headline signal honest for the common "investigate a finished run" case).
-   */
   listSubscriptions(
     workflowRunId: string,
     spaceId: string,
@@ -1527,10 +967,6 @@ export class SpaceRuntime {
     const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run) ?? null;
     const definitionResolved = workflow !== null;
     const nodeFilter = nodeId ?? null;
-    // Whether static interests should currently be materialized in the trie.
-    // Mirrors registerRunInterestsFromWorkflow, which skips static re-materialization
-    // when the canonical task is absent or terminal (its interests were cleared by the
-    // task lifecycle). When false, declared `active: false` is expected, not drift.
     const canonicalTask = this.pickCanonicalTaskForRun(
       run,
       this.config.taskRepo.listByWorkflowRun(run.id)
@@ -1541,7 +977,6 @@ export class SpaceRuntime {
       canonicalTask.status !== 'archived' &&
       canonicalTask.status !== 'cancelled';
 
-    // Layer 1 — declared static interests, re-derived from the definition.
     const declared: SubscriptionDeclaredInterest[] = [];
     if (workflow) {
       for (const node of workflow.nodes) {
@@ -1550,7 +985,7 @@ export class SpaceRuntime {
         try {
           agents = resolveNodeAgents(node);
         } catch {
-          continue; // malformed node — nothing to declare.
+          continue;
         }
         for (const agent of agents) {
           for (const interest of agent.eventInterests ?? []) {
@@ -1562,7 +997,6 @@ export class SpaceRuntime {
               topic,
               topicFrom: interest.topicFrom ?? null,
               label: interest.label ?? null,
-              // topicFrom interests are inert (no resolver yet) → never active.
               active: false,
             });
           }
@@ -1570,7 +1004,6 @@ export class SpaceRuntime {
       }
     }
 
-    // Layer 2 — persisted dynamic rows.
     const persisted: SubscriptionPersistedRow[] = this.workflowEventSubscriptionRepo
       .listByRun(workflowRunId)
       .filter((row) => !nodeFilter || row.nodeId === nodeFilter)
@@ -1584,11 +1017,6 @@ export class SpaceRuntime {
         active: false,
       }));
 
-    // Layer 3 — active in-memory trie entries (workflow targets for this run).
-    // values() walks the whole per-space trie, so this is O(total subscriptions
-    // in the space); acceptable for an occasionally-invoked diagnostic. A
-    // run-indexed trie structure can be added later if this is ever called in a
-    // loop or spaces grow large.
     const active: SubscriptionActiveEntry[] = this.topicTrie
       .values()
       .filter(
@@ -1606,17 +1034,6 @@ export class SpaceRuntime {
         source: 'orphan' as const,
       }));
 
-    // Reconcile durable ↔ trie via normalized keys.
-    //
-    // Dynamic keys include the taskId so two tasks sharing a slot+topic can't
-    // cross-match. Static declaration is slot-level (no task), but a static trie
-    // entry only "effectively" backs a declaration when the definition loaded
-    // (definitionResolved), the canonical task is non-terminal
-    // (staticMaterializable), AND the entry belongs to the canonical task — a
-    // duplicate/superseded task's static entry is stale. When the definition
-    // itself is unavailable, a static entry's backing is unverifiable, reported
-    // as `source: 'unknown'` (neither drift nor confirmed) rather than a false
-    // `orphan`.
     const canonicalTaskId = canonicalTask?.id ?? null;
     const activeStaticKeys = new Set<string>();
     const activeDynamicKeys = new Set<string>();
@@ -1639,7 +1056,7 @@ export class SpaceRuntime {
     }
     const declaredKeys = new Set<string>();
     for (const d of declared) {
-      if (d.topic === null) continue; // topicFrom is not reconcilable yet.
+      if (d.topic === null) continue;
       const key = subscriptionReconcileKey(d.nodeId, d.agentName, d.topic);
       declaredKeys.add(key);
       d.active = activeStaticKeys.has(key);
@@ -1655,7 +1072,7 @@ export class SpaceRuntime {
       if (entry.subscriptionKind === 'static') {
         if (!definitionResolved) {
           entry.source = 'unknown';
-          continue; // declaration layer unavailable — can't classify, don't count
+          continue;
         }
         const canonicalOwned = !canonicalTaskId || entry.taskId === canonicalTaskId;
         const backed =
@@ -1683,8 +1100,6 @@ export class SpaceRuntime {
         persisted,
         active,
         mismatches: {
-          // Only count as drift when a static entry should be live; for terminal
-          // tasks static interests are intentionally cleared (see above).
           declaredNotActive: staticMaterializable
             ? declared.filter((d) => d.topic !== null && !d.active).length
             : 0,
@@ -1863,19 +1278,7 @@ export class SpaceRuntime {
     this.clearQueuedDeliveriesForRun(workflowRunId, 'run_terminal_cleanup');
   }
 
-  /**
-   * Like {@link clearRunInterests} but preserves agent-created `dynamic`
-   * subscriptions. Used for a retryable task cancellation: the run's static and
-   * runtime-auto interests are cleared (the task is no longer active), but a
-   * reused worker session keeps the topics it registered via
-   * `subscribe_external_event` so a later retry still receives them. A full
-   * `clearRunInterests` (also dropping dynamic) is used for permanent teardown
-   * (archive, space delete).
-   */
   clearRunInterestsPreservingDynamic(workflowRunId: string): void {
-    // Only the trie needs clearing: the durable table holds dynamic rows only,
-    // which this path intentionally preserves for retry. Static interests are
-    // not persisted.
     this.topicTrie.remove(
       (target) =>
         isWorkflowSubscriptionTarget(target) &&
@@ -1885,18 +1288,6 @@ export class SpaceRuntime {
     this.clearQueuedDeliveriesForRun(workflowRunId, 'run_terminal_cleanup');
   }
 
-  /**
-   * Remove only the trie interests belonging to a specific task (by taskId),
-   * without affecting other tasks on the same run. Used when a noncanonical
-   * duplicate task is cancelled or archived — the run-wide clear would
-   * incorrectly strip the canonical task's subscriptions.
-   */
-  /**
-   * Add a space to the synchronous delivery-hold cache so external events are
-   * deferred (not injected) while the space is being stopped. Called by
-   * stopActiveWork BEFORE its async task cleanup so a check_failed cannot
-   * reactivate a task during the cleanup window.
-   */
   holdSpaceDeliveries(spaceId: string): void {
     this.pausedSpaceIds.add(spaceId);
   }
@@ -1909,15 +1300,7 @@ export class SpaceRuntime {
     this.clearQueuedDeliveriesForTask(taskId);
   }
 
-  /**
-   * Task-scoped variant that preserves dynamic subscriptions. Used for a
-   * retryable cancellation: the cancelled task's static/auto interests are
-   * cleared, but a reused worker session keeps its subscribe_external_event
-   * topics for a potential retry.
-   */
   clearTaskInterestsPreservingDynamic(taskId: string): void {
-    // Trie-only: the durable table holds dynamic rows only, which this path
-    // preserves for retry. Static interests are not persisted.
     this.topicTrie.remove(
       (target) =>
         isWorkflowSubscriptionTarget(target) &&
@@ -1927,13 +1310,6 @@ export class SpaceRuntime {
     this.clearQueuedDeliveriesForTask(taskId);
   }
 
-  /**
-   * Reset any blocked node executions for a run back to pending. Called by
-   * direct resume paths that bypass the normal blocked → in_progress
-   * transition so the tick loop
-   * re-drives the recovered slot instead of short-circuiting through the
-   * blocked-execution guard. Best-effort — errors are logged and swallowed.
-   */
   resetBlockedExecutionsForRun(runId: string): void {
     try {
       const executions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
@@ -1951,19 +1327,8 @@ export class SpaceRuntime {
     }
   }
 
-  /**
-   * Expire retained published events past their TTL, then redispatch any
-   * published events that still have no delivery rows so a newly-registered
-   * subscription can pick them up. Public so the service can replay after a
-   * run transitions to in_progress (e.g. a gate-open resume). Re-entrancy-safe:
-   * when called from inside handleExternalEvent (e.g. via the blocked-run gate
-   * hook), it defers to the post-handling flush so the in-flight event is not
-   * re-handled before its delivery rows are registered. Idempotent.
-   */
   redispatchRetainedExternalEvents(): void {
     if (this.externalEventHandlingDepth > 0) {
-      // Don't set the deferred-flush flag on a stopped runtime — an in-flight
-      // handler past the stop point shouldn't trigger a post-shutdown flush.
       if (!this.isStopped) {
         this.retainedEventRedispatchPending = true;
       }
@@ -1980,12 +1345,6 @@ export class SpaceRuntime {
 
     let dispatched = 0;
     for (const item of dispatchable) {
-      // A concurrent cleanup may have marked this delivery terminal while the
-      // batch was being prepared. Skip dispatch rather than injecting into a
-      // target that is no longer eligible. Also re-check the current trie: the
-      // persisted delivery row can still be non-terminal if another identical
-      // interest remains, but a queued in-memory item for this target must not
-      // flush after its specific subscription was removed.
       const deliveryTerminal = this.config.externalEventStore?.isDeliveryTerminal(
         item.event.eventId,
         item.deliveryKey
@@ -2037,10 +1396,6 @@ export class SpaceRuntime {
 
     let dispatched = 0;
     for (const item of dispatchable) {
-      // A concurrent cleanup (unregisterExecution, subscription removal, or
-      // run terminalization) may have marked this delivery terminal while the
-      // ordered batch was being prepared. Skip dispatch rather than injecting
-      // an event into a target that is no longer eligible.
       const deliveryTerminal = this.config.externalEventStore?.isDeliveryTerminal(
         item.event.eventId,
         item.deliveryKey
@@ -2086,9 +1441,6 @@ export class SpaceRuntime {
     const queued = this.pendingExternalEventQueue.get(key);
     const inMemoryDeliveryKeys = new Set(queued?.map((item) => item.deliveryKey) ?? []);
 
-    // Collect dispatchable items from both in-memory queue and DB-persisted
-    // pending deliveries into a single list so they can be sorted and
-    // dispatched in chronological order.
     const dispatchable: PendingExternalEvent[] = [];
 
     if (queued) {
@@ -2113,10 +1465,6 @@ export class SpaceRuntime {
 
     if (dispatchable.length === 0) return { targetWithExecution, dispatchable };
 
-    // Sort by createdAt so events from both sources are dispatched in
-    // chronological order regardless of which queue held them. Uses stable
-    // sort (default in modern JS engines) so items with the same createdAt
-    // preserve their insertion order (FIFO from the in-memory queue).
     dispatchable.sort((a, b) => a.createdAt - b.createdAt);
 
     return { targetWithExecution, dispatchable };
@@ -2140,19 +1488,6 @@ export class SpaceRuntime {
           delivery.agentName === target.agentName &&
           delivery.deliveryKey !== excludeDeliveryKey &&
           !skipDeliveryKeys.has(delivery.deliveryKey) &&
-          // Only flush deliveries that carry an explicit retryable
-          // failureReason (e.g. `node_execution_not_active`). A `pending` row
-          // with a null failureReason is still owned by its original dispatch
-          // path and re-dispatching it here would duplicate delivery. The three
-          // in-process owners of a null-failureReason pending row are:
-          //   1. the in-memory pending queue (queueForPendingNode) — already
-          //      drained by the caller and excluded via `skipDeliveryKeys`,
-          //   2. an in-flight dispatch (externalEventDeliveriesInFlight), and
-          //   3. a pending rate-limit digest (externalEventRateLimits.pendingDigest),
-          //      for which this filter is the *only* guard against a duplicate.
-          // Rows left pending+null by a crash/interruption are recovered by
-          // requeuePersistedPendingDeliveries() on the next rehydrate, which
-          // re-queues ALL pending rows (null or not) so none stay stranded.
           delivery.failureReason !== null
       )
       .map((delivery) => {
@@ -2194,10 +1529,6 @@ export class SpaceRuntime {
 
       const mode = deliveryModeFromFailureReason(delivery.failureReason);
       const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
-      // TTL anchor is the event's creation/ingestion time, NOT the delivery
-      // row's registration/updated time — see EXTERNAL_EVENT_QUEUE_TTL_MS.
-      // A delivery registered late for an already-stale event must still
-      // expire, so the event age (not the delivery age) drives the check.
       const queuedItem: PendingExternalEvent = {
         event: eventPayload,
         deliveryKey: delivery.deliveryKey,
@@ -2236,11 +1567,6 @@ export class SpaceRuntime {
     });
 
     if (matches.length === 0) {
-      // Keep unmatched events published for the bounded retention TTL. This is
-      // connector-agnostic: any actor that registers a dynamic interest moments
-      // after an external resource is created can replay the event that arrived
-      // in the registration gap. The periodic TTL sweep terminalizes events that
-      // never gain a matching interest, so this does not grow without bound.
       if (this.acceptingExternalEvents && this.isPublishedExternalEventExpired(payload)) {
         try {
           store.markEventFailed(payload.eventId, {
@@ -2303,11 +1629,6 @@ export class SpaceRuntime {
       await this.deliverToLongHorizonAgent(target, payload, deliveryKey);
     }
 
-    // If a reactive check_failed requires reactivation, perform the shared
-    // task/run recovery ONCE before per-target delivery. This makes the reopen
-    // atomic: every matching target then delivers against the already-in_progress
-    // task instead of each target independently deciding to recover, which could
-    // otherwise leave multiple slots handling one reactivation inconsistently.
     const reactivationTarget = [...workflowDeliveries.values()]
       .filter(
         ({ deliveryKey }) =>
@@ -2319,10 +1640,6 @@ export class SpaceRuntime {
     if (reactivationTarget) {
       const task = this.config.taskRepo.getTask(reactivationTarget.taskId);
       if (task) {
-        // Check-then-create: if a concurrent handler already started recovery for
-        // this task, reuse its promise instead of overwriting. The finally only
-        // deletes the entry when it is still ours, so a concurrent recovery's
-        // entry is not prematurely removed.
         const existing = this.recoveryInFlight.get(task.id);
         if (existing) {
           await existing;
@@ -2348,19 +1665,6 @@ export class SpaceRuntime {
     }
 
     for (const { target, deliveryKey } of workflowDeliveries.values()) {
-      // Failure-aware cool-down: a delivery whose last dispatch failed
-      // RECOVERABLY is skipped for a bounded window on FRESH dispatches (a newly
-      // published or re-polled event). Without this, a session stuck in a
-      // provider-error loop mints a fresh `failed` user-message row on every
-      // source re-poll of the same event (each injection generates a new UUID).
-      // The event stays `published` (delivery pending) and re-evaluates once the
-      // window lifts; the core turn-recovery fix recovers the session in the
-      // meantime. Keyed per-delivery so distinct events still flow (the burst
-      // rate-limit / digest coalesces them) and only re-dispatches of an
-      // already-failed delivery are gated. The bounded retry path
-      // (scheduleExternalEventRetry) does NOT pass through here, so legitimate
-      // transient-failure retries are unaffected. Terminal failures never arm
-      // the cool-down.
       if (this.isDeliveryInDeliveryCooldown(deliveryKey)) {
         this.queueHealthMetrics.recordCooldownSkip();
         continue;
@@ -2369,12 +1673,6 @@ export class SpaceRuntime {
     }
   }
 
-  /**
-   * Deliver (or queue/retry) a single external-event payload to a specific
-   * workflow subscription target. This is the per-target logic extracted from
-   * handleExternalEvent so activation retries can be scoped to the original
-   * delivery instead of replaying the entire event and re-computing matches.
-   */
   private async deliverExternalEventToWorkflowTarget(
     target: WorkflowSubscriptionTarget,
     payload: ExternalEventPublishedPayload,
@@ -2382,13 +1680,8 @@ export class SpaceRuntime {
   ): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store) return;
-    // If a task reactivation (check_failed recovery) is in flight for this task,
-    // await it before delivering — the executor/MCP-server restoration must finish
-    // first to avoid injecting with stale or missing workflow tools.
     const pendingRecovery = this.recoveryInFlight.get(target.taskId);
     if (pendingRecovery) await pendingRecovery;
-    // Re-resolve the target at retry/delivery time so a session that appeared
-    // since the delivery was registered is picked up.
     const resolved = this.resolveSubscriptionTarget(target);
     try {
       if (store.isDeliveryTerminal(payload.eventId, deliveryKey)) {
@@ -2432,27 +1725,10 @@ export class SpaceRuntime {
 
       const preparedTarget = taskDecision.target;
       const currentExecution = this.getCurrentQueueableOrActiveExecution(preparedTarget);
-      // NOTE: a `pull_request.synchronize` event is intentionally NOT used to
-      // refresh lastActivityAt here. It is a PR-level event that fans out to
-      // EVERY subscribed target (coder + reviewer both subscribe to the run's
-      // PR), so stamping on it would mark idle co-subscribers active and
-      // suppress their stall nag. A node's OWN commit push is already captured
-      // — the push is a tool call (`git`/`gh`) on that node's session, which
-      // the sdk.toolUse activity source refreshes, correctly attributed to just
-      // the pushing node. An external push (human/bot) is not agent activity.
       if (preparedTarget.sessionId && this.isTargetSessionLive(preparedTarget.sessionId)) {
-        // pauseSpace does not terminate sessions, so a live in_progress session
-        // would otherwise be injected now, defeating the pause. Skip injection
-        // while the target's space is paused/stopped (sync cache updated via the
-        // space pause/resume registers) — the delivery stays pending and is
-        // requeued by onSpaceResumed. (Regressed by this PR's in_progress
-        // auto-subscription, which now matches PR events during pause.)
         const targetRun = this.config.workflowRunRepo.getRun(preparedTarget.workflowRunId);
         if (targetRun && this.pausedSpaceIds.has(targetRun.spaceId)) {
           this.queueHealthMetrics.recordPausedSpaceSkip();
-          // Persist the defer mode: onSpaceResumed requeues pending
-          // deliveries and reconstructs a null failureReason as 'immediate',
-          // which would steer the kickoff turn after resume.
           store.markDeliveryFailed(payload.eventId, deliveryKey, {
             terminal: false,
             reason: 'deliveryMode:defer; space_paused',
@@ -2460,13 +1736,7 @@ export class SpaceRuntime {
           return;
         }
         const eventRecord = store.getById(payload.eventId);
-        // Normalize a stale persisted 'interrupted' state (daemon crash
-        // between setInterrupted and setIdle) to idle first: the inject layer
-        // treats 'interrupted' as busy, so a defer handoff against it would
-        // persist a row nothing replays.
         await this.normalizeStaleInterruptedSession(preparedTarget.sessionId);
-        // A session mid-interrupt cannot replay a deferred row (P2): park the
-        // delivery and retry once the interrupt resolves to a true idle.
         if (
           this.parkDeliveryForInterruptedSession(
             preparedTarget,
@@ -2477,15 +1747,6 @@ export class SpaceRuntime {
         ) {
           return;
         }
-        // External events ALWAYS deliver on the "next" boundary: insert when
-        // idle, defer/queue when busy and deliver at the next idle point — never
-        // inject mid-work. Force 'defer' and let the inject layer
-        // (injectMessageIntoSession) decide idle→deliver-now vs busy→replay-at-
-        // idle. resolveIncludeCurrentDeliveryMode defaulted to 'immediate' for
-        // fresh deliveries, which derailed an actively-processing session.
-        // Known gap deferred to message-delivery-v2 (task #951): the replayed
-        // turn's completion is not tracked by the node execution (the one-shot
-        // completion callback fires on the pre-replay idle).
         await this.flushPendingNodeQueueAsync(preparedTarget, deliveryKey, {
           event: payload,
           deliveryKey,
@@ -2493,9 +1754,6 @@ export class SpaceRuntime {
           createdAt: eventRecord?.createdAt ?? Date.now(),
         });
       } else if (preparedTarget.sessionId) {
-        // The session captured at spawn is no longer live (worker crashed or
-        // was superseded) — defer the delivery rather than injecting into a
-        // dead session. Counts as a stale-session skip for queue health.
         this.queueHealthMetrics.recordStaleSessionSkip();
         const eventRecord = store.getById(payload.eventId);
         await this.flushPendingNodeQueueAsync(preparedTarget, deliveryKey, {
@@ -2509,11 +1767,6 @@ export class SpaceRuntime {
         currentExecution?.status === 'waiting_rebind'
       ) {
         const eventRecord = store.getById(payload.eventId);
-        // Queue in 'defer' mode: the stored mode is forwarded unchanged at
-        // flush time, and an 'immediate' item flushed into an
-        // already-processing session would steer it mid-turn — violating the
-        // never-inject-mid-work intent. Defer is a no-op difference for a
-        // fresh idle session (defer + idle delivers now).
         this.queueForPendingNode(
           preparedTarget,
           payload,
@@ -2521,11 +1774,6 @@ export class SpaceRuntime {
           'defer',
           eventRecord?.createdAt ?? Date.now()
         );
-        // Mark the persisted delivery with the defer-encoded reason (not
-        // markFailure:false): after a daemon restart the in-memory queue is
-        // gone and requeuePersistedPendingDeliveries reconstructs the mode
-        // via deliveryModeFromFailureReason. The explicit defer marker keeps
-        // the intent legible even though recovery's default is also defer.
         this.scheduleActivationRetry(
           preparedTarget,
           payload,
@@ -2553,18 +1801,13 @@ export class SpaceRuntime {
             resolved,
             payload,
             deliveryKey,
-            // Defer-encoded prefix so a daemon restart before the retry
-            // succeeds reconstructs 'defer' explicitly (recovery's default
-            // is also defer; the marker documents the queued intent).
             `deliveryMode:defer; activation_failed; ${failureReason}`
           );
           return;
         }
         if (activatedTarget?.sessionId && this.isTargetSessionLive(activatedTarget.sessionId)) {
           const eventRecord = store.getById(payload.eventId);
-          // Same stale-state normalization as the pre-activation branch above.
           await this.normalizeStaleInterruptedSession(activatedTarget.sessionId);
-          // Same mid-interrupt park as the pre-activation branch above (P2).
           if (
             this.parkDeliveryForInterruptedSession(
               activatedTarget,
@@ -2578,15 +1821,10 @@ export class SpaceRuntime {
           await this.flushPendingNodeQueueAsync(activatedTarget, deliveryKey, {
             event: payload,
             deliveryKey,
-            // Always defer to the next idle boundary — see the pre-activation
-            // live-session branch above for rationale (never inject mid-work).
             deliveryMode: 'defer',
             createdAt: eventRecord?.createdAt ?? Date.now(),
           });
         } else if (activatedTarget?.sessionId) {
-          // Activation returned a session that is already non-live (worker died
-          // during activation) — defer the delivery. Same stale-session path as
-          // the pre-activation branch above; record the skip for queue health.
           this.queueHealthMetrics.recordStaleSessionSkip();
           const eventRecord = store.getById(payload.eventId);
           await this.flushPendingNodeQueueAsync(activatedTarget, deliveryKey, {
@@ -2598,14 +1836,8 @@ export class SpaceRuntime {
         } else if (activatedTarget) {
           store.markDeliveryFailed(payload.eventId, deliveryKey, {
             terminal: false,
-            // Defer-encoded so a daemon restart reconstructs 'defer'
-            // explicitly (recovery's default is also defer).
             reason: 'deliveryMode:defer; node_execution_not_active',
           });
-          // The persisted retryable delivery plus the activation retry timer
-          // are sufficient; do not duplicate it in the in-memory queue.
-          // In-memory items use queue-time ordering, which would break the
-          // chronological ordering between persisted pending deliveries.
           if (!(await this.isTargetSpacePausedOrStopped(activatedTarget))) {
             this.scheduleActivationRetry(
               activatedTarget,
@@ -2628,7 +1860,6 @@ export class SpaceRuntime {
               resolved,
               payload,
               deliveryKey,
-              // Defer-encoded — same restart-recovery rationale as above.
               'deliveryMode:defer; node_execution_not_active'
             );
           }
@@ -2664,12 +1895,6 @@ export class SpaceRuntime {
     ) {
       return null;
     }
-    // Guard against spurious activation of slots that are not meaningfully
-    // activatable from an event. These are availability decisions (not task
-    // lifecycle): a cancelled execution is a permanently finished slot, a
-    // blocked execution is owned by the blocked-run recovery path, and a
-    // target with no execution history is a workflow node that has not been
-    // reached by normal progression (queue for it instead of pre-spawning).
     if (this.hasTerminalExecutionForTarget(target)) return null;
     const currentExecution = this.getCurrentQueueableOrActiveExecution(target);
     if (currentExecution?.status === 'blocked') return null;
@@ -2690,10 +1915,6 @@ export class SpaceRuntime {
         workflowNodeId: target.nodeId,
       }
     );
-    // If activation timed out or could not produce a session, return the target
-    // so the caller queues the event and schedules a bounded activation retry.
-    // Returning null here would strand the event in the pending queue with no
-    // retry timer.
     if (activated.length === 0) return target;
 
     return this.resolveSubscriptionTarget(target);
@@ -2783,10 +2004,6 @@ export class SpaceRuntime {
     const attempts = (this.externalEventRetryCounts.get(deliveryKey) ?? 0) + 1;
     this.externalEventRetryCounts.set(deliveryKey, attempts);
     if (attempts > EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS) {
-      // Prefix with a retry-exhaustion marker so the queue-health categorizer
-      // recognizes these as retry_exhausted regardless of the underlying error
-      // message (which may be an arbitrary thrown string from the injected
-      // long-horizon delivery fn, not one of the enumerated literals).
       this.config.externalEventStore?.markDeliveryFailed(event.eventId, deliveryKey, {
         terminal: true,
         reason: `retry_exhausted; ${failureReason}`,
@@ -2827,8 +2044,6 @@ export class SpaceRuntime {
     ) {
       return;
     }
-    // Claim synchronously so a concurrent flush cannot re-select the same
-    // persisted delivery while this path is paused on the lifecycle check.
     this.externalEventDeliveriesInFlight.add(deliveryKey);
     let retainClaim = false;
     try {
@@ -2843,10 +2058,6 @@ export class SpaceRuntime {
         return;
       }
 
-      // Rate-limit accounting is synchronous so the digest timer is armed before
-      // any awaited lifecycle check — otherwise the timer registration would slip
-      // past a caller's flush-wait macrotask. The digest path applies the task
-      // lifecycle check itself in deliverDigestToSession.
       const now = Date.now();
       const rateLimitKey = this.buildRateLimitKey(target);
       const state = this.getExternalEventRateLimitState(rateLimitKey);
@@ -2863,7 +2074,6 @@ export class SpaceRuntime {
           createdAt,
           allowTargetSessionFallback,
         });
-        // The digest path retains the claim until deliverDigestToSession runs.
         retainClaim = true;
         if (!state.digestTimer) {
           state.digestTimer = setTimeout(() => {
@@ -2874,11 +2084,6 @@ export class SpaceRuntime {
         return;
       }
 
-      // Immediate path: apply the synchronous task-lifecycle decision so the
-      // common `deliver` case reaches deliverToSession without an awaited lookup
-      // (the flush path observes injections synchronously). `reactivate` (a done
-      // task receiving a check_failed) is the only async case — handle it on a
-      // detached continuation so it cannot block or reorder synchronous dispatch.
       const taskDecision = this.prepareExternalEventTask(target, event);
       if (taskDecision.action === 'fail') {
         store.markDeliveryFailed(event.eventId, deliveryKey, {
@@ -2896,7 +2101,6 @@ export class SpaceRuntime {
         return;
       }
       if (taskDecision.action === 'reactivate') {
-        // The claim is retained across the async recovery; the helper releases it.
         retainClaim = true;
         void this.deliverReactivatedExternalEvent(
           target,
@@ -2909,7 +2113,6 @@ export class SpaceRuntime {
         return;
       }
 
-      // action === 'deliver'
       await this.deliverToSession(target, event, deliveryKey, deliveryMode, createdAt);
       this.scheduleExternalEventRateLimitCleanup(rateLimitKey);
     } finally {
@@ -2917,12 +2120,6 @@ export class SpaceRuntime {
     }
   }
 
-  /**
-   * Reactivate a done task for a reactive PR check_failed event and then deliver
-   * it. Runs detached from the synchronous flush path so reactivation never
-   * blocks or reorders synchronous dispatch. Owns (and releases) the in-flight
-   * delivery claim acquired by {@link enqueueDeliverableExternalEvent}.
-   */
   private async deliverReactivatedExternalEvent(
     target: WorkflowSubscriptionTarget,
     event: ExternalEventPublishedPayload,
@@ -2945,13 +2142,9 @@ export class SpaceRuntime {
         this.clearQueuedDelivery(target, deliveryKey);
         return;
       }
-      // Check-then-create recoveryInFlight so concurrent deliveries for the
-      // same task await this recovery before injecting.
       const existingRecovery = this.recoveryInFlight.get(task.id);
       if (existingRecovery) {
         await existingRecovery;
-        // Recheck recovery success: the shared promise may have failed (task
-        // still done). Terminalize this delivery if the task wasn't reopened.
         const afterShared = this.config.taskRepo.getTask(target.taskId);
         if (!afterShared || afterShared.status === 'done') {
           store.markDeliveryFailed(event.eventId, deliveryKey, {
@@ -2980,7 +2173,6 @@ export class SpaceRuntime {
         await recoveryPromise.finally(() => {
           this.recoveryInFlight.delete(task.id);
         });
-        // If recovery failed, the task is still done — terminalize.
         const recoveredTask = this.config.taskRepo.getTask(target.taskId);
         if (!recoveredTask || recoveredTask.status === 'done') {
           store.markDeliveryFailed(event.eventId, deliveryKey, {
@@ -2993,9 +2185,6 @@ export class SpaceRuntime {
           return;
         }
       }
-      // The recovery await is a cancel/archive/pause race window: re-validate
-      // ownership, lifecycle, subscription, and paused state on the refreshed
-      // target before delivering or queueing.
       const rechecked = this.revalidateRecoveredTarget(target, event);
       if (rechecked.action === 'fail') {
         store.markDeliveryFailed(event.eventId, deliveryKey, {
@@ -3021,21 +2210,12 @@ export class SpaceRuntime {
       }
       const refreshed = rechecked.target;
       if (refreshed.sessionId && this.isTargetSessionLive(refreshed.sessionId)) {
-        // Same stale-state normalization + mid-interrupt park as the fresh
-        // live-session branches: a check_failed reactivation can land while
-        // the target session is mid-interrupt, where a defer handoff would
-        // be marked delivered with nothing owning the row's replay (and a
-        // recovered immediate row would restart the interrupted session).
         await this.normalizeStaleInterruptedSession(refreshed.sessionId);
         if (this.parkDeliveryForInterruptedSession(refreshed, event, deliveryKey, createdAt)) {
           return;
         }
         await this.deliverToSession(refreshed, event, deliveryKey, deliveryMode, createdAt);
       } else {
-        // Recovery resets the finished execution to pending with no live session.
-        // Queue the event and schedule an activation retry so it is delivered once
-        // the recovered slot spawns, instead of stranding the persisted delivery
-        // with no in-memory owner until a daemon restart.
         const eventRecord = store.getById(event.eventId);
         this.queueForPendingNode(
           refreshed,
@@ -3049,10 +2229,6 @@ export class SpaceRuntime {
             refreshed,
             event,
             deliveryKey,
-            // Encode the recovered mode so a daemon restart reconstructs it
-            // faithfully: only the explicit immediate marker recovers
-            // 'immediate'; everything else (defer marker, bare, null)
-            // recovers the defer default.
             `deliveryMode:${deliveryMode}; node_execution_not_active`
           );
         }
@@ -3114,11 +2290,6 @@ export class SpaceRuntime {
         continue;
       }
       if (taskDecision.action === 'reactivate') {
-        // A done task reactivating on a check_failed is rare in the rate-limited
-        // digest path; route it through the detached reactivation delivery rather
-        // than recovering inline (which would block the digest batch). Keep the
-        // in-flight claim held — the detached helper owns and releases it in its
-        // finally, so a concurrent flush cannot re-select and double-deliver.
         void this.deliverReactivatedExternalEvent(
           item.target,
           item.event,
@@ -3134,9 +2305,6 @@ export class SpaceRuntime {
     if (dispatchable.length === 0) return;
     items = dispatchable;
     const target = this.resolveDigestDeliveryTarget(items[0]!);
-    // Don't inject a digest while the target's space is paused (digests
-    // scheduled before the pause bypass the fresh-delivery guard). Requeue the
-    // items as pending — onSpaceResumed requeues them when the space resumes.
     const pausedRun = target.workflowRunId
       ? this.config.workflowRunRepo.getRun(target.workflowRunId)
       : null;
@@ -3158,9 +2326,6 @@ export class SpaceRuntime {
           item.deliveryMode,
           item.createdAt
         );
-        // Release the synchronous digest-path claim acquired in
-        // enqueueDeliverableExternalEvent; the item is back in the pending
-        // queue and will be re-claimed on the next flush.
         this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
       }
       if (sessionLoss) {
@@ -3246,12 +2411,6 @@ export class SpaceRuntime {
       agentName: target.agentName,
     });
     if (liveTarget?.sessionId) return liveTarget;
-    // No current worker session for this node. The activation flush's
-    // allowTargetSessionFallback may fall back to the sessionId captured at
-    // spawn time — but only when that session is still live. A superseded
-    // (dead) activation session must never receive the digest; returning a
-    // sessionless target makes deliverDigestToSession requeue the items as
-    // pending for the next activation.
     if (
       item.allowTargetSessionFallback &&
       target.sessionId &&
@@ -3276,10 +2435,6 @@ export class SpaceRuntime {
   ): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store || !target.sessionId) return;
-    // Don't inject into a live session while the target's space is paused.
-    // This is the final injection point for retries/digests scheduled before a
-    // pause that bypass the fresh-delivery guard in deliverExternalEventToWorkflowTarget;
-    // leaving the persisted delivery pending lets onSpaceResumed requeue it.
     const pausedRun = this.config.workflowRunRepo.getRun(target.workflowRunId);
     if (pausedRun && this.pausedSpaceIds.has(pausedRun.spaceId)) {
       this.queueHealthMetrics.recordPausedSpaceSkip();
@@ -3326,9 +2481,6 @@ export class SpaceRuntime {
         store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
         return;
       }
-      // Recoverable dispatch failure — arm the per-delivery cool-down so a
-      // source re-poll of this same event skips re-injection (no fresh `failed`
-      // row) while the bounded retry path below still drives recovery.
       this.armDeliveryCooldown(deliveryKey);
       const queued = this.getQueuedDelivery(target, deliveryKey);
       this.queueForRetry(
@@ -3382,9 +2534,6 @@ export class SpaceRuntime {
         deliveryMode: 'immediate',
         createdAt: eventRecord?.createdAt ?? Date.now(),
       };
-      // The event record is the authoritative TTL anchor; a queued item created
-      // before the event was backdated (or with a stale clock) must still expire
-      // when the underlying event is older than the TTL window.
       const ttlAnchor = eventRecord?.createdAt ?? queuedItem.createdAt;
       if (this.isQueuedExternalEventExpired({ ...queuedItem, createdAt: ttlAnchor })) {
         this.failQueuedDeliveryForTtl(
@@ -3462,8 +2611,6 @@ export class SpaceRuntime {
         deliveryMode,
         createdAt: eventRecord?.createdAt ?? options.createdAt ?? Date.now(),
       };
-      // The event record is the authoritative TTL anchor; prefer it over an
-      // in-memory queued item that may carry a stale queue-time timestamp.
       const ttlAnchor = eventRecord?.createdAt ?? queuedItem.createdAt;
       if (this.isQueuedExternalEventExpired({ ...queuedItem, createdAt: ttlAnchor })) {
         this.failQueuedDeliveryForTtl(
@@ -3544,9 +2691,6 @@ export class SpaceRuntime {
       createdAt: item.createdAt,
     });
     this.pendingExternalEventQueue.set(key, queue);
-    // These items are rehoused from the rate-limit digest (they bypassed
-    // queueForPendingNode), so count the enqueue here to keep the cumulative
-    // counter consistent with the live queueDepth gauge.
     this.queueHealthMetrics.recordEnqueue(
       item.event.source,
       this.describeEnqueueTargetState(item.target)
@@ -3588,25 +2732,12 @@ export class SpaceRuntime {
     this.queueHealthMetrics.recordEnqueue(event.source, this.describeEnqueueTargetState(target));
   }
 
-  /**
-   * Describe the target's run + node-execution state at enqueue time, for the
-   * queue-health `enqueueByTargetState` breakdown. Surfaces which states force
-   * an event to be queued rather than delivered immediately (e.g. an
-   * `in_progress` run whose node is still `pending`, or a `blocked` run).
-   */
   private describeEnqueueTargetState(target: WorkflowSubscriptionTarget): string {
     const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
     const nodeStatus = this.getCurrentQueueableOrActiveExecution(target)?.status ?? 'none';
     return `run=${run?.status ?? 'unknown'};node=${nodeStatus}`;
   }
 
-  /**
-   * Aggregate health snapshot for the pending external-event delivery queue,
-   * surfaced to operators/debug views. Merges cumulative counters (enqueue,
-   * flush, skips, delivered, failures by reason) with live gauges (depth, age,
-   * in-flight, digest backlog) computed from this runtime's in-memory state and
-   * the durable store. Counters are process-lifetime and reset on restart.
-   */
   getQueueHealthSnapshot(): QueueHealthSnapshot {
     const now = Date.now();
     let queueDepth = 0;
@@ -3619,8 +2750,6 @@ export class SpaceRuntime {
     for (const state of this.externalEventRateLimits.values()) {
       digestBacklog += state.pendingDigest.length;
     }
-    // Persisted-pending count + age via SQL aggregates — avoids materializing
-    // every pending row (and a full in-memory sort) on each snapshot read.
     const store = this.config.externalEventStore;
     const persisted = store ? store.summarizePendingDeliveries(now) : null;
     const gauges: QueueHealthGauges = {
@@ -3636,25 +2765,10 @@ export class SpaceRuntime {
     return this.queueHealthMetrics.snapshot(gauges, now);
   }
 
-  /**
-   * Whether a pending external-event delivery has exceeded its TTL.
-   *
-   * `item.createdAt` is the event's creation/ingestion time for DB-persisted
-   * deliveries (and the queueing time for in-memory deliveries, which ≈ event
-   * ingestion time since they are queued the moment the event is handled).
-   * Expiry is therefore event-age based — see EXTERNAL_EVENT_QUEUE_TTL_MS.
-   */
   private isQueuedExternalEventExpired(item: PendingExternalEvent, now = Date.now()): boolean {
     return now - item.createdAt > EXTERNAL_EVENT_QUEUE_TTL_MS;
   }
 
-  /**
-   * TTL check for a published source event that has no registered deliveries.
-   * Mirrors `isQueuedExternalEventExpired`: the anchor is the source event's
-   * ingestion time (`space_external_events.created_at`), not the current
-   * handling time. Used to bound how long a PR event can stay `published`
-   * waiting for a subscription to appear.
-   */
   private isPublishedExternalEventExpired(
     payload: ExternalEventPublishedPayload,
     now = Date.now()
@@ -3731,11 +2845,6 @@ export class SpaceRuntime {
     }
   }
 
-  /**
-   * Task-scoped variant: fail persisted pending deliveries and clear in-memory
-   * queue entries whose target belongs to the given taskId (across all
-   * runs/nodes/agents), without affecting other tasks on the same run.
-   */
   private clearQueuedDeliveriesForTask(taskId: string): void {
     const store = this.config.externalEventStore;
     for (const [queueKey, queued] of this.pendingExternalEventQueue) {
@@ -3775,23 +2884,6 @@ export class SpaceRuntime {
     return current?.agentSessionId ? { ...target, sessionId: current.agentSessionId } : target;
   }
 
-  /**
-   * Re-resolves the authoritative live session for `target` — the stale-session
-   * guard used immediately before injecting an external event.
-   *
-   * `target.sessionId` is captured when a delivery is queued (at node spawn /
-   * activation time). By the time the async dispatch runs the worker may have
-   * been superseded: it crashed and was respawned (a new `agentSessionId` on
-   * the same node execution) or its execution was reset to pending
-   * (`agentSessionId` cleared). The node execution record is authoritative —
-   * `spawnWorkflowNodeAgentForExecution` writes the new `agentSessionId`
-   * before returning — so `getCurrentQueueableOrActiveExecution` is trusted
-   * over the captured `sessionId`.
-   *
-   * Returns the target retargeted onto the *current* live session, or `null`
-   * when no live session can be resolved. Callers requeue the delivery as
-   * pending instead of injecting into a superseded (dead) session.
-   */
   private resolveLiveDeliveryTarget(
     target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
   ): WorkflowSubscriptionTarget | null {
@@ -3807,23 +2899,10 @@ export class SpaceRuntime {
     );
   }
 
-  /**
-   * Tasks-accepting core of {@link isRunInterestRebuildEligible}. Lets the
-   * rehydrate path batch-fetch tasks once per space (via
-   * `listByWorkflowRunIdsIncludingArchived`) and reuse them across both the
-   * static-rebuild loop and the dynamic-subscription purge, instead of issuing
-   * a per-run task query in each.
-   */
   private isRunInterestRebuildEligibleWithTasks(
     run: SpaceWorkflowRun,
     runTasks: SpaceTask[]
   ): boolean {
-    // A cancelled run (e.g. cancelled by space.stop) must not have its static
-    // event interests rebuilt on resume/rehydrate — the run is no longer active
-    // even if a review task on it was not cancelled. A `done` run is terminal
-    // (it can no longer deliver events — every delivery fails with
-    // target_task_terminal), so rebuilding its interests only causes fan-out
-    // waste on every matching event; the coder re-subscribes if the run reopens.
     if (run.status === 'cancelled' || isWorkflowRunSucceeded(run.status)) {
       return false;
     }
@@ -3848,13 +2927,6 @@ export class SpaceRuntime {
     );
   }
 
-  /**
-   * Synchronous task-lifecycle decision for an external event. A `done` task is
-   * terminal — it no longer receives events (the prior reactive-reopen on a late
-   * CI failure relied on a runtime-owned PR subscription that no longer exists;
-   * see task #886). Keeping this synchronous lets the common `deliver` case reach
-   * delivery without an awaited lookup (the flush path dispatches synchronously).
-   */
   private prepareExternalEventTask(
     target: WorkflowSubscriptionTarget,
     event: ExternalEventPublishedPayload
@@ -3877,12 +2949,6 @@ export class SpaceRuntime {
     return { action: 'deliver' };
   }
 
-  /**
-   * Resolve a task-lifecycle decision into a deliverable target, performing the
-   * async reactivation when the decision is `reactivate`. Used by the routing
-   * and digest paths (both awaited); the synchronous flush path handles
-   * `reactivate` separately so its `deliver` case stays synchronous.
-   */
   private async resolveExternalEventDelivery(
     target: WorkflowSubscriptionTarget,
     event: ExternalEventPublishedPayload
@@ -3908,19 +2974,11 @@ export class SpaceRuntime {
         );
         return { action: 'fail', reason: 'target_task_reactivation_failed' };
       }
-      // The recovery await is a cancellation/archive race window: re-run the
-      // ownership, lifecycle, subscription, and paused checks on the refreshed
-      // target before declaring the event deliverable.
       return this.revalidateRecoveredTarget(target, event);
     }
     return { action: 'deliver', target };
   }
 
-  /**
-   * Re-validate a target after an async task recovery. The recovery await can
-   * straddle a task cancel/archive (which clears the subscription) or a pause,
-   * so the post-recovery decision must be recomputed rather than assumed.
-   */
   private revalidateRecoveredTarget(
     target: WorkflowSubscriptionTarget,
     event: ExternalEventPublishedPayload
@@ -3935,17 +2993,9 @@ export class SpaceRuntime {
     const rechecked = this.prepareExternalEventTask(refreshed, event);
     if (rechecked.action === 'fail') return { action: 'fail', reason: rechecked.reason };
     if (rechecked.action === 'hold') return { action: 'hold' };
-    // Recovery already ran; do not re-enter reactivation (reactivate would only
-    // recur if the task were still done, which recovery resolved).
     return { action: 'deliver', target: refreshed };
   }
 
-  /**
-   * Synchronous task-lifecycle check for the rehydrate/resume requeue sweeps.
-   * Returns a terminal failure reason when a persisted pending delivery can no
-   * longer ever matter (cancelled/archived/done task), or `null` to continue
-   * requeuing. A `done` task is terminal — it no longer reacts to events.
-   */
   private evaluateRequeueTaskLifecycle(
     target: Pick<WorkflowSubscriptionTarget, 'taskId'>,
     event: { topic: string; source: string }
@@ -3974,42 +3024,17 @@ export class SpaceRuntime {
     return this.config.taskAgentManager?.isSessionAlive(sessionId) ?? false;
   }
 
-  /**
-   * Normalize a target's stale persisted `interrupted` state to idle before a
-   * defer handoff. Self-guarding: no-op unless the state is `interrupted`
-   * with no interrupt actually in flight.
-   */
   private async normalizeStaleInterruptedSession(sessionId: string): Promise<void> {
     const session = this.config.taskAgentManager?.getAgentSessionById?.(sessionId);
     await session?.normalizeStaleInterruptedState();
   }
 
-  /**
-   * Whether the target's live session is mid-interrupt. A deferred row handed
-   * to a session in this state has no replay owner unless the interrupt's own
-   * completion publishes `query.trigger` — which the InterruptHandler now does
-   * for USER interrupts, but teardown-bound ones (session stop, sibling
-   * quiesce, shutdown) deliberately suppress. Parking keeps the delivery in
-   * the runtime's retry loop until the interrupt resolves to a true idle.
-   */
   private isTargetSessionInterrupted(sessionId: string): boolean {
     const session = this.config.taskAgentManager?.getAgentSessionById?.(sessionId);
     if (session?.getProcessingState().status !== 'interrupted') return false;
-    // A persisted 'interrupted' status without an interrupt actually in
-    // flight is stale (e.g. a daemon crash between setInterrupted and
-    // setIdle) — no interrupt operation remains to resolve it to idle, so
-    // parking on it would hold the delivery until TTL. Treat it as
-    // not-interrupted and take the normal defer handoff instead.
     return session.isInterruptInProgress();
   }
 
-  /**
-   * Park an external-event delivery when its target's live session is
-   * mid-interrupt (P2): queue it for the pending node and arm a retry instead
-   * of handing it off in 'defer' mode. The interrupt resolves to a true idle
-   * within seconds, and the retry delivers at that idle boundary. Returns true
-   * when the delivery was parked — the caller must not also hand it off.
-   */
   private parkDeliveryForInterruptedSession(
     target: WorkflowSubscriptionTarget,
     payload: ExternalEventPublishedPayload,
@@ -4018,8 +3043,6 @@ export class SpaceRuntime {
   ): boolean {
     if (!target.sessionId || !this.isTargetSessionInterrupted(target.sessionId)) return false;
     this.queueForPendingNode(target, payload, deliveryKey, 'defer', createdAt);
-    // Defer-encoded failure reason documents the queued intent for a daemon
-    // restart (recovery's default is also defer).
     this.scheduleActivationRetry(
       target,
       payload,
@@ -4032,11 +3055,6 @@ export class SpaceRuntime {
     return true;
   }
 
-  /**
-   * Returns true when the target slot has at least one cancelled execution. A
-   * cancelled execution is a permanently finished slot that subscriber
-   * activation should not respawn.
-   */
   private hasTerminalExecutionForTarget(
     target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
   ): boolean {
@@ -4061,14 +3079,6 @@ export class SpaceRuntime {
     return JSON.stringify([target.workflowRunId, target.taskId, target.nodeId, target.agentName]);
   }
 
-  /**
-   * Whether the delivery identified by `deliveryKey` is within its
-   * recoverable-failure cool-down window. Entries past the window are reaped
-   * lazily. The arm ({@link deliverToSession}) and the gate
-   * ({@link handleExternalEventImpl}) share the same delivery key, so a
-   * re-published event whose delivery already failed recoverably is skipped
-   * while distinct events and the bounded retry path proceed.
-   */
   private isDeliveryInDeliveryCooldown(deliveryKey: string): boolean {
     const lastFailureAt = this.externalEventDeliveryCooldowns.get(deliveryKey);
     if (lastFailureAt === undefined) return false;
@@ -4077,20 +3087,9 @@ export class SpaceRuntime {
     return false;
   }
 
-  /**
-   * Arm (or refresh) the recoverable-failure cool-down for a delivery.
-   * Subsequent FRESH dispatches (publish / re-poll) of the same delivery within
-   * {@link deliveryCooldownMs} are skipped by {@link handleExternalEventImpl};
-   * the event stays `published` and re-evaluates once the window lifts.
-   */
   private armDeliveryCooldown(deliveryKey: string): void {
     const map = this.externalEventDeliveryCooldowns;
     map.set(deliveryKey, Date.now());
-    // Bound growth: stale entries (a delivery that failed once and is never
-    // republished) are only reaped lazily on re-query, so sweep expired entries
-    // once the map exceeds its cap. Amortized over arms; a still-oversized map
-    // after the sweep is a genuinely large live-storm (bounded by distinct
-    // in-window failing deliveries).
     if (map.size > this.deliveryCooldownMapCap) {
       const now = Date.now();
       for (const [key, lastFailureAt] of map) {
@@ -4215,13 +3214,6 @@ export class SpaceRuntime {
     const occurredAtValues = items.map((item) => item.event.occurredAt);
     const oldest = new Date(Math.min(...occurredAtValues)).toISOString();
     const newest = new Date(Math.max(...occurredAtValues)).toISOString();
-    // Include every coalesced event id so the agent can fetch any of them via
-    // get_external_event(eventId). deliverDigestToSession marks ALL coalesced
-    // deliveries as delivered after injecting this single message, so hiding
-    // any id (e.g. via a cap) would leave delivered-but-unreachable events.
-    // Rate-limit digests are small in practice, and even a large burst stays
-    // well within an injected-message budget (UUIDs are compact), so we list
-    // all ids rather than truncate.
     const eventIds = items.map((item) => item.event.eventId).join(', ');
     return (
       `${items.length} events received for topics: ${topics.join(', ')} ` +
@@ -4231,20 +3223,8 @@ export class SpaceRuntime {
     );
   }
 
-  /**
-   * Persist a synthetic SDK `system` message into the target session so it
-   * surfaces in `SpaceTaskUnifiedThread`. Failures are logged and swallowed —
-   * thread-event emission must never block a resume or fail a task.
-   *
-   * @internal — public for testing only.
-   */
   emitTaskThreadEvent(sessionId: string, subtype: string, payload: Record<string, unknown>): void {
     try {
-      // Shape mirrors the SDK system message contract expected by the web
-      // thread renderer (`isSDKSystemMessage` + subtype switch in
-      // `space-task-thread-events.ts`). Unknown subtypes degrade gracefully
-      // to a generic "system" event, so consumers without the new subtype
-      // branch still show something meaningful.
       const message = {
         type: 'system',
         subtype,
@@ -4261,45 +3241,17 @@ export class SpaceRuntime {
     }
   }
 
-  /**
-   * Returns the current dedup set snapshot for testing purposes.
-   *
-   * The returned Set is a copy — mutations have no effect on SpaceRuntime's
-   * internal state.  Call this before and after a tick to verify that dedup
-   * entries are added / removed as expected.
-   *
-   * @internal — exposed only for unit tests in the same package.
-   */
   getNotifiedTaskSet(): ReadonlySet<string> {
     return new Set(this.notifiedTaskSet);
   }
 
-  /**
-   * Wire a TaskAgentManager into the runtime after construction.
-   *
-   * Called after construction to resolve the circular dependency:
-   * SpaceRuntimeService is created first (so TaskAgentManager can reference it),
-   * then TaskAgentManager is created, then it is injected back here.
-   */
   setTaskAgentManager(manager: TaskAgentManager): void {
     this.config.taskAgentManager = manager;
     manager.attachToolContinuationRepo?.(this.toolContinuationRepo);
   }
 
-  /**
-   * Cached `PostApprovalRouter` instance (PR 2/5 of the
-   * task-agent-as-post-approval-executor refactor). Built lazily on first use
-   * because it depends on `taskAgentManager`, which is injected after
-   * `SpaceRuntime` is constructed.
-   */
   private postApprovalRouter: PostApprovalRouter | null = null;
 
-  /**
-   * Lazy-construct the `PostApprovalRouter` once `taskAgentManager` is
-   * available. Returns `null` when the manager has not yet been injected —
-   * the only expected scenario is very early startup before the daemon has
-   * finished wiring, in which case we fall through to the legacy path.
-   */
   private getPostApprovalRouter(): PostApprovalRouter | null {
     if (this.postApprovalRouter) return this.postApprovalRouter;
     const manager = this.config.taskAgentManager;
@@ -4330,27 +3282,6 @@ export class SpaceRuntime {
     return this.postApprovalRouter;
   }
 
-  /**
-   * Public entry point — transition a task into `approved` and dispatch the
-   * post-approval step via `PostApprovalRouter`.
-   *
-   * Called by:
-   *   - The `space-runtime.ts` tick loop once an end-node `approve_task` has
-   *     flagged the task ready to approve (via `reportedStatus='done'`).
-   *   - `SpaceRuntimeService.dispatchPostApproval`, invoked from the
-   *     `spaceTask.approvePendingCompletion` RPC handler when a human approves
-   *     a task paused at a `task_completion` checkpoint.
-   *
-   * Contract:
-   *   1. If the task is not already `approved`, transition it there via
-   *      `SpaceTaskManager.setTaskStatus` (so the centralised transition
-   *      validator runs).
-   *   2. Call `PostApprovalRouter.route()` — which handles the no-route,
-   *      inline (Task Agent), spawn, already-routed, and skip branches.
-   *
-   * Returns the `PostApprovalRouteResult` from the router (or a `skipped`
-   * result when the router is not yet wired / the task is missing).
-   */
   async dispatchPostApproval(
     taskId: string,
     approvalSource: SpaceApprovalSource,
@@ -4372,24 +3303,11 @@ export class SpaceRuntime {
 
     const spaceId = current.spaceId;
     const space = await this.config.spaceManager.getSpace(spaceId);
-    // Workflow lookup goes via the run (tasks reference workflowRunId, runs
-    // reference workflowId). Standalone tasks have no run → no workflow → the
-    // router takes the no-route branch.
     const run = current.workflowRunId
       ? this.config.workflowRunRepo.getRun(current.workflowRunId)
       : null;
     const workflow = run ? (this.config.spaceWorkflowManager.getWorkflowForRun(run) ?? null) : null;
 
-    // 1. Ensure the task is in `approved` before routing. Uses the space's
-    //    task manager so the transition validator runs (rejects illegal
-    //    transitions with a structured error).
-    //
-    //    `approvalReason` must be forwarded from `contextExtras` (the RPC
-    //    handler passes the operator's rejection/approval note) — otherwise
-    //    `SpaceTaskManager.setTaskStatus` would stamp `null` and overwrite
-    //    the value the caller may have already written via `updateTask`.
-    //    We distinguish missing (undefined) from explicit null so an
-    //    explicit clear still wins.
     const resolvedApprovalReason =
       typeof contextExtras.approvalReason === 'string'
         ? contextExtras.approvalReason
@@ -4409,12 +3327,6 @@ export class SpaceRuntime {
       );
     }
 
-    // 2. Resolve the post-approval route context (PR URL + template tokens).
-    //
-    // `{{pr_url}}` is the immutable PR identity established by the original
-    // review handoff. Do not use the freshest agent-writable link artifact here:
-    // dispatching merge instructions for a substituted PR could merge it before
-    // the final completion gate notices the mismatch.
     let resolvedPrUrl: string | undefined;
     if (approvedTask.workflowRunId) {
       resolvedPrUrl =
@@ -4428,28 +3340,6 @@ export class SpaceRuntime {
         `Post-approval PR URL override ${overridePrUrl} does not match the reviewed run PR ${resolvedPrUrl}`
       );
     }
-    // The template interpolator (see `post-approval-template.ts`) resolves
-    // tokens by raw identifier match — `{{autonomy_level}}` looks up the
-    // key `autonomy_level`, not `autonomyLevel`. `PostApprovalRouteContext`
-    // declares camelCase for the runtime-facing fields, so we MUST also
-    // supply snake_case aliases so every merge-template token documented in
-    // `POST_APPROVAL_TEMPLATE_KEYS` actually interpolates. Without these
-    // aliases the autonomy-gate step in the merge template ("If
-    // autonomy_level < 4 …") reads as a literal placeholder, which the
-    // reviewer sub-session cannot compare to a number — effectively
-    // disabling the gate or triggering spurious human-input requests.
-    //
-    // `{{approval_authority}}` is the node the Merger reports blockers to and
-    // waits on — the APPROVING node (the one that submitted the completion,
-    // falling back to the workflow end node). It is "Review" for the
-    // Coding/Research workflows and "QA" for the Fullstack QA Loop. Deriving
-    // it here (rather than hard-coding "Review" in the template) keeps the
-    // Fullstack merger from misrouting a blocker to Review when QA is the
-    // authority, even though both channels are reachable.
-    // Read the authority from the DURABLE `postApprovalSourceNodeId` field, not
-    // `pendingCompletionSubmittedByNodeId` — the pending field is cleared
-    // atomically in the same UPDATE that commits `approved` (task #851), so it
-    // is null by the time dispatch runs. Mirrors the router's own sourceNodeId.
     const approvalAuthorityNodeId =
       approvedTask.postApprovalSourceNodeId ?? workflow?.endNodeId ?? null;
     const approvalAuthorityNode =
@@ -4471,15 +3361,6 @@ export class SpaceRuntime {
       workspace_path: space?.workspacePath,
       ...(approvalAuthorityName ? { approval_authority: approvalAuthorityName } : {}),
     };
-    // 3. Dispatch the actual post-approval step. Wrapped in a `finally` that
-    //    GUARANTEES the pending-completion fields are cleared regardless of
-    //    which router branch ran or whether the router threw. The router
-    //    clears these on most paths, but the `already-routed` and status-skip
-    //    branches do not, and a throw mid-route (e.g. an SDK abort during
-    //    sub-session spawn) would leave them set — causing the approval
-    //    banner to linger on an already-approved task (reproducer tasks
-    //    #846/#847). Per-branch cleanup proved too brittle; this is the
-    //    single structural invariant.
     let routeResult: PostApprovalRouteResult;
     try {
       routeResult = await router.route(approvedTask, workflow, routeContext);
@@ -4487,24 +3368,10 @@ export class SpaceRuntime {
       clearPendingCompletionState(this.config.taskRepo, taskId);
     }
 
-    // 4. Re-read and emit so UI listeners see the post-dispatch task state
-    //    (no-route → `done`, inline → `approvalReason` stamped, spawn →
-    //    `postApprovalSessionId` stamped). The router performs its own
-    //    `taskRepo.updateTask` writes without emitting; without this the
-    //    end-node tick path would leave the UI waiting until the next poll.
-    //    The RPC path also emits via `internalEventBus` after this returns — the
-    //    double emit is benign (idempotent UI refresh).
     if (routeResult.mode !== 'skipped') {
       const final = this.config.taskRepo.getTask(taskId);
       if (final) await this.safeOnTaskUpdated(spaceId, final);
 
-      // The no-route branch writes `done` directly via taskRepo,
-      // bypassing setTaskStatus — so the dependency-unblock cascade
-      // doesn't fire there. Trigger it here and emit for each
-      // unblocked dependent so the UI sees the state change.
-      // Guard on `final?.status === 'done'` to confirm the write
-      // landed, and wrap in try-catch so unblock failures don't
-      // abort the already-committed post-approval flow.
       if (routeResult.mode === 'no-route' && final?.status === 'done') {
         try {
           const taskManager = this.getOrCreateTaskManager(spaceId);
@@ -4521,19 +3388,6 @@ export class SpaceRuntime {
     return routeResult;
   }
 
-  /**
-   * Publish a Space runtime notification event to the configured InternalEventBus.
-   *
-   * Maps the legacy `kind`-tagged event shape (retained at call sites for
-   * readability) onto the corresponding typed `space.*` event on
-   * `InternalEventBus`. The `namespaceId` field is set to `'global'` because
-   * these events are space-scoped, not session-scoped — subscribers that need
-   * space-scoped filtering should inspect `payload.spaceId`.
-   *
-   * No-op when no bus is configured (e.g. unit tests). Errors from
-   * `publish()` are caught and logged so a faulty subscriber cannot break
-   * the runtime tick loop.
-   */
   private async safeNotify(event: SpaceNotificationEvent): Promise<void> {
     if (!this.internalEventBus) return;
     const mapped = mapNotificationEventToInternalEvent(event);
@@ -4590,10 +3444,6 @@ export class SpaceRuntime {
     }
   }
 
-  /**
-   * Returns active, non-paused, non-stopped spaces.
-   * Used by tick-loop methods to skip paused and stopped spaces.
-   */
   private async listActiveSpaces(): Promise<import('@hyperneo/shared').Space[]> {
     const spaces = await this.config.spaceManager.listSpaces(false);
     return spaces.filter((s) => !s.paused && !s.stopped);
@@ -4653,26 +3503,14 @@ export class SpaceRuntime {
       if (
         !execution.agentSessionId ||
         execution.status === 'cancelled' ||
-        // Preserve idle sessions only for resumable pauses (task → open), not
-        // terminal cancellation — an idle session on a cancelled run must be
-        // evicted so no path (inject, message.send RPC, etc.) can find + restart
-        // it via ensureQueryStarted.
         (!isTerminalCancel && execution.status === 'idle')
       ) {
         continue;
       }
-      // Two non-idle executions can share one agentSessionId when a node session
-      // is reused. Interrupt the shared session once (a second cancelBySessionId
-      // would hit the SessionManager fallback and start a concurrent teardown on
-      // the same AgentSession) — but still terminalize every sharing row below.
       if (!cancelledSessionIds.has(execution.agentSessionId)) {
         this.config.taskAgentManager?.cancelBySessionId(execution.agentSessionId);
         cancelledSessionIds.add(execution.agentSessionId);
       }
-      // For idle (completed) executions, evict the session but preserve the
-      // completed row — don't overwrite status/result/completedAt with the
-      // cancellation reason. The session is gone from every map; the execution
-      // history stays intact.
       if (execution.status !== 'idle') {
         this.config.nodeExecutionRepo.update(execution.id, {
           status: 'cancelled',
@@ -4683,14 +3521,6 @@ export class SpaceRuntime {
       }
     }
 
-    // Sweep live sub-sessions the TaskAgentManager tracks for this run whose
-    // NodeExecution row carried a null agentSessionId at cancel time (their live
-    // SDK subprocess still needs to be interrupted so the in-flight coder turn
-    // actually stops). Node agents are spawned against the run's canonical task,
-    // so pass every task ID in the run to cover it regardless of which task
-    // triggered the stop. Skip IDs already interrupted above. Invoked
-    // defensively (`?.`): a manager that doesn't expose the method falls back to
-    // the per-row loop above.
     const runTaskIds = this.config.taskRepo.listByWorkflowRun(task.workflowRunId).map((t) => t.id);
     for (const sid of this.config.taskAgentManager?.getLiveSubSessionIdsForTasks?.(runTaskIds) ??
       []) {
@@ -4768,14 +3598,6 @@ export class SpaceRuntime {
         const run = this.config.workflowRunRepo.getRun(previous.workflowRunId);
         if (run && canTransitionRunStatus(run.status, 'cancelled')) {
           await this.transitionRunStatusAndEmit(previous.workflowRunId, 'cancelled');
-          // A pre-registration spawn can register its session in subSessions
-          // between the first stop pass (above) and this run transition, so the
-          // first sweep missed it. Repeat the pass now that the run is
-          // cancelled. Idempotent — cancellingSessions and the already-cancelled
-          // execution rows make it a no-op for stopped sessions. (A residual
-          // window remains for sessions registered after even this pass; fully
-          // closing the spawn-during-cancel race needs the coordinated
-          // cancellation-token pass tracked separately.)
           updated = await this.stopActiveWorkflowTaskAgents(
             {
               ...updated,
@@ -4799,35 +3621,16 @@ export class SpaceRuntime {
     if (!run) throw new Error(`WorkflowRun not found: ${runId}`);
     for (const task of this.config.taskRepo.listByWorkflowRun(runId)) {
       if (task.status === 'approved') {
-        // `approved → cancelled` is now a valid direct transition (matrix gap
-        // G3), so the generic branch below would cancel it in one step. We keep
-        // this explicit two-step (`approved → in_progress → cancelled`) as a
-        // defensive fallback: bouncing through `in_progress` first guarantees
-        // the post-approval worker session, runtime interests, and cooldown
-        // timers are torn down at the intermediate state before the final
-        // cancelled sweep runs — identical to the pre-G3 path this code
-        // shipped with. Checked before the generic branch so it stays
-        // reachable (otherwise the generic branch would preempt it).
         await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'in_progress' });
         await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'cancelled' });
       } else if (isValidSpaceTaskTransition(task.status, 'cancelled')) {
-        // Cancel every task that can transition to cancelled — including `review`
-        // tasks waiting at a gate and rate/usage-limited tasks (whose
-        // rate_limited/usage_limited → cancelled transition is valid) — so
-        // switching/cancelling a run tears down every live session + its cooldown
-        // timer and does not leave them reachable by later events.
         await this.stopWorkflowBackedTaskForStatus(spaceId, task.id, { status: 'cancelled' });
       } else if (task.status === 'cancelled' && task.workflowRunId) {
-        // The requested task may have been pre-cancelled (cancel_task with
-        // cancel_workflow_run: true cancels it before this call), so the
-        // transition above is skipped — still stop its live worker session.
         await this.stopActiveWorkflowTaskAgents(task, 'workflow run cancelled');
       }
     }
     const updated = this.config.workflowRunRepo.getRun(runId) ?? run;
     if (updated.status === 'cancelled') {
-      // Full run cancellation: drop ALL interests (incl. agent-created dynamic)
-      // since the task-cancel subscriber only preserves-dynamic. The run is gone.
       this.clearRunInterests(runId);
       return updated;
     }
@@ -4858,12 +3661,6 @@ export class SpaceRuntime {
     if (updated) {
       let emitUpdated = true;
 
-      // Cascade dependent-task state changes based on the parent's terminal status.
-      //   - `blocked` (transient, retryable): only abort `in_progress` dependents.
-      //     `open` dependents stay `open`, skipped by `areDependenciesMet()` until
-      //     the dependency is retried/completed.
-      //   - `cancelled` (terminal, will not auto-resume): cancel both `open` and
-      //     `in_progress` dependents so they don't wait forever on an unmet dep.
       if (params.status === 'blocked') {
         const reason = params.result ?? updated.result ?? 'Task blocked';
         if (params.blockReason === 'dependency_added') {
@@ -4904,12 +3701,6 @@ export class SpaceRuntime {
         const cascaded = await taskManager.cancelDependentTasks(taskId);
         for (const cancelled of cascaded) {
           await this.safeOnTaskUpdated(spaceId, cancelled);
-          // Cancel the underlying workflow run (if any) so completion
-          // detection on the next tick doesn't finalize the run as
-          // `done` just because the cancelled task signals
-          // completion via `CompletionDetector.isComplete`. Only
-          // in_progress dependents had a live run to begin with;
-          // open dependents have no run attached.
           if (cancelled.workflowRunId) {
             const run = this.config.workflowRunRepo.getRun(cancelled.workflowRunId);
             if (run && canTransitionRunStatus(run.status, 'cancelled')) {
@@ -4930,28 +3721,10 @@ export class SpaceRuntime {
     nextStatus: SpaceWorkflowRun['status']
   ): Promise<SpaceWorkflowRun> {
     const updated = this.config.workflowRunRepo.transitionStatus(runId, nextStatus);
-    // done/cancelled are NOT cleared here. They are reopenable: a peer
-    // `send_message` flips the run back to `in_progress` (see ChannelRouter's
-    // reopen path and WorkflowRunStatusMachine), so a runaway exchange that
-    // crosses the terminal boundary must keep counting against the rolling
-    // dead-loop window — clearing it would hand a reopened run a fresh 15
-    // traversals within the same 5-minute window. The rate-window history is
-    // retained until the rows age out of the window (pruneAllOldEvents at
-    // startup) or the owning task is archived — the true tombstone and only
-    // status from which ChannelRouter hard-blocks further sends (cleared in
-    // SpaceTaskManager.setTaskStatus).
     await this.safeOnWorkflowRunUpdated(updated.spaceId, updated);
     return updated;
   }
 
-  /**
-   * Choose the canonical task for a workflow run in one-task-per-run mode.
-   *
-   * Preference:
-   * 1. Title exactly matches run title (case-insensitive, trimmed)
-   * 2. Lowest task number
-   * 3. Earliest created_at
-   */
   private pickCanonicalTaskForRun(run: SpaceWorkflowRun, runTasks: SpaceTask[]): SpaceTask | null {
     if (runTasks.length === 0) return null;
 
@@ -4970,12 +3743,6 @@ export class SpaceRuntime {
     return sorted[0] ?? null;
   }
 
-  /**
-   * Archive non-canonical run tasks and detach them from the run.
-   *
-   * This is a strict one-task-per-run repair path that removes legacy/duplicate
-   * per-node tasks from active workflow state.
-   */
   private async archiveDuplicateRunTasks(
     spaceId: string,
     run: SpaceWorkflowRun,
@@ -4996,20 +3763,8 @@ export class SpaceRuntime {
         this.config.taskAgentManager.cancelBySessionId(duplicate.taskAgentSessionId);
       }
 
-      // Remove this duplicate task's external-event interests before detaching
-      // it from the run. The archive event nulls workflowRunId, so the task-
-      // cancel/archive subscriber (which keys on workflowRunId) would otherwise
-      // skip cleanup and leave stale dynamic interests matching future webhooks.
-      // Use clearTaskInterests (not raw trie remove) so queued deliveries are
-      // also terminalized.
       this.clearTaskInterests(duplicate.id);
 
-      // Task #85: duplicate-run reconciliation marks tasks `archived` in DB
-      // so the UI stops showing them as active, but this path is NOT a user
-      // archive. Tag the event with `archiveSource: 'system_reconcile'` so
-      // `TaskAgentManager.subscribeToTaskArchiveEvents` skips the cleanup
-      // cascade (worktree removal + SDK .jsonl archival). The UI still
-      // receives the `space.task.updated` event for the status change.
       await this.updateTaskAndEmit(
         spaceId,
         duplicate.id,
@@ -5028,16 +3783,6 @@ export class SpaceRuntime {
     }
   }
 
-  /**
-   * Reconcile task state after a workflow execution attempt has finished.
-   *
-   * Ensures:
-   * - exactly one canonical task remains attached to the run
-   * - succeeded/cancelled run outcomes are reflected in task lifecycle state
-   *
-   * TODO(workflow-completion): keep this coupling explicit when PR/CI lifecycle
-   * events become task-owned; a succeeded run is not the same as accepted work.
-   */
   private async reconcileTerminalRunTasks(run: SpaceWorkflowRun): Promise<void> {
     const runTasks = this.config.taskRepo.listByWorkflowRun(run.id);
     if (runTasks.length === 0) return;
@@ -5075,14 +3820,6 @@ export class SpaceRuntime {
         freshSummary ?? existingResult ?? reportedSummary ?? summaryFromSibling ?? null;
       const nextReportedSummary = freshSummary ?? reportedSummary ?? summaryFromSibling ?? null;
 
-      // Skip tasks already at a terminal or paused state — matches the
-      // active-tick guard (`taskAlreadyResolved`) at processRunTick.
-      // `blocked` is included so that a task that was cascade-blocked
-      // by a dependency failure isn't pushed through dispatchPostApproval
-      // (which would attempt an invalid `blocked → approved` transition).
-      // TODO(workflow-completion): a `done`/Succeeded run can still have a
-      // `blocked` or `cancelled` canonical task here. Reconcile run status vs
-      // task outcome when PR/CI lifecycle events become task-owned.
       if (
         canonicalTask.status !== 'done' &&
         canonicalTask.status !== 'review' &&
@@ -5090,8 +3827,6 @@ export class SpaceRuntime {
         canonicalTask.status !== 'approved' &&
         canonicalTask.status !== 'blocked'
       ) {
-        // Preserve the computed result on the task before routing —
-        // dispatchPostApproval handles the status transition itself.
         const updates = this.buildTaskOutcomeUpdates(
           canonicalTask,
           nextResult,
@@ -5122,12 +3857,6 @@ export class SpaceRuntime {
     }
   }
 
-  /**
-   * Reconcile finished execution attempts that are not in the executor map.
-   *
-   * This keeps task state consistent after daemon restarts and repairs legacy runs
-   * where external paths marked the run terminal but left task state inconsistent.
-   */
   private async reconcileTerminalRunsWithoutExecutors(): Promise<void> {
     const spaces = await this.listActiveSpaces();
     for (const space of spaces) {
@@ -5141,31 +3870,15 @@ export class SpaceRuntime {
     }
   }
 
-  // -------------------------------------------------------------------------
-  // Lifecycle — start / stop
-  // -------------------------------------------------------------------------
-
-  /**
-   * Starts the periodic tick loop.
-   * Calls executeTick() immediately and then every `tickIntervalMs` ms.
-   * Errors from executeTick() are caught and logged so the loop keeps running.
-   */
   start(): void {
-    if (this.tickTimer !== null) return; // already running
+    if (this.tickTimer !== null) return;
     this.isStopped = false;
 
-    // Capture the runtime generation so the fire-and-forget restart IIFE can
-    // detect a stop() that landed during its awaited space scan and abort
-    // instead of re-subscribing/ticking a stopped runtime.
     const generation = this.runtimeGeneration;
     this.subscribeSdkToolUseCreated();
-    // Re-register the space-resume hook after a stop->start cycle; stop()
-    // unsubscribes it to avoid stale callbacks, so start() must restore it.
     this.unsubscribeSpaceResumed ??= this.config.spaceManager.onSpaceResumedRegister?.((spaceId) =>
       this.onSpaceResumed(spaceId)
     );
-    // Maintain the sync paused-space cache so the delivery hot path can defer
-    // (not inject) events for paused spaces without an async lookup.
     this.unsubscribeSpacePaused ??= this.config.spaceManager.onSpacePausedRegister?.((spaceId) => {
       this.pausedSpaceIds.add(spaceId);
     });
@@ -5176,16 +3889,12 @@ export class SpaceRuntime {
     );
     this.acceptingExternalEvents = this.rehydrated;
     const interval = this.config.tickIntervalMs ?? 5_000;
-    // Arm the tick loop synchronously so callers (and tests) observe tickTimer
-    // set immediately. executeTick gates on reconciliationDone so interval ticks
-    // that fire before the stop→start reconciliation completes are no-ops.
     this.tickTimer = setInterval(() => {
       this.executeTick().catch((err: unknown) => {
         log.error('SpaceRuntime: tick failed:', err);
       });
     }, interval);
     if (this.rehydrated) {
-      // Defer all post-reconciliation work until the paused cache is rebuilt.
       this.reconciliationDone = false;
       void (async () => {
         const pausedSpaceIds = new Set<string>();
@@ -5214,7 +3923,6 @@ export class SpaceRuntime {
         });
       })();
     } else {
-      // First start: no retained subs in the trie yet, so no injection risk.
       this.rescheduleQueuedExternalEventRetries();
       this.subscribeExternalEventPublished();
       this.redispatchRetainedExternalEvents();
@@ -5224,22 +3932,9 @@ export class SpaceRuntime {
     }
   }
 
-  /**
-   * Stops the periodic tick loop and waits for any in-flight tick to complete.
-   *
-   * This prevents race conditions during shutdown where an in-flight tick
-   * continues to perform DB operations after the database has been closed.
-   *
-   * Does not affect in-progress executors — they remain in the map and can
-   * be resumed by calling start() again.
-   */
   async stop(): Promise<void> {
-    // Invalidate any in-flight restart IIFE so it aborts before re-subscribing/
-    // ticking this now-stopped runtime.
     this.runtimeGeneration += 1;
     this.isStopped = true;
-    // Cancel any deferred retained-event flush so an in-flight handleExternalEvent
-    // finally doesn't process retained webhooks after shutdown.
     this.retainedEventRedispatchPending = false;
     this.unsubscribeExternalEventPublished?.();
     this.unsubscribeExternalEventPublished = undefined;
@@ -5267,9 +3962,6 @@ export class SpaceRuntime {
           reason: `deliveryMode:${item.deliveryMode}; digest pending during runtime stop`,
         });
         this.preservePendingDigestItem(item);
-        // Release the synchronous digest-path claim acquired in
-        // enqueueDeliverableExternalEvent so the requeued delivery can be
-        // retried/flushed after a restart.
         this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
       }
     }
@@ -5280,9 +3972,6 @@ export class SpaceRuntime {
       clearInterval(this.tickTimer);
       this.tickTimer = null;
     }
-    // Wait for any in-flight executeTick() to finish so that all DB
-    // reads/writes and InternalEventBus<DaemonInternalEventMap> event emissions complete before the
-    // caller proceeds to close the database.
     if (this.tickInFlight) {
       const MAX_TICK_DRAIN_MS = 30_000;
       const start = Date.now();
@@ -5296,8 +3985,6 @@ export class SpaceRuntime {
             );
             resolve();
           } else {
-            // 10 ms balances low latency (fast shutdown) against
-            // CPU churn (no busy-spin) during the drain window.
             setTimeout(check, 10);
           }
         };
@@ -5306,21 +3993,6 @@ export class SpaceRuntime {
     }
   }
 
-  // -------------------------------------------------------------------------
-  // Public API
-  // -------------------------------------------------------------------------
-
-  /**
-   * Main tick method — call on a regular interval.
-   *
-   * On the first call, rehydrateExecutors() loads all in-progress workflow
-   * runs from the DB into the executors map.
-   *
-   * On every call:
-   * 1. Processes completed tasks and advances their workflows
-   * 2. Cleans up executors for runs that have reached a terminal state
-   * 3. Checks standalone tasks (no workflowRunId) for blocked and timeout
-   */
   async executeTick(): Promise<void> {
     if (this.tickInFlight || !this.reconciliationDone) return;
     this.tickInFlight = true;
@@ -5332,23 +4004,12 @@ export class SpaceRuntime {
       const justRehydrated = !this.rehydrated;
       if (!this.rehydrated) {
         await this.rehydrateExecutors();
-        // Run a stalled-run recovery pass right after rehydrate so the
-        // first tick that processes runs already sees a clean slate
-        // (orphan in_progress executions reset to pending, terminally
-        // stalled runs flagged blocked). Idempotent — `recoverStalledRuns`
-        // guards itself with `recoveryDone`. SpaceRuntimeService.start()
-        // also invokes it after `provisionExistingSpaces`; whichever
-        // fires first wins, the other becomes a no-op.
         await this.recoverStalledRuns();
         this.rehydrated = true;
         this.acceptingExternalEvents = true;
       }
 
       if (justRehydrated) {
-        // Route through the re-entrancy-guarded helper: if an event is still
-        // mid-handling (awaiting gate re-eval, before its delivery rows exist),
-        // the raw redispatch would re-handle it; the guard defers to the
-        // post-handling flush instead.
         this.redispatchRetainedExternalEvents();
       }
 
@@ -5357,40 +4018,16 @@ export class SpaceRuntime {
       await this.cleanupTerminalExecutors();
       await this.reconcileTerminalRunsWithoutExecutors();
       await this.checkStandaloneTasks();
-      // Auto-resume tasks paused on a rate/usage cap whose reset has passed.
-      // Driven off the persisted `restrictions.resetAt`, so it survives daemon
-      // restarts (the in-memory watchdog cooldown does not).
       await this.recoverRateLimitedTasks();
 
-      // Bound published events without deliveries (e.g. retained events waiting
-      // for a subscription) so they do not last forever when no matching
-      // subscription, duplicate webhook, or restart occurs.
       this.expirePublishedExternalEventsPastTtl();
 
-      // Physically prune dead-loop event history older than the rolling window
-      // across ALL runs. Active runs lazy-prune their own channels on each
-      // traversal, but done/cancelled (reopenable) runs are never traversed
-      // again — without this periodic sweep their retained rows would accumulate
-      // until the next daemon restart. Throttled to once per window.
       this.pruneExpiredCycleEvents();
     } finally {
       this.tickInFlight = false;
     }
   }
 
-  /**
-   * Start a new workflow run for the given space and workflow.
-   *
-   * Flow:
-   * 1. Load the workflow definition
-   * 2. Create a SpaceWorkflowRun record (status: in_progress)
-   * 3. Create a WorkflowExecutor and register it in the executors map
-   * 4. Ensure one canonical SpaceTask exists for the run
-   * 5. Create pending node_execution rows for the start node
-   *
-   * Returns the created run and its canonical task.
-   * Cleans up maps if task/execution creation fails to prevent orphaned executor entries.
-   */
   async startWorkflowRun(
     spaceId: string,
     workflowId: string,
@@ -5415,7 +4052,6 @@ export class SpaceRuntime {
       throw new Error(`Space not found: ${spaceId}`);
     }
 
-    // Create the run record — starts as 'pending', immediately promoted to 'in_progress'
     const pendingRun = this.config.workflowRunRepo.createPinnedRun({
       spaceId,
       workflowId,
@@ -5427,13 +4063,11 @@ export class SpaceRuntime {
     const run = this.config.workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
     await this.safeOnWorkflowRunCreated(spaceId, run);
 
-    // Register executor and meta. If a later step fails, we must clean these up.
     const meta: ExecutorMeta = { workflow, spaceId, workspacePath: space.workspacePath };
     this.executorMeta.set(run.id, meta);
     const executor = this.buildExecutor(workflow, run, spaceId, space.workspacePath);
     this.executors.set(run.id, executor);
 
-    // Find start node and ensure canonical run task. Roll back map entries if this fails.
     const startNode = workflow.nodes.find((s) => s.id === workflow.startNodeId);
     if (!startNode) {
       this.executors.delete(run.id);
@@ -5446,8 +4080,6 @@ export class SpaceRuntime {
     let canonicalTask: SpaceTask | null = null;
     let startAgents: ReturnType<typeof resolveNodeAgents>;
     try {
-      // One run == one task. Reuse a provided parent task when available,
-      // otherwise create a new canonical task for this run.
       if (options.parentTaskId) {
         const parent = this.config.taskRepo.getTask(options.parentTaskId);
         if (!parent) {
@@ -5485,34 +4117,17 @@ export class SpaceRuntime {
         });
       }
     } catch (err) {
-      // Clean up the executor/meta entries so the run is not orphaned in the map.
       this.executors.delete(run.id);
       this.executorMeta.delete(run.id);
-      // Cancel the DB run record so rehydrateExecutors() does not silently loop
-      // over it on next server restart (an in_progress run with no tasks would
-      // sit in the executor map indefinitely, never advancing and never erroring).
       await this.transitionRunStatusAndEmit(run.id, 'cancelled');
       throw err;
     }
 
-    // Resolve channel topology for the start node and store in run config.
-    // TODO: Milestone 6: pass resolvedChannels to session group creation in
-    // TaskAgentManager.spawnTaskAgent() rather than storing in run config.
     this.storeWorkflowChannels(run.id, workflow.channels ?? []);
 
     return { run, tasks: canonicalTask ? [canonicalTask] : [] };
   }
 
-  /**
-   * Resolve a workflow for a new run from an explicit workflowId.
-   *
-   * Returns the workflow if found in this space's workflows, or null when:
-   *   - No workflowId is provided (LLM agent must call list_workflows first)
-   *   - The provided workflowId is not found in this space
-   *
-   * This is a thin integration point: it loads the space's workflows from the
-   * DB and delegates to the pure `selectWorkflow()` function.
-   */
   resolveWorkflowForRun(spaceId: string, workflowId?: string): SpaceWorkflow | null {
     const availableWorkflows = this.config.spaceWorkflowManager
       .listWorkflows(spaceId)
@@ -5520,34 +4135,15 @@ export class SpaceRuntime {
     return selectWorkflow({ spaceId, availableWorkflows, workflowId });
   }
 
-  /**
-   * Returns the WorkflowExecutor for a given run ID, or undefined if not tracked.
-   * Useful for testing and external inspection.
-   */
   getExecutor(runId: string): WorkflowExecutor | undefined {
     return this.executors.get(runId);
   }
 
-  /**
-   * The PR URL recorded for a workflow run (the approved task's PR), or null when
-   * none is resolvable. Used by the `merge_pr` handler to bind the caller-supplied
-   * `pr_url` to the task's actual PR, so an authorized merger for task A cannot
-   * merge task B's PR by passing its URL (task #866).
-   */
   getApprovedPrUrlForRun(runId: string): string | null {
     const url = this.resolvePrUrlForRun(runId);
     return typeof url === 'string' && url.length > 0 ? url : null;
   }
 
-  /**
-   * Reopen or resume a workflow-backed task as one lifecycle operation.
-   *
-   * A bare SpaceTask status update is not enough for workflow tasks: terminal
-   * workflow runs are reconciled back to their run status on the next tick, and
-   * terminal node executions need either a live session reattached or a pending
-   * row for the tick loop to spawn. This method updates the task, run, and the
-   * current node execution rows together, then ensures the executor map is ready.
-   */
   async recoverWorkflowBackedTask(
     spaceId: string,
     taskId: string,
@@ -5560,14 +4156,6 @@ export class SpaceRuntime {
       );
     }
 
-    // Clear stale expired/failed queued handoffs and reset in-memory counters
-    // so the next tick does not immediately re-block the run based on stale
-    // pending message state from the previous failed cycle.
-    //
-    // Guarded on both task AND run ownership so a wrong-space caller (or a
-    // task whose workflowRunId points to a foreign run) cannot delete messages
-    // or reset retry counters. The transaction below also validates and throws
-    // on mismatch, but these side-effects run outside the transaction.
     const preTxTask = this.config.taskRepo.getTask(taskId);
     const preTxRunId = preTxTask?.workflowRunId;
     const preTxRun = preTxRunId ? this.config.workflowRunRepo.getRun(preTxRunId) : null;
@@ -5576,14 +4164,11 @@ export class SpaceRuntime {
         this.config.pendingMessageRepo.clearTerminalForRun(preTxRunId);
       }
       this.blockedRetryCounts.delete(preTxRunId);
-      // Clear non-terminal idle state so a manually recovered run starts fresh.
       for (const key of this.nonTerminalIdleStates.keys()) {
         if (key.startsWith(preTxRunId + ':')) {
           this.nonTerminalIdleStates.delete(key);
         }
       }
-      // Clear Layer 1 alive-stuck state so manually recovered workflow runs get
-      // a fresh nag/restart budget instead of inheriting stale recovery attempts.
       this.clearAgentStuckStateForRun(preTxRunId);
     }
 
@@ -5603,9 +4188,6 @@ export class SpaceRuntime {
       if (!run) throw new Error(`WorkflowRun not found: ${task.workflowRunId}`);
       if (run.spaceId !== spaceId) throw new Error(`WorkflowRun not found: ${task.workflowRunId}`);
 
-      // Refuse to reopen against a workflow definition that no longer exists
-      // (e.g. deleted after the run completed) — otherwise the task/run are
-      // mutated to in_progress but the run can never tick or spawn again.
       const workflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
       if (!workflow) {
         throw new Error(`Workflow not found: ${run.workflowId}`);
@@ -5663,10 +4245,6 @@ export class SpaceRuntime {
         executions = this.config.nodeExecutionRepo.listByWorkflowRun(run.id);
       }
 
-      // Prefer the subscribed slot (node + agent) when recovering for an event
-      // (e.g. a check_failed that matched an earlier node's agent); otherwise
-      // reset the most recently updated node. Resetting the wrong slot would
-      // leave both the last node/agent and the subscribed one runnable.
       const byRecency = (a: NodeExecution, b: NodeExecution) => {
         const aTime = a.updatedAt ?? a.startedAt ?? a.createdAt;
         const bTime = b.updatedAt ?? b.startedAt ?? b.createdAt;
@@ -5682,11 +4260,6 @@ export class SpaceRuntime {
             (!options.agentName || execution.agentName === options.agentName)
         );
         if (slotExecutions.length === 0) {
-          // The subscribed slot has no execution (e.g. an interest on a node that
-          // was never reached). If the slot is a declared workflow agent, seed a
-          // pending execution so the tick can spawn it; otherwise the subscription
-          // is orphaned — abort so the task/run are not reopened with no runnable
-          // slot (the transaction rolls back).
           const slotNode = workflow.nodes.find((node) => node.id === options.workflowNodeId);
           const slot =
             slotNode && options.agentName
@@ -5756,22 +4329,11 @@ export class SpaceRuntime {
 
     const recovered = recoverTx();
     await this.ensureExecutorRegistered(recovered.run);
-    // ensureExecutorRegistered early-returns when the executor is already
-    // cached, so a recover after a cancel/archive cleared the run's static
-    // workflow interests would leave them unregistered. Re-register explicitly
-    // (idempotent: refreshes static interests, preserves dynamic/auto_pr).
     const recoveredWorkflow = this.config.spaceWorkflowManager.getWorkflowForRun(recovered.run);
     if (recoveredWorkflow) {
       this.registerRunInterestsFromWorkflow(recovered.run, recoveredWorkflow);
     }
     for (const sessionId of liveSessionIds) {
-      // If the live session is paused in a rate/usage-limit cooldown, break it
-      // out immediately so the manual Resume re-runs the turn now instead of
-      // sitting idle until the watchdog timer fires at resetAt. A banner-
-      // cancelled session (cooldown banner's Cancel) can't be broken out via
-      // retryNow, so resumeRateLimitedSubSession re-spawns its execution; in
-      // that case the session is stopped and a fresh one is spawned by the next
-      // tick (with MCP tools attached at spawn), so skip the prepare step.
       const tam = this.config.taskAgentManager;
       const resumeOutcome: 'retried' | 'respawned' | 'noop' =
         tam && typeof tam.resumeRateLimitedSubSession === 'function'
@@ -5802,16 +4364,9 @@ export class SpaceRuntime {
     };
   }
 
-  /**
-   * Returns the number of executors currently tracked (active runs).
-   */
   get executorCount(): number {
     return this.executors.size;
   }
-
-  // -------------------------------------------------------------------------
-  // Private — rehydration
-  // -------------------------------------------------------------------------
 
   private async ensureExecutorRegistered(
     run: SpaceWorkflowRun,
@@ -5832,10 +4387,6 @@ export class SpaceRuntime {
     };
     this.executorMeta.set(run.id, meta);
     this.executors.set(run.id, this.buildExecutor(workflow, run, space.id, space.workspacePath));
-    // Guarded like the static-rebuild loop: a malformed workflow definition
-    // (invalid eventInterests glob, or a slot over MAX_AGENT_SLOT_EVENT_INTERESTS)
-    // would otherwise throw out of registerRunInterests, propagate through the
-    // ungated activeRuns loop, and abort rehydrate for every space.
     try {
       this.registerRunInterestsFromWorkflow(run, workflow);
     } catch (err) {
@@ -5846,19 +4397,6 @@ export class SpaceRuntime {
     return true;
   }
 
-  /**
-   * Rehydrates WorkflowExecutors from the DB for all in-progress workflow runs,
-   * then rehydrates Task Agent sessions if a TaskAgentManager is configured.
-   *
-   * Called once at the start of the first executeTick(). Reconstructs
-   * executors with the run's persisted currentNodeId so the tick loop can
-   * resume advancement from where it left off.
-   *
-   * Executor rehydration runs first so that SpaceRuntimeService executors are
-   * ready when Task Agents try to use them via their MCP tools.
-   *
-   * Runs that reference a missing workflow are skipped silently.
-   */
   private requeuePersistedPendingDeliveries(pausedSpaceIds: Set<string> = new Set()): void {
     const store = this.config.externalEventStore;
     if (!store) return;
@@ -5926,9 +4464,6 @@ export class SpaceRuntime {
         nodeId: delivery.nodeId,
         agentName: delivery.agentName,
       };
-      // Paused/stopped spaces rebuild task-owned subscriptions on resume. Leave
-      // pending deliveries untouched until then rather than treating the absent
-      // in-memory trie entry as an unsubscribe.
       if (run && pausedSpaceIds.has(run.spaceId)) {
         continue;
       }
@@ -5955,11 +4490,6 @@ export class SpaceRuntime {
 
       const mode = deliveryModeFromFailureReason(delivery.failureReason);
       const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
-      // TTL anchor is the event's creation/ingestion time, not the delivery's
-      // registration/updated time — see EXTERNAL_EVENT_QUEUE_TTL_MS. This
-      // rehydrate retry sweep must use the same anchor as the activation
-      // flush (collectPersistedPendingDeliveries) so a persisted pending
-      // delivery cannot dodge the TTL by being replayed after a restart.
       const queuedItem = {
         event: eventPayload,
         deliveryKey: delivery.deliveryKey,
@@ -5977,10 +4507,6 @@ export class SpaceRuntime {
         mode,
         eventRecord.createdAt
       );
-      // Schedule a delayed retry rather than delivering inline: rehydrate runs
-      // before executors/sessions are fully restored, so an immediate inject or
-      // activation can race the spawn path. The retry re-enters the task-owned
-      // delivery path once the runtime is accepting events.
       const resolved = this.resolveSubscriptionTarget(target);
       if (resolved.sessionId) {
         this.scheduleExternalEventRetry(
@@ -6002,22 +4528,11 @@ export class SpaceRuntime {
     }
   }
 
-  /**
-   * Called when a paused/stopped space resumes. Re-schedules activation retries
-   * for sessionless pending deliveries in that space so idle subscribed targets
-   * are not stranded until an unrelated activation or restart happens.
-   */
   onSpaceResumed(spaceId: string): void {
     const store = this.config.externalEventStore;
-    // The space is active again — clear the sync paused cache so the delivery
-    // hot path resumes injecting into live sessions.
     this.pausedSpaceIds.delete(spaceId);
     if (!store) return;
 
-    // Re-register workflow-defined static event interests for eligible runs
-    // before evaluating pending deliveries. The startup rehydrate skips paused
-    // spaces, so a run relying on a workflow eventInterests pattern may have no
-    // trie entry yet; rebuilding first avoids false subscription removal.
     const reactiveRuns = this.config.workflowRunRepo
       .listBySpace(spaceId)
       .filter((run) => this.isRunInterestRebuildEligible(run));
@@ -6046,10 +4561,6 @@ export class SpaceRuntime {
       };
       const eventRecord = store.getById(delivery.eventId);
       if (!eventRecord || eventRecord.state !== 'published') continue;
-      // A deferred delivery may have sat paused longer than the queue TTL.
-      // Apply the same event-age TTL guard as requeuePersistedPendingDeliveries
-      // before scheduling a retry so stale events are failed as ttl_expired
-      // instead of being injected on resume.
       const mode = deliveryModeFromFailureReason(delivery.failureReason);
       const ttlItem = {
         event: this.externalEventPayloadFromRecord(eventRecord.event),
@@ -6082,9 +4593,6 @@ export class SpaceRuntime {
       }
 
       const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
-      // Pass the persisted event creation time so the queued item keeps the
-      // original TTL anchor — stamping the resume time would let an event that
-      // should already have expired survive until five minutes after resume.
       this.queueForPendingNode(
         target,
         eventPayload,
@@ -6112,12 +4620,6 @@ export class SpaceRuntime {
       }
     }
 
-    // Replay retained no-delivery PR events unconditionally (after the
-    // persisted pending deliveries above are requeued). A retained event may
-    // have been kept published during pause for a run whose auto-sub already
-    // existed (so subscribedPrRuns stayed 0); without this it would never be
-    // re-evaluated and would expire. Re-entrancy-guarded; no-op when nothing is
-    // retained.
     this.redispatchRetainedExternalEvents();
   }
 
@@ -6129,13 +4631,6 @@ export class SpaceRuntime {
     }
   }
 
-  /**
-   * Periodic TTL sweep for source events that are still `published` and have
-   * no delivery rows. This bounds events that the runtime intentionally keeps
-   * published waiting for a subscription (e.g. PR-linked events) so they do not
-   * remain in `space_external_events` indefinitely when no matching subscription,
-   * duplicate webhook, or restart occurs.
-   */
   private expirePublishedExternalEventsPastTtl(now = Date.now()): void {
     const store = this.config.externalEventStore;
     if (!store) return;
@@ -6171,11 +4666,6 @@ export class SpaceRuntime {
     }
   }
 
-  /**
-   * Group a flat task list (e.g. from the batched `listByWorkflowRunIdsIncludingArchived`)
-   * by `workflow_run_id`, preserving the within-run ordering the batched query
-   * already returns. Tasks with no workflow_run_id are skipped.
-   */
   private groupTasksByRun(tasks: SpaceTask[]): Map<string, SpaceTask[]> {
     const byRun = new Map<string, SpaceTask[]>();
     for (const task of tasks) {
@@ -6187,36 +4677,6 @@ export class SpaceRuntime {
     return byRun;
   }
 
-  /**
-   * Restore agent-registered `dynamic` workflow subscriptions from the durable
-   * `space_workflow_event_subscriptions` table into the in-memory trie on daemon
-   * rehydrate. This is what lets a subscription an agent created at runtime
-   * (e.g. a coder subscribing to its own PR) survive a restart — dynamic
-   * interests cannot be re-derived, so the table is their source of truth.
-   *
-   * `static` template interests are NOT restored here: they are re-materialized
-   * from the workflow definition by `ensureExecutorRegistered` and the
-   * static-rebuild loop, whose eligibility already covers the post-approval
-   * review phase (a succeeded run whose canonical task parks at `approved`).
-   * Rebuilding static here would duplicate that work under a stricter gate
-   * (`isRunInterestRebuildEligible` excludes done runs) and drop those review
-   * interests, so this method clears/re-inserts `dynamic` entries only.
-   *
-   * Terminal reconciliation: each row is purged rather than restored when its
-   * run is `cancelled` (cancelWorkflowRun's `clearRunInterests` may not have
-   * fired) OR its OWN task is `done`/`archived` (`clearTaskInterests` may not
-   * have fired) — checked per-row so a terminal NONCANONICAL task's row is
-   * caught even when the run's canonical task is still active. Cancelled-TASK
-   * rows on a retryable non-cancelled run are preserved (the lifecycle keeps
-   * them via `clearTaskInterestsPreservingDynamic`), as are rows on succeeded
-   * runs whose task is `review`/`approved` (the post-approval phase).
-   *
-   * `runs`/`tasksByRun` are the caller's already-fetched run + task lists for
-   * the space (one batched `listByWorkflowRunIdsIncludingArchived` per space,
-   * shared with the static-rebuild loop). `sessionId` is intentionally not
-   * persisted — it is resolved dynamically from the live node execution at
-   * delivery time (`resolveSubscriptionTarget`).
-   */
   private rehydrateWorkflowSubscriptions(
     spaceId: string,
     runs: SpaceWorkflowRun[],
@@ -6226,9 +4686,6 @@ export class SpaceRuntime {
     const cancelledRunIds = new Set(
       runs.filter((run) => run.status === 'cancelled').map((run) => run.id)
     );
-    // Index every task by id so each row can be reconciled against its OWN task
-    // (not just the run's canonical one — a run can briefly hold a terminal
-    // noncanonical duplicate whose row must still be purged).
     const terminalTaskIds = new Set<string>();
     for (const runTasks of tasksByRun.values()) {
       for (const task of runTasks) {
@@ -6237,18 +4694,12 @@ export class SpaceRuntime {
         }
       }
     }
-    // Clear only the dynamic trie entries owned by this space so the rebuild is
-    // idempotent WITHOUT clobbering static interests the def-re-materialization
-    // paths (`ensureExecutorRegistered`, run before this, and the static-rebuild
-    // loop, run after) have already established.
     this.topicTrie.remove(
       (target) =>
         isWorkflowSubscriptionTarget(target) &&
         runById.has(target.workflowRunId) &&
         target.subscriptionKind === 'dynamic'
     );
-    // Track already-purged runs/tasks so the delete fires once each even when a
-    // run/task has multiple subscription rows.
     const purgedRuns = new Set<string>();
     const purgedTasks = new Set<string>();
     for (const sub of this.workflowEventSubscriptionRepo.listBySpace(spaceId)) {
@@ -6327,10 +4778,6 @@ export class SpaceRuntime {
     const pausedSpaceIds = new Set<string>();
 
     for (const space of spaces) {
-      // getRehydratableRuns returns 'in_progress' AND 'blocked' runs.
-      // 'pending' is still excluded — it's transient (task creation may have failed).
-      // 'blocked' runs are included so a human-gate-blocked run gets its
-      // executor reloaded on restart, allowing it to advance once the gate is resolved.
       const activeRuns = this.config.workflowRunRepo.getRehydratableRuns(space.id);
       const reviewRuns = this.config.workflowRunRepo
         .listBySpace(space.id)
@@ -6354,24 +4801,11 @@ export class SpaceRuntime {
         await this.ensureExecutorRegistered(run, space);
       }
       this.rehydrateLongHorizonSubscriptions(space.id);
-      // Fetch the space's runs + their tasks once (batched) and reuse for both
-      // the dynamic-subscription rebuild and the static-interest rebuild below,
-      // avoiding a per-run task-list query in each loop.
       const spaceRuns = this.config.workflowRunRepo.listBySpace(space.id);
       const tasksByRun = this.groupTasksByRun(
         this.config.taskRepo.listByWorkflowRunIdsIncludingArchived(spaceRuns.map((run) => run.id))
       );
-      // Rebuild the workflow-subscription (dynamic) trie from the durable table
-      // so an agent-registered subscription survives the restart, and purge any
-      // cancelled-run / terminal-task rows that leaked through the crash window.
-      // Runs before the paused-space short-circuit so a resumed space finds its
-      // trie intact.
       this.rehydrateWorkflowSubscriptions(space.id, spaceRuns, tasksByRun);
-      // Re-register workflow-defined static event interests for eligible runs
-      // BEFORE persisted-delivery replay. Executor rehydration intentionally
-      // excludes most succeeded runs, so a run relying on a workflow
-      // eventInterests pattern would otherwise have no trie entry after a
-      // restart. Idempotent for already-active runs.
       if (space.paused || space.stopped) {
         pausedSpaceIds.add(space.id);
         this.pausedSpaceIds.add(space.id);
@@ -6396,60 +4830,13 @@ export class SpaceRuntime {
 
     this.requeuePersistedPendingDeliveries(pausedSpaceIds);
 
-    // Rehydrate Task Agent sessions after executors are ready.
-    // Executors must be loaded first so Task Agents can use MCP tools
-    // that rely on the SpaceRuntimeService executor map.
     if (this.config.taskAgentManager) {
       await this.config.taskAgentManager.rehydrate();
     }
   }
 
-  // -------------------------------------------------------------------------
-  // Recovery — stalled in_progress runs after daemon restart
-  // -------------------------------------------------------------------------
-
-  /** Idempotency guard: ensures recovery runs at most once per process. */
   private recoveryDone = false;
 
-  /**
-   * Scan every active space for `in_progress` workflow runs whose in-flight
-   * state was orphaned by a daemon restart, and re-drive them so the tick loop
-   * can finalize the run on its next pass.
-   *
-   * Two outcomes (the third — `'skipped'` — covers runs that still have
-   * driveable executions, which the tick loop owns):
-   *
-   *   1. **Stalled-with-completion-signal** — every node execution is terminal
-   *      (`idle`/`cancelled`) and the canonical task is either already terminal
-   *      or has a non-null `reportedStatus`. The next tick will see
-   *      `CompletionDetector.isComplete()` return true and finalize via the
-   *      existing pathway — this method only logs and skips.
-   *
-   *   2. **Stalled-with-no-signal** — every node execution is terminal but no
-   *      completion signal was recorded. No agent is going to drive further
-   *      progress, so the run is marked `blocked` with `block_reason =
-   *      execution_failed` and a clear, restart-aware result message. Note:
-   *      `attemptBlockedRunRecovery` early-returns when no executions are in
-   *      `blocked` status — and a recovery-blocked run has all-idle/cancelled
-   *      executions — so neither the Tier-1 retry nor Tier-2 escalation path
-   *      will fire. The run sits `blocked` until human attention (or a future
-   *      cleanup teaches `attemptBlockedRunRecovery` to also recover from
-   *      idle/cancelled executions). This matches the spec requirement to
-   *      flag ambiguous-recovery runs with a clear reason.
-   *
-   * Note: orphan in-progress executions whose agent sessions died across the
-   * restart are NOT handled here — `processRunTick` already detects dead
-   * sessions and runs the proper crash-retry pathway (with counting) on the
-   * next tick. Duplicating that logic here would silently consume retries.
-   *
-   * Idempotent — guarded by `recoveryDone`. The first caller wins; subsequent
-   * callers (e.g. the first `executeTick()` after `rehydrateExecutors()`) are
-   * no-ops. Both `SpaceRuntimeService.start()` and `executeTick()` invoke this,
-   * so the order in which they fire does not matter.
-   *
-   * Must be called *after* `rehydrateExecutors()` so executor metadata is
-   * available for any run we might transition.
-   */
   async recoverStalledRunsForSpace(spaceId: string): Promise<void> {
     const space = await this.config.spaceManager.getSpace(spaceId);
     if (!space || space.paused || space.stopped) return;
@@ -6481,11 +4868,6 @@ export class SpaceRuntime {
     if (this.recoveryDone) return;
     this.recoveryDone = true;
 
-    // Garbage-collect dead-loop event history older than the rolling window
-    // across all runs. Active cyclic channels are pruned lazily on every
-    // traversal; this bounds history for abandoned/stalled runs that are never
-    // traversed again. Once per daemon start is sufficient — abandoned-run
-    // events are static (no further traversals add rows).
     try {
       this.getCycleRepo().pruneAllOldEvents();
     } catch (err) {
@@ -6532,22 +4914,6 @@ export class SpaceRuntime {
     }
   }
 
-  /**
-   * Recover a single in_progress run after daemon restart.
-   *
-   * Returns the recovery outcome so the caller can aggregate counts:
-   *   - `'completion-pending'` — all executions terminal AND completion signal
-   *                              recorded; tick will finalize via CompletionDetector.
-   *   - `'blocked'`           — all executions terminal AND no completion signal;
-   *                              run forced to `blocked` for human/auto-recovery.
-   *   - `'skipped'`           — nothing to do (e.g. has pending/in_progress/blocked
-   *                              executions that the tick loop already drives,
-   *                              or no executions at all).
-   *
-   * Orphan in_progress executions (whose agent sessions died at restart) are
-   * intentionally left for `processRunTick` to handle — it already detects
-   * dead sessions and applies the proper crash-retry-with-counting flow.
-   */
   private async recoverSingleRun(
     run: SpaceWorkflowRun
   ): Promise<'completion-pending' | 'blocked' | 'skipped'> {
@@ -6560,12 +4926,6 @@ export class SpaceRuntime {
     const space = await this.config.spaceManager.getSpace(run.spaceId);
     if (executions.length === 0) return 'skipped';
 
-    // If the tick loop has any work it can drive — `pending` (about
-    // to spawn), `in_progress` (alive or crashed agent → existing
-    // liveness path resets/blocks), or `blocked` (existing
-    // `attemptBlockedRunRecovery` will retry/escalate) — leave the run
-    // alone. Recovery only intervenes when the runtime has nothing it
-    // can act on (every execution is `idle` or `cancelled`).
     const hasDriveableExecution = executions.some(
       (ex) =>
         ex.status === 'pending' ||
@@ -6581,34 +4941,9 @@ export class SpaceRuntime {
         .some((row) => row.targetKind === 'node_agent') ?? false;
     if (hasDriveableExecution || hasQueuedNodeHandoff) return 'skipped';
 
-    // Every execution is `idle` or `cancelled` (true terminal at the
-    // node level — no agent is going to drive further state). Branch on
-    // whether a completion signal was recorded on the canonical task.
     const tasks = this.config.taskRepo.listByWorkflowRun(run.id);
     const canonicalTask = this.pickCanonicalTaskForRun(run, tasks);
 
-    // A canonical task is "at rest" — i.e. NOT a stalled run that needs
-    // daemon-restart intervention — when it is in any of these states:
-    //
-    //   - `done` / `cancelled`  → terminal; the tick loop's
-    //                             CompletionDetector will pick it up and
-    //                             finalize the run.
-    //   - `review`              → end-node agent finished and the workflow
-    //                             is paused awaiting human approval (e.g.
-    //                             via `submit_for_approval`). All node
-    //                             executions are correctly `idle` while we
-    //                             wait for the human; this is not a stall.
-    //   - `approved`            → human (or auto_policy) approved; a
-    //                             post-approval executor (e.g. PR merge)
-    //                             may still be in flight, leaving prior
-    //                             node executions `idle`.
-    //   - `reportedStatus !== null` → end-node agent reported a result;
-    //                                 the next tick will route through the
-    //                                 completion path.
-    //
-    // In all of these cases a daemon restart must NOT alter task status.
-    // Only when none of these hold is the run genuinely stalled and
-    // eligible to be flagged `blocked`.
     const completionSignalled =
       canonicalTask !== null &&
       (canonicalTask.status === 'done' ||
@@ -6633,11 +4968,6 @@ export class SpaceRuntime {
     }
 
     if (completionSignalled) {
-      // Tick loop's CompletionDetector + processRunTick will fire on the
-      // next pass and transition the run to `done` (or pick up the
-      // cancelled task), or the run will remain paused awaiting the
-      // human / post-approval executor that owns it. Nothing to do
-      // here — the run is at rest, not stalled.
       return 'completion-pending';
     }
 
@@ -6645,11 +4975,6 @@ export class SpaceRuntime {
     try {
       activated = await this.activateRestartRecoveryDownstreamNodes(run, executions);
     } catch (err) {
-      // A downstream target references a deleted custom agent. Block THIS run
-      // with an actionable diagnostic instead of leaking a raw SQLite FK error
-      // (which would only be logged and leave the run in_progress, retrying on
-      // every restart). Isolated to this run — the caller's per-run loop still
-      // recovers other stalled runs.
       if (isMissingWorkflowAgentError(err)) {
         await this.blockRunForMissingAgent(run, err);
         return 'blocked';
@@ -6658,15 +4983,6 @@ export class SpaceRuntime {
     }
     if (activated) return 'skipped';
 
-    // Genuinely stalled with no completion signal — flag the run
-    // as blocked so the user-facing task surfaces in the "Needs Attention"
-    // group rather than appearing in_progress forever.
-    //
-    // We use `execution_failed` as the block reason (the most accurate of
-    // the existing `SpaceBlockReason` values for "node terminated without
-    // reaching completion") and a dedicated, restart-aware `result`
-    // message so operators can distinguish this from the in-tick blocked
-    // path.
     await this.transitionRunStatusAndEmit(run.id, 'blocked');
     if (canonicalTask) {
       const result =
@@ -6748,14 +5064,6 @@ export class SpaceRuntime {
     log.warn(`SpaceRuntime.recoverStalledRuns: blocked run ${run.id}: ${reason}`);
   }
 
-  /**
-   * Block a run whose workflow references a custom agent that no longer exists.
-   * Unlike {@link blockRunWithMissingWorkflow} (whole definition gone) we keep
-   * existing executions intact — the run is recoverable once the operator
-   * recreates the agent or repoints the workflow slot, so cancelling live
-   * executions would discard useful state. The run moves to `blocked` with a
-   * diagnostic carrying the run id, target node, agent name, and stale agent id.
-   */
   private async blockRunForMissingAgent(
     run: SpaceWorkflowRun,
     err: MissingWorkflowAgentError
@@ -6836,10 +5144,6 @@ export class SpaceRuntime {
 
     const createdOrReset: string[] = [];
     const blockedReasons: string[] = [];
-    // A single persisted (run, channel) dead-loop incident must surface at most
-    // one recovery notification, even when multiple idle source executions or a
-    // wildcard source channel yield several stalled transitions for the same
-    // channel in one pass.
     const notifiedDeadLoopChannels = new Set<number>();
 
     for (const {
@@ -6857,12 +5161,7 @@ export class SpaceRuntime {
       );
       if (!cycleResult.open) {
         blockedReasons.push(cycleResult.reason);
-        // Surface a recovery-detected dead loop to the UI (mirrors the live
-        // ChannelRouter surfacing) so it is not mistaken for a generic stall —
-        // once per (run, channel) incident.
         if (cycleResult.deadLoop && !notifiedDeadLoopChannels.has(channelIndex)) {
-          // Record dedup only on a successful publish — a failed publish must
-          // remain retryable on the next stalled transition in this pass.
           const notified = await this.notifyRecoveryDeadLoop(
             run,
             channel,
@@ -6880,12 +5179,6 @@ export class SpaceRuntime {
         const targetNode = nodeByName.get(targetName);
         if (!targetNode || targetNode.id === sourceNode.id) continue;
 
-        // Validate this target's configured agent references now that the channel
-        // is confirmed reachable (cycle cap open), but BEFORE creating any
-        // execution for it. A stale reference blocks the run via
-        // recoverSingleRun's handler; an UNREACHABLE target (capped cycle) was
-        // skipped above and must not block recovery of other branches.
-        // Built-in/worker slots (agentId=null) are preserved.
         const missing = findMissingNodeAgentReferences(
           targetNode,
           (id) => this.config.spaceAgentManager.getById(id) !== null
@@ -6965,28 +5258,10 @@ export class SpaceRuntime {
     return false;
   }
 
-  /**
-   * Resolves the channel cycle repository, preferring the injected instance
-   * (mockable, shared) and falling back to one built from `db` for callers that
-   * don't wire it (e.g. lightweight tests).
-   */
   private getCycleRepo(): ChannelCycleRepository {
     return this.config.channelCycleRepo ?? new ChannelCycleRepository(this.config.db);
   }
 
-  /**
-   * Periodically prunes `channel_cycle_events` rows older than the rolling
-   * dead-loop window across every run. Active runs already lazy-prune their own
-   * (run, channel) on each traversal, but done/cancelled runs are reopenable and
-   * therefore retain their history while never being traversed again — so
-   * without this sweep they would leak rows until the next daemon restart (the
-   * one-shot startup prune only covers runs that existed at boot).
-   *
-   * Throttled to one pass per `DEAD_LOOP_WINDOW_MS`: rows older than the window
-   * are already excluded from the rate count, so deferring their physical
-   * deletion by up to a window is harmless and keeps the (full-scan) prune off
-   * the hot path. Best-effort — a failure is logged, never thrown.
-   */
   pruneExpiredCycleEvents(now: number = Date.now()): void {
     if (now - this.lastGlobalCyclePruneAt < DEAD_LOOP_WINDOW_MS) return;
     this.lastGlobalCyclePruneAt = now;
@@ -7010,8 +5285,6 @@ export class SpaceRuntime {
     if (!isChannelCyclic(channelIndex, workflow.channels ?? [], workflow.nodes)) {
       return { open: true };
     }
-    // Rate-based dead-loop detection: block only a runaway tight ping-pong,
-    // never a genuine extended review spread over time.
     const cycleRepo = this.getCycleRepo();
     const recentCount = cycleRepo.countRecentCycleEvents(runId, channelIndex);
     if (recentCount >= DEAD_LOOP_THRESHOLD) {
@@ -7025,15 +5298,6 @@ export class SpaceRuntime {
     return { open: true };
   }
 
-  /**
-   * Best-effort: publish a `space.workflowRun.deadLoop` event when restart
-   * recovery finds a cyclic channel already in a dead loop, so the human sees
-   * the block in the UI rather than a generic stall. Mirrors the live
-   * `ChannelRouter.notifyDeadLoop` surfacing. Returns `true` on a successful
-   * publish, `false` when no bus is configured or the publish threw — callers
-   * use that to record dedup only on success (a failed publish must be
-   * retryable on the next pass, not permanently suppressed).
-   */
   private async notifyRecoveryDeadLoop(
     run: SpaceWorkflowRun,
     channel: WorkflowChannel,
@@ -7153,22 +5417,6 @@ export class SpaceRuntime {
     }
   }
 
-  // -------------------------------------------------------------------------
-  // Private — tick helpers
-  // -------------------------------------------------------------------------
-
-  /**
-   * For each active executor, processes the current node's tasks:
-   * - Detects blocked and timeout conditions
-   * - Spawns Task Agent sessions for pending tasks
-   * - Monitors agent liveness and resets dead agents
-   *
-   * Agents drive workflow progression themselves via send_message and
-   * `task.reportedStatus`. This method never calls advance() directly.
-   *
-   * Errors from individual runs are caught and re-thrown after all runs have
-   * been processed, so a single bad run cannot starve subsequent ones.
-   */
   private async processCompletedTasks(): Promise<void> {
     let firstError: unknown = null;
 
@@ -7176,19 +5424,13 @@ export class SpaceRuntime {
       try {
         await this.processRunTick(runId);
       } catch (err) {
-        // Capture first unexpected error; continue processing remaining runs.
         if (firstError === null) firstError = err;
       }
     }
 
-    // Re-throw after all runs processed so callers see the error.
     if (firstError !== null) throw firstError;
   }
 
-  /**
-   * Process a single workflow run tick: re-read from DB, recreate executor
-   * with fresh state, detect issues, and spawn/monitor Task Agent sessions.
-   */
   private makeAgentStuckKey(runId: string, executionId: string): string {
     return `${runId}:${executionId}`;
   }
@@ -7291,29 +5533,6 @@ export class SpaceRuntime {
     ].join('\n');
   }
 
-  /**
-   * Compact-then-continue recovery for an idle execution that overflowed its
-   * context window (terminal `prompt_too_long` result).
-   *
-   * State machine (keyed by `${runId}:${executionId}`):
-   *  - prompt-too-long & awaitingContinue (compact in flight) & no result yet &
-   *    within timeout → wait.
-   *  - awaitingContinue & a `result` landed → clear the wait; if the result is
-   *    non-overflow, mark continueNagPending; if overflow, re-compact/escalate.
-   *  - awaitingContinue past COMPACT_RESULT_TIMEOUT_MS with no result → the
-   *    compact turn hung → escalate to blocked.
-   *  - prompt-too-long & not awaiting & attempts < MAX → inject `/compact`.
-   *  - prompt-too-long & attempts >= MAX → escalate to blocked.
-   *  - continueNagPending → deliver the resume nag; on success reset
-   *    compactAttempts (productive compaction) and clear; on failure retry,
-   *    bounded, then escalate.
-   *
-   * The wait clears ONLY on a `result` message (real turn completion) — not an
-   * intermediate `status: 'compacting'` row — so the resume nag is never sent
-   * mid-compaction. `compactAttempts` counts consecutive *unproductive*
-   * compactions and resets on a productive resume, so a long-running worker is
-   * not penalised for stale recovery history.
-   */
   private async recoverPromptTooLongIdleExecution(
     runId: string,
     spaceId: string,
@@ -7335,10 +5554,6 @@ export class SpaceRuntime {
     const lastMessageIsSuccessResult =
       lastMessageIsResult && !(lastMessage as { is_error?: boolean }).is_error;
 
-    // The `/compact` turn landed a RESULT (real completion — not an intermediate
-    // status/compact_boundary row) OR another prompt-too-long user message (e.g.
-    // Kimi returning the overflow as `<local-command-stderr>` stderr). End the
-    // wait and re-evaluate.
     let compactJustFailed = false;
     if (
       state.awaitingContinue &&
@@ -7349,45 +5564,15 @@ export class SpaceRuntime {
       state.awaitingContinue = false;
       state.awaitingContinueAfterDbId = null;
       state.awaitingContinueSince = null;
-      // Only a SUCCESS result proves compaction shrank the context — queue the
-      // resume nag and record this result as the resume anchor. A non-overflow
-      // ERROR result (model/auth/rate-limit) means compaction failed; route it to
-      // re-compact/escalate instead of resuming into an unchanged, still-over-limit
-      // context.
       if (lastMessageIsSuccessResult) {
         state.continueNagPending = true;
         state.awaitingResumeAfterDbId = lastMessageDbId;
       } else if (!overflowed) {
         compactJustFailed = true;
       }
-      // A fresh overflow result falls through with `overflowed` to re-compact.
     }
 
-    // Resume-nag wait: after the continue nag is delivered it is an enqueued
-    // user message invisible to getLastSDKMessage, so the sweep keeps seeing the
-    // compact-success anchor until the resumed turn advances. Hold the recovery
-    // open (preventing the terminal-skip from clearing the state and resetting
-    // compactAttempts prematurely). When the resumed turn produces a RESULT:
-    //  - SUCCESS → productive, clear the recovery state (fresh next time);
-    //  - prompt-too-long → re-compact/escalate with attempts PRESERVED;
-    //  - non-overflow ERROR (auth/rate-limit/model) → route to re-compact/escalate
-    //    (not silently cleared as productive — the resume failed, and a persistent
-    //    error escalates to blocked at the cap rather than leaving the run idle).
-    //
-    // The wait is bounded by COMPACT_RESULT_TIMEOUT_MS: if the resumed turn never
-    // produces a result (provider hang / session died after consuming the nag),
-    // escalate — the execution is `idle`, so the alive-stuck sweep cannot rescue it.
-    //
-    // The wait clears ONLY on a RESULT from the resumed turn — not on the
-    // consumed continue nag itself (a user message), which getLastSDKMessage
-    // briefly returns before the resumed API call returns.
     if (state.awaitingResume && state.awaitingResumeAfterDbId !== null) {
-      // Process a visible resumed-turn RESULT before the timeout — a turn that
-      // legitimately took longer than the window (e.g. tick loop paused) but
-      // did complete must not be mis-blocked. Timeout fires only when NO result
-      // has landed (mirrors the /compact wait's result-first ordering).
-      // A newer prompt-too-long user message (e.g. Kimi stderr) also completes
-      // the resumed turn, so treat it the same as an overflow result.
       if (
         lastMessageDbId !== state.awaitingResumeAfterDbId &&
         (lastMessageIsResult || overflowed)
@@ -7397,20 +5582,13 @@ export class SpaceRuntime {
         state.awaitingResumeSince = null;
         state.awaitingResumeLastProgressDbId = null;
         if (lastMessageIsSuccessResult) {
-          // Productive — real progress. Clear the recovery state (fresh next time).
           this.promptTooLongRecovery.delete(key);
           return 'handled';
         }
-        // Overflow (fall through with `overflowed`) OR non-overflow error: the
-        // resume did not make progress → re-compact/escalate with attempts preserved.
         if (!overflowed) {
           compactJustFailed = true;
         }
       } else {
-        // No resumed-turn result yet. Refresh the timeout clock ONLY when a NEW
-        // progress message appears (dbId differs from the anchor AND from the
-        // last progress dbId). Refreshing on every tick for an unchanged row
-        // would let a turn that hung after producing one message never time out.
         if (
           lastMessageDbId !== state.awaitingResumeAfterDbId &&
           lastMessageDbId !== state.awaitingResumeLastProgressDbId &&
@@ -7435,13 +5613,10 @@ export class SpaceRuntime {
           );
           return 'blocked';
         }
-        return 'handled'; // nag enqueued/consumed but resumed turn hasn't produced a result
+        return 'handled';
       }
     }
 
-    // Bound the post-compact wait: if the /compact turn produced no result
-    // within the timeout, it hung — escalate (the execution is `idle`, so the
-    // alive-stuck sweep cannot rescue it).
     if (
       state.awaitingContinue &&
       state.awaitingContinueSince !== null &&
@@ -7460,14 +5635,8 @@ export class SpaceRuntime {
       return 'blocked';
     }
 
-    // Re-compact/escalate on a fresh overflow OR a just-failed compaction
-    // (non-overflow error result). Both mean compaction did not shrink the
-    // context enough. Also re-enter on a pending retry after a previously failed
-    // injection (compactRetryPending) — a non-overflow-error last message
-    // wouldn't otherwise re-enter the gate.
     if (overflowed || compactJustFailed || state.compactRetryPending) {
       state.compactRetryPending = false;
-      // `/compact` still in flight — wait for the result.
       if (state.awaitingContinue) {
         return 'handled';
       }
@@ -7487,9 +5656,6 @@ export class SpaceRuntime {
         );
         return 'blocked';
       }
-      // Compact FIRST, then continue on a later tick. Count the attempt toward
-      // the cap up front so a session that cannot receive the compact still
-      // escalates. Only mark awaiting after a successful injection.
       state.compactAttempts += 1;
       let injectedDbId: string | null = null;
       try {
@@ -7503,14 +5669,6 @@ export class SpaceRuntime {
       }
       if (injectedDbId !== null) {
         state.awaitingContinue = true;
-        // Anchor the wait on the PRE-COMPACT last message (the overflow result),
-        // NOT the injected `/compact`. `getLastSDKMessage` excludes user messages
-        // saved with send_status='enqueued' (sdk-message-repository.ts:995), and
-        // injectRuntimeRecoveryMessage enqueues the `/compact` — so the injected
-        // row is invisible to getLastSDKMessage until the SDK consumes it. While
-        // the `/compact` is in flight, getLastSDKMessage keeps returning this
-        // pre-compact result; the wait clears only when a newer consumed/result
-        // row lands (the compacted turn's output).
         state.awaitingContinueAfterDbId = lastMessageDbId;
         state.awaitingContinueSince = now;
         log.warn(
@@ -7518,8 +5676,6 @@ export class SpaceRuntime {
             `(agent ${execution.agentName}, session ${sessionId}, attempt ${state.compactAttempts}/${MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS})`
         );
       } else {
-        // Injection failed — preserve a retryable flag so the next tick re-enters
-        // (a non-overflow-error last message wouldn't re-enter the gate on its own).
         state.compactRetryPending = true;
         log.warn(
           `SpaceRuntime: could not inject /compact for overflowed execution ${execution.id} ` +
@@ -7529,16 +5685,10 @@ export class SpaceRuntime {
       return 'handled';
     }
 
-    // Not prompt-too-long. If a `/compact` is still in flight (no result yet),
-    // wait for the post-compact result.
     if (state.awaitingContinue) {
       return 'handled';
     }
 
-    // Compaction succeeded — deliver the resume nag (retryable on failure so a
-    // transient/absent injection is not silently swallowed). On success the
-    // compaction was productive: reset compactAttempts so a long-running worker
-    // that legitimately re-fills context is not blocked by stale history.
     if (state.continueNagPending) {
       let nagDelivered = false;
       try {
@@ -7556,11 +5706,6 @@ export class SpaceRuntime {
       if (nagDelivered) {
         state.continueNagPending = false;
         state.continueNagAttempts = 0;
-        // compactAttempts is NOT reset here (see awaitingResume handling above).
-        // The delivered nag is an enqueued user message invisible to
-        // getLastSDKMessage, so awaitingResume holds the recovery open until the
-        // resumed turn actually advances — preventing the terminal-skip from
-        // clearing the state (and resetting attempts) while the nag is in flight.
         state.awaitingResume = true;
         state.awaitingResumeSince = now;
         log.warn(
@@ -7589,15 +5734,10 @@ export class SpaceRuntime {
       return 'handled';
     }
 
-    // No active recovery phase and not overflowing — nothing to recover.
     this.promptTooLongRecovery.delete(key);
     return 'handled';
   }
 
-  /**
-   * Shared escalation: mark the execution + run `blocked`, notify, and clear the
-   * prompt-too-long recovery state.
-   */
   private async escalatePromptTooLongBlocked(
     runId: string,
     spaceId: string,
@@ -7608,10 +5748,6 @@ export class SpaceRuntime {
     manager: TaskAgentManager | undefined
   ): Promise<void> {
     const key = `${runId}:${execution.id}`;
-    // Cancel the (possibly still-running) session before detaching. A timed-out
-    // /compact or resumed turn may still be processing; leaving it alive while the
-    // bounded blocked-run retry spawns a fresh agent would run two sessions
-    // concurrently for one execution.
     if (execution.agentSessionId) {
       try {
         manager?.cancelBySessionId?.(execution.agentSessionId);
@@ -7625,10 +5761,6 @@ export class SpaceRuntime {
     this.config.nodeExecutionRepo.update(execution.id, {
       status: 'blocked',
       result: reason,
-      // Detach the overflowed session. Its context is exhausted, so reusing it
-      // would just re-overflow. Clearing the id lets the bounded blocked-run
-      // retry (attemptBlockedRunRecovery) spawn fresh on retry instead of
-      // resurrecting this terminal-overflow session into a stuck in_progress.
       agentSessionId: null,
     });
     await this.transitionRunStatusAndEmit(runId, 'blocked');
@@ -7680,12 +5812,7 @@ export class SpaceRuntime {
       const processingState = session?.getProcessingState();
       if (processingState?.status === 'waiting_for_input') continue;
 
-      // Skip nag when task is awaiting human approval — the agent has already
-      // submitted its work and is intentionally idle pending review.
       if (canonicalTask.pendingCheckpointType === 'task_completion') continue;
-      // Skip nag when the execution already has a result and the task is in a
-      // review/approved state — the node agent reported completion and is waiting
-      // for the workflow to advance through the approval gate.
       if (
         execution.result &&
         (canonicalTask.status === 'review' || canonicalTask.status === 'approved')
@@ -7698,16 +5825,6 @@ export class SpaceRuntime {
       const isRuntimeNagMessage =
         lastMessage?.type === 'user' && lastMessage.dbId === state.lastRuntimeNagMessageId;
       const progressMessage = lastMessage && !isRuntimeNagMessage ? lastMessage : null;
-      // Use the NEWEST PROGRESS timestamp, not a ??-chain: once lastActivityAt
-      // is set it must not shadow a MORE RECENT SDK message (or vice versa), or
-      // the detector could nag/restart an agent that just made progress.
-      // lastActivityAt captures tool/message/commit activity that the SDK-message
-      // timestamp misses; take the max of the progress signals only.
-      // `startedAt` is deliberately EXCLUDED from the max — it is a session-
-      // lifecycle marker (re-stamped on restart/recovery), not progress, so
-      // including it would let a freshly-(re)started-but-still-stuck agent look
-      // fresh and suppress its restart. It remains a fallback for a brand-new
-      // session that has produced no progress signal yet.
       const progressSignals = [execution.lastActivityAt, progressMessage?.timestamp].filter(
         (t): t is number => typeof t === 'number'
       );
@@ -7873,8 +5990,6 @@ export class SpaceRuntime {
   }
 
   private async processRunTick(runId: string): Promise<void> {
-    // Always re-read run from DB to pick up external status changes (e.g. human
-    // approval reset, external cancellation).
     const run = this.config.workflowRunRepo.getRun(runId);
     if (!run) return;
     if (run.status === 'cancelled' || isWorkflowRunSucceeded(run.status)) {
@@ -7882,19 +5997,14 @@ export class SpaceRuntime {
       return;
     }
 
-    // Waiting run recovery: attempt bounded automatic retry before giving up.
     if (isWorkflowRunWaiting(run.status)) {
       await this.attemptBlockedRunRecovery(runId, run);
       return;
     }
 
-    // In the agent-centric model, agents activate nodes themselves via activateNode().
-    // The tick loop processes node_executions for the run while keeping exactly
-    // one canonical task as the user-facing envelope.
     const meta = this.executorMeta.get(runId);
     if (!meta) return;
 
-    // One run should have exactly one canonical task.
     const allRunTasks = this.config.taskRepo.listByWorkflowRun(runId);
     if (allRunTasks.length === 0) return;
 
@@ -7936,15 +6046,6 @@ export class SpaceRuntime {
       return;
     }
 
-    // ─── Rate/usage-limited pause guard ───────────────────────────────────
-    // A canonical task paused on a rate/usage cap has a dead worker session
-    // (the cooldown timer owns the wait, or the daemon restarted mid-wait).
-    // Skip ALL liveness/spawn/respawn processing for it: its in_progress
-    // execution must NOT be classified as crashed and respawned (that would
-    // resume work immediately, bypassing the cooldown). When
-    // `recoverRateLimitedTasks()` later restores the task to `in_progress`
-    // (reset time passed), the next tick re-enters the normal path and the
-    // execution is re-driven then.
     if (isRateOrUsageLimited(canonicalTask.status)) {
       return;
     }
@@ -7952,7 +6053,6 @@ export class SpaceRuntime {
     let nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
     if (nodeExecutions.length === 0) return;
 
-    // Refresh dedup entries for this run's canonical task.
     if (canonicalTask.status !== 'blocked') {
       this.notifiedTaskSet.delete(`${canonicalTask.id}:blocked`);
     }
@@ -7960,21 +6060,9 @@ export class SpaceRuntime {
       this.notifiedTaskSet.delete(`${canonicalTask.id}:timeout`);
     }
 
-    // ─── Completion bypass ───────────────────────────────────────────────
-    // If the canonical task is either already terminal or the end-node agent
-    // has reported a result, skip blocked/timeout notifications for sibling
-    // nodes and proceed directly to completion handling. This prevents
-    // spurious "task_blocked" notifications for sibling nodes that are still
-    // running when the end node finishes first.
-    //
-    // Cached for reuse below at the completion-detection branch — neither
-    // `task.status` nor `reportedStatus` changes between here and there.
     const endNodeId = meta.workflow.endNodeId;
     const runIsComplete = this.completionDetector.isComplete({ workflowRunId: runId });
 
-    // Detect execution-level blocked BEFORE the all-completed guard.
-    // When the run is already complete, skip blocked notifications for
-    // siblings — the run will be completed imminently.
     if (!runIsComplete && nodeExecutions.some((execution) => execution.status === 'blocked')) {
       const blockedReason =
         nodeExecutions.find((execution) => execution.status === 'blocked')?.result ??
@@ -8011,8 +6099,6 @@ export class SpaceRuntime {
       return;
     }
 
-    // Timeout detection: check in_progress tasks against Space.config.taskTimeoutMs.
-    // Skip when the run is already complete — it's about to finalize.
     const space = await this.config.spaceManager.getSpace(meta.spaceId);
     if (!runIsComplete) {
       const taskTimeoutMs = space?.config?.taskTimeoutMs;
@@ -8041,30 +6127,16 @@ export class SpaceRuntime {
       }
     }
 
-    // Workflow runs created directly via RPC stay pending until a per-space slot is
-    // available. Existing in-progress canonical tasks continue even if the limit is
-    // later lowered below the current running count.
     if (canonicalTask.status === 'open' && this.getAvailableTaskSlots(space) <= 0) return;
 
-    // ─── Task Agent integration ───────────────────────────────────────────────
-    // When a TaskAgentManager is configured, Task Agents drive the workflow.
-    // SpaceRuntime's role here is lifecycle management only: spawn for pending
-    // tasks, check liveness, and recover from crashes. Agents drive progression
-    // themselves via send_message and `task.reportedStatus` — SpaceRuntime
-    // never calls advance().
     if (this.config.taskAgentManager) {
       const tam = this.config.taskAgentManager;
       let blockedByCrash = false;
 
-      // Snapshot which executions were already pending before this tick's
-      // liveness processing. The repair loop below uses this
-      // to avoid re-elevating executions that were just force-idled and
-      // then reset to pending within the same tick.
       const preTickPendingIds = new Set(
         nodeExecutions.filter((e) => e.status === 'pending').map((e) => e.id)
       );
 
-      // Step 1: Check workflow-node agent liveness by NodeExecution.sessionId.
       for (const execution of nodeExecutions) {
         if (
           !execution.agentSessionId ||
@@ -8077,12 +6149,6 @@ export class SpaceRuntime {
           continue;
         }
 
-        // Part C (task #138): if the dead session was sitting in
-        // `waiting_for_input`, the persisted AskUserQuestion card is now
-        // unanswerable. Try to flip it to `cancelled` (cancelReason
-        // `agent_session_terminated`) so the UI removes the dead-end
-        // rather than rendering a permanently-frozen card. Best-effort:
-        // the AgentSession instance may already be gone from every map.
         try {
           const liveSession = tam.getAgentSessionById(execution.agentSessionId);
           if (liveSession) {
@@ -8155,12 +6221,6 @@ export class SpaceRuntime {
       }
       nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 
-      // Catch-all recovery: a node-agent session that ended on a terminal error
-      // result (e.g. Codex 400, error_during_execution) leaves the node idle
-      // with a *live* session that no other sweep recovers — the result is
-      // classified terminal so the non-terminal-idle and alive-stuck paths both
-      // bail. Auto-continue once/twice, then escalate to `blocked` so
-      // attemptBlockedRunRecovery takes over with its own bounded re-spawn.
       const terminalErrorOutcome = await this.handleTerminalErrorIdleExecutions(
         runId,
         meta.spaceId,
@@ -8190,18 +6250,6 @@ export class SpaceRuntime {
         }
       }
 
-      // Step 1.6: Completion detection.
-      //
-      // Reuses the `runIsComplete` snapshot from above — neither `task.status`
-      // nor `reportedStatus` is mutated between the two checks (the recovery
-      // branches that could change them all `return` before reaching here).
-      //
-      // In the reported-but-not-yet-resolved case, dispatch through the
-      // PostApprovalRouter (PR 2/5). The router handles the terminal
-      // transition — `approved`→(inline/spawn/already-routed) or directly
-      // to `done` when no route is defined. End-node agents signal
-      // completion by setting `task.reportedStatus`, not by calling
-      // `setTaskStatus` directly.
       if (runIsComplete) {
         await this.transitionRunStatusAndEmit(runId, 'done');
         const summaryFromArtifact = this.resolvePrimaryResultArtifactSummary(runId);
@@ -8212,13 +6260,6 @@ export class SpaceRuntime {
         const nextTaskResult = freshSummary ?? existingResult ?? reportedSummary ?? null;
         const nextReportedSummary = freshSummary ?? reportedSummary ?? null;
 
-        // Skip re-resolution when the task is already at a non-`open`/non-`in_progress`
-        // status — `done`/`cancelled` are terminal; `approved` means
-        // PostApprovalRouter already ran once. `review` can only occur via
-        // gate-type checkpoints now that completion actions are removed.
-        // `blocked` is also skipped: a task that was cascade-blocked by a
-        // failed dependency can't be transitioned `blocked → approved`
-        // (invalid transition), so we leave it for manual retry.
         const taskAlreadyResolved =
           canonicalTask.status === 'done' ||
           canonicalTask.status === 'review' ||
@@ -8226,16 +6267,7 @@ export class SpaceRuntime {
           canonicalTask.status === 'approved' ||
           canonicalTask.status === 'blocked';
 
-        // Final status drives sibling cancellation. We only kill siblings when
-        // the task reached a true terminal state (`done`/`cancelled`).
         let finalTaskStatus: SpaceTask['status'] = canonicalTask.status;
-        // Capture the post-approval session the router may spawn just below so
-        // the sibling-quiesce sweep does NOT interrupt it. The spawn happens in
-        // the SAME synchronous block as the sweep (`dispatchPostApproval` →
-        // `PostApprovalRouter.route` → `spawnPostApprovalSubSession` stamps an
-        // `in_progress` node_execution for the merge target node). Without this
-        // exclusion the sweep's victim set is stale relative to that spawn and
-        // kills the freshly-created merge session ~2ms after it starts.
         let spawnedPostApprovalSessionId: string | undefined;
 
         if (!taskAlreadyResolved) {
@@ -8248,17 +6280,10 @@ export class SpaceRuntime {
             await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, updates);
           }
           const result = await this.dispatchPostApproval(canonicalTask.id, 'agent');
-          // The router stamps `postApprovalSessionId` on the task for the
-          // `spawn` (fresh sub-session) and `already-routed` (prior live
-          // sub-session) modes. Narrow the union so we can carry it into the
-          // sibling-quiesce exclusion below.
           spawnedPostApprovalSessionId =
             result.mode === 'spawn' || result.mode === 'already-routed'
               ? result.postApprovalSessionId
               : undefined;
-          // Resolve the final status from the router result. 'no-route'
-          // moved directly to done; 'inline' / 'spawn' / 'already-routed'
-          // parked at approved awaiting mark_complete.
           finalTaskStatus =
             result.mode === 'no-route'
               ? 'done'
@@ -8276,58 +6301,25 @@ export class SpaceRuntime {
           }
         }
 
-        // Sibling NodeExecution quiescing: interrupt siblings still in_progress
-        // when the canonical task reaches a terminal status, transitioning them
-        // to `idle` so they remain reachable via send_message. The end-node
-        // execution itself is excluded so its session can finish writing back
-        // to the agent (it set `task.reportedStatus`, which triggered this
-        // completion path). Skipped when the task is paused at `review` —
-        // the human may yet reject the completion, in which case sibling
-        // progress is still relevant.
-        //
-        // Sessions are deliberately NOT deleted here — they are only destroyed
-        // when the task transitions to `archived` (the true non-recoverable
-        // terminal state). This allows post-completion cross-node messaging,
-        // e.g. a reviewer sending follow-up feedback to a coder whose node
-        // already finished while the PR is still being merged.
-        //
-        // `blocked` is included alongside `done`/`cancelled` because the run
-        // itself has just been transitioned to `done` (above), so leaving
-        // siblings in `in_progress` would create inconsistent run/execution
-        // lifecycle state. `approved` is included for the same reason — the
-        // task has crossed the post-approval boundary; only `review` keeps
-        // siblings live because the human may still reject the completion.
         const taskTerminal =
           finalTaskStatus === 'done' ||
           finalTaskStatus === 'cancelled' ||
           finalTaskStatus === 'blocked' ||
           finalTaskStatus === 'approved';
         if (taskTerminal) {
-          // Resolve the source node to exclude from quiescing. Prefer the DURABLE
-          // `postApprovalSourceNodeId`; fall back to `pendingCompletionSubmittedByNodeId`
-          // (the no-route branch clears the durable field on approved → done but
-          // deliberately retains the pending field as an audit write, so for a
-          // `done` canonical task re-processed by a reconciliation tick while the
-          // run is still active — e.g. a human no-route approval, whose RPC path
-          // doesn't pre-quiesce siblings — the retained pending field is the only
-          // record of the non-end submitter); then the workflow end node. Without
-          // this ordering a reconciliation sweep on such a task would fall through
-          // to `endNodeId` and interrupt the real submitter instead of excluding
-          // it. (task #851.)
           const sourceNodeId =
             canonicalTask.postApprovalSourceNodeId ??
             canonicalTask.pendingCompletionSubmittedByNodeId ??
             endNodeId;
-          const siblingsToQuiesce = this.config.nodeExecutionRepo.listByWorkflowRun(runId).filter(
-            (e) =>
-              e.status === 'in_progress' &&
-              e.agentSessionId &&
-              // Do not kill the post-approval session the router just spawned
-              // in this same synchronous block — it is the legitimate
-              // continuation worker (e.g. the merge step), not a stale sibling.
-              e.agentSessionId !== spawnedPostApprovalSessionId &&
-              (!sourceNodeId || e.workflowNodeId !== sourceNodeId)
-          );
+          const siblingsToQuiesce = this.config.nodeExecutionRepo
+            .listByWorkflowRun(runId)
+            .filter(
+              (e) =>
+                e.status === 'in_progress' &&
+                e.agentSessionId &&
+                e.agentSessionId !== spawnedPostApprovalSessionId &&
+                (!sourceNodeId || e.workflowNodeId !== sourceNodeId)
+            );
           for (const sibling of siblingsToQuiesce) {
             this.config.nodeExecutionRepo.updateStatus(sibling.id, 'idle');
             if (this.config.taskAgentManager) {
@@ -8351,9 +6343,6 @@ export class SpaceRuntime {
         return;
       }
 
-      // Step 2: Spawn workflow node agents for pending executions without sessions.
-      // Skip spawning for paused or stopped spaces — completion/timeout/crash detection above
-      // still runs so in-flight agents are monitored, but no new agents are started.
       if (space?.paused || space?.stopped) return;
 
       const hasQueuedNodeHandoff =
@@ -8389,17 +6378,12 @@ export class SpaceRuntime {
             completedAt: null,
           });
         }
-        // Dead session on a pending execution: spawn will overwrite the
       }
       nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
       const pendingExecutions = nodeExecutions.filter(
         (execution) => execution.status === 'pending'
       );
 
-      // Skip spawning when the canonical task is terminal (done/cancelled/archived).
-      // The task was externally resolved while the run was in_progress — spawning new
-      // agent sub-sessions would conflict with the caller's intent and disturb tests
-      // that mark the task done to prevent agent interference.
       const canonicalTaskIsTerminal =
         canonicalTask.status === 'done' ||
         canonicalTask.status === 'cancelled' ||
@@ -8449,12 +6433,6 @@ export class SpaceRuntime {
                 permanentSpawnFailureReason = err instanceof Error ? err.message : String(err);
                 continue;
               }
-              // A deferred spawn (task paused on a rate/usage cap): leave the
-              // execution `pending` and re-attempt on a later tick once
-              // recoverRateLimitedTasks restores the task. NOT a crash (don't
-              // consume a crash-retry) and NOT permanent (don't
-              // cancel/unregister — a transient cooldown must not permanently
-              // remove the target agent).
               if (isTransientSpawnError(err)) {
                 log.warn(
                   `SpaceRuntime: deferring spawn for limited-task execution ${execution.id}: ${err instanceof Error ? err.message : String(err)}`
@@ -8526,8 +6504,6 @@ export class SpaceRuntime {
         }
       }
 
-      // Agents drive workflow progression via send_message and
-      // `task.reportedStatus`.
       return;
     }
   }
@@ -8649,11 +6625,6 @@ export class SpaceRuntime {
     }
 
     let blockedReason: string | null = null;
-    // Group by (targetAgentName, workflowNodeId) so two nodes reusing a slot
-    // name drain independently — otherwise recovery picks the first node and
-    // strands the other’s queued rows until they expire and block the run.
-    // Use a structured Map instead of an in-band delimiter (slot names are
-    // only validated as non-empty + unique, so a delimiter could collide).
     const groups = new Map<string, Map<string, typeof pending>>();
     for (const row of pending) {
       const nodeId = row.workflowNodeId ?? '';
@@ -8673,11 +6644,6 @@ export class SpaceRuntime {
       targetAgentName: string,
       rowsForCurrentAttempt: typeof pending
     ): void => {
-      // The scoped flush (listPendingForTarget with workflowNodeId) also drains
-      // legacy null-node rows (workflow_node_id IS NULL) for the same target, so
-      // a failure in those rows isn't visible in `rowsForCurrentAttempt`. Include
-      // every pending row for the target — from the original snapshot plus the
-      // attempt's rows — so a failed handoff always blocks the run as intended.
       const targetRows = [
         ...rowsForCurrentAttempt,
         ...pending.filter((row) => row.targetAgentName === targetAgentName),
@@ -8689,37 +6655,21 @@ export class SpaceRuntime {
       blockedReason = `Queued workflow handoff to ${targetAgentName} failed after ${first.attempts} attempt(s): ${first.lastError ?? 'delivery failed'}`;
     };
 
-    // Legacy null-node rows drain for EVERY scoped group (the flush includes
-    // workflow_node_id IS NULL). A transiently-failed legacy row would be
-    // retried once per group in a single tick, consuming all retry attempts and
-    // blocking the run. Track which legacy rows this sweep has already attempted
-    // and let only the FIRST group that sees them drive the drain.
     const attemptedLegacyIds = new Set<string>();
     for (const [targetAgentName, nodeMap] of groups) {
       for (const [workflowNodeIdRaw, rowsForTarget] of nodeMap) {
         const workflowNodeId = workflowNodeIdRaw || undefined;
         try {
-          // Reload this group's rows fresh: a prior group's flush can consume
-          // shared null-node rows (listPendingForTarget includes
-          // workflow_node_id IS NULL), so the original snapshot may list rows
-          // already delivered. Skip to avoid an unnecessary resume/spawn of an
-          // unrelated agent continuation.
-          const remainingForGroup = repo.listPendingForRun(runId).filter(
-            (row) =>
-              row.targetAgentName === targetAgentName &&
-              (row.workflowNodeId ?? '') === workflowNodeIdRaw &&
-              // Skip legacy null-node rows already attempted by an earlier
-              // group in this sweep (retry-storm guard).
-              (row.workflowNodeId || !attemptedLegacyIds.has(row.id))
-          );
+          const remainingForGroup = repo
+            .listPendingForRun(runId)
+            .filter(
+              (row) =>
+                row.targetAgentName === targetAgentName &&
+                (row.workflowNodeId ?? '') === workflowNodeIdRaw &&
+                (row.workflowNodeId || !attemptedLegacyIds.has(row.id))
+            );
           if (remainingForGroup.length === 0) continue;
 
-          // Resolve the target and rescope legacy compound / null-scoped rows to
-          // the pinned bare form (bare agent + resolved node id) BEFORE the
-          // execution lookup. The rescope must run whether or not an execution
-          // already exists — otherwise an existing execution skips it, the row
-          // keeps its old "<nodeId>/<agent>" key, and the flush (bare agent +
-          // "<nodeName>/<agent>") never sees it, so it expires and blocks the run.
           const rescopedTarget = this.resolveQueuedHandoffTarget(
             meta.workflow,
             targetAgentName,
@@ -8778,10 +6728,6 @@ export class SpaceRuntime {
               execution.agentSessionId
             );
             recordBlockedFlushFailure(targetAgentName, rowsForTarget);
-            // The flush drains legacy null-node rows for this target alongside
-            // the scoped rows (listPendingForTarget includes IS NULL). Mark ALL
-            // of the target's pending legacy rows attempted so a later scoped
-            // group in this sweep doesn't re-drain a transiently-failed one.
             for (const row of pending) {
               if (row.targetAgentName === targetAgentName && !row.workflowNodeId) {
                 attemptedLegacyIds.add(row.id);
@@ -8863,11 +6809,6 @@ export class SpaceRuntime {
               blockedReason = `Queued workflow handoff to ${targetAgentName} failed after ${updated.attempts} attempt(s): ${errMsg}`;
             }
           }
-          // Mark the target's pending legacy null-node rows attempted on ANY
-          // outcome (including transient errors) so a later scoped group in the
-          // same sweep doesn't re-drain them — a retry storm would consume all
-          // attempts and block the run. The flush drains legacy rows alongside
-          // the scoped ones, so they belong to this group's attempt too.
           for (const row of pending) {
             if (row.targetAgentName === targetAgentName && !row.workflowNodeId) {
               attemptedLegacyIds.add(row.id);
@@ -8900,13 +6841,6 @@ export class SpaceRuntime {
       if (nodeExecution) return nodeExecution;
     }
 
-    // Legacy fallback for targets the resolver could not map to a declared
-    // node/slot (e.g. a bare slot/node name no longer in the workflow). The raw
-    // comparison is intentional for compound targets: a valid compound is
-    // resolved above, and an invalid one has no matching execution, so comparing
-    // the full "node/agent" string returns undefined and lets the caller surface
-    // it as undeclared. Stripping the prefix here would over-match — e.g.
-    // "WrongNode/reviewer" would bind to another node's reviewer execution.
     return this.config.nodeExecutionRepo
       .listByWorkflowRun(runId)
       .filter(
@@ -8922,21 +6856,6 @@ export class SpaceRuntime {
     targetAgentName: string,
     workflowNodeId?: string
   ): { nodeId: string; agentName: string; agentId: string | null } | null {
-    // Queued handoff rows are addressed two ways:
-    //  - PINNED (workflowNodeId set): the router and enqueueRestartRecoveryMessage
-    //    store the BARE agent slot name + the node id. Slot names may contain "/",
-    //    so match the exact name and never interpret it as a compound.
-    //  - UNPINNED (legacy, workflowNodeId absent): the router stored a compound
-    //    "<nodeId-or-name>/<agent>" so two nodes reusing a slot name don't
-    //    cross-receive. Worker handles encode either the node name or id, and
-    //    node/agent names may contain "/", so match by prefixing each node
-    //    identifier and comparing exactly — never split on the first "/".
-    // Unpinned only, and only for slash-shaped targets: a slot name containing
-    // "/" can resemble another node's compound (e.g. Audit slot "Review/foo" vs
-    // Review's compound "Review/foo"), so an exact bare-slot match must win over
-    // compound parsing. Limit to "/"-containing values so a bare node name like
-    // "Review" still falls through to the bare-node/legacy handling below even
-    // if another node happens to have a slot of that name.
     if (!workflowNodeId && targetAgentName.includes('/')) {
       for (const node of workflow.nodes) {
         const exact = resolveNodeAgents(node).find((slot) => slot.name === targetAgentName);
@@ -8945,26 +6864,16 @@ export class SpaceRuntime {
       }
     }
     for (const node of workflow.nodes) {
-      // Node-scoped resolution: only consider the pinned node so two nodes
-      // reusing a slot name don't both resolve to the first one.
       if (workflowNodeId != null && node.id !== workflowNodeId) continue;
       const slots = resolveNodeAgents(node);
 
       if (workflowNodeId != null) {
-        // Pinned row: bare slot name. Match exactly (a slot named
-        // "<node>/reviewer" must not be stripped to "reviewer"). No compound
-        // parsing, no slots[0] fallback — the row is for this node specifically.
-        // Use an explicit null check so an empty-string node id still pins.
         const direct = slots.find((slot) => slot.name === targetAgentName);
         if (direct)
           return { nodeId: node.id, agentName: direct.name, agentId: direct.agentId ?? null };
         continue;
       }
 
-      // Unpinned compound "<nodeId-or-name>/<agent>": a precise address. The node
-      // must match by name or id AND the named slot must exist — a non-matching
-      // slot (typo, stale def, wrong node) returns no match instead of falling
-      // back to another slot and misdelivering (e.g. "Review/reveiwer" must fail).
       let nodeFormMatched = false;
       for (const nodeForm of [node.name, node.id]) {
         const prefix = `${nodeForm}/`;
@@ -8976,7 +6885,6 @@ export class SpaceRuntime {
       }
       if (nodeFormMatched) continue;
 
-      // Legacy non-compound behavior for bare slot names and node names.
       const nodeNameMatch = node.name === targetAgentName || node.id === targetAgentName;
       const direct = slots.find(
         (slot) => slot.name === targetAgentName || (nodeNameMatch && slot.name === node.name)
@@ -9063,9 +6971,6 @@ export class SpaceRuntime {
   ): Promise<'none' | 'retried' | 'blocked' | 'preserved'> {
     if (space?.paused || space?.stopped) return 'none';
 
-    // Explicit task completion or pause signals are authoritative. A final tool
-    // call may have set reportedStatus or parked the task for human/post-approval
-    // review even if the SDK result row has not been persisted yet.
     if (
       canonicalTask.reportedStatus !== null ||
       canonicalTask.status === 'review' ||
@@ -9087,11 +6992,6 @@ export class SpaceRuntime {
       const lastMessage = this.getSdkMessageRepo().getLastSDKMessage(sessionId);
       const classification = classifyLastMessageForIdleAgent(lastMessage);
       const key = `${runId}:${execution.id}`;
-      // Prompt-too-long recovery takes priority over both the terminal-skip and
-      // the generic non-terminal idle path. It must fire for a terminal overflow
-      // result, while awaiting a post-compact result, and while a resume nag is
-      // pending (retryable) — regardless of whether the latest message is
-      // classified as terminal.
       const ptlState = this.promptTooLongRecovery.get(key);
       if (
         isPromptTooLongErrorMessage(lastMessage) ||
@@ -9157,10 +7057,6 @@ export class SpaceRuntime {
         }
       }
 
-      // Newest PROGRESS timestamp — see handleAliveStuckExecutions for why this
-      // is a max over progress signals only (a stale lastActivityAt must not
-      // shadow a newer SDK message; startedAt is a lifecycle marker excluded
-      // from the max and used only as a fallback).
       const progressSignals = [
         execution.lastActivityAt,
         state.lastObservedProgressMessageAt,
@@ -9258,35 +7154,6 @@ export class SpaceRuntime {
     return preservedAny ? 'preserved' : 'none';
   }
 
-  /**
-   * Catch-all recovery for idle node-agent sessions that ended on a terminal
-   * error result (e.g. Codex 400, `error_during_execution`).
-   *
-   * The result is classified `terminal`, so neither `handleAliveStuckExecutions`
-   * nor `handleNonTerminalIdleExecutions` acts on it — the node silently goes
-   * idle with a live session and no recovery fires. This sweep injects a bounded
-   * number of "continue" messages via the same primitive a manual continue uses
-   * (`tam.injectRuntimeRecoveryMessage`), then escalates to `blocked` so
-   * `attemptBlockedRunRecovery` takes over with its own re-spawn cap.
-   *
-   * Guards (see task #673):
-   * - Only retryable subtypes (`error_during_execution`, `error_max_turns`) are
-   *   continued. Cost (`error_max_budget_usd`) and structured-output exhaustion
-   *   are skipped (non-retryable); prompt-too-long is deferred to #670.
-   * - Only when the task is `in_progress` with no `reportedStatus`.
-   * - A live session gets a bounded continue; a dead session is reset for a
-   *   bounded re-spawn (the crash-retry path only scans in_progress/pending, so
-   *   an idle dead terminal-error row would otherwise sit unrecovered).
-   * - Per-execution retry cap (`MAX_TERMINAL_ERROR_CONTINUE_RETRIES`).
-   * - Deterministic repeats (identical error signature) escalate immediately,
-   *   but only after the prior continue's grace window. A genuinely recovered
-   *   session gets a fresh budget only via a re-spawn (new session id), which
-   *   `attemptBlockedRunRecovery` provides after a block — the state is NOT
-   *   reset on a non-error last message, because `getLastSDKMessage` returns
-   *   consumed user rows (e.g. the injected continue) that are not evidence of
-   *   real progress and would otherwise defeat the repeat/cap guards.
-   * - Grace cooldown between attempts (mirrors the alive-stuck nag grace).
-   */
   private async handleTerminalErrorIdleExecutions(
     runId: string,
     spaceId: string,
@@ -9296,8 +7163,6 @@ export class SpaceRuntime {
   ): Promise<'none' | 'continued' | 'blocked'> {
     if (space?.paused || space?.stopped) return 'none';
 
-    // Explicit completion / review signals are authoritative — a final tool
-    // call may have parked the task even if the error result row persisted.
     if (
       canonicalTask.reportedStatus !== null ||
       canonicalTask.status === 'review' ||
@@ -9318,9 +7183,6 @@ export class SpaceRuntime {
       (execution) => execution.status === 'idle' && !!execution.agentSessionId
     );
 
-    // Index executions by session so per-session guards can be checked across
-    // EVERY row sharing a session (a reused agent can leave tool-continuation
-    // or #670 prompt-too-long state on a sibling idle row, not the newest one).
     const executionsBySession = new Map<string, NodeExecution[]>();
     for (const ex of allExecutions) {
       if (!ex.agentSessionId) continue;
@@ -9329,10 +7191,6 @@ export class SpaceRuntime {
       else executionsBySession.set(ex.agentSessionId, [ex]);
     }
 
-    // A reused named-agent session can have a newer activation in_progress while
-    // older rows remain idle. Skip any session that already has an active
-    // (in_progress/pending) owner — that session is processing the new
-    // activation and must not be recovered via the stale idle row.
     const activeSessions = new Set<string>();
     for (const ex of allExecutions) {
       if (ex.agentSessionId && (ex.status === 'in_progress' || ex.status === 'pending')) {
@@ -9340,11 +7198,6 @@ export class SpaceRuntime {
       }
     }
 
-    // createSubSession treats the NEWEST execution for a session as current
-    // (listByWorkflowRun is created_at ASC). Group by session, keep the newest
-    // idle row per session (excluding active-owner sessions), so recovery
-    // targets the current activation and each shared session is processed at
-    // most once per tick (no double-injected continues).
     const newestPerSession = new Map<string, NodeExecution>();
     for (const execution of idleExecutions) {
       const sid = execution.agentSessionId!;
@@ -9360,24 +7213,13 @@ export class SpaceRuntime {
       const lastMessage = this.getSdkMessageRepo().getLastSDKMessage(sessionId);
       const key = `${runId}:${execution.id}`;
       if (!lastMessage || !isSDKResultError(lastMessage)) continue;
-      // Guards below are checked across EVERY row sharing this session: a reused
-      // agent can leave #670 prompt-too-long state or an active tool continuation
-      // on a sibling idle row, not the newest one selected here.
       const sessionExecutions = executionsBySession.get(sessionId) ?? [execution];
 
-      // Defer to #670: if its prompt-too-long state machine owns ANY execution for
-      // this session it may be mid-compact even when the latest result is a
-      // non-overflow error_during_execution; a terminal-error continue here would
-      // race that recovery.
       if (sessionExecutions.some((e) => this.promptTooLongRecovery.has(`${runId}:${e.id}`))) {
         continue;
       }
-      // Defer over-long-context results to #670 (compaction), not a plain
-      // continue — continuing won't shrink the context.
       if (this.isPromptTooLongResultError(lastMessage)) continue;
 
-      // Only retryable subtypes. Cost guard and structured-output exhaustion are
-      // non-retryable; auth errors arrive via session.error/blocked instead.
       if (
         lastMessage.subtype !== 'error_during_execution' &&
         lastMessage.subtype !== 'error_max_turns'
@@ -9385,10 +7227,6 @@ export class SpaceRuntime {
         continue;
       }
 
-      // Preserve executions with active tool continuations BEFORE the dead-session
-      // reset — the pending tool_result is the next valid transcript item, and
-      // resetting/clearing the session here would orphan/409 it. Checked across
-      // all rows sharing the session (mirrors handleNonTerminalIdleExecutions).
       if (
         sessionExecutions.some(
           (e) =>
@@ -9399,14 +7237,6 @@ export class SpaceRuntime {
         continue;
       }
 
-      // A dead session cannot be continued. The liveness/crash-retry sweep
-      // earlier in processRunTick only considers in_progress/pending rows, so
-      // an idle execution whose session died on a retryable terminal error
-      // would otherwise sit unrecovered — reset it for a bounded re-spawn (or
-      // block if crash retries are exhausted). This runs AFTER the subtype
-      // guards above so non-retryable/cost-guarded subtypes are skipped
-      // consistently whether the session is live or dead (no wasteful
-      // guaranteed-to-re-fail re-spawns).
       if (!tam.isSessionAlive(sessionId)) {
         const crashExhausted = this.resetWorkflowNodeExecutionForSpawnRetry(
           runId,
@@ -9415,11 +7245,6 @@ export class SpaceRuntime {
           sessionId
         );
         if (crashExhausted) {
-          // Crash retries exhausted: escalate via the terminal-error path so the
-          // blockReason is 'execution_failed' (consistent with the alive-session
-          // escalation) and the stale dead session is cleared — letting the row
-          // fall to blockRunForAgentCrash would tag it 'agent_crashed' and leave
-          // agentSessionId attached for attemptBlockedRunRecovery to reuse.
           await this.escalateTerminalErrorToBlocked(
             runId,
             spaceId,
@@ -9431,13 +7256,8 @@ export class SpaceRuntime {
           );
           return 'blocked';
         }
-        // Clear the stale (dead, terminal-result-tainted) session id from EVERY
-        // row that references it so the spawn loop creates a FRESH session.
-        // createSubSession reuses the most recent execution that still carries
-        // an agentSessionId, so leaving sibling idle rows attached would
-        // resurrect this terminal-tainted session on re-spawn.
         this.detachSessionFromAllExecutions(runId, sessionId);
-        continue; // reset to pending; the spawn loop re-spawns a fresh session
+        continue;
       }
 
       const state =
@@ -9451,9 +7271,6 @@ export class SpaceRuntime {
         } satisfies TerminalErrorContinueState);
       this.terminalErrorContinueStates.set(key, state);
 
-      // A re-spawn (e.g. after blocked recovery) produces a new session id.
-      // Reset the budget so a genuinely restarted session gets a fresh chance;
-      // total attempts stay bounded by MAX_BLOCKED_RUN_RETRIES.
       if (state.lastSessionId !== sessionId) {
         state.lastSessionId = sessionId;
         state.continueCount = 0;
@@ -9464,19 +7281,10 @@ export class SpaceRuntime {
 
       const signature = this.computeTerminalErrorSignature(lastMessage);
 
-      // Grace cooldown FIRST. getLastSDKMessage skips user rows the SDK has not
-      // yet consumed, so immediately after a continue the last message is still
-      // the old terminal result. Evaluating the repeat/cap checks before the
-      // cooldown would block the run before the prior continue is even consumed.
-      // The grace window gives the injected continue time to take effect; only
-      // after it passes do we re-evaluate whether the error recurred.
       if (state.lastContinueAt !== null && now - state.lastContinueAt < graceMs) {
         continue;
       }
 
-      // Bound persistently-failing injections: a live but wedged session whose
-      // injection keeps throwing would otherwise retry every grace interval
-      // forever. Escalate once consecutive failures reach the cap.
       if (state.failedInjectionCount >= MAX_TERMINAL_ERROR_CONTINUE_RETRIES) {
         await this.escalateTerminalErrorToBlocked(
           runId,
@@ -9490,13 +7298,6 @@ export class SpaceRuntime {
         return 'blocked';
       }
 
-      // Deterministic repeat (evaluated only after the grace window): a plain
-      // continue already failed to clear this exact error_during_execution, so
-      // looping again cannot help — escalate to blocked. error_max_turns is
-      // exempt: a same-signature max-turns result just means the agent hit the
-      // per-turn cap again (likely after making progress), not a deterministic
-      // failure, so it should consume the continueCount cap below rather than
-      // being short-circuited to a single continue.
       if (
         state.lastRetriedErrorSignature === signature &&
         lastMessage.subtype === 'error_during_execution'
@@ -9513,8 +7314,6 @@ export class SpaceRuntime {
         return 'blocked';
       }
 
-      // Retry cap exhausted — escalate to blocked so attemptBlockedRunRecovery
-      // can attempt a single bounded re-spawn.
       if (state.continueCount >= MAX_TERMINAL_ERROR_CONTINUE_RETRIES) {
         await this.escalateTerminalErrorToBlocked(
           runId,
@@ -9537,13 +7336,6 @@ export class SpaceRuntime {
         state.lastContinueAt = now;
         state.lastRetriedErrorSignature = signature;
         state.failedInjectionCount = 0;
-        // NB: the execution is intentionally left `idle`. The sweep re-evaluates
-        // idle rows every tick, so once the SDK writes the resumed turn's new
-        // last message the cooldown/repeat/cap logic re-applies naturally.
-        // Flipping to `in_progress` here would be a regression:
-        // handleSubSessionComplete is a one-shot callback that already fired for
-        // the original terminal error, so it would NOT re-fire to return the
-        // resumed turn to `idle`, leaving the row stuck in `in_progress`.
         log.warn(
           `Node ${execution.workflowNodeId} ended idle on a terminal error result; ` +
             `sent runtime continue ${state.continueCount}/${MAX_TERMINAL_ERROR_CONTINUE_RETRIES}: ` +
@@ -9551,10 +7343,6 @@ export class SpaceRuntime {
             `subtype=${lastMessage.subtype} signature=${signature}`
         );
       } catch (error) {
-        // Apply the grace cooldown on failure so a transiently-failing
-        // injection can't tight-loop every tick. The continue count/signature
-        // stay unset so a later success still counts correctly; consecutive
-        // failures are bounded by the failedInjectionCount check above.
         state.lastContinueAt = now;
         state.failedInjectionCount += 1;
         log.warn(
@@ -9568,13 +7356,6 @@ export class SpaceRuntime {
     return 'none';
   }
 
-  /**
-   * Clear an `agentSessionId` from every execution row in the run that currently
-   * references it. Used when tearing down a terminal-tainted session so that
-   * `createSubSession` (which reuses the most recent execution that still
-   * carries an agentSessionId) spawns a FRESH session instead of resurrecting
-   * the stale one via a sibling row.
-   */
   private detachSessionFromAllExecutions(runId: string, sessionId: string): void {
     for (const ex of this.config.nodeExecutionRepo.listByWorkflowRun(runId)) {
       if (ex.agentSessionId === sessionId) {
@@ -9583,11 +7364,6 @@ export class SpaceRuntime {
     }
   }
 
-  /**
-   * Escalate a terminal-error-idle execution to `blocked`, mirroring the
-   * alive-stuck blocked path so `attemptBlockedRunRecovery` picks it up on the
-   * next tick with its own `MAX_BLOCKED_RUN_RETRIES` re-spawn cap.
-   */
   private async escalateTerminalErrorToBlocked(
     runId: string,
     spaceId: string,
@@ -9602,12 +7378,6 @@ export class SpaceRuntime {
       `Agent session ended on a terminal error result and exhausted runtime auto-continue recovery ` +
       `(node ${execution.workflowNodeId}, agent ${execution.agentName}, subtype ${errorResult.subtype}): ` +
       `${detail}${errorSnippet ? ` — ${errorSnippet}` : ''}`;
-    // Tear down the stale live session and clear the row's agentSessionId.
-    // attemptBlockedRunRecovery resets blocked executions to `pending` WITHOUT
-    // clearing agentSessionId, and the pending-repair loop re-promotes any
-    // pending execution whose agentSessionId is still alive back to
-    // in_progress — so leaving the live terminal session attached would skip
-    // the fresh re-spawn entirely and leave the run stuck on the same session.
     if (execution.agentSessionId) {
       try {
         tam.cancelBySessionId(execution.agentSessionId);
@@ -9616,11 +7386,6 @@ export class SpaceRuntime {
           `SpaceRuntime: failed to cancel stale terminal-error session ${execution.agentSessionId} during block escalation: ${err instanceof Error ? err.message : String(err)}`
         );
       }
-      // Clear the session from EVERY row that references it. A reused named
-      // agent can have sibling idle rows pointing at the same agentSessionId;
-      // createSubSession reuses the most recent execution that still carries
-      // one, so leaving siblings attached would resurrect this terminal-tainted
-      // session on the next spawn instead of starting fresh.
       this.detachSessionFromAllExecutions(runId, execution.agentSessionId);
     }
     this.config.nodeExecutionRepo.update(execution.id, {
@@ -9657,10 +7422,6 @@ export class SpaceRuntime {
     });
   }
 
-  /**
-   * Normalized signature for a terminal error result, used to detect
-   * deterministic repeats (same subtype + terminal_reason + error strings).
-   */
   private computeTerminalErrorSignature(message: {
     subtype: string;
     terminal_reason?: string;
@@ -9668,17 +7429,10 @@ export class SpaceRuntime {
   }): string {
     const terminalReason =
       typeof message.terminal_reason === 'string' ? message.terminal_reason : '';
-    // Errors can be verbose; trim each so a recurring identical failure matches
-    // while an unrelated new error does not.
     const errors = (message.errors ?? []).map((entry) => entry.trim().slice(0, 200));
     return `${message.subtype}|${terminalReason}|${errors.join('\n')}`;
   }
 
-  /**
-   * Whether a terminal error result represents an over-long-context failure.
-   * Such results must compact (#670) rather than receive a plain continue,
-   * which would only re-hit the same context limit.
-   */
   private isPromptTooLongResultError(message: {
     terminal_reason?: string;
     errors?: string[];
@@ -9849,17 +7603,6 @@ export class SpaceRuntime {
     return false;
   }
 
-  /**
-   * Attempt automatic recovery for a blocked workflow run.
-   *
-   * Tier 1 — Re-trigger: Reset blocked node executions to `pending` and
-   * transition the run back to `in_progress` so the runtime re-spawns
-   * agents on the next tick.
-   *
-   * Tier 2 — Escalate: When retries are exhausted, emit a
-   * `workflow_run_needs_attention` event to the Space Agent for
-   * human/agent escalation.
-   */
   private async attemptBlockedRunRecovery(runId: string, run: SpaceWorkflowRun): Promise<void> {
     const meta = this.executorMeta.get(runId);
     if (!meta) return;
@@ -9879,11 +7622,9 @@ export class SpaceRuntime {
     const blockedReason = blockedExecutions[0].result ?? 'Unknown blocked reason';
 
     if (retryCount < MAX_BLOCKED_RUN_RETRIES) {
-      // Enforce slot cap — don't promote if concurrency limit is reached.
       const space = await this.config.spaceManager.getSpace(meta.spaceId);
       if (this.getAvailableTaskSlots(space) <= 0) return;
 
-      // Tier 1: Reset blocked executions and resume the run.
       for (const execution of blockedExecutions) {
         this.config.nodeExecutionRepo.update(execution.id, {
           status: 'pending',
@@ -9892,7 +7633,6 @@ export class SpaceRuntime {
       }
       this.blockedRetryCounts.set(runId, retryCount + 1);
 
-      // Transition run back to in_progress for the next tick to pick up.
       await this.transitionRunStatusAndEmit(runId, 'in_progress');
       if (canonicalTask.status === 'blocked') {
         await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
@@ -9901,7 +7641,6 @@ export class SpaceRuntime {
         });
       }
 
-      // Clear dedup so a re-block can be notified again.
       this.notifiedTaskSet.delete(`${canonicalTask.id}:blocked`);
 
       await this.safeNotify({
@@ -9919,7 +7658,6 @@ export class SpaceRuntime {
           `(attempt ${retryCount + 1}/${MAX_BLOCKED_RUN_RETRIES})`
       );
     } else {
-      // Tier 2: Retries exhausted — escalate to Space Agent.
       await this.safeNotify({
         kind: 'workflow_run_needs_attention',
         spaceId: meta.spaceId,
@@ -9936,25 +7674,11 @@ export class SpaceRuntime {
     }
   }
 
-  /**
-   * Finds a completion summary from terminal node executions in a succeeded run.
-   *
-   * Strategy:
-   * 1. Find terminal node IDs — workflow nodes with no outbound channel.
-   * 2. Scan node_executions for those nodes.
-   * 3. Return the first non-empty execution result.
-   */
-
   private resolvePrUrlForRun(runId: string): string {
-    // Delegated to the domain artifact profile (coding: resolves the PR URL).
-    // Generic infra does not know which `link` is the PR, so without a profile
-    // there is no primary link to resolve.
     return this.config.artifactProfile?.resolvePrimaryLinkUrl(runId) ?? '';
   }
 
   private resolvePrimaryResultArtifactSummary(runId: string): string | undefined {
-    // Delegated to the domain artifact profile (coding: the kindless terminal
-    // `decision` summary). Returns undefined when no profile is wired.
     return this.config.artifactProfile?.summarizeRunOutcome(runId) ?? undefined;
   }
 
@@ -9977,8 +7701,6 @@ export class SpaceRuntime {
     const channels = workflow.channels ?? [];
     const nodes = workflow.nodes;
 
-    // Build name → nodeId map: node names and per-node agent slot names both resolve
-    // to the containing node's UUID.
     const nameToNodeId = new Map<string, string>();
     for (const node of nodes) {
       nameToNodeId.set(node.name, node.id);
@@ -9989,27 +7711,21 @@ export class SpaceRuntime {
       }
     }
 
-    // Resolve a channel endpoint reference to a node UUID.
-    // Handles: plain names (node/agent-slot), cross-node "nodeId/agentName", '*' wildcard.
     const resolveRef = (ref: string): string | undefined => {
       if (ref === '*') return undefined;
       const slashIdx = ref.indexOf('/');
       if (slashIdx !== -1) {
-        // Cross-node format — the part before the slash is the node UUID
         return ref.slice(0, slashIdx);
       }
       return nameToNodeId.get(ref);
     };
 
-    // Collect node IDs that appear as channel sources (have outbound channels).
-    // Each channel is one-way; a node has outbound if it appears in channel.from.
     const nodesWithOutbound = new Set<string>();
     for (const ch of channels) {
       const fromId = resolveRef(ch.from);
       if (fromId) nodesWithOutbound.add(fromId);
     }
 
-    // Terminal nodes are those with no outbound channels
     const terminalNodeIds = new Set<string>();
     for (const node of nodes) {
       if (!nodesWithOutbound.has(node.id)) {
@@ -10019,7 +7735,6 @@ export class SpaceRuntime {
 
     if (terminalNodeIds.size === 0) return undefined;
 
-    // Look up completed node executions for terminal nodes and return the first result
     const executions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
     for (const execution of executions) {
       if (
@@ -10034,26 +7749,10 @@ export class SpaceRuntime {
     return undefined;
   }
 
-  /**
-   * Removes from the executors map any executor whose run has reached a
-   * terminal state (completed or cancelled).
-   *
-   * Reads run status from DB rather than relying on the executor's cached
-   * this.run, so external status changes (e.g. cancellation via API) are
-   * picked up without requiring executor recreation.
-   *
-   * Emits a `workflow_run_completed` notification for runs that reached the
-   * `completed` state (set by the CompletionDetector or external cancellation).
-   * Includes the Done node agent's result summary (if available) so the
-   * Space Chat Agent can surface it to the human.
-   */
   private async cleanupTerminalExecutors(): Promise<void> {
     for (const [runId] of this.executors) {
       const run = this.config.workflowRunRepo.getRun(runId);
 
-      // Blocked runs keep their executor and proactive gate polls so they remain
-      // rehydratable and poll timers can detect external conditions that may help
-      // unblock the run. Do not remove the executor or prune dedup keys here.
       if (run?.status === 'blocked') {
         continue;
       }
@@ -10074,10 +7773,6 @@ export class SpaceRuntime {
             });
           }
         }
-        // Re-read the run status before reconciling/removing the executor: a
-        // check_failed reactivation may have reopened it to in_progress during
-        // the notification await above. If so, keep its executor alive so the
-        // reopened run can still tick/spawn, and skip stale terminal reconcile.
         const currentRun = this.config.workflowRunRepo.getRun(runId);
         if (currentRun && currentRun.status !== 'done' && currentRun.status !== 'cancelled') {
           continue;
@@ -10085,8 +7780,6 @@ export class SpaceRuntime {
         if (run) {
           await this.reconcileTerminalRunTasks(run);
         }
-        // Re-read again after the reconcile await: a check_failed reactivation
-        // can reopen the run during that await too. If it did, keep the executor.
         const postReconcileRun = this.config.workflowRunRepo.getRun(runId);
         if (
           postReconcileRun &&
@@ -10095,10 +7788,6 @@ export class SpaceRuntime {
         ) {
           continue;
         }
-        // Prune dedup entries for all tasks in this run so the set doesn't
-        // grow unboundedly. Once a run is terminal its tasks will never
-        // reappear in nodeTasks, so the normal per-tick pruning loop
-        // (processRunTick) would never clear them otherwise.
         for (const task of this.config.taskRepo.listByWorkflowRun(runId)) {
           this.notifiedTaskSet.delete(`${task.id}:blocked`);
           this.notifiedTaskSet.delete(`${task.id}:timeout`);
@@ -10109,65 +7798,18 @@ export class SpaceRuntime {
     }
   }
 
-  /**
-   * Returns the cached SpaceTaskManager for a given space.
-   * Public so that tool handlers (e.g. global-spaces-tools) can retry/cancel/reassign tasks.
-   */
   getTaskManagerForSpace(spaceId: string): SpaceTaskManager {
     return this.getOrCreateTaskManager(spaceId);
   }
 
-  /**
-   * Checks standalone tasks (tasks without a workflowRunId) across all spaces for:
-   *   - `blocked` status → emit `task_blocked` notification
-   *   - `in_progress` timeout    → emit `task_timeout` notification
-   *
-   * Uses the shared `notifiedTaskSet` for deduplication so the same task+status pair
-   * is never notified twice in a row. Dedup keys are cleared when the task leaves the
-   * flagged state, allowing re-notification if the task cycles back into it.
-   *
-   * Dedup cleanup includes archived tasks (fetched via includeArchived=true) to prevent
-   * notifiedTaskSet from accumulating stale keys for tasks that were archived while in
-   * a flagged state. Archived tasks can never re-enter blocked or in_progress,
-   * so their dedup keys are always safe to remove.
-   *
-   * Restart contract: because `notifiedTaskSet` is in-memory only, tasks already in
-   * `blocked` at daemon startup will re-notify once on the first tick. This is
-   * intentional — the Space Agent session is new after restart and needs to be informed
-   * of outstanding issues. See the `notifiedTaskSet` field comment for details.
-   */
-  /**
-   * Auto-resume tasks paused on a rate/usage cap (`rate_limited` / `usage_limited`)
-   * once their reset window has passed.
-   *
-   * The pause is set by the RateLimitWatchdog via `session.rate_limit_pause`, and
-   * the resume normally fires from the watchdog's in-memory cooldown timer. That
-   * timer does not survive a daemon restart, so this sweep — driven off the
-   * persisted `restrictions.resetAt` — is the cross-restart backstop: any paused
-   * task whose `resetAt` is in the past (or has none) is restored to `in_progress`
-   * + restrictions cleared, after which the normal in_progress rehydration
-   * (recoverStalledRuns / processRunTick) restarts the worker. Tasks with a
-   * future `resetAt` are left paused and picked up on a later tick.
-   */
   private async recoverRateLimitedTasks(): Promise<void> {
     const spaces = await this.listActiveSpaces();
     const now = Date.now();
     for (const space of spaces) {
       for (const task of this.config.taskRepo.listRateLimitedBySpace(space.id)) {
         const resetAt = task.restrictions?.resetAt;
-        if (resetAt !== undefined && resetAt > now) continue; // still waiting
+        if (resetAt !== undefined && resetAt > now) continue;
         try {
-          // If the task's worker session is still alive IN MEMORY (e.g. the live
-          // watchdog's cooldown timer hasn't fired yet even though resetAt has
-          // passed), let the watchdog perform the resume. Touching the task row
-          // / execution here would race the watchdog: restoring the task while
-          // the session is still in cooldown, or resetting the execution and
-          // spawning a second agent for the same slot.
-          //
-          // Use isSessionInMemory (NOT isSessionAlive): the latter lazy-loads a
-          // persisted session via SessionManager.getSession(), whose hydration
-          // resets rate_limit_cooldown → idle (classified alive), so a
-          // post-restart DEAD cooldown session would be skipped forever.
           const tam = this.config.taskAgentManager;
           const liveSessionForTask =
             !!task.workflowRunId &&
@@ -10180,12 +7822,6 @@ export class SpaceRuntime {
                   (tam?.isSessionInMemory(e.agentSessionId) ?? false)
               );
           if (liveSessionForTask) continue;
-          // Reset the task's in_progress node executions to `pending` directly
-          // (bypassing crash accounting). After a restart the paused task's
-          // worker session is dead; if the liveness path saw it first it would
-          // classify the dead session as an agent crash and consume a
-          // MAX_TASK_AGENT_CRASH_RETRY. Resetting here means the next tick's
-          // spawn path re-drives the worker cleanly instead.
           if (task.workflowRunId) {
             for (const exec of this.config.nodeExecutionRepo.listByWorkflowRun(
               task.workflowRunId
@@ -10194,12 +7830,6 @@ export class SpaceRuntime {
                 this.config.nodeExecutionRepo.update(exec.id, {
                   status: 'pending',
                   result: null,
-                  // Clear the dead session binding: processRunTick scans pending
-                  // executions WITH an agentSessionId, detects this stale one as
-                  // dead, and would otherwise run it through the crash-retry path
-                  // (incrementing taskCrashCounts). A blank agentSessionId makes
-                  // the pending execution a clean non-crash recovery that the
-                  // spawn path re-drives from scratch.
                   agentSessionId: null,
                 });
               }
@@ -10225,17 +7855,9 @@ export class SpaceRuntime {
     const spaces = await this.listActiveSpaces();
 
     for (const space of spaces) {
-      // Fetch all standalone tasks including archived ones for the dedup cleanup pass.
-      // Using listStandaloneBySpace pushes workflow_run_id IS NULL into SQL so only
-      // standalone tasks are returned — no JS-side filtering needed.
-      // includeArchived=true ensures archived tasks have their dedup keys cleared and
-      // do not accumulate as stale entries in notifiedTaskSet indefinitely.
       const allStandalone = this.config.taskRepo.listStandaloneBySpace(space.id, true);
       const activeStandalone = allStandalone.filter((t) => !t.archivedAt);
 
-      // Dedup cleanup: clear keys for tasks that have left their flagged state.
-      // Archived tasks always get their keys cleared — they can never re-enter a
-      // flagged state, so keeping their keys would be a permanent memory leak.
       for (const task of allStandalone) {
         const archived = !!task.archivedAt;
         if (archived || task.status !== 'blocked') {
@@ -10246,7 +7868,6 @@ export class SpaceRuntime {
         }
       }
 
-      // Emit task_blocked for active standalone tasks in blocked state.
       for (const task of activeStandalone) {
         if (task.status !== 'blocked') continue;
         const dedupKey = `${task.id}:blocked`;
@@ -10262,7 +7883,6 @@ export class SpaceRuntime {
         }
       }
 
-      // Timeout detection for active standalone in_progress tasks.
       const taskTimeoutMs = space.config?.taskTimeoutMs;
       if (taskTimeoutMs !== undefined) {
         const now = Date.now();
@@ -10287,18 +7907,6 @@ export class SpaceRuntime {
     }
   }
 
-  /**
-   * Attach a workflow run to open standalone tasks so workflow execution is driven
-   * by the runtime tick (not by Task Agent session creation).
-   *
-   * For each open standalone task:
-   * 1. Select a workflow for the task (LLM-driven, with deterministic fallback)
-   * 2. Start a workflow run
-   * 3. Attach the original task to the run and mark it in_progress
-   *
-   * Selection work runs in parallel across tasks so a slow LLM call on one
-   * task does not delay the rest of the tick.
-   */
   private normalizeConcurrentTaskLimit(limit: number | undefined): number {
     if (limit === undefined || !Number.isFinite(limit)) return MIN_SPACE_CONCURRENT_TASKS;
     return Math.min(
@@ -10314,16 +7922,14 @@ export class SpaceRuntime {
   }
 
   private getRunningTaskCount(spaceId: string): number {
-    return this.config.taskRepo.listBySpace(spaceId, false).filter(
-      // A task paused on a rate/usage cap still holds its concurrency slot: it
-      // will auto-resume when the cap lifts, so counting it prevents the freed
-      // slot from being taken by another task and the later resume from
-      // exceeding the configured limit.
-      (task) =>
-        task.status === 'in_progress' ||
-        task.status === 'approved' ||
-        isRateOrUsageLimited(task.status)
-    ).length;
+    return this.config.taskRepo
+      .listBySpace(spaceId, false)
+      .filter(
+        (task) =>
+          task.status === 'in_progress' ||
+          task.status === 'approved' ||
+          isRateOrUsageLimited(task.status)
+      ).length;
   }
 
   private getAvailableTaskSlots(space: Space | null): number {
@@ -10360,9 +7966,6 @@ export class SpaceRuntime {
 
       const taskManager = this.getOrCreateTaskManager(space.id);
 
-      // Evaluate the full priority-ordered queue so ineligible high-priority
-      // tasks (for example, unmet dependencies) do not strand ready lower-priority
-      // work while slots are available.
       for (const task of standaloneOpenTasks) {
         if (availableSlots <= 0) break;
         const fresh = this.config.taskRepo.getTask(task.id);
@@ -10373,8 +7976,6 @@ export class SpaceRuntime {
         const selected = await this.selectWorkflowForStandaloneTask(fresh, workflows);
         if (!selected) continue;
 
-        // Re-read once more to defend against concurrent updates between
-        // eligibility checks and attachment (e.g. another actor attached the task).
         const current = this.config.taskRepo.getTask(fresh.id);
         if (!current || current.workflowRunId) continue;
         if (current.status !== 'open') continue;
@@ -10409,31 +8010,12 @@ export class SpaceRuntime {
     }
   }
 
-  /**
-   * Pick the workflow to run for a standalone task.
-   *
-   * Order of precedence:
-   * 1. `task.preferredWorkflowId` when it resolves to an existing workflow.
-   * 2. The LLM selector (`SpaceRuntimeConfig.selectWorkflowWithLlm`) when
-   *    provided and it returns an id that exists in the candidate list.
-   *    Unknown ids, `null` returns, and thrown errors all fall through.
-   * 3. Deterministic fallback: the first workflow tagged `default`, else the
-   *    first tagged `v2`, else the most recently updated workflow.
-   *
-   * The old substring/keyword scorer was retired in favour of LLM-based
-   * selection because it mis-routed tasks whose descriptions happened to
-   * share words with workflow metadata (e.g. a "review feedback" task
-   * hijacking a "review" workflow even when "coding" was the right fit).
-   */
   private async selectWorkflowForStandaloneTask(
     task: SpaceTask,
     workflows: SpaceWorkflow[]
   ): Promise<SpaceWorkflow | null> {
     if (workflows.length === 0) return null;
 
-    // Caller-specified preferred workflow wins over both LLM and deterministic
-    // fallback. Fall through if the id doesn't resolve (e.g. workflow was
-    // deleted between task creation and attachment) or is disabled.
     if (task.preferredWorkflowId) {
       const explicit = this.config.spaceWorkflowManager.getWorkflow(task.preferredWorkflowId);
       if (explicit && !explicit.disabled) return explicit;
@@ -10469,14 +8051,6 @@ export class SpaceRuntime {
     return this.selectDeterministicWorkflowFallback(workflows);
   }
 
-  /**
-   * Tiebreak selection when no LLM/preferred workflow is available.
-   *
-   * Preference order:
-   * 1. `default` tag
-   * 2. `v2` tag
-   * 3. Most recently updated workflow
-   */
   private selectDeterministicWorkflowFallback(workflows: SpaceWorkflow[]): SpaceWorkflow | null {
     if (workflows.length === 0) return null;
     if (workflows.length === 1) return workflows[0];
@@ -10499,10 +8073,6 @@ export class SpaceRuntime {
     return scored[0]?.workflow ?? null;
   }
 
-  /**
-   * Returns the cached SpaceTaskManager for a space, creating it if needed.
-   * Caching avoids creating a new manager + repository on every executor build.
-   */
   private getOrCreateTaskManager(spaceId: string): SpaceTaskManager {
     let manager = this.taskManagers.get(spaceId);
     if (!manager) {
@@ -10517,10 +8087,6 @@ export class SpaceRuntime {
     return manager;
   }
 
-  /**
-   * Builds a WorkflowExecutor for the given run with fresh state.
-   * Used for graph navigation (getCurrentNode, isComplete) and condition evaluation.
-   */
   private buildExecutor(
     workflow: SpaceWorkflow,
     run: SpaceWorkflowRun,
@@ -10530,39 +8096,14 @@ export class SpaceRuntime {
     return new WorkflowExecutor(workflow, run);
   }
 
-  /**
-   * Resolves the channel topology for a workflow node and stores it in the run's
-   * config for use by session group creation (Milestone 6).
-   *
-   * Resolves channel topology using `WorkflowNodeAgent.name` entries from the node
-   * and the workflow-level channels array.
-   * Stores the result under `run.config._resolvedChannels`.
-   *
-   * TODO Milestone 6: pass resolvedChannels to session group metadata in
-   * TaskAgentManager.spawnTaskAgent() instead of storing in run config.
-   *
-   * Note: Task Agent channels are persisted as WorkflowChannel entries in the
-   * workflow channels array. This function only resolves and stores user-declared
-   * channels — no runtime auto-generation.
-   */
-  /**
-   * Stores the workflow channels for a run in memory.
-   * Channels are node-to-node (WorkflowNode.name) and need no slot-level resolution.
-   */
   storeWorkflowChannels(runId: string, channels: WorkflowChannel[]): void {
     this.workflowChannelsMap.set(runId, channels);
   }
 
-  /**
-   * Returns the channels for the given run ID.
-   */
   getRunWorkflowChannels(runId: string): WorkflowChannel[] {
     return this.workflowChannelsMap.get(runId) ?? [];
   }
 
-  /**
-   * Returns the channels array for the workflow associated with the given run.
-   */
   getWorkflowChannels(runId: string): WorkflowChannel[] {
     const run = this.config.workflowRunRepo.getRun(runId);
     if (!run) return [];

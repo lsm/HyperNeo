@@ -1,17 +1,7 @@
-/**
- * MessageInfoDropdown Component
- *
- * Dropdown content showing session start information in indigo theme
- * Triggered by MessageInfoButton in user message actions
- */
-
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
 
-// Room agent tools are registered as an in-process MCP server which connects after the
-// system:init message is emitted, so they never appear in sessionInfo.tools. We detect
-// room sessions via session_id and display the known tool set statically.
 const ROOM_AGENT_TOOLS = [
   'room_complete_goal',
   'room_create_task',
@@ -37,7 +27,6 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
 
   return (
     <div class="w-80 max-h-[60vh] overflow-y-scroll bg-sky-50 dark:bg-sky-900/70 rounded-lg border border-sky-200 dark:border-sky-800 p-3 space-y-3 shadow-2xl backdrop-blur-sm">
-      {/* Header */}
       <div class="flex items-center gap-2 pb-2 border-b border-sky-200 dark:border-sky-800">
         <svg
           class="w-4 h-4 text-sky-600 dark:text-sky-400"
@@ -60,7 +49,6 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
         </div>
       </div>
 
-      {/* Working Directory */}
       {sessionInfo.cwd && (
         <div>
           <div class="text-xs font-medium text-sky-900 dark:text-sky-100 mb-1">
@@ -72,7 +60,6 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
         </div>
       )}
 
-      {/* Tools */}
       {displayTools.length > 0 && (
         <div>
           <div class="text-xs font-medium text-sky-900 dark:text-sky-100 mb-1">
@@ -91,7 +78,6 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
         </div>
       )}
 
-      {/* MCP Servers */}
       {sessionInfo.mcp_servers && sessionInfo.mcp_servers.length > 0 && (
         <div>
           <div class="text-xs font-medium text-sky-900 dark:text-sky-100 mb-1">
@@ -114,7 +100,6 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
         </div>
       )}
 
-      {/* Slash Commands */}
       {sessionInfo.slash_commands && sessionInfo.slash_commands.length > 0 && (
         <div>
           <div class="text-xs font-medium text-sky-900 dark:text-sky-100 mb-1">
@@ -133,7 +118,6 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
         </div>
       )}
 
-      {/* Agents */}
       {sessionInfo.agents && sessionInfo.agents.length > 0 && (
         <div>
           <div class="text-xs font-medium text-sky-900 dark:text-sky-100 mb-1">
@@ -152,7 +136,6 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
         </div>
       )}
 
-      {/* Other details */}
       <div class="flex flex-wrap gap-x-3 gap-y-1 text-xs text-sky-600 dark:text-sky-400 pt-2 border-t border-sky-200 dark:border-sky-800">
         <div>
           <span class="font-medium">API Key:</span> {sessionInfo.apiKeySource}

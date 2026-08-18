@@ -31,11 +31,6 @@ export interface EvidenceQualityScoreInput {
   tasks?: EvidencePreflightTaskContext[];
   workflowRuns?: EvidencePreflightWorkflowRunContext[];
   metricSnapshotCount?: number;
-  /**
-   * Full evidence list available in the scope. Used to distinguish "no artifacts
-   * available" from "artifacts available but omitted from the selection" in
-   * artifact diagnostics. Omit to fall back to selected-evidence-only behavior.
-   */
   availableScopeEvidence?: EvidenceRef[];
 }
 

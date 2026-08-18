@@ -83,7 +83,6 @@ describe('InputGroup', () => {
         <Input />
       </InputGroup>
     );
-    // InputAddon should render
     const addon = screen.getByText('$');
     expect(addon).not.toBeNull();
   });
@@ -95,7 +94,6 @@ describe('InputGroup', () => {
         <Input />
       </InputGroup>
     );
-    // InputGroup renders with disabled prop
     const group = container.querySelector('[data-disabled]');
     expect(group).not.toBeNull();
   });
@@ -132,11 +130,9 @@ describe('InputAddon', () => {
     const group = container.firstElementChild as HTMLElement;
     const addon = screen.getByText('$');
 
-    // Hover should propagate to addon
     await act(async () => {
       fireEvent.mouseEnter(group);
     });
-    // Addon should receive data-hover
     expect(addon.getAttribute('data-hover')).toBe('');
 
     await act(async () => {
@@ -155,7 +151,6 @@ describe('InputAddon', () => {
     const group = container.firstElementChild as HTMLElement;
     const addon = screen.getByText('$');
 
-    // Focus should propagate to addon
     await act(async () => {
       fireEvent.focusIn(group);
     });
@@ -236,7 +231,6 @@ describe('InputGroup + InputAddon + Input', () => {
         <InputAddon>USD</InputAddon>
       </InputGroup>
     );
-    // InputGroup itself has data-disabled
     const group = container.querySelector('[data-disabled]');
     expect(group).not.toBeNull();
   });

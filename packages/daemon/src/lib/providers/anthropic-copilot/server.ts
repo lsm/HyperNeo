@@ -1,34 +1,3 @@
-/**
- * Embedded Anthropic-compatible HTTP server for GitHub Copilot.
- *
- * Starts a loopback HTTP server that implements the Anthropic messages API
- * (`POST /v1/messages`).  The Claude Agent SDK is pointed at this server via
- * `ANTHROPIC_BASE_URL` and communicates with it using the standard Anthropic
- * wire format — streaming, tool use, multi-turn — with no custom bridging.
- *
- * ## Request routing
- *
- *   POST /v1/messages   — Anthropic messages (streaming required)
- *   GET  /health        — Liveness probe
- *
- * ## Tool-use support
- *
- * When the request carries a `tools` array the server registers those tools as
- * Copilot SDK external tools.  When the model calls one of them:
- *
- *   1. A `tool_use` SSE block is emitted and the HTTP response is ended.
- *   2. The Copilot session remains alive — its tool handler is suspended.
- *   3. The next request (with `tool_result` messages) is routed to the same
- *      session via ConversationManager, which resumes the suspended handler.
- *
- * ## Session strategy
- *
- *   - No tools: new session per request (session-per-request model).
- *   - With tools: session reuse for tool-result continuation requests.
- *
- * The server uses one shared ConversationManager across all requests.
- */
-
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { isAbsolute, normalize } from 'node:path';
@@ -53,7 +22,6 @@ import { type AnthropicErrorType, createAnthropicErrorBody } from '../shared/err
 
 const logger = new Logger('anthropic-copilot-server');
 
-/** Maximum request body size (10 MB). */
 const MAX_BODY_BYTES = 10 * 1024 * 1024;
 
 const FALLBACK_MODELS = [
@@ -78,10 +46,6 @@ interface CountTokensRequest {
   tools?: AnthropicRequest['tools'];
   tool_choice?: AnthropicRequest['tool_choice'];
 }
-
-// ---------------------------------------------------------------------------
-// HTTP helpers
-// ---------------------------------------------------------------------------
 
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -153,19 +117,6 @@ function modelsListResponse(models: object[]): object {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Session config for non-tool requests
-// ---------------------------------------------------------------------------
-
-/**
- * Extract the per-request working directory from the `Authorization` header.
- *
- * `AnthropicToCopilotBridgeProvider.buildSdkConfig()` encodes the session workspace as
- * `anthropic-copilot-proxy:<path>` in `ANTHROPIC_AUTH_TOKEN`.  Parsing it here
- * lets the singleton embedded server apply the correct `cwd` per HTTP request
- * without rebuilding a new server for every session.
- */
-/** @internal exported for unit tests only */
 export function resolveRequestCwd(req: IncomingMessage, defaultCwd: string): string {
   const auth = (req.headers['authorization'] ?? '') as string;
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
@@ -173,9 +124,6 @@ export function resolveRequestCwd(req: IncomingMessage, defaultCwd: string): str
   if (!token.startsWith(prefix)) return defaultCwd;
   const resolved = token.slice(prefix.length);
   if (!resolved || !isAbsolute(resolved)) return defaultCwd;
-  // Normalise the path (collapses dot-dot segments). The value originates from
-  // buildSdkConfig() which encodes the trusted workspacePath — no root boundary
-  // enforcement is needed here.
   const normalised = normalize(resolved);
   return isAbsolute(normalised) ? normalised : defaultCwd;
 }
@@ -191,10 +139,6 @@ function buildPlainSessionConfig(
     streaming: true,
     infiniteSessions: { enabled: true },
     workingDirectory: cwd,
-    // Restrict to no built-in tools — plain sessions have no caller-defined tools,
-    // so Copilot's built-in bash/file tools must also be disabled.  Without this
-    // the model may autonomously invoke built-in tools (hanging or returning only
-    // tool-call content) instead of producing a text response.
     availableTools: [],
     ...(systemMessage
       ? { systemMessage: { mode: 'replace' as const, content: systemMessage } }
@@ -213,7 +157,6 @@ function buildPlainSessionConfig(
         logger.warn(
           `SDK error (${input.errorContext}, recoverable=${String(input.recoverable)}): ${errorMsg}`
         );
-        // Do not retry quota/payment errors — they will not resolve with retries.
         const isQuotaError =
           errorMsg.includes('402') ||
           errorMsg.toLowerCase().includes('no quota') ||
@@ -232,10 +175,6 @@ function buildPlainSessionConfig(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Request handler
-// ---------------------------------------------------------------------------
-
 async function handleMessages(
   req: IncomingMessage,
   res: ServerResponse,
@@ -244,7 +183,6 @@ async function handleMessages(
   contextUsageStore: ContextUsageStore,
   cwd: string
 ): Promise<void> {
-  // 1. Read and parse body.
   let bodyText: string;
   try {
     bodyText = await readBody(req);
@@ -291,9 +229,6 @@ async function handleMessages(
   const hasTools = Array.isArray(body.tools) && body.tools.length > 0;
   const hasToolResults = extractToolResultIds(body.messages).length > 0;
 
-  // 2a. Tool-result continuation: resume a suspended session.
-  // Note: the Anthropic spec does not require clients to re-send the `tools`
-  // array on follow-up requests, so we check hasToolResults unconditionally.
   if (hasToolResults) {
     let continuation: ReturnType<ConversationManager['findContinuation']>;
     try {
@@ -321,8 +256,6 @@ async function handleMessages(
         return;
       }
       const usageKey = requestUsageKey(req, cwd, body.model);
-      // Remove routing entries and cancel the TTL timer before resuming.
-      // Actual Promise resolution happens inside resumeSessionStreaming.
       manager.acknowledgeContinuation(
         conv,
         toolResults.map((r) => r.toolUseId)
@@ -344,9 +277,6 @@ async function handleMessages(
             // Cleanup (cleanupConversation / releaseConversation) is handled
             // below based on the StreamingOutcome kind.
           },
-          // Heuristic input_tokens for the continuation turn: the full
-          // conversation history (system + all messages including tool results)
-          // is re-serialised on every request, so we use that as the input text.
           (extractSystemText(body.system) ?? '') + formatAnthropicPrompt(body.messages),
           {
             store: contextUsageStore,
@@ -355,16 +285,10 @@ async function handleMessages(
           }
         );
         if (outcome.kind === 'completed') {
-          // streamSession already called session.disconnect() — use
-          // cleanupConversation (no disconnect) to avoid a double-disconnect.
           manager.cleanupConversation(conv);
         }
-        // outcome.kind === 'tool_use': registry already registered the new
-        // pending tool call ID so the next request will find the conversation.
       } catch (err) {
         logger.error('Error resuming conversation:', err);
-        // Error path: streamSession may not have disconnected — releaseConversation
-        // ensures the session is properly torn down.
         await manager.releaseConversation(conv);
         if (!res.headersSent) {
           sendJsonError(res, 500, 'api_error', 'Failed to resume session');
@@ -372,12 +296,8 @@ async function handleMessages(
       }
       return;
     }
-    // No matching pending session — fall through to create a new one.
-    // This can happen if the client re-sends a tool_result after the session
-    // expired (TTL) or after a restart.
   }
 
-  // 2b. New conversation (with or without tools).
   let prompt: string;
   try {
     prompt = formatAnthropicPrompt(body.messages);
@@ -419,10 +339,6 @@ async function handleMessages(
     );
   }
 }
-
-// ---------------------------------------------------------------------------
-// New conversation — with tools (stateful session reuse)
-// ---------------------------------------------------------------------------
 
 async function handleNewToolConversation(
   req: IncomingMessage,
@@ -466,25 +382,16 @@ async function handleNewToolConversation(
       }
     );
     if (outcome.kind === 'completed') {
-      // streamSession already called session.disconnect() — use
-      // cleanupConversation (no disconnect) to avoid a double-disconnect.
       manager.cleanupConversation(conv);
     }
-    // outcome.kind === 'tool_use': session stays alive, registry registered
-    // the pending tool call ID — next request will find it.
   } catch (err) {
     logger.error('Streaming failed:', err);
-    // Error path: releaseConversation ensures the session is disconnected.
     await manager.releaseConversation(conv);
     if (!res.headersSent) {
       sendJsonError(res, 500, 'api_error', err instanceof Error ? err.message : 'Internal error');
     }
   }
 }
-
-// ---------------------------------------------------------------------------
-// Plain request — no tools (session-per-request)
-// ---------------------------------------------------------------------------
 
 async function handlePlainRequest(
   req: IncomingMessage,
@@ -530,18 +437,12 @@ async function handlePlainRequest(
     );
   } catch (err) {
     logger.error('Streaming failed:', err);
-    // Disconnect the session in case runSessionStreaming threw before its
-    // internal finishCompleted() handler had a chance to run (resource leak guard).
     session.disconnect().catch(() => {});
     if (!res.headersSent) {
       sendJsonError(res, 500, 'api_error', err instanceof Error ? err.message : 'Internal error');
     }
   }
 }
-
-// ---------------------------------------------------------------------------
-// Anthropic compatibility endpoints used by Claude Agent SDK context retrieval
-// ---------------------------------------------------------------------------
 
 async function handleCountTokens(
   req: IncomingMessage,
@@ -599,27 +500,11 @@ async function handleModels(res: ServerResponse, client: CopilotClient): Promise
   }
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
 export interface EmbeddedServer {
-  /** Base URL of the embedded server, e.g. `http://127.0.0.1:PORT` */
   readonly url: string;
-  /** Gracefully stop the server (waits for in-flight requests to finish). */
   stop(): Promise<void>;
 }
 
-/**
- * Start an embedded Anthropic-compatible HTTP server backed by a Copilot SDK client.
- *
- * The server listens on a random loopback port (`127.0.0.1:0`).  Pass the
- * returned `url` as `ANTHROPIC_BASE_URL` when constructing a Claude Agent SDK
- * session so all API calls are routed through this server.
- *
- * @param client  Initialised `CopilotClient` to create sessions with.
- * @param cwd     Working directory for Copilot sessions (default: `process.cwd()`).
- */
 export function startEmbeddedServer(
   client: CopilotClient,
   cwd = process.cwd()
@@ -682,9 +567,6 @@ export function startEmbeddedServer(
       resolve({
         url,
         stop: async () => {
-          // Release all active tool-use conversations first so suspended
-          // Promises are rejected and TTL timers are cleared before we
-          // close the HTTP server.
           await manager.shutdown();
           return new Promise<void>((res, rej) => {
             server.close((err) => {

@@ -122,7 +122,6 @@ export function CustomSelectMenusDemo() {
 
   return (
     <div class="space-y-12">
-      {/* Simple custom select */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">Simple custom select</h3>
         <Listbox value={selected} onChange={setSelected}>
@@ -168,7 +167,6 @@ export function CustomSelectMenusDemo() {
         </Listbox>
       </div>
 
-      {/* Custom select with check on left */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">
           Custom select with check on left
@@ -210,7 +208,6 @@ export function CustomSelectMenusDemo() {
         </Listbox>
       </div>
 
-      {/* Custom select with status indicator */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">
           Custom select with status indicator
@@ -269,7 +266,6 @@ export function CustomSelectMenusDemo() {
         </Listbox>
       </div>
 
-      {/* Custom select with avatar */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">Custom select with avatar</h3>
         <Listbox value={selectedWithAvatar} onChange={setSelectedWithAvatar}>
@@ -321,7 +317,6 @@ export function CustomSelectMenusDemo() {
         </Listbox>
       </div>
 
-      {/* Select with secondary text */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">Select with secondary text</h3>
         <Listbox value={selected} onChange={setSelected}>
@@ -359,7 +354,6 @@ export function CustomSelectMenusDemo() {
         </Listbox>
       </div>
 
-      {/* Branded select with supporting text */}
       <div>
         <h3 class="text-sm font-medium text-text-tertiary mb-4">
           Branded select with supporting text

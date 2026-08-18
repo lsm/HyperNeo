@@ -1,16 +1,3 @@
-/**
- * Coding-pack presets end-to-end tests (epic #2299; promoted from the #2300
- * spike in P2 #2302).
- *
- * THE HONESTY TEST: all three capabilities — pr_ready, pr_merged, codex —
- * re-expressed over the github connector + the generic external_state
- * validator + a domain-agnostic predicate, with ZERO engine special-casing.
- * Covers merged / open / conflict / UNKNOWN / rate-limit + the codex +1 path.
- *
- * Each preset is exercised through a mocked `gh` spawn; no production engine
- * code is on the stack.
- */
-
 import { beforeEach, describe, expect, test } from 'bun:test';
 import {
   clearConnectorRegistry,
@@ -210,8 +197,6 @@ describe('pr_merged preset (mark_complete merge gate)', () => {
   });
 
   test('transient GitHub 5xx → retryable_block (not terminal)', async () => {
-    // The shared runGhJson transient broadening affects this deployed gate too:
-    // a 5xx must surface as retryable_block, not a terminal block.
     const validate = createPrMergedValidator(
       mockSpawn([{ stdout: '', stderr: 'HTTP 502: bad gateway', exitCode: 1 }])
     );
@@ -234,22 +219,15 @@ describe('codex_review_approved preset (codex approval gate, opt-in hook)', () =
     }));
   }
 
-  /** Mock `gh` serving the pr-view (with HEAD_SHA) then the PR reviews.
-   *  A stable head recheck is appended (consumed only when approved holds). */
   function codexSpawn(rvs: unknown[]) {
     return mockSpawn([
-      // 1. workspace-branch PR resolution (`gh pr view --json url`) — the run's
-      //    authoritative PR; the caller pr_url is ignored.
       { stdout: JSON.stringify({ url: PR_URL }), stderr: '', exitCode: 0 },
-      // 2. head resolution for that PR.
       {
         stdout: JSON.stringify({ number: 42, headRefOid: HEAD_SHA, url: PR_URL }),
         stderr: '',
         exitCode: 0,
       },
-      // 3. reviews.
       { stdout: JSON.stringify(rvs), stderr: '', exitCode: 0 },
-      // 4. TOCTOU recheck (consumed only when approved is true): head unchanged.
       { stdout: JSON.stringify({ headRefOid: HEAD_SHA }), stderr: '', exitCode: 0 },
     ]);
   }
@@ -268,8 +246,6 @@ describe('codex_review_approved preset (codex approval gate, opt-in hook)', () =
   });
 
   test('a later codex CHANGES_REQUESTED on the same head supersedes an earlier APPROVED', async () => {
-    // Round-9 P1: the latest verdict wins — an APPROVED followed by a
-    // CHANGES_REQUESTED on the same commit must NOT open the gate.
     const validate = createCodexApprovalValidator(
       codexSpawn(
         reviews(
@@ -293,8 +269,6 @@ describe('codex_review_approved preset (codex approval gate, opt-in hook)', () =
   });
 
   test('a later codex COMMENTED does not revoke an earlier APPROVED', async () => {
-    // Matches GitHub merge semantics: only CHANGES_REQUESTED blocks; a later
-    // COMMENTED on the same head leaves the approval intact.
     const validate = createCodexApprovalValidator(
       codexSpawn(
         reviews(
@@ -318,8 +292,6 @@ describe('codex_review_approved preset (codex approval gate, opt-in hook)', () =
   });
 
   test('a later COMMENTED does NOT clear an outstanding CHANGES_REQUESTED (three-state)', async () => {
-    // Round-10 P1: APPROVED → CHANGES_REQUESTED → COMMENTED must still reject —
-    // a changes request is superseded only by a later APPROVED, never a comment.
     const validate = createCodexApprovalValidator(
       codexSpawn(
         reviews(
@@ -349,7 +321,6 @@ describe('codex_review_approved preset (codex approval gate, opt-in hook)', () =
   });
 
   test('a later APPROVED re-approves after a CHANGES_REQUESTED', async () => {
-    // The changes request IS superseded by a subsequent APPROVED (re-review).
     const validate = createCodexApprovalValidator(
       codexSpawn(
         reviews(
@@ -368,9 +339,6 @@ describe('codex_review_approved preset (codex approval gate, opt-in hook)', () =
   });
 
   test('same-second APPROVED then CHANGES_REQUESTED → retryable_block (array order wins)', async () => {
-    // GitHub submitted_at is second-precision: two reviews in the same second
-    // must still honor submission (array) order — the later CHANGES_REQUESTED
-    // wins, not a timestamp-stable-sorted APPROVED.
     const sameSecond = '2026-08-09T10:00:00Z';
     const validate = createCodexApprovalValidator(
       codexSpawn(
@@ -385,9 +353,6 @@ describe('codex_review_approved preset (codex approval gate, opt-in hook)', () =
   });
 
   test('review history exceeding the 10-page cap → terminal block (fail closed)', async () => {
-    // P2: the endpoint is oldest-first, so a stale APPROVED in the fetched
-    // prefix could hide a later CHANGES_REQUESTED beyond review 1000. The gate
-    // must not evaluate a partial history — it fails closed. 10 full pages:
     const fullPage = [
       ...reviews({
         login: 'codex[bot]',
@@ -423,9 +388,6 @@ describe('codex_review_approved preset (codex approval gate, opt-in hook)', () =
   });
 
   test('9 full pages + a short 10th page does NOT trip the fail-closed cap', async () => {
-    // Boundary: just under 1000 reviews. The short final page ends the loop
-    // normally (page 10 < 100 → break, page is not > 10), so the cap is NOT hit
-    // and the verdict is evaluated. The codex APPROVED sits on the short page.
     const fullPage = Array.from({ length: 100 }, (_, i) => ({
       user: { login: `reviewer${i}` },
       state: 'COMMENTED',
@@ -456,8 +418,8 @@ describe('codex_review_approved preset (codex approval gate, opt-in hook)', () =
           ),
           stderr: '',
           exitCode: 0,
-        }, // page 10: 1 review (<100) → break, cap not hit
-        { stdout: JSON.stringify({ headRefOid: HEAD_SHA }), stderr: '', exitCode: 0 }, // recheck
+        },
+        { stdout: JSON.stringify({ headRefOid: HEAD_SHA }), stderr: '', exitCode: 0 },
       ])
     );
     const result = await validate(ctx({}));
@@ -495,7 +457,6 @@ describe('codex_review_approved preset (codex approval gate, opt-in hook)', () =
   });
 
   test('a human login containing "codex" cannot spoof the gate', async () => {
-    // Only GitHub App bots (login ending in [bot]) match the codex bot matcher.
     const validate = createCodexApprovalValidator(
       codexSpawn(reviews({ login: 'codex', state: 'APPROVED', commitId: HEAD_SHA }))
     );
@@ -507,8 +468,6 @@ describe('codex_review_approved preset (codex approval gate, opt-in hook)', () =
     const validate = createCodexApprovalValidator(codexSpawn([]));
     const result = await validate(ctx({}));
     expect(result.type).toBe('retryable_block');
-    // No result-level retryAfterMs — the engine applies hook.retry.delayMs
-    // (+ backoff) so the operator's delay controls take effect.
     expect((result as { retryAfterMs?: number }).retryAfterMs).toBeUndefined();
   });
 
@@ -529,8 +488,6 @@ describe('codex_review_approved preset (codex approval gate, opt-in hook)', () =
   });
 
   test('no pr_url + rate-limited workspace-branch resolution → retryable_block', async () => {
-    // Finding 4: a rate-limited PR-discovery fallback must stay retryable rather
-    // than collapse to a terminal "no PR URL" block.
     const validate = createCodexApprovalValidator(
       mockSpawn([{ stdout: '', stderr: 'HTTP 429: secondary rate limit', exitCode: 1 }])
     );
@@ -539,7 +496,7 @@ describe('codex_review_approved preset (codex approval gate, opt-in hook)', () =
       runId: 'run-1',
       hookId: 'codex-hook',
       methodName: 'send_message',
-      params: { data: {} }, // no pr_url anywhere → triggers the branch fallback
+      params: { data: {} },
       nodeId: 'node-1',
       nodeName: 'Coding',
       sessionId: 'sess-1',
@@ -552,7 +509,6 @@ describe('codex_review_approved preset (codex approval gate, opt-in hook)', () =
   });
 
   test('H: a head pushed between resolution and the comments fetch → retryable_block', async () => {
-    // TOCTOU: the recheck resolves a newer head than the one used for matching.
     const validate = createCodexApprovalValidator(
       mockSpawn([
         { stdout: JSON.stringify({ url: PR_URL }), stderr: '', exitCode: 0 },
@@ -588,8 +544,6 @@ describe('codex_review_approved preset (codex approval gate, opt-in hook)', () =
   });
 
   test('J2: a 4xx auth failure (401) → terminal block, not retryable', async () => {
-    // Pins the 4xx-terminal boundary: isTransientGhError excludes 4xx by
-    // design — a 401 credential failure must NOT retry forever.
     const validate = createCodexApprovalValidator(
       mockSpawn([{ stdout: '', stderr: 'HTTP 401: Bad credentials', exitCode: 1 }])
     );
@@ -598,8 +552,6 @@ describe('codex_review_approved preset (codex approval gate, opt-in hook)', () =
   });
 
   test('TOCTOU recheck with missing headRefOid → retryable_block (fail closed)', async () => {
-    // The recheck returned ok:true but no headRefOid — treat as fail-closed
-    // (retryable), not allow against a possibly-stale headSha.
     const validate = createCodexApprovalValidator(
       mockSpawn([
         { stdout: JSON.stringify({ url: PR_URL }), stderr: '', exitCode: 0 },
@@ -615,7 +567,7 @@ describe('codex_review_approved preset (codex approval gate, opt-in hook)', () =
           stderr: '',
           exitCode: 0,
         },
-        { stdout: JSON.stringify({}), stderr: '', exitCode: 0 }, // recheck: no headRefOid
+        { stdout: JSON.stringify({}), stderr: '', exitCode: 0 },
       ])
     );
     const result = await validate(ctx({}));
@@ -626,13 +578,10 @@ describe('codex_review_approved preset (codex approval gate, opt-in hook)', () =
 describe('review_posted preset (Review→Coding feedback gate)', () => {
   beforeEach(() => clearConnectorRegistry());
 
-  // Workflow started at 00:00; a review/comment at 12:00 is "fresh".
   const START_MS = Date.parse('2026-05-01T00:00:00Z');
   const AFTER = '2026-05-01T12:00:00Z';
   const BEFORE = '2026-04-30T12:00:00Z';
 
-  /** Build a mock spawn that serves the `gh pr view` payload then the
-   *  `gh api user` viewer login (in that order — the op always fetches both). */
   function reviewSpawn(prView: Record<string, unknown>, viewerLogin: string | null) {
     return mockSpawn([
       { stdout: JSON.stringify(prView), stderr: '', exitCode: 0 },
@@ -683,7 +632,6 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
   });
 
   test('own-PR COMMENTED review since start → allow (own_pr_comment fallback)', async () => {
-    // GitHub blocks self-APPROVE, so a COMMENTED review counts on an own PR.
     const validate = createReviewPostedValidator(
       reviewSpawn(
         {
@@ -719,7 +667,6 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
   });
 
   test('comment-only evidence on a NON-own PR → terminal block', async () => {
-    // author != viewer → not an own PR → comment-only evidence is rejected.
     const validate = createReviewPostedValidator(
       reviewSpawn(
         {
@@ -769,8 +716,6 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
   });
 
   test('since-start window also resolves from hookLocalState.workflowStartIso (gate path)', async () => {
-    // The gate evaluator dispatch path carries the anchor via hookLocalState, not
-    // workflowRunCreatedAt. Prove both entry points resolve the window.
     const validate = createReviewPostedValidator(
       reviewSpawn(
         {
@@ -789,8 +734,6 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
   });
 
   test('review_url fallback: with no pr_url, the review permalink resolves the PR', async () => {
-    // Mirrors the legacy gate test: when only review_url is present, the resolver
-    // falls back to it and `gh pr view` resolves the PR from the permalink.
     const reviewUrl = 'https://github.com/acme/corp/pull/42#pullrequestreview-123';
     const validate = createReviewPostedValidator(
       reviewSpawn(
@@ -808,7 +751,6 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
       runId: 'run-1',
       hookId: 'review-posted-gate',
       methodName: 'send_message',
-      // No pr_url anywhere — only review_url (the gate-data fallback path).
       params: { data: { review_url: reviewUrl } },
       rawParams: { data: { review_url: reviewUrl } },
       nodeId: '',
@@ -826,11 +768,6 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
   });
 
   test('frozenPrUrl fallback: allows when the agent omits data.pr_url entirely', async () => {
-    // The gate→hook migration dropped the prompt guidance telling the reviewer
-    // to pass data.pr_url on the Review→Coding handoff. The resolver must fall
-    // back to the run's frozen reviewed PR (stamped by the pr_ready hook) so the
-    // hook no longer false-blocks every feedback send. This alone unblocks the
-    // path even when the agent supplies nothing.
     const validate = createReviewPostedValidator(
       reviewSpawn(
         {
@@ -847,7 +784,6 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
       runId: 'run-1',
       hookId: 'review-posted-hook',
       methodName: 'send_message',
-      // No pr_url / review_url anywhere — the reviewer omitted data.pr_url.
       params: { target: 'Coding', message: 'fix the P2 finding', data: {} },
       nodeId: 'review-node',
       nodeName: 'Review',
@@ -863,11 +799,6 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
   });
 
   test('frozenPrUrl absent + omitted data.pr_url → block (fail-closed)', async () => {
-    // Companion to the frozenPrUrl fallback above: when the run has NOT frozen a
-    // reviewed PR yet (no pr_ready handoff) and the reviewer omits data.pr_url,
-    // the resolver must NOT invent a PR identity — the op fails closed and the
-    // hook blocks. Pins the fallback's last-resort nature to this PR rather than
-    // relying on the unrelated 'missing pr_url → block' coverage.
     const validate = createReviewPostedValidator(reviewSpawn({ url: PR_URL }, 'lsm'));
     const result = await validate({
       workspacePath: '/tmp',
@@ -880,8 +811,6 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
       sessionId: 'sess-1',
       taskId: 'task-1',
       hookLocalState: { workflowStartIso: '2026-05-01T00:00:00Z' },
-      // frozenPrUrl intentionally absent — the run's first handoff has not
-      // frozen a reviewed PR yet.
       currentArtifacts: [],
       permittedExternalLookups: ['github'],
     });
@@ -890,9 +819,6 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
   });
 
   test('camelCase data.prUrl: allows when the agent passes prUrl (not pr_url)', async () => {
-    // The resolver accepts camelCase prUrl in addition to snake_case pr_url —
-    // the Reviewer's prompt may pass either form, so a reviewer that passes
-    // data.prUrl does not false-block.
     const validate = createReviewPostedValidator(
       reviewSpawn(
         {
@@ -945,7 +871,6 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
         'lsm'
       )
     );
-    // No workflowRunCreatedAt, no hookLocalState.workflowStartIso.
     const result = await validate(ctx({}));
     expect(result.type).toBe('block');
     expect((result as { reason: string }).reason).toContain('sinceIso');
@@ -958,7 +883,7 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
       runId: 'run-1',
       hookId: 'review-posted-gate',
       methodName: 'send_message',
-      params: { data: {} }, // no pr_url, no review_url
+      params: { data: {} },
       nodeId: '',
       nodeName: '',
       sessionId: '',
@@ -971,10 +896,6 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
   });
 
   test('host allow-list: a non-github.com / non-GH_HOST pr_url is rejected with NO gh call', async () => {
-    // Security (P1): an attacker-influenced pr_url must not direct the daemon's
-    // GitHub credentials (esp. GH_ENTERPRISE_TOKEN) at an arbitrary host. The
-    // allow-list (github.com or GH_HOST) fires BEFORE any gh spawn — the thrown
-    // spawn proves no credential-bearing call is made.
     const validate = createReviewPostedValidator((() => {
       throw new Error('gh must not be called for a disallowed host');
     }) as unknown as typeof Bun.spawn);
@@ -989,10 +910,6 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
   });
 
   test('host allow-list: a URL parsePrUrl rejects (non-/pull/<digits>) is still host-checked', async () => {
-    // Regression (P1 bypass): parsePrUrl requires `/pull/<digits>`, so a URL like
-    // .../pull/42abc returned null and slipped past the parsePrUrl-keyed
-    // allow-list, reaching `gh pr view` (which posts to the host with an
-    // Authorization header). The URL-parser-based allow-list must catch it.
     const validate = createReviewPostedValidator((() => {
       throw new Error('gh must not be called for a disallowed host');
     }) as unknown as typeof Bun.spawn);
@@ -1007,8 +924,6 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
   });
 
   test('host allow-list: a pr_url matching GH_HOST (GitHub Enterprise) passes through', async () => {
-    // GHES runs on a custom host; setting GH_HOST admits it. Guards against the
-    // allow-list regressing GHES support (the whole reason --hostname exists).
     const ghesUrl = 'https://ghes.corp.example/acme/corp/pull/42';
     const original = process.env.GH_HOST;
     process.env.GH_HOST = 'ghes.corp.example';
@@ -1033,11 +948,6 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
   });
 
   test('viewer-lookup rate limit with only comment evidence → retryable_block (preserve retry)', async () => {
-    // `gh pr view` succeeds (own-PR author + a COMMENTED review), but
-    // `gh api user` is rate-limited. The own-PR determination is inconclusive
-    // AND it matters (the comment evidence would pass iff ownPr), so the rate
-    // limit must surface as retryable_block — not a terminal "not satisfied"
-    // block that stalls the Review→Coding loop for the duration of throttling.
     const validate = createReviewPostedValidator(
       mockSpawn([
         {
@@ -1058,9 +968,6 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
   });
 
   test('viewer-lookup rate limit is ignored when a formal review exists (viewer irrelevant)', async () => {
-    // A formal review counts regardless of ownPr, so a viewer-lookup failure
-    // (even a rate limit) must NOT propagate — the gate allows on the formal
-    // review. Guards the `formalReviewCount === 0` leg of the propagation.
     const validate = createReviewPostedValidator(
       mockSpawn([
         {
@@ -1082,8 +989,6 @@ describe('review_posted preset (Review→Coding feedback gate)', () => {
 });
 
 describe('runGhJson transient / timeout / truncation classification', () => {
-  /** A spawn whose `exited` stays pending until `kill()` is called (mimics the
-   *  helper kill-timer firing — gh killed with empty stderr). */
   function hangingSpawn(): typeof Bun.spawn {
     let killFn: () => void = () => {};
     const exited = new Promise<number>((resolve) => {

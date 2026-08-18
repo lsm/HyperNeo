@@ -154,7 +154,6 @@ describe('Label', () => {
     );
     const input = screen.getByRole('textbox') as HTMLInputElement;
     const label = screen.getByText('Click Me');
-    // Spy on focus
     const focusSpy = vi.spyOn(input, 'focus');
     await act(async () => {
       fireEvent.click(label);
@@ -797,7 +796,6 @@ describe('FieldError', () => {
     const desc = container.querySelector('p[id]');
     const error = container.querySelector('p[role="alert"]');
 
-    // Both description IDs should be in aria-describedby
     const describedBy = input?.getAttribute('aria-describedby')?.split(' ') ?? [];
     expect(describedBy).toContain(desc?.getAttribute('id'));
     expect(describedBy).toContain(error?.getAttribute('id'));
@@ -814,7 +812,6 @@ describe('FieldError', () => {
     const input = screen.getByRole('textbox');
     expect(input.getAttribute('aria-invalid')).toBe('true');
 
-    // Unmount one FieldError - aria-invalid should remain true
     rerender(
       <Field>
         <Input />
@@ -823,7 +820,6 @@ describe('FieldError', () => {
     );
     expect(input.getAttribute('aria-invalid')).toBe('true');
 
-    // Unmount the last FieldError - aria-invalid should now be false
     rerender(
       <Field>
         <Input />
@@ -845,7 +841,6 @@ describe('FieldError', () => {
     const describedBy = input.getAttribute('aria-describedby')?.split(' ') ?? [];
     expect(describedBy).toContain(error?.getAttribute('id'));
 
-    // Unmount Description - FieldError should still work
     rerender(
       <Field>
         <Input />

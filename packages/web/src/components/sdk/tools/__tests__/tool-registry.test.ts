@@ -1,9 +1,4 @@
 // @ts-nocheck
-/**
- * Tests for tool-registry
- *
- * Tests for getToolConfig, getCategoryColors, and tool configurations
- */
 
 import { getToolConfig, getCategoryColors } from '../tool-registry';
 import type { ToolCategory } from '../tool-types';
@@ -407,25 +402,20 @@ describe('tool-registry', () => {
       it(`should have valid config structure for ${toolName}`, () => {
         const config = getToolConfig(toolName);
 
-        // All configs should have these properties
         expect(config.category).toBeDefined();
         expect(typeof config.hasLongOutput).toBe('boolean');
         expect(typeof config.defaultExpanded).toBe('boolean');
 
-        // displayName should be a string
         expect(typeof config.displayName).toBe('string');
 
-        // summaryExtractor should be a function if defined
         if (config.summaryExtractor) {
           expect(typeof config.summaryExtractor).toBe('function');
         }
 
-        // customRenderer should be a function if defined
         if (config.customRenderer) {
           expect(typeof config.customRenderer).toBe('function');
         }
 
-        // colors should have all required properties if defined
         if (config.colors) {
           expect(typeof config.colors.bg).toBe('string');
           expect(typeof config.colors.text).toBe('string');
@@ -459,7 +449,6 @@ describe('tool-registry', () => {
         expect(typeof colors.iconColor).toBe('string');
         expect(typeof colors.lightText).toBe('string');
 
-        // Should have dark mode variants
         expect(colors.bg).toContain('dark:');
         expect(colors.text).toContain('dark:');
         expect(colors.iconColor).toContain('dark:');
@@ -475,7 +464,6 @@ describe('tool-registry', () => {
           todos: [{ content: 'Test', status: 'pending', activeForm: 'Testing' }],
         },
       });
-      // Should return a VNode (TodoViewer component)
       expect(result).toBeTruthy();
     });
 
@@ -579,7 +567,7 @@ describe('tool-registry', () => {
       const longUrl = 'https://example.com/' + 'a'.repeat(100);
       const summary = config.summaryExtractor?.({ url: longUrl });
       expect(summary?.endsWith('...')).toBe(true);
-      expect(summary?.length).toBeLessThanOrEqual(53); // 50 + '...'
+      expect(summary?.length).toBeLessThanOrEqual(53);
     });
 
     it('should handle ListMcpResourcesTool without server', () => {
@@ -679,15 +667,12 @@ describe('tool-registry', () => {
   describe('MCP Tool Edge Cases', () => {
     it('should handle MCP tool with only server part', () => {
       const config = getToolConfig('mcp__server');
-      // When there's no tool part after server, displayName falls back to full toolName
       expect(config.displayName).toBe('mcp__server');
-      // Still treated as MCP since it starts with 'mcp__'
       expect(config.category).toBe('mcp');
     });
 
     it('should handle MCP tool with empty middle parts', () => {
       const config = getToolConfig('mcp____tool');
-      // parts = ['mcp', '', 'tool'], so parts[1] is empty, parts.slice(2) = ['tool']
       expect(config.displayName).toBe('tool');
       expect(config.category).toBe('mcp');
     });

@@ -1,17 +1,3 @@
-/**
- * SpaceAgentNotificationService — InternalEventBus subscriber for Space runtime events.
- *
- * Listens to selected `SpaceEvents` on the `InternalEventBus` and formats them
- * into structured `[TASK_EVENT]` messages for injection into the Space Agent
- * session.
- *
- * ## Subscribed events
- *
- * All events emitted by `SpaceRuntime` and `ChannelRouter` that require agent
- * notification flow through here. Events that do not require agent notification
- * (e.g. internal bookkeeping) are silently ignored.
- */
-
 import type { SpaceAutonomyLevel } from '@hyperneo/shared/types/space';
 import type { InternalEventBus, DaemonInternalEventMap } from '../../internal-event-bus';
 import { Logger } from '../../logger';
@@ -20,34 +6,13 @@ import type { SessionFactory } from './types';
 const log = new Logger('space-agent-notification-service');
 
 export interface SpaceAgentNotificationServiceConfig {
-  /** The InternalEventBus to subscribe to. */
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
-  /** The SessionFactory used to inject messages into sessions. */
   sessionFactory: SessionFactory;
-  /**
-   * The session ID of the Space Agent's global session (e.g. the `spaces:global`
-   * session that receives coordination notifications).
-   */
   sessionId: string;
-  /**
-   * The space ID this service is scoped to. Only events whose `spaceId` matches
-   * this value are processed; events for other spaces are silently ignored.
-   * This prevents cross-space notification leakage when multiple spaces are active.
-   */
   spaceId: string;
-  /**
-   * The autonomy level for this space. Included in every notification message
-   * so the agent has context for how much it can act without human approval.
-   *
-   * Defaults to `1` (most supervised) if not provided.
-   */
   autonomyLevel?: SpaceAutonomyLevel;
 }
 
-/**
- * Production subscriber that turns Space runtime domain events into agent-facing
- * messages and injects them into the Space Agent session.
- */
 export class SpaceAgentNotificationService {
   private readonly internalEventBus: InternalEventBus<DaemonInternalEventMap>;
   private readonly sessionFactory: SessionFactory;
@@ -64,17 +29,7 @@ export class SpaceAgentNotificationService {
     this.autonomyLevel = config.autonomyLevel ?? 1;
   }
 
-  /**
-   * Subscribe to all Space runtime events that require agent notification.
-   *
-   * Call this once after construction. The returned unsubscribe function
-   * tears down all subscriptions.
-   *
-   * Safe to call multiple times — any existing subscriptions are torn down
-   * before the new set is registered.
-   */
   subscribe(): () => void {
-    // Tear down any existing subscriptions to prevent leaks on re-init.
     for (const unsub of this.unsubscribers) {
       unsub();
     }
@@ -119,8 +74,6 @@ export class SpaceAgentNotificationService {
         'space.workflowRun.deadLoop',
         async (event) => {
           if (event.spaceId !== this.spaceId) return;
-          // Await + propagate failures so the router's dedupe-after-success
-          // retry contract holds when the Space Agent session is unavailable.
           await this.notifyStrict(formatWorkflowRunDeadLoop(event, this.autonomyLevel));
         },
         {
@@ -180,23 +133,12 @@ export class SpaceAgentNotificationService {
         origin: 'system',
       });
     } catch (err) {
-      // Session not found or unavailable — log warning, do not propagate.
-      // The notification service must not fail the caller's event handler.
       log.warn(
         `[SpaceAgentNotificationService] Failed to inject notification into session ${this.sessionId}: ${err instanceof Error ? err.message : String(err)}`
       );
     }
   }
 
-  /**
-   * Like {@link notify} but PROPAGATES injection failures instead of swallowing
-   * them. Used by the dead-loop subscriber: a failed injection must surface as
-   * a publish failure to `ChannelRouter.notifyDeadLoop` so its dedupe timestamp
-   * is NOT recorded (dedupe is set only after a successful publish), letting the
-   * next blocked send retry the notification once the Space Agent session
-   * recovers. Other notifications stay fire-and-forget — their publishers don't
-   * gate on delivery success.
-   */
   private async notifyStrict(message: string): Promise<void> {
     await this.sessionFactory.injectMessage(this.sessionId, message, {
       deliveryMode: 'defer',
@@ -204,10 +146,6 @@ export class SpaceAgentNotificationService {
     });
   }
 }
-
-// ---------------------------------------------------------------------------
-// Message formatters
-// ---------------------------------------------------------------------------
 
 function formatTaskBlocked(
   event: {

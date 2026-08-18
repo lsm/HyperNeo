@@ -1,13 +1,3 @@
-/**
- * Tests for GitHub Polling Service
- *
- * Tests the GitHubPollingService class:
- * - Starting and stopping the polling loop
- * - Adding/removing repositories
- * - Repository state management
- * - Rate limit handling
- */
-
 import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import {
   GitHubPollingService,
@@ -143,7 +133,7 @@ describe('GitHubPollingService', () => {
 
     it('does not start twice', () => {
       service.start();
-      service.start(); // Second call should be a no-op
+      service.start();
 
       expect(service.isRunning()).toBe(true);
     });
@@ -158,7 +148,7 @@ describe('GitHubPollingService', () => {
     });
 
     it('handles stop when not running', () => {
-      service.stop(); // Should not throw
+      service.stop();
       expect(service.isRunning()).toBe(false);
     });
   });
@@ -190,11 +180,8 @@ describe('GitHubPollingService', () => {
       service.start();
       service.stop();
 
-      // Create a new service with same token
       const newService = createPollingService({ token: 'test-token' }, onEventMock);
 
-      // The new service should not have the repositories from the old one
-      // (state is not persisted)
       expect(newService.getRepositories()).toHaveLength(0);
     });
   });

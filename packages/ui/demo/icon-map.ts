@@ -1,13 +1,4 @@
-/**
- * Heroicons to Lucide icon name mapping
- *
- * Maps @heroicons/react icon names to their lucide-preact equivalents.
- * Size variants are not needed — lucide icons are size-agnostic via class="w-N h-N".
- *
- * Source heroicons: 66 unique icon names from Tailwind Application UI v4 reference examples
- */
 export const heroiconToLucide: Record<string, string> = {
-  // === Navigation & Actions ===
   Bars3Icon: 'Menu',
   HomeIcon: 'Home',
   UsersIcon: 'Users',
@@ -16,7 +7,7 @@ export const heroiconToLucide: Record<string, string> = {
   CalendarDaysIcon: 'CalendarDays',
   BellIcon: 'Bell',
   InboxIcon: 'Inbox',
-  Cog6ToothIcon: 'Settings', // cog6-tooth
+  Cog6ToothIcon: 'Settings',
   CogIcon: 'Cog',
   SettingsIcon: 'Settings',
   PlusIcon: 'Plus',
@@ -28,7 +19,6 @@ export const heroiconToLucide: Record<string, string> = {
   CheckCircleIcon: 'CheckCircle',
   CheckBadgeIcon: 'BadgeCheck',
 
-  // === Arrows & Navigation ===
   ArrowRightIcon: 'ArrowRight',
   ArrowLeftIcon: 'ArrowLeft',
   ArrowUpIcon: 'ArrowUp',
@@ -46,19 +36,16 @@ export const heroiconToLucide: Record<string, string> = {
   ChevronRightIcon: 'ChevronRight',
   ChevronUpDownIcon: 'ChevronsUpDown',
 
-  // === Search & Input ===
   MagnifyingGlassIcon: 'Search',
   FunnelIcon: 'Filter',
   BarsArrowUpIcon: 'BarChart3',
   HashtagIcon: 'Hash',
 
-  // === User & People ===
   UserIcon: 'User',
   UserCircleIcon: 'UserCircle',
   UserPlusIcon: 'UserPlus',
   AtSymbolIcon: 'AtSign',
 
-  // === Content & Media ===
   DocumentIcon: 'File',
   DocumentDuplicateIcon: 'Copy',
   DocumentPlusIcon: 'FilePlus',
@@ -70,18 +57,15 @@ export const heroiconToLucide: Record<string, string> = {
   ChatBubbleBottomCenterTextIcon: 'MessageSquare',
   ChatBubbleLeftEllipsisIcon: 'MessageCircleMore',
 
-  // === Communication ===
   EnvelopeIcon: 'Mail',
   EnvelopeOpenIcon: 'MailOpen',
   PhoneIcon: 'Phone',
 
-  // === Editing ===
   PencilIcon: 'Pencil',
   PencilSquareIcon: 'PencilLine',
   TrashIcon: 'Trash',
   FolderPlusIcon: 'FolderPlus',
 
-  // === Data & Charts ===
   ChartPieIcon: 'PieChart',
   ChartBarSquareIcon: 'BarChart3',
   TableCellsIcon: 'Table',
@@ -89,7 +73,6 @@ export const heroiconToLucide: Record<string, string> = {
   ServerIcon: 'Server',
   DatabaseIcon: 'Database',
 
-  // === Status & Feedback ===
   ExclamationCircleIcon: 'AlertCircle',
   ExclamationTriangleIcon: 'AlertTriangle',
   InformationCircleIcon: 'Info',
@@ -98,7 +81,6 @@ export const heroiconToLucide: Record<string, string> = {
   FaceFrownIcon: 'Frown',
   StarIcon: 'Star',
 
-  // === Objects & Items ===
   TagIcon: 'Tag',
   BookmarkIcon: 'Bookmark',
   BriefcaseIcon: 'Briefcase',
@@ -108,7 +90,6 @@ export const heroiconToLucide: Record<string, string> = {
   ReceiptRefundIcon: 'Receipt',
   BaggageClaimIcon: 'BaggageClaim',
 
-  // === Actions ===
   HeartIcon: 'Heart',
   HandThumbUpIcon: 'ThumbsUp',
   FlagIcon: 'Flag',
@@ -126,18 +107,15 @@ export const heroiconToLucide: Record<string, string> = {
   LifebuoyIcon: 'LifeBuoy',
   AcademicCapIcon: 'GraduationCap',
   BuildingOfficeIcon: 'Building',
-  // ToothIcon: 'Tooth', // No equivalent in lucide-preact
   ArchiveBoxIcon: 'Archive',
   ViewColumnsIcon: 'Columns3',
   LinkIcon: 'Link',
   MapPinIcon: 'MapPin',
 
-  // === UI Elements ===
   EllipsisHorizontalIcon: 'Ellipsis',
   EllipsisVerticalIcon: 'EllipsisVertical',
   ClockIcon: 'Clock',
 
-  // === Theme Icons ===
   SunIcon: 'Sun',
   MoonIcon: 'Moon',
 };

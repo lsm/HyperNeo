@@ -9,10 +9,6 @@ export interface DropdownItem {
   icon?: ComponentChildren;
   danger?: boolean;
   disabled?: boolean;
-  /**
-   * Native browser tooltip shown on hover. Useful for explaining why a
-   * disabled item is disabled, or providing additional context for an action.
-   */
   title?: string;
 }
 
@@ -27,9 +23,9 @@ export interface DropdownProps {
   items: DropdownMenuItem[];
   position?: 'left' | 'right';
   class?: string;
-  customContent?: ComponentChildren; // Optional custom content instead of menu items
-  isOpen?: boolean; // Controlled open state
-  onOpenChange?: (open: boolean) => void; // Callback when open state changes
+  customContent?: ComponentChildren;
+  isOpen?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 export function Dropdown({
@@ -43,7 +39,6 @@ export function Dropdown({
 }: DropdownProps) {
   const [internalIsOpen, setInternalIsOpen] = useState(false);
 
-  // Use controlled state if provided, otherwise use internal state
   const isOpen = controlledIsOpen !== undefined ? controlledIsOpen : internalIsOpen;
   const setIsOpen = (open: boolean) => {
     if (controlledIsOpen === undefined) {
@@ -66,7 +61,6 @@ export function Dropdown({
   const triggerRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Calculate and update menu position when opened
   useEffect(() => {
     if (isOpen && triggerRef.current) {
       const updatePosition = () => {
@@ -76,15 +70,12 @@ export function Dropdown({
         const viewportWidth = window.innerWidth;
         const viewportHeight = window.innerHeight;
 
-        // Get actual menu dimensions - offsetHeight is more reliable
         const menuHeight = menuRef.current.offsetHeight || 200;
         const menuWidth = menuRef.current.offsetWidth || 220;
 
-        // Calculate space above and below the trigger
         const spaceBelow = viewportHeight - triggerRect.bottom - 8;
         const spaceAbove = triggerRect.top - 8;
 
-        // Decide whether to position above or below
         const shouldPositionAbove = spaceBelow < menuHeight && spaceAbove > spaceBelow;
 
         const newStyle: {
@@ -100,25 +91,17 @@ export function Dropdown({
         };
 
         if (shouldPositionAbove) {
-          // Position above - use bottom anchor relative to viewport
-          // bottom = viewport height - trigger top + gap
           newStyle.bottom = `${viewportHeight - triggerRect.top + 4}px`;
         } else {
-          // Position below - use top anchor
           newStyle.top = `${triggerRect.bottom + 4}px`;
         }
 
-        // Calculate horizontal position
         if (position === 'right') {
-          // Align to right edge of trigger
           const right = viewportWidth - triggerRect.right;
-          // Ensure menu doesn't go off-screen to the left
           const maxRight = viewportWidth - menuWidth - 8;
           newStyle.right = `${Math.max(8, Math.min(right, maxRight))}px`;
         } else {
-          // Align to left edge of trigger
           let left = triggerRect.left;
-          // Ensure menu doesn't go off-screen to the right
           if (left + menuWidth > viewportWidth - 8) {
             left = viewportWidth - menuWidth - 8;
           }
@@ -128,10 +111,8 @@ export function Dropdown({
         setMenuStyle(newStyle);
       };
 
-      // Initial positioning
       updatePosition();
 
-      // Update again after layout to get accurate dimensions
       const rafId = requestAnimationFrame(() => {
         updatePosition();
       });
@@ -142,11 +123,6 @@ export function Dropdown({
     }
   }, [isOpen, position]);
 
-  // Escape closes the menu whenever it is open. The listener registers in a
-  // layout effect so it is attached in the same commit that exposes the menu —
-  // a keydown arriving between commit and a deferred effect cannot be missed.
-  // (An Escape keydown can never be the interaction that opened the menu, so
-  // unlike the click-outside listener below it needs no deferred attach.)
   useLayoutEffect(() => {
     if (!isOpen) return;
 
@@ -164,8 +140,6 @@ export function Dropdown({
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      // Don't close if clicking inside the menu (which uses position:fixed)
-      // Check both dropdownRef and menuRef since fixed positioning can affect contains()
       if (
         menuRef.current?.contains(event.target as Node) ||
         (dropdownRef.current && dropdownRef.current.contains(event.target as Node))
@@ -177,7 +151,6 @@ export function Dropdown({
     };
 
     if (isOpen) {
-      // Delay adding the click listener to avoid closing immediately from the same click that opened it
       const timeoutId = setTimeout(() => {
         document.addEventListener('click', handleClickOutside);
       }, 0);
@@ -193,7 +166,6 @@ export function Dropdown({
     };
   }, [isOpen]);
 
-  // Keyboard navigation
   useEffect(() => {
     if (!isOpen) return;
 
@@ -233,12 +205,10 @@ export function Dropdown({
 
   return (
     <div ref={dropdownRef} class={cn('relative', className)}>
-      {/* Trigger */}
       <div ref={triggerRef} class="cursor-pointer" onClick={() => setIsOpen(!isOpen)}>
         {trigger}
       </div>
 
-      {/* Menu - Using fixed positioning to avoid clipping by overflow containers */}
       {isOpen && (
         <div
           ref={menuRef}
@@ -290,11 +260,8 @@ export function Dropdown({
                     }}
                     onClick={async (e) => {
                       if (!menuItem.disabled) {
-                        // Stop propagation to prevent handleClickOutside from closing dropdown prematurely
                         e.stopPropagation();
                         menuItem.onClick(e);
-                        // Small delay to ensure state updates propagate before closing dropdown
-                        // This helps with modal/dialog triggers that depend on dropdown item clicks
                         await new Promise((resolve) => setTimeout(resolve, 0));
                         setIsOpen(false);
                       }

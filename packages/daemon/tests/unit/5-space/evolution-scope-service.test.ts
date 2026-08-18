@@ -257,7 +257,6 @@ describe('EvolutionScopeService', () => {
       rule: 'Lesson A',
       why: 'Why A',
     });
-    // Wait a tick so updatedAt differs
     const lessonB = evolutionRepo.createLesson({
       scopeId: scope.id,
       status: 'active',
@@ -270,7 +269,6 @@ describe('EvolutionScopeService', () => {
     const selected = service.selectActiveLessonsForTask({ taskId: task.id, limit: 1 });
 
     expect(selected).toHaveLength(1);
-    // lessonA has max confidence, so it should win even if slightly older
     expect(selected[0].id).toBe(lessonA.id);
   });
 
@@ -503,16 +501,12 @@ describe('extractArtifactDetail', () => {
   });
 
   it('prefers the canonical shape field over legacy fields on the same record', () => {
-    // A decision carries both recommendation and summary; the verdict is the
-    // primary signal for evolution evidence.
     expect(extractArtifactDetail({ recommendation: 'approve', summary: 'looks good' })).toBe(
       'approve'
     );
   });
 
   it('falls back to legacy fields for migrated rows', () => {
-    // A migrated pr→link without url still resolves via pr_url; a result→decision
-    // keeps its summary; a bare merge_commit still surfaces.
     expect(extractArtifactDetail({ pr_url: 'https://github.com/acme/app/pull/9' })).toBe(
       'https://github.com/acme/app/pull/9'
     );
@@ -552,9 +546,6 @@ describe('mergeEvolutionPolicy', () => {
       { automation: { completedTaskThreshold: 5 } },
       { automation: null as never }
     );
-    // A null automation patch clears the key (documented null-clear contract),
-    // so the resulting policy has no automation to validate rather than a null
-    // object that validation would reject.
     expect(merged.automation).toBeUndefined();
   });
 

@@ -1,11 +1,3 @@
-/**
- * Reference RPC Handlers
- *
- * RPC handlers for the @ reference system:
- * - reference.resolve — Resolve a single reference to its full entity data
- * - reference.search — search tasks, goals, files, and folders by query string
- */
-
 import type {
   MessageHub,
   ReferenceType,
@@ -25,23 +17,11 @@ import { join, normalize, relative } from 'node:path';
 
 const log = new Logger('reference-handlers');
 
-/**
- * Maximum number of bytes to include in file content payloads.
- * Files larger than this will be truncated to prevent oversized responses.
- */
 const MAX_FILE_CONTENT_BYTES = 50_000;
 
-/**
- * Number of bytes to sample when detecting binary files.
- * Checking the first 8 KB is sufficient for reliable binary detection.
- */
 const BINARY_DETECTION_SAMPLE_BYTES = 8_192;
 
 const RESULTS_PER_CATEGORY = 10;
-
-// ============================================================================
-// Repository interfaces (minimal — only what this handler needs)
-// ============================================================================
 
 export interface TaskRepoForReference {
   getTask(id: string): unknown | null;
@@ -53,37 +33,17 @@ export interface GoalRepoForReference {
   getGoalByShortId(roomId: string, shortId: string): unknown | null;
 }
 
-// ============================================================================
-// Handler dependencies
-// ============================================================================
-
 export interface ReferenceHandlerDeps {
-  /** Raw SQLite database (used to instantiate repositories for reference.search) */
   db: BunDatabase;
-  /** Reactive database (passed to repositories; only used on writes — safe for read-only search) */
   reactiveDb: ReactiveDatabase;
-  /**
-   * Short ID allocator — enables lazy backfill of shortIds for tasks/goals that haven't been
-   * viewed via task.list/goal.list yet. Without this, some results may lack their shortId.
-   */
   shortIdAllocator: ShortIdAllocator;
-  /** Session manager — used to look up session workspace path and room context */
   sessionManager: SessionManager;
-  /** Task repository for looking up room tasks (reference.resolve) */
   taskRepo: TaskRepoForReference;
-  /** Goal repository (not scoped to room — uses global DB access) */
   goalRepo: GoalRepoForReference;
-  /** Workspace root path — used as fallback when no session is provided (optional) */
   workspaceRoot?: string;
-  /** File index for fast file/folder search (reference.search) */
   fileIndex: FileIndex;
 }
 
-// ============================================================================
-// Relevance scoring helpers (reference.search)
-// ============================================================================
-
-/** Relevance score used for sorting across categories. */
 function scoreResult(displayText: string, query: string): number {
   const t = displayText.toLowerCase();
   const q = query.toLowerCase();
@@ -93,7 +53,6 @@ function scoreResult(displayText: string, query: string): number {
   return 1;
 }
 
-/** Filter a list of ReferenceSearchResult by query and return top N sorted by relevance. */
 function filterAndSort(
   results: ReferenceSearchResult[],
   query: string,
@@ -112,19 +71,9 @@ function filterAndSort(
   return scored.slice(0, limit).map((s) => s.r);
 }
 
-// ============================================================================
-// Main setup function
-// ============================================================================
-
-/**
- * Register reference RPC handlers on the MessageHub.
- */
 export function setupReferenceHandlers(messageHub: MessageHub, deps: ReferenceHandlerDeps): void {
   const { db, reactiveDb, shortIdAllocator, sessionManager, fileIndex } = deps;
 
-  // ------------------------------------------------------------------
-  // reference.resolve
-  // ------------------------------------------------------------------
   messageHub.onRequest(
     'reference.resolve',
     async (
@@ -148,7 +97,6 @@ export function setupReferenceHandlers(messageHub: MessageHub, deps: ReferenceHa
         throw new Error('id is required');
       }
 
-      // Determine session context (workspace path + optional room ID)
       const { workspacePath, roomId } = await resolveSessionContext(params.sessionId, deps);
 
       try {
@@ -168,33 +116,17 @@ export function setupReferenceHandlers(messageHub: MessageHub, deps: ReferenceHa
             return { resolved: await resolveFolder(params.id, workspacePath) };
 
           default: {
-            // Exhaustiveness guard — unknown types return null rather than throwing
             log.warn(`Unknown reference type: ${params.type as string}`);
             return { resolved: null };
           }
         }
       } catch (err) {
-        // Log unexpected errors but surface null so callers handle gracefully
         log.warn(`Failed to resolve reference ${params.type}:${params.id}:`, err);
         return { resolved: null };
       }
     }
   );
 
-  // ------------------------------------------------------------------
-  // reference.search
-  // ------------------------------------------------------------------
-
-  /**
-   * reference.search — search across tasks, goals, files, and folders.
-   *
-   * Parameters:
-   *   sessionId: string        — used to resolve room context
-   *   query:     string        — search query
-   *   types?:    ReferenceType[] — filter to specific types (default: all)
-   *
-   * Returns: { results: ReferenceSearchResult[] }
-   */
   messageHub.onRequest('reference.search', async (data) => {
     const params = data as {
       sessionId: string;
@@ -213,13 +145,10 @@ export function setupReferenceHandlers(messageHub: MessageHub, deps: ReferenceHa
     const session = sessionManager.getSessionFromDB(params.sessionId);
     const roomId = session?.context?.roomId;
 
-    // Empty query with no room context: nothing to search.
-    // Empty query WITH room context: return all tasks/goals for the room.
     if (!query && !roomId) return { results: [] };
 
     const allResults: ReferenceSearchResult[] = [];
 
-    // ── Task search ───────────────────────────────────────────────────────
     if (requestedTypes.includes('task')) {
       if (roomId) {
         try {
@@ -237,10 +166,8 @@ export function setupReferenceHandlers(messageHub: MessageHub, deps: ReferenceHa
           log.warn('Failed to search tasks:', err);
         }
       }
-      // No room context → skip task results silently
     }
 
-    // ── Goal search ───────────────────────────────────────────────────────
     if (requestedTypes.includes('goal')) {
       if (roomId) {
         try {
@@ -258,28 +185,19 @@ export function setupReferenceHandlers(messageHub: MessageHub, deps: ReferenceHa
           log.warn('Failed to search goals:', err);
         }
       }
-      // No room context → skip goal results silently
     }
 
-    // ── File / Folder search ──────────────────────────────────────────────
     const fileTypes: Array<'file' | 'folder'> = [];
     if (requestedTypes.includes('file')) fileTypes.push('file');
     if (requestedTypes.includes('folder')) fileTypes.push('folder');
 
     if (fileTypes.length > 0 && query.length > 0) {
-      // Note: file/folder search requires a non-empty query — returning all files
-      // on empty query would be too slow and noisy. Task/goal results above are
-      // returned for empty queries since they are bounded to the room scope.
-      // Path traversal check — reject queries with .. or absolute paths
       if (query.includes('..') || query.startsWith('/')) {
-        // Return what we have so far without file results
         return { results: allResults };
       }
 
       try {
-        // Fetch extra entries to account for post-search type filtering
         const fileEntries = fileIndex.search(query, RESULTS_PER_CATEGORY * fileTypes.length * 2);
-        // Filter to requested types and enforce per-type limit
         const byType = new Map<string, number>([
           ['file', 0],
           ['folder', 0],
@@ -304,34 +222,12 @@ export function setupReferenceHandlers(messageHub: MessageHub, deps: ReferenceHa
     return { results: allResults };
   });
 
-  // ------------------------------------------------------------------
-  // fileindex.rescan
-  // ------------------------------------------------------------------
-
-  /**
-   * fileindex.rescan — trigger an immediate incremental refresh of the FileIndex.
-   *
-   * This is primarily useful for E2E tests that create workspace files and need
-   * them indexed before searching. In normal operation, FileIndex polls automatically.
-   *
-   * Parameters: none
-   * Returns: { size: number } — number of entries in the cache after refresh
-   */
   messageHub.onRequest('fileindex.rescan', async () => {
     await fileIndex.refresh();
     return { size: fileIndex.size() };
   });
 }
 
-// ============================================================================
-// Session context helper
-// ============================================================================
-
-/**
- * Resolve the workspace path and optional room ID for a given session ID.
- *
- * Falls back to the configured workspace root when the session cannot be loaded.
- */
 async function resolveSessionContext(
   sessionId: string,
   deps: ReferenceHandlerDeps
@@ -348,16 +244,11 @@ async function resolveSessionContext(
   };
 }
 
-// ============================================================================
-// Per-type resolution helpers
-// ============================================================================
-
 async function resolveTask(
   id: string,
   roomId: string | null,
   deps: ReferenceHandlerDeps
 ): Promise<ResolvedReference | null> {
-  // Support both UUID and short IDs (e.g. "t-42")
   let task = deps.taskRepo.getTask(id);
   if (!task && roomId) {
     task = deps.taskRepo.getTaskByShortId(roomId, id);
@@ -367,9 +258,6 @@ async function resolveTask(
     return null;
   }
 
-  // When a room context is present, confirm the task belongs to that room
-  // (prevent cross-room access via UUID). Without room context, UUID lookup
-  // is allowed for global sessions (e.g. lobby).
   if (roomId && (task as { roomId?: string }).roomId !== roomId) {
     return null;
   }
@@ -386,7 +274,6 @@ function resolveGoal(
   roomId: string | null,
   deps: ReferenceHandlerDeps
 ): ResolvedReference | null {
-  // Support both UUID and short IDs (e.g. "g-7")
   let goal = deps.goalRepo.getGoal(id);
   if (!goal && roomId) {
     goal = deps.goalRepo.getGoalByShortId(roomId, id);
@@ -396,9 +283,6 @@ function resolveGoal(
     return null;
   }
 
-  // When a room context is present, confirm the goal belongs to that room
-  // (prevent cross-room access via UUID). Without room context, UUID lookup
-  // is allowed for global sessions (e.g. lobby).
   if (roomId && (goal as { roomId?: string }).roomId !== roomId) {
     return null;
   }
@@ -416,10 +300,8 @@ export async function resolveFile(
 ): Promise<ResolvedReference | null> {
   const fileManager = new FileManager(workspacePath);
 
-  // Validate path (throws on traversal — we catch below to return null)
   let absolutePath: string;
   try {
-    // Replicate FileManager path validation without reading the file yet
     const normalized = normalize(workspacePath);
     const resolved = normalize(join(workspacePath, id));
     const rel = relative(normalized, resolved);
@@ -431,7 +313,6 @@ export async function resolveFile(
     return null;
   }
 
-  // Check for binary content before attempting text decode
   let isBinary = false;
   let fileSize = 0;
   let fileMtime = '';
@@ -441,8 +322,6 @@ export async function resolveFile(
     fileSize = stats.size;
     fileMtime = stats.mtime.toISOString();
 
-    // Sample the first BINARY_DETECTION_SAMPLE_BYTES bytes and check for null bytes,
-    // which are the most reliable indicator of binary content.
     const sampleSize = Math.min(fileSize, BINARY_DETECTION_SAMPLE_BYTES);
     if (sampleSize > 0) {
       const buf = Buffer.allocUnsafe(sampleSize);
@@ -456,12 +335,10 @@ export async function resolveFile(
       isBinary = buf.includes(0x00);
     }
   } catch {
-    // File not found or unreadable
     return null;
   }
 
   if (isBinary) {
-    // Return metadata only — content would be garbled and oversized
     return {
       type: 'file',
       id,
@@ -476,7 +353,6 @@ export async function resolveFile(
     };
   }
 
-  // Read text content via FileManager (handles path validation internally)
   let fileData: {
     path: string;
     content: string;
@@ -525,7 +401,6 @@ export async function resolveFolder(
       type: e.type as 'file' | 'directory',
     }));
   } catch {
-    // Directory not found or path traversal detected — return null
     return null;
   }
 

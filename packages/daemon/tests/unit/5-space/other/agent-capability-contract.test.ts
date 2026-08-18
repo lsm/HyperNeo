@@ -1,29 +1,3 @@
-/**
- * Agent Capability Contract Tests
- *
- * Pins the effective runtime capability derived from a worker agent's declared
- * tool profile, against the shared `DENIABLE_TOOLS` constant that both the
- * daemon resolver (`deriveWorkerDisallowedTools`) and the web editor
- * (`SpaceAgentEditor`) import from `@hyperneo/shared`. Sharing one constant
- * means the runtime denial set and the UI's deniable toggles cannot drift apart.
- *
- * Background (the regression this guards): permissive worker presets — Coder,
- * General, Planner, Research — declare an *empty* tool profile. Because the
- * profile is a visible override and not an exhaustive SDK allowlist, the runtime
- * inherits every SDK built-in (Bash, Write, Edit, …) for those agents even
- * though the profile lists none. These tests assert the declared profile and the
- * effective runtime toolset stay consistent.
- *
- * Covered dimensions:
- *   1. deriveWorkerDisallowedTools — the shared tool-policy resolver
- *   2. effective runtime capability vs declared profile (worker presets, Coder)
- *   3. shared resolver across worker + long-horizon families
- *   4. legacy migrated long-horizon data resolves through both resolvers
- *   5. additive validation: requireAgentFamily throwing + task-scoped resolution
- *      (the non-throwing resolveAgentFamily classification is already covered by
- *      agent-family-resolver.test.ts, so this file covers only the additive paths)
- */
-
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { describe, expect, test } from 'bun:test';
 import type { Space, SpaceTask } from '@hyperneo/shared';
@@ -40,10 +14,6 @@ import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agen
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { runMigrations } from '../../../../src/storage/schema/index';
-
-// ---------------------------------------------------------------------------
-// Test DB helpers
-// ---------------------------------------------------------------------------
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -82,10 +52,6 @@ function makeRepos(db: BunDatabase) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// 1. deriveWorkerDisallowedTools — the shared tool-policy resolver
-// ---------------------------------------------------------------------------
-
 describe('deriveWorkerDisallowedTools — shared tool-policy resolver', () => {
   test('empty / null / undefined profile is permissive: no built-ins denied', () => {
     expect(deriveWorkerDisallowedTools([])).toEqual([]);
@@ -94,9 +60,6 @@ describe('deriveWorkerDisallowedTools — shared tool-policy resolver', () => {
   });
 
   test('a profile that omits every deniable tool denies exactly the shared DENIABLE_TOOLS set', () => {
-    // Cross-layer contract: the daemon resolver denies exactly the constant the
-    // web editor imports for its deniable toggles. If either side diverges this
-    // assertion (or the shared import) breaks.
     expect(deriveWorkerDisallowedTools(['Read', 'Grep', 'Glob'])).toEqual([...DENIABLE_TOOLS]);
   });
 
@@ -105,7 +68,6 @@ describe('deriveWorkerDisallowedTools — shared tool-policy resolver', () => {
   });
 
   test('only deniable tools absent from the profile are denied; present ones pass through', () => {
-    // Keeps Bash, denies Write/Edit/MultiEdit/NotebookEdit (mirrors Reviewer intent).
     expect(deriveWorkerDisallowedTools(['Read', 'Bash', 'Grep'])).toEqual([
       'Write',
       'Edit',
@@ -121,7 +83,6 @@ describe('deriveWorkerDisallowedTools — shared tool-policy resolver', () => {
   });
 
   test('a permissive (empty) profile denies nothing — not even auxMutators', () => {
-    // Permissive means permissive: the early return ignores auxMutators entirely.
     expect(deriveWorkerDisallowedTools([], { auxMutators: ['Workflow'] })).toEqual([]);
     expect(deriveWorkerDisallowedTools(null, { auxMutators: ['Workflow'] })).toEqual([]);
   });
@@ -135,21 +96,13 @@ describe('deriveWorkerDisallowedTools — shared tool-policy resolver', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 2. effective runtime capability vs declared profile (worker presets)
-// ---------------------------------------------------------------------------
-
 describe('effective runtime capability vs declared profile (worker presets)', () => {
-  /** Runtime effective availability for the deniable built-ins = those not denied. */
   function effectiveDeniableTools(profile: readonly string[] | null | undefined): string[] {
     const denied = new Set(deriveWorkerDisallowedTools(profile));
     return DENIABLE_TOOLS.filter((t) => !denied.has(t));
   }
 
   test('Coder declares an empty profile yet inherits every deniable tool at runtime', () => {
-    // The permissive-inheritance contract: an empty profile denies nothing, so
-    // Bash/Write/Edit/… stay available at runtime even though the profile lists
-    // none — the agent is not restricted despite declaring no tools.
     const profile = PRESET_AGENT_TOOLS.coder;
     expect(profile).toEqual([]);
     expect(effectiveDeniableTools(profile)).toEqual([...DENIABLE_TOOLS]);
@@ -170,9 +123,6 @@ describe('effective runtime capability vs declared profile (worker presets)', ()
 
   test('Reviewer keeps Bash but denies write/edit deniable tools (restrained review role)', () => {
     const effective = new Set(effectiveDeniableTools(PRESET_AGENT_TOOLS.reviewer));
-    // The Reviewer has Bash for read-only GitHub inspection and gh-CLI review
-    // posting, so Bash is available — but the write/edit deniable tools are
-    // denied, so it cannot modify the code under review.
     expect(effective.has('Bash')).toBe(true);
     expect(effective.has('Write')).toBe(false);
     expect(effective.has('Edit')).toBe(false);
@@ -188,10 +138,6 @@ describe('effective runtime capability vs declared profile (worker presets)', ()
   });
 
   test('capability consistency invariant holds for every preset', () => {
-    // For every preset + every deniable tool: the tool is available at runtime
-    // iff the profile is permissive OR explicitly lists it. This is the
-    // invariant that keeps a permissive (empty) profile from implying the agent
-    // is restricted, and an explicit profile from granting tools it omits.
     for (const [name, profile] of Object.entries(PRESET_AGENT_TOOLS)) {
       const permissive = !profile || profile.length === 0;
       const listed = new Set(profile);
@@ -210,19 +156,7 @@ describe('effective runtime capability vs declared profile (worker presets)', ()
   });
 });
 
-// ---------------------------------------------------------------------------
-// 3. shared resolver across worker and long-horizon families
-// ---------------------------------------------------------------------------
-
 describe('shared resolver across worker and long-horizon families', () => {
-  // Both production session-builders delegate tool resolution to the same shared
-  // deriveWorkerDisallowedTools: createCustomAgentInit (worker) and
-  // buildLongHorizonAgentSessionConfig (long-horizon). Rather than mirror those
-  // paths locally — which cannot detect a production regression — this drives the
-  // real worker path and asserts it delegates to the resolver. The real LH path
-  // (buildLongHorizonAgentSessionConfig → session.config.disallowedTools) is
-  // covered by space-runtime-service.test.ts ("long-horizon event sessions
-  // preserve converted agent tool restrictions"), so it is not duplicated here.
   function workerInit(tools: string[]) {
     return createCustomAgentInit({
       customAgent: {
@@ -266,22 +200,14 @@ describe('shared resolver across worker and long-horizon families', () => {
   }
 
   test('the worker production path (createCustomAgentInit) delegates to the shared resolver', () => {
-    // Permissive profile: the resolver denies nothing, so the production init
-    // omits disallowedTools entirely (the agent inherits every built-in).
     const permissive = workerInit([]);
     expect(permissive.disallowedTools).toBeUndefined();
     expect(permissive.disallowedTools ?? []).toEqual(deriveWorkerDisallowedTools([]));
 
-    // Restrictive profile: the production output matches the resolver exactly,
-    // proving the worker path uses the same shared DENIABLE_TOOLS-backed logic.
     const profile = ['Read', 'Bash'];
     expect(workerInit(profile).disallowedTools ?? []).toEqual(deriveWorkerDisallowedTools(profile));
   });
 });
-
-// ---------------------------------------------------------------------------
-// 4. legacy migrated long-horizon data resolves through both resolvers
-// ---------------------------------------------------------------------------
 
 describe('legacy migrated long-horizon data resolves through both resolvers', () => {
   function backfillLegacyWorker(
@@ -293,7 +219,6 @@ describe('legacy migrated long-horizon data resolves through both resolvers', ()
   ): void {
     seedWorker(db, workerId, spaceId, toolsJson);
     seedGoal(db, goalId, spaceId);
-    // A goal assignment row is what triggers the backfill into the LH registry.
     db.exec('PRAGMA foreign_keys = OFF');
     db.prepare(
       `INSERT INTO space_agent_goal_assignments (space_id, agent_id, goal_id, created_at)
@@ -305,7 +230,6 @@ describe('legacy migrated long-horizon data resolves through both resolvers', ()
   test('migrated permissive worker → permissive LH agent, reachable as long-horizon', () => {
     const db = makeDb();
     seedSpace(db, 'space-a');
-    // A legacy worker with an empty tool profile (the permissive Coder case).
     backfillLegacyWorker(db, 'legacy-coder', 'space-a', 'goal-a', '[]');
 
     migrateLegacyLongHorizonAgentData(db);
@@ -314,13 +238,8 @@ describe('legacy migrated long-horizon data resolves through both resolvers', ()
     const migrated = repos.longHorizonAgentRepo.getById('legacy-coder');
     expect(migrated).not.toBeNull();
     expect(migrated?.templateKey).toBe('migration.legacy_space_agent');
-    // Empty original tools → migrated toolPermissions has no `tools` key → permissive.
     expect(migrated?.toolPermissions.tools).toBeUndefined();
 
-    // Migration *copies* the worker into the LH registry (the worker row is
-    // retained), so the id is now shared across both families. That reachability
-    // as a long-horizon agent is what lets LH ownership/automation operations
-    // apply to migrated legacy data.
     expect(
       requireAgentFamily({
         spaceId: 'space-a',
@@ -330,7 +249,6 @@ describe('legacy migrated long-horizon data resolves through both resolvers', ()
       }).longHorizonAgent?.id
     ).toBe('legacy-coder');
 
-    // And it stays permissive at runtime (the LH extraction path).
     const customTools = Array.isArray(migrated!.toolPermissions.tools)
       ? (migrated!.toolPermissions.tools as string[])
       : undefined;
@@ -341,7 +259,6 @@ describe('legacy migrated long-horizon data resolves through both resolvers', ()
   test('migrated restrictive worker → restrictive LH agent (intent preserved)', () => {
     const db = makeDb();
     seedSpace(db, 'space-a');
-    // A legacy worker with an explicit read-only tool profile.
     backfillLegacyWorker(
       db,
       'legacy-readonly',
@@ -355,7 +272,6 @@ describe('legacy migrated long-horizon data resolves through both resolvers', ()
     const repos = makeRepos(db);
     const migrated = repos.longHorizonAgentRepo.getById('legacy-readonly');
     expect(migrated?.toolPermissions.tools).toEqual(['Read', 'Grep', 'Glob']);
-    // The restrictive intent is preserved through the same shared resolver.
     expect(deriveWorkerDisallowedTools(migrated!.toolPermissions.tools as string[])).toEqual([
       ...DENIABLE_TOOLS,
     ]);
@@ -363,16 +279,7 @@ describe('legacy migrated long-horizon data resolves through both resolvers', ()
   });
 });
 
-// ---------------------------------------------------------------------------
-// 5. additive validation: requireAgentFamily throwing + task-scoped resolution
-// ---------------------------------------------------------------------------
-
 describe('additive validation: requireAgentFamily + task-scoped resolution', () => {
-  // agent-family-resolver.test.ts already covers the non-throwing
-  // resolveAgentFamily classifications (worker_only / long_horizon_only / shared /
-  // cross_space / missing) and the worker-side "Agent not found" message. This
-  // section covers only the additive throwing/guarding paths.
-
   function setup() {
     const db = makeDb();
     seedSpace(db, 'space-a');
@@ -388,8 +295,6 @@ describe('additive validation: requireAgentFamily + task-scoped resolution', () 
   }
 
   test('requireAgentFamily returns the long-horizon agent for a valid LH id', () => {
-    // requireLongHorizonAgentInSpace (the LH-only ownership/automation guard
-    // behind 10+ MCP ops) calls requireAgentFamily; a valid id returns, not throws.
     const { db, ...repos } = setup();
     expect(
       requireAgentFamily({
@@ -416,9 +321,6 @@ describe('additive validation: requireAgentFamily + task-scoped resolution', () 
   });
 
   test('requireAgentFamily surfaces the LH-side not-found message for cross-space / missing ids', () => {
-    // Additive: the long-horizon-expected path produces a distinct
-    // "Long-horizon agent not found: X" message (the existing test only asserts
-    // the worker-expected "Agent not found: X").
     const { db, ...repos } = setup();
     seedSpace(db, 'space-b');
     seedWorker(db, 'cross-worker', 'space-b');
@@ -442,9 +344,6 @@ describe('additive validation: requireAgentFamily + task-scoped resolution', () 
   });
 
   test('resolveAgentInit includes the task id in the worker not-found error', () => {
-    // Worker-side task → agent resolution. A missing agent id must surface a
-    // task-scoped error so callers can correlate the failure to the task that
-    // triggered the session spawn.
     const { db, spaceAgentManager } = setup();
     const task: Partial<SpaceTask> = { id: 'task-42' };
     const space: Partial<Space> = { id: 'space-a' };

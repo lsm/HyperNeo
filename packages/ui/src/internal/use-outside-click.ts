@@ -15,7 +15,6 @@ export function useOutsideClick(
     function handleClick(event: MouseEvent | PointerEvent) {
       const target = event.target as HTMLElement;
       if (!target) return;
-      // Don't trigger if target was removed from DOM
       if (!target.getRootNode().contains(target)) return;
 
       const _containers =
@@ -29,7 +28,6 @@ export function useOutsideClick(
       callbackRef.current(event, target);
     }
 
-    // Use capture phase + delay to avoid race conditions with click handlers
     const timer = setTimeout(() => {
       document.addEventListener('pointerdown', handleClick, true);
     }, 0);

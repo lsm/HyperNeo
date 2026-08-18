@@ -1,13 +1,3 @@
-/**
- * SpaceCreateDialog Component
- *
- * Modal form for creating a new Space with:
- * - Workspace Path (required, hero field)
- * - Name (auto-suggested from directory name)
- * - Description (optional)
- * - Form validation and error handling
- */
-
 import { useState } from 'preact/hooks';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
@@ -24,9 +14,6 @@ interface SpaceCreateDialogProps {
   onClose: () => void;
 }
 
-/**
- * Extract directory basename from a path string
- */
 function basenameFromPath(p: string): string {
   const normalized = p.replace(/[/\\]+$/, '');
   const parts = normalized.split(/[/\\]/);
@@ -125,7 +112,6 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
           </div>
         )}
 
-        {/* Workspace Path — hero field */}
         <div>
           <label class="block text-sm font-medium text-gray-200 mb-1.5">
             Workspace Path
@@ -157,7 +143,6 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
           </div>
         </div>
 
-        {/* Name */}
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-1.5">Name</label>
           <input
@@ -173,7 +158,6 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
           />
         </div>
 
-        {/* Description */}
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-1.5">
             Description

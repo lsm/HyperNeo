@@ -1,12 +1,3 @@
-/**
- * Auth RPC Handlers
- *
- * Handles authentication-related RPC calls including:
- * - HyperNeo auth status (Anthropic API key / OAuth)
- * - Provider auth status (OpenAI, GitHub Copilot, etc.)
- * - Provider OAuth login/logout
- */
-
 import type { MessageHub } from '@hyperneo/shared';
 import type {
   ProviderAuthStatus,
@@ -39,12 +30,6 @@ async function clearCacheAndNotifyProvidersChanged(
   internalEventBus?.publishAsync('providers.changed', { sessionId: 'global' });
 }
 
-/**
- * Remove stored credentials, converting macOS Keychain-unavailable failures
- * into a clear user-facing error. With macOS Keychain-only persistence there is
- * no local DB fallback to delete, so logout/delete must not claim success while
- * the keychain item may still exist.
- */
 async function removeCredentialsOrKeychainError(
   credentialManager: ProviderCredentialManager | undefined,
   providerId: string
@@ -61,29 +46,23 @@ async function removeCredentialsOrKeychainError(
   }
 }
 
-/**
- * Setup authentication-related RPC handlers
- */
 export function setupAuthHandlers(
   messageHub: MessageHub,
   authManager: AuthManager,
   credentialManager?: ProviderCredentialManager,
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>
 ): void {
-  // HyperNeo auth status (Anthropic)
   messageHub.onRequest('auth.status', async () => {
     const authStatus = await authManager.getAuthStatus();
     return { authStatus };
   });
 
-  // List all providers with their auth status
   messageHub.onRequest('auth.providers', async (): Promise<ListProviderAuthStatusResponse> => {
     const registry = getProviderRegistry();
     const providers = registry.getAll();
 
     const providerStatuses: ProviderAuthStatus[] = await Promise.all(
       providers.map(async (provider) => {
-        // Get auth status if provider supports it
         let authStatus: ProviderAuthStatus = {
           id: provider.id,
           displayName: provider.displayName,
@@ -104,7 +83,6 @@ export function setupAuthHandlers(
               error: status.error,
             };
           } else {
-            // Fallback: use isAvailable()
             const available = await provider.isAvailable();
             authStatus = {
               id: provider.id,
@@ -129,13 +107,10 @@ export function setupAuthHandlers(
     return { providers: providerStatuses };
   });
 
-  // Initiate OAuth login for a provider
   messageHub.onRequest(
     'auth.login',
     async (req: ProviderAuthRequest): Promise<ProviderAuthResponse> => {
       const { providerId } = req;
-      // Re-register built-in providers that may have been unregistered (e.g.,
-      // after the user deleted and is now re-adding the provider).
       const registry = getProviderRegistry();
       await registerBuiltInProvider(registry, providerId);
 
@@ -189,7 +164,6 @@ export function setupAuthHandlers(
     }
   );
 
-  // Logout from a provider
   messageHub.onRequest(
     'auth.logout',
     async (req: ProviderLogoutRequest): Promise<ProviderLogoutResponse> => {
@@ -219,7 +193,6 @@ export function setupAuthHandlers(
         try {
           storedCredentials = (await credentialManager?.getCredentials(providerId)) ?? null;
         } catch (readError) {
-          // Unreadable stored row — clear it, then run provider logout if available
           await removeCredentialsOrKeychainError(credentialManager, providerId);
           if (provider.logout) {
             try {
@@ -236,17 +209,6 @@ export function setupAuthHandlers(
         }
 
         if (!provider.logout && !storedCredentials) {
-          // If the macOS Keychain is locked/unavailable, getCredentials() returns
-          // null even when a real credential exists there. Attempt the remove
-          // so the caller surfaces the unlock guidance instead of silently
-          // claiming the credential is env-managed and leaving it in Keychain.
-          //
-          // Both `keychain-unavailable` and `keychain-fallback` mean the
-          // Keychain is unreachable: the former blocks all writes, the
-          // latter has at least one fallback-routed entry. Either way, the
-          // Keychain copy of this provider (if any) is still locked behind
-          // the GUI wall and we want the removeCredentials attempt to
-          // surface unlock guidance rather than report env-managed.
           const backend = credentialManager?.getCredentialStoreStatus?.().backend;
           const keychainLocked =
             backend === 'keychain-unavailable' || backend === 'keychain-fallback';
@@ -262,9 +224,6 @@ export function setupAuthHandlers(
         if (provider.logout) {
           await provider.logout();
         }
-        // Keychain-only persistence: if removal fails because the keychain is
-        // locked, do not claim logout succeeded. The credential may still exist
-        // and could authenticate again after unlock.
         await removeCredentialsOrKeychainError(credentialManager, providerId);
         if (!provider.logout && provider.setCredentials) {
           provider.setCredentials({ type: 'api_key', apiKey: '' });
@@ -289,7 +248,6 @@ export function setupAuthHandlers(
     }
   );
 
-  // Refresh token for a provider
   messageHub.onRequest(
     'auth.refresh',
     async (req: ProviderRefreshRequest): Promise<ProviderRefreshResponse> => {
@@ -314,15 +272,9 @@ export function setupAuthHandlers(
       try {
         const refreshed = await provider.refreshToken();
         if (!refreshed) {
-          // Remove the credential store row first. For providers like Codex,
-          // getCredentials() can re-import stale credentials from an external
-          // auth file after a definitive failure, making a post-logout probe
-          // falsely truthy and leaving a stale row in place. Best-effort: if
-          // the keychain is locked, the rethrow won't skip the restore below.
           await removeCredentialsOrKeychainError(credentialManager, providerId);
           const remaining = await provider.getCredentials?.();
           if (remaining?.type === 'oauth') {
-            // Transient failure — provider still holds credentials. Restore row.
             await credentialManager?.storeOAuthTokens(providerId, remaining);
           }
           return {

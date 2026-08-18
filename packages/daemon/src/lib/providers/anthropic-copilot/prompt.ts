@@ -1,10 +1,3 @@
-/**
- * Prompt formatter — converts Anthropic messages array to a flat prompt string
- * suitable for sending to a Copilot session.
- *
- * Adapted from copilot-sdk-proxy/claude/prompt.ts (MIT).
- */
-
 import type {
   AnthropicMessage,
   ContentBlock,
@@ -12,10 +5,6 @@ import type {
   TextBlock,
   ToolResultBlock,
 } from './types.js';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function isImageBlock(block: TextBlock | ImageBlock): block is ImageBlock {
   return block.type === 'image';
@@ -71,24 +60,6 @@ function formatBlocks(blocks: ContentBlock[], role: 'user' | 'assistant', parts:
   }
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
-/**
- * Flatten an Anthropic messages array into a single prompt string.
- *
- * Each turn is prefixed with `[User]:` or `[Assistant]:`.
- * Tool-use and tool-result blocks are inlined as human-readable annotations so
- * a fresh Copilot session can continue the conversation with full context.
- *
- * **Limitation**: the Copilot SDK accepts a single flat prompt string, not a
- * structured message array.  Multi-turn history is therefore re-serialised as
- * plain text on every request.  This is adequate for most conversational
- * patterns but means the model receives a slightly different representation
- * than a native Anthropic API call would provide (e.g. no per-turn token
- * accounting, no vision content, no extended-thinking blocks).
- */
 export function formatAnthropicPrompt(messages: AnthropicMessage[]): string {
   const parts: string[] = [];
   for (const msg of messages) {
@@ -101,10 +72,6 @@ export function formatAnthropicPrompt(messages: AnthropicMessage[]): string {
   return parts.join('\n\n');
 }
 
-/**
- * Extract the plain text from an Anthropic `system` field.
- * Returns `undefined` when the system message is empty or absent.
- */
 export function extractSystemText(system: string | TextBlock[] | undefined): string | undefined {
   if (system == null) return undefined;
   if (typeof system === 'string') return system || undefined;
@@ -115,10 +82,6 @@ export function extractSystemText(system: string | TextBlock[] | undefined): str
   return text || undefined;
 }
 
-/**
- * Extract all `tool_use_id` values from `tool_result` blocks in the messages.
- * Used to find which pending conversation a follow-up request belongs to.
- */
 export function extractToolResultIds(messages: AnthropicMessage[]): string[] {
   const ids: string[] = [];
   for (const msg of messages) {
@@ -133,10 +96,6 @@ export function extractToolResultIds(messages: AnthropicMessage[]): string[] {
   return ids;
 }
 
-/**
- * Extract the `is_error` flag for a specific `tool_use_id` from messages.
- * Returns `false` if not found or flag is absent.
- */
 export function extractToolResultIsError(messages: AnthropicMessage[], toolUseId: string): boolean {
   for (const msg of messages) {
     if (msg.role !== 'user') continue;
@@ -151,10 +110,6 @@ export function extractToolResultIsError(messages: AnthropicMessage[], toolUseId
   return false;
 }
 
-/**
- * Extract the tool-result text for a specific `tool_use_id` from messages.
- * Returns `undefined` if not found.
- */
 export function extractToolResultContent(
   messages: AnthropicMessage[],
   toolUseId: string
