@@ -106,7 +106,8 @@ describe('QueryOptionsBuilder', () => {
     it('should set allowDangerouslySkipPermissions when bypassPermissions', async () => {
       mockSession.config.permissionMode = 'bypassPermissions';
       const options = await builder.build();
-      expect(options.permissionMode).toBe('bypassPermissions');
+      expect(options.permissionMode).toBeUndefined();
+      expect(builder.getDeferredPermissionMode()).toBe('bypassPermissions');
       expect(options.allowDangerouslySkipPermissions).toBe(true);
     });
 
@@ -980,6 +981,7 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('should include allowedTools when configured', async () => {
+      mockSession.config.permissionMode = 'acceptEdits';
       mockSession.config.allowedTools = ['Bash', 'Read'];
       const options = await builder.build();
       expect(options.allowedTools).toEqual(['Bash', 'Read']);
@@ -1034,6 +1036,7 @@ describe('QueryOptionsBuilder', () => {
 
     it('should enforce space built-in tool allowlist including Bash and subagents', async () => {
       mockSession.type = 'space_chat';
+      mockSession.config.permissionMode = 'acceptEdits';
       const options = await builder.build();
       expect(options.tools).toEqual([
         'Read',
@@ -1081,6 +1084,7 @@ describe('QueryOptionsBuilder', () => {
 
     it('honors a coordinator sdkToolsPreset instead of clobbering it (Task #794)', async () => {
       mockSession.type = 'space_chat';
+      mockSession.config.permissionMode = 'acceptEdits';
       mockSession.config.sdkToolsPreset = [...LONG_HORIZON_AGENT_BUILTIN_TOOLS];
       const options = await builder.build();
 
@@ -1111,6 +1115,7 @@ describe('QueryOptionsBuilder', () => {
 
     it('should auto-allow wildcards for all configured space MCP servers', async () => {
       mockSession.type = 'space_chat';
+      mockSession.config.permissionMode = 'acceptEdits';
       mockSession.config.mcpServers = {
         'space-agent-tools': { command: 'space-cmd' },
         'db-query': { command: 'db-cmd' },
@@ -1246,15 +1251,17 @@ describe('QueryOptionsBuilder', () => {
       expect(options.permissionMode).toBe('prompt');
     });
 
-    it('should default to bypassPermissions', async () => {
+    it('should default to bypassPermissions (withheld at intake, deferred)', async () => {
       const options = await builder.build();
-      expect(options.permissionMode).toBe('bypassPermissions');
+      expect(options.permissionMode).toBeUndefined();
+      expect(builder.getDeferredPermissionMode()).toBe('bypassPermissions');
     });
 
-    it('should map default to bypassPermissions', async () => {
+    it('should map default to bypassPermissions (withheld at intake, deferred)', async () => {
       mockSession.config.permissionMode = 'default';
       const options = await builder.build();
-      expect(options.permissionMode).toBe('bypassPermissions');
+      expect(options.permissionMode).toBeUndefined();
+      expect(builder.getDeferredPermissionMode()).toBe('bypassPermissions');
     });
   });
 
@@ -1275,6 +1282,27 @@ describe('QueryOptionsBuilder', () => {
       expect(options.hooks?.PreToolUse).toHaveLength(1);
       expect(options.hooks?.PreToolUse?.[0]?.matcher).toBeUndefined();
       expect(options.hooks?.PreToolUse?.[0]?.hooks).toHaveLength(1);
+    });
+
+    it('registers the AskUserQuestion PreToolUse hook first when set (bypassPermissions interception channel)', async () => {
+      const auqHook = (async () => ({})) as unknown as Parameters<
+        QueryOptionsBuilder['setAskUserQuestionHook']
+      >[0];
+      builder.setAskUserQuestionHook(auqHook);
+      const options = await builder.build();
+
+      expect(options.hooks?.PreToolUse?.[0]?.matcher).toBe('AskUserQuestion');
+      expect(options.hooks?.PreToolUse?.[0]?.hooks[0]).toBe(auqHook);
+      expect(options.hooks?.PreToolUse?.[1]?.matcher).toBeUndefined();
+    });
+
+    it('getCurrentPermissionMode re-resolves the live mode for the deferred-switch staleness guard', async () => {
+      mockSession.config.permissionMode = 'bypassPermissions';
+      await builder.build();
+      expect(builder.getCurrentPermissionMode()).toBe('bypassPermissions');
+
+      mockSession.config.permissionMode = 'acceptEdits';
+      expect(builder.getCurrentPermissionMode()).toBe('acceptEdits');
     });
 
     it('should install the output-limiter hook when enabled in global settings', async () => {
@@ -1785,6 +1813,7 @@ describe('QueryOptionsBuilder', () => {
 
     it('should set allowedTools for all tools in coordinator mode', async () => {
       mockSession.config.coordinatorMode = true;
+      mockSession.config.permissionMode = 'acceptEdits';
       const options = await builder.build();
 
       expect(options.allowedTools).toBeDefined();
@@ -2284,6 +2313,7 @@ describe('QueryOptionsBuilder', () => {
         getEnabledSkills: mock(() => [enabledSkills[1]]),
       };
       mockSession.type = 'space_chat';
+      mockSession.config.permissionMode = 'acceptEdits';
       mockSession.config.mcpServers = {
         'space-agent-tools': { command: 'space-cmd' },
       };
@@ -3296,6 +3326,7 @@ describe('QueryOptionsBuilder', () => {
     });
 
     it('space_chat allowedTools includes WebSearch, WebFetch', async () => {
+      mockSession.config.permissionMode = 'acceptEdits';
       const options = await new QueryOptionsBuilder(mockContext).build();
       expect(options.allowedTools).toContain('WebSearch');
       expect(options.allowedTools).toContain('WebFetch');
@@ -3303,6 +3334,7 @@ describe('QueryOptionsBuilder', () => {
 
     it('coordinator mode allowedTools includes Skill, WebSearch, WebFetch', async () => {
       mockSession.config.coordinatorMode = true;
+      mockSession.config.permissionMode = 'acceptEdits';
       const options = await new QueryOptionsBuilder(mockContext).build();
       expect(options.allowedTools).toContain('Skill');
       expect(options.allowedTools).toContain('WebSearch');

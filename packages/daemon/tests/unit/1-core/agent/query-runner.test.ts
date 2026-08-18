@@ -49,7 +49,11 @@ describe('QueryRunner', () => {
   let buildSpy: ReturnType<typeof mock>;
   let addSessionStateOptionsSpy: ReturnType<typeof mock>;
   let setCanUseToolSpy: ReturnType<typeof mock>;
+  let setAskUserQuestionHookSpy: ReturnType<typeof mock>;
+  let getDeferredPermissionModeSpy: ReturnType<typeof mock>;
+  let getCurrentPermissionModeSpy: ReturnType<typeof mock>;
   let createCanUseToolCallbackSpy: ReturnType<typeof mock>;
+  let createPreToolUseHookSpy: ReturnType<typeof mock>;
   let enqueueWithIdSpy: ReturnType<typeof mock>;
 
   let queryGeneration: number;
@@ -171,15 +175,23 @@ describe('QueryRunner', () => {
     buildSpy = mock(async () => ({ model: 'claude-sonnet-4-20250514' }));
     addSessionStateOptionsSpy = mock((options: unknown) => options);
     setCanUseToolSpy = mock(() => {});
+    setAskUserQuestionHookSpy = mock(() => {});
+    getDeferredPermissionModeSpy = mock(() => undefined);
+    getCurrentPermissionModeSpy = mock(() => undefined);
     mockOptionsBuilder = {
       build: buildSpy,
       addSessionStateOptions: addSessionStateOptionsSpy,
       setCanUseTool: setCanUseToolSpy,
+      setAskUserQuestionHook: setAskUserQuestionHookSpy,
+      getDeferredPermissionMode: getDeferredPermissionModeSpy,
+      getCurrentPermissionMode: getCurrentPermissionModeSpy,
     } as unknown as QueryOptionsBuilder;
 
     createCanUseToolCallbackSpy = mock(() => async () => true);
+    createPreToolUseHookSpy = mock(() => async () => ({}));
     mockAskUserQuestionHandler = {
       createCanUseToolCallback: createCanUseToolCallbackSpy,
+      createPreToolUseHook: createPreToolUseHookSpy,
     } as unknown as AskUserQuestionHandler;
   });
 
@@ -673,6 +685,74 @@ describe('QueryRunner', () => {
         expect(buildSpy).toHaveBeenCalledTimes(1);
         expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(1);
       });
+    });
+  });
+
+  describe('applyDeferredPermissionMode', () => {
+    type ApplyFn = (
+      queryObject: unknown,
+      mode: string | undefined,
+      timeoutMs?: number,
+      backoffMs?: number
+    ) => Promise<void>;
+
+    const call = (r: QueryRunner, queryObject: unknown, mode: string | undefined) =>
+      (r as unknown as { applyDeferredPermissionMode: ApplyFn }).applyDeferredPermissionMode(
+        queryObject,
+        mode,
+        10,
+        1
+      );
+
+    it('issues the switch when the live mode still matches the captured one', async () => {
+      const setMode = mock(async () => {});
+      const queryObject = { setPermissionMode: setMode } as unknown as Query;
+      const ctx = createContext({ queryObject });
+      runner = new QueryRunner(ctx);
+
+      await call(runner, queryObject, 'bypassPermissions');
+
+      expect(setMode).toHaveBeenCalledWith('bypassPermissions');
+      expect(setMode).toHaveBeenCalledTimes(1);
+    });
+
+    it('bails without writing when the user changed the mode mid-flight (staleness guard)', async () => {
+      const setMode = mock(async () => {});
+      const queryObject = { setPermissionMode: setMode } as unknown as Query;
+      getCurrentPermissionModeSpy.mockReturnValue('acceptEdits');
+      runner = createRunner();
+
+      await call(runner, queryObject, 'bypassPermissions');
+
+      expect(setMode).not.toHaveBeenCalled();
+    });
+
+    it('stops retrying when the query object was replaced or closed', async () => {
+      const setMode = mock(async () => {
+        throw new Error('closed');
+      });
+      const queryObject = { setPermissionMode: setMode } as unknown as Query;
+      const ctx = createContext({ queryObject });
+      runner = new QueryRunner(ctx);
+      ctx.queryObject = null;
+
+      await call(runner, queryObject, 'bypassPermissions');
+
+      expect(setMode).toHaveBeenCalledTimes(1);
+    });
+
+    it('retries a stalled control request and logs an error after all attempts fail', async () => {
+      const setMode = mock(() => new Promise<void>(() => {}));
+      const queryObject = { setPermissionMode: setMode } as unknown as Query;
+      const ctx = createContext({ queryObject });
+      runner = new QueryRunner(ctx);
+
+      await call(runner, queryObject, 'bypassPermissions');
+
+      expect(setMode).toHaveBeenCalledTimes(3);
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.stringContaining('failed to apply deferred permission mode')
+      );
     });
   });
 

@@ -241,12 +241,26 @@ export interface QueryOptionsBuilderContext {
 
 export class QueryOptionsBuilder {
   private canUseTool?: CanUseTool;
+  private askUserQuestionHook?: HookCallback;
+  private deferredPermissionMode?: PermissionMode;
   private readonly logger = new Logger('QueryOptionsBuilder');
 
   constructor(private ctx: QueryOptionsBuilderContext) {}
 
   setCanUseTool(callback: CanUseTool): void {
     this.canUseTool = callback;
+  }
+
+  setAskUserQuestionHook(hook: HookCallback): void {
+    this.askUserQuestionHook = hook;
+  }
+
+  getDeferredPermissionMode(): PermissionMode | undefined {
+    return this.deferredPermissionMode;
+  }
+
+  getCurrentPermissionMode(): PermissionMode {
+    return this.getPermissionMode();
   }
 
   getSkillMcpServers(): Record<string, McpServerConfig> {
@@ -446,6 +460,14 @@ export class QueryOptionsBuilder {
       providerId,
       this.ctx.session.type ?? 'worker'
     );
+
+    if (permissionMode === 'bypassPermissions') {
+      delete queryOptions.permissionMode;
+      delete queryOptions.allowedTools;
+      this.deferredPermissionMode = 'bypassPermissions';
+    } else {
+      this.deferredPermissionMode = undefined;
+    }
 
     const cleanedOptions = Object.fromEntries(
       Object.entries(queryOptions).filter(([_, v]) => v !== undefined)
@@ -841,6 +863,14 @@ CRITICAL RULES:
   private buildHooks(): Options['hooks'] {
     const hooks: NonNullable<Options['hooks']> = {};
     const preToolUse: NonNullable<Options['hooks']>['PreToolUse'] = [];
+
+    if (this.askUserQuestionHook) {
+      preToolUse.push({
+        matcher: 'AskUserQuestion',
+        timeout: 86400,
+        hooks: [this.askUserQuestionHook],
+      });
+    }
 
     const loopDetectorHooks = createLoopDetectorHooks();
     preToolUse.push({

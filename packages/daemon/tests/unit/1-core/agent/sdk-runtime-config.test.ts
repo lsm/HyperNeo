@@ -272,6 +272,27 @@ describe('SDKRuntimeConfig', () => {
       expect(mockSession.config.permissionMode).toBe('prompt');
     });
 
+    it('persists config + db BEFORE the CLI write (deferred-switch staleness guard)', async () => {
+      let resolveCli: () => void = () => {};
+      setPermissionModeSpy.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveCli = resolve;
+          })
+      );
+      config = createConfig();
+
+      const pending = config.setPermissionMode('acceptEdits');
+      expect(mockSession.config.permissionMode).toBe('acceptEdits');
+      expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
+        config: mockSession.config,
+      });
+      expect(setPermissionModeSpy).toHaveBeenCalledWith('acceptEdits');
+
+      resolveCli();
+      await expect(pending).resolves.toEqual({ success: true });
+    });
+
     it('should emit session.updated event', async () => {
       config = createConfig();
 

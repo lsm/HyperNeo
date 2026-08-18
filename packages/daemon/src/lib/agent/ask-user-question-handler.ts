@@ -6,7 +6,12 @@ import type {
 } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
-import type { CanUseTool, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  CanUseTool,
+  HookCallback,
+  PermissionResult,
+  PreToolUseHookInput,
+} from '@anthropic-ai/claude-agent-sdk';
 import type { ProcessingStateManager } from './processing-state-manager';
 import type { MessageQueue } from './message-queue';
 import { Logger } from '../logger';
@@ -36,12 +41,27 @@ interface AskUserQuestionInput {
 interface PendingQuestionResolver {
   toolUseId: string;
   input: Record<string, unknown>;
+  pendingQuestion: PendingUserQuestion;
+  promise: Promise<PermissionResult>;
   resolve: (result: PermissionResult) => void;
   reject: (error: Error) => void;
 }
 
 export const QUESTION_CANCEL_MESSAGE =
   'User cancelled: The user chose not to answer this question. Please proceed accordingly or ask a different question if needed.';
+
+const MAX_QUESTION_STRING_LENGTH = 2000;
+
+const MAX_QUESTIONS = 4;
+const MAX_OPTIONS = 4;
+const MAX_OPTIONS_UNVALIDATED_CHANNEL = 64;
+
+function truncateQuestionString(value: string | undefined): string {
+  if (typeof value !== 'string') return '';
+  return value.length > MAX_QUESTION_STRING_LENGTH
+    ? value.slice(0, MAX_QUESTION_STRING_LENGTH)
+    : value;
+}
 
 export class AskUserQuestionHandler {
   private logger: Logger;
@@ -50,6 +70,176 @@ export class AskUserQuestionHandler {
 
   constructor(private ctx: AskUserQuestionHandlerContext) {
     this.logger = new Logger(`AskUserQuestionHandler ${ctx.session.id}`);
+  }
+
+  private async interceptAskUserQuestion(
+    toolUseID: string,
+    input: Record<string, unknown>,
+    viaChannel: 'can_use_tool' | 'pre_tool_use_hook'
+  ): Promise<PermissionResult> {
+    const { session, stateManager, internalEventBus } = this.ctx;
+
+    const askInput = input as unknown as AskUserQuestionInput;
+    const isHook = viaChannel === 'pre_tool_use_hook';
+    const questionsWellFormed =
+      Array.isArray(askInput.questions) &&
+      askInput.questions.length >= 1 &&
+      askInput.questions.length <= MAX_QUESTIONS &&
+      askInput.questions.every(
+        (q) =>
+          q !== null &&
+          typeof q === 'object' &&
+          typeof q.question === 'string' &&
+          typeof q.multiSelect === 'boolean' &&
+          Array.isArray(q.options) &&
+          q.options.length >= (isHook ? 2 : 1) &&
+          q.options.length <= (isHook ? MAX_OPTIONS : MAX_OPTIONS_UNVALIDATED_CHANNEL) &&
+          q.options.every((o) => o !== null && typeof o === 'object' && typeof o.label === 'string')
+      );
+    if (!questionsWellFormed) {
+      this.logger.warn(
+        `AskUserQuestion ${toolUseID}: malformed tool_input (questions missing, empty, or ill-formed); denying`
+      );
+      return {
+        behavior: 'deny',
+        message: 'AskUserQuestion input is malformed: no valid questions were provided.',
+      };
+    }
+
+    const queued = this.queuedAnswers.get(toolUseID);
+    if (queued) {
+      this.queuedAnswers.delete(toolUseID);
+      const merged: PermissionResult =
+        queued.behavior === 'allow'
+          ? {
+              behavior: 'allow',
+              updatedInput: { ...input, ...queued.updatedInput },
+            }
+          : queued;
+      this.logger.info(
+        `AskUserQuestion ${toolUseID}: consuming queued answer (behavior=${queued.behavior})`
+      );
+      void internalEventBus
+        .publish('question.injected_as_tool_result', {
+          sessionId: session.id,
+          toolUseId: toolUseID,
+          mode: queued.behavior === 'allow' ? 'submitted' : 'cancelled',
+          via: viaChannel,
+        })
+        .catch((publishError: unknown) => {
+          this.logger.warn(
+            `AskUserQuestion ${toolUseID}: question.injected_as_tool_result publish failed (${
+              publishError instanceof Error ? publishError.message : String(publishError)
+            })`
+          );
+        });
+      return merged;
+    }
+
+    const pendingQuestion: PendingUserQuestion = {
+      toolUseId: toolUseID,
+      questions: askInput.questions.map((q) => ({
+        question: truncateQuestionString(q.question),
+        header: truncateQuestionString(q.header),
+        options: q.options.map((o) => ({
+          label: truncateQuestionString(o.label),
+          description: truncateQuestionString(o.description),
+        })),
+        multiSelect: q.multiSelect,
+      })),
+      askedAt: Date.now(),
+    };
+
+    if (this.pendingResolver?.toolUseId === toolUseID) {
+      return this.pendingResolver.promise;
+    }
+
+    let resolvePending!: (result: PermissionResult) => void;
+    let rejectPending!: (error: Error) => void;
+    const pending = new Promise<PermissionResult>((resolve, reject) => {
+      resolvePending = resolve;
+      rejectPending = reject;
+    });
+
+    if (this.pendingResolver) {
+      this.logger.warn(
+        `AskUserQuestion ${this.pendingResolver.toolUseId}: superseded by a newer ` +
+          `AskUserQuestion call (${toolUseID}); denying the older question`
+      );
+      this.pendingResolver.resolve({
+        behavior: 'deny',
+        message:
+          'Superseded by a newer AskUserQuestion call; that question is now awaiting the user.',
+      });
+    }
+    this.pendingResolver = {
+      toolUseId: toolUseID,
+      input,
+      pendingQuestion,
+      promise: pending,
+      resolve: resolvePending,
+      reject: rejectPending,
+    };
+
+    try {
+      await stateManager.setWaitingForInput(pendingQuestion);
+    } catch (err) {
+      resolvePending({
+        behavior: 'deny',
+        message: 'AskUserQuestion failed to surface; the question was not answered.',
+      });
+      if (this.pendingResolver?.toolUseId === toolUseID) {
+        this.pendingResolver = null;
+      }
+      throw err;
+    }
+
+    try {
+      await internalEventBus.publish('question.asked', {
+        sessionId: session.id,
+        pendingQuestion,
+      });
+    } catch (publishError) {
+      this.logger.warn(
+        `AskUserQuestion ${toolUseID}: question.asked publish failed (${
+          publishError instanceof Error ? publishError.message : String(publishError)
+        })`
+      );
+    }
+
+    return pending;
+  }
+
+  createPreToolUseHook(): HookCallback {
+    return async (input) => {
+      const preInput = input as PreToolUseHookInput;
+      if (preInput.hook_event_name !== 'PreToolUse' || preInput.tool_name !== 'AskUserQuestion') {
+        return {};
+      }
+
+      const result = await this.interceptAskUserQuestion(
+        preInput.tool_use_id,
+        (preInput.tool_input ?? {}) as Record<string, unknown>,
+        'pre_tool_use_hook'
+      );
+
+      if (result.behavior === 'allow') {
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse' as const,
+            permissionDecision: 'allow' as const,
+            updatedInput: result.updatedInput,
+          },
+        };
+      }
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse' as const,
+          permissionDecision: 'deny' as const,
+          permissionDecisionReason: result.message,
+        },
+      };
+    };
   }
 
   createCanUseToolCallback(): CanUseTool {
@@ -66,8 +256,6 @@ export class AskUserQuestionHandler {
         matchedAskRule?: { source: string; toolName: string; ruleContent?: string };
       }
     ): Promise<PermissionResult> => {
-      const { session, stateManager, internalEventBus } = this.ctx;
-
       if (toolName !== 'AskUserQuestion') {
         if (options.matchedAskRule) {
           return {
@@ -78,59 +266,7 @@ export class AskUserQuestionHandler {
         return { behavior: 'allow', updatedInput: input };
       }
 
-      const queued = this.queuedAnswers.get(options.toolUseID);
-      if (queued) {
-        this.queuedAnswers.delete(options.toolUseID);
-        const merged: PermissionResult =
-          queued.behavior === 'allow'
-            ? {
-                behavior: 'allow',
-                updatedInput: { ...input, ...queued.updatedInput },
-              }
-            : queued;
-        this.logger.info(
-          `AskUserQuestion ${options.toolUseID}: consuming queued answer (behavior=${queued.behavior})`
-        );
-        await internalEventBus.publish('question.injected_as_tool_result', {
-          sessionId: session.id,
-          toolUseId: options.toolUseID,
-          mode: queued.behavior === 'allow' ? 'submitted' : 'cancelled',
-          viaCanUseTool: true,
-        });
-        return merged;
-      }
-
-      const askInput = input as unknown as AskUserQuestionInput;
-
-      const pendingQuestion: PendingUserQuestion = {
-        toolUseId: options.toolUseID,
-        questions: askInput.questions.map((q) => ({
-          question: q.question,
-          header: q.header,
-          options: q.options.map((o) => ({
-            label: o.label,
-            description: o.description,
-          })),
-          multiSelect: q.multiSelect,
-        })),
-        askedAt: Date.now(),
-      };
-
-      await stateManager.setWaitingForInput(pendingQuestion);
-
-      await internalEventBus.publish('question.asked', {
-        sessionId: session.id,
-        pendingQuestion,
-      });
-
-      return new Promise<PermissionResult>((resolve, reject) => {
-        this.pendingResolver = {
-          toolUseId: options.toolUseID,
-          input,
-          resolve,
-          reject,
-        };
-      });
+      return this.interceptAskUserQuestion(options.toolUseID, input, 'can_use_tool');
     };
   }
 
@@ -155,13 +291,53 @@ export class AskUserQuestionHandler {
 
     const pendingQuestion = currentState.pendingQuestion;
 
-    const answers = this.buildAnswers(pendingQuestion, responses);
+    const resolver = this.pendingResolver;
+    const resolverMatches = !!resolver && resolver.toolUseId === toolUseId;
+
+    const answers = this.buildAnswers(
+      pendingQuestion,
+      responses,
+      resolverMatches ? resolver.input : undefined
+    );
 
     this.trackResolvedQuestion(toolUseId, pendingQuestion, 'submitted', responses);
 
-    if (this.pendingResolver && this.pendingResolver.toolUseId === toolUseId) {
-      await stateManager.setProcessing(toolUseId, 'streaming');
-      const resolver = this.pendingResolver;
+    if (resolverMatches) {
+      try {
+        await stateManager.setProcessing(toolUseId, 'streaming');
+      } catch (err) {
+        resolver.resolve({
+          behavior: 'deny',
+          message: 'AskUserQuestion failed to transition; the question was not answered.',
+        });
+        this.trackResolvedQuestion(toolUseId, pendingQuestion, 'cancelled', responses);
+        if (this.pendingResolver === resolver) {
+          this.pendingResolver = null;
+        }
+        throw err;
+      }
+      if (this.pendingResolver !== resolver) {
+        this.logger.warn(
+          `AskUserQuestion ${toolUseId}: submit arrived after the question was superseded; dropping it`
+        );
+        this.trackResolvedQuestion(toolUseId, pendingQuestion, 'cancelled', responses);
+        const current = this.pendingResolver;
+        if (current) {
+          try {
+            await stateManager.setWaitingForInput(current.pendingQuestion);
+          } catch (restoreError) {
+            current.resolve({
+              behavior: 'deny',
+              message: 'AskUserQuestion failed to restore the card; the question was not answered.',
+            });
+            if (this.pendingResolver === current) {
+              this.pendingResolver = null;
+            }
+            throw restoreError;
+          }
+        }
+        return;
+      }
       this.pendingResolver = null;
       resolver.resolve({
         behavior: 'allow',
@@ -170,6 +346,14 @@ export class AskUserQuestionHandler {
           answers,
         },
       });
+      return;
+    }
+
+    if (resolver) {
+      this.logger.warn(
+        `AskUserQuestion ${toolUseId}: submit for a superseded question; dropping it`
+      );
+      this.trackResolvedQuestion(toolUseId, pendingQuestion, 'cancelled', responses);
       return;
     }
 
@@ -199,14 +383,54 @@ export class AskUserQuestionHandler {
 
     this.trackResolvedQuestion(toolUseId, pendingQuestion, 'cancelled', [], 'user_cancelled');
 
-    if (this.pendingResolver && this.pendingResolver.toolUseId === toolUseId) {
-      await stateManager.setProcessing(toolUseId, 'streaming');
-      const resolver = this.pendingResolver;
+    const resolver = this.pendingResolver;
+    if (resolver && resolver.toolUseId === toolUseId) {
+      try {
+        await stateManager.setProcessing(toolUseId, 'streaming');
+      } catch (err) {
+        resolver.resolve({
+          behavior: 'deny',
+          message: 'AskUserQuestion failed to transition; the question was not cancelled.',
+        });
+        if (this.pendingResolver === resolver) {
+          this.pendingResolver = null;
+        }
+        throw err;
+      }
+      if (this.pendingResolver !== resolver) {
+        this.logger.warn(
+          `AskUserQuestion ${toolUseId}: cancel arrived after the question was superseded; dropping it`
+        );
+        const current = this.pendingResolver;
+        if (current) {
+          try {
+            await stateManager.setWaitingForInput(current.pendingQuestion);
+          } catch (restoreError) {
+            current.resolve({
+              behavior: 'deny',
+              message:
+                'AskUserQuestion failed to restore the card; the question was not cancelled.',
+            });
+            if (this.pendingResolver === current) {
+              this.pendingResolver = null;
+            }
+            throw restoreError;
+          }
+        }
+        return;
+      }
       this.pendingResolver = null;
       resolver.resolve({
         behavior: 'deny',
         message: QUESTION_CANCEL_MESSAGE,
       });
+      return;
+    }
+
+    if (resolver) {
+      this.logger.warn(
+        `AskUserQuestion ${toolUseId}: cancel for a superseded question; dropping it`
+      );
       return;
     }
 
@@ -247,11 +471,19 @@ export class AskUserQuestionHandler {
 
     await stateManager.setIdle();
 
-    await internalEventBus.publish('question.orphaned', {
-      sessionId: session.id,
-      toolUseId: pendingQuestion.toolUseId,
-      reason: telemetryReason,
-    });
+    try {
+      await internalEventBus.publish('question.orphaned', {
+        sessionId: session.id,
+        toolUseId: pendingQuestion.toolUseId,
+        reason: telemetryReason,
+      });
+    } catch (publishError) {
+      this.logger.warn(
+        `AskUserQuestion ${pendingQuestion.toolUseId}: question.orphaned publish failed (${
+          publishError instanceof Error ? publishError.message : String(publishError)
+        })`
+      );
+    }
 
     this.logger.info(
       `AskUserQuestion ${pendingQuestion.toolUseId} orphaned (telemetryReason=${telemetryReason}); UI card cleaned up`
@@ -261,17 +493,21 @@ export class AskUserQuestionHandler {
 
   private buildAnswers(
     pendingQuestion: PendingUserQuestion,
-    responses: QuestionDraftResponse[]
+    responses: QuestionDraftResponse[],
+    rawInput?: Record<string, unknown>
   ): Record<string, string> {
+    const rawQuestions =
+      (rawInput?.questions as AskUserQuestionInput['questions'] | undefined) ?? [];
     const answers: Record<string, string> = {};
     for (const response of responses) {
       const question = pendingQuestion.questions[response.questionIndex];
       if (!question) continue;
+      const questionText = rawQuestions[response.questionIndex]?.question ?? question.question;
 
       if (response.customText) {
-        answers[question.question] = response.customText;
+        answers[questionText] = response.customText;
       } else if (response.selectedLabels.length > 0) {
-        answers[question.question] = response.selectedLabels.join(', ');
+        answers[questionText] = response.selectedLabels.join(', ');
       }
     }
     return answers;
@@ -309,7 +545,7 @@ export class AskUserQuestionHandler {
         sessionId: session.id,
         toolUseId,
         mode,
-        viaCanUseTool: false,
+        via: 'tool_result',
       });
     } catch (publishError) {
       stateManager.releaseIdleWaiters();
