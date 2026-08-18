@@ -470,6 +470,16 @@ export class QueryOptionsBuilder {
   }
 
   /**
+   * Re-resolve the permission mode the way `build()` would right now — the
+   * full session → global → default layering. Used by the query runner's
+   * deferred-switch retry loop to detect that the desired mode changed (in
+   * ANY layer, not just session config) since the deferred mode was captured.
+   */
+  getCurrentPermissionMode(): PermissionMode {
+    return this.getPermissionMode();
+  }
+
+  /**
    * Return MCP servers contributed by enabled skills for this session.
    * Skips skills disabled by runtime overrides and AppMcpServer entries that are disabled.
    * Useful for inspecting effective skill injection without running a full build.

@@ -271,6 +271,24 @@ describe('AskUserQuestionHandler', () => {
       await handler.handleQuestionCancel('acp-2');
       const manyResult = (await manyResultPromise) as { behavior: string };
       expect(manyResult.behavior).toBe('deny');
+
+      // But the unvalidated channel is still bounded: a pathological option
+      // count (>64) denies rather than persisting/broadcasting unbounded state.
+      const hugeOptions = Array.from({ length: 65 }, (_, i) => ({
+        label: `O${i}`,
+        description: `O${i}`,
+      }));
+      const hugeResult = (await callback(
+        'AskUserQuestion',
+        {
+          questions: [
+            { question: 'Pick huge?', header: 'ACP', options: hugeOptions, multiSelect: false },
+          ],
+        },
+        { signal: new AbortController().signal, toolUseID: 'acp-3' }
+      )) as { behavior: string };
+      expect(hugeResult.behavior).toBe('deny');
+      expect(setWaitingForInputSpy).toHaveBeenCalledTimes(2); // no third card
     });
   });
 
@@ -1377,6 +1395,296 @@ describe('AskUserQuestionHandler', () => {
       expect(result.hookSpecificOutput.updatedInput?.answers).toEqual({ 'Pick?': 'A' });
       // ...AND was already deleted from the queue.
       expect(handler.getQueuedAnswersForTesting().has('queued-1')).toBe(false);
+    });
+
+    it('denies malformed tool_input (ill-formed question entries)', async () => {
+      const hook = handler.createPreToolUseHook();
+
+      for (const questions of [null, 'a-string', [42]]) {
+        const result = (await hook(
+          {
+            hook_event_name: 'PreToolUse',
+            tool_name: 'AskUserQuestion',
+            tool_input: { questions },
+            tool_use_id: 'hook-bad-entry',
+          },
+          'hook-bad-entry',
+          { signal: new AbortController().signal }
+        )) as {
+          hookSpecificOutput: { permissionDecision: string };
+        };
+        expect(result.hookSpecificOutput.permissionDecision).toBe('deny');
+      }
+
+      // A question entry whose `question` is not a string also denies.
+      const nonStringQuestion = (await hook(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'AskUserQuestion',
+          tool_input: {
+            questions: [
+              {
+                question: 42,
+                header: 'H',
+                options: [
+                  { label: 'A', description: 'A' },
+                  { label: 'B', description: 'B' },
+                ],
+                multiSelect: false,
+              },
+            ],
+          },
+          tool_use_id: 'hook-bad-entry',
+        },
+        'hook-bad-entry',
+        { signal: new AbortController().signal }
+      )) as {
+        hookSpecificOutput: { permissionDecision: string };
+      };
+      expect(nonStringQuestion.hookSpecificOutput.permissionDecision).toBe('deny');
+      expect(setWaitingForInputSpy).not.toHaveBeenCalled();
+    });
+
+    it('settles the resolver with a deny when setProcessing fails on submit', async () => {
+      const hook = handler.createPreToolUseHook();
+      const resultPromise = hook(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'AskUserQuestion',
+          tool_input: {
+            questions: [
+              {
+                question: 'Q?',
+                header: 'H',
+                options: [
+                  { label: 'A', description: 'A' },
+                  { label: 'B', description: 'B' },
+                ],
+                multiSelect: false,
+              },
+            ],
+          },
+          tool_use_id: 'proc-fail-1',
+        },
+        'proc-fail-1',
+        { signal: new AbortController().signal }
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      setProcessingSpy.mockImplementationOnce(async () => {
+        throw new Error('session.updated subscriber failed');
+      });
+      await expect(
+        handler.handleQuestionResponse('proc-fail-1', [{ questionIndex: 0, selectedLabels: ['A'] }])
+      ).rejects.toThrow('session.updated subscriber failed');
+
+      // The awaiting hook settled with a deny — not wedged to its 86400s
+      // timeout — and the history record was patched from 'submitted'.
+      const result = (await resultPromise) as {
+        hookSpecificOutput: { permissionDecision: string };
+      };
+      expect(result.hookSpecificOutput.permissionDecision).toBe('deny');
+      const lastUpdate = updateSessionSpy.mock.calls.at(-1) as unknown as [
+        string,
+        { metadata: { resolvedQuestions: Record<string, { state: string }> } },
+      ];
+      expect(lastUpdate[1].metadata.resolvedQuestions['proc-fail-1']?.state).toBe('cancelled');
+    });
+
+    it('settles the resolver with a deny when setProcessing fails on cancel', async () => {
+      const hook = handler.createPreToolUseHook();
+      const resultPromise = hook(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'AskUserQuestion',
+          tool_input: {
+            questions: [
+              {
+                question: 'Q?',
+                header: 'H',
+                options: [
+                  { label: 'A', description: 'A' },
+                  { label: 'B', description: 'B' },
+                ],
+                multiSelect: false,
+              },
+            ],
+          },
+          tool_use_id: 'proc-fail-2',
+        },
+        'proc-fail-2',
+        { signal: new AbortController().signal }
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      setProcessingSpy.mockImplementationOnce(async () => {
+        throw new Error('session.updated subscriber failed');
+      });
+      await expect(handler.handleQuestionCancel('proc-fail-2')).rejects.toThrow(
+        'session.updated subscriber failed'
+      );
+
+      const result = (await resultPromise) as {
+        hookSpecificOutput: { permissionDecision: string };
+      };
+      expect(result.hookSpecificOutput.permissionDecision).toBe('deny');
+    });
+
+    it('does not drop a newer resolver superseded during a failed transition (identity-guarded null)', async () => {
+      const hook = handler.createPreToolUseHook();
+      const askHookInput = (toolUseId: string, question: string) => ({
+        hook_event_name: 'PreToolUse' as const,
+        tool_name: 'AskUserQuestion',
+        tool_input: {
+          questions: [
+            {
+              question,
+              header: 'P',
+              options: [
+                { label: 'A', description: 'A' },
+                { label: 'B', description: 'B' },
+              ],
+              multiSelect: false,
+            },
+          ],
+        },
+        tool_use_id: toolUseId,
+      });
+
+      // Question A live.
+      const firstPromise = hook(askHookInput('race-1', 'Pick?'), 'race-1', {
+        signal: new AbortController().signal,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Submit A blocks inside a setProcessing that will FAIL after the gate.
+      let releaseProcessing!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        releaseProcessing = resolve;
+      });
+      setProcessingSpy.mockImplementationOnce(async () => {
+        await gate;
+        throw new Error('session.updated subscriber failed');
+      });
+      const submitPromise = handler.handleQuestionResponse('race-1', [
+        { questionIndex: 0, selectedLabels: ['A'] },
+      ]);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // B supersedes while A's transition is in flight — resolver B installed.
+      const secondPromise = hook(askHookInput('race-2', 'Pick 2?'), 'race-2', {
+        signal: new AbortController().signal,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      releaseProcessing();
+      await expect(submitPromise).rejects.toThrow('session.updated subscriber failed');
+
+      // A settled (supersede deny); B SURVIVED the failed transition's catch —
+      // its resolver was not nulled — and remains answerable.
+      const first = (await firstPromise) as {
+        hookSpecificOutput: { permissionDecision: string };
+      };
+      expect(first.hookSpecificOutput.permissionDecision).toBe('deny');
+
+      await handler.handleQuestionCancel('race-2');
+      const second = (await secondPromise) as {
+        hookSpecificOutput: { permissionDecision: string };
+      };
+      expect(second.hookSpecificOutput.permissionDecision).toBe('deny');
+    });
+
+    it('settles the newer resolver when the supersede card restore fails', async () => {
+      const hook = handler.createPreToolUseHook();
+      const askHookInput = (toolUseId: string, question: string) => ({
+        hook_event_name: 'PreToolUse' as const,
+        tool_name: 'AskUserQuestion',
+        tool_input: {
+          questions: [
+            {
+              question,
+              header: 'P',
+              options: [
+                { label: 'A', description: 'A' },
+                { label: 'B', description: 'B' },
+              ],
+              multiSelect: false,
+            },
+          ],
+        },
+        tool_use_id: toolUseId,
+      });
+
+      // setWaitingForInput call #1 is A's own card; #2 is B's; #3 is the
+      // restore — make ONLY the restore throw.
+      let wfiCalls = 0;
+      setWaitingForInputSpy.mockImplementation(async (pendingQuestion: PendingUserQuestion) => {
+        wfiCalls++;
+        currentState = { status: 'waiting_for_input', pendingQuestion };
+        if (wfiCalls === 3) throw new Error('restore publish failed');
+      });
+
+      const firstPromise = hook(askHookInput('race-1', 'Pick?'), 'race-1', {
+        signal: new AbortController().signal,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      let releaseProcessing!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        releaseProcessing = resolve;
+      });
+      setProcessingSpy.mockImplementationOnce(async () => {
+        await gate;
+      });
+      const submitPromise = handler.handleQuestionResponse('race-1', [
+        { questionIndex: 0, selectedLabels: ['A'] },
+      ]);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const secondPromise = hook(askHookInput('race-2', 'Pick 2?'), 'race-2', {
+        signal: new AbortController().signal,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      releaseProcessing();
+      // The restore (setWaitingForInput call #3) throws; the submit rejects.
+      await expect(submitPromise).rejects.toThrow('restore publish failed');
+
+      // B's resolver settled with a deny — not wedged.
+      const second = (await secondPromise) as {
+        hookSpecificOutput: { permissionDecision: string };
+      };
+      expect(second.hookSpecificOutput.permissionDecision).toBe('deny');
+      const first = (await firstPromise) as {
+        hookSpecificOutput: { permissionDecision: string };
+      };
+      expect(first.hookSpecificOutput.permissionDecision).toBe('deny');
+    });
+
+    it('marks the question orphaned even when the question.orphaned publish fails (log-only guard)', async () => {
+      const pendingQuestion: PendingUserQuestion = {
+        toolUseId: 'orphan-1',
+        questions: [
+          {
+            question: 'Q?',
+            header: 'H',
+            options: [
+              { label: 'A', description: 'A' },
+              { label: 'B', description: 'B' },
+            ],
+            multiSelect: false,
+          },
+        ],
+        askedAt: Date.now(),
+      };
+      currentState = { status: 'waiting_for_input', pendingQuestion };
+      emitSpy.mockImplementation(async (event: string) => {
+        if (event === 'question.orphaned') throw new Error('subscriber failed');
+      });
+
+      // The cleanup itself succeeds and is reported as such.
+      await expect(handler.markQuestionOrphaned()).resolves.toBe(true);
+      expect(setIdleSpy).toHaveBeenCalled();
     });
   });
 

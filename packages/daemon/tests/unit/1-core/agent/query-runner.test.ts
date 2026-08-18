@@ -848,20 +848,20 @@ describe('QueryRunner', () => {
 
       it('applyDeferredPermissionMode bails out when the permission mode changes mid-retry', async () => {
         // The retry loop must not re-apply the captured 'bypassPermissions' if
-        // the user changed the mode while it was retrying — otherwise the
+        // the desired mode changed while it was retrying — otherwise the
         // switch silently reverts a newer user choice (CLI enforces bypass
-        // while config/UI say default). The mode is flipped inside the mock
-        // (simulating the user changing it during attempt 1), so the next
-        // iteration's check deterministically bails — no timing window.
+        // while config/UI say default). The builder's live resolution flips
+        // inside the setPermissionMode mock (simulating the change during
+        // attempt 1), so the next iteration's check deterministically bails.
         const ctx = createContext();
-        ctx.queryObject = { setPermissionMode: mock(async () => {}) } as unknown as QueryLike;
-        ctx.session.config.permissionMode = 'default';
+        let liveMode: string | undefined = 'bypassPermissions';
         const setPermissionMode = mock(async () => {
-          ctx.session.config.permissionMode = 'acceptEdits';
+          liveMode = 'acceptEdits';
           throw new Error('control stream closed');
         });
         const queryObject = { setPermissionMode } as unknown as QueryLike;
         ctx.queryObject = queryObject;
+        (ctx.optionsBuilder as Record<string, unknown>).getCurrentPermissionMode = () => liveMode;
         runner = new QueryRunner(ctx);
 
         await applyOnRunner(runner)(queryObject, 'bypassPermissions', 20, 1);

@@ -673,12 +673,16 @@ describe('QueryOptionsBuilder', () => {
       builder.setAskUserQuestionHook(hook);
 
       const options = await builder.build();
-      const auqEntry = options.hooks?.PreToolUse?.find((e) => e.matcher === 'AskUserQuestion');
-      expect(auqEntry).toBeDefined();
-      expect(auqEntry?.hooks[0]).toBe(hook);
-      // The hook legitimately waits for a human answer — matching the
-      // unbounded wait the canUseTool channel always had.
-      expect(auqEntry?.timeout).toBe(86400);
+      const preToolUse = options.hooks?.PreToolUse ?? [];
+      const auqIndex = preToolUse.findIndex((e) => e.matcher === 'AskUserQuestion');
+      expect(auqIndex).toBeGreaterThanOrEqual(0);
+      // FIRST in the chain: the interception must see the original tool_input
+      // before the loop detector or output-limiter hooks observe/mutate it.
+      expect(auqIndex).toBe(0);
+      expect(preToolUse[auqIndex]?.hooks[0]).toBe(hook);
+      // Generous (24h) because the hook legitimately waits for a human answer
+      // — but a hard bound, unlike the canUseTool channel (no timeout).
+      expect(preToolUse[auqIndex]?.timeout).toBe(86400);
     });
 
     it('does not register the hook when unset (existing hook-count tests keep their shape)', async () => {

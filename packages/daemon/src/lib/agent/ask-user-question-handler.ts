@@ -158,6 +158,12 @@ const MAX_QUESTION_STRING_LENGTH = 2000;
  */
 const MAX_QUESTIONS = 4;
 const MAX_OPTIONS = 4;
+/**
+ * Generous options cap for the canUseTool/ACP channel, which has no schema
+ * contract — bounds the persisted+broadcast state without breaking legitimate
+ * multi-option ACP prompts (well under any real approval dialog).
+ */
+const MAX_OPTIONS_UNVALIDATED_CHANNEL = 64;
 
 /** Truncate a model-supplied string field to MAX_QUESTION_STRING_LENGTH. */
 function truncateQuestionString(value: string | undefined): string {
@@ -206,10 +212,9 @@ export class AskUserQuestionHandler {
     // Malformed input guard: a missing/empty questions array — a question
     // entry without an options array, or an option entry without a label —
     // would throw in the mapping below and abort the tool call inside the
-    // CLI (QA-VERIFY: that an errored PreToolUse hook is non-blocking under
-    // bypass — so the question would proceed with no interaction and no card
-    // — is an empirical claim, NOT confirmed). Deny with a reason instead so
-    // the model sees a recoverable error.
+    // CLI. This guard returns a deny (it never throws); the errored-hook
+    // consequence of the paths that DO throw (the setWaitingForInput re-throw
+    // below) is hedged QA-VERIFY in the supersede block.
     const askInput = input as unknown as AskUserQuestionInput;
     // The min/max option-count bounds mirror the SDK schema only on the
     // PreToolUse hook channel (the primary one, seeing raw pre-schema input).
@@ -230,7 +235,7 @@ export class AskUserQuestionHandler {
           typeof q.multiSelect === 'boolean' &&
           Array.isArray(q.options) &&
           q.options.length >= (isHook ? 2 : 1) &&
-          (!isHook || q.options.length <= MAX_OPTIONS) &&
+          q.options.length <= (isHook ? MAX_OPTIONS : MAX_OPTIONS_UNVALIDATED_CHANNEL) &&
           q.options.every((o) => o !== null && typeof o === 'object' && typeof o.label === 'string')
       );
     if (!questionsWellFormed) {
@@ -269,23 +274,27 @@ export class AskUserQuestionHandler {
       this.logger.info(
         `AskUserQuestion ${toolUseID}: consuming queued answer (behavior=${queued.behavior})`
       );
-      // Telemetry-only publish: log-only so a throwing subscriber cannot lose
-      // the consumed answer (it was already deleted from the queue above) or
-      // reject the interception.
-      try {
-        await internalEventBus.publish('question.injected_as_tool_result', {
+      // Telemetry-only publish, fired WITHOUT awaiting: the fast path must
+      // stay synchronous between the queue delete above and the return below.
+      // An await here opens a window where a dual-firing second channel
+      // (QA-VERIFY: hook + canUseTool for one call) would see an empty queue
+      // and no resolver slot — and zombie re-prompt an already-answered
+      // question. Log-only so a throwing subscriber can neither lose the
+      // consumed answer nor reject anything.
+      void internalEventBus
+        .publish('question.injected_as_tool_result', {
           sessionId: session.id,
           toolUseId: toolUseID,
           mode: queued.behavior === 'allow' ? 'submitted' : 'cancelled',
           via: viaChannel,
+        })
+        .catch((publishError: unknown) => {
+          this.logger.warn(
+            `AskUserQuestion ${toolUseID}: question.injected_as_tool_result publish failed (${
+              publishError instanceof Error ? publishError.message : String(publishError)
+            })`
+          );
         });
-      } catch (publishError) {
-        this.logger.warn(
-          `AskUserQuestion ${toolUseID}: question.injected_as_tool_result publish failed (${
-            publishError instanceof Error ? publishError.message : String(publishError)
-          })`
-        );
-      }
       return merged;
     }
 
@@ -566,7 +575,14 @@ export class AskUserQuestionHandler {
           behavior: 'deny',
           message: 'AskUserQuestion failed to transition; the question was not answered.',
         });
-        this.pendingResolver = null;
+        // The SDK sees a deny here, so patch the 'submitted' history record.
+        this.trackResolvedQuestion(toolUseId, pendingQuestion, 'cancelled', responses);
+        // Identity-guard the null: a supersede during the failed await may
+        // have installed a NEWER resolver — nulling unconditionally would drop
+        // it unsettled and wedge its hook.
+        if (this.pendingResolver === resolver) {
+          this.pendingResolver = null;
+        }
         throw err;
       }
       // Re-verify after the await — the supersede block already denied the
@@ -576,6 +592,9 @@ export class AskUserQuestionHandler {
         this.logger.warn(
           `AskUserQuestion ${toolUseId}: submit arrived after the question was superseded; dropping it`
         );
+        // The SDK sees a deny for this question (the supersede block settled
+        // it), so patch the 'submitted' history record to cancelled.
+        this.trackResolvedQuestion(toolUseId, pendingQuestion, 'cancelled', responses);
         const current = this.pendingResolver;
         if (current) {
           try {
@@ -587,7 +606,11 @@ export class AskUserQuestionHandler {
               behavior: 'deny',
               message: 'AskUserQuestion failed to restore the card; the question was not answered.',
             });
-            this.pendingResolver = null;
+            // Identity-guard: an even newer supersede during the failed
+            // restore must not be dropped by this null.
+            if (this.pendingResolver === current) {
+              this.pendingResolver = null;
+            }
             throw restoreError;
           }
         }
@@ -667,7 +690,12 @@ export class AskUserQuestionHandler {
           behavior: 'deny',
           message: 'AskUserQuestion failed to transition; the question was not cancelled.',
         });
-        this.pendingResolver = null;
+        // Identity-guard the null: a supersede during the failed await may
+        // have installed a NEWER resolver — nulling unconditionally would drop
+        // it unsettled and wedge its hook.
+        if (this.pendingResolver === resolver) {
+          this.pendingResolver = null;
+        }
         throw err;
       }
       if (this.pendingResolver !== resolver) {
@@ -684,7 +712,11 @@ export class AskUserQuestionHandler {
               message:
                 'AskUserQuestion failed to restore the card; the question was not cancelled.',
             });
-            this.pendingResolver = null;
+            // Identity-guard: an even newer supersede during the failed
+            // restore must not be dropped by this null.
+            if (this.pendingResolver === current) {
+              this.pendingResolver = null;
+            }
             throw restoreError;
           }
         }
