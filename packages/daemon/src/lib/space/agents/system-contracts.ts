@@ -10,7 +10,14 @@ You have Bash for read-only GitHub inspection and review posting, and for nothin
 
 ### Each review is fresh
 
-Do not rely on prior conclusions. Before reading the diff, capture the inspected head AND echo it so you can carry the value into the later posting step (a fresh Bash invocation does NOT retain shell variables): \`INSPECTED_HEAD_OID=$(gh pr view "$PR_URL" --json headRefOid --jq .headRefOid); echo "INSPECTED_HEAD_OID=$INSPECTED_HEAD_OID"\`. Copy the echoed OID verbatim into the posting block below. Then read the task/issue, PR description, diff, linked comments, changed files in full, and surrounding code. Immediately before posting, read \`CURRENT_HEAD_OID\` the same way and compare it to the carried \`INSPECTED_HEAD_OID\`; if they differ, do NOT post a verdict — restart the review against the new head. Use the carried \`INSPECTED_HEAD_OID\` as the review mutation's \`commitOID\`.
+Re-derive conclusions from the code every round — do not inherit them. But DO inherit litigation state: prior review threads record what has already been decided, so never re-file a finding that a prior round resolved or dismissed; if you believe a dismissal was wrong, rebut it in a thread reply with new evidence. Before reading the diff, capture the inspected head AND echo it so you can carry the value into the later posting step (a fresh Bash invocation does NOT retain shell variables): \`INSPECTED_HEAD_OID=$(gh pr view "$PR_URL" --json headRefOid --jq .headRefOid); echo "INSPECTED_HEAD_OID=$INSPECTED_HEAD_OID"\`. Copy the echoed OID verbatim into the posting block below. Then read the task/issue, PR description, diff (the delta diff in rounds 2+ — see the round model below), linked comments, changed files in full, and surrounding code. Immediately before posting, read \`CURRENT_HEAD_OID\` the same way and compare it to the carried \`INSPECTED_HEAD_OID\`; if they differ, do NOT post a verdict — restart the review against the new head. Use the carried \`INSPECTED_HEAD_OID\` as the review mutation's \`commitOID\`.
+
+### Round model: round 1 full review, rounds 2+ delta review
+
+Determine the round from the PR's posted reviews: the latest prior review's commitOID is the last reviewed head (\`gh pr view "$PR_URL" --json reviews\` — each review carries the \`commitOID\` it was posted against; take the most recent one).
+
+- Round 1 (no prior review commitOID): review the full PR diff — all dimensions below.
+- Round 2+: review the DELTA since the last reviewed head, not the whole PR. Fetch it with the compare API against the RUN's own repo only: \`gh api repos/<owner>/<repo>/compare/<prev_commit_oid>...<current_head_oid>\` (owner/repo parsed from $PR_URL — this compare call is the one allowed repo-scoped REST read; every other repo-scoped REST read remains forbidden). Review the delta in full, verify each prior finding is resolved or dismissed, and trace the callers/callees of the delta's changed lines for interaction breakage. Do not re-review code untouched since the last reviewed head, and apply the dimensions below to the delta.
 
 ### How to execute (dispatch model)
 
@@ -26,6 +33,7 @@ Review dimensions #1–#6 on every non-trivial change — none are skipped. Add 
 - Read the linked issue/task/ticket and PR description; state in one sentence what was asked and what "done" looks like.
 - Premise: is this the right problem, or an XY problem? Does it duplicate existing functionality or a prior decision (search codebase + PR history)? Does it conflict with project direction?
 - Alignment & completeness: does the diff implement the ask completely? Completeness = no acceptance criterion left unaddressed. List anything missing; flag work beyond the ask (scope creep).
+- Smallest sufficient diff: if a materially smaller implementation would satisfy the ask equally well — same correctness, same criterion coverage — raise it as the FIRST finding in your review (P1) and include a concrete sketch of the smaller approach; never file a vague "could be simpler". Round 1 only: early rounds may reshape the design, later rounds converge — do not demand rewrites of already-reviewed code.
 - Flag: "PR does X but the ticket asked for Y"; "duplicates helper Z"; "criterion #3 unaddressed"; "unrelated refactor / scope creep".
 
 **2. Correctness & resilience**
@@ -61,6 +69,7 @@ Review dimensions #1–#6 on every non-trivial change — none are skipped. Add 
 - Conforms to existing conventions and its layer (daemon/shared/web boundaries, MessageHub protocol, space-runtime structure)? No layering violations?
 - Naming, structure, readability; dead code or unused imports/vars introduced by the change.
 - Over-engineering: speculative generality, unrequested config/abstractions, flexibility for single-use code.
+- Smallest fix: for every finding, suggest the minimal change that resolves it; prefer subtraction — when a finding can be resolved by deleting code (drop an unneeded abstraction, remove speculative config) rather than adding handling, say so explicitly.
 - Docs/comments match changed behavior; public API/contract changes documented?
 - Flag: new abstraction used once; dead export; comment contradicts code; layering breach.
 
@@ -71,6 +80,10 @@ Review dimensions #1–#6 on every non-trivial change — none are skipped. Add 
 - Responsive/overflow: handles viewports, long text, truncation, overflow.
 - Interaction feedback: hover/active/disabled, optimistic updates, clear affordances; no dead controls.
 - Flag: missing loading/empty/error state; modal without focus trap; click handler on a non-interactive element; bypasses the theme/component library.
+
+### Findings stay in scope
+
+A finding blocks only when it concerns lines this PR changed or contracts it touches. Pre-existing issues in untouched code and improvements beyond the ask are NOT findings — note them as passing observations or propose them as separate follow-up tasks, never as P0-P2. Read as widely as you need for context — callers, contracts, neighbors; file findings only on the change itself.
 
 ### Severity & verdict
 
