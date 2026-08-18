@@ -1542,8 +1542,8 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected).toHaveLength(0);
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('pending');
-    // The defer-mode stamp the resume requeue reconstructs its delivery mode
-    // from (mirroring the paused sibling's convention).
+    // The defer-mode stamp — a persisted marker mirroring the paused sibling's
+    // convention (recovery is defer-by-default; see deliveryModeFromFailureReason).
     expect(delivery.failureReason).toContain('deliveryMode:defer');
 
     // Start clears the hold (onSpaceResumed) and requeues the deferred
