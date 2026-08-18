@@ -291,7 +291,7 @@ describe('AskUserQuestionHandler', () => {
           sessionId: testSessionId,
           toolUseId: 'tool-123',
           mode: 'submitted',
-          viaCanUseTool: false,
+          via: 'tool_result',
         })
       );
     });
@@ -627,7 +627,7 @@ describe('AskUserQuestionHandler', () => {
         'question.injected_as_tool_result',
         expect.objectContaining({
           mode: 'cancelled',
-          viaCanUseTool: false,
+          via: 'tool_result',
         })
       );
     });
@@ -908,7 +908,7 @@ describe('AskUserQuestionHandler', () => {
   });
 
   describe('createCanUseToolCallback queued-answer fast path', () => {
-    it('consumes a queued allow without re-prompting and emits viaCanUseTool=true', async () => {
+    it('consumes a queued allow without re-prompting and emits via=can_use_tool', async () => {
       const pendingQuestion: PendingUserQuestion = {
         toolUseId: 'replay-tool',
         questions: [
@@ -950,7 +950,7 @@ describe('AskUserQuestionHandler', () => {
         expect.objectContaining({
           toolUseId: 'replay-tool',
           mode: 'submitted',
-          viaCanUseTool: true,
+          via: 'can_use_tool',
         })
       );
 
@@ -987,6 +987,275 @@ describe('AskUserQuestionHandler', () => {
       expect(setWaitingForInputSpy).not.toHaveBeenCalled();
       expect(result.behavior).toBe('deny');
       expect((result as { message: string }).message).toMatch(/cancel/i);
+    });
+  });
+
+  describe('createPreToolUseHook (bypassPermissions interception channel)', () => {
+    const SIGNAL = new AbortController().signal;
+    const makeInput = (questionText = 'Pick?') => ({
+      questions: [
+        {
+          question: questionText,
+          header: 'Pick',
+          options: [
+            { label: 'A', description: 'First' },
+            { label: 'B', description: 'Second' },
+          ],
+          multiSelect: false,
+        },
+      ],
+    });
+    const hookInput = (toolName: string, toolInput: unknown, toolUseId: string) =>
+      ({
+        hook_event_name: 'PreToolUse',
+        tool_name: toolName,
+        tool_input: toolInput,
+        tool_use_id: toolUseId,
+        session_id: testSessionId,
+        transcript_path: '/tmp/transcript.jsonl',
+        cwd: '/tmp/repo',
+      }) as Parameters<ReturnType<AskUserQuestionHandler['createPreToolUseHook']>>[0];
+
+    it('passes non-AskUserQuestion tools through with no permission decision', async () => {
+      const hook = handler.createPreToolUseHook();
+      const result = await hook(hookInput('Bash', { command: 'ls' }, 'tool-x'), 'tool-x', {
+        signal: SIGNAL,
+      });
+      expect(result).toEqual({});
+      expect(setWaitingForInputSpy).not.toHaveBeenCalled();
+    });
+
+    it('intercepts AskUserQuestion, surfaces the card, and resolves allow+updatedInput on submit (the canUseTool callback is never consulted under bypassPermissions)', async () => {
+      const hook = handler.createPreToolUseHook();
+      const pending = hook(hookInput('AskUserQuestion', makeInput(), 'hook-1'), 'hook-1', {
+        signal: SIGNAL,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(setWaitingForInputSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ toolUseId: 'hook-1' })
+      );
+      expect(currentState.status).toBe('waiting_for_input');
+
+      await handler.handleQuestionResponse('hook-1', [{ questionIndex: 0, selectedLabels: ['A'] }]);
+
+      const result = (await pending) as {
+        hookSpecificOutput: {
+          permissionDecision: string;
+          updatedInput?: { answers?: Record<string, string> };
+        };
+      };
+      expect(result.hookSpecificOutput.permissionDecision).toBe('allow');
+      expect(result.hookSpecificOutput.updatedInput?.answers).toEqual({ 'Pick?': 'A' });
+    });
+
+    it('resolves deny + permissionDecisionReason on user cancel', async () => {
+      const hook = handler.createPreToolUseHook();
+      const pending = hook(hookInput('AskUserQuestion', makeInput(), 'hook-2'), 'hook-2', {
+        signal: SIGNAL,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await handler.handleQuestionCancel('hook-2');
+
+      const result = (await pending) as {
+        hookSpecificOutput: { permissionDecision: string; permissionDecisionReason?: string };
+      };
+      expect(result.hookSpecificOutput.permissionDecision).toBe('deny');
+      expect(result.hookSpecificOutput.permissionDecisionReason).toMatch(/User cancelled/);
+    });
+
+    it('consumes a queued answer without re-prompting (restart survival)', async () => {
+      currentState = {
+        status: 'waiting_for_input',
+        pendingQuestion: { toolUseId: 'hook-3', questions: [], askedAt: Date.now() },
+      };
+      await handler.handleQuestionCancel('hook-3');
+      expect(handler.getQueuedAnswersForTesting().has('hook-3')).toBe(true);
+      currentState = { status: 'idle' };
+      setWaitingForInputSpy.mockClear();
+
+      const hook = handler.createPreToolUseHook();
+      const result = (await hook(hookInput('AskUserQuestion', makeInput(), 'hook-3'), 'hook-3', {
+        signal: SIGNAL,
+      })) as { hookSpecificOutput: { permissionDecision: string } };
+
+      expect(result.hookSpecificOutput.permissionDecision).toBe('deny');
+      expect(setWaitingForInputSpy).not.toHaveBeenCalled();
+      expect(emitSpy).toHaveBeenCalledWith(
+        'question.injected_as_tool_result',
+        expect.objectContaining({
+          toolUseId: 'hook-3',
+          mode: 'cancelled',
+          via: 'pre_tool_use_hook',
+        })
+      );
+    });
+
+    it('denies malformed input (single-option question violates the SDK schema on the hook channel)', async () => {
+      const hook = handler.createPreToolUseHook();
+      const malformed = {
+        questions: [
+          {
+            question: 'One option only',
+            header: 'X',
+            options: [{ label: 'A', description: 'A' }],
+            multiSelect: false,
+          },
+        ],
+      };
+      const result = (await hook(hookInput('AskUserQuestion', malformed, 'hook-4'), 'hook-4', {
+        signal: SIGNAL,
+      })) as {
+        hookSpecificOutput: { permissionDecision: string; permissionDecisionReason?: string };
+      };
+
+      expect(result.hookSpecificOutput.permissionDecision).toBe('deny');
+      expect(result.hookSpecificOutput.permissionDecisionReason).toMatch(/malformed/);
+      expect(setWaitingForInputSpy).not.toHaveBeenCalled();
+
+      const callback = handler.createCanUseToolCallback();
+      const pending = callback('AskUserQuestion', malformed, {
+        signal: SIGNAL,
+        toolUseID: 'hook-4b',
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(setWaitingForInputSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ toolUseId: 'hook-4b' })
+      );
+      await handler.handleQuestionResponse('hook-4b', [
+        { questionIndex: 0, selectedLabels: ['A'] },
+      ]);
+      const cuResult = (await pending) as { behavior: string };
+      expect(cuResult.behavior).toBe('allow');
+    });
+
+    it('truncates oversized question strings in the persisted card and keys answers by the raw question text', async () => {
+      const rawQuestion = 'Q'.repeat(2500);
+      const hook = handler.createPreToolUseHook();
+      const pending = hook(
+        hookInput('AskUserQuestion', makeInput(rawQuestion), 'hook-5'),
+        'hook-5',
+        {
+          signal: SIGNAL,
+        }
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const persisted = setWaitingForInputSpy.mock.calls[0][0] as PendingUserQuestion;
+      expect(persisted.questions[0].question.length).toBe(2000);
+
+      await handler.handleQuestionResponse('hook-5', [{ questionIndex: 0, selectedLabels: ['A'] }]);
+
+      const result = (await pending) as {
+        hookSpecificOutput: { updatedInput?: { answers?: Record<string, string> } };
+      };
+      expect(Object.keys(result.hookSpecificOutput.updatedInput?.answers ?? {})).toEqual([
+        rawQuestion,
+      ]);
+    });
+
+    it('dedupes a same-toolUseId re-entry from the other channel onto the shared promise', async () => {
+      const hook = handler.createPreToolUseHook();
+      const callback = handler.createCanUseToolCallback();
+      const input = makeInput();
+
+      const viaHook = hook(hookInput('AskUserQuestion', input, 'hook-6'), 'hook-6', {
+        signal: SIGNAL,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const viaCallback = callback('AskUserQuestion', input, {
+        signal: SIGNAL,
+        toolUseID: 'hook-6',
+      });
+
+      expect(setWaitingForInputSpy).toHaveBeenCalledTimes(1);
+      await handler.handleQuestionResponse('hook-6', [{ questionIndex: 0, selectedLabels: ['B'] }]);
+
+      const hookResult = (await viaHook) as {
+        hookSpecificOutput: { updatedInput?: { answers?: Record<string, string> } };
+      };
+      const callbackResult = (await viaCallback) as {
+        updatedInput?: { answers?: Record<string, string> };
+      };
+      expect(hookResult.hookSpecificOutput.updatedInput?.answers).toEqual({ 'Pick?': 'B' });
+      expect(callbackResult.updatedInput?.answers).toEqual({ 'Pick?': 'B' });
+    });
+
+    it('denies the older question when a newer AskUserQuestion supersedes it', async () => {
+      const hook = handler.createPreToolUseHook();
+      const older = hook(hookInput('AskUserQuestion', makeInput('Old?'), 'hook-7a'), 'hook-7a', {
+        signal: SIGNAL,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const newer = hook(hookInput('AskUserQuestion', makeInput('New?'), 'hook-7b'), 'hook-7b', {
+        signal: SIGNAL,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const olderResult = (await older) as {
+        hookSpecificOutput: { permissionDecision: string; permissionDecisionReason?: string };
+      };
+      expect(olderResult.hookSpecificOutput.permissionDecision).toBe('deny');
+      expect(olderResult.hookSpecificOutput.permissionDecisionReason).toMatch(/Superseded/);
+
+      await handler.handleQuestionResponse('hook-7b', [
+        { questionIndex: 0, selectedLabels: ['A'] },
+      ]);
+      const newerResult = (await newer) as {
+        hookSpecificOutput: { permissionDecision: string };
+      };
+      expect(newerResult.hookSpecificOutput.permissionDecision).toBe('allow');
+    });
+
+    it("patches the history record to cancelled when a superseded question's submit is dropped", async () => {
+      const hook = handler.createPreToolUseHook();
+      const first = hook(hookInput('AskUserQuestion', makeInput('First?'), 'hook-8a'), 'hook-8a', {
+        signal: SIGNAL,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const second = hook(
+        hookInput('AskUserQuestion', makeInput('Second?'), 'hook-8b'),
+        'hook-8b',
+        {
+          signal: SIGNAL,
+        }
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await first;
+
+      currentState = {
+        status: 'waiting_for_input',
+        pendingQuestion: {
+          toolUseId: 'hook-8a',
+          questions: [],
+          askedAt: Date.now(),
+        },
+      };
+      await handler.handleQuestionResponse('hook-8a', [
+        { questionIndex: 0, selectedLabels: ['A'] },
+      ]);
+
+      const resolved = mockSession.metadata?.resolvedQuestions?.['hook-8a'];
+      expect(resolved?.state).toBe('cancelled');
+
+      currentState = {
+        status: 'waiting_for_input',
+        pendingQuestion: {
+          toolUseId: 'hook-8b',
+          questions: [],
+          askedAt: Date.now(),
+        },
+      };
+      await handler.handleQuestionResponse('hook-8b', [
+        { questionIndex: 0, selectedLabels: ['A'] },
+      ]);
+      const newerResult = (await second) as {
+        hookSpecificOutput: { permissionDecision: string };
+      };
+      expect(newerResult.hookSpecificOutput.permissionDecision).toBe('allow');
     });
   });
 });

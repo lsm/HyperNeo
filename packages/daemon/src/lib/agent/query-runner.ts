@@ -362,6 +362,74 @@ export class QueryRunner {
     this.ctx.queryPromise = this.runQuery(currentGeneration);
   }
 
+  private async applyDeferredPermissionMode(
+    queryObject: QueryLike,
+    deferredPermissionMode: string | undefined,
+    attemptTimeoutMs = 8000,
+    backoffBaseMs = 250
+  ): Promise<void> {
+    if (!deferredPermissionMode || !queryObject.setPermissionMode) return;
+    const { session, logger } = this.ctx;
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const liveMode = this.ctx.optionsBuilder.getCurrentPermissionMode?.();
+      if (liveMode !== undefined && liveMode !== deferredPermissionMode) {
+        logger.debug(
+          `QueryRunner.start: deferred permission mode switch for session ` +
+            `${session.id} aborted — desired mode is now '${liveMode}' ` +
+            `(was '${deferredPermissionMode}' at capture)`
+        );
+        return;
+      }
+      try {
+        const attemptPromise = queryObject.setPermissionMode(deferredPermissionMode);
+        attemptPromise.catch(() => {});
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            attemptPromise,
+            new Promise<never>((_, reject) => {
+              timeoutId = setTimeout(
+                () => reject(new Error(`no response within ${attemptTimeoutMs}ms`)),
+                attemptTimeoutMs
+              );
+            }),
+          ]);
+        } finally {
+          if (timeoutId !== undefined) clearTimeout(timeoutId);
+        }
+        return;
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        if (this.ctx.queryObject !== queryObject) {
+          logger.debug(
+            `QueryRunner.start: deferred permission mode switch for session ` +
+              `${session.id} aborted on attempt ${attempt} — query object ` +
+              `replaced/closed (${detail}); the replacement spawn re-applies it.`
+          );
+          return;
+        }
+        if (attempt === maxAttempts) {
+          logger.error(
+            `QueryRunner.start: failed to apply deferred permission mode ` +
+              `'${deferredPermissionMode}' for session ${session.id} after ` +
+              `${maxAttempts} attempts: ${detail}. The session keeps the intake ` +
+              `state (allowDangerouslySkipPermissions keeps permission decisions ` +
+              `host-managed via canUseTool allow-all). The mode is re-applied on ` +
+              `the next query spawn.`
+          );
+          return;
+        }
+        logger.warn(
+          `QueryRunner.start: deferred permission mode ` +
+            `'${deferredPermissionMode}' for session ${session.id} failed on ` +
+            `attempt ${attempt}/${maxAttempts}: ${detail}; retrying`
+        );
+        await new Promise((resolve) => setTimeout(resolve, backoffBaseMs * attempt));
+      }
+    }
+  }
+
   private async runQuery(
     queryGeneration: number,
     retryAttempt = 0,
@@ -449,6 +517,7 @@ export class QueryRunner {
       }
 
       optionsBuilder.setCanUseTool(this.ctx.askUserQuestionHandler.createCanUseToolCallback());
+      optionsBuilder.setAskUserQuestionHook(this.ctx.askUserQuestionHandler.createPreToolUseHook());
       let queryOptions = await optionsBuilder.build();
 
       if (provider?.setSessionThinkingConfig) {
@@ -648,6 +717,16 @@ export class QueryRunner {
         options: queryOptions,
       });
       this.ctx.queryObject = queryObject;
+
+      void this.applyDeferredPermissionMode(
+        queryObject,
+        optionsBuilder.getDeferredPermissionMode()
+      ).catch((err) => {
+        logger.warn(
+          `QueryRunner.start: deferred permission mode switch failed for session ${session.id}: ` +
+            `${err instanceof Error ? err.message : String(err)}`
+        );
+      });
 
       if (session.config.provider !== 'acp') {
         const effectiveMcpServers = optionsBuilder.getEffectiveMcpServers() ?? {};

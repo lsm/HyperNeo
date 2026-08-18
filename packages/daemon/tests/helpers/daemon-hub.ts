@@ -86,7 +86,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
     sessionId: string;
     toolUseId: string;
     mode: 'submitted' | 'cancelled';
-    viaCanUseTool: boolean;
+    via: 'can_use_tool' | 'pre_tool_use_hook' | 'tool_result';
   };
 
   'userMessage.persisted': {

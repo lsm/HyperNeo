@@ -77,12 +77,12 @@ export class SDKRuntimeConfig {
         return { success: true };
       }
 
+      session.config.permissionMode = mode as Session['config']['permissionMode'];
+      db.updateSession(session.id, { config: session.config });
+
       if (queryObject.setPermissionMode) {
         await queryObject.setPermissionMode(mode);
       }
-
-      session.config.permissionMode = mode as Session['config']['permissionMode'];
-      db.updateSession(session.id, { config: session.config });
 
       await internalEventBus.publish('session.updated', {
         sessionId: session.id,
