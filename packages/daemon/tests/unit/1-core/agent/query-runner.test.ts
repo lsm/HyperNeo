@@ -1594,6 +1594,19 @@ describe('QueryRunner', () => {
       await ctx.queryPromise?.catch(() => {});
 
       expect(buildSpy).toHaveBeenCalledTimes(2);
+      expect(saveSDKMessageSpy).toHaveBeenCalledWith(
+        'test-session-id',
+        expect.objectContaining({
+          type: 'assistant',
+          message: expect.objectContaining({
+            content: expect.arrayContaining([
+              expect.objectContaining({
+                text: expect.stringContaining('Retrying once'),
+              }),
+            ]),
+          }),
+        })
+      );
     });
 
     it('should NOT pass startupMaxRetries in handleError metadata', async () => {
