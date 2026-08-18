@@ -1945,20 +1945,22 @@ export class SpaceRuntime {
    * pre-cleanup snapshot (production path). The no-snapshot form below is the
    * LEGACY/TEST-ONLY overload — its "no-ops if the space resumed mid-quiesce
    * so a stop→start race cannot strip the bindings of live sessions" behavior
-   * (hold-guarded) does NOT apply to production, which parks exactly the
-   * snapshot rows regardless of an intervening start. Run and task statuses
-   * are NOT modified.
+   * (hold-guarded) does NOT apply to production, which parks the snapshot rows
+   * whose binding is UNCHANGED at the re-read (a row a mid-quiesce start
+   * re-bound onto a live session is skipped), regardless of an intervening
+   * start. Run and task statuses are NOT modified.
    */
   parkInFlightExecutionsForSpace(spaceId: string, stopSnapshot?: NodeExecution[]): void {
     if (stopSnapshot) {
-      // Snapshot mode — the production path from stopActiveWork: park EXACTLY
-      // the rows captured BEFORE the cleanup awaits, regardless of an
-      // intervening start. The snapshot is the stop's epoch; every session
-      // those rows were bound to was interrupted by the cleanup, so parking
-      // is always the clean-recovery shape. Guarding on the (mutable) hold
-      // set instead would skip parking when a start lands mid-quiesce, and
-      // the resumed tick would route those dead-bound rows through crash
-      // accounting — exactly what park exists to prevent.
+      // Snapshot mode — the production path from stopActiveWork: park the rows
+      // captured BEFORE the cleanup awaits, regardless of an intervening start
+      // (guarding on the mutable hold set would skip parking when a start
+      // lands mid-quiesce, and the resumed tick would route dead-bound rows
+      // through crash accounting). The snapshot is the stop's epoch; every
+      // session those rows were bound to was interrupted by the cleanup, so
+      // parking is the clean-recovery shape — subject to the re-read guard
+      // below: a row a mid-quiesce start re-bound onto a LIVE session (one the
+      // cleanup never interrupted) is skipped.
       let parkedCount = 0;
       const parkedRuns = new Set<string>();
       for (const exec of stopSnapshot) {

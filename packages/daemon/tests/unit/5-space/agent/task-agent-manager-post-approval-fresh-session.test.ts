@@ -549,9 +549,14 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
   test('peer-injection gate: a paused space still injects (pause keeps live sessions reachable)', async () => {
     // Pause contract: running work continues — a live session on a paused
     // space must stay reachable. The gate is stopped-ONLY (pause never adds
-    // to the stopped-space mirror).
+    // to the stopped-space mirror), and the DB row carries `paused: true` so
+    // a regression adding a paused check to the outer gate OR the in-lock
+    // re-check (lockedSpace?.stopped || lockedSpace.paused) fails this test.
     const hold = makeHoldAwareSpaceManager();
-    const tam = makeManagerWithSpaceManager([], hold.manager);
+    const tam = makeManagerWithSpaceManager([], {
+      ...hold.manager,
+      getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws', paused: true }),
+    });
     const MERGER_SESSION = `space:${SPACE_ID}:task:${TASK_ID}:post-approval:merger`;
     seedLiveSession(tam, MERGER_SESSION);
     const injected: string[] = [];

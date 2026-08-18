@@ -1542,6 +1542,9 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected).toHaveLength(0);
     const delivery = eventStore.listDeliveries(event.id)[0]!;
     expect(delivery.state).toBe('pending');
+    // The defer-mode stamp the resume requeue reconstructs its delivery mode
+    // from (mirroring the paused sibling's convention).
+    expect(delivery.failureReason).toContain('deliveryMode:defer');
 
     // Start clears the hold (onSpaceResumed) and requeues the deferred
     // delivery; the flush delivers it into the live session.

@@ -1226,8 +1226,14 @@ export class SpaceRuntimeService {
           // for this task (the interrupted-set entry would be absent, so the
           // gate would skip the task and a stale pointer would wedge it). Log
           // it and record what we can: an absent entry means "unknown", which
-          // the gate treats as keep — conservative, and the next resume's
-          // already-routed guard sees the (possibly-live) session.
+          // the gate treats as keep. NOTE this is not a self-healing safety
+          // net — resumeDeferredPostApprovals only re-drives tasks WITH a
+          // stamped reason, and this task has none — but today the wedge is
+          // unreachable in practice: cleanup calls stopSessionPreserveDb
+          // non-strict, which swallows interrupt errors, so a REJECTION means
+          // nothing was interrupted and the pointer is genuinely live (the
+          // already-routed guard correctly keeps it). A future change that
+          // makes cleanup reject after a real interruption must handle this.
           log.warn(`stopActiveWork: failed to cleanup agent session for task ${task.id}:`, err);
         }
       })

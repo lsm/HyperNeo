@@ -657,11 +657,17 @@ export class TaskAgentManager {
     this.subscribeToRateLimitEvents();
     this.subscribeToActivityTracking();
     // Sync mirror of stopped spaces, populated by the space manager's
-    // onSpaceStopped/onSpaceResumed callbacks (the same synchronous cadence
-    // the runtime's delivery-hold cache uses). The peer-injection gate reads
+    // onSpaceStopped/onSpaceResumed callbacks. The peer-injection gate reads
     // this instead of the space ROW, so the channel-router hot path does not
     // take a DB read per message. Stopped-only by construction: resume deletes
     // (a resumed space is not stopped), and pause never adds.
+    //
+    // CAVEAT: unlike the runtime's delivery-hold cache, this mirror is NOT
+    // hydrated at startup from listSpaces() — a space stopped before this TAM
+    // was constructed is missing from the mirror until its next stop/start
+    // event. Correctness is preserved (the in-lock DB re-read covers the
+    // missing case); the mirror is a hot-path optimization, not an exhaustive
+    // view, and must not be treated as one by a future refactor.
     this.config.spaceManager?.onSpaceStoppedRegister?.((spaceId) =>
       this.stoppedSpaceIds.add(spaceId)
     );
