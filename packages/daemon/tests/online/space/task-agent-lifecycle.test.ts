@@ -187,6 +187,17 @@ async function fetchSdkMessages(
   return sdkMessages;
 }
 
+async function tryFetchSdkMessages(
+  daemon: DaemonServerContext,
+  sessionId: string
+): Promise<Array<Record<string, unknown>>> {
+  try {
+    return await fetchSdkMessages(daemon, sessionId);
+  } catch {
+    return [];
+  }
+}
+
 async function waitForKickoffContext(
   daemon: DaemonServerContext,
   sessionId: string,
@@ -194,7 +205,7 @@ async function waitForKickoffContext(
 ): Promise<Array<Record<string, unknown>>> {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    const sdkMessages = await fetchSdkMessages(daemon, sessionId);
+    const sdkMessages = await tryFetchSdkMessages(daemon, sessionId);
     if (sdkMessages.length > 0) return sdkMessages;
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
@@ -211,7 +222,7 @@ async function waitForAssistantResponseBeyond(
 ): Promise<Array<Record<string, unknown>>> {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    const assistantMsgs = getAssistantMessages(await fetchSdkMessages(daemon, sessionId));
+    const assistantMsgs = getAssistantMessages(await tryFetchSdkMessages(daemon, sessionId));
     if (assistantMsgs.length > baselineCount) return assistantMsgs;
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
