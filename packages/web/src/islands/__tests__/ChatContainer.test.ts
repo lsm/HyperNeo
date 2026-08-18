@@ -355,22 +355,22 @@ describe('ChatContainer Loading Skeleton CLS Prevention', () => {
   const source = chatContainerSource;
 
   it('skeleton header uses h-[52px] to match ChatHeader fixed height', () => {
-    expect(source).toMatch(/Skeleton header[\s\S]*?h-\[52px\]/);
+    expect(source).toMatch(/route\.route === 'loading'[\s\S]*?h-\[52px\]/);
   });
 
   it('skeleton header does not use py-3 for height', () => {
     const skeletonSection =
-      source.match(/\/\* Skeleton header[\s\S]*?\/\* Skeleton messages/)?.[0] ?? '';
+      source.match(/route\.route === 'loading'[\s\S]*?animate-spin/)?.[0] ?? '';
     expect(skeletonSection).not.toContain('py-3');
   });
 
   it('skeleton footer uses absolute positioning to match ChatComposer layout', () => {
-    expect(source).toMatch(/Skeleton footer[\s\S]*?absolute bottom-0 left-0 right-0/);
+    expect(source).toMatch(/route\.route === 'loading'[\s\S]*?absolute bottom-0 left-0 right-0/);
   });
 
   it('skeleton outer container includes relative to anchor the absolute footer', () => {
     expect(source).toMatch(
-      /flex-1 flex flex-col bg-app-content overflow-hidden relative[\s\S]*?Skeleton header/
+      /route\.route === 'loading'[\s\S]*?flex-1 flex flex-col bg-app-content overflow-hidden relative/
     );
   });
 });
@@ -545,7 +545,7 @@ describe('Pending Agent Mode', () => {
 
   it('pending header mirrors ChatHeader height (h-[52px]) for CLS prevention', () => {
     const pendingBlock =
-      source.match(/Pending Agent Render[\s\S]*?pending-agent-overlay-textarea/)?.[0] ?? '';
+      source.match(/pending-agent-overlay"[\s\S]*?pending-agent-overlay-textarea/)?.[0] ?? '';
     expect(pendingBlock).toContain('min-h-[52px]');
   });
 
