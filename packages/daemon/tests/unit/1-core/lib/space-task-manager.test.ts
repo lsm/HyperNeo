@@ -681,7 +681,7 @@ describe('SpaceTaskManager', () => {
       ]);
     });
 
-    it('blocked allows restart, review, completion, cancellation, and archival', () => {
+    it('blocked allows restart, review, completion, cancellation, archival, and stopping', () => {
       expect(VALID_SPACE_TASK_TRANSITIONS.blocked).toEqual([
         'open',
         'in_progress',
@@ -689,6 +689,7 @@ describe('SpaceTaskManager', () => {
         'done',
         'cancelled',
         'archived',
+        'stopped',
       ]);
     });
 
@@ -707,7 +708,7 @@ describe('SpaceTaskManager', () => {
       ]);
     });
 
-    it('in_progress allows open, review, approved, done, blocked, and cancelled', () => {
+    it('in_progress allows open, review, approved, done, blocked, cancelled, and stopped', () => {
       expect(VALID_SPACE_TASK_TRANSITIONS.in_progress).toEqual([
         'open',
         'review',
@@ -715,6 +716,7 @@ describe('SpaceTaskManager', () => {
         'done',
         'blocked',
         'cancelled',
+        'stopped',
       ]);
     });
   });

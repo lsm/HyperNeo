@@ -425,6 +425,8 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
   run(migrationMarkerKey(193), () => runMigration193(db));
 
   run(migrationMarkerKey(194), () => runMigration194(db));
+
+  run(migrationMarkerKey(195), () => runMigration195(db));
 }
 
 function migrationMarkerKey(version: number): string {
@@ -9426,4 +9428,56 @@ export function runMigration194(db: BunDatabase): void {
   if (!tableHasColumn(db, 'job_queue', 'heartbeat_at')) {
     db.exec(`ALTER TABLE job_queue ADD COLUMN heartbeat_at INTEGER`);
   }
+}
+
+export function runMigration195(db: BunDatabase): void {
+  if (!tableExists(db, 'space_tasks')) return;
+  if (statusCheckContains(db, 'space_tasks', 'stopped')) return;
+
+  const currentSql = tableCreateSql(db, 'space_tasks');
+
+  if (currentSql && currentSql.includes('status IN (')) {
+    const newTableSql = addStoppedStatusToSpaceTasks(
+      replaceCreateTableName(currentSql, 'space_tasks_m195_new')
+    );
+    const copyColumns = tableColumnNames(db, 'space_tasks').map(quoteSqlIdent).join(', ');
+    const existingIndexDdl = capturedIndexDdl(db, 'space_tasks');
+
+    db.exec('PRAGMA foreign_keys = OFF');
+    db.exec('BEGIN');
+    try {
+      db.exec(`DROP TABLE IF EXISTS space_tasks_m195_new`);
+      db.exec(newTableSql);
+      db.exec(
+        `INSERT INTO space_tasks_m195_new (${copyColumns}) SELECT ${copyColumns} FROM space_tasks`
+      );
+      db.exec(`DROP TABLE space_tasks`);
+      db.exec(`ALTER TABLE space_tasks_m195_new RENAME TO space_tasks`);
+      recreateCompatibleIndexes(db, 'space_tasks', existingIndexDdl);
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    } finally {
+      db.exec('PRAGMA foreign_keys = ON');
+    }
+  }
+}
+
+function addStoppedStatusToSpaceTasks(createSql: string): string {
+  let statusMatched = false;
+  const result = createSql.replace(
+    /CHECK\s*\(\s*status\s+IN\s*\(([^)]*)\)\s*\)/i,
+    (match, values: string) => {
+      statusMatched = true;
+      if (values.includes("'stopped'")) {
+        return match;
+      }
+      return `CHECK(status IN (${values.trim()}, 'stopped'))`;
+    }
+  );
+  if (!statusMatched) {
+    throw new Error('Migration 195: space_tasks status CHECK constraint not found');
+  }
+  return result;
 }

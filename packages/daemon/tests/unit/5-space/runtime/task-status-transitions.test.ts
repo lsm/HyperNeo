@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import type { SpaceTaskStatus } from '@hyperneo/shared';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
@@ -263,15 +264,16 @@ describe('VALID_SPACE_TASK_TRANSITIONS — matrix gap closures (task #849)', () 
     const EXPECTED = {
       draft: ['open', 'archived'],
       open: ['in_progress', 'blocked', 'review', 'done', 'cancelled', 'archived'],
-      in_progress: ['open', 'review', 'approved', 'done', 'blocked', 'cancelled'],
-      review: ['done', 'approved', 'in_progress', 'cancelled', 'archived'],
+      in_progress: ['open', 'review', 'approved', 'done', 'blocked', 'cancelled', 'stopped'],
+      review: ['done', 'approved', 'in_progress', 'cancelled', 'archived', 'stopped'],
       approved: ['done', 'in_progress', 'archived', 'cancelled'],
       done: ['in_progress', 'archived'],
-      blocked: ['open', 'in_progress', 'review', 'done', 'cancelled', 'archived'],
+      blocked: ['open', 'in_progress', 'review', 'done', 'cancelled', 'archived', 'stopped'],
       cancelled: ['open', 'in_progress', 'done', 'archived'],
-      rate_limited: ['in_progress', 'open', 'blocked', 'cancelled', 'archived'],
-      usage_limited: ['in_progress', 'open', 'blocked', 'cancelled', 'archived'],
+      rate_limited: ['in_progress', 'open', 'blocked', 'cancelled', 'archived', 'stopped'],
+      usage_limited: ['in_progress', 'open', 'blocked', 'cancelled', 'archived', 'stopped'],
       archived: [],
+      stopped: ['in_progress', 'open', 'review', 'cancelled', 'archived'],
     };
     expect(VALID_SPACE_TASK_TRANSITIONS).toEqual(EXPECTED);
   });
@@ -411,5 +413,153 @@ describe('SpaceTaskManager.setTaskStatus — matrix gap closures (task #849)', (
     expect(cancelled.postApprovalSessionId).toBeNull();
     expect(cancelled.postApprovalStartedAt).toBeNull();
     expect(cancelled.postApprovalBlockedReason).toBeNull();
+  });
+});
+
+describe('stopped status — dormant park capability (task #1080)', () => {
+  test.each([
+    'in_progress',
+    'blocked',
+    'review',
+    'rate_limited',
+    'usage_limited',
+  ] as const)('%s → stopped is a valid transition', (from) => {
+    expect(VALID_SPACE_TASK_TRANSITIONS[from]).toContain('stopped');
+    expect(isValidSpaceTaskTransition(from, 'stopped')).toBe(true);
+  });
+
+  test.each([
+    'draft',
+    'open',
+    'approved',
+    'done',
+    'cancelled',
+    'archived',
+  ] as const)('%s → stopped is rejected by the transition validator', (from) => {
+    expect(VALID_SPACE_TASK_TRANSITIONS[from]).not.toContain('stopped');
+    expect(isValidSpaceTaskTransition(from, 'stopped')).toBe(false);
+  });
+
+  test.each([
+    'in_progress',
+    'open',
+    'review',
+    'cancelled',
+    'archived',
+  ] as const)('stopped → %s is a valid transition', (to) => {
+    expect(VALID_SPACE_TASK_TRANSITIONS.stopped).toContain(to);
+    expect(isValidSpaceTaskTransition('stopped', to)).toBe(true);
+  });
+
+  test.each([
+    'done',
+    'blocked',
+    'approved',
+    'stopped',
+  ] as const)('stopped → %s is rejected by the transition validator', (to) => {
+    expect(VALID_SPACE_TASK_TRANSITIONS.stopped).not.toContain(to);
+    expect(isValidSpaceTaskTransition('stopped', to)).toBe(false);
+  });
+});
+
+describe('SpaceTaskManager.setTaskStatus — stopped preserves task provenance (task #1080)', () => {
+  let db: BunDatabase;
+  let taskRepo: SpaceTaskRepository;
+  let taskManager: SpaceTaskManager;
+
+  beforeEach(() => {
+    db = makeDb();
+    taskRepo = new SpaceTaskRepository(db);
+    taskManager = new SpaceTaskManager(db, SPACE_ID);
+  });
+  afterEach(() => {
+    db.close();
+  });
+
+  function createTask(status: SpaceTaskStatus) {
+    return taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'T',
+      description: '',
+      status,
+    });
+  }
+
+  test('in_progress → stopped preserves result and reportedSummary', async () => {
+    const task = createTask('in_progress');
+    taskRepo.updateTask(task.id, {
+      result: 'partial implementation on branch b1',
+      reportedSummary: 'half done',
+    });
+    const stopped = await taskManager.setTaskStatus(task.id, 'stopped');
+    expect(stopped.status).toBe('stopped');
+    expect(stopped.result).toBe('partial implementation on branch b1');
+    expect(stopped.reportedSummary).toBe('half done');
+  });
+
+  test('blocked → stopped preserves blockReason, result, and reportedSummary', async () => {
+    const task = createTask('in_progress');
+    await taskManager.setTaskStatus(task.id, 'blocked', {
+      result: 'blocked mid-run',
+      blockReason: 'human_input_requested',
+    });
+    const stopped = await taskManager.setTaskStatus(task.id, 'stopped');
+    expect(stopped.status).toBe('stopped');
+    expect(stopped.blockReason).toBe('human_input_requested');
+    expect(stopped.result).toBe('blocked mid-run');
+  });
+
+  test('review → stopped preserves pending-completion checkpoint and approval fields', async () => {
+    const task = createTask('in_progress');
+    await taskManager.setTaskStatus(task.id, 'review');
+    taskRepo.updateTask(task.id, {
+      pendingCheckpointType: 'task_completion',
+      pendingCompletionSubmittedByNodeId: 'reviewer-node',
+      pendingCompletionSubmittedAt: 1234,
+      pendingCompletionReason: 'ready for review',
+      postApprovalSourceNodeId: 'reviewer-node',
+      approvalSource: 'human',
+      approvalReason: 'stamped before the park',
+      approvedAt: 5678,
+    });
+    const stopped = await taskManager.setTaskStatus(task.id, 'stopped');
+    expect(stopped.status).toBe('stopped');
+    expect(stopped.pendingCheckpointType).toBe('task_completion');
+    expect(stopped.pendingCompletionSubmittedByNodeId).toBe('reviewer-node');
+    expect(stopped.pendingCompletionSubmittedAt).toBe(1234);
+    expect(stopped.pendingCompletionReason).toBe('ready for review');
+    expect(stopped.postApprovalSourceNodeId).toBe('reviewer-node');
+    expect(stopped.approvalSource).toBe('human');
+    expect(stopped.approvalReason).toBe('stamped before the park');
+    expect(stopped.approvedAt).toBe(5678);
+  });
+
+  test('rate_limited → stopped preserves result', async () => {
+    const task = createTask('rate_limited');
+    taskRepo.updateTask(task.id, { result: 'partial run before cap' });
+    const stopped = await taskManager.setTaskStatus(task.id, 'stopped');
+    expect(stopped.status).toBe('stopped');
+    expect(stopped.result).toBe('partial run before cap');
+  });
+
+  test('stopped → in_progress resume keeps the parked result and reportedSummary', async () => {
+    const task = createTask('in_progress');
+    taskRepo.updateTask(task.id, {
+      result: 'parked work',
+      reportedSummary: 'parked summary',
+    });
+    await taskManager.setTaskStatus(task.id, 'stopped');
+    const resumed = await taskManager.setTaskStatus(task.id, 'in_progress');
+    expect(resumed.status).toBe('in_progress');
+    expect(resumed.result).toBe('parked work');
+    expect(resumed.reportedSummary).toBe('parked summary');
+  });
+
+  test('approved → stopped is rejected by the transition validator', async () => {
+    const task = createTask('in_progress');
+    await taskManager.setTaskStatus(task.id, 'approved', { approvalSource: 'agent' });
+    await expect(taskManager.setTaskStatus(task.id, 'stopped')).rejects.toThrow(
+      /Invalid status transition from 'approved' to 'stopped'/
+    );
   });
 });
