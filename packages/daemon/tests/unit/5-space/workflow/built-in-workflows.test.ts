@@ -2939,7 +2939,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
     expect(prompt).toContain('approve_task');
     expect(prompt).toContain('submit_for_approval');
     expect(prompt).toMatch(
-      /P0[–-]P3|zero findings|zero P0-P3|findings remain|blocking findings|QA passes|Reviewer System Contract/i
+      /P0[–-]P2|zero findings|zero P0-P2|findings remain|blocking findings|QA passes|Reviewer System Contract/i
     );
     expect(prompt).toMatch(
       /verdict.*APPROVE|APPROVE.*verdict|If approved|If satisfied|approved only|QA passes|after every downstream task/i
@@ -3008,7 +3008,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       /terminal-action tool contract|Terminal-action contract|terminal hand-off|terminal action|terminal calls|terminal actions|terminal-action tool descriptions/
     );
     expect(prompt).toMatch(
-      /P0[–-]P3|zero findings|zero P0-P3|findings remain|blocking findings|QA passes|Reviewer System Contract/i
+      /P0[–-]P2|zero findings|zero P0-P2|findings remain|blocking findings|QA passes|Reviewer System Contract/i
     );
     expect(prompt).toContain('approve_task');
     expect(prompt).toContain('submit_for_approval');

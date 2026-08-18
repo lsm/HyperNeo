@@ -241,22 +241,21 @@ describe('seedPresetAgents', () => {
     expect(reviewer?.customPrompt).toMatch(/Provider:/);
   });
 
-  it('Reviewer custom prompt defines P0–P3 severity levels with decision rules', async () => {
+  it('Reviewer custom prompt defines P0–P2 severity levels with decision rules', async () => {
     const { seeded } = await seedPresetAgents('space-1', manager);
     const reviewer = seeded.find((a) => a.name === 'Reviewer');
 
     expect(reviewer?.customPrompt).toContain('P0');
     expect(reviewer?.customPrompt).toContain('P1');
     expect(reviewer?.customPrompt).toContain('P2');
-    expect(reviewer?.customPrompt).toContain('P3');
     expect(reviewer?.customPrompt).toContain('REQUEST_CHANGES');
     expect(reviewer?.customPrompt).toContain('APPROVE');
-    expect(reviewer?.customPrompt).toContain('P0-P3');
-    expect(reviewer?.customPrompt).toContain('Request changes for any P0-P3 finding');
-    expect(reviewer?.customPrompt).toContain('All four severities block approval');
+    expect(reviewer?.customPrompt).toContain('P0-P2');
+    expect(reviewer?.customPrompt).toContain('Request changes for any P0-P2 finding');
+    expect(reviewer?.customPrompt).toContain('all three levels block approval');
     expect(reviewer?.customPrompt).toContain('no optional severity');
     expect(reviewer?.customPrompt).toContain('pure function of your finding counts');
-    expect(reviewer?.customPrompt).toContain('P0=P1=P2=P3=0');
+    expect(reviewer?.customPrompt).toContain('P0=P1=P2=0');
   });
 
   it('Reviewer custom prompt fences terminal actions while findings are open (Task #136 regression)', async () => {
@@ -265,7 +264,7 @@ describe('seedPresetAgents', () => {
 
     expect(reviewer?.customPrompt).toContain('Terminal-action contract');
     expect(reviewer?.customPrompt).toContain('approve_task/submit_for_approval');
-    expect(reviewer?.customPrompt).toContain('zero P0-P3 findings');
+    expect(reviewer?.customPrompt).toContain('zero P0-P2 findings');
     expect(reviewer?.customPrompt).toContain('If findings remain');
   });
 
@@ -442,6 +441,12 @@ describe('preset agent exact definitions', () => {
         'merge is a separate phase: once the task is approved, the workflow may send you the merge procedure, ' +
         'which you follow (that is when you merge). Your job is implementation first; review feedback comes back ' +
         'until the work is clean.\n\n' +
+        'Keep the diff as small as the task allows: implement exactly what is asked — no drive-by ' +
+        'refactors, cleanup, or speculative handling. When two designs satisfy the ask equally, choose ' +
+        'the one with less code. When addressing review feedback, make the smallest change that resolves ' +
+        "the finding; if a finding demands work beyond the task's scope, dispute it instead of expanding " +
+        'the PR. Smaller is better only at equal correctness — never drop edge-case handling, tests, or ' +
+        'conventions to shrink a diff.\n\n' +
         'Before finishing: ensure all tests pass, commit all changes, and open a PR with a clear description.'
     );
   });
