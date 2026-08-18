@@ -8358,6 +8358,144 @@ describe('createSpaceAgentToolHandlers — update_task status transitions', () =
     expect(summaries[0].status).toBe('open');
     expect(summaries[0].previousStatus).toBe('cancelled');
   });
+
+  test('rejects review → done (approve_task owns the approval action)', async () => {
+    const created = await ctx.taskManager.createTask({ title: 'Task', description: 'Desc' });
+    ctx.taskRepo.updateTask(created.id, { status: 'review' });
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: created.id, status: 'done' })
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("cannot transition a task from 'review' to 'done' directly");
+    expect(result.error).toContain('approve_task');
+    expect(ctx.taskRepo.getTask(created.id)?.status).toBe('review');
+  });
+
+  test("rejects transitions out of 'approved' (mark_complete / post-approval router own them)", async () => {
+    for (const to of ['done', 'in_progress', 'cancelled', 'archived'] as SpaceTaskStatus[]) {
+      const created = await ctx.taskManager.createTask({
+        title: `Task-${to}`,
+        description: 'Desc',
+      });
+      ctx.taskRepo.updateTask(created.id, { status: 'approved' });
+
+      const result = parseResult(
+        await makeHandlers(ctx).update_task({ task_id: created.id, status: to })
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("cannot transition a task out of 'approved' directly");
+      expect(result.error).toContain('mark_complete');
+      expect(ctx.taskRepo.getTask(created.id)?.status).toBe('approved');
+    }
+  });
+
+  test('gates →done on completionAutonomyLevel and rejects below it', async () => {
+    const created = await ctx.taskManager.createTask({ title: 'Task', description: 'Desc' });
+    await ctx.taskManager.startTask(created.id);
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: created.id, status: 'done' })
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('completionAutonomyLevel');
+    expect(result.error).toContain('submit_for_approval');
+    expect(ctx.taskRepo.getTask(created.id)?.status).toBe('in_progress');
+  });
+
+  test('allows →done when effective autonomy meets completionAutonomyLevel', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const created = await ctx.taskManager.createTask({ title: 'Task', description: 'Desc' });
+    await ctx.taskManager.startTask(created.id);
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: created.id, status: 'done' })
+    );
+
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('done');
+  });
+
+  test('gates workflow-backed →done on the workflow completionAutonomyLevel', async () => {
+    const { task } = makeWorkflowBackedTask('blocked');
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 2 });
+    const blocked = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: task.id, status: 'done' })
+    );
+    expect(blocked.success).toBe(false);
+    expect(blocked.error).toContain('completionAutonomyLevel 3');
+
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 3 });
+    const allowed = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: task.id, status: 'done' })
+    );
+    expect(allowed.success).toBe(true);
+    expect((allowed.task as SpaceTask).status).toBe('done');
+  });
+
+  test('returns an error when the task vanishes during the stop-workflow path', async () => {
+    const { task } = makeWorkflowBackedTask('in_progress');
+    const spy = spyOn(ctx.runtime, 'stopWorkflowBackedTaskForStatus').mockImplementation(
+      async () => {
+        ctx.taskRepo.deleteTask(task.id);
+        return null;
+      }
+    );
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: task.id, status: 'cancelled' })
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('not found after stopping its workflow run');
+    spy.mockRestore();
+  });
+
+  test('stops the run when a new dependency blocks an in_progress workflow-backed task', async () => {
+    const { task } = makeWorkflowBackedTask('in_progress');
+    const dep = await ctx.taskManager.createTask({ title: 'Unmet dep', description: '' });
+    const spy = spyOn(ctx.runtime, 'blockWorkflowBackedTask').mockResolvedValue({
+      ...task,
+      status: 'blocked',
+      blockReason: 'dependency_added',
+    });
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: task.id, depends_on: [dep.id] })
+    );
+
+    expect(result.success).toBe(true);
+    expect(spy).toHaveBeenCalledWith(
+      ctx.spaceId,
+      task.id,
+      expect.objectContaining({
+        status: 'blocked',
+        blockReason: 'dependency_added',
+        dependsOn: [dep.id],
+      })
+    );
+    expect((result.task as SpaceTask).status).toBe('blocked');
+    spy.mockRestore();
+  });
+
+  test('skips the dependency-block teardown for tasks without a workflow run', async () => {
+    const created = await ctx.taskManager.createTask({ title: 'Task', description: 'Desc' });
+    await ctx.taskManager.startTask(created.id);
+    const dep = await ctx.taskManager.createTask({ title: 'Unmet dep', description: '' });
+    const spy = spyOn(ctx.runtime, 'blockWorkflowBackedTask');
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: created.id, depends_on: [dep.id] })
+    );
+
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('blocked');
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
 });
 
 describe('createSpaceAgentToolHandlers — publish_task', () => {

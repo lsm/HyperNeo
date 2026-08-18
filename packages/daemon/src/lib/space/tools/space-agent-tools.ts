@@ -7,6 +7,7 @@ import {
   isRateOrUsageLimited,
   isWorkflowRecoveryTransition,
   KNOWN_TOOLS,
+  SPACE_TASK_STATUSES,
 } from '@hyperneo/shared';
 import type {
   CreateEvolutionEpisodeParams,
@@ -43,6 +44,7 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import type { AgentSession } from '../../agent/agent-session';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus';
 import { Logger } from '../../logger';
+import { arraysEqual } from '../../utils/array-utils';
 import type { SessionManager } from '../../session/session-manager';
 import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers';
 import { requireAgentFamily } from '../agents/agent-family-resolver';
@@ -2066,6 +2068,27 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             return jsonResult({ success: true, task: updated });
           }
 
+          if (task.status === 'approved') {
+            return jsonResult({
+              success: false,
+              error:
+                `update_task cannot transition a task out of 'approved' directly. ` +
+                `Use mark_complete to finish post-approval work (approved → done) — its gates ` +
+                `own the post-approval session, the PR-merged check, and the pointer cleanup ` +
+                `the transition would otherwise skip.`,
+            });
+          }
+          if (task.status === 'review' && args.status === 'done') {
+            return jsonResult({
+              success: false,
+              error:
+                `update_task cannot transition a task from 'review' to 'done' directly. ` +
+                `Use the approve_task tool (gated by completionAutonomyLevel) or wait for the ` +
+                `human approval banner so the approval source is stamped and the pending ` +
+                `completion checkpoint clears properly.`,
+            });
+          }
+
           const fromActivePaused =
             task.status === 'in_progress' ||
             task.status === 'blocked' ||
@@ -2109,12 +2132,57 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             });
           }
 
+          if (args.status === 'done') {
+            const space = config.spaceManager ? await config.spaceManager.getSpace(spaceId) : null;
+            const spaceLevel =
+              space?.autonomyLevel ??
+              (getSpaceAutonomyLevel ? await getSpaceAutonomyLevel(spaceId) : 1);
+            const agentLevel = getCallingAgentAutonomyLevel();
+            const currentLevel = agentLevel == null ? spaceLevel : Math.min(spaceLevel, agentLevel);
+            let completionAutonomyLevel = 5;
+            if (task.workflowRunId) {
+              const run = workflowRunRepo.getRun(task.workflowRunId);
+              if (run?.workflowId) {
+                const workflow = workflowManager.getWorkflowForRun(run);
+                if (workflow?.completionAutonomyLevel !== undefined) {
+                  completionAutonomyLevel = workflow.completionAutonomyLevel;
+                }
+              }
+            }
+            if (currentLevel < completionAutonomyLevel) {
+              logAudit(
+                'update_task',
+                {
+                  blocked: true,
+                  reason: 'completion_autonomy',
+                  agentLevel,
+                  spaceLevel,
+                  required: completionAutonomyLevel,
+                },
+                args.task_id
+              );
+              return jsonResult({
+                success: false,
+                error:
+                  `update_task not permitted to set status 'done': effective autonomy level ` +
+                  `${currentLevel} < workflow completionAutonomyLevel ${completionAutonomyLevel}. ` +
+                  `Use submit_for_approval to request human review.`,
+              });
+            }
+          }
+
           if (shouldStopWorkflowForStatus) {
             const stopped = await runtime.stopWorkflowBackedTaskForStatus(spaceId, args.task_id, {
               status: args.status,
               ...fieldParams,
             });
-            const updated = stopped ?? taskRepo.getTask(args.task_id) ?? task;
+            const updated = stopped ?? taskRepo.getTask(args.task_id);
+            if (!updated) {
+              return jsonResult({
+                success: false,
+                error: `Task ${args.task_id} not found after stopping its workflow run.`,
+              });
+            }
 
             logAudit('update_task', auditParams(), args.task_id);
 
@@ -2152,7 +2220,41 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           return jsonResult({ success: true, task: updated });
         }
 
-        const updated = await applyFieldUpdates();
+        let updated = await applyFieldUpdates();
+
+        const dependencyBlockedRun =
+          args.depends_on !== undefined &&
+          task.status === 'in_progress' &&
+          !!task.workflowRunId &&
+          !arraysEqual(task.dependsOn ?? [], args.depends_on) &&
+          updated.status === 'blocked' &&
+          updated.blockReason === 'dependency_added';
+
+        if (dependencyBlockedRun) {
+          updated =
+            (await runtime.blockWorkflowBackedTask(spaceId, args.task_id, {
+              ...fieldParams,
+              status: 'blocked',
+              blockReason: 'dependency_added',
+              result: 'Dependency added while task was in progress',
+              completedAt: null,
+            })) ?? updated;
+
+          logAudit(
+            'update_task',
+            {
+              title: args.title,
+              description: args.description,
+              priority: args.priority,
+              depends_on: args.depends_on,
+              status: args.status,
+              dependencyBlockRunStopped: true,
+            },
+            args.task_id
+          );
+
+          return jsonResult({ success: true, task: updated });
+        }
 
         logAudit(
           'update_task',
@@ -4185,7 +4287,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
     ),
     tool(
       'update_task',
-      "Edit an existing task's title, description, priority, dependencies, or status. The task must belong to this space. Only the fields you provide are updated. Status changes get the same transitions the UI offers (Start, Pause, Block, Reopen, Resume, Mark Done, Cancel, Archive) and are validated against the transition table. 'review' and 'approved' cannot be set here — use submit_for_approval instead.",
+      "Edit an existing task's title, description, priority, dependencies, or status. The task must belong to this space. Only the fields you provide are updated. Status changes get the same transitions the UI offers (Start, Pause, Block, Reopen, Resume, Cancel, Archive) and are validated against the transition table. 'review'/'approved' cannot be set, transitions out of 'approved' and review→done are rejected (use submit_for_approval / approve_task / mark_complete), and setting 'done' is gated by the workflow's completionAutonomyLevel.",
       {
         task_id: z.string().describe('UUID of the task to update'),
         title: z.string().min(1).optional().describe('New title for the task'),
@@ -4198,22 +4300,10 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
             'New dependency list (replaces existing). All must be in the same space. Cycles and non-existent IDs are rejected.'
           ),
         status: z
-          .enum([
-            'draft',
-            'open',
-            'in_progress',
-            'review',
-            'approved',
-            'done',
-            'blocked',
-            'cancelled',
-            'rate_limited',
-            'usage_limited',
-            'archived',
-          ])
+          .enum(SPACE_TASK_STATUSES)
           .optional()
           .describe(
-            "New task status (same transitions as the UI: e.g. open→in_progress Start, in_progress→open Pause, open/blocked→blocked Block, cancelled→open Reopen, done/blocked→in_progress Resume, →done Mark Done, →cancelled Cancel, →archived Archive). Invalid transitions are rejected with the allowed list. 'review' and 'approved' are rejected — use submit_for_approval so pending-completion/approval metadata is stamped. 'rate_limited'/'usage_limited' are runtime-set only."
+            "New task status (same transitions as the UI: e.g. open→in_progress Start, in_progress→open Pause, open→blocked Block, cancelled→open Reopen, done/blocked→in_progress Resume, →cancelled Cancel, →archived Archive). Invalid transitions are rejected with the allowed list. 'review' and 'approved' cannot be set here; review→done and any exit from 'approved' are rejected (use approve_task / mark_complete); 'done' requires autonomy ≥ completionAutonomyLevel (else submit_for_approval); 'rate_limited'/'usage_limited' are runtime-set only."
           ),
       },
       (args) => handlers.update_task(args)

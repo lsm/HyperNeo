@@ -1,3 +1,4 @@
+import { SPACE_TASK_STATUSES } from '@hyperneo/shared';
 import { z } from 'zod';
 
 export const ApproveTaskSchema = z
@@ -77,21 +78,9 @@ export const UpdateTaskSchema = z.object({
   priority: z.enum(['low', 'normal', 'high', 'urgent']).describe('New priority').optional(),
   depends_on: z.array(z.string()).describe('New dependency list (replaces existing)').optional(),
   status: z
-    .enum([
-      'draft',
-      'open',
-      'in_progress',
-      'review',
-      'approved',
-      'done',
-      'blocked',
-      'cancelled',
-      'archived',
-      'rate_limited',
-      'usage_limited',
-    ])
+    .enum(SPACE_TASK_STATUSES)
     .describe(
-      "New task status (same transitions as the UI). Invalid transitions are rejected with the allowed list. 'review' and 'approved' cannot be set here — use submit_for_approval instead."
+      "New task status (same transitions as the UI). Invalid transitions are rejected with the allowed list. 'review'/'approved' cannot be set; review→done and exits from 'approved' are rejected (approve_task / mark_complete); 'done' is gated by completionAutonomyLevel (else submit_for_approval)."
     )
     .optional(),
 });
