@@ -409,9 +409,6 @@ async function createInProcessDaemonServer(
   }
 
   process.env.NODE_ENV = 'test';
-  if (!process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS) {
-    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '30000';
-  }
 
   const workspace =
     externalWorkspacePath ??
