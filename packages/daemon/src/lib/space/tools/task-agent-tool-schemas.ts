@@ -76,6 +76,24 @@ export const UpdateTaskSchema = z.object({
   description: z.string().describe('New description for the task').optional(),
   priority: z.enum(['low', 'normal', 'high', 'urgent']).describe('New priority').optional(),
   depends_on: z.array(z.string()).describe('New dependency list (replaces existing)').optional(),
+  status: z
+    .enum([
+      'draft',
+      'open',
+      'in_progress',
+      'review',
+      'approved',
+      'done',
+      'blocked',
+      'cancelled',
+      'archived',
+      'rate_limited',
+      'usage_limited',
+    ])
+    .describe(
+      "New task status (same transitions as the UI). Invalid transitions are rejected with the allowed list. 'review' and 'approved' cannot be set here — use submit_for_approval instead."
+    )
+    .optional(),
 });
 
 export type UpdateTaskInput = z.infer<typeof UpdateTaskSchema>;

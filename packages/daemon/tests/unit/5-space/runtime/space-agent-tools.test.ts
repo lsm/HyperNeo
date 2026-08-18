@@ -33,7 +33,7 @@ import {
 import { getLongHorizonAgentTemplate } from '../../../../src/lib/space/agents/long-horizon-agent-templates.ts';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store.ts';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
-import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
+import type { SpaceTask, SpaceTaskStatus, SpaceWorkflow, SpaceWorkflowRun } from '@hyperneo/shared';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { formatAgentMessage } from '../../../../src/lib/space/agent-message-envelope.ts';
 import { getModelsCache, setModelsCache } from '../../../../src/lib/model-service.ts';
@@ -8053,6 +8053,310 @@ describe('createSpaceAgentToolHandlers — update_task', () => {
 
     const names = getRegisteredToolNames(server);
     expect(names).toContain('update_task');
+  });
+});
+
+describe('createSpaceAgentToolHandlers — update_task status transitions', () => {
+  let ctx: TestCtx;
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  function makeWorkflowBackedTask(
+    status: SpaceTaskStatus,
+    title = 'T'
+  ): { task: SpaceTask; run: SpaceWorkflowRun } {
+    const wf = buildSingleStepWorkflow(
+      ctx.spaceId,
+      ctx.workflowManager,
+      ctx.agentId,
+      `WF-${title}`
+    );
+    const run = ctx.workflowRunRepo.createRun({
+      spaceId: ctx.spaceId,
+      workflowId: wf.id,
+      title: 'Run',
+    });
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title,
+      description: '',
+      workflowRunId: run.id,
+    });
+    return { task: ctx.taskRepo.updateTask(task.id, { status }) ?? task, run };
+  }
+
+  test('transitions a cancelled task to open (UI Reopen parity)', async () => {
+    const created = await ctx.taskManager.createTask({ title: 'Task', description: 'Desc' });
+    await ctx.taskManager.cancelTask(created.id);
+    expect(ctx.taskRepo.getTask(created.id)?.status).toBe('cancelled');
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: created.id, status: 'open' })
+    );
+
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('open');
+  });
+
+  test('transitions open → in_progress (UI Start parity) and applies other fields', async () => {
+    const created = await ctx.taskManager.createTask({ title: 'Task', description: 'Desc' });
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({
+        task_id: created.id,
+        status: 'in_progress',
+        priority: 'high',
+      })
+    );
+
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('in_progress');
+    expect((result.task as SpaceTask).priority).toBe('high');
+  });
+
+  test('returns the transition-table error for invalid transitions', async () => {
+    const created = await ctx.taskManager.createTask({
+      title: 'Task',
+      description: 'Desc',
+      status: 'draft',
+    });
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: created.id, status: 'in_progress' })
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Invalid status transition from 'draft' to 'in_progress'");
+    expect(result.error).toContain('Allowed: open, archived');
+    expect(ctx.taskRepo.getTask(created.id)?.status).toBe('draft');
+  });
+
+  test('same→same status is a no-op, not a transition error', async () => {
+    const created = await ctx.taskManager.createTask({ title: 'Task', description: 'Desc' });
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({
+        task_id: created.id,
+        status: 'open',
+        title: 'Renamed',
+      })
+    );
+
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('open');
+    expect((result.task as SpaceTask).title).toBe('Renamed');
+  });
+
+  test("rejects bare transitions into 'review'", async () => {
+    const created = await ctx.taskManager.createTask({ title: 'Task', description: 'Desc' });
+    await ctx.taskManager.startTask(created.id);
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: created.id, status: 'review' })
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("cannot transition a task into 'review' directly");
+    expect(result.error).toContain('submit_for_approval');
+    expect(ctx.taskRepo.getTask(created.id)?.status).toBe('in_progress');
+  });
+
+  test("rejects bare transitions into 'approved'", async () => {
+    const created = await ctx.taskManager.createTask({ title: 'Task', description: 'Desc' });
+    await ctx.taskManager.startTask(created.id);
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: created.id, status: 'approved' })
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("cannot transition a task into 'approved' directly");
+    expect(ctx.taskRepo.getTask(created.id)?.status).toBe('in_progress');
+  });
+
+  test('rejects archiving a task that belongs to an active workflow run', async () => {
+    const { task } = makeWorkflowBackedTask('open');
+    const handlers = makeHandlers(ctx, { isWorkflowRunActive: () => true });
+
+    const result = parseResult(
+      await handlers.update_task({ task_id: task.id, status: 'archived' })
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/active workflow run/);
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('open');
+  });
+
+  test('archives a workflow-backed task whose run is terminal', async () => {
+    const { task } = makeWorkflowBackedTask('done');
+    const handlers = makeHandlers(ctx, { isWorkflowRunActive: () => false });
+
+    const result = parseResult(
+      await handlers.update_task({ task_id: task.id, status: 'archived' })
+    );
+
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('archived');
+  });
+
+  test('routes workflow-backed recovery transitions through recoverWorkflowBackedTask', async () => {
+    const cases: Array<{ from: SpaceTaskStatus; to: SpaceTaskStatus }> = [
+      { from: 'done', to: 'in_progress' },
+      { from: 'blocked', to: 'open' },
+      { from: 'blocked', to: 'in_progress' },
+      { from: 'cancelled', to: 'open' },
+      { from: 'cancelled', to: 'in_progress' },
+      { from: 'rate_limited', to: 'in_progress' },
+      { from: 'usage_limited', to: 'in_progress' },
+    ];
+    for (const { from, to } of cases) {
+      const { task, run } = makeWorkflowBackedTask(from, `T-${from}-${to}`);
+      const spy = spyOn(ctx.runtime, 'recoverWorkflowBackedTask').mockResolvedValue({
+        task: { ...task, status: to },
+        run,
+      });
+
+      const result = parseResult(
+        await makeHandlers(ctx).update_task({ task_id: task.id, status: to })
+      );
+
+      expect(result.success).toBe(true);
+      expect(spy).toHaveBeenCalledWith(ctx.spaceId, task.id, to);
+      expect((result.task as SpaceTask).status).toBe(to);
+      spy.mockRestore();
+    }
+  });
+
+  test('recovery transition does not emit space.task.updated from the tool', async () => {
+    const { task, run } = makeWorkflowBackedTask('cancelled');
+    const emitted: Array<Record<string, unknown>> = [];
+    const mockBus = {
+      async publish(event: string, payload: Record<string, unknown>) {
+        if (event === 'space.task.updated') emitted.push(payload);
+      },
+    };
+    const spy = spyOn(ctx.runtime, 'recoverWorkflowBackedTask').mockResolvedValue({
+      task: { ...task, status: 'open' },
+      run,
+    });
+    const handlers = makeHandlers(ctx, {
+      internalEventBus:
+        mockBus as unknown as import('../../../../src/lib/internal-event-bus').InternalEventBus<
+          import('../../../../src/lib/internal-event-bus').DaemonInternalEventMap
+        >,
+    });
+
+    const result = parseResult(await handlers.update_task({ task_id: task.id, status: 'open' }));
+
+    expect(result.success).toBe(true);
+    expect(emitted).toHaveLength(0);
+    spy.mockRestore();
+  });
+
+  test('recovery transition applies follow-up field updates', async () => {
+    const { task, run } = makeWorkflowBackedTask('cancelled');
+    const spy = spyOn(ctx.runtime, 'recoverWorkflowBackedTask').mockResolvedValue({
+      task: { ...task, status: 'open' },
+      run,
+    });
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({
+        task_id: task.id,
+        status: 'open',
+        description: 'Reopened with a new plan',
+      })
+    );
+
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).description).toBe('Reopened with a new plan');
+    spy.mockRestore();
+  });
+
+  test('stops the workflow when an active/paused workflow-backed task moves to a stopped status', async () => {
+    const cases: Array<{ from: SpaceTaskStatus; to: SpaceTaskStatus }> = [
+      { from: 'in_progress', to: 'open' },
+      { from: 'in_progress', to: 'cancelled' },
+      { from: 'blocked', to: 'cancelled' },
+      { from: 'rate_limited', to: 'blocked' },
+      { from: 'usage_limited', to: 'open' },
+    ];
+    for (const { from, to } of cases) {
+      const { task } = makeWorkflowBackedTask(from, `T-${from}-${to}`);
+      const spy = spyOn(ctx.runtime, 'stopWorkflowBackedTaskForStatus').mockResolvedValue({
+        ...task,
+        status: to,
+      });
+      const recoverSpy = spyOn(ctx.runtime, 'recoverWorkflowBackedTask');
+
+      const result = parseResult(
+        await makeHandlers(ctx).update_task({ task_id: task.id, status: to })
+      );
+
+      expect(result.success).toBe(true);
+      expect(spy).toHaveBeenCalledWith(
+        ctx.spaceId,
+        task.id,
+        expect.objectContaining({ status: to })
+      );
+      expect(recoverSpy).not.toHaveBeenCalled();
+      spy.mockRestore();
+      recoverSpy.mockRestore();
+    }
+  });
+
+  test('uses setTaskStatus for workflow-backed transitions that neither recover nor stop the run', async () => {
+    const { task } = makeWorkflowBackedTask('open');
+    const stopSpy = spyOn(ctx.runtime, 'stopWorkflowBackedTaskForStatus');
+    const recoverSpy = spyOn(ctx.runtime, 'recoverWorkflowBackedTask');
+
+    const result = parseResult(
+      await makeHandlers(ctx).update_task({ task_id: task.id, status: 'in_progress' })
+    );
+
+    expect(result.success).toBe(true);
+    expect((result.task as SpaceTask).status).toBe('in_progress');
+    expect(stopSpy).not.toHaveBeenCalled();
+    expect(recoverSpy).not.toHaveBeenCalled();
+    stopSpy.mockRestore();
+    recoverSpy.mockRestore();
+  });
+
+  test('emits space.task.updated and logs audit with previousStatus on plain transitions', async () => {
+    const emitted: Array<Record<string, unknown>> = [];
+    const mockBus = {
+      async publish(event: string, payload: Record<string, unknown>) {
+        if (event === 'space.task.updated') emitted.push(payload);
+      },
+    };
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    const created = await ctx.taskManager.createTask({ title: 'Task', description: 'Desc' });
+    await ctx.taskManager.cancelTask(created.id);
+    const handlers = makeHandlers(ctx, {
+      internalEventBus:
+        mockBus as unknown as import('../../../../src/lib/internal-event-bus').InternalEventBus<
+          import('../../../../src/lib/internal-event-bus').DaemonInternalEventMap
+        >,
+      auditLogRepo,
+    });
+
+    const result = parseResult(await handlers.update_task({ task_id: created.id, status: 'open' }));
+
+    expect(result.success).toBe(true);
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].taskId).toBe(created.id);
+    expect((emitted[0].task as SpaceTask).status).toBe('open');
+
+    const summaries = auditLogRepo
+      .listByTask(created.id)
+      .map((entry) => JSON.parse(entry.paramsSummary ?? '{}') as Record<string, unknown>);
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0].status).toBe('open');
+    expect(summaries[0].previousStatus).toBe('cancelled');
   });
 });
 
