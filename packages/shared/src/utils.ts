@@ -75,3 +75,21 @@ export function appendDraftText(existing: string, text: string): string {
     !(text.length > 0 && CJK_SCRIPT.test(text[0] ?? ''));
   return `${existing}${needsSpace ? ' ' : ''}${text}`.slice(0, DRAFT_CHAR_LIMIT);
 }
+
+export function matchesDraftOrComposition(
+  draft: string,
+  pending: string,
+  expected: string
+): 'direct' | 'composition' | null {
+  if (draft.trim() === expected.trim()) return 'direct';
+  if (pending.trim() !== '') {
+    const composed = composeDraftWhole(draft, pending);
+    if (composed !== null && composed.trim() === expected.trim()) return 'composition';
+  }
+  return null;
+}
+
+export function composeDraftWhole(draft: string, pending: string): string | null {
+  const composed = appendDraftText(draft, pending);
+  return composed === `${draft}${pending}` || composed === `${draft} ${pending}` ? composed : null;
+}

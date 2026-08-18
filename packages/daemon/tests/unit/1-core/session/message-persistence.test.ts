@@ -27,6 +27,7 @@ describe('MessagePersistence', () => {
   let messageHubEventSpy: ReturnType<typeof mock>;
   let internalEventBusPublishSpy: ReturnType<typeof mock>;
   let processingStateSpy: ReturnType<typeof mock>;
+  let dbGetSessionSpy: ReturnType<typeof mock>;
 
   beforeEach(() => {
     mockSession = {
@@ -66,8 +67,14 @@ describe('MessagePersistence', () => {
     } as unknown as SessionCache;
 
     saveUserMessageSpy = mock(() => 'db-msg-1');
+    dbGetSessionSpy = mock(() => ({
+      id: 'test-session-id',
+      status: 'active',
+      metadata: {},
+    }));
     mockDb = {
       saveUserMessage: saveUserMessageSpy,
+      getSession: dbGetSessionSpy,
     } as unknown as Database;
 
     messageHubEventSpy = mock(async () => {});
@@ -92,6 +99,14 @@ describe('MessagePersistence', () => {
       mockInternalEventBus
     );
   });
+
+  const setStoredDraftState = (metadata: Record<string, unknown>): void => {
+    dbGetSessionSpy.mockReturnValue({
+      id: 'test-session-id',
+      status: 'active',
+      metadata,
+    });
+  };
 
   it('persists idle immediate as enqueued and defers dispatch to the durable handler', async () => {
     await persistence.persist({
@@ -122,6 +137,128 @@ describe('MessagePersistence', () => {
         deliveryMode: 'immediate',
         skipQueryStart: false,
       })
+    );
+  });
+
+  it('flags hasDraftToClear when the sent text matches the draft directly', async () => {
+    setStoredDraftState({ inputDraft: 'hello idle' });
+    mockAgentSession.getSessionData.mockReturnValue({
+      ...mockSession,
+      metadata: { ...mockSession.metadata, inputDraft: 'hello idle' },
+    });
+    await persistence.persist({
+      sessionId: 'test-session-id',
+      messageId: 'msg-1',
+      content: 'hello idle',
+    });
+    expect(internalEventBusPublishSpy).toHaveBeenCalledWith(
+      'message.persisted',
+      expect.objectContaining({ hasDraftToClear: true })
+    );
+  });
+
+  it('flags hasDraftToClear when the sent text matches the voice composition', async () => {
+    setStoredDraftState({ inputDraft: 'hello idle', inputDraftVoicePending: 'plus voice' });
+    mockAgentSession.getSessionData.mockReturnValue({
+      ...mockSession,
+      metadata: {
+        ...mockSession.metadata,
+        inputDraft: 'hello idle',
+        inputDraftVoicePending: 'plus voice',
+      },
+    });
+    await persistence.persist({
+      sessionId: 'test-session-id',
+      messageId: 'msg-1',
+      content: 'hello idle plus voice',
+    });
+    expect(internalEventBusPublishSpy).toHaveBeenCalledWith(
+      'message.persisted',
+      expect.objectContaining({ hasDraftToClear: true, voicePendingSent: 'plus voice' })
+    );
+  });
+
+  it('does not flag hasDraftToClear when neither the draft nor the composition matches', async () => {
+    setStoredDraftState({ inputDraft: 'different draft', inputDraftVoicePending: 'voice' });
+    mockAgentSession.getSessionData.mockReturnValue({
+      ...mockSession,
+      metadata: {
+        ...mockSession.metadata,
+        inputDraft: 'different draft',
+        inputDraftVoicePending: 'voice',
+      },
+    });
+    await persistence.persist({
+      sessionId: 'test-session-id',
+      messageId: 'msg-1',
+      content: 'hello idle',
+    });
+    expect(internalEventBusPublishSpy).toHaveBeenCalledWith(
+      'message.persisted',
+      expect.objectContaining({ hasDraftToClear: false })
+    );
+  });
+
+  it("computes the gate from the pre-send snapshot, immune to the sender's optimistic clear", async () => {
+    setStoredDraftState({ inputDraft: 'typing', inputDraftVoicePending: 'voice' });
+    mockAgentSession.getSessionData.mockReturnValue({
+      ...mockSession,
+      metadata: {
+        ...mockSession.metadata,
+        inputDraft: null,
+        inputDraftVoicePending: 'voice',
+      },
+    });
+    await persistence.persist({
+      sessionId: 'test-session-id',
+      messageId: 'msg-1',
+      content: 'typing voice',
+    });
+    expect(internalEventBusPublishSpy).toHaveBeenCalledWith(
+      'message.persisted',
+      expect.objectContaining({ hasDraftToClear: true, voicePendingSent: 'voice' })
+    );
+  });
+
+  it('flags a voice-only composition send (empty draft, pending alone)', async () => {
+    setStoredDraftState({ inputDraft: null, inputDraftVoicePending: 'voice' });
+    mockAgentSession.getSessionData.mockReturnValue({
+      ...mockSession,
+      metadata: {
+        ...mockSession.metadata,
+        inputDraft: null,
+        inputDraftVoicePending: 'voice',
+      },
+    });
+    await persistence.persist({
+      sessionId: 'test-session-id',
+      messageId: 'msg-1',
+      content: 'voice',
+    });
+    expect(internalEventBusPublishSpy).toHaveBeenCalledWith(
+      'message.persisted',
+      expect.objectContaining({ hasDraftToClear: true, voicePendingSent: 'voice' })
+    );
+  });
+
+  it('carries the staging when the sent text extends the pre-send composition', async () => {
+    setStoredDraftState({ inputDraft: 'typing', inputDraftVoicePending: 'voice' });
+    mockAgentSession.getSessionData.mockReturnValue({
+      ...mockSession,
+      metadata: {
+        ...mockSession.metadata,
+        inputDraft: 'typing',
+        inputDraftVoicePending: 'voice',
+      },
+    });
+    await persistence.persist({
+      sessionId: 'test-session-id',
+      messageId: 'msg-1',
+      content: 'typing voice now',
+    });
+    expect(internalEventBusPublishSpy).toHaveBeenCalledWith(
+      'message.persisted',
+      expect.objectContaining({ hasDraftToClear: true, voicePendingSent: 'voice' })
     );
   });
 

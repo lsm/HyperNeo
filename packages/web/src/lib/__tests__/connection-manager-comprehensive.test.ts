@@ -50,7 +50,6 @@ const mockTransportObj: {
 
 vi.mock('@hyperneo/shared', () => ({
   generateUUID: () => `test-uuid-${Math.random()}`,
-  appendDraftText: (a: string, b: string) => (a ? `${a} ${b}` : b),
   MessageHub: class MockMessageHub {
     constructor() {
       return mockHubObj;

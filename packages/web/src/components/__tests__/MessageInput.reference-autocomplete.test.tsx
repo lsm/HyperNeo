@@ -9,6 +9,7 @@ let mockDraftContent = '';
 
 const mockSetContent = vi.fn(() => {});
 const mockClearDraft = vi.fn(() => {});
+const mockHoldDraftAdoption = vi.fn(async (fn: () => Promise<unknown>) => fn());
 const mockClearAttachments = vi.fn(() => {});
 const mockGetImagesForSend = vi.fn(() => undefined);
 const mockRequest = vi.fn(async () => ({ messages: [] }));
@@ -50,6 +51,7 @@ vi.mock('../../hooks', () => ({
     content: mockDraftContent,
     setContent: mockSetContent,
     clear: mockClearDraft,
+    holdDraftAdoption: mockHoldDraftAdoption,
   }),
   useModelSwitcher: () => ({
     currentModel: 'mock-model',

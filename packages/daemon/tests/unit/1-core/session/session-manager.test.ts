@@ -1335,12 +1335,12 @@ describe('SessionManager', () => {
         });
       });
 
-      it('should clear draft when hasDraftToClear is true', async () => {
+      it('clears the draft on a direct match and keeps a staged transcript', async () => {
         const handler = eventHandlers.get('message.persisted');
 
         (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
           id: 'test-id',
-          metadata: { inputDraft: 'test draft' },
+          metadata: { inputDraft: 'test message', inputDraftVoicePending: 'voice' },
         });
 
         await handler?.({
@@ -1350,25 +1350,29 @@ describe('SessionManager', () => {
           hasDraftToClear: true,
         });
 
-        expect(mockDb.updateSession).toHaveBeenCalled();
+        expect(mockDb.updateSession).toHaveBeenCalledWith(
+          'test-id',
+          expect.objectContaining({
+            metadata: expect.objectContaining({ inputDraft: null }),
+          })
+        );
+        const call = mockDb.updateSession.mock.calls[0]?.[1] as {
+          metadata: Record<string, unknown>;
+        };
+        expect(call.metadata.inputDraftVoicePending).toBeUndefined();
       });
 
-      it('re-anchors a staged voice baseline when the send-clear runs', async () => {
+      it('clears the draft and the staged transcript on a composition match', async () => {
         const handler = eventHandlers.get('message.persisted');
 
         (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
           id: 'test-id',
-          metadata: {
-            inputDraft: 'test draft',
-            inputDraftVersion: 2,
-            inputDraftVoicePending: 'voice',
-            inputDraftVoiceBaseline: 'test draft',
-          },
+          metadata: { inputDraft: 'test message', inputDraftVoicePending: 'voice' },
         });
 
         await handler?.({
           sessionId: 'test-id',
-          userMessageText: 'test message',
+          userMessageText: 'test message voice',
           needsWorkspaceInit: false,
           hasDraftToClear: true,
         });
@@ -1378,19 +1382,18 @@ describe('SessionManager', () => {
           expect.objectContaining({
             metadata: expect.objectContaining({
               inputDraft: null,
-              inputDraftVersion: 3,
-              inputDraftVoiceBaseline: '',
+              inputDraftVoicePending: null,
             }),
           })
         );
       });
 
-      it('bumps inputDraftVersion when the sent-message draft clear runs', async () => {
+      it('writes nothing when the fresh draft matches neither the text nor the composition', async () => {
         const handler = eventHandlers.get('message.persisted');
 
         (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
           id: 'test-id',
-          metadata: { inputDraft: 'test draft', inputDraftVersion: 4 },
+          metadata: { inputDraft: 'newer edits', inputDraftVoicePending: 'voice' },
         });
 
         await handler?.({
@@ -1400,12 +1403,111 @@ describe('SessionManager', () => {
           hasDraftToClear: true,
         });
 
-        expect(mockDb.updateSession).toHaveBeenCalledWith(
-          'test-id',
-          expect.objectContaining({
-            metadata: expect.objectContaining({ inputDraft: null, inputDraftVersion: 5 }),
-          })
-        );
+        expect(mockDb.updateSession).not.toHaveBeenCalled();
+      });
+
+      it("consumes only the staging when the sender's optimistic clear already emptied the draft", async () => {
+        const handler = eventHandlers.get('message.persisted');
+
+        (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+          id: 'test-id',
+          metadata: { inputDraft: null, inputDraftVoicePending: 'voice' },
+        });
+
+        await handler?.({
+          sessionId: 'test-id',
+          userMessageText: 'typing voice',
+          needsWorkspaceInit: false,
+          hasDraftToClear: true,
+          voicePendingSent: 'voice',
+        });
+
+        expect(mockDb.updateSession).toHaveBeenCalledWith('test-id', {
+          metadata: { inputDraftVoicePending: null },
+        });
+        const call = mockDb.updateSession.mock.calls[0]?.[1] as {
+          metadata: Record<string, unknown>;
+        };
+        expect(call.metadata.inputDraft).toBeUndefined();
+      });
+
+      it('keeps a staging that a later landing extended mid-send', async () => {
+        const handler = eventHandlers.get('message.persisted');
+
+        (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+          id: 'test-id',
+          metadata: { inputDraft: null, inputDraftVoicePending: 'voice more' },
+        });
+
+        await handler?.({
+          sessionId: 'test-id',
+          userMessageText: 'typing voice',
+          needsWorkspaceInit: false,
+          hasDraftToClear: true,
+          voicePendingSent: 'voice',
+        });
+
+        expect(mockDb.updateSession).not.toHaveBeenCalled();
+      });
+
+      it('consumes the staging when the sent text extends the pre-send composition', async () => {
+        const handler = eventHandlers.get('message.persisted');
+
+        (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+          id: 'test-id',
+          metadata: { inputDraft: null, inputDraftVoicePending: 'voice' },
+        });
+
+        await handler?.({
+          sessionId: 'test-id',
+          userMessageText: 'typing voice now',
+          needsWorkspaceInit: false,
+          hasDraftToClear: true,
+          voicePendingSent: 'voice',
+        });
+
+        expect(mockDb.updateSession).toHaveBeenCalledWith('test-id', {
+          metadata: { inputDraftVoicePending: null },
+        });
+      });
+
+      it('clears both the empty draft and the staging on a voice-only composition send', async () => {
+        const handler = eventHandlers.get('message.persisted');
+
+        (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+          id: 'test-id',
+          metadata: { inputDraft: null, inputDraftVoicePending: 'voice' },
+        });
+
+        await handler?.({
+          sessionId: 'test-id',
+          userMessageText: 'voice',
+          needsWorkspaceInit: false,
+          hasDraftToClear: true,
+        });
+
+        expect(mockDb.updateSession).toHaveBeenCalledWith('test-id', {
+          metadata: { inputDraft: null, inputDraftVoicePending: null },
+        });
+      });
+
+      it("writes nothing when the sender's composition-match clear already consumed the staging", async () => {
+        const handler = eventHandlers.get('message.persisted');
+
+        (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+          id: 'test-id',
+          metadata: { inputDraft: null, inputDraftVoicePending: null },
+        });
+
+        await handler?.({
+          sessionId: 'test-id',
+          userMessageText: 'voice',
+          needsWorkspaceInit: false,
+          hasDraftToClear: true,
+          voicePendingSent: 'voice',
+        });
+
+        expect(mockDb.updateSession).not.toHaveBeenCalled();
       });
     });
 

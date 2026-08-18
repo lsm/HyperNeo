@@ -646,7 +646,7 @@ describe('Session RPC Handlers — models.list', () => {
   });
 });
 
-describe('Session RPC Handlers — session.update voice baseline refresh', () => {
+describe('Session RPC Handlers — session.update voice adoption', () => {
   let messageHubData: ReturnType<typeof createMockMessageHub>;
   let eventBus: ReturnType<typeof createMockInternalEventBus>;
   let sessionManager: {
@@ -656,9 +656,6 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
   };
   let existingPending: string | null;
   let existingDraft: string | null;
-  let existingBaseline: string | null | undefined;
-  let existingBaselineSeq: number | null | undefined;
-  let existingDraftVersion: number | null | undefined;
   let sessionExists: boolean;
 
   beforeEach(async () => {
@@ -666,9 +663,6 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
     eventBus = createMockInternalEventBus();
     existingPending = null;
     existingDraft = null;
-    existingBaseline = undefined;
-    existingBaselineSeq = undefined;
-    existingDraftVersion = undefined;
     sessionExists = true;
     sessionManager = {
       getSession: mock(() => null),
@@ -679,9 +673,6 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
               metadata: {
                 inputDraft: existingDraft,
                 inputDraftVoicePending: existingPending,
-                inputDraftVoiceBaseline: existingBaseline,
-                inputDraftVoiceBaselineSeq: existingBaselineSeq,
-                inputDraftVersion: existingDraftVersion,
               },
             }
           : null
@@ -695,113 +686,117 @@ describe('Session RPC Handlers — session.update voice baseline refresh', () =>
     setupSessionHandlers(messageHubData.hub, sessionManager, eventBus, {} as SpaceManager);
   });
 
-  it('returns the folded draft value so the client can adopt it', async () => {
-    existingPending = null;
-    existingDraft = 'old draft voice words';
-    existingBaseline = 'old draft';
-    existingDraftVersion = 2;
+  it('clears the staged transcript when the write contains it (adoption)', async () => {
+    existingPending = 'the voice text';
     const handler = messageHubData.handlers.get('session.update');
-    const result = (await handler!(
-      { sessionId: 's1', metadata: { inputDraft: 'stale edits' } },
-      {}
-    )) as { success: boolean; draftVersion?: number; draftValue?: string };
-    expect(result.success).toBe(true);
-    expect(result.draftVersion).toBe(3);
-    expect(result.draftValue).toBe('stale edits voice words');
-  });
-
-  it('re-anchors the baseline to the new draft when a pending sequence is staged', async () => {
-    existingPending = 'voice';
-    const handler = messageHubData.handlers.get('session.update');
-    await handler!({ sessionId: 's1', metadata: { inputDraft: 'a b' } }, {});
+    await handler!({ sessionId: 's1', metadata: { inputDraft: 'my edits the voice text' } }, {});
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: { inputDraft: 'a b', inputDraftVoiceBaseline: 'a b', inputDraftVersion: 1 },
+      metadata: { inputDraft: 'my edits the voice text', inputDraftVoicePending: null },
     });
   });
 
-  it('leaves the baseline untouched when no pending sequence is staged', async () => {
+  it('keeps the staged transcript when the write lacks it (cross-tab safety)', async () => {
+    existingPending = 'the voice text';
     const handler = messageHubData.handlers.get('session.update');
-    await handler!({ sessionId: 's1', metadata: { inputDraft: 'plain edit' } }, {});
-    const write = sessionManager.updateSession.mock.calls[0][1] as {
-      metadata: Record<string, unknown>;
-    };
-    expect(write.metadata.inputDraftVoiceBaseline).toBeUndefined();
+    await handler!({ sessionId: 's1', metadata: { inputDraft: 'unaware tab typing' } }, {});
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: 'unaware tab typing' },
+    });
   });
 
-  it('anchors a cleared draft to an empty baseline (pending merges onto nothing)', async () => {
+  it('adopts across a CJK composition boundary', async () => {
+    existingPending = '世界';
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!({ sessionId: 's1', metadata: { inputDraft: '你好世界' } }, {});
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: '你好世界', inputDraftVoicePending: null },
+    });
+  });
+
+  it('clears typing only on an empty write while a draft was staged', async () => {
     existingPending = 'voice';
+    existingDraft = 'typing';
     const handler = messageHubData.handlers.get('session.update');
     await handler!({ sessionId: 's1', metadata: { inputDraft: null } }, {});
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: { inputDraft: null, inputDraftVoiceBaseline: '', inputDraftVersion: 1 },
+      metadata: { inputDraft: null },
     });
   });
 
-  it('folds the merged transcripts into a stale save (baseline lingers, pending cleared)', async () => {
-    existingPending = null;
-    existingDraft = 'old draft voice words';
-    existingBaseline = 'old draft';
+  it('keeps an UNSEEN staged transcript on an empty write over an already-empty draft', async () => {
+    existingPending = 'voice';
+    existingDraft = null;
     const handler = messageHubData.handlers.get('session.update');
-    await handler!({ sessionId: 's1', metadata: { inputDraft: 'stale edits' } }, {});
+    await handler!({ sessionId: 's1', metadata: { inputDraft: null } }, {});
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: {
-        inputDraft: 'stale edits voice words',
-        inputDraftVoiceBaseline: 'stale edits',
-        inputDraftVersion: 1,
-      },
+      metadata: { inputDraft: null },
+    });
+    expect(sessionManager.updateSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats a whitespace-only write as a typing clear that keeps the staging', async () => {
+    existingPending = 'voice';
+    existingDraft = null;
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!({ sessionId: 's1', metadata: { inputDraft: '   ' } }, {});
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: '   ' },
     });
   });
 
-  it('reduces a stale-folded draft to the transcripts on the retrying strip', async () => {
-    existingPending = null;
-    existingDraft = 'stale edits voice words';
-    existingBaseline = 'stale edits';
-    existingBaselineSeq = 1;
-    const handler = messageHubData.handlers.get('session.stripVoiceBaseline');
+  it('acknowledges with success only — no version or folded-value protocol', async () => {
+    existingPending = 'voice';
+    const handler = messageHubData.handlers.get('session.update');
     const result = (await handler!(
-      { sessionId: 's1', expected: 'stale edits voice words', expectedSeq: 1 },
+      { sessionId: 's1', metadata: { inputDraft: 'has voice' } },
       {}
-    )) as { updated: boolean; value: string };
-    expect(result).toEqual({ updated: true, value: 'voice words' });
+    )) as Record<string, unknown>;
+    expect(result).toEqual({ success: true });
   });
 
-  it('applies a post-merge save as-is when it already carries the transcripts', async () => {
-    existingPending = null;
-    existingDraft = 'old draft voice words';
-    existingBaseline = 'old draft';
-    existingDraftVersion = 3;
+  it('leaves the staged transcript untouched on a metadata-only write (no inputDraft key)', async () => {
+    existingPending = 'voice';
+    existingDraft = 'typing';
     const handler = messageHubData.handlers.get('session.update');
-    await handler!(
-      {
-        sessionId: 's1',
-        expectedDraftVersion: 3,
-        metadata: { inputDraft: 'new edits voice words' },
-      },
-      {}
-    );
+    await handler!({ sessionId: 's1', metadata: { title: 'New title' } }, {});
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: {
-        inputDraft: 'new edits voice words',
-        inputDraftVoiceBaseline: null,
-        inputDraftVersion: 4,
-      },
+      metadata: { title: 'New title' },
     });
   });
 
-  it('folds a stale save that coincidentally ends with the transcript phrase', async () => {
-    existingPending = null;
-    existingDraft = 'please say hello';
-    existingBaseline = 'please say';
-    existingDraftVersion = 2;
+  it('consumes a MID-STRING coincidental containment (the documented trade-off)', async () => {
+    existingPending = 'ok';
+    existingDraft = 'typed';
     const handler = messageHubData.handlers.get('session.update');
-    await handler!({ sessionId: 's1', metadata: { inputDraft: 'please say hello' } }, {});
+    await handler!({ sessionId: 's1', metadata: { inputDraft: 'looks ok to me' } }, {});
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: {
-        inputDraft: 'please say hello hello',
-        inputDraftVoiceBaseline: 'please say hello',
-        inputDraftVersion: 3,
-      },
+      metadata: { inputDraft: 'looks ok to me', inputDraftVoicePending: null },
     });
+  });
+
+  it('adopts a trailing-whitespace transcript through a trimmed save', async () => {
+    existingPending = 'hello';
+    existingDraft = 'typed';
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!({ sessionId: 's1', metadata: { inputDraft: 'typed hello' } }, {});
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: 'typed hello', inputDraftVoicePending: null },
+    });
+  });
+
+  it('adopts a LEGACY untrimmed pending (staged by a pre-PR daemon) through a trimmed save', async () => {
+    existingPending = 'hello ';
+    existingDraft = 'typed';
+    const handler = messageHubData.handlers.get('session.update');
+    await handler!({ sessionId: 's1', metadata: { inputDraft: 'typed hello' } }, {});
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: 'typed hello', inputDraftVoicePending: null },
+    });
+  });
+
+  it('no longer registers the retired reconciliation RPCs', async () => {
+    expect(messageHubData.handlers.get('session.stripVoiceBaseline')).toBeUndefined();
+    expect(messageHubData.handlers.get('session.mergeVoiceDraftBackup')).toBeUndefined();
   });
 });
 
@@ -814,11 +809,6 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
   };
   let existingPending: string | null;
   let existingAppendLog: Array<{ id: string; ts: number }> | null;
-  let existingDraft: string | null;
-  let existingBaseline: string | null | undefined;
-  let existingBaselineSeq: number | null | undefined;
-  let existingMergeClaimLog: Array<{ id: string; ts: number }> | null;
-  let existingDraftVersion: number | null | undefined;
   let sessionExists: boolean;
 
   beforeEach(async () => {
@@ -826,11 +816,6 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     eventBus = createMockInternalEventBus();
     existingPending = 'existing';
     existingAppendLog = null;
-    existingDraft = null;
-    existingBaseline = undefined;
-    existingBaselineSeq = undefined;
-    existingMergeClaimLog = null;
-    existingDraftVersion = undefined;
     sessionExists = true;
     sessionManager = {
       getSessionFromDB: mock(() =>
@@ -838,13 +823,8 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
           ? {
               id: 's1',
               metadata: {
-                inputDraft: existingDraft,
                 inputDraftVoicePending: existingPending,
-                inputDraftVoiceBaseline: existingBaseline,
-                inputDraftVoiceBaselineSeq: existingBaselineSeq,
                 inputDraftVoiceAppendLog: existingAppendLog,
-                inputDraftVoiceMergeClaimLog: existingMergeClaimLog,
-                inputDraftVersion: existingDraftVersion,
               },
             }
           : null
@@ -880,16 +860,12 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     });
   });
 
-  it('appends with no leading space when nothing is pending', async () => {
+  it('appends with no leading space and no baseline snapshot when nothing is pending', async () => {
     existingPending = null;
     const handler = messageHubData.handlers.get('session.appendVoiceDraft');
     await handler!({ sessionId: 's1', text: 'hello' }, {});
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: {
-        inputDraftVoicePending: 'hello',
-        inputDraftVoiceBaseline: '',
-        inputDraftVoiceBaselineSeq: 1,
-      },
+      metadata: { inputDraftVoicePending: 'hello' },
     });
   });
 
@@ -918,378 +894,136 @@ describe('Session RPC Handlers — session.appendVoiceDraft', () => {
     expect(sessionManager.updateSession).not.toHaveBeenCalled();
   });
 
-  it('records the outbox dedupId alongside the append', async () => {
+  it('stages whole at exactly the character limit and rejects one character over', async () => {
+    existingPending = 'p'.repeat(99_994);
     const handler = messageHubData.handlers.get('session.appendVoiceDraft');
-    const result = (await handler!({ sessionId: 's1', text: 'hello', dedupId: 'entry-1' }, {})) as {
+    const result = (await handler!({ sessionId: 's1', text: 'hello' }, {})) as {
       success: boolean;
     };
     expect(result.success).toBe(true);
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: {
-        inputDraftVoicePending: 'existing hello',
-        inputDraftVoiceAppendLog: [{ id: 'entry-1', ts: expect.any(Number) }],
-      },
+      metadata: { inputDraftVoicePending: `${'p'.repeat(99_994)} hello` },
+    });
+    existingPending = 'p'.repeat(99_995);
+    await expect(handler!({ sessionId: 's1', text: 'hello' }, {})).rejects.toThrow(
+      'Pending voice draft is at the character limit'
+    );
+  });
+
+  it('normalizes a trailing-whitespace transcript at staging', async () => {
+    existingPending = null;
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    await handler!({ sessionId: 's1', text: 'hello  ' }, {});
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraftVoicePending: 'hello' },
     });
   });
 
-  it('skips a re-append whose dedupId already merged (idempotent replay)', async () => {
-    existingAppendLog = [{ id: 'entry-1', ts: Date.now() }];
+  it('normalizes a legacy untrimmed pending when composing the next append', async () => {
+    existingPending = '  spaced  ';
     const handler = messageHubData.handlers.get('session.appendVoiceDraft');
-    const result = (await handler!({ sessionId: 's1', text: 'hello', dedupId: 'entry-1' }, {})) as {
-      success: boolean;
-      deduped: boolean;
-    };
-    expect(result).toEqual({ success: true, deduped: true });
+    await handler!({ sessionId: 's1', text: 'more' }, {});
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraftVoicePending: 'spaced more' },
+    });
+  });
+
+  it('rejects a non-string dedupId before reading or writing', async () => {
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    await expect(
+      handler!({ sessionId: 's1', text: 'hello', dedupId: 42 as never }, {})
+    ).rejects.toThrow('dedupId must be a string when provided');
     expect(sessionManager.updateSession).not.toHaveBeenCalled();
   });
 
-  it('dedups an out-of-order replay even after a later entry committed', async () => {
-    existingAppendLog = [
-      { id: 'entry-1', ts: Date.now() },
-      { id: 'entry-2', ts: Date.now() },
-    ];
+  it('propagates a failed commit without announcing a landing or acking success', async () => {
+    sessionManager.updateSession.mockImplementation(async () => {
+      throw new Error('db locked');
+    });
     const handler = messageHubData.handlers.get('session.appendVoiceDraft');
-    const result = (await handler!({ sessionId: 's1', text: 'hello', dedupId: 'entry-1' }, {})) as {
-      success: boolean;
-      deduped: boolean;
-    };
-    expect(result).toEqual({ success: true, deduped: true });
-    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+    await expect(handler!({ sessionId: 's1', text: 'hello' }, {})).rejects.toThrow('db locked');
+    expect(
+      messageHubData.hub.event.mock.calls.filter(([m]) => m === 'session.voiceLanded')
+    ).toHaveLength(0);
   });
 
-  it('accumulates processed ids with no count cap — only the TTL bounds the log', async () => {
-    existingAppendLog = Array.from({ length: 600 }, (_, i) => ({
-      id: `entry-${i}`,
-      ts: Date.now(),
-    }));
-    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
-    await handler!({ sessionId: 's1', text: 'hello', dedupId: 'entry-600' }, {});
-    const write = sessionManager.updateSession.mock.calls[0][1] as {
-      metadata: { inputDraftVoiceAppendLog: Array<{ id: string }> };
-    };
-    expect(write.metadata.inputDraftVoiceAppendLog).toHaveLength(601);
-    expect(write.metadata.inputDraftVoiceAppendLog.map((e) => e.id)).toContain('entry-0');
-  });
-
-  it('prunes dedup ids past the retry lifetime instead of keeping them forever', async () => {
+  it('prunes expired dedup-log entries on the next append', async () => {
+    const ttlMs = 24 * 60 * 60 * 1000 + 5 * 60 * 1000;
     existingAppendLog = [
-      { id: 'stale', ts: Date.now() - 25 * 60 * 60 * 1000 },
+      { id: 'expired', ts: Date.now() - ttlMs - 1_000 },
       { id: 'fresh', ts: Date.now() },
     ];
     const handler = messageHubData.handlers.get('session.appendVoiceDraft');
-    await handler!({ sessionId: 's1', text: 'hello', dedupId: 'entry-new' }, {});
-    const write = sessionManager.updateSession.mock.calls[0][1] as {
-      metadata: { inputDraftVoiceAppendLog: Array<{ id: string }> };
+    await handler!({ sessionId: 's1', text: 'hello', dedupId: 'entry-2' }, {});
+    const updates = sessionManager.updateSession.mock.calls[0]?.[1] as {
+      metadata: { inputDraftVoiceAppendLog: Array<{ id: string; ts: number }> };
     };
-    expect(write.metadata.inputDraftVoiceAppendLog.map((e) => e.id)).toEqual([
-      'fresh',
-      'entry-new',
-    ]);
+    const ids = updates.metadata.inputDraftVoiceAppendLog.map((entry) => entry.id);
+    expect(ids).toContain('fresh');
+    expect(ids).toContain('entry-2');
+    expect(ids).not.toContain('expired');
   });
 
-  it('no longer dedups an id past the retry lifetime', async () => {
-    existingAppendLog = [{ id: 'entry-1', ts: Date.now() - 25 * 60 * 60 * 1000 }];
+  it('does not match a replayed dedupId whose log entry expired', async () => {
+    const ttlMs = 24 * 60 * 60 * 1000 + 5 * 60 * 1000;
+    existingAppendLog = [{ id: 'entry-1', ts: Date.now() - ttlMs - 1_000 }];
     const handler = messageHubData.handlers.get('session.appendVoiceDraft');
     const result = (await handler!({ sessionId: 's1', text: 'hello', dedupId: 'entry-1' }, {})) as {
       success: boolean;
       deduped?: boolean;
     };
-    expect(result).toEqual({ success: true });
+    expect(result.deduped).toBeUndefined();
     expect(sessionManager.updateSession).toHaveBeenCalled();
   });
 
-  it('ignores the dedup guard when no dedupId is supplied (live one-shot path)', async () => {
+  it('records the outbox dedupId alongside the append and announces the landing', async () => {
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    const result = (await handler!({ sessionId: 's1', text: 'hello', dedupId: 'entry-1' }, {})) as {
+      success: boolean;
+    };
+    expect(result.success).toBe(true);
+    const updates = sessionManager.updateSession.mock.calls[0]?.[1] as {
+      metadata: { inputDraftVoiceAppendLog: Array<{ id: string; ts: number }> };
+    };
+    expect(updates.metadata.inputDraftVoiceAppendLog).toHaveLength(1);
+    expect(updates.metadata.inputDraftVoiceAppendLog[0].id).toBe('entry-1');
+  });
+
+  it('skips a deduped replay without writing or re-announcing the landing', async () => {
     existingAppendLog = [{ id: 'entry-1', ts: Date.now() }];
     const handler = messageHubData.handlers.get('session.appendVoiceDraft');
-    await handler!({ sessionId: 's1', text: 'hello' }, {});
-    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: { inputDraftVoicePending: 'existing hello' },
-    });
-  });
-
-  it('snapshots the pre-sequence draft as the merge baseline on a new pending sequence', async () => {
-    existingPending = null;
-    existingDraft = 'user draft';
-    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
-    await handler!({ sessionId: 's1', text: 'hello' }, {});
-    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: {
-        inputDraftVoicePending: 'hello',
-        inputDraftVoiceBaseline: 'user draft',
-        inputDraftVoiceBaselineSeq: 1,
-      },
-    });
-  });
-
-  it('does not overwrite the baseline mid-sequence (pending already staged)', async () => {
-    existingPending = 'first';
-    existingDraft = 'draft at sequence start';
-    existingBaseline = 'draft at sequence start';
-    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
-    await handler!({ sessionId: 's1', text: 'second' }, {});
-    const write = sessionManager.updateSession.mock.calls[0][1] as {
-      metadata: Record<string, unknown>;
+    const result = (await handler!({ sessionId: 's1', text: 'hello', dedupId: 'entry-1' }, {})) as {
+      success: boolean;
+      deduped?: boolean;
     };
-    expect(write.metadata.inputDraftVoiceBaseline).toBeUndefined();
-  });
-
-  it('strips the pre-sequence baseline, keeping every merged transcript (stripVoiceBaseline)', async () => {
-    const handler = messageHubData.handlers.get('session.stripVoiceBaseline');
-    expect(handler).toBeDefined();
-    existingBaseline = 'stale baseline';
-    existingBaselineSeq = 3;
-    existingDraft = 'stale baseline first second';
-    const result = (await handler!(
-      { sessionId: 's1', expected: 'stale baseline first second', expectedSeq: 3 },
-      {}
-    )) as { updated: boolean; value: string };
-    expect(result).toEqual({ updated: true, value: 'first second' });
-    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: {
-        inputDraft: 'first second',
-        inputDraftVoiceBaseline: null,
-        inputDraftVoiceLastStrippedSeq: 3,
-        inputDraftVersion: 1,
-      },
-    });
-  });
-
-  it('declines the strip when a NEWER sequence replaced the baseline (draft text unchanged)', async () => {
-    const handler = messageHubData.handlers.get('session.stripVoiceBaseline');
-    existingBaseline = 'stale baseline transcript';
-    existingBaselineSeq = 2;
-    existingDraft = 'stale baseline transcript';
-    const result = (await handler!(
-      { sessionId: 's1', expected: 'stale baseline transcript', expectedSeq: 1 },
-      {}
-    )) as { updated: boolean };
-    expect(result).toEqual({ updated: false });
+    expect(result).toEqual({ success: true, deduped: true });
     expect(sessionManager.updateSession).not.toHaveBeenCalled();
-  });
-
-  it('strips to an empty draft when the baseline alone remains (stripVoiceBaseline)', async () => {
-    existingBaseline = 'stale baseline';
-    existingBaselineSeq = 1;
-    existingDraft = 'stale baseline';
-    const handler = messageHubData.handlers.get('session.stripVoiceBaseline');
-    const result = (await handler!(
-      { sessionId: 's1', expected: 'stale baseline', expectedSeq: 1 },
-      {}
-    )) as { updated: boolean; value: string };
-    expect(result).toEqual({ updated: true, value: '' });
-    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: {
-        inputDraft: null,
-        inputDraftVoiceBaseline: null,
-        inputDraftVoiceLastStrippedSeq: 1,
-        inputDraftVersion: 1,
-      },
-    });
-  });
-
-  it('declines the strip without a baseline snapshot or on a draft mismatch', async () => {
-    const handler = messageHubData.handlers.get('session.stripVoiceBaseline');
-    existingBaseline = undefined;
-    existingDraft = 'any';
-    expect(await handler!({ sessionId: 's1', expected: 'any', expectedSeq: 1 }, {})).toEqual({
-      updated: false,
-    });
-
-    existingBaseline = 'old';
-    existingBaselineSeq = 1;
-    existingDraft = 'newer edit from elsewhere';
     expect(
-      await handler!({ sessionId: 's1', expected: 'old transcripts', expectedSeq: 1 }, {})
-    ).toEqual({ updated: false });
-    expect(sessionManager.updateSession).not.toHaveBeenCalled();
+      messageHubData.hub.event.mock.calls.filter(([m]) => m === 'session.voiceLanded')
+    ).toHaveLength(0);
   });
 
-  it('pushes a backup ONTO the merged transcripts, keeping both (mergeVoiceDraftBackup)', async () => {
-    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
-    expect(handler).toBeDefined();
-    existingPending = null;
-    existingBaseline = 'stale baseline';
-    existingBaselineSeq = 2;
-    existingDraft = 'stale baseline first second';
-    const result = (await handler!({ sessionId: 's1', content: 'user edits' }, {})) as {
-      merged: boolean;
-      value: string;
-    };
-    expect(result).toEqual({ merged: true, value: 'user edits first second' });
-    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: {
-        inputDraft: 'user edits first second',
-        inputDraftVoiceBaseline: null,
-        inputDraftVersion: 1,
-      },
-    });
+  it('emits session.voiceLanded on the session channel after a genuine commit', async () => {
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    await handler!({ sessionId: 's1', text: 'hello' }, {});
+    expect(messageHubData.hub.event).toHaveBeenCalledWith(
+      'session.voiceLanded',
+      { sessionId: 's1' },
+      { channel: 'session:s1' }
+    );
   });
 
-  it('re-anchors the baseline when the pending is still staged (nothing merged yet)', async () => {
-    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
-    existingPending = 'voice';
-    existingBaseline = 'old draft';
-    existingBaselineSeq = 1;
-    existingDraft = 'old draft';
-    const result = (await handler!({ sessionId: 's1', content: 'user edits' }, {})) as {
-      merged: boolean;
-      value: string;
-    };
-    expect(result).toEqual({ merged: true, value: 'user edits' });
-    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: {
-        inputDraft: 'user edits',
-        inputDraftVoiceBaseline: 'user edits',
-        inputDraftVersion: 1,
-      },
-    });
-  });
-
-  it('writes the backup as a plain draft when no sequence lingers', async () => {
-    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
-    existingBaseline = undefined;
-    existingDraft = 'anything';
-    const result = (await handler!({ sessionId: 's1', content: 'user edits' }, {})) as {
-      merged: boolean;
-      value: string;
-    };
-    expect(result).toEqual({ merged: true, value: 'user edits' });
-    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: { inputDraft: 'user edits', inputDraftVersion: 1 },
-    });
-  });
-
-  it('declines the merge when the draft diverged from the baseline snapshot', async () => {
-    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
-    existingPending = null;
-    existingBaseline = 'old';
-    existingBaselineSeq = 1;
-    existingDraft = 'an unrelated newer draft';
-    const result = (await handler!({ sessionId: 's1', content: 'user edits' }, {})) as {
-      merged: boolean;
-    };
-    expect(result).toEqual({ merged: false });
-    expect(sessionManager.updateSession).not.toHaveBeenCalled();
-  });
-
-  it('clears the draft when an empty backup is pushed (owed clear retry)', async () => {
-    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
-    existingBaseline = undefined;
-    existingDraft = 'stale';
-    const result = (await handler!({ sessionId: 's1', content: '' }, {})) as {
-      merged: boolean;
-      value: string;
-    };
-    expect(result).toEqual({ merged: true, value: '' });
-    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: { inputDraft: null, inputDraftVersion: 1 },
-    });
-  });
-
-  it('acknowledges a retry of an already-committed claim without rewriting (mergeVoiceDraftBackup)', async () => {
-    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
-    existingBaseline = 'old';
-    existingBaselineSeq = 1;
-    existingDraft = 'old voice';
-    existingMergeClaimLog = [{ id: 'claim-1', ts: Date.now() }];
-    const result = (await handler!(
-      { sessionId: 's1', content: 'user edits', claimId: 'claim-1' },
-      {}
-    )) as { merged: boolean; value: string };
-    expect(result).toEqual({ merged: true, value: 'old voice' });
-    expect(sessionManager.updateSession).not.toHaveBeenCalled();
-  });
-
-  it('retains every live claim across concurrent commits (merge claim LOG)', async () => {
-    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
-    existingPending = null;
-    existingBaseline = 'old';
-    existingBaselineSeq = 1;
-    existingDraft = 'old voice';
-    existingMergeClaimLog = [{ id: 'claim-a', ts: Date.now() }];
-    const result = (await handler!(
-      { sessionId: 's1', content: 'tab b edits', claimId: 'claim-b' },
-      {}
-    )) as { merged: boolean };
-    expect(result.merged).toBe(true);
-    const write = sessionManager.updateSession.mock.calls[0][1] as {
-      metadata: Record<string, unknown>;
-    };
-    expect(write.metadata.inputDraftVoiceMergeClaimLog.map((e: { id: string }) => e.id)).toEqual([
-      'claim-a',
-      'claim-b',
-    ]);
-    const replay = (await handler!(
-      { sessionId: 's1', content: 'tab a edits', claimId: 'claim-a' },
-      {}
-    )) as { merged: boolean; value: string };
-    expect(replay.merged).toBe(true);
-  });
-
-  it('declines the merge when backup + transcripts would truncate at the limit', async () => {
-    existingPending = null;
-    existingBaseline = 'old';
-    existingBaselineSeq = 1;
-    existingDraft = `old ${'x'.repeat(99_000)}`;
-    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
-    const result = (await handler!({ sessionId: 's1', content: 'y'.repeat(5_000) }, {})) as {
-      merged: boolean;
-    };
-    expect(result).toEqual({ merged: false });
-    expect(sessionManager.updateSession).not.toHaveBeenCalled();
-  });
-
-  it('re-anchors a staged baseline when clearInputDraftIf clears the draft', async () => {
-    const handler = messageHubData.handlers.get('session.clearInputDraftIf');
-    existingDraft = 'full draft';
-    existingPending = 'voice';
-    existingBaseline = 'full draft';
-    const result = (await handler!({ sessionId: 's1', expected: 'full draft' }, {})) as {
-      cleared: boolean;
-    };
-    expect(result.cleared).toBe(true);
-    const write = sessionManager.updateSession.mock.calls[0][1] as {
-      metadata: Record<string, unknown>;
-    };
-    expect(write.metadata.inputDraftVoiceBaseline).toBe('');
-  });
-
-  it('retains every claim for the full retry lifetime (no count cap)', async () => {
-    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
-    existingPending = null;
-    existingBaseline = 'old';
-    existingBaselineSeq = 1;
-    existingDraft = 'old voice';
-    existingMergeClaimLog = Array.from({ length: 25 }, (_, i) => ({
-      id: `claim-${i}`,
-      ts: Date.now(),
-    }));
-    await handler!({ sessionId: 's1', content: 'edits', claimId: 'claim-25' }, {});
-    const write = sessionManager.updateSession.mock.calls[0][1] as {
-      metadata: { inputDraftVoiceMergeClaimLog: Array<{ id: string }> };
-    };
-    expect(write.metadata.inputDraftVoiceMergeClaimLog).toHaveLength(26);
-    expect(write.metadata.inputDraftVoiceMergeClaimLog.map((e) => e.id)).toContain('claim-0');
-  });
-
-  it('records the committed claim id alongside the merged draft', async () => {
-    const handler = messageHubData.handlers.get('session.mergeVoiceDraftBackup');
-    existingPending = null;
-    existingBaseline = 'old';
-    existingBaselineSeq = 1;
-    existingDraft = 'old voice';
-    await handler!({ sessionId: 's1', content: 'user edits', claimId: 'claim-2' }, {});
-    const write = sessionManager.updateSession.mock.calls[0][1] as {
-      metadata: Record<string, unknown>;
-    };
-    expect(write.metadata.inputDraft).toBe('user edits voice');
-    expect(write.metadata.inputDraftVoiceMergeClaimLog).toEqual([
-      { id: 'claim-2', ts: expect.any(Number) },
-    ]);
+  it('does not announce a landing when the append is refused', async () => {
+    existingPending = 'p'.repeat(100_000);
+    const handler = messageHubData.handlers.get('session.appendVoiceDraft');
+    await expect(handler!({ sessionId: 's1', text: 'more' }, {})).rejects.toThrow();
+    expect(
+      messageHubData.hub.event.mock.calls.filter(([m]) => m === 'session.voiceLanded')
+    ).toHaveLength(0);
   });
 });
 
-describe('Session RPC Handlers — session.get voice draft merge', () => {
+describe('Session RPC Handlers — session.get voice composition', () => {
   let messageHubData: ReturnType<typeof createMockMessageHub>;
   let eventBus: ReturnType<typeof createMockInternalEventBus>;
   let sessionManager: {
@@ -1312,39 +1046,71 @@ describe('Session RPC Handlers — session.get voice draft merge', () => {
     return messageHubData.handlers.get('session.get');
   }
 
-  it('merges a pending voice transcript into the draft and clears the staging field', async () => {
+  it('presents the composition of draft and pending without persisting anything', async () => {
     const handler = await setup({
       inputDraft: 'existing',
       inputDraftVoicePending: 'hello world',
     });
     expect(handler).toBeDefined();
-    await handler!({ sessionId: 's1' }, {});
-    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: {
-        inputDraft: 'existing hello world',
-        inputDraftVoicePending: null,
-        inputDraftVersion: 1,
-      },
-    });
+    const result = (await handler!({ sessionId: 's1' }, {})) as {
+      session: { metadata: { inputDraft: string; inputDraftVoicePending: string } };
+    };
+    expect(result.session.metadata.inputDraft).toBe('existing hello world');
+    expect(result.session.metadata.inputDraftVoicePending).toBe('hello world');
+    expect(sessionManager.updateSession).not.toHaveBeenCalled();
   });
 
-  it('leaves the draft untouched when there is no pending transcript', async () => {
+  it('composes across a CJK boundary with no separating space', async () => {
+    const handler = await setup({ inputDraft: '你', inputDraftVoicePending: '世界' });
+    const result = (await handler!({ sessionId: 's1' }, {})) as {
+      session: { metadata: { inputDraft: string } };
+    };
+    expect(result.session.metadata.inputDraft).toBe('你世界');
+  });
+
+  it('returns the draft alone when there is no pending transcript', async () => {
     const handler = await setup({ inputDraft: 'existing' });
-    await handler!({ sessionId: 's1' }, {});
+    const result = (await handler!({ sessionId: 's1' }, {})) as {
+      session: { metadata: { inputDraft: string } };
+    };
+    expect(result.session.metadata.inputDraft).toBe('existing');
     expect(sessionManager.updateSession).not.toHaveBeenCalled();
   });
 
   it('ignores a whitespace-only pending transcript', async () => {
     const handler = await setup({ inputDraft: 'existing', inputDraftVoicePending: '   ' });
-    await handler!({ sessionId: 's1' }, {});
+    const result = (await handler!({ sessionId: 's1' }, {})) as {
+      session: { metadata: { inputDraft: string } };
+    };
+    expect(result.session.metadata.inputDraft).toBe('existing');
     expect(sessionManager.updateSession).not.toHaveBeenCalled();
   });
 
-  it('retains the pending transcript when a full draft leaves no room for it', async () => {
+  it('returns the raw draft when the composition would not fit whole', async () => {
     const fullDraft = 'x'.repeat(100_000);
     const handler = await setup({ inputDraft: fullDraft, inputDraftVoicePending: 'hello' });
-    await handler!({ sessionId: 's1' }, {});
+    const result = (await handler!({ sessionId: 's1' }, {})) as {
+      session: { metadata: { inputDraft: string; inputDraftVoicePending: string } };
+    };
+    expect(result.session.metadata.inputDraft).toBe(fullDraft);
+    expect(result.session.metadata.inputDraftVoicePending).toBe('hello');
     expect(sessionManager.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('presents the composition at exactly the character limit and raw one over', async () => {
+    const draft = 'x'.repeat(99_995);
+    const handler = await setup({ inputDraft: draft, inputDraftVoicePending: 'abcd' });
+    const result = (await handler!({ sessionId: 's1' }, {})) as {
+      session: { metadata: { inputDraft: string } };
+    };
+    expect(result.session.metadata.inputDraft).toBe(`${draft} abcd`);
+    expect(result.session.metadata.inputDraft.length).toBe(100_000);
+
+    const overHandler = await setup({ inputDraft: `${draft}x`, inputDraftVoicePending: 'abcd' });
+    const overResult = (await overHandler!({ sessionId: 's1' }, {})) as {
+      session: { metadata: { inputDraft: string } };
+    };
+    expect(overResult.session.metadata.inputDraft).toBe(`${draft}x`);
   });
 });
 
@@ -1356,13 +1122,18 @@ describe('Session RPC Handlers — session.clearInputDraftIf', () => {
     updateSession: ReturnType<typeof mock>;
   };
   let persistedDraft: string | null;
+  let persistedPending: string | null;
 
   beforeEach(async () => {
     messageHubData = createMockMessageHub();
     eventBus = createMockInternalEventBus();
     persistedDraft = 'snapshot';
+    persistedPending = null;
     sessionManager = {
-      getSessionFromDB: mock(() => ({ id: 's1', metadata: { inputDraft: persistedDraft } })),
+      getSessionFromDB: mock(() => ({
+        id: 's1',
+        metadata: { inputDraft: persistedDraft, inputDraftVoicePending: persistedPending },
+      })),
       updateSession: mock(async () => {}),
     } as unknown as SessionManager;
     const { setupSessionHandlers } = await import(
@@ -1379,7 +1150,33 @@ describe('Session RPC Handlers — session.clearInputDraftIf', () => {
     };
     expect(result.cleared).toBe(true);
     expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
-      metadata: { inputDraft: null, inputDraftVersion: 1 },
+      metadata: { inputDraft: null },
+    });
+  });
+
+  it('keeps the staged transcript on a direct (typing-only) match', async () => {
+    persistedDraft = 'snapshot';
+    persistedPending = 'voice';
+    const handler = messageHubData.handlers.get('session.clearInputDraftIf');
+    const result = (await handler!({ sessionId: 's1', expected: 'snapshot' }, {})) as {
+      cleared: boolean;
+    };
+    expect(result.cleared).toBe(true);
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: null },
+    });
+  });
+
+  it('clears the staged transcript too on a composition match', async () => {
+    persistedDraft = 'snapshot';
+    persistedPending = 'voice';
+    const handler = messageHubData.handlers.get('session.clearInputDraftIf');
+    const result = (await handler!({ sessionId: 's1', expected: 'snapshot voice' }, {})) as {
+      cleared: boolean;
+    };
+    expect(result.cleared).toBe(true);
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: null, inputDraftVoicePending: null },
     });
   });
 
@@ -1400,5 +1197,18 @@ describe('Session RPC Handlers — session.clearInputDraftIf', () => {
       cleared: boolean;
     };
     expect(result.cleared).toBe(true);
+  });
+
+  it('clears both on a voice-only composition match (the displayed-draft discard path)', async () => {
+    persistedDraft = null;
+    persistedPending = 'voice';
+    const handler = messageHubData.handlers.get('session.clearInputDraftIf');
+    const result = (await handler!({ sessionId: 's1', expected: 'voice' }, {})) as {
+      cleared: boolean;
+    };
+    expect(result.cleared).toBe(true);
+    expect(sessionManager.updateSession).toHaveBeenCalledWith('s1', {
+      metadata: { inputDraft: null, inputDraftVoicePending: null },
+    });
   });
 });

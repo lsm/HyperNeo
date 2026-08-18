@@ -6,7 +6,7 @@ import type {
   MessageOrigin,
   MessageImage,
 } from '@hyperneo/shared';
-import { generateUUID } from '@hyperneo/shared';
+import { generateUUID, matchesDraftOrComposition } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus';
 import type { Database } from '../../storage/database';
 import {
@@ -297,7 +297,13 @@ export class SessionManager {
     const unsubMessagePersisted = this.internalEventBus.subscribe(
       'message.persisted',
       async (data) => {
-        const { sessionId, userMessageText, needsWorkspaceInit, hasDraftToClear } = data;
+        const {
+          sessionId,
+          userMessageText,
+          needsWorkspaceInit,
+          hasDraftToClear,
+          voicePendingSent,
+        } = data;
 
         try {
           if (needsWorkspaceInit) {
@@ -310,14 +316,25 @@ export class SessionManager {
 
           if (hasDraftToClear) {
             const beforeClear = this.getSessionFromDB(sessionId);
-            const staged = (beforeClear?.metadata?.inputDraftVoicePending ?? '').trim() !== '';
-            await this.sessionLifecycle.update(sessionId, {
-              metadata: {
-                inputDraft: null,
-                ...(staged ? { inputDraftVoiceBaseline: '' } : {}),
-                inputDraftVersion: (beforeClear?.metadata?.inputDraftVersion ?? 0) + 1,
-              },
-            } as Partial<Session>);
+            const draft = beforeClear?.metadata?.inputDraft ?? '';
+            const pending = beforeClear?.metadata?.inputDraftVoicePending ?? '';
+            const match = matchesDraftOrComposition(draft, pending, userMessageText ?? '');
+            if (match) {
+              await this.sessionLifecycle.update(sessionId, {
+                metadata: {
+                  inputDraft: null,
+                  ...(match === 'composition' ? { inputDraftVoicePending: null } : {}),
+                },
+              } as Partial<Session>);
+            } else if (
+              voicePendingSent !== undefined &&
+              pending.trim() !== '' &&
+              pending.trim() === voicePendingSent.trim()
+            ) {
+              await this.sessionLifecycle.update(sessionId, {
+                metadata: { inputDraftVoicePending: null },
+              } as Partial<Session>);
+            }
           }
         } catch (error) {
           this.logger.error(

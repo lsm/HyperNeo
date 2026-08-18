@@ -34,7 +34,6 @@ import { VoiceWaveform } from './voice/VoiceWaveform.tsx';
 import {
   enqueueTranscript,
   isPermanentAppendRefusal,
-  markVoiceTranscriptLanded,
 } from '../lib/voice/voice-transcript-outbox.ts';
 import { QueuePreviewTray, type QueuePreviewMessage } from './QueuePreviewTray.tsx';
 import { ContentContainer } from './ui/ContentContainer.tsx';
@@ -181,7 +180,7 @@ export default function MessageInput({
     };
   }, []);
 
-  const { content, setContent, clear: clearDraft } = useInputDraft(sessionId);
+  const { content, setContent, clear: clearDraft, holdDraftAdoption } = useInputDraft(sessionId);
   const contentRef = useRef(content);
   contentRef.current = content;
   const {
@@ -435,7 +434,6 @@ export default function MessageInput({
           text: transcript,
           dedupId: outboxId,
         });
-        markVoiceTranscriptLanded(targetSessionId, transcript, outboxId);
       };
       const stageFallback = async (message: string): Promise<{ ok: boolean; message: string }> => {
         try {
@@ -804,35 +802,37 @@ export default function MessageInput({
 
       submittingRef.current = true;
 
-      clearDraft();
-      clearAttachments();
+      await holdDraftAdoption(async () => {
+        clearDraft();
+        clearAttachments();
 
-      if (textareaInputRef.current) {
-        textareaInputRef.current.value = '';
-      }
+        if (textareaInputRef.current) {
+          textareaInputRef.current.value = '';
+        }
 
-      try {
-        const result = await onSend(savedContent, outgoing.images, deliveryMode);
+        try {
+          const result = await onSend(savedContent, outgoing.images, deliveryMode);
 
-        if (result === false) {
-          setContent(savedContent);
-          if (savedAttachments.length > 0) {
-            restoreAttachments(savedAttachments);
+          if (result === false) {
+            setContent(savedContent);
+            if (savedAttachments.length > 0) {
+              restoreAttachments(savedAttachments);
+            }
+            return;
           }
-          return;
-        }
 
-        if (
-          agentWorking ||
-          deliveryMode === 'defer' ||
-          queuedForCurrentTurn.length > 0 ||
-          queuedForNextTurn.length > 0
-        ) {
-          await refreshQueuedMessages();
+          if (
+            agentWorking ||
+            deliveryMode === 'defer' ||
+            queuedForCurrentTurn.length > 0 ||
+            queuedForNextTurn.length > 0
+          ) {
+            await refreshQueuedMessages();
+          }
+        } finally {
+          submittingRef.current = false;
         }
-      } finally {
-        submittingRef.current = false;
-      }
+      });
     },
     [
       disabled,
@@ -843,6 +843,7 @@ export default function MessageInput({
       restoreAttachments,
       setContent,
       onSend,
+      holdDraftAdoption,
       agentWorking,
       queuedForCurrentTurn.length,
       queuedForNextTurn.length,

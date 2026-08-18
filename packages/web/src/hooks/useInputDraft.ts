@@ -1,40 +1,13 @@
 import { useEffect, useRef, useCallback, useMemo } from 'preact/hooks';
 import { useSignal, useSignalEffect } from '@preact/signals';
-import { appendDraftText, generateUUID } from '@hyperneo/shared';
 import { connectionManager } from '../lib/connection-manager';
 import { connectionState } from '../lib/state';
-import {
-  clearDraftBackup,
-  consumeVoiceTranscriptLanded,
-  getClearTombstone,
-  getDraftBackup,
-  getLandingGeneration,
-  getLandingTranscript,
-  hasClearTombstone,
-  isLandingLive,
-  peekExpiredDraftBackup,
-  removeClearTombstone,
-  retireDraftBackupClaim,
-  saveClearTombstone,
-  saveDraftBackup,
-  voiceTranscriptLandedSignal,
-} from '../lib/voice/voice-transcript-outbox';
-
-function transcriptsFromMerge(
-  draft: string | undefined,
-  baseline: string | null | undefined
-): string | null {
-  if (typeof baseline !== 'string' || draft === undefined) return null;
-  if (draft === baseline) return '';
-  if (draft.startsWith(`${baseline} `)) return draft.slice(baseline.length + 1);
-  if (draft.startsWith(baseline)) return draft.slice(baseline.length);
-  return null;
-}
 
 export interface UseInputDraftResult {
   content: string;
   setContent: (content: string) => void;
   clear: () => void;
+  holdDraftAdoption: <T>(fn: () => Promise<T>) => Promise<T>;
 }
 
 export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraftResult {
@@ -43,85 +16,57 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
   const prevSessionIdRef = useRef<string | null>(null);
   const currentSessionIdRef = useRef(sessionId);
   const initialLoadSettledRef = useRef<string | null>(null);
-  const foldedLandingRef = useRef<Map<string, number>>(new Map());
-  const pendingClearRef = useRef<string | null>(null);
-  const draftVersionsRef = useRef<Map<string, number>>(new Map());
-  const flushKickRef = useRef<() => void>(() => {});
-  const activeMergeClaimsRef = useRef<Map<string, { claimId: string; content: string }>>(new Map());
-
-  const advanceDraftVersion = (sid: string, version: number | undefined): void => {
-    if (typeof version !== 'number') return;
-    const cached = draftVersionsRef.current.get(sid);
-    if (cached === undefined || version > cached) draftVersionsRef.current.set(sid, version);
-  };
-  const consumeLanding = useCallback((sessionId: string, generation: number): void => {
-    foldedLandingRef.current.set(sessionId, generation);
-    removeClearTombstone(sessionId);
-    consumeVoiceTranscriptLanded(sessionId, generation);
-  }, []);
+  const lastSeenContentRef = useRef<{
+    sessionId: string | null;
+    content: string;
+    cleared?: boolean;
+  }>({ sessionId: null, content: '' });
+  const lastNonEmptyContentRef = useRef<{ sessionId: string | null; content: string }>({
+    sessionId: null,
+    content: '',
+  });
+  const lastLoadedDraftRef = useRef<string>('');
+  const deferredVoiceAdoptRef = useRef<string | null>(null);
+  const submissionHoldsRef = useRef(0);
+  const loadRequestSeqRef = useRef(0);
 
   const loadDraft = useCallback(
     (
       targetSessionId: string,
       isCancelled: () => boolean,
-      onResult?: (
-        ok: boolean,
-        pendingRetained?: boolean,
-        wasCancelled?: boolean,
-        draft?: string,
-        baseline?: string | null,
-        baselineSeq?: number | null
-      ) => void,
-      reconcileOnCancel?: boolean
+      onResult?: (ok: boolean, applied?: boolean, draft?: string, voicePending?: string) => void,
+      applyGuard?: () => boolean
     ): void => {
       const hub = connectionManager.getHubIfConnected();
       if (!hub) {
         onResult?.(false);
         return;
       }
-      const requestedGeneration = voiceTranscriptLandedSignal.peek().get(targetSessionId);
+      const requestSeq = ++loadRequestSeqRef.current;
       hub
         .request<{
-          session: {
-            metadata?: {
-              inputDraft?: string;
-              inputDraftVoicePending?: string | null;
-              inputDraftVoiceBaseline?: string | null;
-              inputDraftVoiceBaselineSeq?: number | null;
-              inputDraftVersion?: number | null;
-            };
-          };
+          session?: { metadata?: { inputDraft?: string; inputDraftVoicePending?: string } };
         }>('session.get', {
           sessionId: targetSessionId,
         })
         .then((response) => {
-          const cancelled = isCancelled();
-          const draft = response.session?.metadata?.inputDraft;
-          const baseline = response.session?.metadata?.inputDraftVoiceBaseline;
-          const baselineSeq = response.session?.metadata?.inputDraftVoiceBaselineSeq;
-          const pendingRetained = !!response.session?.metadata?.inputDraftVoicePending;
-          if (typeof response.session?.metadata?.inputDraftVersion === 'number') {
-            advanceDraftVersion(targetSessionId, response.session.metadata.inputDraftVersion);
-          }
-          if (!cancelled && draft) {
+          if (isCancelled()) return;
+          const draft = response.session?.metadata?.inputDraft ?? '';
+          const applied =
+            (applyGuard ? applyGuard() : true) && loadRequestSeqRef.current === requestSeq;
+          if (applied) {
             contentSignal.value = draft;
-          } else if (
-            cancelled &&
-            reconcileOnCancel &&
-            !pendingRetained &&
-            currentSessionIdRef.current === targetSessionId &&
-            foldedLandingRef.current.get(targetSessionId) !== requestedGeneration
-          ) {
-            const transcript =
-              transcriptsFromMerge(draft, baseline) ?? getLandingTranscript(targetSessionId);
-            if (transcript) {
-              contentSignal.value = appendDraftText(contentSignal.peek(), transcript);
-            }
-            if (requestedGeneration !== undefined) {
-              foldedLandingRef.current.set(targetSessionId, requestedGeneration);
+            lastLoadedDraftRef.current = draft;
+            if (draft.trim() !== '') {
+              lastNonEmptyContentRef.current = { sessionId: targetSessionId, content: draft };
             }
           }
-          onResult?.(true, pendingRetained, cancelled, draft, baseline, baselineSeq);
+          onResult?.(
+            true,
+            applied,
+            draft,
+            response.session?.metadata?.inputDraftVoicePending ?? ''
+          );
         })
         .catch(() => {
           if (isCancelled()) return;
@@ -131,126 +76,78 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     [contentSignal]
   );
 
-  const reconcileOwedClear = useCallback(
+  const issueAdoptionRefresh = useCallback(
     (targetSessionId: string): void => {
-      const hub = connectionManager.getHubIfConnected();
-      if (!hub) return;
-      const tombstone = getClearTombstone(targetSessionId);
-      hub
-        .request<{
-          session?: {
-            metadata?: {
-              inputDraft?: string;
-              inputDraftVoicePending?: string | null;
-              inputDraftVoiceBaseline?: string | null;
-              inputDraftVoiceBaselineSeq?: number | null;
-              inputDraftVoiceLastStrippedSeq?: number | null;
-            };
-          };
-        }>('session.get', { sessionId: targetSessionId })
-        .then((response) => {
-          const meta = response.session?.metadata ?? {};
-          const observedDraft = meta.inputDraft ?? '';
-          const canAdopt = (): boolean =>
-            currentSessionIdRef.current === targetSessionId &&
-            (contentSignal.peek().trim() === '' || contentSignal.peek() === observedDraft);
-          if (
-            tombstone?.baselineSeq !== undefined &&
-            meta.inputDraftVoiceLastStrippedSeq === tombstone.baselineSeq
-          ) {
-            if (canAdopt()) {
-              contentSignal.value = meta.inputDraft ?? '';
-            }
-            removeClearTombstone(targetSessionId);
-            if (pendingClearRef.current === targetSessionId) {
-              pendingClearRef.current = null;
-            }
+      if (submissionHoldsRef.current > 0) {
+        deferredVoiceAdoptRef.current = targetSessionId;
+        return;
+      }
+      const adoptable = (): boolean => {
+        const current = contentSignal.peek();
+        return current === '' || current === lastLoadedDraftRef.current;
+      };
+      if (!adoptable()) {
+        deferredVoiceAdoptRef.current = targetSessionId;
+        return;
+      }
+      loadDraft(
+        targetSessionId,
+        () => currentSessionIdRef.current !== targetSessionId,
+        (ok, applied, draft, voicePending) => {
+          if (currentSessionIdRef.current !== targetSessionId) return;
+          if (!ok || !applied) {
+            deferredVoiceAdoptRef.current = targetSessionId;
             return;
           }
-          if ((meta.inputDraftVoicePending ?? '').trim() !== '') {
-            return hub
-              .request<{ cleared?: boolean }>('session.clearInputDraftIf', {
-                sessionId: targetSessionId,
-                expected: meta.inputDraft ?? '',
-              })
-              .then((result) => {
-                if (!result.cleared) {
-                  flushKickRef.current();
-                  return;
-                }
-                return hub
-                  .request<{ session?: { metadata?: { inputDraft?: string } } }>('session.get', {
-                    sessionId: targetSessionId,
-                  })
-                  .then((merged) => {
-                    if (currentSessionIdRef.current === targetSessionId) {
-                      const mergedDraft = merged.session?.metadata?.inputDraft ?? '';
-                      if (
-                        contentSignal.peek().trim() === '' ||
-                        contentSignal.peek() === observedDraft
-                      ) {
-                        contentSignal.value = mergedDraft;
-                      }
-                    }
-                    removeClearTombstone(targetSessionId);
-                    if (pendingClearRef.current === targetSessionId) {
-                      pendingClearRef.current = null;
-                    }
-                  });
-              })
-              .catch(() => {
-                /* stays owed — the reconnect subscription retries */
-              });
+          deferredVoiceAdoptRef.current = null;
+          if (!draft) return;
+          const pendingTrimmed = (voicePending ?? '').trim();
+          if (pendingTrimmed !== '' && !draft.includes(pendingTrimmed)) {
+            deferredVoiceAdoptRef.current = targetSessionId;
+            return;
           }
-          if (
-            typeof meta.inputDraftVoiceBaseline === 'string' &&
-            typeof meta.inputDraftVoiceBaselineSeq === 'number'
-          ) {
-            saveClearTombstone(targetSessionId, meta.inputDraftVoiceBaselineSeq);
-            return hub
-              .request<{ updated?: boolean; value?: string }>('session.stripVoiceBaseline', {
-                sessionId: targetSessionId,
-                expected: meta.inputDraft ?? '',
-                expectedSeq: meta.inputDraftVoiceBaselineSeq,
-              })
-              .then((result) => {
-                if (!result.updated) {
-                  flushKickRef.current();
-                  return;
-                }
-                if (canAdopt()) {
-                  contentSignal.value = result.value ?? '';
-                }
-                removeClearTombstone(targetSessionId);
-                if (pendingClearRef.current === targetSessionId) {
-                  pendingClearRef.current = null;
-                }
-              });
+          lastSeenContentRef.current = { sessionId: targetSessionId, content: draft };
+          if (draftSaveTimeoutRef.current) {
+            clearTimeout(draftSaveTimeoutRef.current);
+            draftSaveTimeoutRef.current = null;
           }
-          return hub
-            .request<{ cleared?: boolean }>('session.clearInputDraftIf', {
+          const hubNow = connectionManager.getHubIfConnected();
+          if (!hubNow) {
+            deferredVoiceAdoptRef.current = targetSessionId;
+            return;
+          }
+          hubNow
+            .request('session.update', {
               sessionId: targetSessionId,
-              expected: meta.inputDraft ?? '',
+              metadata: { inputDraft: draft },
             })
-            .then((result) => {
-              if (!result.cleared) {
-                flushKickRef.current();
-                return;
-              }
-              if (canAdopt()) {
-                contentSignal.value = '';
-              }
-              removeClearTombstone(targetSessionId);
-              if (pendingClearRef.current === targetSessionId) {
-                pendingClearRef.current = null;
-              }
+            .catch(() => {
+              deferredVoiceAdoptRef.current = targetSessionId;
             });
-        })
-        .catch(() => {
-          /* stays owed — the reconnect subscription retries */
-        });
+        },
+        adoptable
+      );
     },
-    [contentSignal]
+    [contentSignal, loadDraft]
+  );
+
+  const holdDraftAdoption = useCallback(
+    async <T>(fn: () => Promise<T>): Promise<T> => {
+      submissionHoldsRef.current += 1;
+      try {
+        return await fn();
+      } finally {
+        submissionHoldsRef.current -= 1;
+        if (submissionHoldsRef.current === 0) {
+          const live = currentSessionIdRef.current;
+          if (live && deferredVoiceAdoptRef.current === live && contentSignal.peek() === '') {
+            deferredVoiceAdoptRef.current = null;
+            issueAdoptionRefresh(live);
+          }
+        }
+      }
+    },
+    [contentSignal, issueAdoptionRefresh]
   );
 
   useEffect(() => {
@@ -263,339 +160,71 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     currentSessionIdRef.current = sessionId;
 
     contentSignal.value = '';
+    lastLoadedDraftRef.current = '';
 
     let cancelled = false;
+    const adoptable = (): boolean => {
+      const current = contentSignal.peek();
+      return current === '' || current === lastLoadedDraftRef.current;
+    };
     loadDraft(
       sessionId,
       () => cancelled,
-      (ok, pendingRetained, wasCancelled, draft, baseline) => {
-        if (wasCancelled) return;
+      (_ok, applied, draft, voicePending) => {
+        if (cancelled) return;
+        const pendingTrimmed = (voicePending ?? '').trim();
+        if (!applied) {
+          if (pendingTrimmed !== '') {
+            deferredVoiceAdoptRef.current = sessionId;
+          }
+          return;
+        }
         initialLoadSettledRef.current = sessionId;
-        if (hasClearTombstone(sessionId)) {
-          pendingClearRef.current = sessionId;
-          if (isLandingLive(sessionId)) {
-            voiceTranscriptLandedSignal.value = new Map(voiceTranscriptLandedSignal.value);
-          } else {
-            void reconcileOwedClear(sessionId);
-          }
-          return;
+        if (pendingTrimmed !== '' && draft && !draft.includes(pendingTrimmed)) {
+          deferredVoiceAdoptRef.current = sessionId;
         }
-        const claimed = peekExpiredDraftBackup(sessionId);
-        const backup = getDraftBackup(sessionId) ?? claimed?.content ?? null;
-        const generation = voiceTranscriptLandedSignal.value.get(sessionId);
-        const landingLive = generation !== undefined && isLandingLive(sessionId);
-        if (!ok) {
-          if (backup !== null && landingLive) contentSignal.value = backup;
-          return;
-        }
-        if (pendingRetained) {
-          if (backup !== null) {
-            contentSignal.value = backup;
-            if (!landingLive && claimed) {
-              pendingBackupFlushRef.current.set(sessionId, {
-                content: claimed.content.trim(),
-                generation: claimed.generation,
-                key: claimed.key,
-                claimId: generateUUID(),
-                ts: claimed.ts,
-              });
-              flushKickRef.current();
-            }
-          }
-          return;
-        }
-        let transcripts = transcriptsFromMerge(draft, baseline);
-        const aggregate = landingLive ? getLandingTranscript(sessionId) : null;
-        if (
-          aggregate &&
-          draft?.endsWith(aggregate) &&
-          aggregate.length > (transcripts?.length ?? -1)
-        ) {
-          transcripts = aggregate;
-        }
-        if (backup === null) {
-          if (landingLive) consumeLanding(sessionId, generation);
-          return;
-        }
-        if (transcripts === null) {
-          if (landingLive) contentSignal.value = backup;
-          return;
-        }
-        contentSignal.value = appendDraftText(backup, transcripts);
-        if (landingLive) consumeLanding(sessionId, generation);
-        else if (claimed) retireDraftBackupClaim(claimed);
-      }
+      },
+      adoptable
     );
     return () => {
       cancelled = true;
     };
-  }, [sessionId, contentSignal, loadDraft, consumeLanding, reconcileOwedClear]);
+  }, [sessionId, contentSignal, loadDraft]);
 
-  const prevReplayContentRef = useRef<{ sessionId: string | null; content: string }>({
-    sessionId: null,
-    content: '',
-  });
-  useSignalEffect(() => {
-    const generation = voiceTranscriptLandedSignal.value.get(sessionId);
-    if (generation === undefined || !isLandingLive(sessionId)) return;
-    if (initialLoadSettledRef.current !== sessionId) return;
-    void connectionState.value;
-    const content = contentSignal.value;
-    const justCleared =
-      prevReplayContentRef.current.sessionId === sessionId &&
-      prevReplayContentRef.current.content.trim() !== '';
-    prevReplayContentRef.current = { sessionId, content };
-    if (content.trim() !== '' && pendingClearRef.current !== sessionId) return;
-    let cancelled = false;
-    const oweClear = (baselineSeq?: number) => {
-      pendingClearRef.current = sessionId;
-      const persisted = saveClearTombstone(sessionId, baselineSeq);
-      if (!persisted) {
-        clearDraftBackup(sessionId);
-      }
-    };
-    const stillCurrent = () => currentSessionIdRef.current === sessionId;
-    const refresh = () => {
-      if (!stillCurrent()) return;
-      loadDraft(
-        sessionId,
-        () => cancelled,
-        (ok, pendingRetained, _wasCancelled) => {
-          if (ok && !pendingRetained) consumeLanding(sessionId, generation);
-        },
-        true
-      );
-    };
-    if (justCleared || pendingClearRef.current === sessionId) {
-      const hub = connectionManager.getHubIfConnected();
-      if (!hub) {
-        oweClear();
-        return () => {
-          cancelled = true;
-        };
-      }
-      pendingClearRef.current = null;
-      if (!saveClearTombstone(sessionId)) clearDraftBackup(sessionId);
-      loadDraft(
-        sessionId,
-        () => cancelled,
-        (ok, pendingRetained, _wasCancelled, draft, _baseline, baselineSeq) => {
-          if (!ok) {
-            oweClear();
-            return;
-          }
-          if (pendingRetained) {
-            hub
-              .request<{ cleared?: boolean }>('session.clearInputDraftIf', {
-                sessionId,
-                expected: draft ?? '',
-              })
-              .then((result) => {
-                if (!result.cleared) {
-                  oweClear();
-                  return;
-                }
-                if (stillCurrent()) refresh();
-              })
-              .catch(() => {
-                oweClear();
-              });
-            return;
-          }
-          if (typeof baselineSeq === 'number') saveClearTombstone(sessionId, baselineSeq);
-          hub
-            .request<{ updated?: boolean; value?: string }>('session.stripVoiceBaseline', {
-              sessionId,
-              expected: draft ?? '',
-              expectedSeq: baselineSeq ?? undefined,
-            })
-            .then((result) => {
-              if (!stillCurrent()) return;
-              if (result.updated) {
-                const currentContent = contentSignal.peek();
-                const stripped = result.value ?? '';
-                if (currentContent.trim() === '' || currentContent === (draft ?? '')) {
-                  contentSignal.value = stripped;
-                } else if (stripped.trim() !== '') {
-                  contentSignal.value = appendDraftText(currentContent, stripped);
-                }
-                consumeLanding(sessionId, generation);
-              } else {
-                refresh();
-              }
-            })
-            .catch(() => {
-              oweClear(baselineSeq ?? undefined);
-            });
-        },
-        true
-      );
-      return () => {
-        cancelled = true;
-      };
-    }
-    refresh();
-    return () => {
-      cancelled = true;
-    };
-  });
-
-  const lastSeenContentRef = useRef<{
-    sessionId: string | null;
-    content: string;
-    cleared?: boolean;
-  }>({ sessionId: null, content: '' });
-  const pendingBackupFlushRef = useRef<
-    Map<
-      string,
-      {
-        content: string;
-        generation: number;
-        key: string;
-        claimId: string;
-        ts: number;
-      }
-    >
-  >(new Map());
   useEffect(() => {
-    const flushRetryTimerRef: { current: ReturnType<typeof setTimeout> | null } = {
-      current: null,
-    };
-    let flushRetryDelayMs = 5_000;
-    const scheduleFlushRetry = () => {
-      if (flushRetryTimerRef.current) return;
-      flushRetryTimerRef.current = setTimeout(() => {
-        flushRetryTimerRef.current = null;
-        retryBackupFlush();
-      }, flushRetryDelayMs);
-      flushRetryDelayMs = Math.min(flushRetryDelayMs * 2, 60_000);
-    };
-    const retryBackupFlush = () => {
-      if (connectionState.value !== 'connected') return;
-      if (
-        !isLandingLive(currentSessionIdRef.current) &&
-        hasClearTombstone(currentSessionIdRef.current)
-      ) {
-        reconcileOwedClear(currentSessionIdRef.current);
-      }
+    if (!sessionId) return;
+    let unsubEvent: (() => void) | null = null;
+    const register = (): void => {
+      if (unsubEvent) return;
       const hub = connectionManager.getHubIfConnected();
       if (!hub) return;
-      const queued = [...pendingBackupFlushRef.current.entries()];
-      pendingBackupFlushRef.current.clear();
-      const requeueClaim = (
-        flushSessionId: string,
-        entry: { content: string; generation: number; key: string; claimId: string; ts: number }
-      ) => {
-        const newer = pendingBackupFlushRef.current.get(flushSessionId);
-        if (
-          newer &&
-          (newer.generation > entry.generation ||
-            (newer.generation === entry.generation && newer.ts > entry.ts))
-        ) {
-          return;
+      unsubEvent = hub.onEvent(
+        'session.voiceLanded',
+        (data: { sessionId?: string }, context?: { channel?: string }) => {
+          if (context?.channel !== `session:${sessionId}`) return;
+          if (currentSessionIdRef.current !== sessionId) return;
+          issueAdoptionRefresh(sessionId);
         }
-        pendingBackupFlushRef.current.set(flushSessionId, entry);
-        scheduleFlushRetry();
-      };
-      for (const [flushSessionId, { content, generation, key, claimId, ts }] of queued) {
-        if (flushSessionId === currentSessionIdRef.current) {
-          if (contentSignal.peek().trim() === '') {
-            hub
-              .request<{ merged?: boolean; value?: string }>('session.mergeVoiceDraftBackup', {
-                sessionId: flushSessionId,
-                content,
-                claimId,
-              })
-              .then((result) => {
-                if (!result.merged) {
-                  requeueClaim(flushSessionId, { content, generation, key, claimId, ts });
-                  return;
-                }
-                if (currentSessionIdRef.current === flushSessionId) {
-                  if (contentSignal.peek().trim() === '') {
-                    contentSignal.value = result.value ?? content;
-                  }
-                }
-                retireDraftBackupClaim({ key, generation, ts });
-              })
-              .catch(() => {
-                requeueClaim(flushSessionId, { content, generation, key, claimId, ts });
-              });
-          } else {
-            const active = contentSignal.peek().trim();
-            const boundClaim = activeMergeClaimsRef.current.get(flushSessionId);
-            const activeClaimId =
-              boundClaim && boundClaim.content === active ? boundClaim.claimId : generateUUID();
-            activeMergeClaimsRef.current.set(flushSessionId, {
-              claimId: activeClaimId,
-              content: active,
-            });
-            hub
-              .request<{ merged?: boolean; value?: string }>('session.mergeVoiceDraftBackup', {
-                sessionId: flushSessionId,
-                content: active,
-                claimId: activeClaimId,
-              })
-              .then((result) => {
-                if (result.merged) {
-                  activeMergeClaimsRef.current.delete(flushSessionId);
-                  retireDraftBackupClaim({ key, generation, ts });
-                  if (
-                    flushSessionId === currentSessionIdRef.current &&
-                    contentSignal.peek().trim() === active
-                  ) {
-                    contentSignal.value = result.value ?? active;
-                  }
-                  return;
-                }
-                requeueClaim(flushSessionId, {
-                  content: active,
-                  generation,
-                  key,
-                  claimId: activeClaimId,
-                  ts,
-                });
-              })
-              .catch(() => {
-                requeueClaim(flushSessionId, {
-                  content: active,
-                  generation,
-                  key,
-                  claimId: activeClaimId,
-                  ts,
-                });
-              });
-          }
-          continue;
-        }
-        hub
-          .request<{ merged?: boolean }>('session.mergeVoiceDraftBackup', {
-            sessionId: flushSessionId,
-            content,
-            claimId,
-          })
-          .then((result) => {
-            if (result.merged) {
-              retireDraftBackupClaim({ key, generation, ts });
-              return;
-            }
-            requeueClaim(flushSessionId, { content, generation, key, claimId, ts });
-          })
-          .catch(() => {
-            requeueClaim(flushSessionId, { content, generation, key, claimId, ts });
-          });
+      );
+    };
+    register();
+    const unsubscribeConnection = connectionState.subscribe(() => {
+      if (unsubEvent) {
+        unsubEvent();
+        unsubEvent = null;
       }
-    };
-    flushKickRef.current = () => {
-      if (connectionState.value === 'connected') scheduleFlushRetry();
-    };
-    const unsubscribe = connectionState.subscribe(retryBackupFlush);
+      register();
+      if (deferredVoiceAdoptRef.current === sessionId) {
+        deferredVoiceAdoptRef.current = null;
+        issueAdoptionRefresh(sessionId);
+      }
+    });
     return () => {
-      unsubscribe();
-      flushKickRef.current = () => {};
-      if (flushRetryTimerRef.current) clearTimeout(flushRetryTimerRef.current);
+      unsubscribeConnection();
+      if (unsubEvent) unsubEvent();
     };
-  }, [contentSignal, reconcileOwedClear]);
+  }, [sessionId, issueAdoptionRefresh]);
+
   useSignalEffect(() => {
     const content = contentSignal.value;
 
@@ -607,92 +236,25 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
     if (prevSessionIdRef.current && prevSessionIdRef.current !== sessionId) {
       const prevSessionId = prevSessionIdRef.current;
       const last = lastSeenContentRef.current;
-      const trimmedContent = last.sessionId === prevSessionId ? last.content.trim() : '';
-      const prevHasLanding = isLandingLive(prevSessionId);
-      if (prevHasLanding) {
-        const liveClaim = peekExpiredDraftBackup(prevSessionId);
-        if (liveClaim?.content.trim()) {
-          pendingBackupFlushRef.current.set(prevSessionId, {
-            content: liveClaim.content.trim(),
-            generation: liveClaim.generation,
-            key: liveClaim.key,
-            claimId: generateUUID(),
-            ts: liveClaim.ts,
-          });
-          flushKickRef.current();
-        }
-        prevSessionIdRef.current = sessionId;
-        return;
-      }
-      const claimed = peekExpiredDraftBackup(prevSessionId);
-      const flushClaimId = claimed ? generateUUID() : null;
-      const flushContent = claimed?.content.trim() || trimmedContent;
-      const queueRetry = () => {
-        if (claimed?.content.trim()) {
-          pendingBackupFlushRef.current.set(prevSessionId, {
-            content: claimed.content.trim(),
-            generation: claimed.generation,
-            key: claimed.key,
-            claimId: flushClaimId ?? generateUUID(),
-            ts: claimed.ts,
-          });
-          flushKickRef.current();
-        }
-      };
-      const pushBackup = () => {
-        const hub = connectionManager.getHubIfConnected();
-        if (!hub) {
-          queueRetry();
-          return;
-        }
-        if (!flushContent && !(last.sessionId === prevSessionId && last.cleared)) return;
-        if (!claimed) {
-          hub
-            .request<{ draftVersion?: number; draftValue?: string }>('session.update', {
-              sessionId: prevSessionId,
-              expectedDraftVersion: draftVersionsRef.current.get(prevSessionId),
-              metadata: {
-                inputDraft: flushContent || null,
-              },
-            })
-            .then((ack) => {
-              if (typeof ack?.draftValue !== 'string') {
-                advanceDraftVersion(prevSessionId, ack?.draftVersion);
-              }
-            })
-            .catch(() => {
-              /* ignore flush errors */
-            });
-          return;
-        }
-        hub
-          .request<{ merged?: boolean }>('session.mergeVoiceDraftBackup', {
-            sessionId: prevSessionId,
-            content: flushContent,
-            claimId: flushClaimId ?? undefined,
-          })
-          .then((result) => {
-            if (result.merged) retireDraftBackupClaim(claimed);
-            else queueRetry();
-          })
-          .catch(() => {
-            queueRetry();
-          });
-      };
-      pushBackup();
+      const flushContent = last.sessionId === prevSessionId ? last.content.trim() : '';
+      const wasCleared = last.sessionId === prevSessionId && !!last.cleared;
       prevSessionIdRef.current = sessionId;
+      if (!flushContent && !wasCleared) return;
+      const hub = connectionManager.getHubIfConnected();
+      if (!hub) return;
+      hub
+        .request('session.update', {
+          sessionId: prevSessionId,
+          metadata: {
+            inputDraft: flushContent || null,
+          },
+        })
+        .catch(() => {
+          /* ignore flush errors */
+        });
       return;
     }
     prevSessionIdRef.current = sessionId;
-
-    if (isLandingLive(sessionId)) {
-      if (content.trim() !== '') {
-        const backedUp = saveDraftBackup(sessionId, content, getLandingGeneration(sessionId) ?? 0);
-        if (backedUp) return;
-      } else {
-        return;
-      }
-    }
 
     const trimmedContent = content.trim();
 
@@ -701,56 +263,67 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       lastSeenContentRef.current = { sessionId, content: '', cleared: true };
       const hub = connectionManager.getHubIfConnected();
       if (hub) {
-        hub
-          .request<{ draftVersion?: number; draftValue?: string }>('session.update', {
-            sessionId,
-            expectedDraftVersion: draftVersionsRef.current.get(sessionId),
-            metadata: {
-              inputDraft: null,
-            },
-          })
-          .then((ack) => {
-            if (typeof ack?.draftValue !== 'string') {
-              advanceDraftVersion(sessionId, ack?.draftVersion);
-            }
-            if (lastSeenContentRef.current.sessionId === sessionId) {
-              lastSeenContentRef.current = { sessionId, content: '' };
-            }
-          })
-          .catch(() => {
-            /* ignore clear errors */
-          });
+        const settleCleared = (): void => {
+          if (lastSeenContentRef.current.sessionId === sessionId) {
+            lastSeenContentRef.current = { sessionId, content: '' };
+          }
+        };
+        const clearTyping = (): void => {
+          hub
+            .request('session.update', {
+              sessionId,
+              metadata: {
+                inputDraft: null,
+              },
+            })
+            .then(settleCleared)
+            .catch(() => {
+              /* ignore clear errors */
+            });
+        };
+        const prior = lastNonEmptyContentRef.current;
+        if (prior && prior.sessionId === sessionId && prior.content.trim() !== '') {
+          hub
+            .request<{ cleared?: boolean }>('session.clearInputDraftIf', {
+              sessionId,
+              expected: prior.content,
+            })
+            .then((res) => {
+              if (res?.cleared) {
+                settleCleared();
+                return;
+              }
+              clearTyping();
+            })
+            .catch(() => {
+              clearTyping();
+            });
+        } else {
+          clearTyping();
+        }
+      }
+      if (deferredVoiceAdoptRef.current === sessionId) {
+        deferredVoiceAdoptRef.current = null;
+        issueAdoptionRefresh(sessionId);
       }
       return;
     }
 
+    initialLoadSettledRef.current = sessionId;
     lastSeenContentRef.current = { sessionId, content };
+    lastNonEmptyContentRef.current = { sessionId, content };
     draftSaveTimeoutRef.current = setTimeout(async () => {
+      if (contentSignal.peek() !== content) return;
       const hub = connectionManager.getHubIfConnected();
       if (!hub) return;
 
       try {
-        const ack = await hub.request<{ draftVersion?: number; draftValue?: string }>(
-          'session.update',
-          {
-            sessionId,
-            expectedDraftVersion: draftVersionsRef.current.get(sessionId),
-            metadata: {
-              inputDraft: trimmedContent,
-            },
-          }
-        );
-        if (typeof ack?.draftValue === 'string') {
-          if (
-            currentSessionIdRef.current === sessionId &&
-            contentSignal.peek().trim() === trimmedContent
-          ) {
-            contentSignal.value = ack.draftValue;
-            advanceDraftVersion(sessionId, ack.draftVersion);
-          }
-          return;
-        }
-        advanceDraftVersion(sessionId, ack?.draftVersion);
+        await hub.request('session.update', {
+          sessionId,
+          metadata: {
+            inputDraft: trimmedContent,
+          },
+        });
       } catch {
         // Ignore draft save errors
       }
@@ -782,7 +355,8 @@ export function useInputDraft(sessionId: string, debounceMs = 250): UseInputDraf
       },
       setContent,
       clear,
+      holdDraftAdoption,
     }),
-    [contentSignal, setContent, clear]
+    [contentSignal, setContent, clear, holdDraftAdoption]
   );
 }

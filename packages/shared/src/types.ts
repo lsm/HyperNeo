@@ -313,12 +313,7 @@ export interface SessionMetadata {
   lastContextInfo?: ContextInfo | null;
   inputDraft?: string | null;
   inputDraftVoicePending?: string | null;
-  inputDraftVoiceBaseline?: string | null;
-  inputDraftVoiceBaselineSeq?: number | null;
   inputDraftVoiceAppendLog?: Array<{ id: string; ts: number }> | null;
-  inputDraftVoiceLastStrippedSeq?: number | null;
-  inputDraftVoiceMergeClaimLog?: Array<{ id: string; ts: number }> | null;
-  inputDraftVersion?: number | null;
   removedOutputs?: string[];
   resolvedQuestions?: Record<string, ResolvedQuestion>;
   lastSdkCost?: number;
@@ -432,6 +427,7 @@ export type EventType =
   | 'tools.unloaded'
   | 'session.created'
   | 'session.updated'
+  | 'session.voiceLanded'
   | 'session.deleted'
   | 'session.ended'
   | 'session.interrupted'

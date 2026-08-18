@@ -1,5 +1,12 @@
 import { describe, test, expect } from 'bun:test';
-import { appendDraftText, generateUUID, parseJson, parseJsonOptional } from '../src/utils.ts';
+import {
+  appendDraftText,
+  composeDraftWhole,
+  generateUUID,
+  matchesDraftOrComposition,
+  parseJson,
+  parseJsonOptional,
+} from '../src/utils.ts';
 
 describe('generateUUID', () => {
   test('generates valid UUID format', () => {
@@ -195,5 +202,68 @@ describe('appendDraftText', () => {
     const big = 'a'.repeat(100_000);
     expect(appendDraftText(big, 'more').length).toBe(100_000);
     expect(appendDraftText('x', 'y'.repeat(200_000)).length).toBe(100_000);
+  });
+});
+
+describe('composeDraftWhole', () => {
+  test('returns the joined string when both parts fit whole (with separator)', () => {
+    expect(composeDraftWhole('hello', 'world')).toBe('hello world');
+  });
+
+  test('returns the joined string with no separator across a CJK boundary', () => {
+    expect(composeDraftWhole('你好', '世界')).toBe('你好世界');
+  });
+
+  test('returns the pending alone when the draft is empty', () => {
+    expect(composeDraftWhole('', 'voice')).toBe('voice');
+  });
+
+  test('returns null when the join would be sliced at the character limit', () => {
+    expect(composeDraftWhole('a'.repeat(100_000), 'more')).toBeNull();
+  });
+
+  test('accepts a composition of exactly the character limit', () => {
+    const draft = 'x'.repeat(99_995);
+    const composed = composeDraftWhole(draft, 'abcd');
+    expect(composed).toBe(`${draft} abcd`);
+    expect(composed?.length).toBe(100_000);
+    expect(composeDraftWhole(`${draft}x`, 'abcd')).toBeNull();
+  });
+});
+
+describe('matchesDraftOrComposition', () => {
+  test("returns 'direct' when the stored draft equals the expected text", () => {
+    expect(matchesDraftOrComposition('hello', 'voice', 'hello')).toBe('direct');
+  });
+
+  test("returns 'direct' with an empty stored draft and empty expected", () => {
+    expect(matchesDraftOrComposition('', 'voice', '')).toBe('direct');
+  });
+
+  test("returns 'composition' when draft + pending compose the expected text", () => {
+    expect(matchesDraftOrComposition('hello', 'voice', 'hello voice')).toBe('composition');
+  });
+
+  test("returns 'composition' for a voice-only composition (empty draft)", () => {
+    expect(matchesDraftOrComposition('', 'voice', 'voice')).toBe('composition');
+  });
+
+  test('trims both sides before comparing', () => {
+    expect(matchesDraftOrComposition('  hello  ', 'voice', ' hello ')).toBe('direct');
+    expect(matchesDraftOrComposition('hello', 'voice', '  hello voice  ')).toBe('composition');
+  });
+
+  test('composes without a separator across a CJK boundary', () => {
+    expect(matchesDraftOrComposition('你好', '世界', '你好世界')).toBe('composition');
+  });
+
+  test('returns null when neither the draft nor the composition matches', () => {
+    expect(matchesDraftOrComposition('newer edits', 'voice', 'hello voice')).toBeNull();
+    expect(matchesDraftOrComposition('hello', 'voice', 'unrelated')).toBeNull();
+  });
+
+  test('never reports a composition from an empty pending', () => {
+    expect(matchesDraftOrComposition('hello', '', 'hello')).toBe('direct');
+    expect(matchesDraftOrComposition('hello', '', 'hello there')).toBeNull();
   });
 });
